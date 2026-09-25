@@ -102,7 +102,7 @@ from card C*. That is not a decision context.
 `card_dispatcher.cpp:770` sets `suppress_op_card_event = 1`, puts `SELECT_OP_MODE` on the current
 frame and pushes nothing. It is already the model the other cards should follow.
 
-### Grain Sales — LANDED in `aa5ec64`
+### Grain Sales — LANDED in `7057251`
 
 Grain Sales looked like the hard case because P17 §5's first attempt pushed the child frame
 *before* the US answered, so the parent had to survive a possible decline. **The choice comes

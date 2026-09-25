@@ -11,7 +11,7 @@ balance both show the training signal oscillating rather than the network lackin
 
 Seed 3, 80M, flags otherwise identical to `E4-08-03` (`launch_flags.py --diff` shows the one
 change, plus `--resume-every-steps` and the explicitly recorded seed streams). `--gae-lambda` was
-added for this (`4f8b492`); it was hard-coded at 0.98 before. Phase 2, seed 5 from scratch to
+added for this (`c78df99`); it was hard-coded at 0.98 before. Phase 2, seed 5 from scratch to
 160M, is running (`E4-26-05`, `E4-27-05`).
 
 ## Strength

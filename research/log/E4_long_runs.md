@@ -149,7 +149,7 @@ E4-08-37@240M rates 2179 in the same field.
 
 ## Relaunched with z-loss (E4-59-43, E4-59-44), 2026-09-25
 
-**The change:** `--z-loss-coef 1e-4` (`69d8b01`) adds `1e-4 · mean(logsumexp(policy logits)²)` to
+**The change:** `--z-loss-coef 1e-4` (`e25cc42`) adds `1e-4 · mean(logsumexp(policy logits)²)` to
 the update. Everything else is the E4-57 configuration, with TF32, on the same seeds, 43 and 44.
 `launch_flags.py --diff` against E4-57-43/44 shows only `--z-loss-coef`.
 
@@ -343,7 +343,7 @@ non-country actions (confirmed by the owner). So a shift common to every country
 invisible to the policy, gets no gradient, and random-walks as the head's weights move for other
 reasons.
 
-**The fix, `--ladder-head-center` (`1e820df`), centres `pe_country`'s hidden features across the
+**The fix, `--ladder-head-center` (`72dbc23`), centres `pe_country`'s hidden features across the
 84 countries before its final projection.** The tests confirm three things:
 * every country-only distribution is unchanged;
 * the correction's mean over countries equals the final bias exactly;
@@ -432,7 +432,7 @@ shrank from a typical largest legal logit of 21 at 85M to 0.8 at 120M. Its train
 from 1.22 to 1.85–1.91 over the same stretch. That is the 356-Elo loss recorded as entropy
 inflation ([`../findings/training/entropy_inflation.md`](../findings/training/entropy_inflation.md)),
 now located: the policy's logits flattened wholesale. It was a resume on the drained pool (the
-pre-`3803d5d` bug), so it is confounded, and its cause is not established.
+pre-`4eb58df` bug), so it is confounded, and its cause is not established.
 
 ## Stage 1 answered: centred heads stop the divergence (E4-61-43/44), 2026-09-25
 
@@ -443,7 +443,7 @@ pre-`3803d5d` bug), so it is confounded, and its cause is not established.
 * Neither run pinned at any 40M readout. Seed 43 stayed balanced (0.42–0.68), where every
   earlier seed-43 run leaned USSR or pinned at 110–140M. That is one seed, so not evidence of a
   balance effect.
-* The master merge (`683f151`) was built and tested after the runs finished: the backend suites
+* The master merge (`5a564f5`) was built and tested after the runs finished: the backend suites
   gave 1,884 passed and 6 skipped.
 
 **Strength.** `data/reports/long_center_800M.{md,json}`: 31 players, 100 games per side per

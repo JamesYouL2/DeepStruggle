@@ -110,7 +110,7 @@ update gains count for more.
 Taken together, wall-clock per training step drops by roughly 35–45%, and about 60% of that
 needs no change to numerics or only TF32.
 
-## Adopted: the bit-identical changes and a 10M snapshot interval (`bea6311`, 2026-09-24)
+## Adopted: the bit-identical changes and a 10M snapshot interval (`d2ad667`, 2026-09-24)
 
 * **What changed:**
   * `GraphCache` checks staleness once per rollout.
@@ -127,8 +127,8 @@ needs no change to numerics or only TF32.
 
 | | median per-iteration steps/s | wall s for 3M |
 |:---|---:|---:|
-| before (`3dcb2f2`) | 64.9k / 63.9k / 64.3k | 61.9 / 61.8 / 62.3 |
-| after (`bea6311`) | 66.9k / 70.1k / 72.3k | 60.1 / 59.1 / 56.0 |
+| before (`54d19a2`) | 64.9k / 63.9k / 64.3k | 61.9 / 61.8 / 62.3 |
+| after (`d2ad667`) | 66.9k / 70.1k / 72.3k | 60.1 / 59.1 / 56.0 |
 
 That is **+8%** in steps/s. The 10M snapshot interval comes on top, removing about half of the
 ~17% evaluation overhead.
@@ -139,7 +139,7 @@ fp32 control, E4-57 runs with `--tf32`, and the two arms of a seed run as a pair
 ## The TF32 A/B (E4-56 fp32, E4-57 `--tf32`), 2026-09-24
 
 **Setup:**
-* the E4-08 recipe (M2d, λ 0.98, pool 0.3/12), from scratch to 80M, on `bea6311`;
+* the E4-08 recipe (M2d, λ 0.98, pool 0.3/12), from scratch to 80M, on `d2ad667`;
 * seeds 40–42, with the two arms of a seed run as a pair;
 * `launch_flags.py --diff` against E4-08-36 shows only the seed, the snapshot interval, the
   budget and `--tf32`.
@@ -210,7 +210,7 @@ speeds up the two-at-a-time workload.
 2. **Matched A/B:** level or better on 3 of 3 seeds, per seat.
 3. **Checkpoint round-trip:** TF32-trained checkpoints load and play in fp32.
 
-## TF32 is the default (`72db935`), and where throughput stands (2026-09-24)
+## TF32 is the default (`3f63d24`), and where throughput stands (2026-09-24)
 
 Every figure here is measured through `tools/train.py`, using `data/logs/perf/perf_run.sh`: M2d,
 512 envs, 3M steps, the opponent pool, and the median per-iteration steps/s after 0.5M steps.
@@ -218,9 +218,9 @@ Every figure here is measured through `tools/train.py`, using `data/logs/perf/pe
 
 | level | code | solo steps/s | paired steps/s per arm |
 |:---|:---|---:|---:|
-| L0: before P26 | `3dcb2f2`, fp32 | 64.4k (64.9 / 63.9 / 64.3) | 39.2k (39.1 / 39.3) |
-| L1: bit-identical rollout changes | `bea6311`, `--no-tf32` | 69.7k (66.9 / 70.1 / 72.3), +8% | 41.3k (40.5 / 40.6 / 41.8 / 42.1), +5% |
-| **L2: + TF32, now the default** | `72db935` | **86.4k** (86.3 / 85.3 / 87.7), **+34%** | **48.2k** (48.3 / 48.4 / 47.9 / 48.1), **+23%** |
+| L0: before P26 | `54d19a2`, fp32 | 64.4k (64.9 / 63.9 / 64.3) | 39.2k (39.1 / 39.3) |
+| L1: bit-identical rollout changes | `d2ad667`, `--no-tf32` | 69.7k (66.9 / 70.1 / 72.3), +8% | 41.3k (40.5 / 40.6 / 41.8 / 42.1), +5% |
+| **L2: + TF32, now the default** | `3f63d24` | **86.4k** (86.3 / 85.3 / 87.7), **+34%** | **48.2k** (48.3 / 48.4 / 47.9 / 48.1), **+23%** |
 | L3: + `--compile-update max-autotune` (opt-in) | this commit | 95.5k (97.3 / 93.7), +48% | 52.2k (52.2 / 52.2), +33% |
 | L3': + `--compile-update default` (opt-in) | this commit | 91.5k (92.7 / 90.3), +42% | 51.9k (51.6 / 52.2), +32% |
 

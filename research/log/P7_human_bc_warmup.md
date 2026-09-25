@@ -26,7 +26,7 @@ produce a better agent?
 + K=40, run in parallel on one 4090, snapshots every 2M steps. One flag apart: the BC warmup
 checkpoint. Arm A warmed on 5,000 self-play games from `dec_turns40` (79.2% top-1 after 2 epochs);
 arm B on the human corpus, 144,844 samples with value targets masked on the 149 games whose
-recording stops (45.4% top-1). Engine as of `68f155b` minus the Independent Reds fix, which landed
+recording stops (45.4% top-1). Engine as of `f07fd37` minus the Independent Reds fix, which landed
 mid-run and applies to neither arm.
 
 **Result** (tournament, 1,000 games per pair):

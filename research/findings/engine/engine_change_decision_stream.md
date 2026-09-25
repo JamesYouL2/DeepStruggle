@@ -25,8 +25,8 @@ in two parts:
 
 ## What it moved: nothing
 
-Both engine builds were compiled side by side — `a09e15a` (before P14) and the fixed build, whose
-committed part is `5938e52` — and
+Both engine builds were compiled side by side — `b5f2c06` (before P14) and the fixed build, whose
+committed part is `0d2f499` — and
 the same games were played through each, recording at every step the decision type, the **legal
 mask's popcount and hash**, and the action chosen. The mask hash is the sensitive part: an engine
 change can alter what is *offered* without altering what a deterministic chooser *picks*, and a

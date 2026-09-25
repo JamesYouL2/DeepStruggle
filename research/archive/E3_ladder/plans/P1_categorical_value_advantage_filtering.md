@@ -116,7 +116,7 @@ against the control.
 | categorical #2 | 3% vs anchor, clip collapsed to 3% | `v_vp` returned real VP where the buffer's contract is normalised (`last_ret_vp = last_v_vp.clone()`), poisoning the bootstrap 20× |
 | categorical #3 (`--vf-coef` sweep) | not run to completion | diagnosed the CE/MSE scale gap: `vf_coef=0.5` weighted a ~1.5 cross-entropy against a ~0.04 MSE, a 102× imbalance |
 | categorical #4 (`--vf-coef 0.0125`) | **18%** vs anchor at 80M | trained stably but weak — the real defect, below |
-| categorical #5 (b3809aa, additive) | **80.0%** vs anchor at 80M | healthy; indistinguishable from the control |
+| categorical #5 (95e9e50, additive) | **80.0%** vs anchor at 80M | healthy; indistinguishable from the control |
 
 ### Result: the categorical VP head is mildly harmful, not a null
 
@@ -127,7 +127,7 @@ against the control.
 >
 > It had never been rated at all. `NeuralAgent.from_checkpoint` built a scalar net
 > unconditionally, so a categorical checkpoint could not be loaded by the tournament or any
-> probe, and every number below came from the training loop's own evaluation. Fixed in 6b32a84.
+> probe, and every number below came from the training loop's own evaluation. Fixed in 1c49072.
 
 
 

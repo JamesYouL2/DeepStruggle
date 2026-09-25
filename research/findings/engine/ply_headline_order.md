@@ -63,5 +63,5 @@ is exactly the test that should have caught it, and it was vacuous. It took its 
 discarded because `step` returned a bool nobody read, and the loop ran its full 4000 iterations
 against a state that never moved. The monotonicity assertion passed having never seen a second ply.
 
-Making `step` raise ([[engine_change_decision_stream]], commit `941b45b`) is what surfaced it. The
+Making `step` raise ([[engine_change_decision_stream]], commit `51b479c`) is what surfaced it. The
 test now asserts monotonicity across the whole walk, headlines included, over five seeds.

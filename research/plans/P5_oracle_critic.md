@@ -10,10 +10,10 @@ bootstrapping change. If P2 is demoted, run this in its slot.
 > old implementation out of the history when this step runs:
 >
 > ```bash
-> git show 574e04a:ai/models/coldwar_net_v4.py     # belief_head, oracle head, forward_all,
-> git show 574e04a:ai/training/nash_pg.py          #   predict_belief, evaluate_oracle
-> git show 574e04a:ai/training/rollout_buffer.py   # OracleGuidedNashPGTrainer, the losses
-> git show 574e04a:bindings/ts_env.py              # opp_hands columns, get_batches_with_oracle
+> git show 9c74b98:ai/models/coldwar_net_v4.py     # belief_head, oracle head, forward_all,
+> git show 9c74b98:ai/training/nash_pg.py          #   predict_belief, evaluate_oracle
+> git show 9c74b98:ai/training/rollout_buffer.py   # OracleGuidedNashPGTrainer, the losses
+> git show 9c74b98:bindings/ts_env.py              # opp_hands columns, get_batches_with_oracle
 > ```                                              # info["opponent_hands"] plumbing
 >
 > `VectorizedBatchRunner::get_opponent_hands` was **kept** in the bindings: it is a read-only

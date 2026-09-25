@@ -205,8 +205,8 @@ DEFCON pass. "Participate vs boycott" does not.
   **decline** returns it and continues with Grain Sales' own 2 Ops; anything else is the ordinary
   5-way resolution acting on the stack top. No card-specific branch remains. This only works given
   §2, which is the argument for §2.
-  **DONE** in `aa5ec64`, though not by the child frame this line describes. That was attempted,
-  failed and reverted (`47f6043`); what shipped needs **no nesting at all** — the offer is the
+  **DONE** in `7057251`, though not by the child frame this line describes. That was attempted,
+  failed and reverted (`8207b14`); what shipped needs **no nesting at all** — the offer is the
   drawn card's own resolution node on Grain Sales' frame, converted on a decline and replaced on a
   play. Design: [P17_stack_layout.md](P17_stack_layout.md) §1b. The abandoned child-frame plan,
   kept for its failure analysis: [P17_grain_sales_child_frame.md](P17_grain_sales_child_frame.md).
@@ -246,7 +246,7 @@ comments (`late_war.cpp:63`, `late_war.cpp:271`).
 
 ## 6a. The rules fixes land AFTER the refactor, not with it
 
-§6's three sites were implemented and then **reverted** (`57df782`, reverted by `75da57f`). They
+§6's three sites were implemented and then **reverted** (`dcc565a`, reverted by `3b02c9a`). They
 are correct fixes and they were landed in the wrong order.
 
 **Every one of them changes the decision stream.** Setting `allow_early_stop = 0` where it

@@ -27,12 +27,12 @@ Two things it does not say, both of which have been read into it at some point:
 
 ## Scope — which date, and what exactly landed on it
 
-"The starred events change" is `cff2344` and `25d9b70`, both **2026-09-10**, the E1 → E2 boundary.
+"The starred events change" is `9fa5b05` and `341088e`, both **2026-09-10**, the E1 → E2 boundary.
 That is the date the assumption's scope begins.
 
 It is a *batch*, not a commit: eight further engine and observation commits landed the same day,
-including observation v2.3 (`4fb3cff`), Europe Control becoming its own ending (`430ba9b`,
-`9591470`) and the Socialist Governments cap (`32902a3`). Anything claimed "after the starred
+including observation v2.3 (`dc08a39`), Europe Control becoming its own ending (`9f55470`,
+`9591470`) and the Socialist Governments cap (`e758b6d`). Anything claimed "after the starred
 change" is claimed after all of them. The full list is
 [`../findings/engine/engine_revisions.md`](../findings/engine/engine_revisions.md).
 
@@ -98,8 +98,8 @@ boundary the assumption names.
 
 **2. P14 — an engine correctness change that moved no decision at all.**
 [`../findings/engine/engine_change_decision_stream.md`](../findings/engine/engine_change_decision_stream.md).
-The mask/step collapse plus the Missile Envy forced-play fix (`5938e52`), measured against
-`a09e15a`: 1,068 games, 385,812 steps, four policies — a policy-free deterministic walk plus argmax
+The mask/step collapse plus the Missile Envy forced-play fix (`0d2f499`), measured against
+`b5f2c06`: 1,068 games, 385,812 steps, four policies — a policy-free deterministic walk plus argmax
 play from `E3-20-28@160M`, `E3-20-28@320M` and `E3-17-25@160M` — comparing outcome, game length,
 chosen action *and the legal mask itself* at every step. **Zero divergences of any kind.** An
 engine change that does not move the decision stream cannot move a training result, so this is a
@@ -110,7 +110,7 @@ Its limit is the reason it is so clean: P14 fixed conditions that do not arise i
 1.54M-position sweep found zero naturally occurring mask/step disagreements). It demonstrates the
 claim for a change that touches nothing. It says nothing about a change that touches something.
 
-**3. The `ROLL_DIE` pair, held at E3 by measurement.** `b6874af` and `9f78026` changed `engine/`
+**3. The `ROLL_DIE` pair, held at E3 by measurement.** `d124cff` and `09c2498` changed `engine/`
 between `E3-20-28` and the registered `E3-21-28`, and the letter was held because no `ROLL_DIE`
 node is ever handed to an agent (0 in 879 single-env and 12,800 vectorized env-steps). Same
 pattern: measured, not assumed ([`../runs.md`](../runs.md), *E3-21*).
@@ -132,7 +132,7 @@ that cannot be subtracted.
 
 **6. A code-fix batch did reverse relative conclusions once — in search.**
 [`../log/search_cost_and_coverage.md`](../log/search_cost_and_coverage.md) §9. Re-measured at
-`c7e3731` after `8533a68`, `b6874af` and `9f78026`, on the same checkpoint:
+`611d83e` after `a92e9ce`, `d124cff` and `09c2498`, on the same checkpoint:
 
 | comparison | before the fixes | after |
 |:---|---:|---:|
@@ -142,8 +142,8 @@ that cannot be subtracted.
 Both are *relative* comparisons between two decision-making configurations, and both reversed.
 Two caveats keep this from being a clean counterexample, and they matter: the sample sizes rose
 three- to tenfold, so the old figures were two noisy point estimates and the re-measurement is the
-better instrument regardless; and two of the three fixes are harness code (`8533a68`) or affect the
-probe loop rather than training. But the third, `9f78026`, is `engine/` — a chance node whose only
+better instrument regardless; and two of the three fixes are harness code (`a92e9ce`) or affect the
+probe loop rather than training. But the third, `09c2498`, is `engine/` — a chance node whose only
 legal action rolled 255 instead of a die, which makes space race attempts and coups succeed
 automatically for *both* sides. The record itself says of the old numbers: *"Neither is proven to
 have fired in these particular probes, and neither is ruled out."*

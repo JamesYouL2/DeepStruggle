@@ -69,7 +69,7 @@ that plays one opening has stopped searching that part of the space, which matte
 
 **Correction, same day.** This section first attributed the change to the resume emptying the
 opponent pool. **It did not.** `E3-20-28`'s continuation records
-`base_commit = c9062336`, which *is* the commit "fix(training): rebuild the self-growing opponent
+`base_commit = 702e955e`, which *is* the commit "fix(training): rebuild the self-growing opponent
 pool when resuming" — so that resume rebuilt the pool from the run's own snapshots. The pool was
 not reset, and the mechanism proposed here was wrong.
 

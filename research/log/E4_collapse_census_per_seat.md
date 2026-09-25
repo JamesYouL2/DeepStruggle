@@ -74,7 +74,7 @@ are not directly comparable with it.
 
 ## The first collapse logged per seat
 
-Only `E4.1-01-05` was launched after the per-seat metrics went in (`9c49329`), so it is the only
+Only `E4.1-01-05` was launched after the per-seat metrics went in (`71e59f8`), so it is the only
 collapse seen with them. Figures are 1M buckets:
 
 | step | USSR self-play share | `adv_std_us` / `_ussr` | `adv_mean_us` / `_ussr` | `entropy_us` / `_ussr` | explained var. |

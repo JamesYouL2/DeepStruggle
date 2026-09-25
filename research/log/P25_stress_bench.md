@@ -544,7 +544,7 @@ effect, so a two-seed bench cannot rank levers. Any further lever needs at least
 ## Step 3h: the late collapse was the pool (E4-48), 2026-09-24
 
 Recorded separately in [`P25_pool_resume_bug.md`](P25_pool_resume_bug.md). A resume drained the opponent pool to its
-recent end (fixed in `3803d5d`). Rerun on a fixed pool, all three seed-5 continuations from 160M
+recent end (fixed in `4eb58df`). Rerun on a fixed pool, all three seed-5 continuations from 160M
 avoid the pin their drained twins hit. The two rated ones finish 170–390 Elo above their twins. The bench is from scratch
 and never resumes, so nothing above is affected.
 
@@ -572,11 +572,11 @@ flags for 10 iterations at a commit and compares every logged value with E4-27-0
 
 | commit | against E4-27-05 |
 |:---|:---|
-| 318f01f (E4-27-05's own) | bit-identical, so training is deterministic on this machine |
-| d6c89ad, bfbb789 (E4.1 engine), 9c49329 (per-seat signals), bfb7ace (dropped sync/refresh) | bit-identical |
+| 5ee8170 (E4-27-05's own) | bit-identical, so training is deterministic on this machine |
+| 5757e15, 1d7a1d0 (E4.1 engine), 71e59f8 (per-seat signals), 2ea9af0 (dropped sync/refresh) | bit-identical |
 | 4124562 (masked means as sum/count) | rounding: 3.7e-9 at iteration 1, 8e-5 by iteration 3 |
-| 7766e3d (π_ref log-probs once per update) | rounding: 8.7e-10 at iteration 1 |
-| a5a8e87, 7e260ab, 2a9b5a4 (graphs, serial replay, levers off) | bit-identical to 7766e3d |
+| 7467994 (π_ref log-probs once per update) | rounding: 8.7e-10 at iteration 1 |
+| 52aee21, e91b8d2, 4088ccc (graphs, serial replay, levers off) | bit-identical to 7467994 |
 
 Two commits change the arithmetic, both at 1e-9. The rollouts (USSR win rates) are identical
 through iteration 3, so no commit changed the game or the update. Training is chaotic: rounding
@@ -598,7 +598,7 @@ differs from E4-27-05's own only by the 1e-9 rounding above. Its output is in
 
 | run | 0–80M, by 5M (self-play USSR share) | buckets ≥ 0.95 |
 |:---|:---|---:|
-| E4-27-05 (318f01f) | .52 .36 .41 .50 .70 .75 .84 .82 .90 .89 .87 .92 .97 .98 .98 .98 | 4 |
+| E4-27-05 (5ee8170) | .52 .36 .41 .50 .70 .75 .84 .82 .90 .89 .87 .92 .97 .98 .98 .98 | 4 |
 | rounding demo (4124562) | .42 .56 .62 .71 .75 .68 .55 .56 .47 .51 .53 .54 .60 .80 .84 .90 | 0 |
 
 A last-digit change to one mean moved the collapse from 40M to about 65M. Within 80M it also
@@ -616,7 +616,7 @@ training dies or is delayed for a long time. The evidence gathered against that 
   * The long episodes each cost about 50–70M steps.
   * By 160M the collapsed seeds had caught up: −1.4 Elo against the seeds that never collapsed
     ([`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md)).
-* **Every permanent stall came after a resume on the drained pool.** The fix is `3803d5d`. On
+* **Every permanent stall came after a resume on the drained pool.** The fix is `4eb58df`. On
   the fixed pool, 3 of 3 continuations did not pin
   ([`P25_pool_resume_bug.md`](P25_pool_resume_bug.md)).
 * **The clean replicates on the fixed code did not pin.** E4-08-36 and E4-08-37 ran straight to
@@ -645,11 +645,11 @@ ran. All three levers stay in the code, off by default (`--adv-norm-floor`, `--e
 `--target-kl`).
 
 **What P25 leaves behind:**
-* the pool resume fix (`3803d5d`);
-* the per-seat signals (`9c49329`);
+* the pool resume fix (`4eb58df`);
+* the per-seat signals (`71e59f8`);
 * `launch_flags.py`, which now diffs every recorded flag;
 * the finding that training is chaotic at 1e-9;
-* the CUDA-graph fix (`9bfceb1`), found while chasing the bench's crashes.
+* the CUDA-graph fix (`754f9e1`), found while chasing the bench's crashes.
 
 **What moves on:**
 * Step 5's codified rewind goes to [`reserve`](../plans/reserve.md) as an optional safety net.

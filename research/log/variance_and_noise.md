@@ -69,9 +69,9 @@ closer look, largely removable.
 The environment seed was the literal `12345` and torch was left unseeded, so two runs of one
 configuration saw the same deals and the same dice and differed only in initialisation. A
 "replicate" under that arrangement measures a fraction of the thing. `--seed` now sets both
-together (`4f2b23b`), or neither when omitted, which keeps existing behaviour.
+together (`21a4daf`), or neither when omitted, which keeps existing behaviour.
 
-`--resume` was added alongside (`4f2b23b`), because snapshots are bare `state_dict`s and a
+`--resume` was added alongside (`21a4daf`), because snapshots are bare `state_dict`s and a
 `--warmup-checkpoint` restart silently drops the optimiser moments, the reference policy and the
 step counter. The tests assert the distinction rather than assume it: ten steps must equal five,
 save, resume, five more, **and** a weights-only restart must *not* match. If that negative control

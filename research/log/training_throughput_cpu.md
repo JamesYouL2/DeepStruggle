@@ -12,11 +12,11 @@
 
 `/workspace/data/logs/perf/perf_run.sh`: M2d as on the P25 bench, 512 envs, 3M steps from
 scratch, no snapshots. Steady steps/s is measured on the training clock from 1M steps on. The old
-code was run from a detached worktree at `e67fbe5`. Run-to-run noise is about ±5% when clean.
+code was run from a detached worktree at `37eec91`. Run-to-run noise is about ±5% when clean.
 
 | code | CPU threads | steps/s | wall | CPU-s |
 |:---|:---|---:|---:|---:|
-| old (`e67fbe5`) | default (16) | 39,322 / 40,124 | 92–95 s | 808–855 |
+| old (`37eec91`) | default (16) | 39,322 / 40,124 | 92–95 s | 808–855 |
 | + masked_fill | default | 43,691 / 42,741 | 85–91 s | 743–811 |
 | + masked_fill | 1 / 2 / 4 | 26,569 / 35,747 / 40,960–43,691 | — | 131 / 163 / 228–244 |
 | **+ masked_fill + targeted refresh** | **default** | **49,152 / 46,811** | **76–79 s** | 636–654 |
@@ -69,7 +69,7 @@ or `ts_engine` load libgomp, and an explicit value in the environment still wins
 set, the training harness now gives 47,953 steps/s on 123 CPU-s. A 5-player, 2,000-game tournament
 goes from 139.6 games/s on 235 CPU-s (spin) to **167.1 games/s on 22 CPU-s** (passive).
 
-**Why it used to cost less CPU.** The code is not the cause. The 09-20 code (`d8aa324c`, which the
+**Why it used to cost less CPU.** The code is not the cause. The 09-20 code (`e90294e9`, which the
 E4-08 seed sweep ran at ~51k steps/s), built from its own sources and run on the same harness today,
 spins just as hard: 34,493 / 41,831 steps/s on 926 / 768 CPU-s. No commit ever set a thread count
 or a wait policy. What did change is the kernel, from 7.1.8 to 7.2.6 at the first reboot on
@@ -86,10 +86,10 @@ same 3M steps is given alongside.
 
 | commit | change | steps/s | wall |
 |:---|:---|---:|---:|
-| `31810cc` | passive OpenMP waiting (baseline for this section) | 45,723–47,953 | 78–81 s |
+| `adaaa0d` | passive OpenMP waiting (baseline for this section) | 45,723–47,953 | 78–81 s |
 | `4124562` | no CPU-GPU syncs in the PPO minibatch loop | 49,152 / 53,137 | 71–76 s |
-| `7766e3d` | two rollout forwards instead of three | 56,174 / 56,174 | 67–69 s |
-| `7766e3d` | pi_ref log-probs once per update, not per minibatch | 65,536 / 65,536 | 59–60 s |
+| `7467994` | two rollout forwards instead of three | 56,174 / 56,174 | 67–69 s |
+| `7467994` | pi_ref log-probs once per update, not per minibatch | 65,536 / 65,536 | 59–60 s |
 | next commit | rollout forwards as CUDA-graph replays, learner and opponent overlapped | **70,217 / 70,217** | 57–59 s |
 
 Against the clean start of this log (old code, 39–40k steps/s, 808–855 CPU-s), that is **~1.8×
@@ -124,7 +124,7 @@ step on CUDA against the previous commit, using `/workspace/data/logs/perf/train
 * **Thread count:** superseded by passive waiting, which takes the CPU down further (~1.6 cores)
   at full speed, without capping the threads the parallel loops can use.
 
-### Resolved: the stall was a GPU deadlock between concurrent CUDA-graph replays (fixed in `7e260ab`)
+### Resolved: the stall was a GPU deadlock between concurrent CUDA-graph replays (fixed in `e91b8d2`)
 
 **Diagnosis, 2026-09-24 03:00.** The watchdog below caught two more hangs: E4-44-05 and E4-45-05, the
 late-collapse pair, both at ~190M. `PYTHONFAULTHANDLER` printed the main thread of each at
@@ -201,7 +201,7 @@ and adds a pool member every 2 iterations. Two processes each:
 
 | condition | captures per process | failures |
 |:---|:---|:---|
-| as committed (`830c3ba`) | 30, 53 | **2 of 2, within 90 s** |
+| as committed (`8343a6e`) | 30, 53 | **2 of 2, within 90 s** |
 | graphs never dropped (`retain` a no-op) | 133, 139 (then out of memory) | 0 |
 | cuBLAS workspace off (`CUBLAS_WORKSPACE_CONFIG=:0:0`), drops on | 202, 186 | 0 |
 | **fix** (one capture stream per cache, warmup on it), workspace on | 320, 329 | 0 |
@@ -220,7 +220,7 @@ it.
 * each capture warms up on that stream first, so its workspace is allocated eagerly from the
   ordinary allocator, once, before any capture.
 
-All graphs then share one workspace that is never freed. Replays are already serial (`7e260ab`), so
+All graphs then share one workspace that is never freed. Replays are already serial (`e91b8d2`), so
 sharing is safe.
 
 `tests/training/test_graphed_forward.py` pins two properties, both verified to FAIL on the pre-fix
@@ -237,10 +237,10 @@ vs `--no-cuda-graphs`, alternating):
 | two runs at once, 2 rounds | 39,851 per process | 39,240 | **+1.5%** |
 
 The +7% measured when graphs went in came mostly from overlapping the learner's and the
-opponent's replays, which the serial-replay fix (`7e260ab`) removed. What is left is the saving on
+opponent's replays, which the serial-replay fix (`e91b8d2`) removed. What is left is the saving on
 kernel launches. It is small, but graphs still pay for themselves.
 
-### Clang engine (master `5fb5971`) vs GCC: +22% in the engine, nothing end to end (2026-09-24)
+### Clang engine (master `9a9ad4b`) vs GCC: +22% in the engine, nothing end to end (2026-09-24)
 
 Both builds were measured on the same machine, the GPU otherwise idle, alternating rounds.
 * **Engine alone** (`ts_benchmark`, 500k steps, pinned to one P-core, 5 rounds): GCC 1.57M

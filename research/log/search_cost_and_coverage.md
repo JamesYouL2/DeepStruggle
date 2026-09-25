@@ -20,28 +20,28 @@ code was at when it was measured, because three of them predate fixes that could
 
 | searcher | budget | games | win rate | deployable? | measured at |
 |---|---:|---:|---:|---|---|
-| **PIMCTS** (reads the true `GameState`) | 48 sims | 12 | **100%** (12/12) | no — sees the opponent's hand | `3ef3d9b`, 09-15 15:11 |
-| DMCTS (honest) | 48 sims | 12 | 58.3% (7/12) | yes — not distinguishable from chance at n=12 | `3ef3d9b`, 09-15 15:11 |
+| **PIMCTS** (reads the true `GameState`) | 48 sims | 12 | **100%** (12/12) | no — sees the opponent's hand | `0f8af9f`, 09-15 15:11 |
+| DMCTS (honest) | 48 sims | 12 | 58.3% (7/12) | yes — not distinguishable from chance at n=12 | `0f8af9f`, 09-15 15:11 |
 | DMCTS, 1 world | 96 sims | 40 | **72.5%** | yes | `5985175`, 09-15 ~17:42 |
 | DMCTS, 4 worlds × 24 | 96 total | 40 | 65.0% | yes | `5985175`, 09-15 ~17:42 |
 | DMCTS, 16 worlds × 6 | 96 total | 40 | 55.0% | yes | `5985175`, 09-15 ~17:42 |
 | DMCTS, 1 world | 384 sims | 30 | **76.7%** (23/30) | yes | pre-`5985175` tree, 09-15 16:56 |
 | DMCTS, 4 worlds × 96 | 384 total | 30 | 73.3% (22/30) | yes | `5985175`, 09-15 17:42 |
 
-The 48-sim pair is recorded in `3ef3d9b`'s own commit message, so that one is certain. The
+The 48-sim pair is recorded in `0f8af9f`'s own commit message, so that one is certain. The
 384-simulation row was taken from a working tree while batched MCTS was being written, before
 `5985175` committed it.
 
 > **Every row above predates three fixes and should be re-taken before being relied on**
-> (invariant 13). In commit order: `8533a68` "search the state the caller holds, and refuse to
-> return an illegal action"; `b6874af` "reject a micro-action whose decision_type is not the one
-> being asked"; `9f78026` "a chance node's only legal action rolled 255 instead of a die".
+> (invariant 13). In commit order: `a92e9ce` "search the state the caller holds, and refuse to
+> return an illegal action"; `d124cff` "reject a micro-action whose decision_type is not the one
+> being asked"; `09c2498` "a chance node's only legal action rolled 255 instead of a die".
 >
 > The searcher's *own* chance handling was never affected — `settle()` uses `auto_advance_step` or
 > an explicit `MicroAction(ROLL_DIE, 0, 0, 0)`, both of which roll properly. The exposure is the
 > harness that played the probe games: any loop that read the legal mask and called `step_flat` at
-> a chance node forced a die of 255 before `9f78026`, which makes space race attempts and coups
-> succeed automatically for *both* sides. And before `8533a68` the searcher could return an action
+> a chance node forced a die of 255 before `09c2498`, which makes space race attempts and coups
+> succeed automatically for *both* sides. And before `a92e9ce` the searcher could return an action
 > illegal in the caller's state, which a loop ignoring the return value re-offers forever. Neither
 > is proven to have fired in these particular probes, and neither is ruled out.
 
@@ -158,9 +158,9 @@ step guard now raises on. With the caller settling the same way, 0 of 128 were i
 
 ## 7. Coverage sweep
 
-Measured at `f08cde8` (the working tree it was committed from), engine
+Measured at `63d2d7f` (the working tree it was committed from), engine
 `2fb70052dee0164871632209060cbaa23fd4f0fb99cc2e956241e231b0e8e691` — so this is the first search
-measurement taken *after* `8533a68`, `b6874af` and `9f78026`, and the only one on this page not
+measurement taken *after* `a92e9ce`, `d124cff` and `09c2498`, and the only one on this page not
 subject to the caveat in §1.
 
 Configuration, spelled out because the comparison to §1 turns on it: the **privileged** searcher
@@ -272,7 +272,7 @@ rather than done.
 
 ## 9. The honest searcher, re-measured on the fixed engine
 
-§1's numbers all predate `8533a68`, `b6874af` and `9f78026`. Re-taken at `c7e3731` on engine
+§1's numbers all predate `a92e9ce`, `d124cff` and `09c2498`. Re-taken at `611d83e` on engine
 `2fb7005`, same checkpoint as the originals (`E3-20-28` @320M), against the plain policy of that
 net, **120 games each** — three to four times the games the originals had.
 
@@ -315,7 +315,7 @@ Full coverage. This is measured under CPU contention (the searcher is CPU-bound;
 Worth recording against the estimate in `5985175`'s commit message — "a 160M-step arm with search
 on both sides at 96 simulations per move from ~137 days into ~6 days". The measurement above puts
 that same configuration at ~62 days. The two differ by a factor of ten and the later optimisations
-(`fbeda4d`, `9079e7c`) should have moved it the other way, so one of them is wrong; the tournament
+(`7fc67fe`, `3ad4a83`) should have moved it the other way, so one of them is wrong; the tournament
 figure is the one with a 120-game measurement behind it.
 
 ## 10. E4: honest search on top of `E4-08-03@240M`

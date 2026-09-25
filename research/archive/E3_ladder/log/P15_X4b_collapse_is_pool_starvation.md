@@ -38,7 +38,7 @@ and **60.8%** of games ending in DEFCON 1, against the replay's 7.81 and 25.3%.
 
 ## The cause: `dirname` of a directory
 
-Before `266e891` the rebuild resolved the run directory as
+Before `1e1f8e5` the rebuild resolved the run directory as
 
 ```python
 _run_dir = os.path.dirname(os.path.abspath(resume))
@@ -69,9 +69,9 @@ regimes, with nothing in the log saying which one you got.
 
 `E3-29-28`'s continuation and the replay differ in exactly two things, and both act on the pool:
 
-1. **Base commit.** Between `ef6ec61` and `b8711a2` the only commits touching `ai/training/` are
-   `3cf4b18` and `f099cc6` (metrics only), `da4ee60` and `2d24830` (new flags, both default-off
-   and recorded off in the replay's metadata), and **`266e891`, the pool fix**. The search-target
+1. **Base commit.** Between `cdae53c` and `0f57a29` the only commits touching `ai/training/` are
+   `5a2c791` and `315727a` (metrics only), `7d64363` and `6daca3a` (new flags, both default-off
+   and recorded off in the replay's metadata), and **`1e1f8e5`, the pool fix**. The search-target
    off-by-one fix is *not* in this window, so it is identical in both runs and cannot explain the
    difference.
 2. **`--snapshot-every-steps`** 5M vs 250k — which is itself how a self-growing pool acquires

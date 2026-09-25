@@ -17,7 +17,7 @@ seeds was a single `--seed`, and a single `--seed` drives four independent thing
 | `pool` | which opponent is drawn per game, and which side the learner takes |
 
 So "seed 1 collapses and seed 3 does not" names no mechanism: the two differ in four ways
-simultaneously. `--seed-init`, `--seed-sampling`, `--seed-env` and `--seed-pool` (commit `85d3bd8`)
+simultaneously. `--seed-init`, `--seed-sampling`, `--seed-env` and `--seed-pool` (commit `2623489`)
 each override one, so one stream can be moved at a time.
 
 `np.random.seed` was originally counted as a fifth source and is not one. The only consumers of
