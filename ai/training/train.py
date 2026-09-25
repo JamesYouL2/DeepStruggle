@@ -28,6 +28,32 @@ _LADDER_LOOKUP_REQUIRED = ("ladder_card_lookup_heads", "ladder_card_lookup_dim",
                            "ladder_card_lookup_identity_dim")
 
 
+def _resolve_head_center(args: argparse.Namespace) -> bool:
+    """--ladder-head-center, with its default ("auto") resolved.
+
+    On since 2026-09-25 for every ladder network with per-entity heads in the E4 view: centring
+    removes the country-logit shift the E4 policy cannot see, which otherwise drifts until a long
+    TF32 run diverges, at no measured cost (research/log/E4_long_runs.md). Auto follows the
+    checkpoint a run starts from -- a resume or a warm start keeps the setting its weights were
+    trained with, since the buffer that records it is part of the state dict -- and stays off in
+    the merged (E4.1) view, where countries do compete with play modes. An explicit
+    --ladder-head-center / --no-ladder-head-center always wins.
+    """
+    if args.ladder_head_center is not None:
+        return bool(args.ladder_head_center)
+    if not getattr(args, "per_entity_heads", 0):
+        return False
+    src = getattr(args, "resume", None) or getattr(args, "warmup_checkpoint", None)
+    if src:
+        import torch
+        from ai.training.generic_trainer import resolve_resume
+        path = resolve_resume(src) if getattr(args, "resume", None) else src
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        sd = blob.get("model_state_dict", blob) if isinstance(blob, dict) else blob
+        return "pe_center" in sd
+    return not bool(getattr(args, "merged_influence", False))
+
+
 def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
     """The P21 backbone configuration, or None when another architecture was asked for.
 
@@ -70,7 +96,7 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         head_context=bool(args.ladder_head_context) if args.per_entity_heads else True,
         head_static=bool(args.ladder_head_static) if args.per_entity_heads else True,
         head_entities=(args.ladder_head_entities if args.per_entity_heads else "both"),
-        head_center=bool(args.ladder_head_center),
+        head_center=_resolve_head_center(args),
         identity_dim=int(args.identity_dim),
         drop_static=bool(args.drop_static),
         hidden_dim=int(args.ladder_hidden_dim),
@@ -168,11 +194,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "Scoring -- identical ops, era and is_scoring -- so a query returns an\n"
                           "average over the cards it needed to tell apart. Kept reachable as the\n"
                           "ablation that attributes the gain, not as a variant expected to work.")
-    lad.add_argument("--ladder-head-center", action="store_true", default=False,
+    lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,
                      help="Centre the per-entity heads' hidden features across entities before "
-                          "their final projection, removing the common shift of the country logits "
-                          "that the E4 policy cannot see and that otherwise drifts without limit "
-                          "(research/log/E4_long_runs.md). E4 view only.")
+                          "their final projection, removing the country-logit shift the E4 policy "
+                          "cannot see and that otherwise drifts until a long TF32 run diverges "
+                          "(research/log/E4_long_runs.md). Default (auto): on for per-entity heads in "
+                          "the E4 view; a resume or warm start follows its checkpoint; off with "
+                          "--merged-influence."),
     lad.add_argument("--ladder-head-entities", type=str, default=None,
                      choices=["both", "country", "card"],
                      help="Which per-entity heads exist. The card-collision finding predicts "

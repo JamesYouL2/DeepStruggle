@@ -108,6 +108,29 @@ def test_without_per_entity_heads_it_is_refused() -> None:
         create_ladder_net("cpu", **cfg, head_center=True)
 
 
-def test_the_cli_offers_it_off_by_default() -> None:
+def _args(*argv: str) -> Any:
     from ai.training.train import build_parser
-    assert build_parser().parse_args([]).ladder_head_center is False
+    return build_parser().parse_args(list(argv))
+
+
+def test_the_default_is_auto_and_resolves_on_for_per_entity_heads_in_the_e4_view() -> None:
+    from ai.training.train import _resolve_head_center
+    a = _args("--per-entity-heads", "64")
+    assert a.ladder_head_center is None
+    assert _resolve_head_center(a) is True
+    assert _resolve_head_center(_args()) is False                      # no per-entity heads
+    assert _resolve_head_center(_args("--per-entity-heads", "64", "--merged-influence")) is False
+    assert _resolve_head_center(_args("--per-entity-heads", "64", "--no-ladder-head-center")) is False
+
+
+def test_a_warm_start_follows_its_checkpoint(tmp_path: Any) -> None:
+    from ai.training.train import _resolve_head_center
+    plain = tmp_path / "plain.pt"
+    centred = tmp_path / "centred.pt"
+    torch.save(create_ladder_net("cpu", **M2D).state_dict(), plain)
+    torch.save(create_ladder_net("cpu", **M2D, head_center=True).state_dict(), centred)
+    assert _resolve_head_center(_args("--per-entity-heads", "64", "--warmup-checkpoint", str(plain))) is False
+    assert _resolve_head_center(_args("--per-entity-heads", "64", "--warmup-checkpoint", str(centred))) is True
+    # an explicit flag still wins
+    assert _resolve_head_center(_args("--per-entity-heads", "64", "--warmup-checkpoint", str(plain),
+                                      "--ladder-head-center")) is True
