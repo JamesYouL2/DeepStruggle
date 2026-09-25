@@ -315,6 +315,13 @@ def build_parser() -> argparse.ArgumentParser:
                              "back between doses.")
     parser.add_argument("--inject-weight", type=float, default=1.0,
                         help="Scale on the injected supervised loss.")
+    parser.add_argument("--inject-setup-only", action="store_true", default=False,
+                        help="P4 arm B: inject only the corpus's setup placements (phase SETUP), policy "
+                             "loss only -- a human anchor for the opening and nothing else.")
+    parser.add_argument("--setup-block-lambda", action="store_true", default=False,
+                        help="P4 arm A: GAE lambda = 1 between consecutive setup placements, so the "
+                             "setup's credit telescopes to the turn-1 headline position instead of "
+                             "bootstrapping from the critic at half-placed boards.")
     parser.add_argument("--train-steps", type=int, default=80_000_000,
                         help="The run's budget, in env steps. Must be positive. "
                              "Defaults to the standard 80,000,000. "
@@ -652,6 +659,8 @@ def main():
             inject_dataset=args.inject_dataset,
             inject_every=args.inject_every,
             inject_weight=args.inject_weight,
+            inject_setup_only=args.inject_setup_only,
+            setup_block_lambda=args.setup_block_lambda,
             decisiveness_turns=args.decisiveness_turns,
             max_snapshot_opponents=args.eval_max_snapshot_opponents,
             opponent_checkpoints=args.opponent_checkpoints,

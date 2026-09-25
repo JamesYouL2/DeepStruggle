@@ -270,6 +270,7 @@ class BaseNashPGTrainer:
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
+        setup_block_lambda: bool = False,
         device: torch.device | str = "cuda",
     ):
         self.device = torch.device(device if (torch.cuda.is_available() and device == "cuda") else ("cuda" if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"))
@@ -475,6 +476,7 @@ class BaseNashPGTrainer:
                                       ActionEncoder.FLAT_ACTION_SIZE, self.device)
             # GAE's backward recursion too: ~5,000 elementwise launches per rollout, same kernels.
             self.buffer.graph_gae = True
+        self.buffer.setup_block_lambda = bool(setup_block_lambda)
         #: The USSR's smoothed self-play win share. Starts even, and is carried in the resume
         #: state so a resumed run does not relearn it.
         self.wolf_sp_ussr = 0.5

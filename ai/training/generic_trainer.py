@@ -671,7 +671,8 @@ class _HumanInjector:
 
     def __init__(self, dataset_path: str, model: nn.Module, device: torch.device,
                  every: int, weight: float, batch_size: int = 512,
-                 holdout_seed: int = 7, holdout_frac: float = 0.2) -> None:
+                 holdout_seed: int = 7, holdout_frac: float = 0.2,
+                 setup_only: bool = False) -> None:
         from ai.training.human_corpus_dataset import HumanCorpusDataset
 
         self.every = max(1, int(every))
@@ -695,6 +696,19 @@ class _HumanInjector:
         self.train_idx = np.flatnonzero(
             np.fromiter((g not in held for g in game), dtype=bool, count=len(game)))
         self.held_out_games = len(held)
+
+        #: P4 arm B: only the setup placements (the observation's phase slot is 0 in SETUP), and
+        #: the policy term only. A human value target at the setup is an outcome ~400 plies away
+        #: from a population whose later play is nothing like ours; the point is the opening.
+        self.setup_only = bool(setup_only)
+        if self.setup_only:
+            from ai.training.rollout_buffer import setup_phase_slot
+            obs_col = self.ds._column("obs")
+            phase = np.asarray(obs_col[:, setup_phase_slot()], dtype=np.float32)
+            setup_rows = phase < (0.5 / 6.0)
+            self.train_idx = self.train_idx[setup_rows[self.train_idx]]
+            if len(self.train_idx) < batch_size:
+                raise ValueError(f"only {len(self.train_idx)} setup samples in {dataset_path}")
 
         self._obs = self.ds._column("obs")
         self._mask = self.ds._column("mask")
@@ -723,10 +737,13 @@ class _HumanInjector:
         self.model.train()
         logits, v_win, v_vp = self.model(b_obs, b_mask)
         denom = b_has.sum().clamp(min=1.0)
-        loss = self.weight * (
-            F.cross_entropy(logits, b_act)
-            + 0.5 * (((v_win.squeeze(-1) - b_val) ** 2 * b_has).sum() / denom)
-            + 0.05 * (((v_vp.squeeze(-1) - b_vp) ** 2 * b_has).sum() / denom))
+        if self.setup_only:
+            loss = self.weight * F.cross_entropy(logits, b_act)
+        else:
+            loss = self.weight * (
+                F.cross_entropy(logits, b_act)
+                + 0.5 * (((v_win.squeeze(-1) - b_val) ** 2 * b_has).sum() / denom)
+                + 0.05 * (((v_vp.squeeze(-1) - b_vp) ** 2 * b_has).sum() / denom))
         self.opt.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -1437,6 +1454,8 @@ def train_pipeline(
     entropy_normalize: bool = False,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
+    setup_block_lambda: bool = False,
+    inject_setup_only: bool = False,
     cuda_graphs: bool = True,
     start_pool_frac: float = 0.0,
     start_pool_capacity: int = 512,
@@ -1466,6 +1485,9 @@ def train_pipeline(
             "invisible only while no decision compares countries with other actions. E4.1's "
             "merged view does (influence-first-point-in-X against the play modes), so the shift "
             "is part of the policy there. Refused rather than silently changing the policy.")
+    if inject_setup_only and not (inject_dataset and inject_every > 0):
+        raise ValueError("--inject-setup-only filters --inject-dataset; give it a dataset and "
+                         "--inject-every.")
     if int(pool_every_steps) <= 0:
         raise ValueError(
             f"pool_every_steps must be positive, got {pool_every_steps}. It sets the rate the "
@@ -1648,6 +1670,8 @@ def train_pipeline(
         "entropy_normalize": bool(entropy_normalize),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
+        "setup_block_lambda": bool(setup_block_lambda),
+        "inject_setup_only": bool(inject_setup_only),
         "cuda_graphs": bool(cuda_graphs),
         # The optimisation settings, under their CLI names so tools/scripts/launch_flags.py can
         # diff them. Until 2026-09-24 none of these was recorded, so a run launched with a
@@ -1824,6 +1848,7 @@ def train_pipeline(
         entropy_normalize=entropy_normalize,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
+        setup_block_lambda=setup_block_lambda,
         cuda_graphs=cuda_graphs,
         device=dev,
     )
@@ -2030,7 +2055,8 @@ def train_pipeline(
 
     injector = None
     if inject_dataset and inject_every > 0:
-        injector = _HumanInjector(inject_dataset, model, dev, inject_every, inject_weight)
+        injector = _HumanInjector(inject_dataset, model, dev, inject_every, inject_weight,
+                                  setup_only=inject_setup_only)
         print(f"Injecting human data from {inject_dataset} every {inject_every} "
               f"iterations at weight {inject_weight}; "
               f"{len(injector.train_idx):,} train samples, "

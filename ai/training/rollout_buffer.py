@@ -7,6 +7,12 @@ from bindings.ts_env import obs_size
 import numpy as np
 from bindings.action_encoder import ActionEncoder
 
+def setup_phase_slot() -> int:
+    """Index of global feature 9 (current_phase / 6) in the flat observation: the global block is
+    the last 100 floats, and SETUP is phase 0. A function, not a module constant, so importing this
+    module never needs the engine's OBS_SIZE (tests/bindings/test_import_survives_older_engine.py)."""
+    return obs_size() - 100 + 9
+
 # Advantages below this magnitude (post-normalisation) carry effectively no learning
 # signal for the decision they are attached to.
 NEAR_ZERO_ADVANTAGE_EPS = 0.01
@@ -122,6 +128,12 @@ class RolloutBuffer:
         #: (research/log/P26_quick_screen.md). A replay runs the same kernels on the same inputs,
         #: so the result is bitwise the eager one. CUDA only.
         self.graph_gae = False
+        #: P4 arm A, --setup-block-lambda: lambda = 1 between consecutive setup placements, so the
+        #: setup's credit is the telescoped return to the first real position (the turn-1
+        #: headline) instead of bootstrapping from the critic at "USSR has placed 2 of 6". A setup
+        #: decision is read from the observation: global feature 9 is current_phase / 6, and SETUP
+        #: is phase 0 (engine/src/observation.cpp). Off: the recursion is exactly as before.
+        self.setup_block_lambda = False
         self._gae_graph: Optional[Any] = None
         self._gae_graph_key: Optional[Tuple[Any, ...]] = None
         self._gae_static: Dict[str, torch.Tensor] = {}
@@ -258,8 +270,12 @@ class RolloutBuffer:
                 "next_values_own was passed to add(). Silently falling back to the negated "
                 "bootstrap would make the arm measure nothing.")
 
+        if self.setup_block_lambda and per_player_gae:
+            raise ValueError("setup_block_lambda is defined on the interleaved GAE recursion; "
+                             "per_player_gae replaces it outside blunder windows.")
         key = (float(gamma), float(gae_lambda), bool(slice_turn_boundaries), bool(blunder_window),
-               int(defcon_risk_horizon), bool(same_perspective_bootstrap))
+               int(defcon_risk_horizon), bool(same_perspective_bootstrap),
+               bool(self.setup_block_lambda))
         if self.graph_gae and self.device.type == "cuda":
             window_mask = self._gae_backward_graphed(key, last_v_win, last_v_vp, last_players)
         else:
@@ -279,7 +295,12 @@ class RolloutBuffer:
         defcon_risk_target in place and returns the blunder-window mask. No host syncs, so it can
         be captured as a CUDA graph."""
         (gamma, gae_lambda, slice_turn_boundaries, blunder_window, defcon_risk_horizon,
-         same_perspective_bootstrap) = key
+         same_perspective_bootstrap, setup_block_lambda) = key
+        setup = torch.zeros(1, dtype=torch.bool, device=self.device)
+        if setup_block_lambda:
+            # setup[t]: step t is a setup placement. The phase slot is exactly 0.0 in SETUP and
+            # >= 1/6 otherwise, so a half-step threshold is exact.
+            setup = self.obs[:, :, setup_phase_slot()] < (0.5 / 6.0)
         last_gae = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         window_mask = torch.zeros((self.buffer_size, self.num_envs), dtype=torch.bool,
                                   device=self.device)
@@ -366,7 +387,14 @@ class RolloutBuffer:
 
             # Outside it: the ordinary zero-sum Bellman TD error and GAE recursion.
             delta = self.rewards[t] + gamma * next_val * non_terminal - v_t
-            std_gae = delta + gamma * gae_lambda * sign * non_terminal * last_gae
+            if setup_block_lambda and t < self.buffer_size - 1:
+                # lambda = 1 only for a transition that stays inside the setup block of one game
+                # (non_terminal already zeroes a transition across an episode boundary).
+                lam = torch.where(setup[t] & setup[t + 1],
+                                  torch.ones_like(v_t), torch.full_like(v_t, gae_lambda))
+                std_gae = delta + gamma * lam * sign * non_terminal * last_gae
+            else:
+                std_gae = delta + gamma * gae_lambda * sign * non_terminal * last_gae
 
             last_gae = torch.where(in_window, win_adv, std_gae)
             self.advantages[t] = last_gae
