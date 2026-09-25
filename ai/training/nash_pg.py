@@ -271,6 +271,7 @@ class BaseNashPGTrainer:
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
         setup_block_lambda: bool = False,
+        block_lambda: str = "off",
         device: torch.device | str = "cuda",
     ):
         self.device = torch.device(device if (torch.cuda.is_available() and device == "cuda") else ("cuda" if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"))
@@ -477,6 +478,10 @@ class BaseNashPGTrainer:
             # GAE's backward recursion too: ~5,000 elementwise launches per rollout, same kernels.
             self.buffer.graph_gae = True
         self.buffer.setup_block_lambda = bool(setup_block_lambda)
+        self.buffer.block_lambda = str(block_lambda)
+        self.buffer.block_mode()          # validates
+        #: A2 needs each env's RNG state at every decision; read only when it is used.
+        self._record_rngs = self.buffer.block_mode() == "same-side"
         #: The USSR's smoothed self-play win share. Starts even, and is carried in the resume
         #: state so a resumed run does not relearn it.
         self.wolf_sp_ussr = 0.5
@@ -732,6 +737,12 @@ class BaseNashPGTrainer:
                     seat_entropy_n[_code] += _sel.sum()
 
             actions_np = actions_t.cpu().numpy()
+            # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
+            # step. A change by the next decision means a chance node came between them.
+            _rngs_np: Optional[np.ndarray] = None
+            if self._record_rngs:
+                _rngs_np = np.array([self.env.runner.get_state(i).rng_state
+                                     for i in range(self.num_envs)], dtype=np.uint64).view(np.int64)
 
             # P15-X4b. MUST happen before the step: `_search_targets` reads the runner's current
             # state, and `buffer.add` below files the answer against `obs_t`, which is s_t. Taken
@@ -789,6 +800,7 @@ class BaseNashPGTrainer:
                 next_values_own=next_own_t,
                 search_pi=search_pi_t,
                 has_search=has_search_t,
+                rngs=_rngs_np,
             )
 
             # v_win is from the *acting* player's perspective; multiplying by the acting

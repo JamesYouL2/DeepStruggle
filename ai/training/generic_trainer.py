@@ -1455,6 +1455,7 @@ def train_pipeline(
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
     setup_block_lambda: bool = False,
+    block_lambda: str = "off",
     inject_setup_only: bool = False,
     cuda_graphs: bool = True,
     start_pool_frac: float = 0.0,
@@ -1485,6 +1486,9 @@ def train_pipeline(
             "invisible only while no decision compares countries with other actions. E4.1's "
             "merged view does (influence-first-point-in-X against the play modes), so the shift "
             "is part of the policy there. Refused rather than silently changing the policy.")
+    if setup_block_lambda and block_lambda not in ("off", "setup"):
+        raise ValueError(f"--setup-block-lambda is --block-lambda setup; it conflicts with "
+                         f"--block-lambda {block_lambda}.")
     if inject_setup_only and not (inject_dataset and inject_every > 0):
         raise ValueError("--inject-setup-only filters --inject-dataset; give it a dataset and "
                          "--inject-every.")
@@ -1671,6 +1675,7 @@ def train_pipeline(
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
         "setup_block_lambda": bool(setup_block_lambda),
+        "block_lambda": str(block_lambda),
         "inject_setup_only": bool(inject_setup_only),
         "cuda_graphs": bool(cuda_graphs),
         # The optimisation settings, under their CLI names so tools/scripts/launch_flags.py can
@@ -1849,6 +1854,7 @@ def train_pipeline(
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
         setup_block_lambda=setup_block_lambda,
+        block_lambda=block_lambda,
         cuda_graphs=cuda_graphs,
         device=dev,
     )

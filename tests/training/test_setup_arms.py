@@ -40,7 +40,7 @@ def _raw_adv(on: bool, lam: float = 0.9) -> torch.Tensor:
     b = RolloutBuffer(T, N, device="cpu")
     b.setup_block_lambda = on
     last = _fill(b)
-    key = (1.0, lam, False, True, 4, False, on)
+    key = (1.0, lam, False, True, 4, False, "setup" if on else "off")
     b._gae_backward(key, last.last_v_win, last.last_v_vp, last.last_players)
     return b.advantages.clone()
 
@@ -56,7 +56,7 @@ def test_inside_the_block_the_advantage_telescopes_to_the_first_real_position() 
     b = RolloutBuffer(T, N, device="cpu")
     b.setup_block_lambda = True
     last = _fill(b)
-    b._gae_backward((1.0, lam, False, True, 4, False, True), last.last_v_win, last.last_v_vp,
+    b._gae_backward((1.0, lam, False, True, 4, False, "setup"), last.last_v_win, last.last_v_vp,
                     last.last_players)
     a = b.advantages
     # step 5 is the block's last placement: ordinary lambda from there on
@@ -110,3 +110,81 @@ def test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term(tmp_path: 
     phase = inj._obs[inj.train_idx][:, setup_phase_slot()]
     assert len(inj.train_idx) > 1000 and float(abs(phase).max()) == 0.0
     assert inj.maybe_step(0) > 0.0
+
+
+def _lam_one(mode: str, b: RolloutBuffer) -> torch.Tensor:
+    """Which transitions a mode chains, read back through the recursion's own mask."""
+    b.block_lambda = mode
+    last = _Last(torch.zeros(N), torch.zeros(N), torch.zeros(N, dtype=torch.bool),
+                 torch.ones(N, dtype=torch.int8))
+    b.values_win.zero_(); b.rewards.zero_()
+    # with V = 0 and rewards 0 except at the end, the advantage at t is non-zero only if the chain
+    # from t reaches the step whose reward is set -- so probe one transition at a time instead:
+    out = torch.zeros(T - 1, N, dtype=torch.bool)
+    for t in range(T - 1):
+        b.rewards.zero_(); b.rewards[t + 1] = 1.0
+        b.values_win.zero_()
+        b._gae_backward((1.0, 0.0, False, False, 4, False, mode), last.last_v_win,
+                        last.last_v_vp, last.last_players)
+        # with gae_lambda = 0 the advantage at t sees reward t+1 only through a lambda-1 link
+        out[t] = b.advantages[t] != 0
+    return out
+
+
+def test_setup_side_cuts_the_block_where_the_mover_changes() -> None:
+    b = RolloutBuffer(T, N, device="cpu")
+    _fill(b, setup_len=8)
+    b.players[:4] = -1; b.players[4:] = 1              # USSR 0-3, US 4-...
+    a = _lam_one("setup", b)
+    s = _lam_one("setup-side", b)
+    assert bool(a[3].all()) and not bool(s[3].any())   # the hand-over: chained only in "setup"
+    assert bool(s[0].all()) and bool(s[5].all())       # inside each side's run: chained
+    assert not bool(s[7].any())                        # setup -> first real position: not chained
+
+
+def test_same_side_chains_same_mover_with_unchanged_rng_only() -> None:
+    b = RolloutBuffer(T, N, device="cpu")
+    _fill(b, setup_len=0)
+    b.players.fill_(1)
+    b.rngs.zero_()
+    b.rngs[5:] = 7                                     # a chance node between steps 4 and 5
+    b.players[10:] = -1                                # the mover changes between 9 and 10
+    s = _lam_one("same-side", b)
+    assert bool(s[0].all()) and bool(s[3].all())
+    assert not bool(s[4].any())                        # rng changed
+    assert not bool(s[9].any())                        # mover changed
+    assert bool(s[12].all())
+
+
+def test_the_trainer_records_rng_states_only_for_same_side() -> None:
+    from ai.models import create_coldwar_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+    for mode, expect in (("off", False), ("same-side", True)):
+        torch.manual_seed(0)
+        env = TsVectorizedEnv(num_envs=8, base_seed=123)
+        tr = NashPGTrainer(active_net=create_coldwar_net(torch.device("cpu")), env=env, num_envs=8,
+                           buffer_size=64, batch_size=64, cuda_graphs=False, device="cpu",
+                           block_lambda=mode)
+        tr.collect_rollouts()
+        assert bool((tr.buffer.rngs != 0).any()) is expect
+        if expect:
+            # a real rollout changes the rng somewhere (the deal, dice) and keeps it somewhere
+            same = tr.buffer.rngs[:-1] == tr.buffer.rngs[1:]
+            assert bool(same.any()) and bool((~same).any())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+def test_graphed_equals_eager_for_same_side() -> None:
+    eager = RolloutBuffer(T, N, device="cuda")
+    graphed = RolloutBuffer(T, N, device="cuda")
+    graphed.graph_gae = True
+    for seed in range(3):
+        for b in (eager, graphed):
+            b.block_lambda = "same-side"
+            last = _fill(b, seed=seed)
+            g = torch.Generator().manual_seed(seed + 10)
+            b.rngs.copy_(torch.randint(0, 3, (T, N), generator=g).cumsum(0))
+            b.compute_gae(last.last_v_win.cuda(), last.last_v_vp.cuda(), last.last_dones.cuda(),
+                          last.last_players.cuda())
+        assert torch.equal(eager.advantages, graphed.advantages)

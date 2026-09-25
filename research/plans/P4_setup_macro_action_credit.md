@@ -44,6 +44,8 @@ centred per-entity heads, snapshots every 10M, pool every 5M. Seeds 43 and 44, 8
 |:---|:---|:---|
 | control | **E4-61-43, E4-61-44** (already run, same flags) | — |
 | A: credit | E4-62-43, E4-62-44 | `--setup-block-lambda`: GAE λ = 1 between consecutive setup placements, so the setup's advantage telescopes to the first real position (the turn-1 headline). Normal λ everywhere else. Setup is read from the observation's phase slot (SETUP = 0). |
+| A1: per-side setup | E4-64-43, E4-64-44 | `--block-lambda setup-side`: as A, but the block is cut where the mover changes, so each side's setup credit ends at the first position the other side moves from. |
+| A2: all same-side deterministic blocks | E4-65-43, E4-65-44 | `--block-lambda same-side`: λ = 1 between any two consecutive decisions of one game with the same mover and the engine's RNG state unchanged, so no die roll (every coup or realignment attempt ends a block), no card draw, no hidden chance. It chains 68% of all transitions in a real rollout (93% of setup transitions); it costs ~8% throughput. |
 | B: anchor | E4-63-43, E4-63-44 | `--inject-dataset human_corpus_e4 --inject-every 1 --inject-weight 1.0 --inject-setup-only`: one supervised step per iteration on the corpus's 3,060 training setup placements (50 games held out), policy term only, with its own AdamW at 1e-4 as in P7. |
 
 ## Measure
