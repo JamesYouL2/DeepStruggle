@@ -77,7 +77,20 @@ HeuristicBot at 1500; E4-08-36@240M rates 2276 in this field.
 | forced wins taken | 67.4% | 68.0% | 71.2% | 61.9% | 63.8% | 64.6% |
 
 **Arm A contests more of the board at 80M on both seeds:** 1.6–1.7 empty battlegrounds at turn 8
-against 2.4–3.4. That fits λ = 1 on the setup extending to any consecutive placement block of the
-same mover at the opening, and a better USSR opening. It is one budget, and 40M does not show it
-cleanly (A 3.33 and 1.60), so it is a lead, not a result. Forced wins are unchanged
-everywhere.
+against 2.4–3.4. Arm A changes credit only inside the setup, so if the effect is real it is
+downstream of a better opening (Poland held from 40M), not of in-game credit. It is one budget,
+and 40M does not show it cleanly (A 3.33 and 1.60), so it is a lead, not a result. Forced wins
+are unchanged everywhere.
+
+**What arm A does exactly (clarified 2026-09-25).**
+* λ = 1 applies to a transition only when both step t and step t+1 are SETUP-phase decisions of
+  the same game. Everything else keeps λ = 0.98, including in-game placement blocks.
+* **The block spans both sides.** The USSR's 6 placements and the US's 9 are one block (with the
+  usual sign flip at the hand-over), so the USSR's setup credit telescopes through the US's
+  placements to the turn-1 headline. That puts the US's sampling noise into the USSR's
+  advantage.
+* The setup has no chance nodes, so realignments and coup rolls do not arise here.
+* Open variants:
+  * per-side setup blocks, cut at the USSR → US hand-over;
+  * all same-side deterministic blocks, ended at any die roll, so each realignment or coup
+    attempt is its own boundary.
