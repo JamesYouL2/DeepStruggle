@@ -469,6 +469,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "opponent's advantages are roughly the negative of the learner's, so "
                              "averaged in they leave the learner's own uncentred; against a "
                              "near-equal frozen opponent that collapses the learner (P24).")
+    parser.add_argument("--opponent-temperature", type=float, default=None,
+                        help="P24: the temperature pool opponents play at in rollouts; 0 is "
+                             "greedy, the policy a greedy tournament rates. Default: sampled "
+                             "exactly as the learner is.")
     parser.add_argument("--wolf-seat-weight", action="store_true", default=False,
                         help="WoLF-style per-seat learning rates: scale each seat's PPO surrogate "
                              "by w_us = 2x^p/(x^p+(1-x)^p) and w_ussr = 2(1-x)^p/(x^p+(1-x)^p), with "
@@ -739,6 +743,7 @@ def main():
             league_frac=args.league_frac,
             per_seat_adv_norm=args.per_seat_adv_norm,
             adv_norm_learner_only=args.adv_norm_learner_only,
+            opponent_temperature=args.opponent_temperature,
             wolf_seat_weight=args.wolf_seat_weight,
             wolf_power=args.wolf_power,
             wolf_ema_games=args.wolf_ema_games,

@@ -1478,6 +1478,7 @@ def train_pipeline(
     league_frac: Optional[float] = None,
     per_seat_adv_norm: bool = False,
     adv_norm_learner_only: bool = False,
+    opponent_temperature: Optional[float] = None,
     wolf_seat_weight: bool = False,
     wolf_power: float = 1.0,
     wolf_ema_games: float = 2000.0,
@@ -1711,6 +1712,7 @@ def train_pipeline(
         "league_frac": None if league_frac is None else float(league_frac),
         "per_seat_adv_norm": bool(per_seat_adv_norm),
         "adv_norm_learner_only": bool(adv_norm_learner_only),
+        "opponent_temperature": None if opponent_temperature is None else float(opponent_temperature),
         "wolf_seat_weight": bool(wolf_seat_weight),
         "wolf_power": float(wolf_power),
         "wolf_ema_games": float(wolf_ema_games),
@@ -1891,6 +1893,7 @@ def train_pipeline(
         merged_influence=merged_influence,
         per_seat_adv_norm=per_seat_adv_norm,
         adv_norm_learner_only=adv_norm_learner_only,
+        opponent_temperature=opponent_temperature,
         wolf_seat_weight=wolf_seat_weight,
         wolf_power=wolf_power,
         wolf_ema_games=wolf_ema_games,
@@ -2113,6 +2116,10 @@ def train_pipeline(
     if adv_norm_learner_only:
         print("[advantages] mean and spread from the learner's own transitions "
               "(--adv-norm-learner-only)", flush=True)
+    if opponent_temperature is not None:
+        print(f"[opponent pool] opponents play at temperature {opponent_temperature:g} "
+              f"({'greedy' if opponent_temperature <= 0 else 'sampled'}; --opponent-temperature)",
+              flush=True)
     if wolf_seat_weight:
         print(f"[wolf] per-seat weights from the self-play USSR share on the {wolf_scope} "
               f"objective: power={wolf_power}, dead zone={wolf_dead_zone} ({wolf_dead_zone_mode}), "

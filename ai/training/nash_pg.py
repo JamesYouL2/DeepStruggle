@@ -120,6 +120,22 @@ def wolf_seat_weights(sp_ussr: float, power: float = 1.0, dead_zone: float = 0.0
     return 2.0 * a / (a + b), 2.0 * b / (a + b)
 
 
+def opponent_actions(logits: torch.Tensor, actions: torch.Tensor, opp_rows: torch.Tensor,
+                     temperature: float) -> torch.Tensor:
+    """P24: re-choose the frozen opponent's actions at its own temperature.
+
+    `logits` holds each row's deciding network's logits (the opponent's on `opp_rows`, masked to
+    -1e9 off the legal set), and `actions` what the rollout sampled at the learner's temperature.
+    At 0 the opponent plays its argmax -- the policy a greedy tournament measures -- otherwise it
+    samples softmax(logits / temperature). Learner rows are returned unchanged.
+    """
+    if temperature <= 0.0:
+        chosen = logits.argmax(dim=-1)
+    else:
+        chosen = torch.multinomial(F.softmax(logits / temperature, dim=-1), 1).squeeze(1)
+    return torch.where(opp_rows, chosen, actions)
+
+
 def bonus_entropy(entropy: torch.Tensor, mask: torch.Tensor, normalize: bool) -> torch.Tensor:
     """The per-decision entropy the entropy bonus rewards.
 
@@ -254,6 +270,7 @@ class BaseNashPGTrainer:
         rollout_temps: Optional[Sequence[float]] = None,
         merged_influence: bool = False,
         per_seat_adv_norm: bool = False,
+        opponent_temperature: Optional[float] = None,
         adv_norm_learner_only: bool = False,
         wolf_seat_weight: bool = False,
         wolf_power: float = 1.0,
@@ -395,6 +412,10 @@ class BaseNashPGTrainer:
         )
         self.buffer.per_seat_adv_norm = bool(per_seat_adv_norm)
         self.buffer.adv_norm_learner_only = bool(adv_norm_learner_only)
+        #: P24: the temperature pool opponents play at in rollouts; None samples them exactly as
+        #: the learner is sampled, as every run before it did.
+        self.opponent_temperature: Optional[float] = (
+            None if opponent_temperature is None else float(opponent_temperature))
         # P25 3j-3l, the levers that act on the collapse loop's own closing points. Each is off at
         # 0 and off leaves the update bitwise unchanged. None is defined together with WoLF or
         # per-seat normalisation, so those combinations are refused rather than half-applied.
@@ -723,6 +744,9 @@ class BaseNashPGTrainer:
                 # the underlying canonical policy parameterization pi_theta.
                 if self.setup_explore_frac > 0.0:
                     self._force_setup_exploration(actions_t, masks_t)
+                if self.opponent_temperature is not None and not bool(learner_np.all()):
+                    actions_t = opponent_actions(logits, actions_t, ~learner_t,
+                                                 self.opponent_temperature)
 
                 unscaled_log_probs = F.log_softmax(logits, dim=-1)
                 log_probs_t = unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1)
