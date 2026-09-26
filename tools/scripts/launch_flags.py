@@ -89,6 +89,7 @@ _BEFORE_RECORDED = {
     "block_lambda": lambda meta: "setup" if meta.get("setup_block_lambda") else "off",
     # P24: no league before it existed
     "league_pool_size": lambda meta: 4,
+    "adv_norm_learner_only": lambda meta: False,
 }
 
 

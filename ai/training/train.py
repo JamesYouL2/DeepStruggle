@@ -463,6 +463,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--per-seat-adv-norm", action="store_true", default=False,
                         help="Normalise advantages per seat instead of over both, so a losing "
                              "seat's small spread is not scaled away by the winning seat's.")
+    parser.add_argument("--adv-norm-learner-only", action="store_true", default=False,
+                        help="Take the advantage normalisation's mean and spread over the "
+                             "learner's own transitions, not a frozen pool opponent's too. The "
+                             "opponent's advantages are roughly the negative of the learner's, so "
+                             "averaged in they leave the learner's own uncentred; against a "
+                             "near-equal frozen opponent that collapses the learner (P24).")
     parser.add_argument("--wolf-seat-weight", action="store_true", default=False,
                         help="WoLF-style per-seat learning rates: scale each seat's PPO surrogate "
                              "by w_us = 2x^p/(x^p+(1-x)^p) and w_ussr = 2(1-x)^p/(x^p+(1-x)^p), with "
@@ -732,6 +738,7 @@ def main():
             league_pool_size=args.league_pool_size,
             league_frac=args.league_frac,
             per_seat_adv_norm=args.per_seat_adv_norm,
+            adv_norm_learner_only=args.adv_norm_learner_only,
             wolf_seat_weight=args.wolf_seat_weight,
             wolf_power=args.wolf_power,
             wolf_ema_games=args.wolf_ema_games,

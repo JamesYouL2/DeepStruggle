@@ -60,6 +60,9 @@ class RolloutBuffer:
         #: Normalise advantages per seat rather than over both (--per-seat-adv-norm). Off by
         #: default; set by the trainer after construction.
         self.per_seat_adv_norm: bool = False
+        #: Take the normalisation's mean and spread over the learner's own transitions only
+        #: (--adv-norm-learner-only). Off by default; set by the trainer after construction.
+        self.adv_norm_learner_only: bool = False
 
         # Storage buffers allocated on device for fast GPU tensor operations
         self.obs = torch.zeros((buffer_size, num_envs, self.obs_dim), dtype=torch.float32, device=self.device)
@@ -511,8 +514,21 @@ class RolloutBuffer:
         # relative to the other side's. Which of those is happening is an empirical question,
         # so the per-side figures are recorded below rather than assumed either way.
         flat_adv = self.advantages.view(-1)
-        mean_adv = flat_adv.mean()
-        std_adv = flat_adv.std() + 1e-8
+        # A frozen opponent's transitions are stored so GAE stays a recursion over consecutive
+        # steps, and they carry roughly the negative of the learner's advantages. Averaged in,
+        # they hold the batch mean near zero whatever the learner does, so its own advantages are
+        # never centred: a learner slightly behind its pool sees every action it took pushed
+        # down, flattens, falls further behind -- a loop that collapsed every learner trained
+        # against a near-equal frozen opponent (P24, 2026-09-26). --adv-norm-learner-only takes
+        # the statistics over the learner's own transitions.
+        own: Optional[torch.Tensor] = None
+        if self.adv_norm_learner_only:
+            _own = self.learner.view(-1) > 0.5
+            if bool(_own.any()) and not bool(_own.all()):
+                own = _own
+        stat_adv = flat_adv if own is None else flat_adv[own]
+        mean_adv = stat_adv.mean()
+        std_adv = stat_adv.std() + 1e-8
         self.raw_advantage_std = float(std_adv)
 
         flat_players = self.players.view(-1)
@@ -541,9 +557,10 @@ class RolloutBuffer:
             normed = torch.empty_like(flat)
             for code in (1, -1):
                 sel = fp == code
-                if int(sel.sum()) > 1:
-                    s = flat[sel]
-                    normed[sel] = (s - s.mean()) / (s.std() + 1e-8)
+                st_sel = sel if own is None else (sel & own)
+                if int(st_sel.sum()) > 1:
+                    s = flat[st_sel]
+                    normed[sel] = (flat[sel] - s.mean()) / (s.std() + 1e-8)
             other = (fp != 1) & (fp != -1)
             if bool(other.any()):
                 normed[other] = (flat[other] - mean_adv) / std_adv

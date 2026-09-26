@@ -254,6 +254,7 @@ class BaseNashPGTrainer:
         rollout_temps: Optional[Sequence[float]] = None,
         merged_influence: bool = False,
         per_seat_adv_norm: bool = False,
+        adv_norm_learner_only: bool = False,
         wolf_seat_weight: bool = False,
         wolf_power: float = 1.0,
         wolf_ema_games: float = 2000.0,
@@ -393,6 +394,7 @@ class BaseNashPGTrainer:
             device=self.device,
         )
         self.buffer.per_seat_adv_norm = bool(per_seat_adv_norm)
+        self.buffer.adv_norm_learner_only = bool(adv_norm_learner_only)
         # P25 3j-3l, the levers that act on the collapse loop's own closing points. Each is off at
         # 0 and off leaves the update bitwise unchanged. None is defined together with WoLF or
         # per-seat normalisation, so those combinations are refused rather than half-applied.
