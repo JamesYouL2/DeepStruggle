@@ -173,7 +173,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for n in names:
             v = sums[n].get(k, float("nan"))
             cells.append(f"{v:.0f}" if k == "positions" else
-                         f"{v:.2f}" if ("ops" in k or "mean" in k) else f"{100 * v:.1f}%")
+                         f"{v:.2f}" if (k == "mean ops" or k.endswith(", mean")) else f"{100 * v:.1f}%")
         lines.append(f"| {k} | " + " | ".join(cells) + " |")
     table = "\n".join(lines)
     print(table)
