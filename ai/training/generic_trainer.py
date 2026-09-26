@@ -15,7 +15,7 @@ import re
 import argparse
 import functools
 import random
-from typing import (Any, Callable, Dict, Final, List, Optional, Sequence, Tuple, TypeVar,
+from typing import (Any, Callable, Dict, Final, List, Optional, Sequence, Set, Tuple, TypeVar,
                     Union, cast)
 import numpy as np
 import torch
@@ -1221,6 +1221,38 @@ def resume_states_in(run_dir: str) -> Dict[int, str]:
     return found
 
 
+#: A league member on disk: `snapshot_<n>steps.pt`, optionally behind a prefix (a published
+#: exploiter snapshot is `<run>_snapshot_<n>steps.pt`). Not `pool_*` or `resume_*`, and not
+#: `snapshot_final.pt` / `snapshot_0s.pt`, which are copies or the untrained start.
+LEAGUE_SNAPSHOT_RE = re.compile(r"(?:^|_)snapshot_(\d+)steps\.pt$")
+
+
+def scan_league_snapshots(dirs: Sequence[str], seen: Set[str],
+                          settle_seconds: float = 20.0) -> List[str]:
+    """P24: snapshot files in `dirs` not in `seen`, oldest first by modification time.
+
+    A file modified within the last `settle_seconds` is left for the next scan rather than read
+    while it may still be being written. Symlinks are followed, and `seen` holds resolved paths,
+    so a snapshot published under two names is taken once.
+    """
+    now = time.time()
+    found: List[Tuple[float, str]] = []
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not LEAGUE_SNAPSHOT_RE.search(f):
+                continue
+            path = os.path.realpath(os.path.join(d, f))
+            if path in seen or not os.path.isfile(path):
+                continue
+            mtime = os.path.getmtime(path)
+            if now - mtime < settle_seconds:
+                continue
+            found.append((mtime, path))
+    return [q for _, q in sorted(found)]
+
+
 def resolve_resume(resume: str) -> str:
     """The resume state a --resume argument names.
 
@@ -1441,6 +1473,9 @@ def train_pipeline(
     opponent_pfsp_uniform_mix: float = 0.25,
     seat_balance: bool = False,
     seat_balance_max_frac: float = 0.8,
+    league_dirs: Optional[List[str]] = None,
+    league_pool_size: int = 4,
+    league_frac: Optional[float] = None,
     per_seat_adv_norm: bool = False,
     wolf_seat_weight: bool = False,
     wolf_power: float = 1.0,
@@ -1492,6 +1527,15 @@ def train_pipeline(
     if inject_setup_only and not (inject_dataset and inject_every > 0):
         raise ValueError("--inject-setup-only filters --inject-dataset; give it a dataset and "
                          "--inject-every.")
+    if league_dirs and opponent_frac <= 0.0:
+        raise ValueError("--league-dirs adds opponents to the pool, so it needs --opponent-frac > 0.")
+    if league_dirs and int(league_pool_size) < 1:
+        raise ValueError(f"--league-pool-size must be >= 1, got {league_pool_size}")
+    if league_frac is not None and not league_dirs:
+        raise ValueError("--league-frac sets the league's share of draws; give --league-dirs.")
+    if league_dirs and opponent_checkpoints:
+        raise ValueError("--league-dirs grows the pool from other runs; it is not combined with a "
+                         "fixed --opponent-checkpoints pool.")
     if int(pool_every_steps) <= 0:
         raise ValueError(
             f"pool_every_steps must be positive, got {pool_every_steps}. It sets the rate the "
@@ -1661,6 +1705,9 @@ def train_pipeline(
         "ref_update_freq": ref_update_freq,
         "seat_balance": bool(seat_balance),
         "seat_balance_max_frac": float(seat_balance_max_frac),
+        "league_dirs": [os.path.abspath(d) for d in league_dirs] if league_dirs else None,
+        "league_pool_size": int(league_pool_size),
+        "league_frac": None if league_frac is None else float(league_frac),
         "per_seat_adv_norm": bool(per_seat_adv_norm),
         "wolf_seat_weight": bool(wolf_seat_weight),
         "wolf_power": float(wolf_power),
@@ -1863,7 +1910,40 @@ def train_pipeline(
     # snapshot instead of against itself, so the outcome depends on the learner's actions
     # again and the advantage signal has something to be non-zero about. See
     # ai/training/opponent_pool.py and research/plans/P10_opponent_sampling.md.
-    if opponent_frac > 0.0 and (opponent_checkpoints or opponent_self_pool):
+    _league_seen: Set[str] = set()
+
+    def _league_scan() -> int:
+        """P24: add the league directories' new snapshots to the pool; returns how many.
+
+        Only the newest `league_pool_size` of what is new are loaded -- the league group keeps
+        no more than that, so loading older ones would only evict them again. A snapshot that
+        fails to load is left unseen, to be tried at the next scan.
+        """
+        pool = trainer.opponent_pool
+        if pool is None or not league_dirs:
+            return 0
+        from ai.training.opponent_pool import load_pool as _load
+        new = scan_league_snapshots(league_dirs, _league_seen)
+        _league_seen.update(new)
+        added = 0
+        for q in new[-int(league_pool_size):]:
+            try:
+                net = _load([q], dev)[0]
+            except Exception as exc:
+                print(f"[league] could not load {q} ({exc}); will retry at the next scan",
+                      flush=True)
+                _league_seen.discard(q)
+                continue
+            m = LEAGUE_SNAPSHOT_RE.search(os.path.basename(q))
+            pool.add(net, int(m.group(1)) if m else 0, merged=checkpoint_merged_influence(q),
+                     path=q, group="league")
+            added += 1
+        if added:
+            print(f"[league] +{added} member(s); league group now "
+                  f"{sum(g == 'league' for g in pool.groups)} of {len(pool.nets)}", flush=True)
+        return added
+
+    if opponent_frac > 0.0 and (opponent_checkpoints or opponent_self_pool or league_dirs):
         from ai.training.opponent_pool import OpponentPool, load_pool
 
         _lock = {"us": 1, "ussr": -1, None: None}[opponent_lock_side]
@@ -1872,10 +1952,29 @@ def train_pipeline(
         _saved_pool: Optional[Dict[str, Any]] = None
         _seed_steps: List[int] = []
         _seed_paths: List[str] = []
+        _seed_groups: Optional[List[str]] = None
         if opponent_checkpoints:
             _seed_nets = load_pool(opponent_checkpoints, dev)
             _seed_merged = [checkpoint_merged_influence(p) for p in opponent_checkpoints]
             _src = f"{len(opponent_checkpoints)} fixed snapshot(s)"
+        elif not opponent_self_pool:
+            # P24: a pool made only of other runs' snapshots -- the main exploiter's, which plays
+            # nothing but the main agent's newest. Everything already on disk is marked seen, so
+            # only the newest `league_pool_size` are ever played and later scans add what is new.
+            _found = scan_league_snapshots(league_dirs or [], _league_seen)
+            if not _found:
+                raise RuntimeError(
+                    f"--league-dirs holds no snapshot to play against: {league_dirs}. A league-only "
+                    "pool needs at least one snapshot_<n>steps.pt there before it starts.")
+            _league_seen.update(_found)
+            _new = _found[-int(league_pool_size):]
+            _seed_nets = load_pool(_new, dev)
+            _seed_merged = [checkpoint_merged_influence(p) for p in _new]
+            _seed_groups = ["league"] * len(_new)
+            _seed_steps = [int(m.group(1)) if (m := LEAGUE_SNAPSHOT_RE.search(os.path.basename(q))) else 0
+                           for q in _new]
+            _seed_paths = list(_new)
+            _src = f"{len(_new)} league snapshot(s) from {', '.join(league_dirs or [])}"
         else:
             # On RESUME, rebuild the pool from the snapshots this run already wrote. The resume
             # state carries the model, optimiser, pi_ref, step counts and RNG -- not the pool --
@@ -1974,6 +2073,9 @@ def train_pipeline(
             merged=_seed_merged,
             seat_balance=seat_balance,
             seat_balance_max_frac=seat_balance_max_frac,
+            groups=_seed_groups,
+            league_capacity=int(league_pool_size) if league_dirs else 0,
+            league_frac=league_frac,
         )
         if any(_seed_merged) or merged_influence:
             print(f"[opponent pool] action views (P23): learner "
@@ -1981,6 +2083,9 @@ def train_pipeline(
                   f"{sum(_seed_merged)} E4.1 / {len(_seed_merged) - sum(_seed_merged)} E4", flush=True)
         if opponent_self_pool and not opponent_checkpoints and _saved_pool:
             trainer.opponent_pool.load_state_dict(_saved_pool, _seed_steps, _seed_paths)
+        elif _seed_groups is not None:
+            trainer.opponent_pool.steps = list(_seed_steps)
+            trainer.opponent_pool.paths = list(_seed_paths)
         elif opponent_self_pool and not opponent_checkpoints and _seed_paths:
             # A rebuild has no record to restore, but its members' steps are known and must be
             # kept for the same reason: at step 0 they would be the first evicted.
@@ -1995,6 +2100,11 @@ def train_pipeline(
               f"draw={'PFSP-' + opponent_pfsp_weighting if opponent_pfsp else 'uniform'}"
               + (f" (uniform floor {opponent_pfsp_uniform_mix})" if opponent_pfsp else "")
               + (f", seat-balance=on (max frac {seat_balance_max_frac})" if seat_balance else ""))
+        if league_dirs:
+            print(f"[league] dirs={', '.join(league_dirs)}, capacity={league_pool_size}, "
+                  f"share of draws={'by size' if league_frac is None else league_frac}", flush=True)
+            if opponent_self_pool:
+                _league_scan()
     if per_seat_adv_norm:
         print("[advantages] normalised per seat (--per-seat-adv-norm)", flush=True)
     if wolf_seat_weight:
@@ -2057,6 +2167,7 @@ def train_pipeline(
     # resume finds as it finds snapshots.
     pool_every = int(pool_every_steps)
     next_pool_steps = pool_every
+    next_league_scan = 0
     it = 0
 
     injector = None
@@ -2372,6 +2483,10 @@ def train_pipeline(
                 # say so loudly and keep training rather than losing the run.
                 print(f"[opponent pool] FAILED to add snapshot at {total_env_steps}: {_e}",
                       flush=True)
+
+        if league_dirs and total_env_steps >= next_league_scan:
+            next_league_scan = total_env_steps + pool_every
+            _league_scan()
 
         if due:
             # Beside the snapshot, not inside it: snapshot_*.pt stays a bare state dict because

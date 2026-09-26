@@ -52,6 +52,16 @@ and then every opponent carries whatever strategy the run has converged on -- th
 loses the winnable games that made the mechanism work in the first place, and the window quietly
 closes. Instead the first and most recent snapshots are always kept and the interior point with
 the smallest neighbouring gap is evicted, so the pool stays spread over the whole run.
+
+**League members (P24).** Members added with `group="league"` come from *other* runs -- a main
+exploiter's snapshots for the main agent, the main agent's newest snapshots for the exploiter. They
+are kept apart from the run's own history: their step counts are another run's, so spacing them
+against the run's own snapshots would mean nothing. The league group holds `league_capacity`
+members and evicts the oldest-added first, because a league member is only as relevant as the
+policy it was trained against is recent. With `league_frac` set, each iteration's opponent comes
+from the league group with that probability, whatever the two groups' sizes. Otherwise every member
+is drawn alike. The league group is left out of `state_dict`: the trainer re-scans its directories
+on resume. A pool without league members runs exactly the code paths it ran before.
 """
 from __future__ import annotations
 
@@ -74,7 +84,9 @@ class OpponentPool:
                  capacity: int = 12, pfsp: bool = False, pfsp_weighting: str = "var",
                  pfsp_uniform_mix: float = 0.25, pfsp_prior: float = 4.0,
                  merged: Optional[Sequence[bool]] = None,
-                 seat_balance: bool = False, seat_balance_max_frac: float = 0.8) -> None:
+                 seat_balance: bool = False, seat_balance_max_frac: float = 0.8,
+                 groups: Optional[Sequence[str]] = None, league_capacity: int = 0,
+                 league_frac: Optional[float] = None) -> None:
         if not nets:
             raise ValueError("OpponentPool needs at least one frozen network")
         if capacity < 1:
@@ -87,6 +99,16 @@ class OpponentPool:
             raise ValueError(f"pfsp_uniform_mix must be in [0, 1), got {pfsp_uniform_mix}")
         if pfsp_prior <= 0.0:
             raise ValueError(f"pfsp_prior must be positive, got {pfsp_prior}")
+        if league_frac is not None and not 0.0 <= league_frac <= 1.0:
+            raise ValueError(f"league_frac must be in [0, 1], got {league_frac}")
+        if groups is not None:
+            if len(groups) != len(nets):
+                raise ValueError("groups must give one group per seed net")
+            bad = sorted({g for g in groups if g not in ("self", "league")})
+            if bad:
+                raise ValueError(f"unknown pool group(s) {bad}; expected 'self' or 'league'")
+            if "league" in groups and league_capacity < 1:
+                raise ValueError("league members need league_capacity >= 1")
         self.nets = list(nets)
         self.capacity = capacity
         self.pfsp = bool(pfsp)
@@ -117,6 +139,12 @@ class OpponentPool:
         if merged is not None and len(merged) != len(self.nets):
             raise ValueError("merged must give one flag per seed net")
         self.merged: List[bool] = [bool(x) for x in merged] if merged is not None else [False] * len(self.nets)
+        #: "self" for the run's own history, "league" for another run's snapshots (P24).
+        self.groups: List[str] = [str(g) for g in groups] if groups is not None else ["self"] * len(self.nets)
+        self.league_capacity = int(league_capacity)
+        #: Probability that an iteration's opponent is drawn from the league group, when both
+        #: groups have members. None draws every member alike.
+        self.league_frac: Optional[float] = None if league_frac is None else float(league_frac)
         for n in self.nets:
             n.eval()
             for p in n.parameters():
@@ -248,13 +276,18 @@ class OpponentPool:
             return weak if self.rng.random() < p_weak else -weak
         return 1 if self.rng.random() < 0.5 else -1
 
-    def add(self, net: Any, steps: int, merged: bool = False, path: str = "") -> None:
+    def add(self, net: Any, steps: int, merged: bool = False, path: str = "",
+            group: str = "self") -> None:
         """Add a snapshot taken at `steps`, evicting to stay within capacity.
 
         The net is frozen in place. Callers pass a freshly loaded copy, not the live training
         model -- adding the model under training would give the learner an opponent whose
         weights move with it, which is self-play with extra steps.
         """
+        if group not in ("self", "league"):
+            raise ValueError(f"unknown pool group {group!r}; expected 'self' or 'league'")
+        if group == "league" and self.league_capacity < 1:
+            raise ValueError("league members need league_capacity >= 1")
         net.eval()
         for p in net.parameters():
             p.requires_grad_(False)
@@ -262,12 +295,13 @@ class OpponentPool:
         self.steps.append(int(steps))
         self.paths.append(str(path))
         self.merged.append(bool(merged))
+        self.groups.append(group)
         self._register()
 
-        while len(self.nets) > self.capacity:
+        while len(self._members("self")) > self.capacity:
             # Keep the endpoints; drop the interior snapshot whose neighbours are closest
             # together, which is the one carrying the least information about the run's span.
-            order = sorted(range(len(self.steps)), key=lambda i: self.steps[i])
+            order = sorted(self._members("self"), key=lambda i: self.steps[i])
             victim = None
             best_gap = None
             for pos in range(1, len(order) - 1):
@@ -277,17 +311,28 @@ class OpponentPool:
                     best_gap, victim = gap, i
             if victim is None:  # capacity < 3: fall back to dropping the oldest
                 victim = order[0]
-            self.nets.pop(victim)
-            self.steps.pop(victim)
-            self.paths.pop(victim)
-            self.merged.pop(victim)
-            dead = self.ids.pop(victim)
-            self.wins.pop(dead, None)
-            self.games.pop(dead, None)
-            # Exposure to an evicted opponent is dropped rather than reattributed: the outcome
-            # would otherwise be credited to a snapshot that is no longer in the pool.
-            for env in self._exposure:
-                env.pop(dead, None)
+            self._remove(victim)
+        while len(self._members("league")) > self.league_capacity:
+            # Oldest-added first: ids are issued in arrival order.
+            self._remove(min(self._members("league"), key=lambda i: self.ids[i]))
+
+    def _members(self, group: str) -> List[int]:
+        """Indices, in `self.nets` order, of the members in one group."""
+        return [i for i, g in enumerate(self.groups) if g == group]
+
+    def _remove(self, victim: int) -> None:
+        self.nets.pop(victim)
+        self.steps.pop(victim)
+        self.paths.pop(victim)
+        self.merged.pop(victim)
+        self.groups.pop(victim)
+        dead = self.ids.pop(victim)
+        self.wins.pop(dead, None)
+        self.games.pop(dead, None)
+        # Exposure to an evicted opponent is dropped rather than reattributed: the outcome
+        # would otherwise be credited to a snapshot that is no longer in the pool.
+        for env in self._exposure:
+            env.pop(dead, None)
 
     def start_iteration(self) -> None:
         """Pick the opponent this iteration's mixed environments will face, and record exposure.
@@ -299,7 +344,21 @@ class OpponentPool:
         whichever snapshot happened to be current when it ended would be wrong most of the time.
         """
         probs = self.sampling_probs()
-        if (self.pfsp or (self.seat_balance and self.pressure() > 0.0)) and probs:
+        league = self._members("league")
+        own = self._members("self")
+        if self.league_frac is not None and league and own:
+            # P24: the league's share is fixed rather than set by the two groups' sizes. Within
+            # the run's own group the draw is whatever it would have been without the league.
+            if self.rng.random() < self.league_frac:
+                idx = league[self.rng.randrange(len(league))]
+            elif (self.pfsp or (self.seat_balance and self.pressure() > 0.0)) and probs:
+                sub = [probs[i] for i in own]
+                total = sum(sub)
+                idx = own[self._weighted_index([q / total for q in sub])] if total > 0.0 \
+                    else own[self.rng.randrange(len(own))]
+            else:
+                idx = own[self.rng.randrange(len(own))]
+        elif (self.pfsp or (self.seat_balance and self.pressure() > 0.0)) and probs:
             idx = self._weighted_index(probs)
         else:
             idx = self.rng.randrange(len(self.nets))
@@ -369,23 +428,40 @@ class OpponentPool:
         PFSP draw starts blind and re-learns what the run already knew, and a uniform draw
         silently loses the record of which opponents were ever played.
         """
+        # The run's own history only: league members belong to other runs, and the trainer
+        # re-scans their directories on resume rather than restoring a stale membership. Without
+        # league members this is the whole pool, exported exactly as before P24.
+        steps, paths, merged, ids = list(self.steps), list(self.paths), list(self.merged), list(self.ids)
+        wins, games = dict(self.wins), dict(self.games)
+        side_wins, side_games = dict(self.side_wins), dict(self.side_games)
+        if "league" in self.groups:
+            own = self._members("self")
+            keep = {self.ids[i] for i in own}
+            steps = [self.steps[i] for i in own]
+            paths = [self.paths[i] for i in own]
+            merged = [self.merged[i] for i in own]
+            ids = [self.ids[i] for i in own]
+            wins = {k: v for k, v in wins.items() if k in keep}
+            games = {k: v for k, v in games.items() if k in keep}
+            side_wins = {k: v for k, v in side_wins.items() if k[0] in keep}
+            side_games = {k: v for k, v in side_games.items() if k[0] in keep}
         return {
-            "steps": list(self.steps),
+            "steps": steps,
             # Where each member's weights are, so a continuation into a new run directory keeps
             # the members earlier legs wrote. Absent from states written before it was added.
-            "paths": list(self.paths),
+            "paths": paths,
             # Informational: on resume each member's view is re-derived from its run directory
             # (tools/lib/action_view.py), which cannot disagree with the snapshot it describes.
-            "merged": list(self.merged),
-            "ids": list(self.ids),
+            "merged": merged,
+            "ids": ids,
             "next_id": int(self._next_id),
-            "wins": {int(k): float(v) for k, v in self.wins.items()},
-            "games": {int(k): float(v) for k, v in self.games.items()},
+            "wins": {int(k): float(v) for k, v in wins.items()},
+            "games": {int(k): float(v) for k, v in games.items()},
             "rng_state": self.rng.getstate(),
             # Seat balancing's record, as [oid, side, value] rows (tuple keys do not serialise).
             "sp_us": float(self.sp_us),
-            "side_wins": [[int(o), int(s), float(v)] for (o, s), v in self.side_wins.items()],
-            "side_games": [[int(o), int(s), float(v)] for (o, s), v in self.side_games.items()],
+            "side_wins": [[int(o), int(s), float(v)] for (o, s), v in side_wins.items()],
+            "side_games": [[int(o), int(s), float(v)] for (o, s), v in side_games.items()],
         }
 
     def load_state_dict(self, blob: Dict[str, Any], loaded_steps: Sequence[int],
@@ -411,6 +487,7 @@ class OpponentPool:
                              f"{len(self.nets)} nets")
         self.steps = [int(st) for st in loaded_steps]
         self.paths = [str(q) for q in loaded_paths] if loaded_paths is not None else [""] * len(self.nets)
+        self.groups = ["self"] * len(self.nets)
         saved_steps = list(blob.get("steps", []))
         saved_ids = list(blob.get("ids", []))
         by_step = {int(st): int(oid) for st, oid in zip(saved_steps, saved_ids)}
@@ -461,12 +538,24 @@ class OpponentPool:
         (HeuristicBot, RandomBot) saturate above 89% by 120M. `opp_win_rate_mean` and its spread
         are that missing instrument, and PFSP needs them anyway.
         """
+        own_steps = [self.steps[i] for i in self._members("self")] or self.steps
         out: Dict[str, float] = {
             "opp_frac_mixed": float(self.is_mixed.mean()),
             "opp_pool_size": float(len(self.nets)),
-            "opp_pool_span_m": float((max(self.steps) - min(self.steps)) / 1e6)
-            if self.steps else 0.0,
+            "opp_pool_span_m": float((max(own_steps) - min(own_steps)) / 1e6)
+            if own_steps else 0.0,
         }
+        league = [self.ids[i] for i in self._members("league")]
+        if league:
+            # P24: how the learner fares against the league, per seat, raw rather than smoothed --
+            # the league driver decides resets on these, and a prior would hide an early lead.
+            out["opp_league_size"] = float(len(league))
+            out["opp_league_win_rate_mean"] = float(sum(self.win_rate(o) for o in league) / len(league))
+            for side, name in ((1, "us"), (-1, "ussr")):
+                g = sum(self.side_games.get((o, side), 0.0) for o in league)
+                w = sum(self.side_wins.get((o, side), 0.0) for o in league)
+                out[f"opp_league_games_{name}"] = float(g)
+                out[f"opp_league_win_{name}"] = float(w / g) if g > 0.0 else 0.5
         rates = [self.win_rate(oid) for oid in self.ids]
         played = [self.games.get(oid, 0.0) for oid in self.ids]
         if rates:

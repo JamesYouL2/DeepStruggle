@@ -596,6 +596,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--opponent-pfsp-uniform-mix", type=float, default=0.25,
                         help="Floor of uniform probability mixed under the PFSP weights, so no "
                              "pool member can be driven to zero. The pool's value is its spread.")
+    parser.add_argument("--league-dirs", nargs="+", default=None,
+                        help="P24: other runs' directories whose snapshots join the opponent pool "
+                             "as a separate 'league' group, re-scanned every --pool-every-steps. "
+                             "With --opponent-self-pool the run's own history stays in the pool "
+                             "beside them (the main agent); without it the pool is the league "
+                             "alone (a main exploiter, with --opponent-frac 1.0). A file named "
+                             "snapshot_<n>steps.pt, or <prefix>_snapshot_<n>steps.pt, is a member.")
+    parser.add_argument("--league-pool-size", type=int, default=4,
+                        help="Most league members kept; the oldest-added is evicted first.")
+    parser.add_argument("--league-frac", type=float, default=None,
+                        help="Probability that an iteration's pool opponent is a league member, "
+                             "when the pool also holds the run's own history. Default: every "
+                             "member drawn alike, so the league's share follows the group sizes.")
     parser.add_argument("--opponent-lock-side", type=str, default=None,
                         choices=["us", "ussr"],
                         help="Pin the learner to one side against the frozen opponent; default alternates")
@@ -715,6 +728,9 @@ def main():
             merged_influence=args.merged_influence,
             seat_balance=args.seat_balance,
             seat_balance_max_frac=args.seat_balance_max_frac,
+            league_dirs=args.league_dirs,
+            league_pool_size=args.league_pool_size,
+            league_frac=args.league_frac,
             per_seat_adv_norm=args.per_seat_adv_norm,
             wolf_seat_weight=args.wolf_seat_weight,
             wolf_power=args.wolf_power,
