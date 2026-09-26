@@ -14,18 +14,20 @@ Both learners are ordinary `tools/train.py` runs (invariant 9); the league is a 
   <league-dir>`, which holds the exploiter snapshots this driver publishes, drawn with
   `--league-frac` of the pool's draws.
 * **Main exploiter:** `--opponent-frac 1.0` against the main agent's newest snapshots only
-  (`--league-dirs <main run dir> --league-pool-size 2`), resumed from `--exploiter-reset` -- an
-  early state of the main lineage, the closest thing to AlphaStar's supervised reset point.
-* **Publish:** when the exploiter writes a snapshot while winning at least `--publish-win`
-  against the main agent on either seat, it is symlinked into the league directory. Per seat,
-  because a weakness of the main agent is usually a weakness of one seat.
-* **Reset:** once it wins `--reset-win` on either seat, its next snapshot is published and it is
-  restarted from the reset state, as a new generation -- or when a generation's
-  `--exploiter-gen-steps` run out, whether or not it succeeded.
+  (`--league-dirs <main run dir> --league-pool-size 2`), resumed from `--exploiter-reset`, plus
+  `--exploiter-args`. An exploiter carrying the self-play recipe collapses or stalls; the one that
+  exploits plays a greedy opponent with no KL anchor, no entropy bonus and learner-only
+  normalisation (`research/log/P24_stage1_exploiter_collapse.md`).
+* **Judged greedily:** each new exploiter snapshot plays the main agent's newest snapshot,
+  greedy on both sides, `--judge-games` a side, on the CPU -- about 8 s for 200, and no third GPU
+  process. A greedy tournament is what rates the main agent, so it is what an exploit must beat;
+  the exploiter's own training win rate, sampled against a greedy opponent, sits far below it.
+* **Publish:** a snapshot scoring at least `--publish-win` is symlinked into the league directory.
+* **Reset:** one scoring at least `--reset-win` is published and the exploiter restarts from the
+  reset state as a new generation -- as it also does when `--exploiter-gen-steps` run out.
 
-The exploiter's win rate is read from its own `training_metrics.jsonl` (`opp_league_win_us` /
-`_ussr`, with their game counts), so judging it needs no third GPU process. Events go to
-`<league-dir>/events.jsonl`. The driver ends when the main agent's run does.
+Events, every judgement included, go to `<league-dir>/events.jsonl`. The driver ends when the main
+agent's run does.
 """
 
 from __future__ import annotations
@@ -76,22 +78,23 @@ def _snapshots(run_dir: str) -> List[int]:
     return sorted(int(m.group(1)) for f in os.listdir(run_dir) if (m := SNAP_RE.match(f)))
 
 
-def _last_metrics(run_dir: str) -> Optional[Dict[str, Any]]:
-    path = os.path.join(run_dir, "training_metrics.jsonl")
-    if not os.path.exists(path):
+_OVERALL_RE = re.compile(r"Overall Result: .*? (\d+)W - (\d+)L - (\d+)D")
+_RECORD_RE = re.compile(r"Record: (\d+)W - (\d+)L - (\d+)D")
+
+
+def _judge(exploiter: str, main_snap: str, games: int) -> Optional[Dict[str, float]]:
+    """Greedy head to head on the CPU: the exploiter's score overall and per seat, or None."""
+    out = subprocess.run(
+        [sys.executable, "tools/tournament.py", "--models", exploiter, main_snap,
+         "--games-per-side", str(games), "--temperature", "0.0", "--device", "cpu"],
+        cwd=ROOT, capture_output=True, text=True, env=dict(os.environ))
+    text = out.stdout + out.stderr
+    m = _OVERALL_RE.search(text)
+    recs = _RECORD_RE.findall(text)
+    if m is None or len(recs) < 2:
         return None
-    with open(path, "rb") as f:
-        f.seek(0, os.SEEK_END)
-        f.seek(max(0, f.tell() - 65536))
-        lines = f.read().decode("utf-8", "replace").splitlines()
-    for line in reversed(lines):
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if "opp_league_win_us" in rec:
-            return rec
-    return None
+    score = lambda w, l, d: (int(w) + 0.5 * int(d)) / max(1, int(w) + int(l) + int(d))
+    return {"overall": score(*m.groups()), "as_us": score(*recs[0]), "as_ussr": score(*recs[1])}
 
 
 def _stop(proc: subprocess.Popen, grace: float = 120.0) -> None:
@@ -123,10 +126,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--main-league-frac", type=float, default=0.5)
     ap.add_argument("--main-league-size", type=int, default=4)
     ap.add_argument("--exploiter-league-size", type=int, default=2)
+    ap.add_argument("--exploiter-args", default="",
+                    help="Flags for the exploiter only, one string (e.g. --opponent-temperature 0 "
+                         "--eta 0 --entropy-coef 0 --adv-norm-learner-only).")
     ap.add_argument("--publish-win", type=float, default=0.55)
-    ap.add_argument("--reset-win", type=float, default=0.70)
-    ap.add_argument("--min-games", type=float, default=300.0,
-                    help="Games per seat against the current main snapshots before a rate counts.")
+    ap.add_argument("--reset-win", type=float, default=0.65)
+    ap.add_argument("--judge-games", type=int, default=200,
+                    help="Games a side in each greedy judgement.")
     ap.add_argument("--main-description", required=True)
     ap.add_argument("--exploiter-description", required=True)
     ap.add_argument("--poll", type=float, default=60.0)
@@ -162,10 +168,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     expl: Optional[subprocess.Popen] = None
     expl_dir = ""
     published: set = set()
-    reset_pending = False
 
     def start_generation() -> None:
-        nonlocal gen, expl, expl_dir, reset_pending
+        nonlocal gen, expl, expl_dir
         gen += 1
         name = f"{a.exploiter_name}-{gen}"
         t = time.time()
@@ -175,9 +180,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "--opponent-frac", "1.0", "--league-dirs", main_dir,
             "--league-pool-size", str(a.exploiter_league_size),
             "--description", f"{a.exploiter_description} Generation {gen}.",
-        ], os.path.join(a.log_dir, f"{name}.log"))
+        ] + shlex.split(a.exploiter_args), os.path.join(a.log_dir, f"{name}.log"))
         expl_dir = _run_dir(name, t)
-        reset_pending = False
         _event(a.league_dir, "exploiter_launched", run=name, generation=gen, dir=expl_dir,
                pid=expl.pid)
 
@@ -191,43 +195,38 @@ def main(argv: Optional[List[str]] = None) -> int:
                 _event(a.league_dir, "exploiter_stopped", generation=gen, reason="main finished")
             return int(main_proc.returncode or 0)
 
-        rec = _last_metrics(expl_dir)
-        rates = {}
-        if rec is not None:
-            for seat in ("us", "ussr"):
-                if rec.get(f"opp_league_games_{seat}", 0.0) >= a.min_games:
-                    rates[seat] = float(rec[f"opp_league_win_{seat}"])
-        best = max(rates.values()) if rates else 0.0
-        if best >= a.reset_win and not reset_pending:
-            reset_pending = True
-            _event(a.league_dir, "exploiter_succeeded", generation=gen, rates=rates,
-                   steps=rec.get("total_steps") if rec else None)
-
+        reset = False
         for n in _snapshots(expl_dir):
             if n in seen_snaps or n <= reset_steps:
                 continue
             seen_snaps.add(n)
             src = os.path.join(expl_dir, f"snapshot_{n}steps.pt")
-            if best >= a.publish_win and src not in published:
+            target = os.path.join(main_dir, f"snapshot_{_snapshots(main_dir)[-1]}steps.pt")
+            time.sleep(20)                     # let the snapshot finish writing
+            res = _judge(src, target, a.judge_games)
+            _event(a.league_dir, "judged", generation=gen, snapshot=src, against=target, result=res)
+            if res is None:
+                continue
+            if res["overall"] >= a.publish_win and src not in published:
                 link = os.path.join(a.league_dir,
                                     f"{os.path.basename(expl_dir).rsplit('_', 2)[0]}_snapshot_{n}steps.pt")
                 if not os.path.exists(link):
                     os.symlink(src, link)
                 published.add(src)
-                _event(a.league_dir, "published", generation=gen, snapshot=src, rates=rates)
-            if reset_pending and expl is not None:
-                _stop(expl)
-                _event(a.league_dir, "exploiter_reset", generation=gen, reason="succeeded",
-                       rates=rates)
-                seen_snaps = set()
-                start_generation()
+                _event(a.league_dir, "published", generation=gen, snapshot=src, result=res)
+            if res["overall"] >= a.reset_win:
+                reset = True
                 break
-        else:
-            if expl is not None and expl.poll() is not None:
-                _event(a.league_dir, "exploiter_reset", generation=gen,
-                       reason=f"budget spent (exit {expl.returncode})", rates=rates)
-                seen_snaps = set()
-                start_generation()
+        if reset and expl is not None:
+            _stop(expl)
+            _event(a.league_dir, "exploiter_reset", generation=gen, reason="succeeded")
+            seen_snaps = set()
+            start_generation()
+        elif expl is not None and expl.poll() is not None:
+            _event(a.league_dir, "exploiter_reset", generation=gen,
+                   reason=f"budget spent (exit {expl.returncode})")
+            seen_snaps = set()
+            start_generation()
         time.sleep(a.poll)
 
 
