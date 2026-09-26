@@ -352,6 +352,23 @@ PYTHONPATH=. .venv/bin/python tools/tournament.py \
   --output-report <run-dir>/tournament_report.md
 ```
 
+**Pairings are packed** (`--pack-pairs`, default 25). A round robin used to play one pairing at a
+time: ~200 games, two ~100-row forwards per step, the GPU at ~35%. Now the agents are split into
+blocks of ⌊√pack⌋, and a pack plays all pairings between two blocks, or inside several blocks, in
+one engine batch, with one forward per *agent* per step over all its positions
+(`BatchMatchRunner.play_packed_matchups`). Each game keeps the deal seed it had before, with the
+same seat-swapped copy.
+
+On a 33-player field (528 pairings, 100 games per side):
+* tournament time went from 819 s to 250 s (3.3×);
+* 547 of 561 pairings were identical game for game, and the largest Elo difference was 0.4. The
+  rest is float rounding of near-ties at a different batch composition.
+
+Greedy agents and bots reproduce the old path apart from that rounding. Sampled agents reproduce
+it in distribution only. `--pack-pairs 1` plays one pairing at a time, and `--track-choices` or
+`--log-games` force it. The one cost that remains is the heuristic bot, which is pure Python per
+position.
+
 ---
 
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)

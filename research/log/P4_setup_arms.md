@@ -94,3 +94,78 @@ are unchanged everywhere.
   * per-side setup blocks, cut at the USSR → US hand-over;
   * all same-side deterministic blocks, ended at any die roll, so each realignment or coup
     attempt is its own boundary.
+
+## Follow-up arms: A1 (per-side setup blocks) and A2 (every same-side deterministic block), 2026-09-26
+
+**The arms** (`--block-lambda`, `38febc8`):
+
+| arm | runs | change |
+|:---|:---|:---|
+| A1 | E4-64-43, E4-64-44 | `setup-side`: arm A's rule, cut at the USSR → US hand-over |
+| A2 | E4-65-43, E4-65-44 | `same-side`: λ = 1 between any two consecutive decisions of one game with the same mover and the engine's RNG state unchanged |
+
+A2 ends a block at any chance node: every coup or realignment roll, a card draw, a hidden random
+event. On a real rollout A2 chains 68% of all transitions (93% of setup transitions) and costs
+~8% throughput.
+
+Both arms ran on the default recipe, 80M, seeds 43 and 44, against the E4-61 controls. The flag
+diffs show only `--block-lambda`. All four runs finished without a crash, and none pinned.
+
+**Setup stability** (`data/reports/p4b_setup_stability.*`). Each cell counts the snapshots, of 8,
+in which the target is met more than half the time; seeds are 43 / 44.
+
+| run | Poland | West Germany | Italy | Iran | all four |
+|:---|---:|---:|---:|---:|---:|
+| control E4-61 | 0 / 6 | 1 / 1 | 6 / 8 | 4 / 7 | 0 / 1 |
+| A E4-62 | 8 / 6 | 0 / 0 | 2 / 6 | 2 / 6 | 0 / 0 |
+| A1 E4-64 | 6 / 6 | 0 / 0 | 7 / 8 | 3 / 7 | 0 / 0 |
+| A2 E4-65 | 6 / 8 | 3 / 2 | 7 / 3 | 6 / 7 | 1 / 1 |
+| B E4-63 | 8 / 8 | 8 / 3 | 8 / 8 | 8 / 7 | 8 / 2 |
+
+* **Every credit variant fixes Poland.**
+* **Cutting the block at the hand-over (A1) changes nothing about West Germany: 0 of 16.** The
+  cross-side coupling in A was not what kept West Germany out.
+* **A2 plays West Germany in 5 of 16 snapshots but does not hold it.** Its openings swing more,
+  as its entropy is much higher (US/USSR 1.84–1.85 / 1.54–1.63 at 80M against ~1.2 for the
+  control).
+
+**Strength** (`data/reports/p4b_blocks_80M.{md,json}`, 33 players, E4-08-36@240M = 2341):
+
+| run | 40M | 60M | 70M | 80M | mean 60–80M |
+|:---|---:|---:|---:|---:|---:|
+| control E4-61-43 | 1894 | 1923 | 2041 | 2047 | 2003 |
+| control E4-61-44 | 1889 | 1933 | 1927 | 1990 | 1950 |
+| A E4-62-43 | 1826 | 1907 | 1998 | 2111 | 2006 |
+| A E4-62-44 | 1968 | 2006 | 2010 | 2062 | 2026 |
+| A1 E4-64-43 | 1872 | 1948 | 2022 | 2082 | 2017 |
+| A1 E4-64-44 | 1839 | 2020 | 2013 | 2011 | 2015 |
+| A2 E4-65-43 | 1441 | 1560 | 1654 | 1750 | 1655 |
+| A2 E4-65-44 | 1542 | 1645 | 1677 | 1778 | 1700 |
+
+**Head to head against the same seed's control** (60–80M, 9 pairings):
+
+| arm | seed 43 | seed 44 | mean |
+|:---|---:|---:|---:|
+| A | −8 | +64 | +27 |
+| **A1** | **+25** | **+53** | **+39** |
+| **A2** | −334 | −251 | **−289** |
+
+**Reading:**
+* **A1 is the best credit variant:** positive on both seeds, with Poland fixed. It is inside the
+  noise at two seeds.
+* **A2 is far worse at 80M.** λ = 1 on two thirds of all transitions makes the returns too noisy:
+  the advantage spread is ~0.35–0.39 against ~0.24, entropy stays high, and learning is much
+  slower. Chaining every deterministic same-side block is harmful as built. Only the setup
+  benefits from λ = 1.
+* **Board coverage at 80M** (turn 8, empty / uncontrolled battlegrounds):
+
+  | run | seed 43 | seed 44 |
+  |:---|:---|:---|
+  | A1 | 1.58 / 3.00 | 2.97 / 5.17 |
+  | control | 3.36 / 6.96 | 2.37 / 5.85 |
+
+  A's seed-43 lead repeats in A1, but the seed-44 control is already about as good, so the lead
+  is not established.
+
+The rating field was re-run packed with the new tournament runner, as a check. 547–560 of 561
+pairings came out identical and the largest Elo difference was 0.4, so the numbers above stand.
