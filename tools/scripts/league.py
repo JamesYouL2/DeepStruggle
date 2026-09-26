@@ -13,9 +13,11 @@ Both learners are ordinary `tools/train.py` runs (invariant 9); the league is a 
 * **Main agent:** its own spread pool as usual (`--opponent-self-pool`), plus `--league-dirs
   <league-dir>`, which holds the exploiter snapshots this driver publishes, drawn with
   `--league-frac` of the pool's draws.
-* **Main exploiter:** `--opponent-frac 1.0` against the main agent's newest snapshots only
-  (`--league-dirs <main run dir> --league-pool-size 2`), resumed from `--exploiter-reset`, plus
-  `--exploiter-args`. An exploiter carrying the self-play recipe collapses or stalls; the one that
+* **Main exploiter:** `--opponent-frac 1.0`, resumed from `--exploiter-reset`, plus
+  `--exploiter-args`. With `--exploiter-target frozen` (the default) each generation trains against
+  the main agent's newest snapshot *at its launch*, and is judged against that same snapshot: an
+  exploit takes 30-40M steps to find, and a target that moves every 10M never lets it settle.
+  `moving` trains against the main agent's two newest snapshots as they appear. An exploiter carrying the self-play recipe collapses or stalls; the one that
   exploits plays a greedy opponent with no KL anchor, no entropy bonus and learner-only
   normalisation (`research/log/P24_stage1_exploiter_collapse.md`).
 * **Judged greedily:** each new exploiter snapshot plays the main agent's newest snapshot,
@@ -97,6 +99,22 @@ def _judge(exploiter: str, main_snap: str, games: int) -> Optional[Dict[str, flo
     return {"overall": score(*m.groups()), "as_us": score(*recs[0]), "as_ussr": score(*recs[1])}
 
 
+class _Adopted:
+    """A main agent this driver did not launch: a running process, known by its PID."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: Optional[int] = None
+
+    def poll(self) -> Optional[int]:
+        if self.returncode is None:
+            try:
+                os.kill(self.pid, 0)
+            except ProcessLookupError:
+                self.returncode = 0          # its exit status is not ours to read
+        return self.returncode
+
+
 def _stop(proc: subprocess.Popen, grace: float = 120.0) -> None:
     if proc.poll() is not None:
         return
@@ -111,7 +129,12 @@ def _stop(proc: subprocess.Popen, grace: float = 120.0) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--main-name", required=True)
-    ap.add_argument("--main-resume", required=True)
+    ap.add_argument("--main-resume", default=None)
+    ap.add_argument("--adopt-main-dir", default=None,
+                    help="Take over a main agent already running in this run directory "
+                         "(with --adopt-main-pid) instead of launching one.")
+    ap.add_argument("--adopt-main-pid", type=int, default=None)
+    ap.add_argument("--exploiter-target", choices=["frozen", "moving"], default="frozen")
     ap.add_argument("--main-steps", type=int, required=True)
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--exploiter-name", required=True,
@@ -143,16 +166,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     common = shlex.split(a.train_args)
 
     t0 = time.time()
-    main_proc = _launch(common + [
-        "--resume", a.main_resume, "--seed", str(a.seed), "--run-name", a.main_name,
-        "--train-steps", str(a.main_steps),
-        "--opponent-frac", "0.3", "--opponent-self-pool", "--opponent-pool-size", "12",
-        "--league-dirs", a.league_dir, "--league-pool-size", str(a.main_league_size),
-        "--league-frac", str(a.main_league_frac),
-        "--description", a.main_description,
-    ], os.path.join(a.log_dir, f"{a.main_name}.log"))
-    main_dir = _run_dir(a.main_name, t0)
-    _event(a.league_dir, "main_launched", run=a.main_name, dir=main_dir, pid=main_proc.pid)
+    main_proc: Any
+    if a.adopt_main_dir:
+        if a.adopt_main_pid is None:
+            raise SystemExit("--adopt-main-dir needs --adopt-main-pid")
+        main_proc = _Adopted(a.adopt_main_pid)
+        main_dir = a.adopt_main_dir
+        _event(a.league_dir, "main_adopted", run=a.main_name, dir=main_dir, pid=a.adopt_main_pid)
+    else:
+        if not a.main_resume:
+            raise SystemExit("--main-resume is needed to launch a main agent")
+        main_proc = _launch(common + [
+            "--resume", a.main_resume, "--seed", str(a.seed), "--run-name", a.main_name,
+            "--train-steps", str(a.main_steps),
+            "--opponent-frac", "0.3", "--opponent-self-pool", "--opponent-pool-size", "12",
+            "--league-dirs", a.league_dir, "--league-pool-size", str(a.main_league_size),
+            "--league-frac", str(a.main_league_frac),
+            "--description", a.main_description,
+        ], os.path.join(a.log_dir, f"{a.main_name}.log"))
+        main_dir = _run_dir(a.main_name, t0)
+        _event(a.league_dir, "main_launched", run=a.main_name, dir=main_dir, pid=main_proc.pid)
     # The exploiter plays the main agent's newest snapshots, so it waits for the first one.
     while not _snapshots(main_dir):
         if main_proc.poll() is not None:
@@ -167,23 +200,27 @@ def main(argv: Optional[List[str]] = None) -> int:
     gen = 0
     expl: Optional[subprocess.Popen] = None
     expl_dir = ""
+    gen_target = ""
     published: set = set()
 
     def start_generation() -> None:
-        nonlocal gen, expl, expl_dir
+        nonlocal gen, expl, expl_dir, gen_target
         gen += 1
         name = f"{a.exploiter_name}-{gen}"
+        gen_target = os.path.join(main_dir, f"snapshot_{_snapshots(main_dir)[-1]}steps.pt")
+        pool = (["--opponent-checkpoints", gen_target] if a.exploiter_target == "frozen" else
+                ["--league-dirs", main_dir, "--league-pool-size", str(a.exploiter_league_size)])
         t = time.time()
         expl = _launch(common + [
             "--resume", a.exploiter_reset, "--seed", str(a.seed), "--run-name", name,
             "--train-steps", str(reset_steps + a.exploiter_gen_steps),
-            "--opponent-frac", "1.0", "--league-dirs", main_dir,
-            "--league-pool-size", str(a.exploiter_league_size),
-            "--description", f"{a.exploiter_description} Generation {gen}.",
+            "--opponent-frac", "1.0", *pool,
+            "--description", f"{a.exploiter_description} Generation {gen}"
+                             + (f", against {os.path.basename(gen_target)}." if a.exploiter_target == "frozen" else "."),
         ] + shlex.split(a.exploiter_args), os.path.join(a.log_dir, f"{name}.log"))
         expl_dir = _run_dir(name, t)
         _event(a.league_dir, "exploiter_launched", run=name, generation=gen, dir=expl_dir,
-               pid=expl.pid)
+               pid=expl.pid, target=gen_target if a.exploiter_target == "frozen" else "moving")
 
     start_generation()
     seen_snaps: set = set()
@@ -201,10 +238,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 continue
             seen_snaps.add(n)
             src = os.path.join(expl_dir, f"snapshot_{n}steps.pt")
-            target = os.path.join(main_dir, f"snapshot_{_snapshots(main_dir)[-1]}steps.pt")
+            newest = os.path.join(main_dir, f"snapshot_{_snapshots(main_dir)[-1]}steps.pt")
+            target = gen_target if a.exploiter_target == "frozen" else newest
             time.sleep(20)                     # let the snapshot finish writing
             res = _judge(src, target, a.judge_games)
-            _event(a.league_dir, "judged", generation=gen, snapshot=src, against=target, result=res)
+            info = _judge(src, newest, a.judge_games) if target != newest else res
+            _event(a.league_dir, "judged", generation=gen, snapshot=src, against=target, result=res,
+                   vs_main_newest=info, main_newest=newest)
             if res is None:
                 continue
             if res["overall"] >= a.publish_win and src not in published:
