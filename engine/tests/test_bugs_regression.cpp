@@ -708,3 +708,34 @@ TEST(InfluenceOpsMustBeSpent, RealignmentKeepsItsStop) {
     ActionMask::generate_flat_mask_212(s, mask);
     ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 1);
 }
+
+// An opponent's card played for Ops first fires its Event afterwards in the same frame, and the
+// Event used to inherit the Ops play's allow_early_stop. After a realignment, Warsaw Pact
+// Formed's mandatory branch choice offered CONFIRM_DONE.
+TEST(OwedEventDoesNotInheritTheOpsStop, WarsawPactAfterARealignment) {
+    GameState s{};
+    Engine::init_game(s, 11);
+    s.current_phase = Phase::ACTION_ROUND;
+    s.phasing_player = Player::US;
+    s.card_locations[card_ids::WARSAW_PACT_FORMED] = hand_of(Player::US);
+    s.ctx() = DecisionContext{};
+    s.ctx().decision_player = Player::US;
+    s.ctx().decision_type = DecisionType::SELECT_CARD;
+
+    uint8_t mask[FLAT_ACTION_SPACE_SIZE];
+    auto step_flat = [&](uint16_t idx) {
+        ActionMask::generate_flat_mask_212(s, mask);
+        ASSERT_EQ(mask[idx], 1);
+        ASSERT_TRUE(StateMachine::step(s, ActionMask::decode_flat_action_212(s, idx)));
+    };
+    step_flat(static_cast<uint16_t>(flat_slots::CARD + card_ids::WARSAW_PACT_FORMED - 1));
+    // Ops first as a realignment, stopped at once; the Event then fires for the USSR.
+    step_flat(static_cast<uint16_t>(flat_slots::RESOLUTION + 4));   // OPS_REALIGN
+    ASSERT_EQ(s.ctx().allow_early_stop, 1);
+    step_flat(flat_slots::CONFIRM_DONE);
+
+    ASSERT_EQ(static_cast<int>(s.ctx().resolving_card), static_cast<int>(card_ids::WARSAW_PACT_FORMED));
+    ASSERT_EQ(static_cast<int>(s.ctx().decision_type), static_cast<int>(DecisionType::CHOOSE_BRANCH));
+    ActionMask::generate_flat_mask_212(s, mask);
+    ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 0);
+}

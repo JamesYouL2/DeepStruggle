@@ -352,6 +352,9 @@ void StateMachine::advance_after_ops(GameState& state) noexcept {
             state.ctx().decision_player = opp;
             state.ctx().resolving_card = owed_card;
             state.ctx().timing_branch = 255; // cleared
+            // The Event runs in the frame the Ops were spent in, so it must not inherit their stop
+            // -- see the action-round twin below.
+            state.ctx().allow_early_stop = 0;
 
             const bool owed_fired = CardHandlers::event_has_effect(state, owed_card, opp);
             bool done = CardHandlers::trigger_event(state, owed_card, opp);
@@ -441,6 +444,13 @@ void StateMachine::advance_after_ops(GameState& state) noexcept {
         state.ctx().decision_player = opp;
         state.ctx().resolving_card = card;
         state.ctx().timing_branch = 255; // cleared
+        // The Event runs in the frame the Ops were just spent in, and a handler that does not set
+        // allow_early_stop itself inherited theirs: after a realignment -- and after an influence
+        // play, while that could stop -- Warsaw Pact Formed's mandatory choice offered
+        // CONFIRM_DONE and could be declined, and the free Op from CIA Created or "Lone Gunman"
+        // showed the stop in the observation. An Event starts from none; the handlers that
+        // allow one set it.
+        state.ctx().allow_early_stop = 0;
 
         const bool owed_fired = CardHandlers::event_has_effect(state, card, opp);
         bool done = CardHandlers::trigger_event(state, card, opp);
