@@ -1,6 +1,6 @@
 # P24 — an AlphaStar-style league, without a supervised starting point
 
-**Status:** **closed at stage 1 (2026-09-26), negative**: [`../log/P24_stage1_exploiter_collapse.md`](../log/P24_stage1_exploiter_collapse.md). A main exploiter from this trainer, started at the plateau, finds nothing to exploit in the lineage's near-equal snapshots within 20M steps: greedy, none beats its frozen target by more than noise. It first collapsed at temperature 1 through a normalisation artefact, which is now understood. The league mechanism works (`--league-dirs`, `tools/scripts/league.py`); what is missing is an exploiter that exploits. Open routes: a search-based best response, or opponents from outside the lineage.
+**Status:** **stage 1 reopened (2026-09-26)**: [`../log/P24_stage1_exploiter_collapse.md`](../log/P24_stage1_exploiter_collapse.md). An exploiter carrying the self-play recipe collapses or stalls. One with a greedy opponent, no KL anchor, no entropy bonus and learner-only normalisation beats its frozen target by 7–10 points more than ordinary training does, on two lineages. The league is to be relaunched with that exploiter, and with publish/reset decided by a greedy CPU head to head against the main agent.
 **Needs approval:** none of it touches `engine/` or the observation. It needs one trainer change
 (a pool that grows from other runs' directories) and a driver built on `tools/train.py`.
 
