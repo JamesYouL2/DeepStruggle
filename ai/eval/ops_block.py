@@ -226,6 +226,39 @@ class BlockReport:
     extra: Dict[str, float] = field(default_factory=dict)
 
 
+def contested_battlegrounds(start: "ts.GameState") -> np.ndarray:
+    """P27's contested battlegrounds at `start`, as a mask over countries: battlegrounds
+    neither side controls that both sides can reach."""
+    _, bg, _ = country_table()
+    side = 0 if int(_ctx(start).decision_player) == int(ts.Player.US) else 1
+    inf0 = influence(start)
+    return (bg & ~controlled(inf0, side) & ~controlled(inf0, 1 - side)
+            & access(inf0, side) & access(inf0, 1 - side))
+
+
+def force_take(start: "ts.GameState", country: int,
+               choose: Callable[["ts.GameState"], int]) -> Optional[Allocation]:
+    """P27 stage 2: the influence play that first places points in `country` until the mover
+    controls it, then lets `choose` place whatever is left. None if the engine refuses a point
+    there before control is reached, or the play ends first."""
+    c0 = _ctx(start)
+    card, player = int(c0.pending_op_card), int(c0.decision_player)
+    side = 0 if player == int(ts.Player.US) else 1
+    st = start.clone()
+    acts: List[int] = []
+    node = NODE_OFFSET + int(country)
+    while not bool(controlled(influence(st), side)[country]):
+        if not _in_block(st, card, player) or node not in set(int(a) for a in _legal(st)):
+            return None
+        acts.append(node)
+        ts.Engine.step_flat(st, node, True, False)
+    while _in_block(st, card, player):
+        a = int(choose(st))
+        acts.append(a)
+        ts.Engine.step_flat(st, a, True, False)
+    return Allocation(st, tuple(acts), influence(st))
+
+
 def analyse(start: "ts.GameState", allocations: Sequence[Allocation], policy: Allocation,
             values: Optional[np.ndarray] = None, policy_value: Optional[float] = None) -> BlockReport:
     """The P27 measures for one play. `values[i]` is the critic's value of allocation i's end

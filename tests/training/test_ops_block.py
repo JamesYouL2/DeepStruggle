@@ -98,3 +98,36 @@ def test_every_point_is_classified_once() -> None:
         # class -- the classes are disjoint by construction, so the counts sum to the points
         assert sum(rep.points_by_class.values()) == rep.policy_points
         assert set(rep.outcomes) >= {"takes a contested battleground", "no control change at all"}
+
+
+def test_force_take_places_until_controlled_then_hands_over() -> None:
+    """The forced branch of the P27 oracle: points go to the chosen contested battleground until
+    the mover controls it, and the policy places the rest."""
+    import numpy as np
+    from ai.eval.ops_block import (contested_battlegrounds, controlled, force_take, influence,
+                                   is_block_start, play_block, NODE_OFFSET)
+    found = 0
+    for st in _starts(40, max_ops=4):
+        cbg = np.flatnonzero(contested_battlegrounds(st))
+        if not len(cbg) or not is_block_start(st):
+            continue
+        side = 0 if int(st.ctx().decision_player) == int(ts.Player.US) else 1
+        first_legal = lambda s: int(np.flatnonzero(np.asarray(ts.Engine.get_flat_action_mask(s, False)))[0])
+        for c in cbg:
+            alloc = force_take(st, int(c), first_legal)
+            if alloc is None:
+                continue
+            found += 1
+            assert bool(controlled(alloc.inf_end, side)[c])
+            k = 0
+            while k < len(alloc.actions) and alloc.actions[k] == NODE_OFFSET + int(c):
+                k += 1
+            assert k >= 1
+            # the same play, re-run through play_block with the recorded actions, ends identically
+            it = iter(alloc.actions)
+            replay = play_block(st, lambda s: next(it))
+            assert np.array_equal(replay.inf_end, alloc.inf_end)
+            break
+        if found >= 5:
+            break
+    assert found >= 1, "no contested battleground was takeable in 40 starts"
