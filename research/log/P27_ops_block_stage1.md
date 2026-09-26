@@ -162,3 +162,52 @@ Two expected changes:
 * Replay 59's invalid-play entry now takes 3 answering decisions instead of 1.
 * One bot replay recorded under the old rule, which stopped early at step 172, was moved to
   `data/replays/archive_pre_influence_spent/`.
+
+## Stage 2: the rollout oracle, 2026-09-26
+
+**Tool:** `tools/scripts/ops_block_oracle.py`.
+
+**Positions:** the P27 missed positions, re-collected from E4-61-44@720M's own self-play. These are
+influence plays where some allocation takes a contested battleground and the greedy play takes none:
+591 of 1,500 play starts, mostly early-war (Iraq, South Korea, Italy, Iran).
+
+**The two branches:**
+* **take:** points go to the contested battleground the policy ranks highest at the first point,
+  until the mover controls it; the policy places the rest (`ops_block.force_take`);
+* **policy:** the policy's own greedy allocation.
+
+Each branch is played to the end 16 times by the same checkpoint on both sides, greedily. Pair k
+re-seeds the engine RNG identically in both branches.
+
+**Checks:** 85% of positions have mixed outcomes across their 16 pairs, and the two branches'
+results differ in 73% of positions.
+
+Report: `data/reports/p27_oracle_v1.{md,json}`.
+
+| positions | n | take | policy | take − policy (pp) | critic prefers take |
+|:---|---:|---:|---:|---:|---:|
+| all | 591 | 50.1% | 50.8% | **−0.8 ± 0.6** | 23% |
+| mover US | 281 | 39.4% | 40.8% | −1.5 ± 0.9 | 18% |
+| mover USSR | 310 | 59.7% | 59.8% | −0.1 ± 0.9 | 28% |
+| policy: partial on a contested battleground | 174 | 50.8% | 51.7% | −0.9 ± 1.2 | 31% |
+| policy: takes another battleground | 140 | 59.6% | 60.5% | −0.9 ± 1.2 | 20% |
+| policy: takes a non-battleground | 239 | 46.1% | 46.1% | +0.1 ± 1.0 | 23% |
+| policy: breaks an opponent's control | 167 | 50.1% | 52.7% | −2.5 ± 1.2 | 13% |
+| policy: no control change | 130 | 51.3% | 51.8% | −0.5 ± 1.4 | 32% |
+
+By Ops value, 1 to 5 Ops, the difference runs from +0.4 to −2.6. Where the oracle's difference is at
+least 25 points (77 positions), the critic's sign agrees in 58%.
+
+**Reading:**
+* **With this policy playing the rest of the game, taking the contested battleground instead of what
+  it did is worth nothing:** −0.8 ± 0.6 overall, and no class of alternative is worse than taking it.
+* **The critic's reluctance was not an error of value.** Stage 1 found its favourite skipped the
+  battleground in 69–76% of positions, and the oracle agrees that skipping costs nothing. The critic
+  is weak at telling these positions apart (58% sign agreement where the difference is large), but it
+  is not biased against taking.
+* **So stage 1's "misses half of takeable contested battlegrounds" is not a defect of this policy by
+  outcome.** Training aimed at those positions (stage 3 as proposed) would have nothing to teach.
+
+**The caveat.** The oracle values the placement *given how this policy plays afterwards*. A
+continuation that exploits a battleground better, as a strong human might, could value it more. The
+cheap check is to re-run the oracle with a stronger playout policy, such as E5-06@610M.

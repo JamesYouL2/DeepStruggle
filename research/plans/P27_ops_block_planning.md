@@ -1,12 +1,6 @@
 # P27 — Short-horizon planning inside an ops play: capacity, learning or data?
 
-**Status:** stage 1 done (2026-09-26): [`../log/P27_ops_block_stage1.md`](../log/P27_ops_block_stage1.md).
-Half of the takeable contested battlegrounds are missed. The critic's own favourite takes them in
-only 24–31% of positions, so this is not mainly a policy that fails its critic; stage 2 decides
-whether the critic or the rule is wrong. On the way, influence Ops were made to be spent in full
-(an engine rule change, same log).
-**Needs approval:** none for stages 1–3. They are measurement only. A capacity fix in stage 4
-would be an architecture change.
+**Status:** stages 1 and 2 done (2026-09-26): [`../log/P27_ops_block_stage1.md`](../log/P27_ops_block_stage1.md). Stage 1: half of takeable contested battlegrounds are missed, and the critic's favourite skips them too. Stage 2, the rollout oracle: taking one instead is worth −0.8 ± 0.6 pp when this policy plays the rest, so the miss is not a defect by outcome and stage 3 has nothing to teach. The open caveat is a stronger playout policy.
 
 ## The problem
 
