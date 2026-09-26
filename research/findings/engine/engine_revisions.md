@@ -115,8 +115,10 @@ sixth of decisions. What an E4 checkpoint *does* barely changes. E4-61-44@720M s
 play early 0.06 times per game at temperature 0.1, and the observation keeps the value E4
 checkpoints were trained on (`ALLOW_EARLY_STOP` reads 1 throughout an influence play). An E4 checkpoint
 evaluated on E5 is therefore a small, measured handicap rather than an unknown one. **E5-01**
-retrains E4-61's configuration on E5 to test whether training notices at all
-([`../../runs.md`](../../runs.md), *E5*).
+retrained E4-61's configuration on E5 to test whether training notices at all, and it does not.
+Against E4-61 the pair's late mean is +2 Elo, and the head to head is 51.0% ± 0.6 over 7,200 games
+([`../../log/E5_01_engine_bump.md`](../../log/E5_01_engine_bump.md)). This is the first arm in the
+repository re-run across a letter boundary.
 
 ## Changes held inside E3 by measurement
 
@@ -149,9 +151,9 @@ was worth is [`../../log/observation_layout.md`](../../log/observation_layout.md
 
 ## Open, and worth knowing
 
-* **No arm has ever been re-run across a letter boundary.** No configuration was trained on E1 and
-  again on E2, or on E2 and again on E3, so no measurement in this repository shows a *training*
-  result surviving — or failing to survive — a rules change. See
+* **One arm has been re-run across a letter boundary: E5-01**, E4-61's configuration on E5, with
+  no effect (+2 Elo). No configuration was trained on E1 and again on E2, or on E2 and again on E3.
+  The E4 → E5 change is small, so this says nothing about the larger earlier boundaries. See
   [`../../method/what_survives_an_engine_change.md`](../../method/what_survives_an_engine_change.md).
 * **`BUGS.md` ENG-1** (UN Intervention offers companion cards the rules forbid) is open, which
   means the current E3 engine is known to be playing a slightly wrong game right now.

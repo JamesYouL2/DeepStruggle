@@ -23,7 +23,7 @@ boundary*. Attempts restart at 01.
 
 | arm | what it varied | budget | directory | result |
 |:---|:---|:---|:---|:---|
-| **E5-01-43, E5-01-44** | The first E5 arm: E4-61-43/44's configuration exactly (E4-08 recipe, M2d, λ 0.98, pool 0.3/12, TF32, centred heads, `--block-lambda off`) on the E5 engine, from scratch, as a pair. `launch_flags.py --diff` against E4-61 shows only `--train-steps`. Control: E4-61-43/44 at 240M. Does the rules change move training at all? | 0 → 240M | `E5-01-4{3,4}_20260926_*` | *running* |
+| **E5-01-43, E5-01-44** | The first E5 arm: E4-61-43/44's configuration exactly (E4-08 recipe, M2d, λ 0.98, pool 0.3/12, TF32, centred heads, `--block-lambda off`) on the E5 engine, from scratch, as a pair. `launch_flags.py --diff` against E4-61 shows only `--train-steps`. Control: E4-61-43/44 at 240M. Does the rules change move training at all? | 0 → 240M | `E5-01-4{3,4}_20260926_*` | [`log/E5_01_engine_bump.md`](log/E5_01_engine_bump.md): **no effect**. Late mean (200–240M) vs E4-61: −7 (seed 43), +12 (seed 44), pair +2; head to head 51.0% ± 0.6 over 7,200 games. Learning curves match 40→240M |
 
 ## E4 — the post-P17 engine
 
