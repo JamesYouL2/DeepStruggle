@@ -123,7 +123,7 @@ def summarise(res: Dict[str, Any]) -> Dict[str, float]:
         "contested battleground takeable": len(take) / len(rs),
         "policy takes it | takeable": (len(take) - len(missed)) / max(1, len(take)),
         "missed | takeable": len(missed) / max(1, len(take)),
-        "gains an uncontested country instead | missed": (
+        "gains control of something else | missed": (
             sum(r["policy_gains_uncontested"] for r in missed) / max(1, len(missed))),
         "reinforcing points / points placed": sum(r["policy_reinforce_points"] for r in rs) / max(1, pts),
         "battleground shortfall (max - policy), mean": float(np.mean(
@@ -133,6 +133,14 @@ def summarise(res: Dict[str, Any]) -> Dict[str, float]:
             [r["critic_best"] - r["critic_policy"] for r in rs])),
         "critic-best takes it | takeable": sum(r["critic_best_takes_contested"] for r in take) / max(1, len(take)),
     }
+    # what the policy does instead, in the missed positions: outcomes (multi-label) and where
+    # the points went (share of the points it placed)
+    if missed:
+        for k in missed[0]["outcomes"]:
+            s[f"missed -> {k}"] = sum(r["outcomes"][k] for r in missed) / len(missed)
+        mp = sum(sum(r["points_by_class"].values()) for r in missed)
+        for k in missed[0]["points_by_class"]:
+            s[f"missed: points to {k}"] = sum(r["points_by_class"][k] for r in missed) / max(1, mp)
     # the diagnosis: in takeable positions, who takes it
     for cb in (True, False):
         for pt in (True, False):

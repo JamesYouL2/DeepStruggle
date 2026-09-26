@@ -73,3 +73,28 @@ def test_the_report_counts_what_the_boards_say() -> None:
         vals = np.arange(len(allocs), dtype=np.float64)
         rep2 = analyse(st, allocs, pol, values=vals, policy_value=-1.0)
         assert rep2.critic_rank_of_policy == len(allocs) and rep2.critic_best == len(allocs) - 1
+
+
+def test_contested_means_uncontrolled_and_reachable_by_both_sides() -> None:
+    from ai.eval.ops_block import access, controlled
+    stab, bg, names = country_table()
+    inf = np.zeros((2, N_COUNTRIES), dtype=np.int32)
+    wg = names.index("West Germany"); ea = names.index("East Germany"); fr = names.index("France")
+    inf[0, fr] = 3                       # US in France: West Germany is a neighbour
+    inf[1, ea] = 3                       # USSR in East Germany: West Germany is a neighbour
+    assert access(inf, 0)[wg] and access(inf, 1)[wg]
+    assert not controlled(inf, 0)[wg] and not controlled(inf, 1)[wg] and bg[wg]
+    inf2 = inf.copy(); inf2[1, ea] = 0
+    assert not access(inf2, 1)[wg]       # the USSR no longer reaches it
+
+
+def test_every_point_is_classified_once() -> None:
+    for st in _starts(3, max_ops=3, seed=7):
+        allocs = enumerate_block(st)
+        pol = play_block(st, lambda s: int(np.flatnonzero(
+            np.asarray(ts.Engine.get_flat_action_mask(s, False)))[-1]))
+        rep = analyse(st, allocs, pol)
+        # a country is in exactly one class unless it is both own-controlled and a battleground
+        # class -- the classes are disjoint by construction, so the counts sum to the points
+        assert sum(rep.points_by_class.values()) == rep.policy_points
+        assert set(rep.outcomes) >= {"takes a contested battleground", "no control change at all"}

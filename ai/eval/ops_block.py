@@ -5,12 +5,15 @@ node between them: no dice, no card draw, no opponent move. So every legal alloc
 enumerated from the position where the play starts, and each one scored. That turns short-horizon
 "no plan" failures that are easy to eyeball into rates:
 
-* **missed contested battleground:** some allocation takes control of a battleground the opponent
-  has influence in (or controls), and the policy's allocation takes none;
-* **uncontested instead:** in those same positions, the policy gains control of a country the
-  opponent has no influence in;
-* **reinforcing:** points the policy puts into countries it already controlled when the play
-  started;
+* **missed contested battleground:** some allocation takes control of a *contested* battleground
+  -- one neither side controls and both sides can reach (own influence there or in a neighbour, or
+  next to the own superpower) -- and the policy's allocation takes none. Taking *any* contested
+  battleground counts: choosing one over another is not judged here, because which one is right
+  is a longer-horizon question the rules cannot settle;
+* **what it does instead:** in those positions, where the policy's points went (the contested
+  battleground without reaching control, another battleground, its own countries, uncontrolled or
+  opponent-held non-battlegrounds) and what they achieved (control of something else, an opponent's
+  control broken, points left unspent);
 * and, against the network's own critic: the value it assigns to its own allocation against the
   best allocation by the same critic (`critic_regret`), and whether that critic-best allocation
   takes the contested battleground.
@@ -42,6 +45,32 @@ NODE_OFFSET = 116
 N_COUNTRIES = 84
 CONFIRM_DONE = 208
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+@lru_cache(maxsize=1)
+def adjacency() -> Tuple[np.ndarray, np.ndarray]:
+    """(adj[84, 84], superpower_adjacent[2, 84]) from rules/map.json; row 0 of the second is the
+    USA, row 1 the USSR."""
+    with open(os.path.join(_ROOT, "rules", "map.json"), encoding="utf-8") as f:
+        countries = sorted(json.load(f)["countries"], key=lambda c: int(c["id"]))
+    idx = {c["name"]: int(c["id"]) for c in countries}
+    adj = np.zeros((N_COUNTRIES, N_COUNTRIES), dtype=bool)
+    sp = np.zeros((2, N_COUNTRIES), dtype=bool)
+    for c in countries:
+        for nb in c.get("neighbours", []):
+            adj[int(c["id"]), idx[nb]] = adj[idx[nb], int(c["id"])] = True
+        side = {"USA": 0, "USSR": 1}.get(str(c.get("superpower_adjacent")))
+        if side is not None:
+            sp[side, int(c["id"])] = True
+    return adj, sp
+
+
+def access(inf: np.ndarray, side: int) -> np.ndarray:
+    """Boolean [84]: countries `side` can place influence in -- own influence there or in a
+    neighbour, or adjacent to its own superpower."""
+    adj, sp = adjacency()
+    own = inf[side] > 0
+    return own | (adj[:, own].any(axis=1)) | sp[side]
 
 
 @lru_cache(maxsize=1)
@@ -181,11 +210,15 @@ class BlockReport:
     n_allocations: int
     takeable_contested: bool
     policy_takes_contested: bool
-    policy_gains_uncontested: bool
+    policy_gains_uncontested: bool             # gains control of a non-contested country
     policy_points: int
     policy_reinforce_points: int
     policy_bg_gain: int
     max_bg_gain: int
+    #: where the policy's points went, by the country's state when the play started
+    points_by_class: Dict[str, int] = field(default_factory=dict)
+    #: what the policy's allocation achieved
+    outcomes: Dict[str, bool] = field(default_factory=dict)
     critic_policy: float = float("nan")
     critic_best: float = float("nan")
     critic_best_takes_contested: bool = False
@@ -202,8 +235,9 @@ def analyse(start: "ts.GameState", allocations: Sequence[Allocation], policy: Al
     side = 0 if int(c0.decision_player) == int(ts.Player.US) else 1
     inf0 = influence(start)
     ctl0 = controlled(inf0, side)
-    contested_bg = bg & (~ctl0) & (inf0[1 - side] > 0)
-    uncontested = (~ctl0) & (inf0[1 - side] == 0)
+    opp_ctl0 = controlled(inf0, 1 - side)
+    contested_bg = bg & (~ctl0) & (~opp_ctl0) & access(inf0, side) & access(inf0, 1 - side)
+    uncontested = (~ctl0) & (~contested_bg)
 
     def gains(inf: np.ndarray) -> np.ndarray:
         return controlled(inf, side) & (~ctl0)
@@ -222,6 +256,29 @@ def analyse(start: "ts.GameState", allocations: Sequence[Allocation], policy: Al
         policy_bg_gain=int((pg & bg).sum()),
         max_bg_gain=max(bg_gain) if bg_gain else 0,
     )
+    classes = {
+        "contested battleground": contested_bg,
+        "other uncontrolled battleground": bg & (~ctl0) & (~opp_ctl0) & (~contested_bg),
+        "opponent-controlled battleground": bg & opp_ctl0,
+        "own-controlled country": ctl0,
+        "uncontrolled non-battleground": (~bg) & (~ctl0) & (~opp_ctl0),
+        "opponent-controlled non-battleground": (~bg) & opp_ctl0,
+    }
+    rep.points_by_class = {k: int(placed[m].sum()) for k, m in classes.items()}
+    opp_end = controlled(policy.inf_end, 1 - side)
+    left = 0
+    if not ts.Engine.is_terminal(policy.end) and policy.actions and policy.actions[-1] == CONFIRM_DONE:
+        left = 1
+    rep.outcomes = {
+        "takes a contested battleground": rep.policy_takes_contested,
+        "partial on a contested battleground": bool((placed[contested_bg] > 0).any()
+                                                    and not rep.policy_takes_contested),
+        "takes another battleground": bool((pg & bg & ~contested_bg).any()),
+        "takes a non-battleground": bool((pg & ~bg).any()),
+        "breaks an opponent's control": bool((opp_ctl0 & ~opp_end).any()),
+        "stops with points unspent": bool(left),
+        "no control change at all": bool(not pg.any() and not (opp_ctl0 & ~opp_end).any()),
+    }
     if values is not None and len(values) == len(allocations) and policy_value is not None:
         best = int(np.argmax(values))
         rep.critic_best = float(values[best])
