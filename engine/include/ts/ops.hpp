@@ -30,6 +30,9 @@ class Operations {
 public:
     static uint8_t get_modified_ops(const GameState& state, uint8_t base_ops, Player player, Region target_region = Region::NONE_REGION) noexcept;
     static uint8_t get_effective_ops(const GameState& state, uint8_t card_id, Player player, Region target_region = Region::NONE_REGION) noexcept;
+    // The card's Ops for an action aimed at one country: the regional bonuses exactly as that
+    // country earns them (Asia for the China Card, Southeast Asia for Vietnam Revolts).
+    static uint8_t get_effective_ops_in(const GameState& state, uint8_t card_id, Player player, uint8_t country_id) noexcept;
 
     // The Ops budget to hand a player who is about to conduct Operations, whether from playing
     // a card for Ops or from an Event that grants them. Conditional region bonuses -- Vietnam

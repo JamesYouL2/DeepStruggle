@@ -222,21 +222,29 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
 1. **Never Allocate Heap Memory in State Types**: Always ensure `static_assert(std::is_trivially_copyable_v<GameState>);` passes.
 2. **Deterministic PRNG**: Use `Prng::roll_d6(state.rng_state)` or `Prng::random_index(state.rng_state, n)` whenever game state dice or shuffles are executed.
 3. **Pass / Confirm Handling**: Multi-step cards (e.g. *Suez Crisis*, *Muslim Revolution*, *Independent Reds*, *Special Relationship*) must support early pass (`action.primary_id == 0` or `CONFIRM_DONE`) when no eligible targets remain.
-4. **Passing an Action Round**: a player holding cards must play one -- `SELECT_CARD` offers the
+4. **Influence Ops are spent in full** (2026-09-26). `begin_op_mode` opens an influence play with
+   `allow_early_stop = 0`, and the mask offers `CONFIRM_DONE` in one
+   (`DecisionContext::is_ops_influence_play`) only once no country can take the next point -- a
+   legitimate end, so it raises no anomaly. Realignment keeps its stop; a coup never had one. The
+   merged view's "influence, place nothing" follows, since it is defined by that stop.
+   **The observation keeps the old value**: `ctx_slots::ALLOW_EARLY_STOP` reads 1 throughout an
+   influence play, as every checkpoint trained so far saw it, while the engine's own flag is
+   truthful. That compatibility holds until the observation is next revised.
+5. **Passing an Action Round**: a player holding cards must play one -- `SELECT_CARD` offers the
    pass (mask index 0, flat 211) only to a player with none. Two exceptions: the China Card is not
    part of the hand a player is required to spend, so a holder whose only playable card is the
    China Card is offered both it and the pass; and the eighth action round is granted by North Sea
    Oil or a Space Station to the one player who earned it and is theirs to decline, so the pass is
    always on offer there. A player with an empty hand never reaches the mask at all --
    `advance_after_action_round` passes them itself.
-5. **The China Card Can Be Raced**: it carries no Event of its own, so `SELECT_PLAY_MODE` offers
+6. **The China Card Can Be Raced**: it carries no Event of its own, so `SELECT_PLAY_MODE` offers
    Operations and, where the next box's Ops requirement is met, the Space Race. Racing with the
    best Ops card in the game is a poor play and not an illegal one -- at turn 10 AR4 of
    ts-replayer game 247 the US races to box 5 with it. Whatever it is played for it passes to the
    opponent face down and is never discarded, so `SpaceRace::attempt_space` sets
    `china_card_holder` and `china_card_playable` rather than touching `card_locations`. Its Asia
    bonus pays nothing here: the space track is not in a region.
-6. **Headline Cards Leave Hand On Commitment**: both headlines are played at once, face down, and
+7. **Headline Cards Leave Hand On Commitment**: both headlines are played at once, face down, and
    only then resolved in Ops order, so as soon as both are selected each card's location becomes
    `CardLocation::HEADLINE_COMMITTED` -- neither is in a hand while the other resolves, and a card that
    reads a hand (The Cambridge Five, Missile Envy, Grain Sales To Soviets, "Lone Gunman", CIA
@@ -244,24 +252,24 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
    find it there. `HEADLINE_COMMITTED` is a waypoint: the ordinary post-resolution cleanup overwrites it
    with the card's real destination. It is deliberately not the discard pile, which Star Wars and
    SALT Negotiations read.
-7. **Ops Spent In A Headline Discard Their Own Card**: `advance_after_ops` relocates
+8. **Ops Spent In A Headline Discard Their Own Card**: `advance_after_ops` relocates
    `pending_op_card` in the HEADLINE phase, because the headline machinery only clears the two
    headline cards themselves. A card played *through* one of them -- Grain Sales To Soviets draws
    from the opponent's hand and has its player play what it draws -- otherwise stays in the hand
    it was played from, in the running for Missile Envy and playable a second time.
-8. **Traps Judge A Card On Its Effective Ops**: Quagmire and Bear Trap take a discard of 2 Ops
+9. **Traps Judge A Card On Its Effective Ops**: Quagmire and Bear Trap take a discard of 2 Ops
    or more, and Containment, Brezhnev Doctrine and Red Scare/Purge all move that value, so
    eligibility is `Operations::get_effective_ops(state, card, p)` and not the printed value --
    with no target region, since a discard has none. The mask and the SELECT_CARD handler must
    agree: a card only one of them accepts either cannot be discarded or falls through to an
    ordinary play.
-9. **A Card In Play Is Not In Hand**: the engine leaves an Ops card in its owner's hand until
+10. **A Card In Play Is Not In Hand**: the engine leaves an Ops card in its owner's hand until
    the play finishes, and an opponent's card played for Operations fires its own event -- so an
    event that reads that hand can find the very card in front of it. Grain Sales To Soviets,
    Five Year Plan, Terrorism and Missile Envy all skip whatever `resolving_card` names, which is
    that card. Only the first two are reachable this way (the other two are neutral, and a
    neutral card played for Operations fires no event).
-10. **Cancelling Cuban Missile Crisis Is A Choice, At Two Moments**: the crisis can be paid off at
+11. **Cancelling Cuban Missile Crisis Is A Choice, At Two Moments**: the crisis can be paid off at
    any time; the engine offers it at the head of the payer's own action round, where declining is
    allowed and usual, and inside a coup they make, where it is not -- couping without paying
    loses the game. Both are a `POINT_NODE` with `resolving_card == CUBAN_MISSILE_CRISIS`: the US
@@ -269,7 +277,7 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
    the coup is already staged and the chance node opens on the far side of the answer;
    `ctx().pending_roll == RollType::COUP` is what tells the two apart. With one payer, or
    none, `execute_coup` settles it inline as before.
-11. **An Opponent's Card Owes Its Event In A Headline Too**: playing an opponent's card
+12. **An Opponent's Card Owes Its Event In A Headline Too**: playing an opponent's card
    carries the order in the resolution itself -- P17 retired `CHOOSE_TIMING_BRANCH`, so
    `Resolution::EVENT` on an opponent card means event-first and any `OPS_*` means
    ops-first. The `timing_branch` field survives as internal state, set from whichever was
@@ -278,7 +286,7 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
    the US headlines Grain Sales To Soviets, takes Willy Brandt and realigns Cuba twice with it,
    and Willy Brandt's Event must still follow. A headlined card is excluded: it is played as
    its Event, so Ops belonging to one are Ops its Event gave away and it has already fired.
-12. **Shuttle Diplomacy Removes A Battleground, And A Country With It**: in Asia or Middle East
+13. **Shuttle Diplomacy Removes A Battleground, And A Country With It**: in Asia or Middle East
    scoring it takes one USSR-controlled *battleground* off their totals, and the country count
    goes with it because that battleground is a country -- both matter, since Domination and
    Control are decided by who holds more countries. All of it is conditional on there being a
@@ -286,7 +294,7 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
    never by losing their one non-battleground country. At turn 10 AR1 of ts-replayer game 323
    they hold Lebanon and no battleground at all, and the region is worth 5 to the US, not 8.
    Final scoring is exempt.
-13. **Defectors Cancels The USSR Headline However It Reaches The Table**: the headlined case is
+14. **Defectors Cancels The USSR Headline However It Reaches The Table**: the headlined case is
    settled before either card resolves, by the check on `headline_us_card` in `step`. Any other
    route -- Five Year Plan discarding it out of the USSR hand, Grain Sales To Soviets handing
    it to the US, Star Wars taking it out of the discard pile -- fires it once the pair is
@@ -295,27 +303,27 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
    after it is too late. At turn 2's headline of ts-replayer game 313 the USSR headlines
    Vietnam Revolts against Five Year Plan, the higher Ops, and the Defectors it discards leaves
    Vietnam at [0][0].
-14. **Each Headline Card Resolves In Its Own Frame**: `advance_headline_step` gives the second
+15. **Each Headline Card Resolves In Its Own Frame**: `advance_headline_step` gives the second
    card a fresh `DecisionContext` rather than writing over the first's. What lasts belongs to
    the state -- the effect bits, the card Missile Envy forced on its recipient -- and what does
    not includes the visited bitmap that enforces "no more than one per country". At turn 7's
    headline of ts-replayer game 92 the US's Colonial Rear Guards places in Zaire, Angola,
    Zimbabwe and Nigeria, and the USSR's Decolonization was then offered none of them: three of
    its four Influence had nowhere to go.
-15. **A Trap Never Holds A Scoring Card Past The Turn**: Quagmire and Bear Trap take a card of
+16. **A Trap Never Holds A Scoring Card Past The Turn**: Quagmire and Bear Trap take a card of
    2 effective Ops or more each action round, and a scoring card is not one -- but it is
    playable out of a trap on either of two counts: nothing in hand is eligible, or the player
    holds as many scoring cards as they have action rounds left to play them in. The second is
    what stops a trap costing a player the game, since a scoring card held at a turn's end is a
    loss outright. At turn 4 AR7 of ts-replayer game 63 the USSR has spent two rounds discarding
    to Bear Trap and plays Central America Scoring on the last one.
-16. **A Headline Ends With The Stack Empty**: an event that grants Ops does not finish when it
+17. **A Headline Ends With The Stack Empty**: an event that grants Ops does not finish when it
    is triggered, so the frame it was fired in stays open until those Ops are spent. Missile Envy
    fires the card it takes inside a pushed frame; a card like ABM Treaty leaves it behind.
    `advance_after_ops` unwinds the stack on the HEADLINE path before advancing the headline,
    stopping at a frame that holds an unanswered `SELECT_OP_MODE` -- those are Ops still owed
    inside the headline, which is what the stack is for.
-17. **Always Update Tests When Changing Card Logic**: Add unit test cases in `engine/tests/` for any new card behaviors, interactions, or edge cases.
+18. **Always Update Tests When Changing Card Logic**: Add unit test cases in `engine/tests/` for any new card behaviors, interactions, or edge cases.
 
 ---
 

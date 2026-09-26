@@ -618,3 +618,93 @@ TEST(RegressionTest, HeldScoringOutranksTheForceAndDefersIt) {
     // Deferred, not discharged.
     ASSERT_EQ(static_cast<int>(s.forced_card_id), static_cast<int>(card_ids::MISSILE_ENVY));
 }
+
+// Influence Ops must all be spent (owner's ruling, 2026-09-26). An influence play used to open
+// with allow_early_stop = 1, so CONFIRM_DONE was offered at every point and a play could end
+// with Ops unspent. It is offered now only when the board has no legal target left, which is a
+// legitimate end and not an anomaly. Realignment keeps its stop.
+namespace {
+void open_ops_play(GameState& s, Player p, uint8_t ops, OpMode mode) {
+    s.current_phase = Phase::ACTION_ROUND;
+    s.phasing_player = p;
+    s.ctx() = DecisionContext{};
+    s.ctx().decision_player = p;
+    s.ctx().decision_type = DecisionType::SELECT_OP_MODE;
+    s.ctx().pending_op_card = card_ids::DUCK_AND_COVER;
+    s.ctx().pending_ops_value = ops;
+    ASSERT_TRUE(StateMachine::step(s, MicroAction{DecisionType::SELECT_OP_MODE,
+                                                  static_cast<uint8_t>(mode), 0, 0}));
+    ASSERT_EQ(static_cast<int>(s.ctx().decision_type), static_cast<int>(DecisionType::POINT_NODE));
+}
+
+int first_node(const uint8_t* mask) {
+    for (int i = 0; i < 84; ++i) if (mask[flat_slots::NODE + i]) return i;
+    return -1;
+}
+} // namespace
+
+TEST(InfluenceOpsMustBeSpent, NoStopWhileAPlacementIsLegal) {
+    GameState s{};
+    Engine::init_game(s, 7);
+    open_ops_play(s, Player::US, 3, OpMode::INFLUENCE);
+    ASSERT_TRUE(s.ctx().is_ops_influence_play());
+
+    uint8_t mask[FLAT_ACTION_SPACE_SIZE];
+    for (int point = 0; point < 3 && s.ctx().decision_type == DecisionType::POINT_NODE; ++point) {
+        ActionMask::generate_flat_mask_212(s, mask);
+        const int cid = first_node(mask);
+        ASSERT_TRUE(cid >= 0);
+        ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 0);
+
+        // The engine's flag is truthful; the observation keeps the value every checkpoint so
+        // far was trained on.
+        ASSERT_EQ(s.ctx().allow_early_stop, 0);
+        ObservationBufferV23 obs{};
+        Observation::extract(s, Player::US, &obs);
+        ASSERT_TRUE(obs.global_features[ctx_slots::ALLOW_EARLY_STOP] == 1.0f);
+
+        ASSERT_TRUE(StateMachine::step(s, MicroAction{DecisionType::POINT_NODE,
+                                                      static_cast<uint8_t>(cid), 0, 0}));
+    }
+}
+
+TEST(InfluenceOpsMustBeSpent, StopsWhenNothingIsPlaceable) {
+    GameState s{};
+    Engine::init_game(s, 7);
+    // Every country USSR-controlled by a margin one US point cannot break: each point costs 2.
+    // Influence cannot be chosen with nothing affordable, so the case arises mid-play -- three
+    // Ops, one point bought for two, and the last Op has nowhere to go.
+    for (uint8_t i = 0; i < 84; ++i) {
+        s.countries[i].us_influence = 0;
+        s.countries[i].ussr_influence = 6;
+    }
+    open_ops_play(s, Player::US, 3, OpMode::INFLUENCE);
+
+    uint8_t mask[FLAT_ACTION_SPACE_SIZE];
+    ActionMask::generate_flat_mask_212(s, mask);
+    const int cid = first_node(mask);
+    ASSERT_TRUE(cid >= 0);
+    ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 0);
+    ASSERT_TRUE(StateMachine::step(s, MicroAction{DecisionType::POINT_NODE,
+                                                  static_cast<uint8_t>(cid), 0, 0}));
+    ASSERT_EQ(static_cast<int>(s.ctx().remaining_steps), 1);
+    ASSERT_TRUE(s.ctx().is_ops_influence_play());
+
+    ActionMask::generate_flat_mask_212(s, mask);
+    ASSERT_EQ(first_node(mask), -1);
+    ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 1);
+
+    MicroAction done{DecisionType::POINT_NODE, 255, 0, action_flags::CONFIRM_DONE};
+    ASSERT_TRUE(StateMachine::step(s, done));
+    ASSERT_TRUE(!(s.ctx().decision_type == DecisionType::POINT_NODE && s.ctx().is_ops_influence_play()));
+}
+
+TEST(InfluenceOpsMustBeSpent, RealignmentKeepsItsStop) {
+    GameState s{};
+    Engine::init_game(s, 7);
+    open_ops_play(s, Player::US, 3, OpMode::REALIGN);
+    ASSERT_TRUE(!s.ctx().is_ops_influence_play());
+    uint8_t mask[FLAT_ACTION_SPACE_SIZE];
+    ActionMask::generate_flat_mask_212(s, mask);
+    ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 1);
+}

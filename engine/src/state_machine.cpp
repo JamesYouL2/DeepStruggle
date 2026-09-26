@@ -724,10 +724,12 @@ static bool commit_card_to_ops(GameState& state, Player p, uint8_t card) noexcep
 
 // Open the POINT_NODE that spends the Ops. `pending_ops_value` must already be set.
 //
-// Placement and realignment are repeatable and keep their stop; a coup is a single action and
-// does not. That asymmetry is why the merged mask gates coup on a target existing and offers the
-// other two unconditionally -- choosing realignment with nothing to hit stops immediately, while
-// a coup with nothing to hit would have no way out.
+// Realignment is repeatable and keeps its stop; a coup is a single action and does not. Influence
+// has no stop either: every point must be placed, and CONFIRM_DONE is offered only once the board
+// has no legal target left (DecisionContext::is_ops_influence_play, read by the mask). The merged
+// mask gates coup on a target existing and offers the other two unconditionally -- choosing
+// realignment or influence with nothing to hit ends at once, while a coup with nothing to hit
+// would have no way out.
 static bool begin_op_mode(GameState& state, Player p, OpMode op_mode) noexcept {
     const uint8_t ops = state.ctx().pending_ops_value;
     state.ctx().op_mode = op_mode;
@@ -745,7 +747,7 @@ static bool begin_op_mode(GameState& state, Player p, OpMode op_mode) noexcept {
     }
     state.ctx().decision_type = DecisionType::POINT_NODE;
     state.ctx().remaining_steps = ops;
-    state.ctx().allow_early_stop = 1;
+    state.ctx().allow_early_stop = (op_mode == OpMode::INFLUENCE) ? 0 : 1;
     return true;
 }
 
@@ -1304,21 +1306,12 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
                 if (state.ctx().op_mode == OpMode::COUP) {
                     uint8_t coup_ops = state.ctx().pending_ops_value;
                     uint8_t op_card = state.ctx().pending_op_card;
-                    const auto& c_info = MapData::get_country(cid);
                     const bool china_card = (op_card == card_ids::THE_CHINA_CARD);
                     const bool vietnam_bonus =
                         (p == Player::USSR && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE));
 
                     if (china_card || vietnam_bonus) {
-                        uint8_t plain = Operations::get_effective_ops(
-                            state, op_card, p, Region::NONE_REGION);
-                        coup_ops = plain;
-                        if (china_card && c_info.region == Region::ASIA) {
-                            coup_ops += 1;
-                        }
-                        if (vietnam_bonus && c_info.in_southeast_asia) {
-                            coup_ops += 1;
-                        }
+                        coup_ops = Operations::get_effective_ops_in(state, op_card, p, cid);
                     }
                     state.ctx().pending_roll = RollType::COUP;
                     state.ctx().roll_target = cid;

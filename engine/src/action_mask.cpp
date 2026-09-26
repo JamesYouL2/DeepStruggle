@@ -629,6 +629,10 @@ void ActionMask::generate_flat_mask_212(const GameState& state, uint8_t* mask_21
             }
             if (ctx.allow_early_stop) {
                 mask_212[flat_slots::CONFIRM_DONE] = 1;
+            } else if (!any_target && ctx.is_ops_influence_play()) {
+                // Influence Ops must all be spent, and here the board has nowhere left to
+                // spend them: the play ends with the rest unspent, which is correct.
+                mask_212[flat_slots::CONFIRM_DONE] = 1;
             } else if (!any_target) {
                 // A choice the board cannot supply a single legal target for. The mask would
                 // otherwise be empty and the game would sit on this decision until something

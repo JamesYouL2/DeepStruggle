@@ -43,7 +43,9 @@ def test_a_missile_envy_card_may_not_go_to_the_space_race() -> None:
 def test_the_entry_converts_and_teaches_nothing() -> None:
     conv = convert_game(_game(59))
     assert conv.failure is None, f"replay 59 stopped at {conv.failure}"
-    assert conv.invalid_decisions == 1, "the one decision inside it, emitted as nothing"
+    # The op mode and the two placements it leads to: Influence Ops must be spent in full
+    # (2026-09-26), so the play can no longer be answered with the mode and an immediate stop.
+    assert conv.invalid_decisions == 3, "the decisions inside it, emitted as nothing"
     assert conv.entries_converted == 122
 
 
@@ -73,3 +75,16 @@ def test_no_other_game_carries_an_invalid_play() -> None:
     for replay_id, entries in _INVALID_PLAYS.items():
         for key in entries:
             assert key not in _LOG_MISCOUNTED.get(replay_id, {})
+
+
+
+def test_purge_and_vietnam_revolts_cancel_and_the_play_is_valid() -> None:
+    """Replay 219 turn 2 AR6: Truman Doctrine for Influence under both Red Scare/Purge and
+    Vietnam Revolts is 1 - 1 + 1 = 1 Op, and the log's single point in Burma spends it. It
+    looked like a forgone bonus point while Purge was floored at 1 before Vietnam Revolts added
+    its +1, which made the play worth 2. Not an invalid play: nothing in it is answered."""
+    assert 219 not in _INVALID_PLAYS
+    conv = convert_game(_game(219))
+    assert conv.failure is None, f"replay 219 stopped at {conv.failure}"
+    assert conv.invalid_decisions == 0
+    assert conv.entries_converted == conv.entries_total

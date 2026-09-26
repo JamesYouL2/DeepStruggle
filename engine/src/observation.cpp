@@ -353,7 +353,12 @@ void Observation::extract(const GameState& state, Player perspective,
     out_buf->global_features[ctx_slots::REMAINING_STEPS]    = static_cast<float>(ctx.remaining_steps) / 7.0f;
     out_buf->global_features[ctx_slots::PENDING_OPS_VALUE]  = static_cast<float>(ctx.pending_ops_value) / 5.0f;
     out_buf->global_features[ctx_slots::MAX_PER_COUNTRY]    = static_cast<float>(ctx.max_per_country) / 5.0f;
-    out_buf->global_features[ctx_slots::ALLOW_EARLY_STOP]   = ctx.allow_early_stop ? 1.0f : 0.0f;
+    // Compatibility, until the observation is next revised: an influence Ops play reads 1 here,
+    // as it did when it could stop with points unspent, although CONFIRM_DONE is no longer
+    // offered in it. Every checkpoint so far saw 1 there; the mask is what tells a model the stop
+    // is gone. The engine's own flag is truthful -- it is only this slot that keeps the old value.
+    out_buf->global_features[ctx_slots::ALLOW_EARLY_STOP]   =
+        (ctx.allow_early_stop || ctx.is_ops_influence_play()) ? 1.0f : 0.0f;
     // 255 means "no branch chosen", which is neither of these.
     out_buf->global_features[ctx_slots::TIMING_OPS_FIRST]   = (ctx.timing_branch == 0) ? 1.0f : 0.0f;
     out_buf->global_features[ctx_slots::TIMING_EVENT_FIRST] = (ctx.timing_branch == 1) ? 1.0f : 0.0f;

@@ -198,6 +198,19 @@ When a card is played for Operations, the phasing player must allocate **all** O
                                                 degrades DEFCON
 ```
 
+**Ops modifiers.** A card's Operations value is its printed value adjusted by every modifier in
+play, each with its own limit:
+
+| modifier | change | limit |
+|:---|:---|:---|
+| Containment (US) / Brezhnev Doctrine (USSR) | $+1$ | at most $4$, or $5$ for the China Card in Asia (its own Asia bonus counted inside that 5) |
+| Red Scare/Purge | $-1$ | no less than $1$ -- a floor on the final value |
+| The China Card, all Ops in Asia | $+1$ | -- |
+| Vietnam Revolts (USSR), all Ops in Southeast Asia | $+1$ | beyond either limit: a 4 becomes 5, the China Card 6 |
+
+Containment/Brezhnev and Red Scare/Purge together net to the printed value. Red Scare/Purge and
+Vietnam Revolts cancel on a 1-Op card: $1 - 1 + 1 = 1$.
+
 ### 5.1 Mode 0: Influence Placement
 - **Cost**:
   - $1\text{ Op}$ per influence marker in an Uncontrolled or Friendly-Controlled country.
@@ -207,6 +220,10 @@ When a card is played for Operations, the phasing player must allocate **all** O
   1. A country where the player already has influence;
   2. A country adjacent to a friendly influence marker that was present at the **start** of the Action Round;
   3. A country adjacent to the player's superpower home space.
+- **Spending**: every Op must be placed. The play ends early only when no country can take the
+  next point -- one Op left and every reachable country enemy-controlled, or the China Card's
+  Asian point with nothing reachable in Asia. Influence cannot be chosen at all when no country
+  can take the first point.
 
 ### 5.2 Mode 1: Realignment Rolls
 - **Cost**: $1\text{ Op}$ per realignment attempt. Target may be targeted multiple times in the same AR.
