@@ -1,6 +1,6 @@
 # P24 — an AlphaStar-style league, without a supervised starting point
 
-**Status:** proposed, not started. Gated on the slow-π_ref replicate. [P25](../archive/E4_ladder/plans/P25_collapse_robustness.md) closed without a lever: collapse on the fixed pool is a recoverable delay. P23 (E4.1) is parked. **New constraint (2026-09-24):** a `--warmup-checkpoint` start (fresh optimizer, π_ref and pool) dissolves the US seat within 5M, even in the E4 view ([`../log/P23_E4_1_ab.md`](../log/P23_E4_1_ab.md)). Resetting an exploiter to an early snapshot is exactly such a start, so find out which reset does it before building the league.
+**Status:** **stage 1 running (2026-09-26)**: a two-learner league (main agent + one main exploiter, the two-process limit) from the plateau, E5-02-43/44 + E5-03-43/44-g, against E4-61's own 410→610M legs ([`../runs.md`](../runs.md), *E5*). Code: `--league-dirs` / `--league-pool-size` / `--league-frac` (`ai/training/opponent_pool.py` league group) and `tools/scripts/league.py`. Why now: the pool already spans a run's whole history (spacing eviction), so its memory is not why training plateaus near 400M; a same-lineage pool that cannot punish a shared weakness is what is left. Was: proposed, gated on the slow-π_ref replicate (gate waived by the owner).
 **Needs approval:** none of it touches `engine/` or the observation. It needs one trainer change
 (a pool that grows from other runs' directories) and a driver built on `tools/train.py`.
 
