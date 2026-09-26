@@ -5,10 +5,19 @@ one change: `--rollout-temps 0.8 1.2 0.7 1.1`. `launch_flags.py --diff` against 
 flag and `--train-steps`. The default bands, 0.15 / 0.50 / 0.10 / 0.35, sharpen every environment
 while PPO records temperature-1 log-probabilities. The new bands sample at roughly the policy.
 
-**Prior:** on E3 the same change won 46.0% to 17.8% against an anchor, and the ending mix explained
-it: sharpening makes one systematic blunder universal
+**Prior, stated correctly.** E3 ran the same change as a complete two-by-two: two seeds, each
+treatment against its own seed's control, 80M from scratch
 ([`../archive/E3_ladder/log/P15_rollout_temperature.md`](../archive/E3_ladder/log/P15_rollout_temperature.md)).
-The change had never been tested on E4.
+* **Both seeds were faster early**, significant from 40M to 60M.
+* **At 80M only seed A held** (46.0% against 17.8%). Seed B's treatment plateaued at about 23% while its
+  control caught up (+3.0 pp, not significant).
+* **The verdict:** it *accelerates*, and whether it raises the ceiling is seed-dependent. The
+  recommendation to change the default was withdrawn, pending seeds three and four, which never ran.
+* **The mechanism was withdrawn too.** The ending-mix explanation (fewer DEFCON-1 endings) did not
+  survive the second control seed.
+
+An earlier version of this entry quoted only seed A's 46.0% against 17.8% as the E3 result. That
+overstated it. The change had never been tested on E4.
 
 **Controls:** E4-61-SEED's own 410→610M legs, the same comparison as the P24 league. The known
 confounds are the same, each small and measured:
@@ -53,7 +62,18 @@ its log-probabilities agree.
 
 **This is the largest single gain on the E4/E5 ladder since the architecture work, and it breaks
 the ~400M plateau** that time alone had not moved (the treadmill). Two seeds, both large, both far
-outside noise, and in the same direction as E3's result on another architecture.
+outside noise.
+
+**It bears directly on E3's open question.** E3 left open whether the change raises the ceiling or
+only speeds up early training. E5-06 starts at a ceiling, the plateau, and holds its gain for 200M
+steps on both seeds. That is the persistence E3's seed B lacked, though in a different regime (a
+late plateau, not training from scratch), with two seeds again.
+
+Two checks are running:
+* **E5-07**, the same resume with the default temperature, tests whether the resume carries any
+  of the gain;
+* **E5-08**, the change from scratch to 240M, repeats E3's setup at three times its budget, which
+  is where E3's seed B lost its gain.
 
 **Proposed:** make `--rollout-temps 0.8 1.2 0.7 1.1` the default. That is the owner's call, since it
 changes the recipe for every future arm.
