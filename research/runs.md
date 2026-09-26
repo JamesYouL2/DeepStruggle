@@ -14,6 +14,17 @@ space, Grain Sales decision stream and Missile Envy card handling all differ. No
 comparable, so the registry restarts here. The old one, with its findings distilled, is
 [`archive/E3_ladder/`](archive/E3_ladder/README.md).
 
+## E5 — influence Ops spent in full
+
+Engine baseline: `b19b958` (influence Ops spent in full; per-modifier Ops limits) and `8d05d94`
+(no stop leaking into an owed Event). Observation v2.3 unchanged. What changed and why the letter
+bumped: [`findings/engine/engine_revisions.md`](findings/engine/engine_revisions.md), *The E4 → E5
+boundary*. Attempts restart at 01.
+
+| arm | what it varied | budget | directory | result |
+|:---|:---|:---|:---|:---|
+| **E5-01-43, E5-01-44** | The first E5 arm: E4-61-43/44's configuration exactly (E4-08 recipe, M2d, λ 0.98, pool 0.3/12, TF32, centred heads, `--block-lambda off`) on the E5 engine, from scratch, as a pair. `launch_flags.py --diff` against E4-61 shows only `--train-steps`. Control: E4-61-43/44 at 240M. Does the rules change move training at all? | 0 → 240M | `E5-01-4{3,4}_20260926_*` | *running* |
+
 ## E4 — the post-P17 engine
 
 Engine baseline: Grain Sales flattened to one decision (`7057251`), Missile Envy starred-card

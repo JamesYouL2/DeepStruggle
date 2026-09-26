@@ -10,7 +10,7 @@ revision are [`../../runs.md`](../../runs.md). This file is the other half: not 
 means* but *what the engine did*, because an Elo number is a statement about a game and three
 different games have been played here.
 
-**The letter is coarse.** It has three values and the project has had several dozen `fix(engine)`
+**The letter is coarse.** It has five values and the project has had several dozen `fix(engine)`
 commits. A letter bumps when someone judged that the decision stream moved; the commits inside a
 letter are the ones judged not to move it, and in two cases that judgement was measured rather
 than assumed ([below](#changes-held-inside-e3-by-measurement)).
@@ -22,6 +22,8 @@ than assumed ([below](#changes-held-inside-e3-by-measurement)).
 | **E1** | everything before `9fa5b05` | to 2026-09-09 | a starred card spent for Operations was **deleted from the game**. Arms A–G and everything older. Not runnable today: their observation layouts are gone and `check_checkpoint_layout` refuses their checkpoints by width |
 | **E2** | `9fa5b05`, `341088e` (+ the 09-10 batch below) | 2026-09-10 | the starred-card fix, plus observation v2.3. Arms H, H2, I |
 | **E3** | `76e7385`, `6381cf4` | 2026-09-11 | the Aldrich Ames discard and the Star Wars pick made mandatory. Everything from P1 onward |
+| **E4** | `7057251`, `0aa3dc0` (P17) | 2026-09-19 | Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space repacked 212 → 220. The registry restarted here ([`../../runs.md`](../../runs.md)) |
+| **E5** | `b19b958`, `8d05d94` | 2026-09-26 | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops play's stop ([below](#the-e4--e5-boundary)) |
 
 ## E1 was not one engine either
 
@@ -95,6 +97,26 @@ rare cards — but it runs against the reference, so it flatters the E3 arms sli
 **Neither statement has a measurement behind it.** Nothing in the record puts a number on the two
 cards' frequency or on what the handicap is worth in Elo, and `E2-02-21-480M` is nonetheless the
 project's standing rating anchor and the reference every P1 arm was rated against.
+
+## The E4 → E5 boundary
+
+Three rules fixes, 2026-09-26, all in [`../../log/P27_ops_block_stage1.md`](../../log/P27_ops_block_stage1.md):
+
+* **Influence Ops are spent in full** (`b19b958`). An influence play offered CONFIRM_DONE at every
+  point; it now does only when no country can take the next point. Realignment keeps its stop.
+* **Each Ops modifier carries its own limit** (`b19b958`). Containment/Brezhnev to at most 4 (5
+  for the China Card in Asia), Red Scare/Purge to no less than 1 on the final value, Vietnam Revolts
+  beyond both. Only a 1-Op card under both Purge and Vietnam Revolts changes value (2 → 1).
+* **An owed Event does not inherit the Ops play's stop** (`8d05d94`). After a realignment, Warsaw
+  Pact Formed's mandatory choice could be declined.
+
+The letter bumps because the legal mask changes: in random play the stop disappears from about a
+sixth of decisions. What an E4 checkpoint *does* barely changes. E4-61-44@720M stopped an influence
+play early 0.06 times per game at temperature 0.1, and the observation keeps the value E4
+checkpoints were trained on (`ALLOW_EARLY_STOP` reads 1 throughout an influence play). An E4 checkpoint
+evaluated on E5 is therefore a small, measured handicap rather than an unknown one. **E5-01**
+retrains E4-61's configuration on E5 to test whether training notices at all
+([`../../runs.md`](../../runs.md), *E5*).
 
 ## Changes held inside E3 by measurement
 
