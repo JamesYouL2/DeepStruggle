@@ -319,12 +319,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P4 arm B: inject only the corpus's setup placements (phase SETUP), policy "
                              "loss only -- a human anchor for the opening and nothing else.")
     parser.add_argument("--block-lambda", choices=["off", "setup", "setup-side", "same-side"],
-                        default="off",
+                        default=None,
                         help="P4: GAE lambda = 1 inside decision blocks. setup: every consecutive "
                              "SETUP-phase pair, across both sides (= --setup-block-lambda, arm A); "
                              "setup-side: the same, cut where the mover changes (A1); same-side: any "
                              "consecutive pair of one game with the same mover and the engine's RNG "
-                             "unchanged -- no die roll, card draw or hidden chance between (A2).")
+                             "unchanged -- no die roll, card draw or hidden chance between (A2). "
+                             "Default: setup-side (adopted 2026-09-26, research/log/P4_setup_arms.md), "
+                             "or setup with --setup-block-lambda; off reproduces runs before it.")
     parser.add_argument("--setup-block-lambda", action="store_true", default=False,
                         help="P4 arm A: GAE lambda = 1 between consecutive setup placements, so the "
                              "setup's credit telescopes to the turn-1 headline position instead of "
@@ -668,7 +670,8 @@ def main():
             inject_weight=args.inject_weight,
             inject_setup_only=args.inject_setup_only,
             setup_block_lambda=args.setup_block_lambda,
-            block_lambda=args.block_lambda,
+            block_lambda=(args.block_lambda if args.block_lambda is not None
+                          else ("setup" if args.setup_block_lambda else "setup-side")),
             decisiveness_turns=args.decisiveness_turns,
             max_snapshot_opponents=args.eval_max_snapshot_opponents,
             opponent_checkpoints=args.opponent_checkpoints,

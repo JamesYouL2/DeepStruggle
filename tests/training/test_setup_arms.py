@@ -188,3 +188,12 @@ def test_graphed_equals_eager_for_same_side() -> None:
             b.compute_gae(last.last_v_win.cuda(), last.last_v_vp.cuda(), last.last_dones.cuda(),
                           last.last_players.cuda())
         assert torch.equal(eager.advantages, graphed.advantages)
+
+
+def test_setup_side_is_the_default_and_older_modes_stay_reachable() -> None:
+    from ai.training.train import build_parser
+    p = build_parser()
+    a = p.parse_args([])
+    assert a.block_lambda is None                       # resolved to setup-side in main()
+    assert p.parse_args(["--block-lambda", "off"]).block_lambda == "off"
+    assert p.parse_args(["--setup-block-lambda"]).setup_block_lambda is True

@@ -85,6 +85,8 @@ UNCHECKED_BY_DESIGN = frozenset({
 _BEFORE_RECORDED = {
     "tf32": lambda meta: False,
     "pool_every_steps": lambda meta: meta.get("snapshot_every_steps"),
+    # before --block-lambda existed every run used the ordinary lambda everywhere
+    "block_lambda": lambda meta: "setup" if meta.get("setup_block_lambda") else "off",
 }
 
 

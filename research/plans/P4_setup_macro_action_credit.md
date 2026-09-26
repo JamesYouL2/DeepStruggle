@@ -1,6 +1,6 @@
 # P4 — Setup: credit through the placement block, and a human anchor as the contrast
 
-**Status:** screen done (2026-09-25): [`../log/P4_setup_arms.md`](../log/P4_setup_arms.md). Arm A fixes Poland, never West Germany; arm B holds the human opening on 1 of 2 seeds. Neither changes strength measurably (+27 / +18). Was: running. Rewritten from the E3-era version, which was queued and never
+**Status:** **A1 adopted as the default (2026-09-26)**: `--block-lambda setup-side` (`--block-lambda off` reproduces earlier runs). Screen done (2026-09-25): [`../log/P4_setup_arms.md`](../log/P4_setup_arms.md). Arm A fixes Poland, never West Germany; arm B holds the human opening on 1 of 2 seeds. Neither changes strength measurably (+27 / +18). Was: running. Rewritten from the E3-era version, which was queued and never
 run, because E4 has since measured what the setup follows. The runs are listed under *Runs*.
 **Needs approval:** none. `ai/training/rollout_buffer.py` and the human-data injector only; no
 engine or observation change.

@@ -49,6 +49,12 @@ moved from 5M to 10M on 2026-09-24, because at 5M evaluation cost ~17% of a run'
 
 TF32 matmuls are on by default since 2026-09-24 (P26): +15% steps/s on M2d, solo or paired, and no strength cost in a 3-seed A/B (`research/log/P26_quick_screen.md`). `--no-tf32` gives fp32, which is what every run before E4-57 used. The setting is recorded in `metadata.json` as `tf32`.
 
+`--block-lambda {off,setup,setup-side,same-side}` sets where GAE uses λ = 1 inside a decision
+block (P4, `research/log/P4_setup_arms.md`). The **default since 2026-09-26 is `setup-side`**: λ = 1
+between consecutive setup placements by the same player. It fixes the USSR's Poland and was +39
+against the control. `same-side` chains every same-mover step with no chance node between them,
+and it was −289. `--block-lambda off` reproduces runs before the default.
+
 `--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a
 shift common to every country logit is invisible to the policy and gets no gradient. Left free,
