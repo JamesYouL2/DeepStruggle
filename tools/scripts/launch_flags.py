@@ -114,6 +114,10 @@ def recorded(run_dir: str) -> dict:
             out.setdefault("ladder_head_center", bool(v.get("head_center", False)))
         elif k in dflt:
             out[k] = v
+    # Before 2026-09-27 a run that took the default rollout bands recorded None, and the default
+    # was the sharpening bands; since then the bands actually used are always recorded.
+    if "rollout_temps" in meta and meta["rollout_temps"] is None:
+        out["rollout_temps"] = [0.15, 0.50, 0.10, 0.35]
     return out
 
 

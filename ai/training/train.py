@@ -570,14 +570,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-node-filter", type=str, default="card_playmode",
                         choices=["card_playmode", "all"],
                         help="Which decisions are eligible.")
-    parser.add_argument("--rollout-temps", type=float, nargs=4, default=None,
+    parser.add_argument("--rollout-temps", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0],
                         metavar=("T1", "T2", "T3", "T4"),
-                        help="The four per-environment rollout sampling temperatures. Default is "
-                             "0.15 0.50 0.10 0.35 -- every band BELOW 1.0, so sampling is sharper "
-                             "than the policy itself despite the schedule being described as "
-                             "exploration. Pass values around 1.0 to sample from the policy as "
-                             "trained, which is the textbook PPO choice and has never been "
-                             "measured here.")
+                        help="The four per-environment rollout sampling temperatures. Default "
+                             "1.0 1.0 1.0 1.0: sample at the policy, so PPO's temperature-1 "
+                             "log-probabilities are the ones the actions came from (adopted "
+                             "2026-09-27, research/log/E5_06_rollout_temperature.md). Runs before "
+                             "then used 0.15 0.50 0.10 0.35, every band sharper than the policy; "
+                             "pass those to reproduce one.")
     parser.add_argument("--setup-explore-frac", type=float, default=0.0,
                         help="Fraction of environments whose OPENING placement is replaced by a "
                              "uniform legal choice, and trained on. Temperature cannot reach these "

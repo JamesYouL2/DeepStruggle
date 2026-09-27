@@ -247,3 +247,8 @@ also holds E4-61 (the default) over the same span, the plateau arms at 610M, and
 * **The best models are E5-11-43@560M and E5-11-44@640M.**
 
 **Proposed:** make flat 1.0 the default for `--rollout-temps`. That is the owner's decision.
+
+**Adopted (owner, 2026-09-27).** `--rollout-temps` now defaults to `1.0 1.0 1.0 1.0`
+(`nash_pg.DEFAULT_ROLLOUT_TEMPS`). The old bands are `nash_pg.LEGACY_ROLLOUT_TEMPS`. A run's metadata
+now always records the bands it used, and `launch_flags.py` reads an old record of None as the
+legacy bands.

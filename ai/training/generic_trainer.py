@@ -28,7 +28,7 @@ from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward
 from bindings.ts_env import OBS_LAYOUT_NAME, TsVectorizedEnv
 from ai.training.rollout_buffer import RolloutBuffer
-from ai.training.nash_pg import NashPGTrainer
+from ai.training.nash_pg import DEFAULT_ROLLOUT_TEMPS, NashPGTrainer
 from ai.training.start_pool import DEFAULT_TURN_MIX, StartPositionPool
 from ai.eval.agreement import evaluate_dataset
 from ai.training.human_corpus_dataset import HumanCorpusDataset
@@ -1693,7 +1693,9 @@ def train_pipeline(
         "opponent_pool_size": int(opponent_pool_size),
         "reset_opponent_pool": bool(reset_opponent_pool),
         "setup_explore_frac": float(setup_explore_frac),
-        "rollout_temps": list(rollout_temps) if rollout_temps else None,
+        # Always the bands actually used: a record of None means a run from before the default
+        # changed, and so the legacy bands (see nash_pg.LEGACY_ROLLOUT_TEMPS).
+        "rollout_temps": list(rollout_temps) if rollout_temps else list(DEFAULT_ROLLOUT_TEMPS),
         "opponent_checkpoints": list(opponent_checkpoints or []),
         # Recorded because they change what the arm IS, and an unrecorded flag is how a
         # two-factor experiment stays invisible -- snapshot_every_steps was missing for

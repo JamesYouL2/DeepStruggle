@@ -117,6 +117,14 @@ running any of them.
 
 - **Engine:** post-P17. One observation layout; old-layout checkpoints are refused, not misread.
   The observation is not to be changed without asking (`CLAUDE.md`).
+- **Recipe defaults changed since E4-08:**
+  * TF32 and centred per-entity heads (P26, 2026-09-25);
+  * `--block-lambda setup-side` (P4 A1, 2026-09-26);
+  * **`--rollout-temps 1.0 1.0 1.0 1.0`** (2026-09-27, [`../log/E5_06_rollout_temperature.md`](../log/E5_06_rollout_temperature.md)):
+    sampling at the policy plateaus +135/+170 above the old sharpening bands.
+
+  Runs before a change are reproduced with the old flag. `launch_flags.py` reads a missing record as
+  the old value.
 - **Architecture / matched control:** **M2d** — `--arch ladder --ladder-input-mode grouped
   --ladder-aggregation flatten --drop-static --per-entity-heads 64 --ladder-head-entities
   country`, with `--ladder-head-context` and `--ladder-head-static` both on. Its representative is

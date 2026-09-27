@@ -120,6 +120,17 @@ def wolf_seat_weights(sp_ussr: float, power: float = 1.0, dead_zone: float = 0.0
     return 2.0 * a / (a + b), 2.0 * b / (a + b)
 
 
+#: Rollout temperature bands. The default samples at the policy itself (every band 1.0), so the
+#: log-probabilities PPO records at temperature 1 are the ones the actions were drawn from.
+#: Adopted 2026-09-27 (research/log/E5_06_rollout_temperature.md): from scratch it plateaus
+#: +135/+170 above the old bands and 69-70% head to head, on two seeds.
+DEFAULT_ROLLOUT_TEMPS: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+#: The bands every run used before then: all below 1.0, so every environment sampled sharper
+#: than the policy while PPO recorded temperature-1 log-probabilities. A run whose metadata
+#: records no `rollout_temps` used these.
+LEGACY_ROLLOUT_TEMPS: Tuple[float, float, float, float] = (0.15, 0.50, 0.10, 0.35)
+
+
 def opponent_actions(logits: torch.Tensor, actions: torch.Tensor, opp_rows: torch.Tensor,
                      temperature: float) -> torch.Tensor:
     """P24: re-choose the frozen opponent's actions at its own temperature.
@@ -509,12 +520,10 @@ class BaseNashPGTrainer:
         #: state so a resumed run does not relearn it.
         self.wolf_sp_ussr = 0.5
 
-        # Rollout temperature bands. The default four are all BELOW 1.0, so sampling is
-        # softmax(logits / tau) with tau < 1 -- sharper than the policy itself, in every band.
-        # The comment this replaced called that "exploration"; relative to the policy's own
-        # distribution it is the opposite, and nobody has measured whether sharpening rollouts
-        # helps. `rollout_temps` makes the band an argument so that question can be asked.
-        _bands = list(rollout_temps) if rollout_temps else [0.15, 0.50, 0.10, 0.35]
+        # Rollout temperature bands, one per quarter of the environments. The default samples at
+        # the policy (DEFAULT_ROLLOUT_TEMPS); the pre-2026-09-27 bands, all below 1.0, sharpened
+        # every environment and made the policy's argmax blunder universal (LEGACY_ROLLOUT_TEMPS).
+        _bands = list(rollout_temps) if rollout_temps else list(DEFAULT_ROLLOUT_TEMPS)
         if len(_bands) != 4:
             raise ValueError(f"rollout_temps needs exactly 4 values, got {len(_bands)}")
         if any(t <= 0.0 for t in _bands):
@@ -525,9 +534,8 @@ class BaseNashPGTrainer:
             temps[self.num_envs // 4 : self.num_envs // 2] = _bands[1]
             temps[self.num_envs // 2 : 3 * self.num_envs // 4] = _bands[2]
             temps[3 * self.num_envs // 4 :] = _bands[3]
-            if rollout_temps:
-                print(f"[rollout temps] bands {_bands} (default is "
-                      f"[0.15, 0.50, 0.10, 0.35], all sharpening)", flush=True)
+            print(f"[rollout temps] bands {_bands} (default {list(DEFAULT_ROLLOUT_TEMPS)}; before "
+                  f"2026-09-27 {list(LEGACY_ROLLOUT_TEMPS)})", flush=True)
             self.env_temps = torch.from_numpy(temps).unsqueeze(1).to(self.device)
         else:
             self.env_temps = torch.ones((self.num_envs, 1), dtype=torch.float32, device=self.device)
