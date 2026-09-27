@@ -182,6 +182,23 @@ controlled whenever a treatment changes the policy's entropy, because then the t
 longer equally far from their own argmax — the X4b arm sits at 0.56 nats against its control's
 1.17.
 
+## A seat's head-to-head rate means nothing without the control's own seat rate
+
+"The arm wins 38% as US against the control" is not a statement about the arm's US play. The game,
+and these policies, are not seat-balanced: greedy self-play of one checkpoint gives US anywhere
+from 31.5% to 43% on this ladder. So read each seat against the **control's greedy self-play win
+rate in the same seat**, and report arm-seat-rate − control-self-play-seat-rate.
+
+**The worked example (2026-09-27).**
+* E5-11-43@240M scored 38.0% as US against E5-08-43@240M, and was reported as weak on that seat.
+* E5-08-43's own self-play gives US 37.0%, so the arm is *level* as US (+1.0). Its gain is all on
+  the USSR seat (+9.5).
+* Against E5-01 the same arm is +38 as US and +20 as USSR, where the raw rates (71.5% / 87.0%)
+  suggested the reverse.
+
+The *overall* head-to-head rate is unaffected, because paired deals put each deal on both seats.
+To get the baseline, `tools/tournament.py` needs two paths for one checkpoint; symlink the snapshot.
+
 ## One-sidedness of self-play is not evidence that a side is degrading
 
 `critic_base_rate` is `max(p, 1 − p)` over resolved self-play games (`critic_tracker.py:140`) —

@@ -187,3 +187,25 @@ by ≥ 2.5 pp pooled and lose on neither seed.
   about 1.5 standard errors, and the rule does not act on that.
 
 **Next:** E5-11-43/44, flat 1.0 from scratch to 800M.
+
+## E5-11 at 240M, and per-seat results read against control self-play (2026-09-27)
+
+E5-11 is flat 1.0 from scratch. Greedy head to heads at 240M, 200 games a side. Per-seat effect =
+the arm's seat rate − the control's own greedy self-play rate in that seat
+([`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.md)).
+
+| E5-11 at 240M vs | overall | US effect | USSR effect |
+|:---|---:|---:|---:|
+| E5-01-43 (default) | 79.2% | +38.5 | +20.0 |
+| E5-08-43 (bands) | 55.2% | +1.0 | +9.5 |
+| E5-01-44 (default) | 76.5% | +37.5 | +15.5 |
+| E5-08-44 (bands) | 61.3% | +28.0 | −5.5 |
+
+Self-play US win rates at 240M: E5-01 33.0% / 39.0%, E5-08 37.0% / 31.5%, E5-11 41.0% / 43.0%.
+
+* Against the default, flat 1.0 is stronger on both seats, and most on US.
+* Against the bands, the gain sits on a different seat on each seed, so the skew is a seed property.
+* Flat 1.0's own games are the most seat-balanced of the three.
+
+**Earlier per-seat readings in this log and in the P24 log quote raw rates.** Those readings are not
+seat effects. The overall rates stand.
