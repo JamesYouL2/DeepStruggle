@@ -209,3 +209,41 @@ Self-play US win rates at 240M: E5-01 33.0% / 39.0%, E5-08 37.0% / 31.5%, E5-11 
 
 **Earlier per-seat readings in this log and in the P24 log quote raw rates.** Those readings are not
 seat effects. The overall rates stand.
+
+## E5-11: flat 1.0 from scratch to 800M (2026-09-27)
+
+**Arms:** E5-01's configuration with `--rollout-temps 1.0 1.0 1.0 1.0`, from scratch to 800M, seeds 43 and 44
+as a pair. `launch_flags.py --diff` against E5-01 shows only the temperature and `--train-steps`.
+
+**Result.** Round robins `data/reports/e5_11_long_{43,44}.{md,json}`, greedy, 100 games a side. The field
+also holds E4-61 (the default) over the same span, the plateau arms at 610M, and E4-08-36@240M.
+
+| run | 240M | 320M | 400M | 480M | 560M | 640M | 720M | 800M |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| E5-11-43, flat 1.0 | 2395 | 2441 | 2414 | 2443 | 2466 | 2442 | 2441 | 2447 |
+| E4-61-43, default | — | — | 2255 | 2294 | 2264 | 2250 | 2283 | 2288 |
+| E5-11-44, flat 1.0 | 2326 | 2332 | 2368 | 2395 | 2416 | 2435 | 2406 | 2396 |
+| E4-61-44, default | — | — | 2197 | 2227 | 2201 | 2258 | 2282 | 2291 |
+
+| comparison | seed 43 | seed 44 |
+|:---|---:|---:|
+| E5-11 at 640–800M vs E4-61 at 640–800M | **70.3% ± 1.1** (+170 late mean) | **69.3% ± 1.1** (+135) |
+| E5-11 at 640–800M vs its own 480–560M | 49.9% ± 1.4 | 51.5% ± 1.4 |
+| E5-11 at 640–800M vs E5-09@610M (flat 1.0 resumed on the default's plateau) | 57.0% ± 2.0 | 62.7% ± 2.0 |
+
+**Readouts during the run**, greedy, 200 games a side:
+* At 40M: 84% / 81% against E5-01.
+* At 240M: 79% / 76.5% against E5-01, and 55% / 61% against E5-08 (the bands).
+* At 400M: 75% / 76% against E4-61; 63% / 60.5% against the previous best, E4-61-44@720M.
+* At 480–560M: about 70% against the previous best.
+
+**Reading:**
+* **Flat 1.0 from scratch plateaus later and higher.** It levels off from about 320M on seed 43 and
+  about 560M on seed 44. The default did so near 400M. The final 240M add nothing (50% against its
+  own 480–560M).
+* **At the plateau it sits +135 to +170 above the default**, and 69–70% head to head.
+* **Training from scratch at the new temperature beats switching temperature on a trained run**, by
+  57–63%.
+* **The best models are E5-11-43@560M and E5-11-44@640M.**
+
+**Proposed:** make flat 1.0 the default for `--rollout-temps`. That is the owner's decision.
