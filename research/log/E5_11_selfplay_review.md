@@ -105,3 +105,35 @@ low rate at DEFCON 3+ is not a hole the policy has stopped exploring. Two caveat
 * The forced branch uses the policy's own targeting, which gets little training. A gain would have
   been a lower bound; a loss partly measures the targeting.
 * Step 208 of seed 4 (+7 points) is real, but it is a rare spot rather than a pattern.
+
+## Follow-up: the owner's textbook realignment spot (2026-09-27)
+
+The owner's sharper question: at DEFCON 2, with a battleground where I have no influence and a
+positive net realignment modifier, and no open battleground I can reach, realigning is often right.
+`realign_oracle.py --scenario locked-bg` finds exactly that spot. The target must also hold some
+opponent influence, and the net modifier is read from the observation's own board slot.
+`--scenario locked-bg-takeable` relaxes "no reachable open battleground" to "none this card's
+influence could take control of". Each scenario was sampled in self-play at temperature 0.1, and
+400 declines per checkpoint were played out with 32 paired greedy playouts. There are three
+branches: the policy's choice; realignment with every roll on the textbook battleground; and
+realignment with the policy's own targets.
+
+| scenario | checkpoint | greedy realigns in the spot | realign on the battleground − policy | policy's own targets − policy | ≥ 25 pp better |
+|:---|:---|---:|---:|---:|---:|
+| no reachable open battleground | E5-11-43@560M | 9.7% of 445 | −1.2 ± 0.7 | −0.4 ± 0.7 | 2.2% |
+| | E5-11-44@640M | 2.0% of 408 | −2.3 ± 0.7 | −2.5 ± 0.7 | 0.8% |
+| no takeable open battleground | E5-11-43@560M | 5.9% of 426 | −3.2 ± 0.6 | −3.0 ± 0.6 | 0.2% |
+| | E5-11-44@640M | 1.2% of 406 | −3.5 ± 0.6 | −3.3 ± 0.6 | 0.5% |
+
+The strict spot is rare: about one per 90 games on seed 43, and mostly the US on turns 8–10. The
+relaxed one is common in the early game. (Its game count in the reports undercounts, because
+collection stopped inside the first 256 games; its positions come from turns 1–7 of those games.)
+**In neither version does realigning beat the policy's choice for this model.** No subgroup by
+side, turn, chosen mode or target is significantly positive. The only positive cells are single
+digits of noise, such as the USSR in the strict spot, +0.4 / +2.3. Realigning instead of spacing
+is clearly worse (−7 to −21).
+
+**This is a statement about this model's strength.** Both sides of every playout are the model
+itself, so a realignment whose value lies in the follow-up is worth only what the model makes of
+that follow-up. At this strength realignment is not a lever. It can be re-asked of a stronger
+checkpoint with the same command.
