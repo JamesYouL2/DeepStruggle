@@ -150,3 +150,40 @@ Head to head at matched steps, arm against control:
 
 **Next (pre-registered in `runs.md`):** E5-09 (flat 1.0) and E5-10 (flat 1.1) against E5-06 and E5-07
 from the same resume. Then the chosen temperature trains from scratch to 800M.
+
+## Which temperature: bands against flat 1.0 against flat 1.1 (E5-09, E5-10), 2026-09-27
+
+**Design:** all four arms from the same resume, E4-61-SEED@410M on E5, to 610M. Round robins
+`data/reports/temp_choice_{43,44}.{md,json}`, greedy, 100 games a side:
+
+| arm | seed 43, late mean (560–610M) | seed 44, late mean |
+|:---|---:|---:|
+| bands 0.8 1.2 0.7 1.1 (E5-06) | 2364 | 2433 |
+| flat 1.0 (E5-09) | 2415 | 2416 |
+| flat 1.1 (E5-10) | 2417 | 2438 |
+| default 0.15 0.50 0.10 0.35 (E5-07) | 2313 | 2335 |
+
+**Head to head of the late snapshots** (1,800 games a seed, 3,600 pooled):
+
+| pairing | seed 43 | seed 44 | pooled |
+|:---|---:|---:|---:|
+| flat 1.1 vs bands | 58.4% | 51.3% | **54.9% ± 0.8** |
+| flat 1.0 vs bands | 59.9% | 44.6% | 52.3% ± 0.8 |
+| flat 1.1 vs flat 1.0 | 48.9% | 53.4% | 51.2% ± 0.8 |
+| bands vs default | 54.4% | 58.3% | 56.3% |
+| flat 1.0 vs default | 63.3% | 60.9% | 62.1% |
+| flat 1.1 vs default | 64.6% | 64.9% | 64.8% |
+
+**The pre-registered rule** (`runs.md`, E5-10 row) requires an arm to beat both other temperature arms
+by ≥ 2.5 pp pooled and lose on neither seed.
+* Flat 1.1 misses on flat 1.0: +1.2.
+* Flat 1.0 misses on the bands: +2.3, and it loses to them on seed 44.
+* **So the arms are neutral, and flat 1.0 is chosen.**
+
+**Reading:**
+* **The large step is leaving the sharpening default.** Every near-policy setting beats it 56–65%.
+* **Among the near-policy settings the differences are small.** Flat 1.1 is the pooled leader,
+  better than the bands on both seeds and the best against the default. Its lead over flat 1.0 is
+  about 1.5 standard errors, and the rule does not act on that.
+
+**Next:** E5-11-43/44, flat 1.0 from scratch to 800M.
