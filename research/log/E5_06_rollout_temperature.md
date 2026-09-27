@@ -82,3 +82,71 @@ changes the recipe for every future arm.
 * whether the gain holds from scratch, where E3 saw it (a from-scratch pair to 160M);
 * whether other bands do better (a flat 1.0, or bands above 1);
 * whether the sharpened endpoint, entropy 0.35, costs anything the probes can see.
+
+## The resume control (E5-07) and the from-scratch test (E5-08), 2026-09-27
+
+### E5-07: resuming is not neutral, and temperature holds against the matched control
+
+**E5-07** is E5-06's resume, E4-61-SEED@410M on E5 to 610M, with the default temperatures.
+Round robins `data/reports/e5_07_resume_{43,44}.{md,json}`, greedy, 100 games a side:
+
+| run | 440M | 480M | 520M | 560M | 590M | 610M | late mean |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| E5-06-43 | 2350 | 2359 | 2339 | 2346 | 2367 | 2381 | 2364 |
+| E5-07-43 | 2272 | 2272 | 2287 | 2320 | 2311 | 2298 | 2310 |
+| E4-61-43 | 2270 | 2289 | 2297 | 2267 | 2330 | 2307 | 2301 |
+| E5-06-44 | 2314 | 2388 | 2398 | 2398 | 2391 | 2390 | 2393 |
+| E5-07-44 | 2309 | 2283 | 2343 | 2308 | 2300 | 2347 | 2318 |
+| E4-61-44 | 2303 | 2277 | 2285 | 2275 | 2279 | 2302 | 2286 |
+
+Head to head of the late snapshots (560, 590, 610M), 1,800 games a pair:
+
+| comparison | seed 43 | seed 44 | mean |
+|:---|---:|---:|---:|
+| resume (and E5) alone: E5-07 vs E4-61 | +9, 51.1% ± 1.2 | **+33, 53.7% ± 1.2** | +21 |
+| **temperature alone: E5-06 vs E5-07** | **+55, 54.4%** | **+75, 58.1%** | **+65** |
+| both: E5-06 vs E4-61 | +63, 58.4% | +108, 61.2% | +86 |
+
+* **The resume is not neutral on seed 44.** +33 there is about three standard errors. The +73/+115
+  quoted above against E4-61 included it, so they overstate the temperature's effect.
+* **The temperature effect proper is +55 and +75 against the matched resume control, +65 on
+  average.**
+* E5-07-44's first leg was aborted at 452M: the stall watchdog read an 8 h host suspend as silence.
+  It was continued from its own 450M state as a second leg under the same name. The watchdog now
+  counts awake time only.
+
+### E5-08: from scratch, the gain holds to 240M on both seeds
+
+**E5-08** is E5-01-SEED's configuration with `--rollout-temps 0.8 1.2 0.7 1.1`, from scratch to
+240M. Round robins `data/reports/e5_08_scratch_{43,44}.{md,json}`:
+
+| run | 40M | 80M | 120M | 160M | 200M | 240M | late mean (200–240M) |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| E5-08-43 | 2098 | 2240 | 2289 | 2289 | 2351 | 2400 | **2376** |
+| E5-01-43, control | 1858 | 1951 | 2110 | 2205 | 2221 | 2188 | 2205 |
+| E5-08-44 | 1886 | 2091 | 2156 | 2207 | 2254 | 2268 | **2261** |
+| E5-01-44, control | 1711 | 1932 | 1979 | 2046 | 2104 | 2156 | 2130 |
+
+Head to head at matched steps, arm against control:
+
+| | 40M | 80M | 120M | 160M | 200M | 240M | late (200–240M) |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| seed 43 | 85.0% | 81.0% | 69.5% | 66.0% | 70.5% | 74.5% | **73.5% ± 1.6** |
+| seed 44 | 76.5% | 75.5% | 79.0% | 75.0% | 63.0% | 62.0% | **68.4% ± 1.6** |
+
+* **The late mean gains +171 on seed 43 and +131 on seed 44.** Both seeds hold past E3's 80M budget
+  out to 240M. E3's seed B lost its lead by 80M; neither seed does here.
+* Seed 44's lead narrows at the end (62% at 240M). Whether the gap keeps closing is the 800M run's
+  question.
+* **On training-game blunders:** self-inflicted DEFCON 1 falls from 20–39% of the control's games to
+  3–8%, while provoked DEFCON 1 barely moves (10–15%). Games reaching final scoring rise from 2–8%
+  to 26–34%. Sharpened sampling made the policy's argmax blunder universal. Sampling at the policy
+  lets PPO push that blunder down.
+
+**A cross-field check** (`data/reports/best_2026-09-27.{md,json}`, one field, greedy):
+* E5-06-43@610M rates highest, at 2327.
+* **E5-08-43@240M, a 240M from-scratch run, rates 2293.** That is above E4-61-44@720M (2268) and
+  E4-61-43@800M (2245).
+
+**Next (pre-registered in `runs.md`):** E5-09 (flat 1.0) and E5-10 (flat 1.1) against E5-06 and E5-07
+from the same resume. Then the chosen temperature trains from scratch to 800M.
