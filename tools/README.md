@@ -59,6 +59,15 @@ whatever opening it had found, including a degenerate one
 step with no chance node between them, and it was −289. Runs from E5-12 used `setup-side`;
 pass it to reproduce them.
 
+`--setup-entropy-floor <nats>` (off at 0) puts an adaptive entropy floor on the learner's setup
+placements. A setup placement at p ≈ 1 is never resampled, so its opening locks whether or not it
+is any good (E5-11-43 opens Greece 2 in every game, 5 points worse for its own US than a sane
+opening: `research/log/E5_11_setup_lock_and_critic_views.md`). The extra bonus applies to setup
+decisions only. Its coefficient moves by `--setup-entropy-lr` × (floor − the rollout's setup
+entropy) each iteration within [0, `--setup-entropy-max-coef`], so it is zero until the opening
+starts to lock. It is logged as `entropy_setup` (always) and `setup_ent_coef`, and restored on a
+resume. `tools/scripts/setup_oracle.py` measures whether an opening is actually worse.
+
 `--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a
 shift common to every country logit is invisible to the policy and gets no gradient. Left free,
