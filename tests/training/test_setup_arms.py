@@ -190,10 +190,11 @@ def test_graphed_equals_eager_for_same_side() -> None:
         assert torch.equal(eager.advantages, graphed.advantages)
 
 
-def test_setup_side_is_the_default_and_older_modes_stay_reachable() -> None:
+def test_off_is_the_default_and_the_block_modes_stay_reachable() -> None:
     from ai.training.train import build_parser
     p = build_parser()
     a = p.parse_args([])
-    assert a.block_lambda is None                       # resolved to setup-side in main()
+    assert a.block_lambda is None                       # resolved to off in main()
+    assert p.parse_args(["--block-lambda", "setup-side"]).block_lambda == "setup-side"
     assert p.parse_args(["--block-lambda", "off"]).block_lambda == "off"
     assert p.parse_args(["--setup-block-lambda"]).setup_block_lambda is True

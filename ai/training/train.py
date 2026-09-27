@@ -325,8 +325,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "setup-side: the same, cut where the mover changes (A1); same-side: any "
                              "consecutive pair of one game with the same mover and the engine's RNG "
                              "unchanged -- no die roll, card draw or hidden chance between (A2). "
-                             "Default: setup-side (adopted 2026-09-26, research/log/P4_setup_arms.md), "
-                             "or setup with --setup-block-lambda; off reproduces runs before it.")
+                             "Default: off (setup-side was the default 2026-09-26..27; at flat rollout "
+                             "temperature it added no strength and froze the setup, "
+                             "research/log/E5_12_setup_credit_at_flat_temperature.md), or setup with "
+                             "--setup-block-lambda.")
     parser.add_argument("--setup-block-lambda", action="store_true", default=False,
                         help="P4 arm A: GAE lambda = 1 between consecutive setup placements, so the "
                              "setup's credit telescopes to the turn-1 headline position instead of "
@@ -694,7 +696,7 @@ def main():
             inject_setup_only=args.inject_setup_only,
             setup_block_lambda=args.setup_block_lambda,
             block_lambda=(args.block_lambda if args.block_lambda is not None
-                          else ("setup" if args.setup_block_lambda else "setup-side")),
+                          else ("setup" if args.setup_block_lambda else "off")),
             decisiveness_turns=args.decisiveness_turns,
             max_snapshot_opponents=args.eval_max_snapshot_opponents,
             opponent_checkpoints=args.opponent_checkpoints,
