@@ -90,6 +90,10 @@ _BEFORE_RECORDED = {
     # P24: no league before it existed
     "league_pool_size": lambda meta: 4,
     "adv_norm_learner_only": lambda meta: False,
+    # no setup entropy floor before it existed (2026-09-27)
+    "setup_entropy_floor": lambda meta: 0.0,
+    "setup_entropy_lr": lambda meta: 0.01,
+    "setup_entropy_max_coef": lambda meta: 1.0,
 }
 
 

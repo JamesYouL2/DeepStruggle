@@ -1342,6 +1342,8 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
         "adv_std_ema": float(getattr(getattr(trainer, "buffer", None), "adv_std_ema", 0.0)),
         "adv_std_ema_steps": float(getattr(getattr(trainer, "buffer", None), "adv_std_ema_steps", 0.0)),
         "ent_coef_seat": (dict(trainer.ent_coef_seat) if hasattr(trainer, "ent_coef_seat") else None),
+        # --setup-entropy-floor's adaptive coefficient.
+        "setup_ent_coef": float(getattr(trainer, "setup_ent_coef", 0.0)),
     }, path)
 
 
@@ -1373,6 +1375,8 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         _buf.adv_std_ema_steps = float(blob.get("adv_std_ema_steps", 0.0))
     if hasattr(trainer, "ent_coef_seat") and blob.get("ent_coef_seat"):
         trainer.ent_coef_seat = {int(k): float(v) for k, v in blob["ent_coef_seat"].items()}
+    if hasattr(trainer, "setup_ent_coef"):
+        trainer.setup_ent_coef = float(blob.get("setup_ent_coef", 0.0))
     recorded_seed = blob.get("seed", None)
     reseed = seed is not None and (recorded_seed is None or int(recorded_seed) != int(seed))
     if reseed:
@@ -1489,6 +1493,9 @@ def train_pipeline(
     entropy_ceiling: float = 0.0,
     target_kl: float = 0.0,
     entropy_normalize: bool = False,
+    setup_entropy_floor: float = 0.0,
+    setup_entropy_lr: float = 0.01,
+    setup_entropy_max_coef: float = 1.0,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
     setup_block_lambda: bool = False,
@@ -1725,6 +1732,9 @@ def train_pipeline(
         "entropy_ceiling": float(entropy_ceiling),
         "target_kl": float(target_kl),
         "entropy_normalize": bool(entropy_normalize),
+        "setup_entropy_floor": float(setup_entropy_floor),
+        "setup_entropy_lr": float(setup_entropy_lr),
+        "setup_entropy_max_coef": float(setup_entropy_max_coef),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
         "setup_block_lambda": bool(setup_block_lambda),
@@ -1906,6 +1916,9 @@ def train_pipeline(
         entropy_ceiling=entropy_ceiling,
         target_kl=target_kl,
         entropy_normalize=entropy_normalize,
+        setup_entropy_floor=setup_entropy_floor,
+        setup_entropy_lr=setup_entropy_lr,
+        setup_entropy_max_coef=setup_entropy_max_coef,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
         setup_block_lambda=setup_block_lambda,
@@ -2144,6 +2157,10 @@ def train_pipeline(
     if entropy_normalize:
         print(f"[entropy] the bonus rewards entropy / log(legal) per decision (--entropy-normalize), "
               f"coefficient {entropy_coef:g}", flush=True)
+    if setup_entropy_floor > 0.0:
+        print(f"[setup entropy floor] {setup_entropy_floor:g} nats on the learner's setup placements; "
+              f"coefficient adapts at lr {setup_entropy_lr:g} within [0, {setup_entropy_max_coef:g}]",
+              flush=True)
     if target_kl > 0.0:
         print(f"[P25 3l] per-seat KL early stop at approx KL {target_kl:g} from the rollout policy "
               f"(--target-kl)", flush=True)
@@ -2402,7 +2419,7 @@ def train_pipeline(
                     "wolf_sp_ussr", "wolf_w_us", "wolf_w_ussr",
                     # P25 3j-3l. approx_kl_* is always present; the rest only with their lever.
                     "approx_kl_us", "approx_kl_ussr", "kl_stop_frac_us", "kl_stop_frac_ussr",
-                    "ent_coef_us", "ent_coef_ussr",
+                    "ent_coef_us", "ent_coef_ussr", "entropy_setup", "setup_ent_coef",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss"):

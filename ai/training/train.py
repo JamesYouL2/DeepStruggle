@@ -520,6 +520,15 @@ def build_parser() -> argparse.ArgumentParser:
                              "more room than a few-option one (P23: E4.1's ~50-option op-mode nodes). "
                              "Same average bonus as the raw one at ~2.1x --entropy-coef on E4's "
                              "decision mix. Logged entropy stays raw.")
+    parser.add_argument("--setup-entropy-floor", type=float, default=0.0,
+                        help="An entropy FLOOR, in nats, on the learner's setup placements: an extra "
+                             "bonus on setup decisions only, whose coefficient moves by "
+                             "--setup-entropy-lr x (floor - rollout setup entropy) per iteration within "
+                             "[0, --setup-entropy-max-coef]. A setup placement at p ~ 1 is never "
+                             "resampled and its opening locks, good or bad "
+                             "(research/log/E5_11_setup_lock_and_critic_views.md). 0 is off.")
+    parser.add_argument("--setup-entropy-lr", type=float, default=0.01)
+    parser.add_argument("--setup-entropy-max-coef", type=float, default=1.0)
     parser.add_argument("--z-loss-coef", type=float, default=0.0,
                         help="z-loss: coef * mean(logsumexp(policy logits)^2) in the update (PaLM uses "
                              "1e-4). Bounds the logits' level, which the softmax leaves free and which "
@@ -756,6 +765,9 @@ def main():
             entropy_ceiling=args.entropy_ceiling,
             target_kl=args.target_kl,
             entropy_normalize=args.entropy_normalize,
+            setup_entropy_floor=args.setup_entropy_floor,
+            setup_entropy_lr=args.setup_entropy_lr,
+            setup_entropy_max_coef=args.setup_entropy_max_coef,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,
             cuda_graphs=not args.no_cuda_graphs,

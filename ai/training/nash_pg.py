@@ -25,7 +25,7 @@ from ai.models.coldwar_net_v2 import VP_LIMIT
 
 from bindings.ts_env import TsVectorizedEnv
 from bindings.action_encoder import ActionEncoder
-from .rollout_buffer import RolloutBuffer
+from .rollout_buffer import RolloutBuffer, setup_phase_slot
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -296,6 +296,9 @@ class BaseNashPGTrainer:
         entropy_ceiling_grace_steps: float = 5_000_000.0,
         target_kl: float = 0.0,
         entropy_normalize: bool = False,
+        setup_entropy_floor: float = 0.0,
+        setup_entropy_lr: float = 0.01,
+        setup_entropy_max_coef: float = 1.0,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
@@ -457,6 +460,20 @@ class BaseNashPGTrainer:
         self.target_kl = float(target_kl)
         #: --entropy-normalize: the bonus rewards entropy / log(legal) per decision; see bonus_entropy.
         self.entropy_normalize = bool(entropy_normalize)
+        #: --setup-entropy-floor: a one-sided entropy FLOOR on the learner's setup placements, in
+        #: nats. A setup placement pushed to p ~ 1 is never sampled differently again, and both the
+        #: policy gradient and the ordinary entropy bonus vanish there, so the opening locks,
+        #: good or bad (research/log/E5_11_setup_lock_and_critic_views.md). An extra bonus on setup
+        #: decisions only, whose coefficient moves by lr x (floor - rollout setup entropy) each
+        #: iteration within [0, max_coef]: zero while the setup is above the floor, so it acts
+        #: only once the opening starts to lock. Normalised like the ordinary bonus (per learner
+        #: decision), so a coefficient of 0.01 is the ordinary bonus again on those decisions.
+        if setup_entropy_floor < 0.0 or setup_entropy_lr < 0.0 or setup_entropy_max_coef < 0.0:
+            raise ValueError("setup_entropy_floor, setup_entropy_lr and setup_entropy_max_coef must be >= 0")
+        self.setup_entropy_floor = float(setup_entropy_floor)
+        self.setup_entropy_lr = float(setup_entropy_lr)
+        self.setup_entropy_max_coef = float(setup_entropy_max_coef)
+        self.setup_ent_coef = 0.0
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -631,6 +648,11 @@ class BaseNashPGTrainer:
             c = self.ent_coef_seat[code] - self.entropy_ceiling_lr * (float(h) - self.entropy_ceiling)
             self.ent_coef_seat[code] = min(self.ent_coef, max(self.entropy_ceiling_min_coef, c))
 
+    def _update_setup_entropy(self, h: float) -> None:
+        """--setup-entropy-floor: move the setup bonus toward holding setup entropy at the floor."""
+        c = self.setup_ent_coef + self.setup_entropy_lr * (self.setup_entropy_floor - float(h))
+        self.setup_ent_coef = min(self.setup_entropy_max_coef, max(0.0, c))
+
     def _graphed_forward(self, obs_t: torch.Tensor, masks_t: torch.Tensor,
                          learner_np: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """The rollout forward as CUDA-graph replays: the learner over every env, and in a mixed
@@ -685,6 +707,9 @@ class BaseNashPGTrainer:
         self.buffer.reset()
         seat_entropy_sum = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
         seat_entropy_n = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
+        setup_entropy_sum = torch.zeros((), device=self.device)
+        setup_entropy_n = torch.zeros((), device=self.device)
+        _setup_slot = setup_phase_slot()
         sp_games = 0.0
         sp_us_wins = 0.0
         completed_episodes: List[Dict[str, Any]] = []
@@ -769,6 +794,10 @@ class BaseNashPGTrainer:
                     _sel = learner_t & (_dp_t == _code)
                     seat_entropy_sum[_code] += (_ent * _sel).sum()
                     seat_entropy_n[_code] += _sel.sum()
+                # The learner's setup placements (global phase slot exactly 0 in SETUP).
+                _setup_sel = learner_t & (obs_t[:, _setup_slot] < (0.5 / 6.0))
+                setup_entropy_sum += (_ent * _setup_sel).sum()
+                setup_entropy_n += _setup_sel.sum()
 
             actions_np = actions_t.cpu().numpy()
             # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
@@ -952,6 +981,13 @@ class BaseNashPGTrainer:
             self._update_entropy_ceiling(metrics)
             metrics["ent_coef_us"] = self.ent_coef_seat[1]
             metrics["ent_coef_ussr"] = self.ent_coef_seat[-1]
+        _sn = float(setup_entropy_n.item())
+        if _sn > 0:
+            metrics["entropy_setup"] = float(setup_entropy_sum.item()) / _sn
+            if self.setup_entropy_floor > 0.0:
+                self._update_setup_entropy(metrics["entropy_setup"])
+        if self.setup_entropy_floor > 0.0:
+            metrics["setup_ent_coef"] = self.setup_ent_coef
         metrics.update(self.critic_tracker.metrics())
         # Pool size and span, so a pool that silently stops growing is visible as a flat line
         # rather than being invisible. Without this the mechanism cannot be verified from a run.
@@ -1204,6 +1240,8 @@ class NashPGTrainer(BaseNashPGTrainer):
         # 3k: this update's per-seat entropy coefficients, as device scalars.
         ent_c_us = torch.tensor(self.ent_coef_seat[1], device=self.device)
         ent_c_ussr = torch.tensor(self.ent_coef_seat[-1], device=self.device)
+        setup_c = self.setup_ent_coef
+        _setup_slot_u = setup_phase_slot()
         # 3l: whether each seat is still updating its policy (1.0) or has been stopped (0.0), and
         # the per-seat approximate KL, accumulated on the device so the check costs no sync.
         seat_act = {1: torch.ones((), dtype=torch.float64, device=self.device),
@@ -1440,6 +1478,11 @@ class NashPGTrainer(BaseNashPGTrainer):
                         _ew = _own_f * torch.where(b_players == 1, seat_act[1],
                                                    seat_act[-1]).to(cur_entropy.dtype)
                     ent_loss = (ent_b * _ew * _c).sum() / _own_n
+                if setup_c > 0.0:
+                    # The setup floor's bonus: raw entropy (the floor is in nats), learner's setup
+                    # placements only, normalised per learner decision like the ordinary bonus.
+                    _setup_f = (b_obs[:, _setup_slot_u] < (0.5 / 6.0)).to(cur_entropy.dtype) * _own_f
+                    ent_loss = ent_loss + setup_c * (cur_entropy * _setup_f).sum() / _own_n
                 policy_loss = (ppo_loss + self.eta * kl_term - ent_loss
                                + self.search_ce_coef * search_ce)
                 # The log-normaliser over the legal actions (masked logits are -1e9, so they add
