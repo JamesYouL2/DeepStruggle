@@ -120,6 +120,9 @@ running any of them.
 - **Recipe defaults changed since E4-08:**
   * TF32 and centred per-entity heads (P26, 2026-09-25);
   * `--block-lambda setup-side` (P4 A1, 2026-09-26);
+    E5-12 (2026-09-27, [`../log/E5_12_setup_credit_at_flat_temperature.md`](../log/E5_12_setup_credit_at_flat_temperature.md)):
+    at flat 1.0 it adds no strength (−73 / +30) and freezes the setup, bad or good. **Reverting it to
+    `off` is proposed, pending the owner**;
   * **`--rollout-temps 1.0 1.0 1.0 1.0`** (2026-09-27, [`../log/E5_06_rollout_temperature.md`](../log/E5_06_rollout_temperature.md)):
     sampling at the policy plateaus +135/+170 above the old sharpening bands.
 
