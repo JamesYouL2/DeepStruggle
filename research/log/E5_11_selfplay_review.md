@@ -81,3 +81,27 @@ architecture change:
    A large gain would argue for training on search targets.
 
 Card-to-card attention (P21 M3, blocked) stays available.
+
+## Follow-up: the realignment oracle (2026-09-27)
+
+`tools/scripts/realign_oracle.py` was run on 1,200 play-mode nodes per checkpoint: 600 at DEFCON 2
+and 600 at DEFCON 3+. Each is a node where realignment is legal and the greedy policy declines it,
+kept with probability 0.08 from self-play at temperature 0.1 so that it spreads over games. At each
+node, realignment was forced and the policy chose its own targets; 24 paired greedy playouts were
+played per branch. Reports are in `data/reports/realign_oracle/`.
+
+| realign − policy's choice | E5-11-43@560M | E5-11-44@640M |
+|:---|---:|---:|
+| all | **−3.4 ± 0.4** | **−5.1 ± 0.4** |
+| DEFCON 2 | −3.4 ± 0.5 | −5.4 ± 0.6 |
+| DEFCON 3+ | −3.5 ± 0.5 | −4.8 ± 0.6 |
+| positions where realignment is ≥ 25 pp better / ≥ 25 pp worse | 1.2% / 6.1% | 1.1% / 7.2% |
+
+**The policy is right to decline.** Realigning where it chooses not to loses on average, at both
+DEFCON classes, for both sides and at every stage of the game. The ≥ 25-point tail in favour of
+realigning is smaller than the tail against it, and consistent with playout noise at 24 pairs. The
+low rate at DEFCON 3+ is not a hole the policy has stopped exploring. Two caveats:
+
+* The forced branch uses the policy's own targeting, which gets little training. A gain would have
+  been a lower bound; a loss partly measures the targeting.
+* Step 208 of seed 4 (+7 points) is real, but it is a rare spot rather than a pattern.
