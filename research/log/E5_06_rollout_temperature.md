@@ -252,3 +252,38 @@ also holds E4-61 (the default) over the same span, the plateau arms at 610M, and
 (`nash_pg.DEFAULT_ROLLOUT_TEMPS`). The old bands are `nash_pg.LEGACY_ROLLOUT_TEMPS`. A run's metadata
 now always records the bands it used, and `launch_flags.py` reads an old record of None as the
 legacy bands.
+
+## Quality: the goal probes on flat 1.0 (2026-09-27)
+
+`tools/scripts/goal_probes.py`, report `data/reports/goal_probes_2026-09-27.{md,json}`, on:
+* E5-11-43@560M/800M and E5-11-44@640M/800M (flat 1.0);
+* E4-61-43@560M, E4-61-44@560M and E4-61-44@720M (the old bands).
+
+| probe | E5-11, flat 1.0 | E4-61, old bands | human |
+|:---|:---|:---|:---|
+| empty battlegrounds, turn 8 | **1.3–1.6** | 2.1–3.0 | — |
+| uncontrolled battlegrounds, turn 8 | **3.9–5.4** | 6.6–7.6 | — |
+| uncontrolled battlegrounds, turn 5 | **6.0–8.2** | 10.7–11.4 | — |
+| own-DEFCON loss taken with an alternative (@0.1 / @1) | **0.4–1.1% / 1.0–1.9%** | 1.8–2.4% / 3.5–4.6% | — |
+| space exit spent on a card with its own exit (@0.1 / @1) | **3–7% / 2–8%** | 7–18% / 25–29% | — |
+| mean final turn | 7.5–8.1 | 6.4–7.7 | — |
+| forced wins taken | 55–60% | **62–69%** | — |
+| avoidable losses avoided | 93–95% | 95% | — |
+| setup: Poland ≥ 3 | 100% | 0 or 100% | 99.2% |
+| setup: West Germany ≥ 4 | 0.2–100%, flips | 0 or 100%, flips | 61.4% |
+| setup: Iran ≥ 2 | 0–58%, once 99.9% | 0–100% | 96.2% |
+| setup: all four | 0%, once 99.9% (E5-11-44@640M) | 0% | 57.2% |
+
+**Reading:**
+* **Flat 1.0 moves two of the goal's criteria a long way.**
+  * *Contesting battlegrounds:* about 4 fewer uncontrolled at turn 5, and about 1 fewer empty at
+    turn 8.
+  * *Disposing of a card through its own exit:* spacing a card that has an exit falls from 25–29%
+    to 2–8% when sampled. It is the clearest case of sharpened sampling making one systematic
+    mistake universal.
+  * Own-DEFCON losses with an alternative roughly halve.
+* **The opening still oscillates.** Poland is fixed. West Germany and Iran flip between snapshots,
+  as before. These runs had the setup block credit off (`--block-lambda off`, to match E4-61);
+  P4's A1, now the default, fixed Poland but never West Germany.
+* **Forced wins are slightly worse (55–60% against 62–69%).** This is now the largest remaining
+  simple mistake by rate.
