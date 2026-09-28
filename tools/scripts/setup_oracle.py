@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
-"""US opening oracle: the checkpoint's own US setup against forced alternatives, over many deals.
+"""Opening oracle: one side's own setup against forced alternatives, over many deals.
 
 A setup the policy plays with probability ~1 is never sampled differently in training, so the
 policy never learns whether an alternative is better. This asks the game directly. Each deal is
-played by the checkpoint up to the US setup, which is where the branches split:
+played by the checkpoint up to `--side`'s setup (the USSR places first, so for the USSR that is the
+start of the game), which is where the branches split:
 
-* **own** -- the checkpoint places the US setup itself;
-* **each named opening** -- the US placements are forced in the order given: the seven Western
-  Europe points first, then the two bonus points, which the engine offers only where the US already
-  has influence.
+* **own** -- the checkpoint places that side's setup itself;
+* **each named opening** -- that side's placements are forced in the order given. For the US: the
+  seven Western Europe points first, then the two bonus points, which the engine offers only where
+  the US already has influence. For the USSR: its six Eastern Europe points. The other side then
+  sets up as the checkpoint would, in reply.
 
 Every branch is then played to the end once per deal by the checkpoint on both sides, greedily.
 The engine RNG is re-seeded identically in every branch of a deal. What is reported is the US win
-rate and its paired difference from `own`, beside the critic's own difference at the first decision
-after setup (read from the mover's side), in the same units -- whether the critic sees what the
-playouts see.
+rate of `--side` and its paired difference from `own`, beside the critic's own difference at the
+first decision after that side's setup (read from the mover's side), in the same units -- whether
+the critic sees what the playouts see.
 
     PYTHONPATH=.:build/release python tools/scripts/setup_oracle.py --checkpoint <snapshot.pt> \\
         --deals 2000 --opening "human=West Germany*4,Italy*2,France,Italy,Iran"
+    ... --side USSR --opening "human=East Germany,Poland*4,Yugoslavia"
 """
 
 from __future__ import annotations
@@ -65,22 +68,25 @@ def _greedy(model: torch.nn.Module, dev: torch.device, st: "ts.GameState") -> in
     return int(model(o, m)[0].float().argmax(-1).item())
 
 
-def us_setup_start(model: torch.nn.Module, dev: torch.device, seed: int) -> "ts.GameState":
+def setup_start(model: torch.nn.Module, dev: torch.device, seed: int,
+                side: "ts.Player" = ts.Player.US) -> "ts.GameState":
+    """A fresh deal, played by the checkpoint up to `side`'s first setup placement."""
     st = ts.GameState()
     ts.Engine.init_game(st, seed)
-    while st.ctx().decision_player != ts.Player.US:
+    settle(st, SettleMode.CHANCE)
+    while st.ctx().decision_player != side:
         ts.Engine.step_flat(st, _greedy(model, dev, st), False)
         settle(st, SettleMode.CHANCE)
     return st
 
 
 def play_setup(model: torch.nn.Module, dev: torch.device, start: "ts.GameState",
-               forced: Sequence[int]) -> Tuple["ts.GameState", List[int]]:
-    """The US setup from `start`, forcing `forced` in order and the checkpoint's choice after it."""
+               forced: Sequence[int], side: "ts.Player" = ts.Player.US) -> Tuple["ts.GameState", List[int]]:
+    """`side`'s setup from `start`, forcing `forced` in order and the checkpoint's choice after it."""
     st = start.clone()
     queue = list(forced)
     placed: List[int] = []
-    while st.ctx().decision_player == ts.Player.US and st.current_phase == ts.Phase.SETUP:
+    while st.ctx().decision_player == side and st.current_phase == ts.Phase.SETUP:
         mask = np.asarray(ts.Engine.get_flat_action_mask(st, False))
         if queue:
             a = NODE_OFFSET + queue.pop(0)
@@ -99,7 +105,7 @@ def play_setup(model: torch.nn.Module, dev: torch.device, start: "ts.GameState",
 @torch.no_grad()
 def _critic_us(model: torch.nn.Module, dev: torch.device, states: Sequence["ts.GameState"]) -> np.ndarray:
     """The critic's v_win from the US side for each state, read from the mover's observation (the
-    only perspective the value head is trained on) and sign-converted."""
+    only perspective the value head is trained on) and sign-converted. Negate for the USSR."""
     out = np.zeros(len(states))
     for i, st in enumerate(states):
         mover = ts.Player(int(st.ctx().decision_player))
@@ -116,6 +122,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--opening", action="append", default=[],
                     help="name=Country*n,Country,... in placement order; repeatable")
     ap.add_argument("--seed", type=int, default=1000)
+    ap.add_argument("--side", choices=["US", "USSR"], default="US",
+                    help="Whose opening is varied; the other side sets up as the checkpoint would.")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
@@ -124,20 +132,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     names = {v: k for k, v in ids.items()}
     openings = dict(parse_opening(s, ids) for s in a.opening)
 
-    starts = [us_setup_start(model, dev, a.seed + g) for g in range(a.deals)]
+    side = ts.Player.US if a.side == "US" else ts.Player.USSR
+    sign = 1.0 if a.side == "US" else -1.0
+    starts = [setup_start(model, dev, a.seed + g, side) for g in range(a.deals)]
     branches: Dict[str, List["ts.GameState"]] = {"own": []}
     own: Counter = Counter()
     for s in starts:
-        end, placed = play_setup(model, dev, s, [])
+        end, placed = play_setup(model, dev, s, [], side)
         branches["own"].append(end)
         own[tuple(sorted(Counter(names[p] for p in placed).items()))] += 1
     for name, forced in openings.items():
-        branches[name] = [play_setup(model, dev, s, forced)[0] for s in starts]
+        branches[name] = [play_setup(model, dev, s, forced, side)[0] for s in starts]
     print("own opening(s):", ", ".join(f"{dict(k)} x{n}" for k, n in own.most_common(3)))
 
     seeds = [7919 * g + 17 for g in range(a.deals)]
-    score = {name: (playouts(model, dev, sts, seeds, 0.0) + 1.0) / 2.0 for name, sts in branches.items()}
-    critic = {name: _critic_us(model, dev, sts) for name, sts in branches.items()}
+    score = {name: (sign * playouts(model, dev, sts, seeds, 0.0) + 1.0) / 2.0 for name, sts in branches.items()}
+    critic = {name: sign * _critic_us(model, dev, sts) for name, sts in branches.items()}
     base, cbase = score["own"], critic["own"]
     for name, sc in score.items():
         d = sc - base
@@ -145,7 +155,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         dc = critic[name] - cbase
         cse = dc.std(ddof=1) / np.sqrt(len(dc)) if len(dc) > 1 else 0.0
         # v_win is an expected result in [-1, 1]; half of it is a win-rate difference.
-        print(f"{name:32s} US wins {100 * sc.mean():5.1f}%   vs own {100 * d.mean():+5.1f} ± {100 * se:.1f} pp "
+        print(f"{name:32s} {a.side} wins {100 * sc.mean():5.1f}%   vs own {100 * d.mean():+5.1f} ± {100 * se:.1f} pp "
               f"(paired, {len(d)} deals) | critic vs own {100 * dc.mean() / 2:+5.1f} ± {100 * cse / 2:.1f} pp")
     return 0
 

@@ -104,3 +104,37 @@ confound. Its US gain is the same size against both opponents (+7.5 and +7.7).
 * **Open next:** a USSR opening check (setup_oracle for the USSR side); the floor with a damped
   integrator; and seed-43 repeats. Credit per seat, the US only, would test whether the US gain
   can be had without touching the USSR.
+
+## Follow-up: the USSR opening check (2026-09-28)
+
+`tools/scripts/setup_oracle.py --side USSR`: the USSR's six placements are forced at the start of
+the game, the model then plays the US setup in reply, and each branch is played out (2,000 paired
+deals, `data/reports/setup_oracle_ussr.txt`). A regression run on the US side reproduces the
+earlier numbers exactly (42.6% / 48.0% / +5.4 / critic +16.2). Each figure is the alternative minus
+the model's own opening, as USSR win rate:
+
+| USSR opening | E5-16-43@700M (own: Pol 3, Yug 3) | E5-11-43@700M (own: Pol 3, Hun 3) | E5-16-44@800M (own: Pol 3, Yug 3) | E5-11-44@800M (own: Pol 3, Yug 3) |
+|:---|---:|---:|---:|---:|
+| Poland 3, Hungary 3 | −0.9 ± 1.4 | own | −0.8 | −0.8 |
+| Poland 3, Yugoslavia 3 | own | **−22.6 ± 1.5** | own | own |
+| Poland 3, Romania 3 | −3.7 | −9.4 | −2.4 | −3.7 |
+| human (EG 1, Poland 4, Yug 1) | −0.2 | −8.0 | −1.4 | −0.4 |
+| critic's range for the alternatives | −16 to −2 | −42 to −30 | −1 to +4 | −24 to −20 |
+
+* **Seed 43's USSR did not lose strength by moving from Hungary to Yugoslavia.** For E5-16-43 the
+  two are within a point of each other (−0.9 ± 1.4), and the human opening is level too. The −5
+  in the per-seat test comes from its play, not its opening.
+* **E5-11-43 is brittle off its own opening, and E5-16 is not.** Forced into Yugoslavia, E5-11-43
+  loses 22.6 points; the human opening costs it 8, Romania 9. E5-16-43, which trained on sampled
+  openings for 150M, loses at most 3.7 to any of them. E5-11-44, whose own opening is already
+  Yugoslavia, is not brittle either. What E5-11-43 cannot handle is any opening it does not play.
+* **The critic's error has a direction.** Read from the US side, which is the mover's view after
+  the USSR's setup, E5-11's critic rates every unfamiliar USSR opening as far better for the US
+  than it is (−20 to −42 against −1 to −23 in playouts). On the US side, it rated every unfamiliar
+  US opening as far better for the US (+15 to +29 against +2 to +7). So it is not "optimistic about
+  alternatives": it favours the US in positions it has not seen. E5-16's critic has mostly lost the
+  bias; seed 43's Hungary at −16 is the exception.
+* **What is left of seed 43's USSR deficit** (−5.1 against E5-11, −4.6 against E4-61) is in its
+  play. The candidates are adaptation to the stronger US opening it now trains against (so it plays
+  worse against the Greece-2 US and E4-61's openings), collateral from the floor's overshoot, and
+  seed noise, since seed 44 is −1.0. Only a replicate on another seed separates these.
