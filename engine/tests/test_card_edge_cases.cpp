@@ -625,6 +625,11 @@ TEST(CardEdgeCasesTest, OlympicGames_Boycott_OpsModifiers_Suite) {
 
 
 // Tests for all cards allowing operations under Red Scare / Containment / Brezhnev Doctrine
+// Deluxe rule 7.4.3: Operations an Event grants "are treated as if a card had been played for its
+// Operations Point Value ... subject to all the restrictions of rule 6.0 and other events limiting
+// their placement or value", and 7.4.2's Example 3 is exactly CIA Created under Containment, worth
+// 2. These suites were briefly replaced on the strength of an FAQ line ("Ops from events are not
+// affected") that the Deluxe rulebook contradicts; the rulebook is the higher authority.
 TEST(CardEdgeCasesTest, CIACreated_OpsModifiers_Suite) {
     // 1. Default (1 Op)
     {
@@ -2542,12 +2547,14 @@ TEST(CardEdgeCasesTest, WarEvents_UnifiedWrapper_Suite) {
         step_ok = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::POINT_NODE, ts::countries::GREECE, 0, 0});
         ASSERT_FALSE(step_ok);
 
-        // Target Mexico (stab 2) accepted -> roll 3 is success -> +3 MilOps, 1 VP
+        // Target Mexico (stab 2) accepted. Mexico borders the United States, which counts as a
+        // US-controlled neighbour (rule 2.1.5, FAQ under Brush War): -1, so a 4 is the lowest
+        // roll that reaches 3 -> +3 MilOps, 1 VP
         step_ok = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::POINT_NODE, ts::countries::MEXICO, 0, 0});
         ASSERT_FALSE(step_ok);
         ASSERT_EQ(state.ctx().decision_type, ts::DecisionType::ROLL_DIE);
 
-        done = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::ROLL_DIE, 3, 0, 0});
+        done = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::ROLL_DIE, 4, 0, 0});
         ASSERT_TRUE(done);
         ASSERT_EQ(state.ussr_mil_ops, 3); // Brush war gives 3 MilOps
         ASSERT_EQ(state.victory_points, -1); // USSR gets 1 VP

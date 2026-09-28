@@ -475,7 +475,7 @@ void ActionMask::generate_mask(const GameState& state, uint8_t* mask_out, size_t
                     uint8_t op_card = ctx.pending_op_card;
                     uint8_t total_spent = ctx.pending_ops_value - ctx.remaining_steps;
                     if (op_card == card_ids::THE_CHINA_CARD) {
-                        uint8_t non_asia_base = Operations::get_effective_ops(state, op_card, p, Region::NONE_REGION);
+                        uint8_t non_asia_base = Operations::plain_budget(state, op_card, p);
                         for (uint8_t i = 0; i < 84; ++i) {
                             if (mask_out[i] && MapData::get_country(i).region != Region::ASIA) {
                                 uint8_t cost = Operations::get_influence_cost(state, p, i);
@@ -485,7 +485,7 @@ void ActionMask::generate_mask(const GameState& state, uint8_t* mask_out, size_t
                             }
                         }
                     } else if (p == Player::USSR && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE)) {
-                        uint8_t non_se_base = Operations::get_effective_ops(state, op_card, p, Region::NONE_REGION);
+                        uint8_t non_se_base = Operations::plain_budget(state, op_card, p);
                         for (uint8_t i = 0; i < 84; ++i) {
                             if (mask_out[i] && !MapData::get_country(i).in_southeast_asia) {
                                 uint8_t cost = Operations::get_influence_cost(state, p, i);

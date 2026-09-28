@@ -63,8 +63,29 @@ uint8_t Operations::grant_ops_for_card(const GameState& state, uint8_t card_id,
     return get_effective_ops(state, card_id, player, Region::ASIA);
 }
 
+// Ops an event grants: "as if they played a 4 Ops card", "using the Operations value of this
+// card". Deluxe rule 7.4.3: they "are treated as if a card had been played for its Operations
+// Point Value ... subject to all the restrictions of rule 6.0 and other events limiting their
+// placement or value", so Containment, Brezhnev Doctrine and Red Scare/Purge apply -- 7.4.2's
+// Example 3 is CIA Created under Containment, worth 2. Region::ASIA grants the Vietnam Revolts
+// bonus up front for the ladder to withdraw, as for a card.
 uint8_t Operations::grant_ops(const GameState& state, uint8_t base_ops, Player player) noexcept {
     return get_modified_ops(state, base_ops, player, Region::ASIA);
+}
+
+void Operations::grant_card_ops_to_ctx(GameState& state, uint8_t card_id, Player player) noexcept {
+    state.ctx().pending_ops_value = grant_ops_for_card(state, card_id, player);
+    state.ctx().ops_plain = get_effective_ops(state, card_id, player, Region::NONE_REGION);
+}
+
+void Operations::grant_event_ops_to_ctx(GameState& state, uint8_t base_ops, Player player) noexcept {
+    state.ctx().pending_ops_value = grant_ops(state, base_ops, player);
+    state.ctx().ops_plain = get_modified_ops(state, base_ops, player, Region::NONE_REGION);
+}
+
+uint8_t Operations::plain_budget(const GameState& state, uint8_t op_card, Player player) noexcept {
+    if (state.ctx().ops_plain != 0) return state.ctx().ops_plain;
+    return get_effective_ops(state, op_card, player, Region::NONE_REGION);
 }
 
 bool Operations::can_place_influence(const GameState& state, Player p, uint8_t country_id) noexcept {

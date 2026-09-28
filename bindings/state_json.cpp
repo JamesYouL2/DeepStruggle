@@ -769,6 +769,7 @@ Value save(const GameState& state) {
         f.set("roll_target", I(c.roll_target));
         f.set("roll_actor", I(static_cast<int>(c.roll_actor)));
         f.set("event_stage", I(c.event_stage));
+        f.set("ops_plain", I(c.ops_plain));
         Value si = Value::array(), vn = Value::array(), nc = Value::array();
         for (uint64_t v : c.start_influence_nodes) si.push(Value(v));
         for (uint64_t v : c.visited_nodes) vn.push(Value(v));
@@ -926,6 +927,8 @@ bool load_save(const Value& d, GameState& out, std::string* error) {
             c.roll_target = get<uint8_t>(f, "roll_target", 0);
             c.roll_actor = static_cast<Player>(get<int>(f, "roll_actor", 0));
             c.event_stage = get<uint8_t>(f, "event_stage", 0);
+            // Absent from saves that predate it; 0 falls back to the card, as it always did.
+            c.ops_plain = get<uint8_t>(f, "ops_plain", 0);
             const std::pair<const char*, uint64_t*> bitsets[] = {
                 {"start_influence_nodes", c.start_influence_nodes.data()},
                 {"visited_nodes", c.visited_nodes.data()},
