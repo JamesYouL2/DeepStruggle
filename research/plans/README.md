@@ -102,7 +102,7 @@ running any of them.
 | [P8](P8_teach_the_defcon_conjunction.md) | auxiliary risk head for provoked DEFCON-1 | instruments exist |
 | [P4](P4_setup_macro_action_credit.md) | macro-action credit for placement blocks | rebase the file first |
 | [P2](P2_chance_aware_targets.md) | dice expectation + pre-deal bootstrap in value targets | **read the E3-22 lesson first**: a better offline return estimate lost by 520 Elo. Judge on training outcome, never on offline target quality |
-| [P5](P5_oracle_critic.md) | oracle critic as a deal-side variance reducer | rebase the file first |
+| [P5](P5_oracle_critic.md) | oracle critic as a deal-side variance reducer | **shelved 2026-09-28**: the opponent's hand adds +0.3 points of explained variance offline |
 | [reserve](reserve.md) | ideas with triggers — PSRO-lite meta-Nash sampling, optimism/extragradient, per-side capacity | |
 
 ## Archived programmes

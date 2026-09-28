@@ -1,6 +1,8 @@
 # P5 — Oracle critic (and the belief head that rides with it)
 
-**Status:** queued
+**Status:** **sized offline and shelved (2026-09-28)**: the opponent's hand explains +0.3 points of
+the result's variance beyond the public critic (0.283 → 0.286), at most +0.8 at setup. There is too
+little hidden information for an oracle critic to reduce much variance; see *Sizing* below.
 **Gate:** after P2, so a deal-side variance reducer is not confounded with the deal-side
 bootstrapping change. If P2 is demoted, run this in its slot.
 **Needs approval:** none.
@@ -100,3 +102,35 @@ specifically P(VOA in hand) when it is; the VOA-exposure probe; then Elo.
 ## Runs
 
 (none yet)
+
+## Sizing (2026-09-28)
+
+`tools/scripts/oracle_sizing.py` ran before anything was built. It used 29,924 self-play games of
+E5-11-43@560M at temperature 1 and recorded 2% of decisions (281,538 records), scored on 5,984
+held-out games. The opponent's hand (110 bits) was the only extra input: no deck order and no
+future rolls, which are chance, not hidden information. Two fits compare the result's explained
+variance (1 − Brier / Brier of the base rate) without and with it. The first is an MLP on the
+network's trunk features plus its own v_win, early-stopped on held-out games. The second is a
+linear fit on the critic's own logit. Report: `data/reports/oracle_sizing_e5_11_43.md`.
+
+| slice | checkpoint's critic | MLP: + opponent's hand | linear: + opponent's hand |
+|:---|---:|---:|---:|
+| all | 0.283 | +0.003 | +0.003 |
+| setup | 0.049 | +0.008 | +0.008 |
+| headline | 0.276 | +0.001 | +0.004 |
+| action round | 0.292 | +0.003 | +0.003 |
+| turn 1 / 2–3 / 4–5 / 6–7 / 8–10 | 0.067 / 0.174 / 0.295 / 0.338 / 0.505 | +0.004 / +0.001 / +0.001 / +0.002 / +0.005 | +0.005 / +0.003 / +0.002 / +0.003 / +0.005 |
+
+**The hidden hand carries almost no information about the result that the public critic lacks.**
+About 72% of the result's variance is unexplained by either, which is future chance (dice,
+draws) and future play. An oracle critic's value is bounded by the extra variance it explains, so
+this one would reduce the policy's advantage variance by well under 1%. The earlier finding that
+the critic cannot rank headline choices position by position is therefore not a hidden-information
+problem: at the headline the hand adds +0.1 to +0.4 points.
+
+Caveats: a first run on 6,000 games overfit (heads memorise games, since the result is one label
+per game) and was discarded. And the MLP sees hand × board interactions only through a 128-wide
+layer. Neither moves the conclusion much: the linear fit gives the same numbers.
+
+If variance is the target, the chance side is where it is: P2's chance-aware targets, which
+average over the next roll instead of sampling it.
