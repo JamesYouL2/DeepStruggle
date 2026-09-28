@@ -568,14 +568,14 @@ export class CardsView {
           <div class="card-ops-badge ${meta.side}">${meta.ops}</div>
           <div class="all-cards-info">
             <div class="card-name">#${meta.id} ${meta.name} ${meta.one_time ? "★" : ""}</div>
-            <div class="card-meta">${meta.age.toUpperCase()} • ${meta.side.toUpperCase()}</div>
           </div>
         </div>
         <div class="card-loc-badge ${locBadgeClass}">${locLabel}</div>
       `;
 
-      itemEl.addEventListener("mouseenter", (e) => this.showTooltip(e, meta));
-      itemEl.addEventListener("mouseleave", () => this.hideTooltip());
+      // No description here -- neither an era/side line nor the hover tooltip the hand tabs
+      // show: the list is for finding a card and where it is. Its text is one click away.
+      itemEl.title = "Click for the card's text";
       itemEl.addEventListener("click", () => {
         this.showPileModal(`Card #${meta.id}: ${meta.name}`, [id]);
       });

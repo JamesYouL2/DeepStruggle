@@ -87,6 +87,8 @@ def test_frontend_workbench_html_structure():
         "decision-panel",
         "decision-body",
         "decision-type-badge",
+        "cards-sidebar",
+        "hands-panel",
         "tab-ussr-hand",
         "tab-us-hand",
         "tab-board-cards",

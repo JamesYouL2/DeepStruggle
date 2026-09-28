@@ -685,9 +685,66 @@ body {
 .main-content {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: 300px minmax(0, 1fr) 380px;
+  min-height: 0;
   overflow: hidden;
   position: relative;
+}
+
+/* Left sidebar: the card lists (hands, piles, all 110), the full height of the board. */
+.cards-sidebar {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-color);
+  backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+.cards-sidebar .hands-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cards-sidebar .tabs { flex-wrap: wrap; flex-shrink: 0; }
+.cards-sidebar .tabs { gap: 2px; }
+.cards-sidebar .tab-btn { white-space: nowrap; padding: 4px 5px; font-size: 11.5px; }
+.cards-sidebar .tab-content.active {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.cards-sidebar .card-list,
+.cards-sidebar .all-cards-scroll-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+/* A list item never shrinks below its own line: squeezed, the rows used to overlap. */
+.card-list > * { flex-shrink: 0; }
+
+/* Narrower screens: slimmer side columns; then one column -- map, the HUD rail, the cards --
+   scrolling as a page. */
+@media (max-width: 1280px) {
+  .main-content { grid-template-columns: 240px minmax(0, 1fr) 330px; }
+}
+@media (max-width: 960px) {
+  /* The header's tracks do not fit either: let it scroll sideways rather than clip. */
+  .top-bar { overflow-x: auto; }
+  .main-content {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .main-content > .map-container { order: 1; flex: 0 0 60vh; min-height: 300px; }
+  .main-content > .sidebar { order: 2; flex: 0 0 auto; overflow: visible; border-left: none; border-top: 1px solid var(--border-color); }
+  .main-content > .cards-sidebar { order: 3; flex: 0 0 auto; overflow: visible; border-right: none; border-top: 1px solid var(--border-color); }
+  .cards-sidebar .card-list,
+  .cards-sidebar .all-cards-scroll-list { max-height: 360px; }
 }
 
 /* Map Section */
@@ -1876,21 +1933,72 @@ body {
   font-size: 11px;
   word-break: break-word;
 }
-.analysis-value { margin-bottom: 8px; }
-.analysis-value-bar {
+/* The critic, each side's own P(win) (trace_view.ts valueSidesHtml, in the replay readout and
+   the live analysis panel). Only the side to move is trained, so its card is lit and the other
+   is dimmed; the compact bar below is filled from the lit one alone, as P(US wins). */
+.value-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.value-side {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: rgba(0, 0, 0, 0.2);
+  cursor: help;
+  transition: opacity 0.2s ease;
+}
+.value-side-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+}
+.value-side-name { font-weight: 800; font-size: 11px; letter-spacing: 0.4px; }
+.value-side.us .value-side-name { color: var(--us-blue-light); }
+.value-side.ussr .value-side-name { color: var(--ussr-red-light); }
+.value-side-tag {
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.value-side-p {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+.value-side-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+.value-side.calibrated.us { border-color: var(--us-blue); background: rgba(37, 99, 235, 0.16); }
+.value-side.calibrated.ussr { border-color: var(--ussr-red); background: rgba(220, 38, 38, 0.16); }
+.value-side.calibrated .value-side-tag { color: var(--warning); }
+.value-side.uncalibrated { opacity: 0.42; border-style: dashed; }
+.value-bar-wrap { margin-bottom: 8px; cursor: help; }
+.value-bar {
   position: relative;
-  height: 10px;
-  border-radius: 5px;
+  height: 8px;
+  border-radius: 4px;
   overflow: hidden;
   background: var(--ussr-red);
 }
-.analysis-value-us {
+.value-bar-us {
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--us-blue);
   transition: width 0.25s ease;
 }
-.analysis-value-mid {
+.value-bar-mid {
   position: absolute;
   left: 50%;
   top: 0;
@@ -1898,7 +2006,7 @@ body {
   width: 1px;
   background: rgba(255, 255, 255, 0.6);
 }
-.analysis-value-text {
+.value-bar-text {
   display: flex;
   justify-content: space-between;
   gap: 6px;
@@ -1907,8 +2015,21 @@ body {
   font-size: 10px;
   color: var(--text-muted);
 }
-.analysis-value-text .us { color: var(--us-blue-light); }
-.analysis-value-text .ussr { color: var(--ussr-red-light); }
+.value-bar-text .us { color: var(--us-blue-light); }
+.value-bar-text .ussr { color: var(--ussr-red-light); }
+.value-result {
+  margin-bottom: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 700;
+}
+.trace-critic tr.uncalibrated td { opacity: 0.45; }
+.trace-critic tr.calibrated td { color: var(--text-main); font-weight: 700; }
+.trace-critic tr.calibrated.row-us td:first-child { color: var(--us-blue-light); }
+.trace-critic tr.calibrated.row-ussr td:first-child { color: var(--ussr-red-light); }
 .analysis-who.us { color: var(--us-blue-light); }
 .analysis-who.ussr { color: var(--ussr-red-light); }
 .analysis-choices {

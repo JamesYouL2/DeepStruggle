@@ -2,11 +2,13 @@
  * Showing what the model believed, next to what it did.
  *
  * Four views over the same per-step trace (see `ai/eval/policy_readout.py`):
- *   - the value ribbon, the critic's win value across the whole game, under the timeline;
- *   - a probability chip on each log row;
+ *   - the value ribbon, the calibrated critic as P(US wins) across the whole game, under the
+ *     timeline;
+ *   - a probability chip on each log row, and a chip for the calibrated value's move;
  *   - **a probability on every choosable thing** -- each card in hand, each mode button, each
  *     country on the map -- for the decision about to be made from the position on screen;
- *   - the readout panel, with the critic's prediction for both sides to five decimals.
+ *   - the readout panel: each side's own chance of winning -- the side to move highlighted, since
+ *     only its reading is trained -- and the raw predictions for both sides to five decimals.
  *
  * **Which decision the board's numbers belong to.** A replay step's snapshot is the position
  * *after* its action, so the board on screen is the node the *next* step was decided at -- its
@@ -79,8 +81,151 @@ function fmt5(v: number | undefined): string {
   return v === undefined ? "–" : (v >= 0 ? "+" : "") + v.toFixed(5);
 }
 
-/** The small `p=0.42` chip that goes on a replay log row. */
-export function policyChipHtml(step: ReplayStep, prev?: ReplayStep): string {
+// -- which critic reading to believe ------------------------------------------------------------
+//
+// The critic is read from both sides' observations, but the value head is trained only on the
+// observation of the player who is deciding. That side's reading is the calibrated one; the
+// other side's is an untrained extrapolation and can be far off (+0.99 where the truth is about
+// -0.35 has been seen). Every view below therefore shows each side's own P(win) = (1 + v)/2,
+// highlights the decider's and dims the other, and plots only the decider's -- converted to the
+// US point of view -- as the value of a position. A terminal position has no decider.
+
+export type Side = "US" | "USSR";
+
+/** `v_vp` is the predicted final VP margin divided by this (the automatic-victory threshold). */
+export const VP_LIMIT = 20;
+
+const CALIBRATED_NOTE = "trained on the side to move: this is the reading to believe";
+const UNCALIBRATED_NOTE = "not the side to move: the value head is never trained on this side's observation here, so this reading is untrained extrapolation";
+const TERMINAL_NOTE = "game over: no side is to move, so neither reading is a trained one";
+
+export function asSide(p: string | undefined | null): Side | null {
+  return p === "US" || p === "USSR" ? p : null;
+}
+
+/** An expected result v in [-1, 1] as a probability of winning (draws are rare). */
+export function pWin(v: number): number {
+  return Math.max(0, Math.min(1, (1 + v) / 2));
+}
+
+function pct(p: number): string {
+  return `${(p * 100).toFixed(1)}%`;
+}
+
+function signed1(v: number): string {
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`;
+}
+
+/**
+ * Who decides at the position replay step `i`'s critic was read on.
+ *
+ * `critic.at === "after"` (every writer today) reads the state after the step's action -- the
+ * position the *next* step is decided from, so the decider is the next step's player. The last
+ * step has no next one; its snapshot's own decision context stands in, unless the game is over.
+ * A terminal snapshot has no decider even though its stale decision context still names one.
+ */
+export function replayDecider(steps: ReplayStep[], i: number): Side | null {
+  const step = steps[i];
+  if (!step) return null;
+  if (step.critic?.at === "before") return asSide(step.player);
+  if (step.state_snapshot?.is_terminal) return null;
+  return asSide(steps[i + 1]?.player) ?? asSide(step.state_snapshot?.decision_context?.decision_player);
+}
+
+/** The calibrated and the untrained reading of one position, both as P(US wins). */
+export interface CalibratedValue {
+  decider: Side;
+  pUs: number;
+  pUsOther: number | null;
+}
+
+/** The decider's reading converted to the US point of view, or null when there is no decider. */
+export function calibratedValue(c: CriticTrace | undefined, decider: Side | null): CalibratedValue | null {
+  if (!c || !decider) return null;
+  const vUs = c.v_win_us;
+  const vUssr = c.v_win_ussr;
+  if (decider === "US") {
+    if (vUs === undefined) return null;
+    return { decider, pUs: pWin(vUs), pUsOther: vUssr === undefined ? null : 1 - pWin(vUssr) };
+  }
+  if (vUssr === undefined) return null;
+  return { decider, pUs: 1 - pWin(vUssr), pUsOther: vUs === undefined ? null : pWin(vUs) };
+}
+
+const seriesCache = new WeakMap<ReplayStep[], Array<CalibratedValue | null>>();
+
+/** Every step's calibrated value (memoised per replay: each log row asks for two of them). */
+export function calibratedSeries(steps: ReplayStep[]): Array<CalibratedValue | null> {
+  let series = seriesCache.get(steps);
+  if (!series) {
+    series = steps.map((s, i) => calibratedValue(s.critic, replayDecider(steps, i)));
+    seriesCache.set(steps, series);
+  }
+  return series;
+}
+
+/** How a finished game came out, from the terminal display state. */
+export function resultText(state: GameState | null | undefined): string {
+  if (!state) return "Game over.";
+  const u = state.terminal_utility;
+  const who = u > 0 ? "US won" : u < 0 ? "USSR won" : "drawn";
+  const vp = state.victory_points;
+  return `Game over — ${who}${vp !== undefined ? ` (VP ${vp > 0 ? "+" : ""}${vp})` : ""}.`;
+}
+
+/**
+ * Each side's own estimated chance of winning, with the side to move -- the one reading that is
+ * trained -- highlighted and the other dimmed, then a compact bar filled from the calibrated
+ * reading alone as P(US wins). `decider` null with `terminal` set is a finished game: both are
+ * dimmed and the bar gives way to the result.
+ */
+export function valueSidesHtml(c: CriticTrace, decider: Side | null,
+                               terminal?: GameState | null): string {
+  const side = (s: Side): string => {
+    const v = s === "US" ? c.v_win_us : c.v_win_ussr;
+    const vp = s === "US" ? c.v_vp_us : c.v_vp_ussr;
+    const cls = s.toLowerCase();
+    const status = decider === s ? "calibrated" : "uncalibrated";
+    const note = decider === s ? CALIBRATED_NOTE : terminal ? TERMINAL_NOTE
+      : decider ? UNCALIBRATED_NOTE : "no side to move here, so neither reading is a trained one";
+    const tag = decider === s ? "to move · trained" : terminal ? "game over" : decider ? "untrained" : "no decider";
+    const p = v === undefined ? null : pWin(v);
+    return `
+      <div class="value-side ${cls} ${status}" data-side="${s}" data-p="${p === null ? "" : p.toFixed(6)}"
+           title="${s}'s own estimate of its chance to win: (1 + v_win_${cls})/2${v === undefined ? "" : ` = (1 ${v >= 0 ? "+" : "−"} ${Math.abs(v).toFixed(4)})/2`}. ${note}">
+        <div class="value-side-head"><span class="value-side-name">${s}</span><span class="value-side-tag">${tag}</span></div>
+        <div class="value-side-p">${p === null ? "–" : pct(p)}</div>
+        <div class="value-side-sub">wins, own view${vp === undefined ? "" : ` · VP ${signed1(vp * VP_LIMIT)}`}</div>
+      </div>`;
+  };
+  const parts = [`<div class="value-sides" data-decider="${decider ?? "none"}">${side("US")}${side("USSR")}</div>`];
+  const cal = calibratedValue(c, decider);
+  if (cal) {
+    // The predicted final VP margin from the calibrated side, turned to the US point of view.
+    const vpRaw = cal.decider === "US" ? c.v_vp_us : c.v_vp_ussr;
+    const vpUs = vpRaw === undefined ? undefined : (cal.decider === "US" ? 1 : -1) * vpRaw * VP_LIMIT;
+    const vpText = vpUs === undefined ? "" : `VP ${vpUs >= 0 ? "US" : "USSR"} +${Math.abs(vpUs).toFixed(1)}`;
+    parts.push(`
+      <div class="value-bar-wrap" title="The calibrated reading only (${cal.decider}, the side to move), as P(US wins); the predicted final VP margin is ${cal.decider}'s own, ×${VP_LIMIT}">
+        <div class="value-bar" data-p-us="${cal.pUs.toFixed(6)}">
+          <span class="value-bar-us" style="width:${(cal.pUs * 100).toFixed(1)}%"></span>
+          <span class="value-bar-mid"></span>
+        </div>
+        <div class="value-bar-text">
+          <span class="us">US ${pct(cal.pUs)}</span>
+          <span class="value-bar-vp">${vpText}</span>
+          <span class="ussr">USSR ${pct(1 - cal.pUs)}</span>
+        </div>
+      </div>`);
+  } else if (terminal) {
+    parts.push(`<div class="value-result" title="${TERMINAL_NOTE}">${resultText(terminal)}</div>`);
+  }
+  return parts.join("");
+}
+
+/** The small `p=0.42` chip that goes on a replay log row, and the calibrated value's move. */
+export function policyChipHtml(steps: ReplayStep[], idx: number): string {
+  const step = steps[idx];
   const pol = step.policy;
   const parts: string[] = [];
   if (pol && pol.source === "forced") {
@@ -95,23 +240,27 @@ export function policyChipHtml(step: ReplayStep, prev?: ReplayStep): string {
       `<span class="trace-chip" style="border-color:${probColor(p)};color:${probColor(p)}" title="${title}">`
       + `p=${p.toFixed(3)}${offMode ? " ✳" : ""}</span>`);
   }
-  const v = step.critic?.v_win_us;
-  const pv = prev?.critic?.v_win_us;
-  if (v !== undefined && pv !== undefined) {
-    const dv = v - pv;
-    // Only a move worth noticing gets a badge; every step nudges the value a little.
-    if (Math.abs(dv) >= 0.05) {
-      const cls = dv > 0 ? "trace-dv-us" : "trace-dv-ussr";
-      parts.push(`<span class="trace-chip ${cls}" title="critic v_win (US) moved by this much across this step">Δv ${dv > 0 ? "+" : ""}${dv.toFixed(2)}</span>`);
+  const series = calibratedSeries(steps);
+  const cur = series[idx];
+  const prev = idx > 0 ? series[idx - 1] : null;
+  if (cur && prev) {
+    const dp = cur.pUs - prev.pUs;
+    // Only a move worth noticing gets a badge; every step nudges the value a little. 2.5 points
+    // of probability is the 0.05 of v_win this chip used to be keyed on.
+    if (Math.abs(dp) >= 0.025) {
+      const cls = dp > 0 ? "trace-dv-us" : "trace-dv-ussr";
+      parts.push(`<span class="trace-chip ${cls}" title="the calibrated critic's P(US wins) moved by this many points across this step -- each position read from the side to move there (${prev.decider}, then ${cur.decider})">ΔP ${dp > 0 ? "+" : "−"}${Math.abs(dp * 100).toFixed(0)}%</span>`);
     }
   }
   return parts.join("");
 }
 
 /**
- * The value ribbon: one column per step, the critic's US win value, zero line through the
- * middle. Clicking seeks. Drawn as inline SVG -- the repo draws its map the same way, and a
- * charting dependency for one sparkline is not worth the bytes.
+ * The value ribbon: one column per step, the calibrated critic as P(US wins) -- each position
+ * read from the side to move there, never the untrained side -- with 50% through the middle.
+ * The untrained reading of the same positions is the faint dashed line, for comparison only.
+ * Clicking seeks. Drawn as inline SVG -- the repo draws its map the same way, and a charting
+ * dependency for one sparkline is not worth the bytes.
  */
 export function renderValueRibbon(
   container: HTMLElement,
@@ -119,8 +268,9 @@ export function renderValueRibbon(
   currentIndex: number,
   onSeek: (index: number) => void,
 ): void {
-  const values: Array<number | null> = steps.map(s =>
-    s.critic?.v_win_us !== undefined ? s.critic.v_win_us : null);
+  const series = calibratedSeries(steps);
+  const values: Array<number | null> = series.map(c => (c ? c.pUs : null));
+  const others: Array<number | null> = series.map(c => (c ? c.pUsOther : null));
   if (!values.some(v => v !== null)) {
     container.classList.add("hidden");
     container.innerHTML = "";
@@ -131,22 +281,32 @@ export function renderValueRibbon(
   const W = 1000, H = 60, mid = H / 2;
   const n = values.length;
   const x = (i: number) => (n <= 1 ? 0 : (i / (n - 1)) * W);
-  const y = (v: number) => mid - Math.max(-1, Math.min(1, v)) * (mid - 3);
+  const y = (p: number) => mid - (Math.max(0, Math.min(1, p)) * 2 - 1) * (mid - 3);
 
-  // One area per contiguous run of values, so gaps (a replay traced only at decision nodes)
-  // stay gaps instead of being bridged by a line that was never measured.
-  const areas: string[] = [];
-  let run: Array<{ i: number; v: number }> = [];
-  const flush = () => {
-    if (run.length === 0) return;
-    const line = run.map((pt, k) => `${k === 0 ? "M" : "L"}${x(pt.i).toFixed(1)},${y(pt.v).toFixed(1)}`).join("");
-    const close = `L${x(run[run.length - 1].i).toFixed(1)},${mid} L${x(run[0].i).toFixed(1)},${mid} Z`;
-    areas.push(`<path d="${line}${close}" fill="url(#ribbon-fill)" stroke="none"/>`);
-    areas.push(`<path d="${line}" fill="none" stroke="var(--us-blue-light)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`);
-    run = [];
+  // One path per contiguous run of values, so gaps (a replay traced only at decision nodes, the
+  // terminal position) stay gaps instead of being bridged by a line that was never measured.
+  const runs = (vals: Array<number | null>): Array<Array<{ i: number; v: number }>> => {
+    const out: Array<Array<{ i: number; v: number }>> = [];
+    let run: Array<{ i: number; v: number }> = [];
+    vals.forEach((v, i) => {
+      if (v === null) { if (run.length) out.push(run); run = []; } else { run.push({ i, v }); }
+    });
+    if (run.length) out.push(run);
+    return out;
   };
-  values.forEach((v, i) => { if (v === null) { flush(); } else { run.push({ i, v }); } });
-  flush();
+  const linePath = (run: Array<{ i: number; v: number }>) =>
+    run.map((pt, k) => `${k === 0 ? "M" : "L"}${x(pt.i).toFixed(1)},${y(pt.v).toFixed(1)}`).join("");
+
+  const paths: string[] = [];
+  for (const run of runs(others)) {
+    paths.push(`<path class="ribbon-uncalibrated" d="${linePath(run)}" fill="none" stroke="var(--text-muted)" stroke-opacity="0.45" stroke-dasharray="3 3" stroke-width="1" vector-effect="non-scaling-stroke"/>`);
+  }
+  for (const run of runs(values)) {
+    const line = linePath(run);
+    const close = `L${x(run[run.length - 1].i).toFixed(1)},${mid} L${x(run[0].i).toFixed(1)},${mid} Z`;
+    paths.push(`<path d="${line}${close}" fill="url(#ribbon-fill)" stroke="none"/>`);
+    paths.push(`<path class="ribbon-calibrated" d="${line}" fill="none" stroke="var(--us-blue-light)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`);
+  }
 
   // VP changes: the events the value curve should be explaining.
   const ticks: string[] = [];
@@ -169,11 +329,11 @@ export function renderValueRibbon(
       </defs>
       ${ticks.join("")}
       <line x1="0" y1="${mid}" x2="${W}" y2="${mid}" stroke="var(--text-dim)" stroke-width="1" vector-effect="non-scaling-stroke"/>
-      ${areas.join("")}
+      ${paths.join("")}
       <line x1="${cx.toFixed(1)}" y1="0" x2="${cx.toFixed(1)}" y2="${H}" stroke="var(--warning)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
     </svg>
-    <span class="ribbon-label ribbon-label-top">US +1</span>
-    <span class="ribbon-label ribbon-label-bottom">USSR −1</span>`;
+    <span class="ribbon-label ribbon-label-top">US</span>
+    <span class="ribbon-label ribbon-label-bottom">USSR</span>`;
 
   container.onclick = (ev: MouseEvent) => {
     const rect = container.getBoundingClientRect();
@@ -314,12 +474,22 @@ export function decorateChoices(policy: PolicyTrace | undefined, state: GameStat
 
 // -- the right-rail panel ---------------------------------------------------------------------
 
-export function criticTableHtml(critic: CriticTrace): string {
+/**
+ * The raw readings to five decimals. The side to move -- whose reading is the trained one -- is
+ * highlighted and the other dimmed, as in `valueSidesHtml`; with no decider both are dimmed.
+ */
+export function criticTableHtml(critic: CriticTrace, decider: Side | null = null): string {
+  const row = (s: Side, v: number | undefined, vp: number | undefined) => {
+    const cal = decider === s;
+    const title = cal ? CALIBRATED_NOTE : decider ? UNCALIBRATED_NOTE : "no side to move: neither reading is a trained one";
+    return `<tr class="row-${s.toLowerCase()} ${cal ? "calibrated" : "uncalibrated"}" data-side="${s}" title="${title}">`
+      + `<td>${s}${cal ? " ◂" : ""}</td><td>${fmt5(v)}</td><td>${fmt5(vp)}</td></tr>`;
+  };
   return `
     <table class="trace-critic">
       <tr><th>prediction</th><th>v_win</th><th>v_vp</th></tr>
-      <tr class="row-us"><td>US</td><td>${fmt5(critic.v_win_us)}</td><td>${fmt5(critic.v_vp_us)}</td></tr>
-      <tr class="row-ussr"><td>USSR</td><td>${fmt5(critic.v_win_ussr)}</td><td>${fmt5(critic.v_vp_ussr)}</td></tr>
+      ${row("US", critic.v_win_us, critic.v_vp_us)}
+      ${row("USSR", critic.v_win_ussr, critic.v_vp_ussr)}
       <tr class="trace-residual" title="A zero-sum critic must put these at zero; whatever is left is model error">
         <td>residual</td><td>${fmt5(critic.win_residual)}</td><td>${fmt5(critic.vp_residual)}</td></tr>
     </table>`;
@@ -350,16 +520,18 @@ function nextDecisionHtml(pol: PolicyTrace | undefined, index: number): string {
 }
 
 /**
- * Fill the right-rail panel: the critic's prediction for the position on screen, then a summary
- * of the decision whose probabilities are painted on the board.
+ * Fill the readout panel: the critic's prediction for the position on screen -- each side's own
+ * chance, the side to move highlighted -- then a summary of the decision whose probabilities are
+ * painted on the board.
  */
-export function renderTracePanel(current: ReplayStep | undefined, next: ReplayStep | undefined,
-                                 index: number): void {
+export function renderTracePanel(steps: ReplayStep[], index: number): void {
   const panel = document.getElementById("trace-panel");
   const body = document.getElementById("trace-panel-body");
   const badge = document.getElementById("trace-source-badge");
   if (!panel || !body) return;
 
+  const current = steps[index];
+  const next = steps[index + 1];
   const critic = current?.critic;
   const nextPolicy = next?.policy;
   if (!critic && !nextPolicy) {
@@ -372,8 +544,11 @@ export function renderTracePanel(current: ReplayStep | undefined, next: ReplaySt
 
   const sections: string[] = [];
   if (critic) {
-    sections.push(`<div class="trace-section-label">POSITION ON SCREEN — after step ${index + 1}</div>`);
-    sections.push(criticTableHtml(critic));
+    const decider = replayDecider(steps, index);
+    const terminal = current?.state_snapshot?.is_terminal ? current.state_snapshot : null;
+    sections.push(`<div class="trace-section-label">POSITION ON SCREEN — after step ${index + 1}${decider ? `, <span class="analysis-who ${decider.toLowerCase()}">${decider}</span> to move` : ""}</div>`);
+    sections.push(valueSidesHtml(critic, decider, terminal));
+    sections.push(criticTableHtml(critic, decider));
   }
   sections.push(`<div class="trace-section-label">NEXT DECISION — from this position</div>`);
   sections.push(nextDecisionHtml(nextPolicy, index));

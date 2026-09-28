@@ -40,7 +40,51 @@
 
     <!-- Main Central Grid -->
     <main class="main-content">
-      <!-- Left / Center: Interactive Deluxe Map Canvas -->
+      <!-- Left Sidebar: the card lists, beside the map rather than under the model readout. -->
+      <aside class="cards-sidebar" id="cards-sidebar">
+        <!-- Cards & Hands (full visibility): both hands, the piles, and all 110 cards. -->
+        <div class="panel hands-panel" id="hands-panel">
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="tab-ussr-hand">USSR (<span id="ussr-hand-count">0</span>)</button>
+            <button class="tab-btn" data-tab="tab-us-hand">US (<span id="us-hand-count">0</span>)</button>
+            <button class="tab-btn" data-tab="tab-board-cards">Piles</button>
+            <button class="tab-btn" data-tab="tab-all-cards" title="All 110 cards and where each one is">All (110)</button>
+          </div>
+
+          <div class="tab-content active" id="tab-ussr-hand">
+            <div class="card-list" id="ussr-cards-list"></div>
+          </div>
+          <div class="tab-content" id="tab-us-hand">
+            <div class="card-list" id="us-cards-list"></div>
+          </div>
+          <div class="tab-content" id="tab-board-cards">
+            <div id="china-card-container"></div>
+            <div class="piles-summary">
+              <button id="btn-view-discard" class="btn btn-secondary btn-block">View Discard Pile (<span id="discard-count">0</span>)</button>
+              <button id="btn-view-removed" class="btn btn-secondary btn-block">View Removed Pile (<span id="removed-count">0</span>)</button>
+              <div class="draw-count-label">Draw Deck: <strong id="draw-count">0</strong> cards remaining</div>
+            </div>
+          </div>
+          <div class="tab-content" id="tab-all-cards">
+            <div class="all-cards-controls">
+              <input type="text" id="all-cards-search" placeholder="Search cards by name/ID..." class="all-cards-search-input">
+              <select id="all-cards-filter" class="all-cards-filter-select">
+                <option value="ALL">All (110 Cards)</option>
+                <option value="HAND_US">US Hand</option>
+                <option value="HAND_USSR">USSR Hand</option>
+                <option value="DRAW_DECK">Draw Deck</option>
+                <option value="DISCARD_PILE">Discard Pile</option>
+                <option value="REMOVED_FROM_GAME">Removed Pile</option>
+                <option value="ONGOING_EVENT">Ongoing / China</option>
+                <option value="UNAVAILABLE">Future Era</option>
+              </select>
+            </div>
+            <div class="card-list all-cards-scroll-list" id="all-cards-list"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center: Interactive Deluxe Map Canvas -->
       <section class="map-container" id="map-container">
         <div class="map-viewport-controls">
           <button id="btn-zoom-in" class="btn-icon" title="Zoom In">+</button>
@@ -53,7 +97,7 @@
         </div>
       </section>
 
-      <!-- Right Sidebar: Decision HUD, Hands, Discard, Full Card DB -->
+      <!-- Right Sidebar: Decision HUD, model analysis / readout, active effects -->
       <aside class="sidebar">
         <!-- Section 1: Decision & Interactive HUD -->
         <div class="panel decision-panel" id="decision-panel">
@@ -119,47 +163,6 @@
           </div>
         </div>
 
-        <!-- Section 2: Cards & Hands (Full Visibility) -->
-        <div class="panel hands-panel">
-          <div class="tabs">
-            <button class="tab-btn active" data-tab="tab-ussr-hand">USSR (<span id="ussr-hand-count">0</span>)</button>
-            <button class="tab-btn" data-tab="tab-us-hand">US (<span id="us-hand-count">0</span>)</button>
-            <button class="tab-btn" data-tab="tab-board-cards">Piles</button>
-            <button class="tab-btn" data-tab="tab-all-cards">All Cards (110)</button>
-          </div>
-
-          <div class="tab-content active" id="tab-ussr-hand">
-            <div class="card-list" id="ussr-cards-list"></div>
-          </div>
-          <div class="tab-content" id="tab-us-hand">
-            <div class="card-list" id="us-cards-list"></div>
-          </div>
-          <div class="tab-content" id="tab-board-cards">
-            <div id="china-card-container"></div>
-            <div class="piles-summary">
-              <button id="btn-view-discard" class="btn btn-secondary btn-block">View Discard Pile (<span id="discard-count">0</span>)</button>
-              <button id="btn-view-removed" class="btn btn-secondary btn-block">View Removed Pile (<span id="removed-count">0</span>)</button>
-              <div class="draw-count-label">Draw Deck: <strong id="draw-count">0</strong> cards remaining</div>
-            </div>
-          </div>
-          <div class="tab-content" id="tab-all-cards">
-            <div class="all-cards-controls">
-              <input type="text" id="all-cards-search" placeholder="Search cards by name/ID..." class="all-cards-search-input">
-              <select id="all-cards-filter" class="all-cards-filter-select">
-                <option value="ALL">All (110 Cards)</option>
-                <option value="HAND_US">US Hand</option>
-                <option value="HAND_USSR">USSR Hand</option>
-                <option value="DRAW_DECK">Draw Deck</option>
-                <option value="DISCARD_PILE">Discard Pile</option>
-                <option value="REMOVED_FROM_GAME">Removed Pile</option>
-                <option value="ONGOING_EVENT">Ongoing / China</option>
-                <option value="UNAVAILABLE">Future Era</option>
-              </select>
-            </div>
-            <div class="card-list all-cards-scroll-list" id="all-cards-list"></div>
-          </div>
-        </div>
-
         <!-- Section 3: Persistent Flags & Context Stack -->
         <div class="panel effects-panel">
           <div class="panel-header">
@@ -205,9 +208,9 @@
         <div class="timeline-container">
           <span id="rep-step-label">Step 0 / 0</span>
           <input type="range" id="rep-timeline-slider" min="0" max="0" value="0">
-          <!-- The critic's win value across the whole game, one column per step. Empty for a
-               replay without a trace. -->
-          <div class="value-ribbon hidden" id="rep-value-ribbon" title="Critic v_win (US perspective) across the game -- click to seek"></div>
+          <!-- The calibrated critic across the whole game as P(US wins), one column per step:
+               each position read from the side to move there. Empty for a replay without a trace. -->
+          <div class="value-ribbon hidden" id="rep-value-ribbon" title="Critic: P(US wins) across the game, each position read from the side to move (the only trained reading); the faint dashed line is the other, untrained side's reading. Click to seek."></div>
         </div>
         <div class="replay-options">
           <select id="rep-server-select" class="replay-select-dropdown" title="Replays in the local server's replay directory">

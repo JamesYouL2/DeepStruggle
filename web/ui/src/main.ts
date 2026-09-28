@@ -369,9 +369,8 @@ export class TSApp {
       renderValueRibbon(ribbon, this.replaySteps, this.replayCurrentStep,
                         (idx: number) => this.replayControls.goToStep(idx));
     }
-    const current = this.replaySteps[this.replayCurrentStep];
     const next = this.replaySteps[this.replayCurrentStep + 1];
-    renderTracePanel(current, next, this.replayCurrentStep);
+    renderTracePanel(this.replaySteps, this.replayCurrentStep);
     decorateChoices(next?.policy, this.state);
   }
 
@@ -463,7 +462,7 @@ export class TSApp {
               <span class="log-step">[T${step.turn} AR${step.ar}]</span>
               <span class="log-player ${playerClass}">${playerClass}:</span>
               <span class="log-text" style="flex: 1;">${step.description || `Action type=${step.action?.decision_type}`}</span>
-              ${policyChipHtml(step, idx > 0 ? this.replaySteps[idx - 1] : undefined)}
+              ${policyChipHtml(this.replaySteps, idx)}
               ${isVpTarget ? '<span class="log-vp-badge">🎯 VP CHANGE</span>' : ''}
             </div>
             ${dieRollHtml}
@@ -761,7 +760,7 @@ export class TSApp {
       if (!this.session) return;
       this.session.newGame(Math.floor(Math.random() * 1_000_000));
       if (this.isReplayMode) this.setReplayMode(false);
-      renderTracePanel(undefined, undefined, 0);
+      renderTracePanel([], 0);
       this.refresh();
     });
 
@@ -777,7 +776,7 @@ export class TSApp {
       if (!this.isReplayMode && this.liveState) {
         // Back to the live game: the board still shows the replay's last position.
         this.state = this.liveState;
-        renderTracePanel(undefined, undefined, 0);
+        renderTracePanel([], 0);
         this.renderState();
         if (this.liveAnalysis) {
           this.analysisPanel.render(this.liveAnalysis, this.state);

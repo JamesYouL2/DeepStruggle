@@ -44,7 +44,9 @@ log by a golden recorded from the Python session, the readout against `read_poli
     Written by `tools/lib/self_play.py`, `tools/play_match.py` and the tournament tools; the
     browser workbench exports its own games in the same format (*Export Replay*).
   - Optional per-step **trace**: `policy` (what the model believed at that node) and `critic`
-    (both value heads from both perspectives on the state the step's snapshot shows), plus
+    (both value heads from both perspectives on the state the step's snapshot shows -- of which
+    only the reading of the side to move there, the next step's `player`, is a trained one; the
+    workbench highlights it and dims the other), plus
     `metadata.trace` naming the model, engine build and settings that produced them. Written by
     `tools/lib/self_play.py` and `tools/play_match.py --trace`, and after the fact by
     `tools/annotate_replay.py`; see `ai/eval/policy_readout.py`. `policy.top` lists **every**

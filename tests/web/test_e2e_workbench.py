@@ -161,6 +161,74 @@ def test_the_page_reads_the_model_as_python_does(browser: Any, server: str, chec
     assert not page.errors
 
 
+def test_the_live_readout_highlights_the_side_to_move(browser: Any, server: str) -> None:
+    """The critic is trained only on the decider's observation: the live panel lights that
+    side's own P(win), dims the other's, fills the bar from the lit one alone, and follows the
+    decider as the game moves from the USSR setup to the US setup."""
+    page = _open(browser, server + "/")
+    _pick_local_model(page)
+    for side in ("USSR", "US"):
+        for _ in range(12):
+            if page.evaluate("window.__wb.state.decision_context.decision_player") == side:
+                break
+            n = page.evaluate("window.__wb.state.step_index")
+            page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.policy")
+            page.click("#btn-play-favourite")
+            page.wait_for_function(f"window.__wb.state.step_index > {n}")
+        page.wait_for_function(
+            "d => window.__wb.liveAnalysis && window.__wb.liveAnalysis.decision_player === d"
+            " && document.querySelector('#analysis-body .value-side.calibrated')?.dataset.side === d",
+            arg=side, timeout=60000)
+        a = page.evaluate("window.__wb.liveAnalysis")
+        body = page.locator("#analysis-body")
+        other = "US" if side == "USSR" else "USSR"
+        assert body.locator(".value-side.calibrated").count() == 1
+        assert body.locator(f".value-side.uncalibrated[data-side='{other}']").count() == 1
+        assert body.locator(".trace-critic tr.calibrated").get_attribute("data-side") == side
+
+        key = "v_win_us" if side == "US" else "v_win_ussr"
+        p_own = (1 + a["critic"][key]) / 2
+        cal = body.locator(".value-side.calibrated")
+        assert abs(float(cal.get_attribute("data-p")) - p_own) < 1e-5
+        p_us = p_own if side == "US" else 1 - p_own
+        assert abs(float(body.locator(".value-bar").get_attribute("data-p-us")) - p_us) < 1e-5
+
+        # v_vp is the final margin / 20: the bar's VP is the calibrated side's, in VP.
+        vp = a["critic"]["v_vp_us" if side == "US" else "v_vp_ussr"] * 20 * (1 if side == "US" else -1)
+        text = body.locator(".value-bar-vp").inner_text()
+        assert text == f"VP {'US' if vp >= 0 else 'USSR'} +{abs(vp):.1f}", text
+    assert not page.errors
+
+
+def test_the_cards_panel_is_its_own_column_left_of_the_map(browser: Any, server: str) -> None:
+    page = _open(browser, server + "/")
+    assert page.locator("#cards-sidebar #hands-panel .tabs .tab-btn").count() == 4
+    assert page.locator(".sidebar #hands-panel").count() == 0, "the cards left the right rail"
+    cards = page.locator("#cards-sidebar").bounding_box()
+    board = page.locator("#map-container").bounding_box()
+    rail = page.locator(".sidebar").bounding_box()
+    assert cards and board and rail
+    assert cards["x"] + cards["width"] <= board["x"] + 1 and board["x"] + board["width"] <= rail["x"] + 1
+
+    # The switch still switches; the "all" list names each card and where it is, and nothing more.
+    page.click("[data-tab='tab-all-cards']")
+    assert page.locator("#tab-all-cards").is_visible() and not page.locator("#tab-ussr-hand").is_visible()
+    assert page.locator("#all-cards-list .all-cards-item").count() == 110
+    assert page.locator("#all-cards-list .card-meta").count() == 0
+    page.click("[data-tab='tab-us-hand']")
+    assert page.locator("#us-cards-list .card-item").count() > 0
+
+    # Narrow: one column, map first, no sideways overflow of the board area.
+    page.set_viewport_size({"width": 800, "height": 900})
+    page.wait_for_timeout(200)
+    board = page.locator("#map-container").bounding_box()
+    cards = page.locator("#cards-sidebar").bounding_box()
+    assert board and cards and cards["y"] >= board["y"] + board["height"] - 1
+    assert page.evaluate("(() => { const m = document.querySelector('.main-content');"
+                         " return m.scrollWidth <= m.clientWidth + 1; })()")
+    assert not page.errors
+
+
 def test_auto_play_undo_and_the_shared_link(browser: Any, server: str) -> None:
     page = _open(browser, server + "/")
     _pick_local_model(page)

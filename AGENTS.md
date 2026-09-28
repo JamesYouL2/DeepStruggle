@@ -386,8 +386,9 @@ The workbench serves three purposes, all in the page:
   rolls, *Debug Tools* sets influence, DEFCON and VP (undoable), *Export Replay* saves the game.
 * **Play with a model** -- in *Model Analysis* pick a local checkpoint (exported to ONNX on first
   use, `tools/export_onnx.py`), a Hugging Face repo's `.onnx`, or drop an `.onnx` file. Every
-  position then shows its probability on each card, button and country plus its critic for both
-  sides; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
+  position then shows its probability on each card, button and country plus its critic: each
+  side's own chance of winning, the side to move -- the only reading the value head is trained on
+  -- highlighted and the other dimmed; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
   *Auto-play* (none / USSR / US) makes that side play by itself.
 
 The address bar always carries `pos` (the position itself), `model` and `auto`, updated with
