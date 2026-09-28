@@ -174,9 +174,8 @@ struct alignas(64) DecisionContext {
     // The Ops budget before any conditional region bonus (China Card in Asia, Vietnam Revolts in
     // Southeast Asia): what the budget falls back to when a placement or roll leaves the region.
     // Set by whoever grants the Ops, because only the grant knows it -- the card in
-    // pending_op_card does not. Olympic Games grants 4 on a 2 Ops card, and an event's Ops take
-    // no Containment, Brezhnev Doctrine or Red Scare/Purge while the same card played for Ops
-    // does. 0 in a frame that predates it, and then the ladder falls back to the card.
+    // pending_op_card does not: Olympic Games grants 4 on a 2 Ops card. 0 in a frame that
+    // predates it, and then the ladder falls back to the card.
     uint8_t  ops_plain;
 
     static constexpr uint8_t NODE_COUNT_MAX = 3;   // two bits; no card allows more than 2

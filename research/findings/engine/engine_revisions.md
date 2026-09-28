@@ -198,13 +198,13 @@ was worth is [`../../log/observation_layout.md`](../../log/observation_layout.md
 
 ## The 2026-09-28 rules audit moves the decision stream
 
-Ten rules fixes (`BUGS.md` ENG-2, `engine/AGENTS.md` §10). They change what is legal and what it
-is worth -- Brush War odds, event Ops under the three Ops modifiers, when We Will Bury You pays,
+Nine rules fixes (`BUGS.md` ENG-2, `engine/AGENTS.md` §10). They change what is legal and what it
+is worth -- Brush War odds, when UN Intervention is an Event, when We Will Bury You pays,
 what the Mid War deal can draw -- so by [`../../method/run_nomenclature.md`](../../method/run_nomenclature.md)
 this is a letter boundary, and every E4 checkpoint now plays a game it was not trained on. The
-deterministic walk in `tests/engine_logic/test_observation_golden.py` diverged at decision 182 of
-480 (turn 1, AR 6: CIA Created under Containment now grants 1 Op, not 2); every observation before
-that point was bit-identical, so the extractor is unchanged and only the game moved. The golden
+deterministic walk in `tests/engine_logic/test_observation_golden.py` diverged at decision 311 of
+480; every observation before that point was bit-identical, so the extractor is unchanged and only
+the game moved. The golden
 was regenerated for that reason. **The letter itself has not been bumped** -- naming the next
 engine is the owner's call.
 
