@@ -14,6 +14,18 @@ space, Grain Sales decision stream and Missile Envy card handling all differ. No
 comparable, so the registry restarts here. The old one, with its findings distilled, is
 [`archive/E3_ladder/`](archive/E3_ladder/README.md).
 
+## E6 — the era transitions keep the discard
+
+Engine baseline: the rule 4.4 fix (2026-09-28): at turns 4 and 8 the new era's cards join the
+existing deck and the discard pile stays until the deck runs out. Every letter before E6 shuffled
+the discard back in at both transitions. Observation v2.3 and the action space unchanged. What
+changed and why the letter bumped: [`findings/engine/engine_revisions.md`](findings/engine/engine_revisions.md),
+*The E5 → E6 boundary*. Attempts restart at 01.
+
+| arm | what it varied | budget | directory | result |
+|:---|:---|:---|:---|:---|
+| **E6-01-43** | Does knowing the corrected deck matter? E5-21-43@560M (the best model; `E5-21-43_20260928_165156/resume_state.pt`) fine-tuned **on E6** for 40M, with exactly the flags of its own E5 continuation's first 40M (setup credit + floor 0.3, `--resume-every-steps 10000000`, the published E5-22 exploiter snapshots as a static league pool, `--league-frac 0.5`, size 4, no exploiter training), so the only difference from that continuation is the engine (owner, 2026-09-28). **Players, all rated on E6, greedy:** A = E6-01-43@600M; B = E5-21-43@560M (untuned); C = E5-21-43@600M from the E5 continuation (the same +40M on the old deck, which separates "knows E6" from "trained 40M longer"). **Pre-registered:** A is better if it beats B above B's own twin self-play bars on E6 **in both seats** (the owner's per-seat rule), 2,000 games per seat; and A beats C head to head with the 95% interval above 50%, 2,000 per seat. A's 570/580/590M snapshots against B, 500 per seat, for the trend | 560 → 600M | `E6-01-43_*` | *running* |
+
 ## E5 — influence Ops spent in full
 
 Engine baseline: `b19b958` (influence Ops spent in full; per-modifier Ops limits) and `8d05d94`

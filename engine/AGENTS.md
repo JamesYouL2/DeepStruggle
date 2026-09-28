@@ -437,3 +437,21 @@ What it did expose was a P23 defect, fixed in the same change: the merged view t
 ends the game" as a failed composition and dropped influence, removing a legal E4 option. It now
 offers `OPS_INFLUENCE` there as the bare commit (`tests/bindings/test_merged_influence.py`, pinned to
 this position in `p23_wwby_pending_position.json`).
+
+## 10. The era transitions do not reshuffle the discard (fixed in E6, 2026-09-28)
+
+`StateMachine::finish_end_turn` adds the Mid War cards at turn 4 and the Late War cards at turn 8
+with `add_era_cards_to_deck`, and does nothing else to the deck. Rule 4.4: "do not add in the
+discards to the deck -- instead add the Mid War or Late War cards to the existing deck and
+reshuffle. The ignored discards remain in the discard pile for now." The only reshuffle is the one
+in `deal_cards_to_hands` when the draw deck runs out. `rules/rules.md` §"Reshuffle Invariant" always
+said so.
+
+From `4f103fc` (2026-08-21, the second day of the engine) until E6, both transitions also called
+`reshuffle_discard_into_draw`, so every non-starred card spent since the last reshuffle -- scoring
+cards, Red Scare/Purge -- came back at turn 4 and again at turn 8. Every checkpoint before E6 was
+trained on that deck. The human-log converter did not catch it because it sets each turn's hands
+from the log (`_set_hand`), so the engine's own deck was never compared against real games; the
+corpus prints `*RESHUFFLE*` at turns 3 and 7 and never at 4 or 8. Held by
+`EraTransitionKeepsTheDiscard.*` (`tests/test_bugs_regression.cpp`) and
+`test_the_era_transitions_leave_the_discard_pile` (`tests/engine_logic/test_hand_knowledge_triggers.py`).

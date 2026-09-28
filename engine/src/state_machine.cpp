@@ -87,9 +87,9 @@ void StateMachine::deal_cards_to_hands(GameState& state) noexcept {
                 // The deck is empty, so every card is now in a hand, the discard, removed, in
                 // play, or never in the game -- and all of those but the hands are public. Each
                 // player can therefore name the other's hand as the complement of what they can
-                // see. The shuffle that follows is the consequence, not the cause, which is why
-                // this fires here and not in the scheduled era reshuffles at turns 4 and 8,
-                // where the deck is not empty and no such deduction exists.
+                // see. The shuffle that follows is the consequence, not the cause. It is also the
+                // only reshuffle there is: the era transitions at turns 4 and 8 add cards to the
+                // deck and leave the discard alone (rule 4.4).
                 reveal_both_hands(state);
                 reshuffle_discard_into_draw(state);
                 for (uint8_t i = 1; i <= 110; ++i) {
@@ -653,12 +653,16 @@ void StateMachine::finish_end_turn(GameState& state) noexcept {
     state.turn++;
     state.action_round = 0;
 
+    // Rule 4.4: the new era's cards join the existing deck, and the discard pile stays where it
+    // is until the deck next runs out. Until E6 both transitions also shuffled the discard back
+    // in, so everything spent since the last reshuffle -- scoring cards included -- came round
+    // again at turns 4 and 8. The human corpus never prints *RESHUFFLE* at turn 4 or 8, and
+    // prints one at turns 3 and 7, where the deck really does run out
+    // (research/findings/engine/engine_revisions.md, "The E5 -> E6 boundary").
     if (state.turn == 4) {
         add_era_cards_to_deck(state, WarEra::MID);
-        reshuffle_discard_into_draw(state);
     } else if (state.turn == 8) {
         add_era_cards_to_deck(state, WarEra::LATE);
-        reshuffle_discard_into_draw(state);
     }
 
     if (state.turn <= 10) {

@@ -178,18 +178,37 @@ def test_exhausting_the_deck_makes_both_hands_public() -> None:
             f"{side} held {sorted(originals)} when the deck ran out; those are deducible")
 
 
-def test_the_scheduled_era_reshuffles_do_not_reveal_anything() -> None:
-    """Turn 4 and turn 8 shuffle the discard back in, but the deck is not empty and nothing is
-    deducible. A reveal there would be a rule the game does not have."""
-    state = _fresh()
-    _stock_hand(state, ts.Player.US, [20, 21])
-    _stock_hand(state, ts.Player.USSR, [30, 31])
-    assert _known(state, ts.Player.US) == set()
-
-    ts.StateMachine.reshuffle_discard_into_draw(state)
-
-    assert _known(state, ts.Player.US) == set(), "a plain reshuffle revealed a hand"
-    assert _known(state, ts.Player.USSR) == set(), "a plain reshuffle revealed a hand"
+def test_the_era_transitions_leave_the_discard_pile() -> None:
+    """Turns 4 and 8 add the new era's cards to the existing deck and leave the discard pile
+    alone (rule 4.4). Every card discarded when turn 3 (or 7) ends is still there when the next
+    turn's hands are dealt; only the deck running out shuffles it back in, and with a whole era
+    just added it cannot run out in that deal. Until E6 both transitions shuffled it back."""
+    rng = np.random.default_rng(0)
+    seen = {4: 0, 8: 0}
+    for seed in range(40):
+        state = _fresh(seed)
+        prev_turn, prev_discard = int(state.turn), set()
+        for _ in range(3000):
+            if ts.Engine.is_terminal(state):
+                break
+            turn = int(state.turn)
+            if turn != prev_turn and turn in seen:
+                still = {c for c in prev_discard
+                         if state.get_card_location(c) == ts.CardLocation.DISCARD_PILE}
+                assert still == prev_discard, (
+                    f"seed {seed}: {sorted(prev_discard - still)} left the discard pile at the "
+                    f"start of turn {turn}")
+                seen[turn] += 1
+            prev_turn = turn
+            prev_discard = {c for c in range(1, 111)
+                            if state.get_card_location(c) == ts.CardLocation.DISCARD_PILE}
+            legal = np.flatnonzero(np.asarray(ts.get_flat_action_mask(state)))
+            if legal.size == 0:
+                break
+            ts.Engine.step_flat(state, int(rng.choice(legal)))
+    # Random play rarely survives to turn 8 (DEFCON); engine/tests/test_bugs_regression.cpp
+    # holds that transition directly. Turn 4 is reached often enough to test here.
+    assert seen[4] >= 5, f"only {seen[4]} random games reached turn 4"
 
 
 def test_a_whole_game_never_marks_a_card_known_outside_a_hand() -> None:

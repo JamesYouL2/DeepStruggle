@@ -10,7 +10,7 @@ revision are [`../../runs.md`](../../runs.md). This file is the other half: not 
 means* but *what the engine did*, because an Elo number is a statement about a game and three
 different games have been played here.
 
-**The letter is coarse.** It has five values and the project has had several dozen `fix(engine)`
+**The letter is coarse.** It has six values and the project has had several dozen `fix(engine)`
 commits. A letter bumps when someone judged that the decision stream moved; the commits inside a
 letter are the ones judged not to move it, and in two cases that judgement was measured rather
 than assumed ([below](#changes-held-inside-e3-by-measurement)).
@@ -24,6 +24,7 @@ than assumed ([below](#changes-held-inside-e3-by-measurement)).
 | **E3** | `76e7385`, `6381cf4` | 2026-09-11 | the Aldrich Ames discard and the Star Wars pick made mandatory. Everything from P1 onward |
 | **E4** | `7057251`, `0aa3dc0` (P17) | 2026-09-19 | Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space repacked 212 → 220. The registry restarted here ([`../../runs.md`](../../runs.md)) |
 | **E5** | `b19b958`, `8d05d94` | 2026-09-26 | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops play's stop ([below](#the-e4--e5-boundary)) |
+| **E6** | *this change* | 2026-09-28 | the era transitions no longer shuffle the discard pile back into the deck (rule 4.4): at turns 4 and 8 only the new era's cards join it. Before, every card spent since the last reshuffle came back at turns 4 and 8 ([below](#the-e5--e6-boundary)) |
 
 ## E1 was not one engine either
 
@@ -119,6 +120,34 @@ retrained E4-61's configuration on E5 to test whether training notices at all, a
 Against E4-61 the pair's late mean is +2 Elo, and the head to head is 51.0% ± 0.6 over 7,200 games
 ([`../../log/E5_01_engine_bump.md`](../../log/E5_01_engine_bump.md)). This is the first arm in the
 repository re-run across a letter boundary.
+
+## The E5 → E6 boundary
+
+**One rules fix, 2026-09-28: the era transitions leave the discard pile alone.** At the start of
+turn 4 the engine added the Mid War cards *and* shuffled the whole discard pile back into the
+deck, and did the same with the Late War cards at turn 8. Rule 4.4 says the discards "remain in the
+discard pile for now, but will be reshuffled into the deck in the next reshuffle", which is when
+the deck runs out. `rules/rules.md` (the project's own spec) always said the same; the engine never
+implemented it.
+
+* **Since when.** `4f103fc` (2026-08-21), the second day of the engine, which made the era
+  mechanism work at all (before it, every card sat in the deck from turn 1) and added the two
+  reshuffles in the same change. **Every letter from E1 to E5 has it.**
+* **Found by** the owner in a workbench game: Red Scare/Purge, spent at turn 3 AR2, was dealt to
+  the US at turn 4 along with the other ten discards (`data/ts_red_scare_bug.json`).
+* **The human corpus confirms the rule.** Of the 300 games, `*RESHUFFLE*` appears at turn 3 in all
+  283 that reach it and at turn 7 in 199 of 210, and never at turn 4 (274 games) or turn 8 (192).
+* **Why nothing caught it.** The converter's hand solver has the rule right
+  (`tools/lib/ts_replayer_hands.py`, "the era brings in is separate and does not disturb the
+  pile"), but the converter then sets each turn's hands from the log (`_set_hand`), so the engine's
+  own deck was never checked against a real game.
+* **What changes in play.** Cards spent in turn 3 after its reshuffle -- the non-starred scoring
+  cards among them -- wait until the deck runs out (about turn 7) instead of returning at turn 4;
+  the Mid War discards likewise stay out at turn 8. The decks of turns 4–7 and 8–10 are different
+  games, and so is when a scoring card comes round.
+
+The legal mask and the observation layout are unchanged; the decision stream changes from the
+turn-4 deal on. E5 checkpoints load and play on E6, but learned the old deck.
 
 ## Changes held inside E3 by measurement
 

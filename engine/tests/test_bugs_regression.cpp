@@ -1,3 +1,4 @@
+#include <initializer_list>
 #include "ts/observation.hpp"
 #include "test_framework.hpp"
 #include "ts/state_machine.hpp"
@@ -738,4 +739,61 @@ TEST(OwedEventDoesNotInheritTheOpsStop, WarsawPactAfterARealignment) {
     ASSERT_EQ(static_cast<int>(s.ctx().decision_type), static_cast<int>(DecisionType::CHOOSE_BRANCH));
     ActionMask::generate_flat_mask_212(s, mask);
     ASSERT_EQ(mask[flat_slots::CONFIRM_DONE], 0);
+}
+
+// Rule 4.4: moving to the Mid War or the Late War adds that era's cards to the existing deck and
+// leaves the discard pile alone. Before E6 both transitions shuffled the discard back in, so a
+// card spent in turn 3 -- Red Scare/Purge in the owner's workbench game, and any scoring card --
+// could be dealt again at turn 4, where it should wait for the deck to run out (about turn 7).
+namespace {
+
+// Ends turn `from` and returns the state at the start of the next one. Scoring cards are moved
+// out of the hands first: one held at the end of a turn loses the game, which ends it before
+// the transition this is testing.
+GameState end_turn_with_discards(uint8_t from, WarEra already_in, std::initializer_list<uint8_t> discards) {
+    GameState state{};
+    StateMachine::init_new_game(state, 42);
+    if (already_in == WarEra::MID) StateMachine::add_era_cards_to_deck(state, WarEra::MID);
+    for (uint8_t i = 1; i <= 110; ++i) {
+        if (in_hand_of(state.card_locations[i], Player::US) ||
+            in_hand_of(state.card_locations[i], Player::USSR)) {
+            if (CardData::is_scoring_card(i)) state.card_locations[i] = CardLocation::DRAW_DECK;
+        }
+    }
+    for (uint8_t c : discards) state.card_locations[c] = CardLocation::DISCARD_PILE;
+    state.turn = from;
+    StateMachine::end_turn(state);
+    return state;
+}
+
+} // namespace
+
+TEST(EraTransitionKeepsTheDiscard, MidWarJoinsTheDeckAndTheDiscardStays) {
+    const GameState state = end_turn_with_discards(
+        3, WarEra::EARLY,
+        {card_ids::RED_SCARE_PURGE, card_ids::EUROPE_SCORING, card_ids::DECOLONIZATION});
+    ASSERT_EQ(state.turn, 4);
+    ASSERT_EQ(state.card_locations[card_ids::RED_SCARE_PURGE], CardLocation::DISCARD_PILE);
+    ASSERT_EQ(state.card_locations[card_ids::EUROPE_SCORING], CardLocation::DISCARD_PILE);
+    ASSERT_EQ(state.card_locations[card_ids::DECOLONIZATION], CardLocation::DISCARD_PILE);
+    // The Mid War is in: every Mid War card is in the deck or has just been dealt.
+    for (uint8_t i = 1; i <= 110; ++i) {
+        if (CardData::get_card(i).era != WarEra::MID) continue;
+        const CardLocation loc = state.card_locations[i];
+        ASSERT_TRUE(loc == CardLocation::DRAW_DECK || in_hand_of(loc, Player::US) ||
+                    in_hand_of(loc, Player::USSR));
+    }
+}
+
+TEST(EraTransitionKeepsTheDiscard, LateWarJoinsTheDeckAndTheDiscardStays) {
+    // Shuttle Diplomacy (73) is a Mid War card with no star.
+    const GameState state = end_turn_with_discards(
+        7, WarEra::MID, {card_ids::SHUTTLE_DIPLOMACY, card_ids::RED_SCARE_PURGE});
+    ASSERT_EQ(state.turn, 8);
+    ASSERT_EQ(state.card_locations[card_ids::SHUTTLE_DIPLOMACY], CardLocation::DISCARD_PILE);
+    ASSERT_EQ(state.card_locations[card_ids::RED_SCARE_PURGE], CardLocation::DISCARD_PILE);
+    for (uint8_t i = 1; i <= 110; ++i) {
+        if (CardData::get_card(i).era != WarEra::LATE) continue;
+        ASSERT_NE(state.card_locations[i], CardLocation::UNAVAILABLE);
+    }
 }

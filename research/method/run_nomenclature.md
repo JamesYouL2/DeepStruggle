@@ -95,6 +95,9 @@ column of [`../runs.md`](../runs.md) is what maps them back.
 | **E1** | before `9fa5b05` | pre-starred-card fix: a starred card spent for Operations was deleted from the game. Arms A–G and everything older. Not runnable — the observation layouts they used are gone. |
 | **E2** | `9fa5b05`, `341088e` | starred-card fix, observation v2.3. Arms H, H2, I. |
 | **E3** | `76e7385`, `6381cf4` | the Aldrich Ames discard and the Star Wars pick made mandatory. Everything from P1 onward. |
+| **E4** | `7057251`, `0aa3dc0` | P17: Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space 212 → 220. |
+| **E5** | `b19b958`, `8d05d94` | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops stop. |
+| **E6** | 2026-09-28 | the era transitions at turns 4 and 8 no longer shuffle the discard back into the deck (rule 4.4). |
 
 Each boundary is a *batch* rather than a commit — eight further engine and observation commits
 landed with the starred-card fix on 2026-09-10 — and what each one changed, with what it
