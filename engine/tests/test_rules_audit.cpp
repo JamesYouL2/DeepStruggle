@@ -308,3 +308,21 @@ TEST(RulesAudit, OlympicBoycottUnderVietnamRevolts_KeepsFourOutsideSoutheastAsia
     ASSERT_EQ(s.ctx().pending_ops_value, 4);
     ASSERT_EQ(s.ctx().remaining_steps, 3);
 }
+
+TEST(RulesAudit, OlympicBoycottUnderVietnamRevoltsAndPurge_FallsBackToTheModifiedGrant) {
+    // The fallback is the grant as modified (rule 7.4.3): 4 less Purge's 1 is 3, plus Vietnam
+    // Revolts while in Southeast Asia is 4. Leaving the subregion falls back to 3 -- not to the
+    // card's printed 2, and not to an unmodified 4.
+    GameState s = action_round_for(Player::USSR);
+    s.defcon = 4;
+    s.set_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE);
+    s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
+    ASSERT_FALSE(CardHandlers::trigger_event(s, card_ids::OLYMPIC_GAMES, Player::USSR));
+    ASSERT_FALSE(CardHandlers::handle_event_step(s, MicroAction{DecisionType::CHOOSE_BRANCH, 1, 0, 0}));
+    ASSERT_EQ(s.ctx().pending_ops_value, 4);
+    ASSERT_TRUE(Engine::step(s, MicroAction{DecisionType::SELECT_OP_MODE,
+                                            static_cast<uint8_t>(OpMode::INFLUENCE), 0, 0}));
+    ASSERT_TRUE(Engine::step(s, MicroAction{DecisionType::POINT_NODE, countries::EAST_GERMANY, 0, 0}));
+    ASSERT_EQ(s.ctx().pending_ops_value, 3);
+    ASSERT_EQ(s.ctx().remaining_steps, 2);
+}

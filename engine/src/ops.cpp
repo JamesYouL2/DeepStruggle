@@ -64,16 +64,13 @@ uint8_t Operations::grant_ops_for_card(const GameState& state, uint8_t card_id,
 }
 
 // Ops an event grants: "as if they played a 4 Ops card", "using the Operations value of this
-// card". They are not a card played for Operations, so Containment, Brezhnev Doctrine and Red
-// Scare/Purge do not touch them -- FAQ, under Red Scare/Purge: "The reduction is for any use of
-// Ops, including Space Race. Ops from events are not affected." Vietnam Revolts is different in
-// kind: it pays for where the Ops are spent, not for the card, and is granted up front for the
-// ladder to withdraw exactly as for a card.
+// card". Deluxe rule 7.4.3: they "are treated as if a card had been played for its Operations
+// Point Value ... subject to all the restrictions of rule 6.0 and other events limiting their
+// placement or value", so Containment, Brezhnev Doctrine and Red Scare/Purge apply -- 7.4.2's
+// Example 3 is CIA Created under Containment, worth 2. Region::ASIA grants the Vietnam Revolts
+// bonus up front for the ladder to withdraw, as for a card.
 uint8_t Operations::grant_ops(const GameState& state, uint8_t base_ops, Player player) noexcept {
-    if (base_ops == 0 || player == Player::NONE) return 0;
-    uint8_t ops = base_ops;
-    if (player == Player::USSR && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE)) ops++;
-    return ops;
+    return get_modified_ops(state, base_ops, player, Region::ASIA);
 }
 
 void Operations::grant_card_ops_to_ctx(GameState& state, uint8_t card_id, Player player) noexcept {
@@ -83,7 +80,7 @@ void Operations::grant_card_ops_to_ctx(GameState& state, uint8_t card_id, Player
 
 void Operations::grant_event_ops_to_ctx(GameState& state, uint8_t base_ops, Player player) noexcept {
     state.ctx().pending_ops_value = grant_ops(state, base_ops, player);
-    state.ctx().ops_plain = base_ops;
+    state.ctx().ops_plain = get_modified_ops(state, base_ops, player, Region::NONE_REGION);
 }
 
 uint8_t Operations::plain_budget(const GameState& state, uint8_t op_card, Player player) noexcept {

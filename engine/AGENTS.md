@@ -431,16 +431,26 @@ with its fix reverted:
 
 | rule | before | source |
 |:---|:---|:---|
-| A war's defender's **superpower** counts as an adjacent controlled country (-1) | only the 84 countries were counted: a USSR Brush War on Mexico, a US one on Afghanistan, rolled a point too high | Rule 2.1.5; FAQ under Brush War (a reversal of an earlier ruling) |
-| **Ops granted by an event** take no Containment, Brezhnev Doctrine or Red Scare/Purge | every event grant went through `get_modified_ops`: CIA Created, Lone Gunman, ABM Treaty, Olympic boycott, Grain Sales, KAL-007, Glasnost, Junta, Tear Down This Wall, and Che's and Ortega's coups | FAQ, Red Scare/Purge: "Ops from events are not affected". Cards played for Ops still take them (FAQ 7.4). `CardEdgeCasesTest.EventGrantedOps_IgnoreOpsModifiers` |
-| The region-bonus ladder falls back to the **grant's** base, not the card's | an Olympic boycott under Vietnam Revolts fell to the card's printed 2 on leaving Southeast Asia, losing two of the event's four Ops | `DecisionContext::ops_plain`, set by `Operations::grant_*_ops_to_ctx` |
+| A war's defender's **superpower** counts as an adjacent controlled country (-1) | only the 84 countries were counted: a USSR Brush War on Mexico, a US one on Afghanistan, rolled a point too high | Rule 2.1.5 (superpower spaces count for "events and realignments"); FAQ under Brush War (a reversal of an earlier ruling) |
+| The region-bonus ladder falls back to the event's **modified grant**, not the card's printed Ops | an Olympic boycott under Vietnam Revolts fell to the card's printed 2 on leaving Southeast Asia, losing two of the event's four Ops | `DecisionContext::ops_plain`, set by `Operations::grant_*_ops_to_ctx`. Rule 7.4.3 for "modified" |
 | **UN Intervention** is an Event only with an opponent-associated card in hand | offered and fizzled, which cancelled a pending We Will Bury You for nothing | Card text; FAQ card #32 |
 | **We Will Bury You** settles on a trapped US round | a Quagmire discard round skipped the check and the 3 VP waited for the next card play | Card text: UN Intervention was not played in that round |
 | **NORAD** arms on DEFCON *moving* to 2 | Cuban Missile Crisis or How I Learned setting 2 at 2 armed it | Card text: "moved to 2" |
 | **U-2 Incident** and **Flower Power** reach UN Intervention played through Grain Sales | the route paid neither | Card text |
 | **Flower Power** charges a war card lent to UN Intervention | 0 VP, and a test asserted it | Card text: "used for Operations or an Event". `CardInteractionTest.FlowerPower_ChargesWhenWarCardPlayedViaUNInterventionByUS` |
-| The **Mid and Late War** join the draw deck without the discard pile | turns 4 and 8 reshuffled the discards back in | `rules/rules.md` 4.2; the human corpus (`tools/lib/ts_replayer_hands.py`: discards return only on deck exhaustion) |
+| The **Mid and Late War** join the draw deck without the discard pile | turns 4 and 8 reshuffled the discards back in | Deluxe rule 4.4: "do not add in the discards to the deck"; `rules/rules.md` 4.2; the human corpus (`tools/lib/ts_replayer_hands.py`) |
 | **Summit** counts regions without Shuttle Diplomacy or Formosan Resolution | both scoring-only effects moved Summit's die | FAQ card #73; card #35 "for scoring purposes only". `Scoring::dominates_or_controls` |
+
+**Checked and left as it was: event-granted Ops take the Ops modifiers.** Containment, Brezhnev
+Doctrine and Red Scare/Purge apply to Ops an Event grants (CIA Created, Lone Gunman, ABM Treaty,
+the Olympic boycott, Grain Sales, KAL-007, Glasnost) and to the coups Junta, Che, Ortega and Tear
+Down This Wall make with their card's value. Deluxe rule 7.4.3: those Operations "are treated as if
+a card had been played for its Operations Point Value ... subject to all the restrictions of rule
+6.0 and other events limiting their placement or value", and 7.4.2's Example 3 is CIA Created under
+Containment, worth 2. The FAQ line struggler's rulings table quotes -- "Ops from events are not
+affected" -- is contradicted by the rulebook, which outranks it. The audit briefly reversed this on
+the strength of that line; the `*_OpsModifiers_Suite` tests in `test_card_edge_cases.cpp` pin the
+rulebook's reading.
 
 Each of these moves the decision stream, so the engine behind every checkpoint changed; see
 `research/findings/engine/engine_revisions.md`. The human corpus (`tests/replayer`) could not be

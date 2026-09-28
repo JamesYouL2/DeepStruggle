@@ -1582,8 +1582,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
             if (state.ctx().decision_type == DecisionType::ROLL_DIE) {
                 uint8_t cid = state.ctx().roll_target;
                 uint8_t forced = action.primary_id;
-                // The card's own Ops: an event's coup takes no Ops modifier (see grant_ops).
-                const uint8_t che_ops = 3;
+                uint8_t che_ops = Operations::get_modified_ops(state, 3, Player::USSR);
                 // execute_coup credits the military operations; crediting them again here
                 // spent each coup twice, so a single coup reached the cap of 5 where it should
                 // have earned 3, and the second one was free.
@@ -1628,7 +1627,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
             if (state.ctx().decision_type == DecisionType::ROLL_DIE) {   // as Che, above
                 uint8_t target_cid = state.ctx().roll_target;
                 uint8_t forced = action.primary_id;
-                const uint8_t ortega_ops = 2;   // unmodified, as Che's
+                uint8_t ortega_ops = Operations::get_modified_ops(state, 2, Player::USSR);
                 Operations::execute_coup(state, Player::USSR, target_cid, ortega_ops, forced);
                 state.ctx().resolving_card = 0;
                 return true;
