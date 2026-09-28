@@ -196,14 +196,26 @@ model was given*). `check_obs_width` and `check_checkpoint_layout` now refuse by
 catches a changed *width* and cannot catch changed *content* at the same width. What each layout
 was worth is [`../../log/observation_layout.md`](../../log/observation_layout.md).
 
+## The 2026-09-28 rules audit moves the decision stream
+
+Ten rules fixes (`BUGS.md` ENG-2, `engine/AGENTS.md` §10). They change what is legal and what it
+is worth -- Brush War odds, event Ops under the three Ops modifiers, when We Will Bury You pays,
+what the Mid War deal can draw -- so by [`../../method/run_nomenclature.md`](../../method/run_nomenclature.md)
+this is a letter boundary, and every E4 checkpoint now plays a game it was not trained on. The
+deterministic walk in `tests/engine_logic/test_observation_golden.py` diverged at decision 182 of
+480 (turn 1, AR 6: CIA Created under Containment now grants 1 Op, not 2); every observation before
+that point was bit-identical, so the extractor is unchanged and only the game moved. The golden
+was regenerated for that reason. **The letter itself has not been bumped** -- naming the next
+engine is the owner's call.
+
 ## Open, and worth knowing
 
 * **One arm has been re-run across a letter boundary: E5-01**, E4-61's configuration on E5, with
   no effect (+2 Elo). No configuration was trained on E1 and again on E2, or on E2 and again on E3.
   The E4 → E5 change is small, so this says nothing about the larger earlier boundaries. See
   [`../../method/what_survives_an_engine_change.md`](../../method/what_survives_an_engine_change.md).
-* **`BUGS.md` ENG-1** (UN Intervention offers companion cards the rules forbid) is open, which
-  means the current E3 engine is known to be playing a slightly wrong game right now.
+* **`BUGS.md` ENG-1** (UN Intervention offers companion cards the rules forbid) was open through
+  E3, which means that engine was known to be playing a slightly wrong game. It is fixed.
 * **ENG-3's own text predicted the opposite of what P14 measured.** It said of the forced-play fix:
   *"they change what is legal, so they change the decision stream and invalidate comparisons across
   the change."* The change landed and moved no decision in 385,812 steps. The prediction was a

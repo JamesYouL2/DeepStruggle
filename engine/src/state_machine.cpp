@@ -716,20 +716,8 @@ static void clear_force_for_card(GameState& state, Player p, uint8_t card) noexc
 static bool commit_card_to_ops(GameState& state, Player p, uint8_t card) noexcept {
     clear_force_for_card(state, p, card);
 
-    // Flower Power charges the US 2 VP for playing a war card, but only for a war that can
-    // actually happen. Camp David Accords stops Arab-Israeli War being played as an event at all,
-    // so playing it for Operations sets off no war and costs nothing: at turn 8 AR2 of
-    // ts-replayer game 105 the US coups Guatemala with it under both effects and the log records
-    // no VP change, where the engine handed the USSR 2.
-    if (p == Player::US && CardData::is_war_card(card) &&
-        state.has_flag(effect_bits::FLOWER_POWER_ACTIVE) &&
-        CardHandlers::can_trigger_event(state, card, p)) {
-        state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 2));
-        if (state.victory_points <= -20) {
-            state.current_phase = Phase::GAME_OVER;
-            return false;
-        }
-    }
+    // Flower Power charges the US 2 VP for a war card played for Operations.
+    if (!CardHandlers::charge_flower_power_for_ops(state, p, card)) return false;
     if (card == card_ids::THE_CHINA_CARD && p == Player::US) {
         state.clear_flag(effect_bits::FORMOSAN_RESOLUTION_ACTIVE);
     }
@@ -1063,6 +1051,23 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
         switch (dt) {
             case DecisionType::SELECT_CARD: {
                 uint8_t card = action.primary_id;
+
+                // We Will Bury You on a trapped US round. Quagmire spends the round on a discard
+                // and a die, or on nothing at all when no card qualifies, so UN Intervention
+                // cannot be played in it -- and that round is still the US's "next action round"
+                // the card names. The settlement below sits past the trap branch, which returns
+                // first, so the 3 VP waited for whichever round the US next played a card in.
+                if (p == Player::US && state.current_phase == Phase::ACTION_ROUND &&
+                    state.has_flag(effect_bits::QUAGMIRE_ACTIVE) &&
+                    state.has_flag(effect_bits::WE_WILL_BURY_YOU_PENDING)) {
+                    state.clear_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
+                    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 3));
+                    if (state.victory_points <= -20) {
+                        state.current_phase = Phase::GAME_OVER;
+                        return true;
+                    }
+                }
+
                 if (card == 0 || action.is_confirm_done()) {
                     if (state.current_phase == Phase::HEADLINE) advance_headline_step(state);
                     else advance_after_action_round(state);
@@ -1202,7 +1207,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
                     // Event-first is still a play for Operations, so it owes the same charges.
                     if (!commit_card_to_ops(state, p, card)) return true;   // game ended
                     state.ctx().timing_branch = static_cast<uint8_t>(TimingBranch::EVENT_FIRST);
-                    state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, card, p);
+                    Operations::grant_card_ops_to_ctx(state, card, p);
                     state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
                     state.ctx().decision_player = p;
                     if (!state.push_context()) {
@@ -1231,7 +1236,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
                     state.ctx().timing_branch = opponent_card
                         ? static_cast<uint8_t>(TimingBranch::OPS_FIRST)
                         : static_cast<uint8_t>(255);
-                    state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, card, p);
+                    Operations::grant_card_ops_to_ctx(state, card, p);
                     return begin_op_mode(state, p, to_op_mode(mode));
                 }
                 return false;
@@ -1244,13 +1249,13 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
 
                 if (branch == TimingBranch::OPS_FIRST) {
                     state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
-                    state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, card, p);
+                    Operations::grant_card_ops_to_ctx(state, card, p);
                     return true;
                 }
 
                 if (branch == TimingBranch::EVENT_FIRST) {
                     state.ctx().timing_branch = static_cast<uint8_t>(TimingBranch::EVENT_FIRST);
-                    state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, card, p);
+                    Operations::grant_card_ops_to_ctx(state, card, p);
                     state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
                     state.ctx().decision_player = p;
                     if (!state.push_context()) {
@@ -1325,7 +1330,18 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
                         (p == Player::USSR && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE));
 
                     if (china_card || vietnam_bonus) {
-                        coup_ops = Operations::get_effective_ops_in(state, op_card, p, cid);
+                        // A card played for Operations takes every Ops modifier and its limit
+                        // (get_effective_ops_in). Ops an event granted take none of them -- FAQ,
+                        // "Ops from events are not affected" -- only the Vietnam Revolts bonus.
+                        const uint8_t plain = Operations::plain_budget(state, op_card, p);
+                        if (plain == Operations::get_effective_ops(state, op_card, p, Region::NONE_REGION)) {
+                            coup_ops = Operations::get_effective_ops_in(state, op_card, p, cid);
+                        } else {
+                            coup_ops = plain;
+                            if (vietnam_bonus && MapData::get_country(cid).in_southeast_asia) {
+                                coup_ops += 1;
+                            }
+                        }
                     }
                     state.ctx().pending_roll = RollType::COUP;
                     state.ctx().roll_target = cid;
@@ -1404,8 +1420,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
                                 (budget > state.ctx().remaining_steps)
                                     ? (budget - state.ctx().remaining_steps) : 0);
 
-                            uint8_t plain = Operations::get_effective_ops(
-                                state, op_card, p, Region::NONE_REGION);
+                            uint8_t plain = Operations::plain_budget(state, op_card, p);
                             uint8_t asia_ok = static_cast<uint8_t>(
                                 plain + (china_card ? 1 : 0));
 
@@ -1488,8 +1503,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
                             (budget > state.ctx().remaining_steps)
                                 ? (budget - state.ctx().remaining_steps) : 0);
 
-                        uint8_t plain = Operations::get_effective_ops(
-                            state, op_card, realign_player, Region::NONE_REGION);
+                        uint8_t plain = Operations::plain_budget(state, op_card, realign_player);
                         uint8_t asia_ok = static_cast<uint8_t>(
                             plain + (china_card ? 1 : 0));
 
