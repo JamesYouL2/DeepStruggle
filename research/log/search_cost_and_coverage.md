@@ -357,3 +357,31 @@ Search still pays on the distilled net. The 5 pp drop overall is within noise (d
 so **most of the headroom is still there**, and a second round of distillation, or a longer leg,
 has something to take. The split by seat is sharper: the US-seat gain fell from 69% to 56% while
 the USSR seat did not move, so distillation took most of what search offered the US seat first.
+
+---
+
+## E5 re-measure (2026-09-28): search adds little to E5-11-43@560M
+
+The E3 figures above predate three search fixes and were taken on the pre-P17 engine with 12–40
+games. Re-taken on E5 with the best current model, honest search (`search:<ckpt>:<sims>:determinize`,
+batched MCTS on one sampled world per decision) against the raw greedy policy of the same net,
+100 games per seat, `tools/tournament.py --pack-pairs 1`
+(`data/reports/e5_11_43_560M_search{64,256}.md`):
+
+| searcher | overall | as US | as USSR | throughput |
+|---|---:|---:|---:|---:|
+| 64 sims | **51.5% ± 3.5** | 49% | 54% | ~180 searched decisions/s |
+| 256 sims | **57.0% ± 3.5** | 50% | 64% | ~40 searched decisions/s |
+| raw policy's own self-play | 50% | 42.5% | 57.5% | — |
+
+* **At 64 simulations search is null. At 256 it is +7 points (~50 Elo), about 2 standard errors.**
+  E3's 72.5–76.7% against its raw policy does not transfer. A stronger policy leaves less for search
+  to find, and search is only as good as the critic at its leaves. That critic cannot rank headline
+  choices position by position (its sign agrees with the playouts 49–65% of the time, in
+  `E5_15_human_opening_resume.md`) and is biased toward the US in unfamiliar positions
+  (`E5_16_setup_mc_credit.md`).
+* **The cost is unchanged in kind.** The tree runs in Python: PUCT selection, state clones, engine
+  steps, node objects and backups. Only the leaf evaluation is batched on the GPU, which sat at
+  ~4% while the process used ~5 cores. Plain batched play runs ~76,000 decisions/s, so 256-sim
+  search is ~1,900× slower per decision. Search in training (expert iteration) would need the tree
+  in compiled code, parallel across the machine's 24 cores, to be affordable.
