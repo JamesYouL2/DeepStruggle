@@ -13,6 +13,7 @@ Both learners are ordinary `tools/train.py` runs (invariant 9); the league is a 
 * **Main agent:** its own spread pool as usual (`--opponent-self-pool`), plus `--league-dirs
   <league-dir>`, which holds the exploiter snapshots this driver publishes, drawn with
   `--league-frac` of the pool's draws.
+* **Main agent from scratch:** omit `--main-resume`.
 * **Main exploiter:** `--opponent-frac 1.0`, resumed from `--exploiter-reset`, plus
   `--exploiter-args`. With `--exploiter-target frozen` (the default) each generation trains against
   the main agent's newest snapshot *at its launch*, and is judged against that same snapshot: an
@@ -27,6 +28,9 @@ Both learners are ordinary `tools/train.py` runs (invariant 9); the league is a 
 * **Publish:** a snapshot scoring at least `--publish-win` is symlinked into the league directory.
 * **Reset:** one scoring at least `--reset-win` is published and the exploiter restarts from the
   reset state as a new generation -- as it also does when `--exploiter-gen-steps` run out.
+  `--exploiter-reset main-latest` makes the reset state the main agent's newest tagged resume
+  state at each generation's launch, so every generation starts level with its target; the first
+  waits for one at least `--exploiter-start-steps` in.
 
 Events, every judgement included, go to `<league-dir>/events.jsonl`. The driver ends when the main
 agent's run does.
@@ -47,6 +51,17 @@ from typing import Any, Dict, List, Optional
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CHECKPOINTS = "/workspace/data/checkpoints"
 SNAP_RE = re.compile(r"^snapshot_(\d+)steps\.pt$")
+RESUME_RE = re.compile(r"^resume_(\d+)steps\.pt$")
+
+
+def latest_resume(run_dir: str, min_steps: int = 0) -> Optional[str]:
+    """The newest tagged resume state (`resume_<n>steps.pt`) with n >= min_steps, or None.
+
+    Tagged states are written whole and never rewritten, unlike `resume_state.pt`, so one can be
+    read while the run that wrote it goes on."""
+    found = [(int(m.group(1)), f) for f in os.listdir(run_dir) if (m := RESUME_RE.match(f))]
+    found = [(n, f) for n, f in found if n >= min_steps]
+    return os.path.join(run_dir, max(found)[1]) if found else None
 
 
 def _event(league_dir: str, kind: str, **kw: Any) -> None:
@@ -64,10 +79,12 @@ def _launch(args: List[str], log_path: str) -> subprocess.Popen:
 
 
 def _run_dir(name: str, started: float, timeout: float = 600.0) -> str:
-    """The directory `tools/train.py --run-name <name>` created after `started`."""
-    deadline = time.time() + timeout
+    """The directory `tools/train.py --run-name <name>` created after `started`.
+
+    The timeout counts this loop's own sleeps, not the wall clock: a host suspend stops sleep
+    but not the clock, and must not read as a launch that never produced a directory."""
     pat = re.compile(rf"^{re.escape(name)}_\d{{8}}_\d{{6}}$")
-    while time.time() < deadline:
+    for _ in range(int(timeout / 5)):
         cands = [os.path.join(CHECKPOINTS, d) for d in os.listdir(CHECKPOINTS) if pat.match(d)]
         cands = [d for d in cands if os.path.getmtime(d) >= started - 5]
         if cands:
@@ -129,7 +146,8 @@ def _stop(proc: subprocess.Popen, grace: float = 120.0) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--main-name", required=True)
-    ap.add_argument("--main-resume", default=None)
+    ap.add_argument("--main-resume", default=None,
+                    help="Resume state for the main agent; omitted, it starts from scratch.")
     ap.add_argument("--adopt-main-dir", default=None,
                     help="Take over a main agent already running in this run directory "
                          "(with --adopt-main-pid) instead of launching one.")
@@ -139,6 +157,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--exploiter-name", required=True,
                     help="Generation g runs as <name>-<g>.")
+    ap.add_argument("--exploiter-start-steps", type=int, default=0,
+                    help="With --exploiter-reset main-latest: the first generation waits until the main "
+                         "agent has a tagged resume state at least this far on.")
     ap.add_argument("--exploiter-reset", required=True,
                     help="Resume state every exploiter generation starts from.")
     ap.add_argument("--exploiter-gen-steps", type=int, default=50_000_000)
@@ -174,10 +195,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         main_dir = a.adopt_main_dir
         _event(a.league_dir, "main_adopted", run=a.main_name, dir=main_dir, pid=a.adopt_main_pid)
     else:
-        if not a.main_resume:
-            raise SystemExit("--main-resume is needed to launch a main agent")
-        main_proc = _launch(common + [
-            "--resume", a.main_resume, "--seed", str(a.seed), "--run-name", a.main_name,
+        # No --main-resume: the main agent starts from scratch.
+        resume_args = ["--resume", a.main_resume] if a.main_resume else []
+        main_proc = _launch(common + resume_args + [
+            "--seed", str(a.seed), "--run-name", a.main_name,
             "--train-steps", str(a.main_steps),
             "--opponent-frac", "0.3", "--opponent-self-pool", "--opponent-pool-size", "12",
             "--league-dirs", a.league_dir, "--league-pool-size", str(a.main_league_size),
@@ -193,10 +214,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             return int(main_proc.returncode or 1)
         time.sleep(a.poll)
 
-    m_reset = re.search(r"(\d+)steps", os.path.basename(a.exploiter_reset))
-    if m_reset is None:
-        raise SystemExit(f"--exploiter-reset must name a resume_<n>steps.pt state, got {a.exploiter_reset}")
-    reset_steps = int(m_reset.group(1))
+    follow_main = a.exploiter_reset == "main-latest"
+    if follow_main:
+        # Each generation restarts from the main agent's newest tagged resume state, so it starts
+        # level with the target it is about to attack (P24 stage 1's recommendation). The first
+        # waits until the main agent is past the basics.
+        while latest_resume(main_dir, a.exploiter_start_steps) is None:
+            if main_proc.poll() is not None:
+                _event(a.league_dir, "main_exited_early", code=main_proc.returncode)
+                return int(main_proc.returncode or 1)
+            time.sleep(a.poll)
+    elif re.search(r"(\d+)steps", os.path.basename(a.exploiter_reset)) is None:
+        raise SystemExit(f"--exploiter-reset must name a resume_<n>steps.pt state or be main-latest, "
+                         f"got {a.exploiter_reset}")
+    reset_file = a.exploiter_reset
+    reset_steps = 0
     gen = 0
     expl: Optional[subprocess.Popen] = None
     expl_dir = ""
@@ -204,15 +236,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     published: set = set()
 
     def start_generation() -> None:
-        nonlocal gen, expl, expl_dir, gen_target
+        nonlocal gen, expl, expl_dir, gen_target, reset_file, reset_steps
         gen += 1
+        if follow_main:
+            newest = latest_resume(main_dir, a.exploiter_start_steps)
+            assert newest is not None
+            reset_file = newest
+        m_reset = re.search(r"(\d+)steps", os.path.basename(reset_file))
+        assert m_reset is not None
+        reset_steps = int(m_reset.group(1))
         name = f"{a.exploiter_name}-{gen}"
         gen_target = os.path.join(main_dir, f"snapshot_{_snapshots(main_dir)[-1]}steps.pt")
         pool = (["--opponent-checkpoints", gen_target] if a.exploiter_target == "frozen" else
                 ["--league-dirs", main_dir, "--league-pool-size", str(a.exploiter_league_size)])
         t = time.time()
         expl = _launch(common + [
-            "--resume", a.exploiter_reset, "--seed", str(a.seed), "--run-name", name,
+            "--resume", reset_file, "--seed", str(a.seed), "--run-name", name,
             "--train-steps", str(reset_steps + a.exploiter_gen_steps),
             "--opponent-frac", "1.0", *pool,
             "--description", f"{a.exploiter_description} Generation {gen}"
@@ -220,7 +259,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ] + shlex.split(a.exploiter_args), os.path.join(a.log_dir, f"{name}.log"))
         expl_dir = _run_dir(name, t)
         _event(a.league_dir, "exploiter_launched", run=name, generation=gen, dir=expl_dir,
-               pid=expl.pid, target=gen_target if a.exploiter_target == "frozen" else "moving")
+               pid=expl.pid, reset=reset_file, target=gen_target if a.exploiter_target == "frozen" else "moving")
 
     start_generation()
     seen_snaps: set = set()
