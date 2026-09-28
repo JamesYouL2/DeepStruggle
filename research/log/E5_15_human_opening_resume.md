@@ -63,3 +63,40 @@ estimates (+0.4, +2.3), but neither difference is distinguishable from zero.
   the Greece and Denmark-style locks and the opening wander of E5-13. It does not buy strength by
   the owner's rule. A mixed arm (the human US setup, the USSR's own) would be the natural next
   question if the US gain is wanted.
+
+## Follow-up: does the US punish an unbuffered USSR opening? (2026-09-28)
+
+The owner's hypothesis for why the human USSR opening does not pay for this model: a USSR opening
+of East Germany 3, Poland 3 and Yugoslavia (or Hungary) 3 sits at exactly control everywhere. It
+invites a US headline of Independent Reds (the US matches the 3 in Yugoslavia or Hungary) or of
+East European Unrest (−1 in each of the three, and all three are lost). The human opening's 4 in
+East Germany and 4 in Poland buffers against both. If this model's US does not play those
+headlines, its USSR has no reason to buffer.
+
+Probe (`data/reports/headline_probe.py`, results in `data/reports/headline_probe.{txt,*.json}`):
+1,000 greedy games per checkpoint, each played by the model to the turn-1 US headline. Both models
+open 3/3/3 as USSR in every game: seed 44 with Yugoslavia, seed 43 with Hungary. Where the US
+holds either card, each branch (that card, or the policy's own pick) is forced, the headlines are
+resolved greedily, and the critic is read at the first action-round decision from the mover's side,
+the only trained view. Then 32 paired greedy playouts are run per branch.
+
+| | IR, E5-11-44@640M | IR, E5-11-43@560M | EEU, E5-11-44@640M | EEU, E5-11-43@560M |
+|:---|---:|---:|---:|---:|
+| held at the turn-1 US headline | 206 | 206 | 233 | 233 |
+| headlined | 12.1% | 13.1% | 24.5% | 45.1% |
+| where not: playouts, card − policy's pick (US win) | −2.3 ± 0.9 | −2.3 ± 1.1 | −2.0 ± 1.1 | +0.2 ± 1.2 |
+| critic prefers the card to the pick | 14% | 7% | 15% | 10% |
+
+What it headlined instead: Containment, Red Scare/Purge, Defectors and Marshall Plan.
+
+* **The US does play them, 12–45% of the time. Where it does not, it is right by its own play.**
+  Forcing Independent Reds or East European Unrest instead of its pick is 2 points worse, or even,
+  in the playouts.
+* **The critic and the policy agree with the playouts on average.** It is neither a critic nor a
+  policy error. Per position the critic cannot tell which headline is better: where the playout
+  difference is at least 10 points, its sign agrees only 49–65% of the time, which is near chance.
+* So against this model's US, the unbuffered 3/3/3 opening is not being punished. At this strength
+  the headlines that exploit it are worth no more than the other strong US headlines it holds. That
+  fits the USSR half of the human opening measuring no better than the model's own (E5-15, above).
+  A stronger US that follows up East European Unrest well could change this. It is a statement
+  about this model's play, not about the opening.
