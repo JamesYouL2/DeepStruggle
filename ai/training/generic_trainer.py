@@ -1501,6 +1501,9 @@ def train_pipeline(
     setup_entropy_floor: float = 0.0,
     setup_entropy_lr: float = 0.01,
     setup_entropy_max_coef: float = 1.0,
+    setup_mc_credit: bool = False,
+    setup_mc_coef: float = 1.0,
+    setup_mc_min_batch: int = 512,
     forced_opening: Optional[str] = None,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
@@ -1742,6 +1745,9 @@ def train_pipeline(
         "setup_entropy_lr": float(setup_entropy_lr),
         "setup_entropy_max_coef": float(setup_entropy_max_coef),
         "forced_opening": forced_opening,
+        "setup_mc_credit": bool(setup_mc_credit),
+        "setup_mc_coef": float(setup_mc_coef),
+        "setup_mc_min_batch": int(setup_mc_min_batch),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
         "setup_block_lambda": bool(setup_block_lambda),
@@ -1949,6 +1955,9 @@ def train_pipeline(
         setup_entropy_floor=setup_entropy_floor,
         setup_entropy_lr=setup_entropy_lr,
         setup_entropy_max_coef=setup_entropy_max_coef,
+        setup_mc_credit=setup_mc_credit,
+        setup_mc_coef=setup_mc_coef,
+        setup_mc_min_batch=setup_mc_min_batch,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
         setup_block_lambda=setup_block_lambda,
@@ -2187,6 +2196,13 @@ def train_pipeline(
     if entropy_normalize:
         print(f"[entropy] the bonus rewards entropy / log(legal) per decision (--entropy-normalize), "
               f"coefficient {entropy_coef:g}", flush=True)
+    if setup_mc_credit:
+        if forced_opening:
+            raise ValueError("--setup-mc-credit has no setup to credit under --forced-opening")
+        print(f"[setup MC credit] the learner's setup placements are credited with the game result "
+              f"(advantage = result - V), coef {setup_mc_coef:g}, trained in batches of >= "
+              f"{setup_mc_min_batch} once their games end; dropped from the lambda-return surrogate",
+              flush=True)
     if setup_entropy_floor > 0.0:
         print(f"[setup entropy floor] {setup_entropy_floor:g} nats on the learner's setup placements; "
               f"coefficient adapts at lr {setup_entropy_lr:g} within [0, {setup_entropy_max_coef:g}]",
@@ -2451,6 +2467,8 @@ def train_pipeline(
                     # P25 3j-3l. approx_kl_* is always present; the rest only with their lever.
                     "approx_kl_us", "approx_kl_ussr", "kl_stop_frac_us", "kl_stop_frac_ussr",
                     "ent_coef_us", "ent_coef_ussr", "entropy_setup", "setup_ent_coef",
+                    "setup_mc_n", "setup_mc_ready", "setup_mc_pending", "setup_mc_result_mean",
+                    "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss"):

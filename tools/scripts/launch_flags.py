@@ -94,6 +94,9 @@ _BEFORE_RECORDED = {
     "setup_entropy_floor": lambda meta: 0.0,
     "setup_entropy_lr": lambda meta: 0.01,
     "setup_entropy_max_coef": lambda meta: 1.0,
+    "setup_mc_credit": lambda meta: False,
+    "setup_mc_coef": lambda meta: 1.0,
+    "setup_mc_min_batch": lambda meta: 512,
     # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
     # below as "unrecorded" for older runs and diffs as the default.
 }

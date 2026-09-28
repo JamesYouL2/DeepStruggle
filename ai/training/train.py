@@ -528,6 +528,17 @@ def build_parser() -> argparse.ArgumentParser:
                              "resampled and its opening locks, good or bad "
                              "(research/log/E5_11_setup_lock_and_critic_views.md). 0 is off.")
     parser.add_argument("--setup-entropy-lr", type=float, default=0.01)
+    parser.add_argument("--setup-mc-credit", action="store_true", default=False,
+                        help="Credit the learner's setup placements with the game result (Monte "
+                             "Carlo, advantage = result - V) instead of the lambda-return, which at "
+                             "gamma 1 / lambda 0.98 reaches the setup only through the critic's "
+                             "values of the next positions -- and the critic over-rates unfamiliar "
+                             "openings (research/log/E5_11_setup_lock_and_critic_views.md). As "
+                             "Ataraxos trains its setup. Pair with --setup-entropy-floor: a setup "
+                             "played at p ~ 1 is never compared with anything.")
+    parser.add_argument("--setup-mc-coef", type=float, default=1.0)
+    parser.add_argument("--setup-mc-min-batch", type=int, default=512,
+                        help="Finished-game setup placements to gather before one MC setup step.")
     parser.add_argument("--forced-opening", type=str, default=None,
                         help="Start every training game after a scripted setup (a name from "
                              "tools/lib/openings.py, e.g. 'human': USSR East Germany 1, Poland 4, "
@@ -775,6 +786,9 @@ def main():
             setup_entropy_lr=args.setup_entropy_lr,
             setup_entropy_max_coef=args.setup_entropy_max_coef,
             forced_opening=args.forced_opening,
+            setup_mc_credit=args.setup_mc_credit,
+            setup_mc_coef=args.setup_mc_coef,
+            setup_mc_min_batch=args.setup_mc_min_batch,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,
             cuda_graphs=not args.no_cuda_graphs,

@@ -75,6 +75,18 @@ untrained. Rate such a checkpoint with the same opening: `tools/tournament.py --
 applies it to every agent, and an `opening:<name>:<spec>` model spec applies it to one agent only.
 The run's own snapshot match evaluations use the opening automatically; its probes do not.
 
+`--setup-mc-credit` (off by default) credits the learner's setup placements with the **game
+result** (advantage = result − V(s), the critic only as a baseline) instead of the λ-return. With
+γ 1 and λ 0.98, the λ-return reaches the setup only through the critic's values of the positions
+just after it, and the critic over-rates unfamiliar openings three to four times
+(`research/log/E5_11_setup_lock_and_critic_views.md`). This is how Ataraxos trains its setup. A
+game outlasts a rollout, so each placement waits until its game ends. It is then trained in
+batches of at least `--setup-mc-min-batch` (512) with the PPO clip against the log-prob it was
+sampled with. Setup rows leave the ordinary surrogate, but keep the entropy bonus, the floor and
+the KL. Pair it with `--setup-entropy-floor`, because a placement at p ≈ 1 is never compared with
+anything. From scratch the result is a slow teacher: setup entropy stays near uniform for millions
+of steps.
+
 `--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a
 shift common to every country logit is invisible to the policy and gets no gradient. Left free,

@@ -299,6 +299,9 @@ class BaseNashPGTrainer:
         setup_entropy_floor: float = 0.0,
         setup_entropy_lr: float = 0.01,
         setup_entropy_max_coef: float = 1.0,
+        setup_mc_credit: bool = False,
+        setup_mc_coef: float = 1.0,
+        setup_mc_min_batch: int = 512,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
@@ -474,6 +477,22 @@ class BaseNashPGTrainer:
         self.setup_entropy_lr = float(setup_entropy_lr)
         self.setup_entropy_max_coef = float(setup_entropy_max_coef)
         self.setup_ent_coef = 0.0
+        #: --setup-mc-credit: the learner's setup placements are credited with the GAME RESULT
+        #: (Monte Carlo, lambda = 1 to the end), not the lambda-return. With gamma 1 and lambda
+        #: 0.98 a setup placement's GAE weights the result by ~0.98^(decisions to the end), i.e.
+        #: <= 0.01, so the setup learns only from the critic's values of the positions just after
+        #: it -- and the critic over-rates unfamiliar openings 3-4x
+        #: (research/log/E5_11_setup_lock_and_critic_views.md). Ataraxos trains its setup on MC
+        #: returns for the same reason. A game outlasts a rollout, so each setup decision waits in
+        #: a per-env pending list until its game ends, then joins a ready batch trained with the
+        #: PPO clip against the log-prob it was sampled with; advantage = result - V(s), the critic
+        #: only as a baseline. Setup rows are dropped from the ordinary surrogate; the entropy
+        #: bonus (and --setup-entropy-floor) and the KL to pi_ref still apply to them there.
+        self.setup_mc_credit = bool(setup_mc_credit)
+        self.setup_mc_coef = float(setup_mc_coef)
+        self.setup_mc_min_batch = int(setup_mc_min_batch)
+        self._setup_pending: List[List[Tuple[Any, ...]]] = [[] for _ in range(self.num_envs)]
+        self._setup_ready: List[Tuple[Any, ...]] = []
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -648,6 +667,74 @@ class BaseNashPGTrainer:
             c = self.ent_coef_seat[code] - self.entropy_ceiling_lr * (float(h) - self.entropy_ceiling)
             self.ent_coef_seat[code] = min(self.ent_coef, max(self.entropy_ceiling_min_coef, c))
 
+    def _setup_mc_record(self, obs_t: torch.Tensor, masks_t: torch.Tensor, actions_t: torch.Tensor,
+                         log_probs_t: torch.Tensor, v_win_t: torch.Tensor, learner_np: np.ndarray,
+                         dp: np.ndarray) -> None:
+        """--setup-mc-credit: file this step's learner setup placements under their env."""
+        setup = np.asarray(self._obs_np)[:, setup_phase_slot()] < (0.5 / 6.0)
+        rows = np.flatnonzero(setup & learner_np)
+        if rows.size == 0:
+            return
+        idx = torch.from_numpy(rows).to(obs_t.device)
+        o, m = obs_t.index_select(0, idx), masks_t.index_select(0, idx)
+        a, lp = actions_t.index_select(0, idx), log_probs_t.index_select(0, idx)
+        v = v_win_t.reshape(-1).index_select(0, idx)
+        for j, i in enumerate(rows):
+            self._setup_pending[int(i)].append((o[j], m[j], a[j], lp[j].detach(), v[j].detach(), int(dp[i])))
+
+    def _setup_mc_resolve(self, completed_episodes: Sequence[Dict[str, Any]]) -> None:
+        """--setup-mc-credit: a finished game's setup placements get its result, seen by their mover."""
+        for ep in completed_episodes:
+            i = int(ep.get("env_idx", -1))
+            if not 0 <= i < self.num_envs or not self._setup_pending[i]:
+                continue
+            util = float(ep.get("terminal_utility", 0.0))            # +1 US win, -1 USSR win
+            for rec in self._setup_pending[i]:
+                self._setup_ready.append(rec + (util * (1.0 if rec[5] == 1 else -1.0),))
+            self._setup_pending[i] = []
+
+    def _setup_mc_update(self) -> Dict[str, float]:
+        """--setup-mc-credit: one clipped policy step on the setup placements whose games ended."""
+        out: Dict[str, float] = {"setup_mc_ready": float(len(self._setup_ready)),
+                                 "setup_mc_pending": float(sum(len(p) for p in self._setup_pending))}
+        n = len(self._setup_ready)
+        if n < max(1, self.setup_mc_min_batch):
+            return out
+        recs, self._setup_ready = self._setup_ready, []
+        obs = torch.stack([r[0] for r in recs])
+        masks = torch.stack([r[1] for r in recs])
+        act = torch.stack([r[2] for r in recs]).long().reshape(-1)
+        old_lp = torch.stack([r[3] for r in recs]).float().reshape(-1)
+        v = torch.stack([r[4] for r in recs]).float().reshape(-1)
+        g = torch.tensor([r[6] for r in recs], dtype=torch.float32, device=obs.device)
+        adv = g - v
+        # Scale only: the critic baseline already centres it, and a state-only baseline cannot
+        # bias the gradient however wrong the critic is.
+        adv_n = adv / adv.std().clamp(min=0.1) if n > 1 else adv
+        self.active_net.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        clip_n = 0.0
+        ratio_dev = 0.0
+        for i in range(0, n, self.batch_size):
+            sl = slice(i, i + self.batch_size)
+            logits = self.active_net(obs[sl], masks[sl])[0].float()
+            lp = F.log_softmax(logits, dim=-1).gather(1, act[sl].unsqueeze(1)).squeeze(1)
+            ratio = torch.exp(torch.clamp(lp - old_lp[sl], -20.0, 20.0))
+            a = adv_n[sl]
+            surr = torch.min(ratio * a, torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * a)
+            loss = -self.setup_mc_coef * surr.sum() / n
+            loss.backward()
+            with torch.no_grad():
+                clip_n += float(((ratio < 1.0 - self.clip_eps) | (ratio > 1.0 + self.clip_eps)).float().sum())
+                ratio_dev += float((ratio - 1.0).abs().sum())
+        nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+        self.optimizer.step()
+        self.active_net.eval()
+        out.update({"setup_mc_n": float(n), "setup_mc_result_mean": float(g.mean()),
+                    "setup_mc_adv_mean": float(adv.mean()), "setup_mc_adv_std": float(adv.std()) if n > 1 else 0.0,
+                    "setup_mc_clip_frac": clip_n / n, "setup_mc_ratio_dev": ratio_dev / n})
+        return out
+
     def _update_setup_entropy(self, h: float) -> None:
         """--setup-entropy-floor: move the setup bonus toward holding setup entropy at the floor."""
         c = self.setup_ent_coef + self.setup_entropy_lr * (self.setup_entropy_floor - float(h))
@@ -800,6 +887,9 @@ class BaseNashPGTrainer:
                 setup_entropy_n += _setup_sel.sum()
 
             actions_np = actions_t.cpu().numpy()
+            if self.setup_mc_credit:
+                self._setup_mc_record(obs_t, masks_t, actions_t, log_probs_t, v_win_t,
+                                      np.asarray(learner_np, dtype=bool), _dp)
             # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
             # step. A change by the next decision means a chance node came between them.
             _rngs_np: Optional[np.ndarray] = None
@@ -907,6 +997,8 @@ class BaseNashPGTrainer:
                     # The learner's side was just redrawn, so this env's views may have swapped.
                     self._apply_view_env(_i)
 
+            if self.setup_mc_credit and self._info.get("completed_episodes"):
+                self._setup_mc_resolve(self._info["completed_episodes"])
             if "completed_episodes" in self._info and self._info["completed_episodes"]:
                 # Win rate, ending mix and game length describe how the policy plays. Games
                 # against a frozen pool opponent are a different question and would make a
@@ -1134,6 +1226,8 @@ class BaseNashPGTrainer:
             self.steps_since_ref_update = 0
 
         combined: Dict[str, Any] = {**rollout_metrics, **train_metrics}
+        if self.setup_mc_credit:
+            combined.update(self._setup_mc_update())
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.
@@ -1362,6 +1456,10 @@ class NashPGTrainer(BaseNashPGTrainer):
                 # steps, but they must not pull on the policy. Without a pool this is all ones
                 # and the expression reduces to the plain mean.
                 keep = b_learner > 0.5
+                if self.setup_mc_credit:
+                    # Setup placements take their credit from the game result instead
+                    # (_setup_mc_update); the lambda-return reaching them is the critic's.
+                    keep = keep & (b_obs[:, setup_phase_slot()] >= (0.5 / 6.0))
                 if self.adv_filter_quantile > 0.0 and surrogate.numel() > 1:
                     # Keep the samples the policy can actually learn from. The threshold is a
                     # quantile of this minibatch rather than a fixed |A|, so it adapts as the
