@@ -26,12 +26,47 @@ bool Scoring::is_controlled_by(const GameState& state, uint8_t country_id, Playe
     return get_country_control(state, country_id) == p;
 }
 
+namespace {
+
+// The two card effects that change what a scoring counts. Both are scoring-only, which is why
+// they are switches: Summit asks who Dominates or Controls a region, and neither card has
+// anything to say about that.
+struct ScoringAdjustments {
+    bool shuttle_diplomacy;    // drop a USSR battleground from the next ME/Asia scoring
+    bool formosan_resolution;  // Taiwan is a battleground while the event stands
+};
+
+RegionScoreSummary evaluate_region_impl(const GameState& state, Region r,
+                                        ScoringAdjustments adjust) noexcept;
+
+} // namespace
+
 RegionScoreSummary Scoring::evaluate_region(const GameState& state, Region r, bool is_final_scoring) noexcept {
+    // Shuttle Diplomacy "does not count for Final Scoring"; Formosan Resolution's Deluxe text
+    // extends it to Final Scoring explicitly.
+    return evaluate_region_impl(state, r, ScoringAdjustments{!is_final_scoring, true});
+}
+
+bool Scoring::dominates_or_controls(const GameState& state, Region r, Player p) noexcept {
+    // Summit's modifier. Neither Shuttle Diplomacy nor Formosan Resolution applies: the first
+    // "does not affect Summit or Kitchen Debates" (FAQ, card #73) and the second makes Taiwan a
+    // battleground "for scoring purposes only" (card #35). Counting them here moved Summit's
+    // die by a region whenever either tipped a Domination.
+    const auto summary = evaluate_region_impl(state, r, ScoringAdjustments{false, false});
+    const RegionalStatus st = (p == Player::US) ? summary.us_status : summary.ussr_status;
+    return st == RegionalStatus::DOMINATION || st == RegionalStatus::CONTROL;
+}
+
+namespace {
+
+RegionScoreSummary evaluate_region_impl(const GameState& state, Region r,
+                                        ScoringAdjustments adjust) noexcept {
     RegionScoreSummary summary{};
     if (r == Region::NONE_REGION) return summary;
 
-    bool taiwan_is_bg = (r == Region::ASIA && state.has_flag(effect_bits::FORMOSAN_RESOLUTION_ACTIVE) &&
-                         is_controlled_by(state, countries::TAIWAN, Player::US));
+    bool taiwan_is_bg = (adjust.formosan_resolution && r == Region::ASIA &&
+                         state.has_flag(effect_bits::FORMOSAN_RESOLUTION_ACTIVE) &&
+                         Scoring::is_controlled_by(state, countries::TAIWAN, Player::US));
 
     uint8_t total_bg = MapData::get_region_battleground_count(r) + (taiwan_is_bg ? 1 : 0);
 
@@ -39,7 +74,7 @@ RegionScoreSummary Scoring::evaluate_region(const GameState& state, Region r, bo
         const auto& c_info = MapData::get_country(cid);
         if (c_info.region != r) continue;
 
-        Player ctrl = get_country_control(state, cid);
+        Player ctrl = Scoring::get_country_control(state, cid);
         bool is_bg = c_info.battleground || (cid == countries::TAIWAN && taiwan_is_bg);
 
         if (ctrl == Player::US) {
@@ -70,7 +105,7 @@ RegionScoreSummary Scoring::evaluate_region(const GameState& state, Region r, bo
     uint8_t effective_ussr_bg = summary.ussr_battlegrounds;
     uint8_t effective_ussr_countries = summary.ussr_countries;
     uint8_t effective_ussr_adjacent = summary.ussr_superpower_adjacent;
-    if (!is_final_scoring && (r == Region::MIDDLE_EAST || r == Region::ASIA) &&
+    if (adjust.shuttle_diplomacy && (r == Region::MIDDLE_EAST || r == Region::ASIA) &&
         state.has_flag(effect_bits::SHUTTLE_DIPLOMACY_ACTIVE) && effective_ussr_bg > 0) {
         // All of it hangs on there being a battleground to remove. The country goes because
         // that battleground *is* a country, not on its own -- so the USSR can be put out of
@@ -158,6 +193,8 @@ RegionScoreSummary Scoring::evaluate_region(const GameState& state, Region r, bo
 
     return summary;
 }
+
+} // namespace
 
 void Scoring::score_region(GameState& state, Region r) noexcept {
     if (r == Region::NONE_REGION) return;

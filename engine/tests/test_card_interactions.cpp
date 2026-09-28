@@ -90,7 +90,7 @@ TEST(CardInteractionTest, FlowerPower_NoVP_WhenWarCardSpacedByUS) {
     ASSERT_EQ(state.victory_points, 2);
 }
 
-TEST(CardInteractionTest, FlowerPower_NoVP_WhenWarCardPlayedViaUNInterventionByUS) {
+TEST(CardInteractionTest, FlowerPower_ChargesWhenWarCardPlayedViaUNInterventionByUS) {
     ts::GameState state{};
     state.set_flag(ts::effect_bits::FLOWER_POWER_ACTIVE);
     state.card_locations[ts::card_ids::ARAB_ISRAELI_WAR] = ts::hand_of(ts::Player::US);
@@ -100,8 +100,12 @@ TEST(CardInteractionTest, FlowerPower_NoVP_WhenWarCardPlayedViaUNInterventionByU
     ts::CardHandlers::trigger_event(state, ts::card_ids::UN_INTERVENTION, ts::Player::US);
     ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, ts::card_ids::ARAB_ISRAELI_WAR, 0, 0});
 
-    // Arab-Israeli War was used for Ops, event canceled -> Flower Power gives 0 VP
-    ASSERT_EQ(state.victory_points, 0);
+    // Flower Power charges "every US played War card, used for Operations or an Event". UN
+    // Intervention cancels the war's Event and hands the US its Operations, so the card is
+    // played and used for Operations -- the same charge as playing it for Ops outright, which
+    // the engine already made. This test used to assert 0 VP on the reading that a cancelled
+    // Event owes nothing; the card names Operations use explicitly.
+    ASSERT_EQ(state.victory_points, -2);
 }
 
 TEST(CardInteractionTest, FlowerPower_CampDavidBlocksArabIsraeliWar_NoVPForArabIsraeliWar_ButAwardsForBrushWar) {

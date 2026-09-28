@@ -566,14 +566,15 @@ TEST(CardEdgeCasesTest, OlympicGames_Boycott_OpsModifiers_Suite) {
         ASSERT_EQ(s.ctx().pending_ops_value, 4);
     }
 
-    // 2. Boycott under Red Scare / Purge (3 Ops)
+    // 2. Boycott under Red Scare / Purge: still 4. The boycott's Ops come from the event, and
+    //    "Ops from events are not affected" (FAQ, Red Scare/Purge) -- see Operations::grant_ops.
     {
         GameState s{};
         s.defcon = 4;
         s.set_flag(effect_bits::PURGE_US_ACTIVE);
         CardHandlers::trigger_event(s, card_ids::OLYMPIC_GAMES, Player::US);
         CardHandlers::handle_event_step(s, MicroAction{DecisionType::CHOOSE_BRANCH, 1, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
+        ASSERT_EQ(s.ctx().pending_ops_value, 4);
     }
     {
         GameState s{};
@@ -581,7 +582,7 @@ TEST(CardEdgeCasesTest, OlympicGames_Boycott_OpsModifiers_Suite) {
         s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
         CardHandlers::trigger_event(s, card_ids::OLYMPIC_GAMES, Player::USSR);
         CardHandlers::handle_event_step(s, MicroAction{DecisionType::CHOOSE_BRANCH, 1, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
+        ASSERT_EQ(s.ctx().pending_ops_value, 4);
     }
 
     // 3. Boycott under Containment / Brezhnev Doctrine (4 Ops capped)
@@ -624,397 +625,102 @@ TEST(CardEdgeCasesTest, OlympicGames_Boycott_OpsModifiers_Suite) {
 }
 
 
-// Tests for all cards allowing operations under Red Scare / Containment / Brezhnev Doctrine
-TEST(CardEdgeCasesTest, CIACreated_OpsModifiers_Suite) {
-    // 1. Default (1 Op)
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::CIA_CREATED, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    // 2. Containment (2 Ops)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::CIA_CREATED, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-    // 3. Purge (1 Op - min 1)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::CIA_CREATED, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    // 4. Containment + Purge (1 Op - net zero)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::CIA_CREATED, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
+// Ops granted by an event are the event's, not a card played for Operations, and no Ops
+// modifier touches them. FAQ, under Red Scare/Purge: "The reduction is for any use of Ops,
+// including Space Race. Ops from events are not affected." The same holds for the +1 of
+// Containment and Brezhnev Doctrine, whose text is "Operations cards played by" their side.
+//
+// This replaced eleven per-card suites that asserted the opposite -- each modifier moving the
+// grant by one -- with no source cited for it. Every combination of the three modifiers is run
+// against every event that grants Ops, including the coups Che and Ortega make "using this
+// card's Operations value".
+namespace {
+
+constexpr uint64_t kModifierSets[] = {
+    0,
+    effect_bits::CONTAINMENT_ACTIVE,
+    effect_bits::BREZHNEV_DOCTRINE_ACTIVE,
+    effect_bits::PURGE_US_ACTIVE,
+    effect_bits::PURGE_USSR_ACTIVE,
+    effect_bits::CONTAINMENT_ACTIVE | effect_bits::PURGE_US_ACTIVE,
+    effect_bits::BREZHNEV_DOCTRINE_ACTIVE | effect_bits::PURGE_USSR_ACTIVE,
+};
+
+} // namespace
+
+TEST(CardEdgeCasesTest, EventGrantedOps_IgnoreOpsModifiers) {
+    struct Grant { uint8_t card; Player p; uint8_t ops; };
+    const Grant grants[] = {
+        {card_ids::CIA_CREATED, Player::US, 1},
+        {card_ids::LONE_GUNMAN, Player::USSR, 1},
+        {card_ids::ABM_TREATY, Player::US, 4},
+        {card_ids::ABM_TREATY, Player::USSR, 4},
+        {card_ids::GLASNOST, Player::USSR, 4},
+        {card_ids::SOVIETS_SHOOT_DOWN_KAL_007, Player::US, 4},
+        {card_ids::TEAR_DOWN_THIS_WALL, Player::US, 3},
+        {card_ids::GRAIN_SALES, Player::US, 2},    // the USSR hand is empty
+    };
+    for (uint64_t mods : kModifierSets) {
+        for (const Grant& g : grants) {
+            GameState s{};
+            s.defcon = 4;
+            s.countries[countries::SOUTH_KOREA].us_influence = 3;   // KAL-007's condition
+            s.set_flag(effect_bits::THE_REFORMER_PLAYED);            // Glasnost's condition
+            s.persistent_effects |= mods;
+            CardHandlers::trigger_event(s, g.card, g.p);
+            ASSERT_EQ(s.ctx().decision_type, DecisionType::SELECT_OP_MODE);
+            ASSERT_EQ(s.ctx().pending_ops_value, g.ops);
+        }
+        // Junta: 2, once its Influence is placed.
+        for (Player p : {Player::US, Player::USSR}) {
+            GameState s{};
+            s.persistent_effects |= mods;
+            CardHandlers::trigger_event(s, card_ids::JUNTA, p);
+            CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
+            ASSERT_EQ(s.ctx().pending_ops_value, 2);
+        }
+        // Olympic Games boycotted: "as if they played a 4 Ops card".
+        for (Player sponsor : {Player::US, Player::USSR}) {
+            GameState s{};
+            s.defcon = 4;
+            s.persistent_effects |= mods;
+            CardHandlers::trigger_event(s, card_ids::OLYMPIC_GAMES, sponsor);
+            CardHandlers::handle_event_step(s, MicroAction{DecisionType::CHOOSE_BRANCH, 1, 0, 0});
+            ASSERT_EQ(s.ctx().pending_ops_value, 4);
+        }
+        // Che's coup on Colombia (stability 1), roll 1: 1 + 3 - 2 = 2 removed of 3.
+        {
+            GameState s{};
+            s.persistent_effects |= mods;
+            s.countries[countries::COLOMBIA].us_influence = 3;
+            CardHandlers::trigger_event(s, card_ids::CHE, Player::USSR);
+            CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::COLOMBIA, 0, 0});
+            CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 1, 0, 0});
+            ASSERT_EQ(s.countries[countries::COLOMBIA].us_influence, 1);
+            ASSERT_EQ(s.ussr_mil_ops, 3);   // Che is not a free coup: its 3 Ops count
+        }
+        // Ortega's free coup on Honduras (stability 2), roll 4: 4 + 2 - 4 = 2 removed of 3.
+        {
+            GameState s{};
+            s.persistent_effects |= mods;
+            s.countries[countries::HONDURAS].us_influence = 3;
+            CardHandlers::trigger_event(s, card_ids::ORTEGA_ELECTED_IN_NICARAGUA, Player::USSR);
+            CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::HONDURAS, 0, 0});
+            CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 4, 0, 0});
+            ASSERT_EQ(s.countries[countries::HONDURAS].us_influence, 1);
+        }
     }
 }
 
-TEST(CardEdgeCasesTest, LoneGunman_OpsModifiers_Suite) {
-    // 1. Default (1 Op)
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::LONE_GUNMAN, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    // 2. Brezhnev (2 Ops)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::LONE_GUNMAN, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-    // 3. Purge (1 Op - min 1)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::LONE_GUNMAN, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    // 4. Brezhnev + Purge (1 Op - net zero)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::LONE_GUNMAN, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-}
-
-TEST(CardEdgeCasesTest, Junta_OpsModifiers_Suite) {
-    // US play: 2 base ops
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::US);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::US);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::US);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::US);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-
-    // USSR play: 2 base ops
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::JUNTA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::CHILE, 0, 0});
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-}
-
-TEST(CardEdgeCasesTest, ABMTreaty_OpsModifiers_Suite) {
-    // US play
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4); // Capped at 4
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-
-    // USSR play
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4); // Capped at 4
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::ABM_TREATY, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-}
-
-TEST(CardEdgeCasesTest, Glasnost_OpsModifiers_Suite) {
-    // Glasnost grants 4 Ops to USSR if The Reformer is played
-    {
-        GameState s{};
-        s.set_flag(effect_bits::THE_REFORMER_PLAYED);
-        CardHandlers::trigger_event(s, card_ids::GLASNOST, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::THE_REFORMER_PLAYED);
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::GLASNOST, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4); // Capped at 4
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::THE_REFORMER_PLAYED);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::GLASNOST, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::THE_REFORMER_PLAYED);
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::GLASNOST, Player::USSR);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-}
-
-TEST(CardEdgeCasesTest, SovietsShootDownKAL007_OpsModifiers_Suite) {
-    // KAL-007 grants 4 Ops to US if South Korea is US controlled
-    {
-        GameState s{};
-        s.defcon = 4;
-        s.countries[countries::SOUTH_KOREA].us_influence = 3; // Controlled
-        CardHandlers::trigger_event(s, card_ids::SOVIETS_SHOOT_DOWN_KAL_007, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-    {
-        GameState s{};
-        s.defcon = 4;
-        s.countries[countries::SOUTH_KOREA].us_influence = 3;
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::SOVIETS_SHOOT_DOWN_KAL_007, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4); // Capped at 4
-    }
-    {
-        GameState s{};
-        s.defcon = 4;
-        s.countries[countries::SOUTH_KOREA].us_influence = 3;
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::SOVIETS_SHOOT_DOWN_KAL_007, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.defcon = 4;
-        s.countries[countries::SOUTH_KOREA].us_influence = 3;
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::SOVIETS_SHOOT_DOWN_KAL_007, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-}
-
-TEST(CardEdgeCasesTest, Che_OpsModifiers_Suite) {
-    // Che performs coup using modified 3 base ops
-    // Country: Colombia (stability 1). Roll 1:
-    // Default (3 ops): 1 + 3 - 2 = 2 coup val (removes 2 US)
-    {
-        GameState s{};
-        s.countries[countries::COLOMBIA].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::CHE, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::COLOMBIA, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 1, 0, 0});
-        ASSERT_EQ(s.countries[countries::COLOMBIA].us_influence, 1); // 3 - 2 = 1
-    }
-    // Brezhnev (4 ops): 1 + 4 - 2 = 3 coup val (removes 3 US)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.countries[countries::COLOMBIA].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::CHE, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::COLOMBIA, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 1, 0, 0});
-        ASSERT_EQ(s.countries[countries::COLOMBIA].us_influence, 0); // 3 - 3 = 0
-    }
-    // Purge (2 ops): 1 + 2 - 2 = 1 coup val (removes 1 US)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        s.countries[countries::COLOMBIA].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::CHE, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::COLOMBIA, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 1, 0, 0});
-        ASSERT_EQ(s.countries[countries::COLOMBIA].us_influence, 2); // 3 - 1 = 2
-    }
-    // Brezhnev + Purge (3 ops): 1 + 3 - 2 = 2 coup val (removes 2 US)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        s.countries[countries::COLOMBIA].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::CHE, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::COLOMBIA, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 1, 0, 0});
-        ASSERT_EQ(s.countries[countries::COLOMBIA].us_influence, 1); // 3 - 2 = 1
-    }
-}
-
-TEST(CardEdgeCasesTest, OrtegaElected_OpsModifiers_Suite) {
-    // Ortega performs coup using modified 2 base ops
-    // Country: Honduras (stability 2). Roll 4:
-    // Default (2 ops): 4 + 2 - 4 = 2 coup val (removes 2 US)
-    {
-        GameState s{};
-        s.countries[countries::HONDURAS].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::ORTEGA_ELECTED_IN_NICARAGUA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::HONDURAS, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 4, 0, 0});
-        ASSERT_EQ(s.countries[countries::HONDURAS].us_influence, 1); // 3 - 2 = 1
-    }
-    // Brezhnev (3 ops): 4 + 3 - 4 = 3 coup val (removes 3 US)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.countries[countries::HONDURAS].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::ORTEGA_ELECTED_IN_NICARAGUA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::HONDURAS, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 4, 0, 0});
-        ASSERT_EQ(s.countries[countries::HONDURAS].us_influence, 0); // 3 - 3 = 0
-    }
-    // Purge (1 op): 4 + 1 - 4 = 1 coup val (removes 1 US)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        s.countries[countries::HONDURAS].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::ORTEGA_ELECTED_IN_NICARAGUA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::HONDURAS, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 4, 0, 0});
-        ASSERT_EQ(s.countries[countries::HONDURAS].us_influence, 2); // 3 - 1 = 2
-    }
-    // Brezhnev + Purge (2 ops): 4 + 2 - 4 = 2 coup val (removes 2 US)
-    {
-        GameState s{};
-        s.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
-        s.countries[countries::HONDURAS].us_influence = 3;
-        CardHandlers::trigger_event(s, card_ids::ORTEGA_ELECTED_IN_NICARAGUA, Player::USSR);
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::POINT_NODE, countries::HONDURAS, 0, 0});
-        CardHandlers::handle_event_step(s, MicroAction{DecisionType::ROLL_DIE, 4, 0, 0});
-        ASSERT_EQ(s.countries[countries::HONDURAS].us_influence, 1); // 3 - 2 = 1
-    }
-}
-
-TEST(CardEdgeCasesTest, TearDownThisWall_OpsModifiers_Suite) {
-    // US performs 3 Ops in Europe
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::TEAR_DOWN_THIS_WALL, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::TEAR_DOWN_THIS_WALL, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 4);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::TEAR_DOWN_THIS_WALL, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::TEAR_DOWN_THIS_WALL, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-}
-
-TEST(CardEdgeCasesTest, GrainSales_OpsModifiers_Suite) {
-    // US conducts 2 Ops if USSR has no cards or card returned
-    {
-        GameState s{};
-        CardHandlers::trigger_event(s, card_ids::GRAIN_SALES, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::GRAIN_SALES, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 3);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::GRAIN_SALES, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 1);
-    }
-    {
-        GameState s{};
-        s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
-        s.set_flag(effect_bits::PURGE_US_ACTIVE);
-        CardHandlers::trigger_event(s, card_ids::GRAIN_SALES, Player::US);
-        ASSERT_EQ(s.ctx().pending_ops_value, 2);
-    }
+// The same modifiers still apply to a card played for Operations: the FAQ's "for all purposes"
+// (7.4). Pinned beside the test above so the two readings cannot be confused for one another.
+TEST(CardEdgeCasesTest, CardPlayedForOps_StillTakesOpsModifiers) {
+    GameState s{};
+    s.set_flag(effect_bits::CONTAINMENT_ACTIVE);
+    ASSERT_EQ(Operations::get_effective_ops(s, card_ids::CIA_CREATED, Player::US), 2);
+    s.clear_flag(effect_bits::CONTAINMENT_ACTIVE);
+    s.set_flag(effect_bits::PURGE_USSR_ACTIVE);
+    ASSERT_EQ(Operations::get_effective_ops(s, card_ids::ABM_TREATY, Player::USSR), 3);
 }
 
 
@@ -2542,12 +2248,14 @@ TEST(CardEdgeCasesTest, WarEvents_UnifiedWrapper_Suite) {
         step_ok = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::POINT_NODE, ts::countries::GREECE, 0, 0});
         ASSERT_FALSE(step_ok);
 
-        // Target Mexico (stab 2) accepted -> roll 3 is success -> +3 MilOps, 1 VP
+        // Target Mexico (stab 2) accepted. Mexico borders the United States, which counts as a
+        // US-controlled neighbour (rule 2.1.5, FAQ under Brush War): -1, so a 4 is the lowest
+        // roll that reaches 3 -> +3 MilOps, 1 VP
         step_ok = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::POINT_NODE, ts::countries::MEXICO, 0, 0});
         ASSERT_FALSE(step_ok);
         ASSERT_EQ(state.ctx().decision_type, ts::DecisionType::ROLL_DIE);
 
-        done = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::ROLL_DIE, 3, 0, 0});
+        done = ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::ROLL_DIE, 4, 0, 0});
         ASSERT_TRUE(done);
         ASSERT_EQ(state.ussr_mil_ops, 3); // Brush war gives 3 MilOps
         ASSERT_EQ(state.victory_points, -1); // USSR gets 1 VP

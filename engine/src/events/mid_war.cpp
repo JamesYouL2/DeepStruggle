@@ -38,8 +38,10 @@ bool trigger_arms_race(GameState& state, Player p) noexcept {
 }
 
 bool trigger_cuban_missile_crisis(GameState& state, Player p) noexcept {
+    // NORAD asks whether DEFCON "moved to 2" during the round. Setting it to 2 from 2 is not a
+    // move, so it arms nothing -- the case at hand whenever the crisis is played at DEFCON 2.
+    if (state.defcon != 2) state.defcon_dropped_to_2 = 1;
     state.defcon = 2;
-    state.defcon_dropped_to_2 = 1;
     if (p == Player::US) {
         state.set_flag(effect_bits::CMC_ACTIVE_US);
     } else {
@@ -180,7 +182,7 @@ bool trigger_missile_envy(GameState& state, Player p) noexcept {
         } else {
             // Use for Ops (opponent event does NOT occur)
             state.ctx().pending_op_card = chosen_card;
-            state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, chosen_card, p);
+            Operations::grant_card_ops_to_ctx(state, chosen_card, p);
             state.ctx().decision_player = p;
             state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
             state.ctx().timing_branch = 255;
@@ -292,7 +294,7 @@ bool trigger_abm_treaty(GameState& state, Player p) noexcept {
     state.defcon = static_cast<uint8_t>(std::min(5, static_cast<int>(state.defcon) + 1));
     state.ctx().decision_player = p;
     state.ctx().pending_op_card = card_ids::ABM_TREATY;
-    state.ctx().pending_ops_value = Operations::grant_ops(state, 4, p);
+    Operations::grant_event_ops_to_ctx(state, 4, p);
     state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
     state.ctx().resolving_card = 0;
     return false;
@@ -351,7 +353,7 @@ bool trigger_lone_gunman(GameState& state, Player p) noexcept {
     // USSR conducts Operations using card Ops value (1 Op base)
     state.ctx().decision_player = Player::USSR;
     state.ctx().pending_op_card = card_ids::LONE_GUNMAN;
-    state.ctx().pending_ops_value = Operations::grant_ops(state, 1, Player::USSR);
+    Operations::grant_event_ops_to_ctx(state, 1, Player::USSR);
     state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
     state.ctx().resolving_card = 0;
     return false;
@@ -428,7 +430,7 @@ bool trigger_grain_sales(GameState& state, Player p) noexcept {
         // Influence it then owes were lost to a play mode for card 0.
         state.ctx().decision_player = Player::US;
         state.ctx().pending_op_card = card_ids::GRAIN_SALES;
-        state.ctx().pending_ops_value = Operations::grant_ops(state, 2, Player::US);
+        Operations::grant_event_ops_to_ctx(state, 2, Player::US);
         state.ctx().resolving_card = 0;
         state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
         return false;
