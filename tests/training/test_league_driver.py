@@ -26,3 +26,14 @@ def test_latest_resume_waits_for_the_start_threshold(tmp_path) -> None:
     assert latest_resume(d, 40_000_000) is None
     _touch(d, "resume_40042496steps.pt")
     assert latest_resume(d, 40_000_000) == os.path.join(d, "resume_40042496steps.pt")
+
+
+def test_the_driver_refuses_a_non_conforming_exploiter_name_before_launching(tmp_path) -> None:
+    import pytest
+    from tools.scripts.league import main
+    base = ["--main-name", "E5-21-43", "--main-steps", "1", "--seed", "43", "--exploiter-reset", "main-latest",
+            "--league-dir", str(tmp_path / "l"), "--log-dir", str(tmp_path / "g"), "--train-args", "",
+            "--main-description", "x", "--exploiter-description", "x"]
+    with pytest.raises(SystemExit, match="not <engine>-<attempt>-<seed>"):
+        main(base + ["--exploiter-name", "E5-22-43b"])
+    assert not (tmp_path / "l").exists()

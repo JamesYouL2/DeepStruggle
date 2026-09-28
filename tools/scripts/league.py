@@ -185,6 +185,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--poll", type=float, default=60.0)
     a = ap.parse_args(argv)
 
+    # Both names are checked up front, against the rule tools/train.py enforces, generation suffix
+    # included: a non-conforming exploiter name used to fail only when its first generation
+    # launched, and the driver then died while the main agent trained on alone.
+    sys.path.insert(0, ROOT)
+    from ai.training.generic_trainer import RUN_NAME_RE
+    for n in (a.main_name, f"{a.exploiter_name}-1"):
+        if not RUN_NAME_RE.match(n):
+            raise SystemExit(f"run name {n!r} is not <engine>-<attempt>-<seed>; tools/train.py would refuse it")
     os.makedirs(a.league_dir, exist_ok=True)
     os.makedirs(a.log_dir, exist_ok=True)
     common = shlex.split(a.train_args)
