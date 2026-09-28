@@ -76,3 +76,44 @@ deals (`e5_21_setup_oracle_{us,ussr}_43.txt`):
     lead growing from 480M to 560M.
 * **Seed 43 only.** The per-seat split against E5-11-43 has repeated the same shape across three
   arms. This arm's US gain (+11.8) is too large for that alone, but it needs a second seed.
+
+## Continued 560 → 720M (2026-09-28): the climb stops
+
+E5-21-43 was continued from its 560M end state with the same flags and league. The owner asked
+whether it keeps climbing, and whether a stronger US would push the USSR. The exploiter series
+restarted as E5-23-43, after a first driver died on a non-conforming run name, so 560–610M ran
+with no exploiter training. The three E5-23 generations published nothing.
+
+**Fixed-reference trajectory** (`data/reports/e5_21_trajectory_43_720.{md,json}`), 200 games per
+seat per cell, rating anchored at E5-11-43@240M = 2200:
+
+| snapshot | vs E5-11-43@240M, US / USSR | vs E5-21-43@560M, US / USSR | Elo |
+|:---|:---|:---|---:|
+| E5-21 480M | 56.0 / 62.5 | 38.5 / 51.0 | 2296 |
+| E5-21 560M | 61.0 / 70.5 | — | 2320 |
+| E5-21 600M | 66.0 / 61.0 | 47.5 / 57.5 | 2315 |
+| E5-21 640M | 67.5 / 76.0 | 45.0 / 57.0 | 2327 |
+| E5-21 680M | 62.5 / 68.0 | 47.5 / 57.0 | 2320 |
+| E5-21 720M | 46.5 / 61.5 | 41.5 / 48.5 | **2267** |
+| E5-11 600 / 640 / 680 / 720M | 55.5–65.5 / 64.5–72.0 | 38.0–50.5 / 45.5–50.5 | 2281 / 2286 / 2328 / 2276 |
+
+**Greedy self-play, US win rate** (500 deals, ±2.2): 49.6% (560M), 49.2% (600M), 40.0% (640M),
+49.4% (680M), 41.4% (720M).
+
+**Per seat against E5-11-43 at 640/680/720M** (`e5_21_rr_43_720.{md,json}`): overall **50.7%**;
+as USSR −0.9 ± 2.6 against the bar; as US +3.6 ± 2.6.
+
+**Reading.**
+* **The rating plateaus from 560M** (2315–2327 through 680M) **and dips at 720M** (2267, lower
+  in both seats against both references). Setup entropy rose over the continuation, from
+  0.65–0.67 to 0.85 at 720M. That may be the setup loosening again, or one weak snapshot.
+* **The US did not keep climbing.** Against the 560M model, the US is level (45–47.5% against
+  an equal-strength bar of about 47%). Self-play does not tip past 50%: it oscillates between
+  about 40% and 49%.
+* **The USSR improved a little from 560M to 680M.** Against the 560M model it scores 57–57.5%,
+  above the equal-strength bar of about 53%, by about +4. That is the only sign of the stronger
+  US pushing the USSR, and it is small and within two standard errors.
+* **Against E5-11 the lead has closed.** 54.6% at 480–560M became 50.7% at 640–720M. E5-11's own
+  snapshots vary widely (2276–2328), so part of the difference is noise in the control.
+* One seed. The clear gain of the combined recipe is the repaired, stable US opening and the
+  +32 Elo it bought by 560M. It did not keep compounding past that with this budget.
