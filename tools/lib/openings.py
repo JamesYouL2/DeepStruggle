@@ -45,8 +45,20 @@ USSR_POLAND_HUNGARY: Sequence[Tuple[int, int]] = ((POLAND, 3), (HUNGARY, 3))
 US_NO_WEST_GERMANY: Sequence[Tuple[int, int]] = (
     (CANADA, 2), (ITALY, 2), (FRANCE, 3), (IRAN, 1), (SOUTH_KOREA, 1))
 
+PANAMA = 70
+
+#: The US openings E5-16 settled on (research/log/E5_16_setup_mc_credit.md), in placement order:
+#: seven Western Europe points, then the two bonus points where the US already has influence.
+US_E516_43: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (FRANCE, 2), (ITALY, 1), (ITALY, 1), (IRAN, 1))
+US_E516_44: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 2), (FRANCE, 3), (ITALY, 2), (IRAN, 1), (PANAMA, 1))
+
+#: A name maps to a script per side. A side with no script sets up for itself -- one-sided
+#: openings exist for evaluation (the other side replying as the agent would); training's
+#: --forced-opening needs both sides.
 OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "human": {"US": expand(US_OPENING), "USSR": expand(USSR_OPENING)},
+    "us_e516_43": {"US": expand(US_E516_43)},
+    "us_e516_44": {"US": expand(US_E516_44)},
     "ph_west_germany": {"US": expand(US_OPENING), "USSR": expand(USSR_POLAND_HUNGARY)},
     "ph_no_west_germany": {"US": expand(US_NO_WEST_GERMANY), "USSR": expand(USSR_POLAND_HUNGARY)},
 }
@@ -62,7 +74,7 @@ def scripted_setup_index(state: ts.GameState, side: str, opening: str,
 
     `cursor` is per-side and mutated in place; pass `{"US": 0, "USSR": 0}` at the start of a game.
     """
-    if state.current_phase != ts.Phase.SETUP:
+    if state.current_phase != ts.Phase.SETUP or side not in OPENINGS[opening]:
         return None
     script = OPENINGS[opening][side]
     k = cursor[side]
@@ -93,6 +105,10 @@ def play_scripted_setup(state: ts.GameState, opening: str) -> ts.GameState:
     than returning a partly scripted opening."""
     from bindings.settle import SettleMode, settle
 
+    missing = {"US", "USSR"} - set(OPENINGS[opening])
+    if missing:
+        raise ValueError(f"the '{opening}' opening scripts only one side (no {sorted(missing)}); "
+                         f"a scripted game start needs both")
     st = state.clone()
     cursor = {"US": 0, "USSR": 0}
     for _ in range(4 * SETUP_DECISIONS):
@@ -132,6 +148,8 @@ class ScriptedSetupOverride:
         setup_rows = rows[np.asarray(obs)[rows, setup_phase_slot()] < (0.5 / 6.0)]
         for r in setup_rows:
             side = "US" if int(d_players[r]) == 1 else "USSR"
+            if side not in OPENINGS[opening]:
+                continue                      # this side sets up for itself
             k = int(self.cursor[side][r])
             script = OPENINGS[opening][side]
             if k >= len(script):

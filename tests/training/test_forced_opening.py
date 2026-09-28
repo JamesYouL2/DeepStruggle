@@ -117,3 +117,32 @@ def test_the_training_cli_has_no_forced_opening_by_default() -> None:
     from ai.training.train import build_parser
     assert build_parser().parse_args([]).forced_opening is None
     assert "human" in OPENINGS
+
+
+def test_a_one_sided_opening_scripts_its_side_and_leaves_the_other_to_the_agent() -> None:
+    from tools.lib.openings import FRANCE
+    n = 6
+    runner = ts.VectorizedBatchRunner(n, 11)
+    for i in range(n):
+        runner.reset_game(i, 200 + i)
+    runner.refresh_all()
+    override = ScriptedSetupOverride(n)
+    rng = np.random.default_rng(3)
+    for _ in range(40):
+        obs = np.asarray(runner.get_observations())
+        if (obs[:, setup_phase_slot()] >= 0.5 / 6.0).all():
+            break
+        masks = np.asarray(runner.get_action_masks())
+        dp = np.array(runner.get_decision_players())
+        acts = np.array([rng.choice(np.flatnonzero(row)) for row in masks], dtype=np.int32)
+        override.apply(acts, obs, masks, dp, np.arange(n), "us_e516_43")   # both sides' rows offered
+        runner.step_flat_all(acts.tolist(), auto_advance=True)
+    for i in range(n):
+        st = runner.get_state(i)
+        assert (_inf(st, WEST_GERMANY)[0], _inf(st, FRANCE)[0], _inf(st, ITALY)[0], _inf(st, IRAN)[0]) == (4, 2, 2, 2)
+        assert _inf(st, POLAND)[1] != 4 or _inf(st, YUGOSLAVIA)[1] != 1   # the USSR was not scripted
+
+
+def test_training_refuses_a_one_sided_opening() -> None:
+    with pytest.raises(ValueError):
+        play_scripted_setup(_fresh(), "us_e516_43")

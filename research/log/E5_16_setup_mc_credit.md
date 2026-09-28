@@ -138,3 +138,34 @@ the model's own opening, as USSR win rate:
   play. The candidates are adaptation to the stronger US opening it now trains against (so it plays
   worse against the Greece-2 US and E4-61's openings), collateral from the floor's overshoot, and
   seed noise, since seed 44 is −1.0. Only a replicate on another seed separates these.
+
+## Follow-up: is seed 43's USSR worse, or adapted? (2026-09-28)
+
+**The two readings.** By ~670M, E5-16's opponent pool holds only E5-16 snapshots, whose US plays the
+repaired opening, so its USSR has not met a Greece-2 US for a long time. Its USSR deficit against
+E5-11 and E4-61 could therefore be a general decline, or specialisation away from a weak US opening
+it no longer meets. The test holds the US policy fixed (E5-11's) and varies only its opening: its
+own (Greece 2 / Canada 2), or E5-16's repaired one, scripted through a one-sided evaluation opening
+(`us_e516_43` / `us_e516_44` in `tools/lib/openings.py`; the USSR sets up for itself). E5-16's
+USSR and E5-11's USSR each face it over the late block (3 × 3 pairings × 100 games,
+`data/reports/e5_16_adaptation_{43,44}.md`).
+
+| USSR win rate | vs E5-11 US, its own opening | vs E5-11 US, E5-16's opening |
+|:---|---:|---:|
+| seed 43: E5-16 | 50.8% | 50.3% |
+| seed 43: E5-11 | 54.7% | 47.7% |
+| seed 43: E5-16 − E5-11 | −3.9 | **+2.7 ± 2.4** |
+| seed 44: E5-16 | 58.3% | 59.7% |
+| seed 44: E5-11 | 62.3% | 58.1% |
+| seed 44: E5-16 − E5-11 | −4.0 | **+1.6 ± 2.3** |
+
+* **E5-11's USSR depends on its own US's weak opening. E5-16's does not.** When the same US
+  policy switches to the repaired opening, E5-11's USSR loses 7.0 points (seed 43) and 4.2 (seed
+  44). E5-16's USSR is unchanged (−0.5, +1.4).
+* **Against the repaired opening, E5-16's USSR is level or better:** +2.7 and +1.6, pooled
+  +2.1 ± 1.7. The deficit appears only against the weak openings E5-11's USSR has trained to exploit
+  for hundreds of millions of steps.
+* So the USSR "loss" is E5-16 no longer exploiting a weakness that its own training population no
+  longer has. It is not a general decline. It is real against those opponents: E5-11's US, and
+  probably E4-61's. That is the per-seat rule's bar measuring the control's USSR against the
+  control's own US.
