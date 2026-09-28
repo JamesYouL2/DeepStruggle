@@ -170,6 +170,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--main-league-frac", type=float, default=0.5)
     ap.add_argument("--main-league-size", type=int, default=4)
     ap.add_argument("--exploiter-league-size", type=int, default=2)
+    ap.add_argument("--main-args", default="",
+                    help="Flags for the main agent only, after --train-args (e.g. its setup credit), so the "
+                         "exploiter keeps the recipe that exploits.")
     ap.add_argument("--exploiter-args", default="",
                     help="Flags for the exploiter only, one string (e.g. --opponent-temperature 0 "
                          "--eta 0 --entropy-coef 0 --adv-norm-learner-only).")
@@ -204,7 +207,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "--league-dirs", a.league_dir, "--league-pool-size", str(a.main_league_size),
             "--league-frac", str(a.main_league_frac),
             "--description", a.main_description,
-        ], os.path.join(a.log_dir, f"{a.main_name}.log"))
+        ] + shlex.split(a.main_args), os.path.join(a.log_dir, f"{a.main_name}.log"))
         main_dir = _run_dir(a.main_name, t0)
         _event(a.league_dir, "main_launched", run=a.main_name, dir=main_dir, pid=main_proc.pid)
     # The exploiter plays the main agent's newest snapshots, so it waits for the first one.
