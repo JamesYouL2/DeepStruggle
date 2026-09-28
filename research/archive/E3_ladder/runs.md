@@ -268,7 +268,7 @@ written down and are not reconstructed speculatively."*
 
 They were written down — in `metadata.json`, which the registry had not been read against:
 
-* **E3-18-22** — `data/checkpoints/E3-18-22/metadata.json`, base commit `3df7566d`: *"P10 exp1:
+* **E3-18-22** — `data/checkpoints/E3-18-22/metadata.json`, base commit `806bc11d`: *"P10 exp1:
   continue E3-17-22 160M→240M unchanged; does critic AUC and adv_std recover without
   intervention"*, resumed from `E3-17-22.../resume_160038912steps.pt`. That is P10's experiment 1,
   the do-nothing control. **Its result is not written up anywhere in `research/`.** Its final
@@ -344,17 +344,17 @@ because the default telescopes only under the antisymmetry approximation. No ext
 
 E3-20-28 is the matched baseline for this arm as well.
 
-One caveat on the pairing, for when it is: `b6874af` and `9f78026` changed `engine/` after
+One caveat on the pairing, for when it is: `d124cff` and `09c2498` changed `engine/` after
 E3-20-28 was trained. The training decision stream is unchanged — no `ROLL_DIE` node is ever
 handed to an agent (0 in 879 single-env and 12,800 vectorized env-steps) and the runner always
 forces die 0 — so the engine letter stays E3 and the pair is comparable. That is a measured
 claim, not an assumption, and it is the reason the letter was not bumped.
 
 **Added 2026-09-16, after P14.** A third `engine/` change now sits between E3-20-28 and the
-unrun E3-21-28: the mask/step collapse and the Missile Envy forced-play fix (`5938e52`), which is
+unrun E3-21-28: the mask/step collapse and the Missile Envy forced-play fix (`0d2f499`), which is
 the change that killed this arm twice at ~4M steps in the first place. It was measured the same
 way and more thoroughly — 1,068 games, 385,812 steps, four policies, comparing outcome, game
-length, chosen action **and the legal mask itself** at every step against a build of `a09e15a`,
+length, chosen action **and the legal mask itself** at every step against a build of `b5f2c06`,
 with **zero divergences of any kind**. The letter stays E3 and the pairing stands. See
 [`../../findings/engine/engine_change_decision_stream.md`](../../findings/engine/engine_change_decision_stream.md).
 
@@ -368,7 +368,7 @@ opponents spanning 26.7M where the baseline had 9 spanning 40M, and `--opponent-
 third of its games against that pool. Over its eleven 5M windows the critic was indistinguishable
 from baseline (AUC −0.0074, 95% CI [−0.022, +0.007]) — a null that means nothing, because the arm
 differed in two factors. Neither run's metadata even recorded its snapshot cadence. The time flags
-were removed outright in response (`9277cac`), and `tools/compare_runs.py` (`8df58bc`) now diffs
+were removed outright in response (`bf4b58c`), and `tools/compare_runs.py` (`e05917d`) now diffs
 configuration *and observed pool growth* before it will show a metric.
 
 The second, `E3-22-28_20260916_132615`, ran with `--snapshot-every-steps 5000000` and matched the
@@ -423,7 +423,7 @@ Directory: `E3-23-28_20260916_171033`.
 **The X4b collapse was opponent-pool starvation, not a property of search-CE.** Full account in
 [`log/P15_X4b_collapse_is_pool_starvation.md`](log/P15_X4b_collapse_is_pool_starvation.md); the
 short version is that `--resume <run-directory>` rebuilt the pool from the *parent* of the
-directory until `266e891`, found no snapshots, and started with a pool of one.
+directory until `1e1f8e5`, found no snapshots, and started with a pool of one.
 
 | arm | varied | budget | directory | result |
 |:---|:---|:---|:---|:---|

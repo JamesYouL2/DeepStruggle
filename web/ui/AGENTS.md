@@ -11,7 +11,7 @@ WebAssembly, models as ONNX -- so `dist/` works from GitHub Pages as well as fro
 
 ```
 web/ui/
-├── index.html                  # Workbench layout (Top Bar, SVG Map, Decision HUD, Bottom Drawer)
+├── index.html                  # Workbench layout (Top Bar; cards | SVG Map | HUD rail; Bottom Drawer)
 ├── package.json                # Dependencies and build scripts
 ├── vite.config.ts              # base path (TS_WEB_BASE, for Pages), /api proxy to the local server
 ├── tsconfig.json
@@ -24,12 +24,13 @@ web/ui/
 │   │                           # readout.ts (policy + critic for the position on screen)
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
-│   ├── cards_view.ts           # Hand tabs, Card Explorer, and the Active Continuous Effects panel (EFFECT_INFO_MAP)
+│   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
 │   ├── tracks_view.ts          # Turn, Action Round, DEFCON, Mil Ops, Space Race, and Victory Points tracks
 │   ├── action_hud.ts           # Decision HUD, human-readable branch catalog (CARD_BRANCHES), and dice selector
 │   ├── replay_controls.ts      # Replay timeline scrubber, playback engine, and server replay picker
-│   ├── trace_view.ts           # Replay trace: value ribbon, log chips, readout panel, probability badges
-│   ├── analysis_view.ts        # Live model analysis panel: model picker, critic bar, top choices, badges
+│   ├── trace_view.ts           # Replay trace: value ribbon, log chips, readout panel, probability badges;
+│   │                           # the critic display (which reading is calibrated) shared with analysis_view
+│   ├── analysis_view.ts        # Live model analysis panel: model picker, critic readings, top choices, badges
 │   ├── debug_panel.ts          # State inspector and engine override tools
 │   ├── style.css               # Theme tokens, dark mode palette, animations, layout styles
 │   └── types.ts                # TypeScript interface mirrors of engine GameState and MicroAction
@@ -53,9 +54,17 @@ web/ui/
    - Renders all 84 countries with regional color coding, battleground badges, stability indicators, and US/USSR influence counts.
    - Highlights valid country targets with dynamic glowing borders when a `POINT_NODE` decision is active.
    - Mouse pan and zoom, with metadata loaded autonomously and re-rendered on arrival.
-2. **Active Continuous Effects Panel (`cards_view.ts`)**:
+2. **Layout: cards on the left, the board, the HUD rail on the right (`index.html`, `style.css`)**:
+   - `.main-content` is a three-column grid: `#cards-sidebar` (the hands panel -- USSR / US /
+     Piles / All tabs, the switch unchanged) the full height of the board on the left, the map in
+     the middle, and the right rail with the Decision HUD, model analysis / replay readout and
+     active effects. Below 1280px the side columns narrow; below 960px it becomes one scrolling
+     column: map, HUD rail, cards.
+   - The *All* tab lists each card's name and where it is -- no era/side line and no hover
+     description (the hand tabs keep their tooltip); a click opens the card's text.
+3. **Active Continuous Effects Panel (`cards_view.ts`)**:
    - `EFFECT_INFO_MAP` describes every persistent continuous-effect and state bit (e.g. *Containment*, *Brezhnev Doctrine*, *Red Scare/Purge*, *Quagmire*, *Bear Trap*, *Flower Power*, *Willy Brandt*, *NORAD*, *NATO*, Space Race bonuses) with side tags (`US`, `USSR`, `Both`, `Neutral`), duration badges (`Turn Only`, `Permanent`, `Conditional`, `Space Perk`), and rule summaries. Add an entry here whenever the engine gains an effect bit.
-3. **Descriptive Branch Choice HUD (`action_hud.ts`)**:
+4. **Descriptive Branch Choice HUD (`action_hud.ts`)**:
    - `CARD_BRANCHES` translates numeric branch IDs into readable options (e.g. *Branch 0: Award 2 VP / Branch 1: Conduct 4 Ops* for Olympic Games; *Branch 0: Remove all US Influence / Branch 1: Add 5 USSR Influence* for Warsaw Pact).
    - An event's card choice (`SELECT_CARD` with a `resolving_card`) lists every offered card as a
      button in the HUD -- name, ops, side and where it is -- because those cards are mostly in no
@@ -63,13 +72,13 @@ web/ui/
      Negotiations' discard pile. The pass button appears whenever the mask offers card 0, labelled
      for what it means there (Done / Take no card / No card can be chosen).
      `tests/web/test_e2e_card_choices.py` plays all three from the US hand.
-4. **Deluxe Space Race Track & Modal Inspector (`tracks_view.ts`)**:
+5. **Deluxe Space Race Track & Modal Inspector (`tracks_view.ts`)**:
    - Renders the 9-step ladder (0..8) in the top status bar with US and USSR marker tokens and turn attempt counters (`Attempts: used/max`).
    - Clicking the widget opens the full modal: all 9 boxes, required Ops, success rolls, 1st/2nd VP awards, and special ongoing privileges.
-5. **Interactive Action Stream & Replay Timeline (`replay_controls.ts`, `main.ts`)**:
+6. **Interactive Action Stream & Replay Timeline (`replay_controls.ts`, `main.ts`)**:
    - Timeline scrubber with play/pause, step forward/backward, and server replay loading.
    - The bottom Action Stream lists recorded game events with active-step highlighting (`.active-replay-step`) and click-to-scrub navigation.
-6. **The game runs in the page (`engine/`, `game/`, `main.ts`)**:
+7. **The game runs in the page (`engine/`, `game/`, `main.ts`)**:
    - `engine/wasm_engine.ts` loads the WebAssembly build of `engine/` + `bindings/`
      (`bindings/wasm/ts_engine_wasm.cpp`, built into `public/engine/` by
      `tools/scripts/build_web.sh`). Display state, saves, rules and observations are the same C++
@@ -85,7 +94,7 @@ web/ui/
      session, pinned by a golden (`tests/web/test_describe_golden.py`).
    - `refresh()` in `main.ts` is the one place a change of position lands: render, then (async,
      versioned so a stale result is dropped) the link token, the model's readout, and auto-play.
-7. **Live model analysis (`analysis/`, `analysis_view.ts`)**:
+8. **Live model analysis (`analysis/`, `analysis_view.ts`)**:
    - Models are ONNX exports of checkpoints (`tools/export_onnx.py`) run by onnxruntime-web,
      single-threaded (GitHub Pages cannot send the cross-origin-isolation headers threads need),
      from three sources: **local** checkpoints (`/api/local/models`; the server exports on first
@@ -104,6 +113,22 @@ web/ui/
      decider's observation with its real mask, and both sides' observations for the critic),
      softmax over the legal actions at temperature 1, the argmax as the favourite.
      `tests/web/test_e2e_workbench.py` checks it against `read_policy` / `read_critic` in Python.
+   - **Which critic reading is believed.** The value head is trained only on the observation of
+     the side to move, so of the two readings (`v_win_us` from the US observation, `v_win_ussr`
+     from the USSR one) only the decider's is calibrated; the other is untrained extrapolation
+     and can be far off. `trace_view.ts` `valueSidesHtml` shows each side's own P(win) =
+     (1 + v)/2 with the decider's card lit ("to move · trained") and the other dimmed
+     ("untrained"), a compact bar filled from the calibrated reading alone as P(US wins), and the
+     predicted final VP margin (`v_vp` × `VP_LIMIT` = 20) -- each side's own on its card, the
+     calibrated side's on the bar. `criticTableHtml` lights and dims its rows the same way. Live,
+     the decider is `analysis.decision_player` (the readout is on the position itself); in a
+     replay it is `replayDecider()`: the critic is read *after* the step's action, so the decider
+     is the **next** step's `player` (the last step falls back to its snapshot's decision
+     context). A terminal position has no decider -- its snapshot's stale decision context is
+     ignored -- so both readings are dimmed and the bar gives way to the result. The replay's
+     value ribbon and the log rows' `ΔP` chip plot the calibrated reading as P(US wins); the
+     untrained one is only the ribbon's faint dashed line. `tests/web/test_value_readings.py`
+     pins the rules on the TypeScript itself; the E2E tests check them on screen.
    - Every legal action's probability is painted on the card, HUD button or country that sends
      it, matched by the MicroAction each choice carries. For an E4.1 (merged-influence) model the
      composed placements go on the countries and the influence button carries their sum. The
@@ -120,7 +145,7 @@ web/ui/
      `history.replaceState`, never `pushState`, so moves do not pile up in Back. A reload of the
      same link keeps the game's history; *New Game* starts afresh in the page.
    - A generic `.hidden { display: none }` rule backs every mode-specific panel.
-8. **Bundled metadata (`metadata.ts`)**:
+9. **Bundled metadata (`metadata.ts`)**:
    - `rules/map.json` and `rules/cards.json` are imported at build time, so the page needs no
      server to draw the board. The flat action layout comes from the engine
      (`WasmEngine.layout`), never from a hand-kept copy.
@@ -156,8 +181,9 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,039 steps) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
-| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
-| `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views; the header tracks and the Space Race widget |
+| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
+| `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
+| `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |
 
 The TypeScript under test in node (`tests/web/js/*.ts`) is bundled with the esbuild that ships

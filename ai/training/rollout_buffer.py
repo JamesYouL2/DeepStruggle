@@ -7,6 +7,15 @@ from bindings.ts_env import obs_size
 import numpy as np
 from bindings.action_encoder import ActionEncoder
 
+BLOCK_LAMBDA_MODES = ("off", "setup", "setup-side", "same-side")
+
+
+def setup_phase_slot() -> int:
+    """Index of global feature 9 (current_phase / 6) in the flat observation: the global block is
+    the last 100 floats, and SETUP is phase 0. A function, not a module constant, so importing this
+    module never needs the engine's OBS_SIZE (tests/bindings/test_import_survives_older_engine.py)."""
+    return obs_size() - 100 + 9
+
 # Advantages below this magnitude (post-normalisation) carry effectively no learning
 # signal for the decision they are attached to.
 NEAR_ZERO_ADVANTAGE_EPS = 0.01
@@ -51,6 +60,9 @@ class RolloutBuffer:
         #: Normalise advantages per seat rather than over both (--per-seat-adv-norm). Off by
         #: default; set by the trainer after construction.
         self.per_seat_adv_norm: bool = False
+        #: Take the normalisation's mean and spread over the learner's own transitions only
+        #: (--adv-norm-learner-only). Off by default; set by the trainer after construction.
+        self.adv_norm_learner_only: bool = False
 
         # Storage buffers allocated on device for fast GPU tensor operations
         self.obs = torch.zeros((buffer_size, num_envs, self.obs_dim), dtype=torch.float32, device=self.device)
@@ -122,9 +134,33 @@ class RolloutBuffer:
         #: (research/log/P26_quick_screen.md). A replay runs the same kernels on the same inputs,
         #: so the result is bitwise the eager one. CUDA only.
         self.graph_gae = False
+        #: P4 arm A, --setup-block-lambda: lambda = 1 between consecutive setup placements, so the
+        #: setup's credit is the telescoped return to the first real position (the turn-1
+        #: headline) instead of bootstrapping from the critic at "USSR has placed 2 of 6". A setup
+        #: decision is read from the observation: global feature 9 is current_phase / 6, and SETUP
+        #: is phase 0 (engine/src/observation.cpp). Off: the recursion is exactly as before.
+        self.setup_block_lambda = False
+        #: --block-lambda: where lambda = 1 is used between consecutive decisions.
+        #:   "setup"      every consecutive SETUP-phase pair of one game, across both sides (arm A);
+        #:   "setup-side" the same, cut where the mover changes (A1);
+        #:   "same-side"  any consecutive pair of one game with the same mover and no chance node
+        #:                between -- the engine's RNG state unchanged, so no die roll (a coup or a
+        #:                realignment attempt ends a block), no card draw, no hidden chance (A2).
+        #: "off" (default) defers to setup_block_lambda, so arm A's runs keep their meaning.
+        self.block_lambda = "off"
+        #: The engine's RNG state at each decision (int64 view of the uint64), for "same-side".
+        self.rngs = torch.zeros((buffer_size, num_envs), dtype=torch.int64, device=self.device)
         self._gae_graph: Optional[Any] = None
         self._gae_graph_key: Optional[Tuple[Any, ...]] = None
         self._gae_static: Dict[str, torch.Tensor] = {}
+
+    def block_mode(self) -> str:
+        """The effective --block-lambda mode (setup_block_lambda alone means "setup")."""
+        if self.block_lambda not in BLOCK_LAMBDA_MODES:
+            raise ValueError(f"block_lambda must be one of {BLOCK_LAMBDA_MODES}, got {self.block_lambda!r}")
+        if self.block_lambda == "off" and self.setup_block_lambda:
+            return "setup"
+        return self.block_lambda
 
     def reset(self) -> None:
         """Resets the buffer pointer."""
@@ -151,6 +187,7 @@ class RolloutBuffer:
         next_values_own: Optional[torch.Tensor] = None,
         search_pi: Optional[torch.Tensor] = None,
         has_search: Optional[torch.Tensor] = None,
+        rngs: Optional[np.ndarray | torch.Tensor] = None,
     ) -> None:
         """Appends a single environment step across all parallel environments."""
         if isinstance(obs, np.ndarray):
@@ -204,6 +241,9 @@ class RolloutBuffer:
                 defcon_blunder = torch.from_numpy(defcon_blunder)
             self.defcon_blunder[self.step].copy_(defcon_blunder)
 
+        if rngs is not None:
+            self.rngs[self.step].copy_(rngs.to(self.device) if isinstance(rngs, torch.Tensor)
+                                       else torch.from_numpy(rngs).to(self.device))
         if next_values_own is not None:
             self.next_values_own[self.step].copy_(next_values_own)
             self.has_next_values_own = True
@@ -258,8 +298,12 @@ class RolloutBuffer:
                 "next_values_own was passed to add(). Silently falling back to the negated "
                 "bootstrap would make the arm measure nothing.")
 
+        mode = self.block_mode()
+        if mode != "off" and per_player_gae:
+            raise ValueError("block lambda is defined on the interleaved GAE recursion; "
+                             "per_player_gae replaces it outside blunder windows.")
         key = (float(gamma), float(gae_lambda), bool(slice_turn_boundaries), bool(blunder_window),
-               int(defcon_risk_horizon), bool(same_perspective_bootstrap))
+               int(defcon_risk_horizon), bool(same_perspective_bootstrap), mode)
         if self.graph_gae and self.device.type == "cuda":
             window_mask = self._gae_backward_graphed(key, last_v_win, last_v_vp, last_players)
         else:
@@ -279,7 +323,23 @@ class RolloutBuffer:
         defcon_risk_target in place and returns the blunder-window mask. No host syncs, so it can
         be captured as a CUDA graph."""
         (gamma, gae_lambda, slice_turn_boundaries, blunder_window, defcon_risk_horizon,
-         same_perspective_bootstrap) = key
+         same_perspective_bootstrap, mode) = key
+        # lam_one[t]: the transition t -> t+1 stays inside a block, so it takes lambda = 1. The
+        # last step's successor is outside the buffer and keeps the ordinary lambda.
+        lam_one = torch.zeros((self.buffer_size, self.num_envs), dtype=torch.bool,
+                              device=self.device)
+        if mode != "off":
+            same_mover = self.players[:-1] == self.players[1:]
+            if mode in ("setup", "setup-side"):
+                # The phase slot is exactly 0.0 in SETUP and >= 1/6 otherwise.
+                setup = self.obs[:, :, setup_phase_slot()] < (0.5 / 6.0)
+                inside = setup[:-1] & setup[1:]
+                if mode == "setup-side":
+                    inside = inside & same_mover
+            else:
+                inside = same_mover & (self.rngs[:-1] == self.rngs[1:])
+            lam_one[:-1] = inside
+        use_block = mode != "off"
         last_gae = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         window_mask = torch.zeros((self.buffer_size, self.num_envs), dtype=torch.bool,
                                   device=self.device)
@@ -366,7 +426,13 @@ class RolloutBuffer:
 
             # Outside it: the ordinary zero-sum Bellman TD error and GAE recursion.
             delta = self.rewards[t] + gamma * next_val * non_terminal - v_t
-            std_gae = delta + gamma * gae_lambda * sign * non_terminal * last_gae
+            if use_block:
+                # lambda = 1 only for a transition inside a block of one game (non_terminal
+                # already zeroes a transition across an episode boundary).
+                lam = torch.where(lam_one[t], torch.ones_like(v_t), torch.full_like(v_t, gae_lambda))
+                std_gae = delta + gamma * lam * sign * non_terminal * last_gae
+            else:
+                std_gae = delta + gamma * gae_lambda * sign * non_terminal * last_gae
 
             last_gae = torch.where(in_window, win_adv, std_gae)
             self.advantages[t] = last_gae
@@ -448,8 +514,21 @@ class RolloutBuffer:
         # relative to the other side's. Which of those is happening is an empirical question,
         # so the per-side figures are recorded below rather than assumed either way.
         flat_adv = self.advantages.view(-1)
-        mean_adv = flat_adv.mean()
-        std_adv = flat_adv.std() + 1e-8
+        # A frozen opponent's transitions are stored so GAE stays a recursion over consecutive
+        # steps, and they carry roughly the negative of the learner's advantages. Averaged in,
+        # they hold the batch mean near zero whatever the learner does, so its own advantages are
+        # never centred: a learner slightly behind its pool sees every action it took pushed
+        # down, flattens, falls further behind -- a loop that collapsed every learner trained
+        # against a near-equal frozen opponent (P24, 2026-09-26). --adv-norm-learner-only takes
+        # the statistics over the learner's own transitions.
+        own: Optional[torch.Tensor] = None
+        if self.adv_norm_learner_only:
+            _own = self.learner.view(-1) > 0.5
+            if bool(_own.any()) and not bool(_own.all()):
+                own = _own
+        stat_adv = flat_adv if own is None else flat_adv[own]
+        mean_adv = stat_adv.mean()
+        std_adv = stat_adv.std() + 1e-8
         self.raw_advantage_std = float(std_adv)
 
         flat_players = self.players.view(-1)
@@ -478,9 +557,10 @@ class RolloutBuffer:
             normed = torch.empty_like(flat)
             for code in (1, -1):
                 sel = fp == code
-                if int(sel.sum()) > 1:
-                    s = flat[sel]
-                    normed[sel] = (s - s.mean()) / (s.std() + 1e-8)
+                st_sel = sel if own is None else (sel & own)
+                if int(st_sel.sum()) > 1:
+                    s = flat[st_sel]
+                    normed[sel] = (flat[sel] - s.mean()) / (s.std() + 1e-8)
             other = (fp != 1) & (fp != -1)
             if bool(other.any()):
                 normed[other] = (flat[other] - mean_adv) / std_adv

@@ -28,6 +28,32 @@ _LADDER_LOOKUP_REQUIRED = ("ladder_card_lookup_heads", "ladder_card_lookup_dim",
                            "ladder_card_lookup_identity_dim")
 
 
+def _resolve_head_center(args: argparse.Namespace) -> bool:
+    """--ladder-head-center, with its default ("auto") resolved.
+
+    On since 2026-09-25 for every ladder network with per-entity heads in the E4 view: centring
+    removes the country-logit shift the E4 policy cannot see, which otherwise drifts until a long
+    TF32 run diverges, at no measured cost (research/log/E4_long_runs.md). Auto follows the
+    checkpoint a run starts from -- a resume or a warm start keeps the setting its weights were
+    trained with, since the buffer that records it is part of the state dict -- and stays off in
+    the merged (E4.1) view, where countries do compete with play modes. An explicit
+    --ladder-head-center / --no-ladder-head-center always wins.
+    """
+    if args.ladder_head_center is not None:
+        return bool(args.ladder_head_center)
+    if not getattr(args, "per_entity_heads", 0):
+        return False
+    src = getattr(args, "resume", None) or getattr(args, "warmup_checkpoint", None)
+    if src:
+        import torch
+        from ai.training.generic_trainer import resolve_resume
+        path = resolve_resume(src) if getattr(args, "resume", None) else src
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        sd = blob.get("model_state_dict", blob) if isinstance(blob, dict) else blob
+        return "pe_center" in sd
+    return not bool(getattr(args, "merged_influence", False))
+
+
 def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
     """The P21 backbone configuration, or None when another architecture was asked for.
 
@@ -70,7 +96,7 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         head_context=bool(args.ladder_head_context) if args.per_entity_heads else True,
         head_static=bool(args.ladder_head_static) if args.per_entity_heads else True,
         head_entities=(args.ladder_head_entities if args.per_entity_heads else "both"),
-        head_center=bool(args.ladder_head_center),
+        head_center=_resolve_head_center(args),
         identity_dim=int(args.identity_dim),
         drop_static=bool(args.drop_static),
         hidden_dim=int(args.ladder_hidden_dim),
@@ -168,11 +194,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "Scoring -- identical ops, era and is_scoring -- so a query returns an\n"
                           "average over the cards it needed to tell apart. Kept reachable as the\n"
                           "ablation that attributes the gain, not as a variant expected to work.")
-    lad.add_argument("--ladder-head-center", action="store_true", default=False,
+    lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,
                      help="Centre the per-entity heads' hidden features across entities before "
-                          "their final projection, removing the common shift of the country logits "
-                          "that the E4 policy cannot see and that otherwise drifts without limit "
-                          "(research/log/E4_long_runs.md). E4 view only.")
+                          "their final projection, removing the country-logit shift the E4 policy "
+                          "cannot see and that otherwise drifts until a long TF32 run diverges "
+                          "(research/log/E4_long_runs.md). Default (auto): on for per-entity heads in "
+                          "the E4 view; a resume or warm start follows its checkpoint; off with "
+                          "--merged-influence."),
     lad.add_argument("--ladder-head-entities", type=str, default=None,
                      choices=["both", "country", "card"],
                      help="Which per-entity heads exist. The card-collision finding predicts "
@@ -287,6 +315,24 @@ def build_parser() -> argparse.ArgumentParser:
                              "back between doses.")
     parser.add_argument("--inject-weight", type=float, default=1.0,
                         help="Scale on the injected supervised loss.")
+    parser.add_argument("--inject-setup-only", action="store_true", default=False,
+                        help="P4 arm B: inject only the corpus's setup placements (phase SETUP), policy "
+                             "loss only -- a human anchor for the opening and nothing else.")
+    parser.add_argument("--block-lambda", choices=["off", "setup", "setup-side", "same-side"],
+                        default=None,
+                        help="P4: GAE lambda = 1 inside decision blocks. setup: every consecutive "
+                             "SETUP-phase pair, across both sides (= --setup-block-lambda, arm A); "
+                             "setup-side: the same, cut where the mover changes (A1); same-side: any "
+                             "consecutive pair of one game with the same mover and the engine's RNG "
+                             "unchanged -- no die roll, card draw or hidden chance between (A2). "
+                             "Default: off (setup-side was the default 2026-09-26..27; at flat rollout "
+                             "temperature it added no strength and froze the setup, "
+                             "research/log/E5_12_setup_credit_at_flat_temperature.md), or setup with "
+                             "--setup-block-lambda.")
+    parser.add_argument("--setup-block-lambda", action="store_true", default=False,
+                        help="P4 arm A: GAE lambda = 1 between consecutive setup placements, so the "
+                             "setup's credit telescopes to the turn-1 headline position instead of "
+                             "bootstrapping from the critic at half-placed boards.")
     parser.add_argument("--train-steps", type=int, default=80_000_000,
                         help="The run's budget, in env steps. Must be positive. "
                              "Defaults to the standard 80,000,000. "
@@ -419,6 +465,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--per-seat-adv-norm", action="store_true", default=False,
                         help="Normalise advantages per seat instead of over both, so a losing "
                              "seat's small spread is not scaled away by the winning seat's.")
+    parser.add_argument("--adv-norm-learner-only", action="store_true", default=False,
+                        help="Take the advantage normalisation's mean and spread over the "
+                             "learner's own transitions, not a frozen pool opponent's too. The "
+                             "opponent's advantages are roughly the negative of the learner's, so "
+                             "averaged in they leave the learner's own uncentred; against a "
+                             "near-equal frozen opponent that collapses the learner (P24).")
+    parser.add_argument("--opponent-temperature", type=float, default=None,
+                        help="P24: the temperature pool opponents play at in rollouts; 0 is "
+                             "greedy, the policy a greedy tournament rates. Default: sampled "
+                             "exactly as the learner is.")
     parser.add_argument("--wolf-seat-weight", action="store_true", default=False,
                         help="WoLF-style per-seat learning rates: scale each seat's PPO surrogate "
                              "by w_us = 2x^p/(x^p+(1-x)^p) and w_ussr = 2(1-x)^p/(x^p+(1-x)^p), with "
@@ -464,6 +520,32 @@ def build_parser() -> argparse.ArgumentParser:
                              "more room than a few-option one (P23: E4.1's ~50-option op-mode nodes). "
                              "Same average bonus as the raw one at ~2.1x --entropy-coef on E4's "
                              "decision mix. Logged entropy stays raw.")
+    parser.add_argument("--setup-entropy-floor", type=float, default=0.0,
+                        help="An entropy FLOOR, in nats, on the learner's setup placements: an extra "
+                             "bonus on setup decisions only, whose coefficient moves by "
+                             "--setup-entropy-lr x (floor - rollout setup entropy) per iteration within "
+                             "[0, --setup-entropy-max-coef]. A setup placement at p ~ 1 is never "
+                             "resampled and its opening locks, good or bad "
+                             "(research/log/E5_11_setup_lock_and_critic_views.md). 0 is off.")
+    parser.add_argument("--setup-entropy-lr", type=float, default=0.01)
+    parser.add_argument("--setup-mc-credit", action="store_true", default=False,
+                        help="Credit the learner's setup placements with the game result (Monte "
+                             "Carlo, advantage = result - V) instead of the lambda-return, which at "
+                             "gamma 1 / lambda 0.98 reaches the setup only through the critic's "
+                             "values of the next positions -- and the critic over-rates unfamiliar "
+                             "openings (research/log/E5_11_setup_lock_and_critic_views.md). As "
+                             "Ataraxos trains its setup. Pair with --setup-entropy-floor: a setup "
+                             "played at p ~ 1 is never compared with anything.")
+    parser.add_argument("--setup-mc-coef", type=float, default=1.0)
+    parser.add_argument("--setup-mc-min-batch", type=int, default=512,
+                        help="Finished-game setup placements to gather before one MC setup step.")
+    parser.add_argument("--forced-opening", type=str, default=None,
+                        help="Start every training game after a scripted setup (a name from "
+                             "tools/lib/openings.py, e.g. 'human': USSR East Germany 1, Poland 4, "
+                             "Yugoslavia 1; US West Germany 4, Italy 3, Iran 2). The setup is never "
+                             "learned, so rate the result with tools/tournament.py --opening or an "
+                             "opening:<name>: spec prefix.")
+    parser.add_argument("--setup-entropy-max-coef", type=float, default=1.0)
     parser.add_argument("--z-loss-coef", type=float, default=0.0,
                         help="z-loss: coef * mean(logsumexp(policy logits)^2) in the update (PaLM uses "
                              "1e-4). Bounds the logits' level, which the softmax leaves free and which "
@@ -516,14 +598,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-node-filter", type=str, default="card_playmode",
                         choices=["card_playmode", "all"],
                         help="Which decisions are eligible.")
-    parser.add_argument("--rollout-temps", type=float, nargs=4, default=None,
+    parser.add_argument("--rollout-temps", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0],
                         metavar=("T1", "T2", "T3", "T4"),
-                        help="The four per-environment rollout sampling temperatures. Default is "
-                             "0.15 0.50 0.10 0.35 -- every band BELOW 1.0, so sampling is sharper "
-                             "than the policy itself despite the schedule being described as "
-                             "exploration. Pass values around 1.0 to sample from the policy as "
-                             "trained, which is the textbook PPO choice and has never been "
-                             "measured here.")
+                        help="The four per-environment rollout sampling temperatures. Default "
+                             "1.0 1.0 1.0 1.0: sample at the policy, so PPO's temperature-1 "
+                             "log-probabilities are the ones the actions came from (adopted "
+                             "2026-09-27, research/log/E5_06_rollout_temperature.md). Runs before "
+                             "then used 0.15 0.50 0.10 0.35, every band sharper than the policy; "
+                             "pass those to reproduce one.")
     parser.add_argument("--setup-explore-frac", type=float, default=0.0,
                         help="Fraction of environments whose OPENING placement is replaced by a "
                              "uniform legal choice, and trained on. Temperature cannot reach these "
@@ -552,6 +634,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--opponent-pfsp-uniform-mix", type=float, default=0.25,
                         help="Floor of uniform probability mixed under the PFSP weights, so no "
                              "pool member can be driven to zero. The pool's value is its spread.")
+    parser.add_argument("--league-dirs", nargs="+", default=None,
+                        help="P24: other runs' directories whose snapshots join the opponent pool "
+                             "as a separate 'league' group, re-scanned every --pool-every-steps. "
+                             "With --opponent-self-pool the run's own history stays in the pool "
+                             "beside them (the main agent); without it the pool is the league "
+                             "alone (a main exploiter, with --opponent-frac 1.0). A file named "
+                             "snapshot_<n>steps.pt, or <prefix>_snapshot_<n>steps.pt, is a member.")
+    parser.add_argument("--league-pool-size", type=int, default=4,
+                        help="Most league members kept; the oldest-added is evicted first.")
+    parser.add_argument("--league-frac", type=float, default=None,
+                        help="Probability that an iteration's pool opponent is a league member, "
+                             "when the pool also holds the run's own history. Default: every "
+                             "member drawn alike, so the league's share follows the group sizes.")
     parser.add_argument("--opponent-lock-side", type=str, default=None,
                         choices=["us", "ussr"],
                         help="Pin the learner to one side against the frozen opponent; default alternates")
@@ -624,6 +719,10 @@ def main():
             inject_dataset=args.inject_dataset,
             inject_every=args.inject_every,
             inject_weight=args.inject_weight,
+            inject_setup_only=args.inject_setup_only,
+            setup_block_lambda=args.setup_block_lambda,
+            block_lambda=(args.block_lambda if args.block_lambda is not None
+                          else ("setup" if args.setup_block_lambda else "off")),
             decisiveness_turns=args.decisiveness_turns,
             max_snapshot_opponents=args.eval_max_snapshot_opponents,
             opponent_checkpoints=args.opponent_checkpoints,
@@ -667,7 +766,12 @@ def main():
             merged_influence=args.merged_influence,
             seat_balance=args.seat_balance,
             seat_balance_max_frac=args.seat_balance_max_frac,
+            league_dirs=args.league_dirs,
+            league_pool_size=args.league_pool_size,
+            league_frac=args.league_frac,
             per_seat_adv_norm=args.per_seat_adv_norm,
+            adv_norm_learner_only=args.adv_norm_learner_only,
+            opponent_temperature=args.opponent_temperature,
             wolf_seat_weight=args.wolf_seat_weight,
             wolf_power=args.wolf_power,
             wolf_ema_games=args.wolf_ema_games,
@@ -678,6 +782,13 @@ def main():
             entropy_ceiling=args.entropy_ceiling,
             target_kl=args.target_kl,
             entropy_normalize=args.entropy_normalize,
+            setup_entropy_floor=args.setup_entropy_floor,
+            setup_entropy_lr=args.setup_entropy_lr,
+            setup_entropy_max_coef=args.setup_entropy_max_coef,
+            forced_opening=args.forced_opening,
+            setup_mc_credit=args.setup_mc_credit,
+            setup_mc_coef=args.setup_mc_coef,
+            setup_mc_min_batch=args.setup_mc_min_batch,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,
             cuda_graphs=not args.no_cuda_graphs,

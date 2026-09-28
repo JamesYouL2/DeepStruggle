@@ -31,7 +31,7 @@ Everything below is measured on three checkpoints from one run,
 `data/checkpoints/run_v2_20260907_long160M` — `--arch v2`, `--reward-scheme blunder_aware`,
 `--decisiveness-turns 40`, `--num-envs 512`, `--train-steps 160000000`,
 `--snapshot-every-steps 5000000`, `--inject-dataset data/datasets/human_corpus --inject-every 1
---inject-weight 1.0`, launched from a dirty tree on `5159bfe` (the dirt being the
+--inject-weight 1.0`, launched from a dirty tree on `44efad1` (the dirt being the
 `--snapshot-every-steps` support itself).
 
 | name used here | file | what it is |

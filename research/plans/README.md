@@ -64,9 +64,11 @@ where it was measured and where it is healthy.
 
 | item | what | cost | status |
 |:---|:---|:---|:---|
-| **[P26](P26_training_throughput.md)** | **current focus (2026-09-24).** Training throughput, first, because a faster step means more experiments in the same time. Quick measurement of TF32, bf16 autocast and `torch.compile` on M2d, and of the snapshot-probe cost, before deciding which to take through the adoption gates | ~1 h of GPU for the quick screen | **screened** ([`../log/P26_quick_screen.md`](../log/P26_quick_screen.md)): TF32 +13–16% with no visible drift; compile + TF32 up to +30% but an erratic rollout; bf16 drifts (7% of argmaxes); staleness check +5% and GAE graph ~+4% bit-identical; snapshot eval 17% of wall |
+| **[P26](P26_training_throughput.md)** | **done (2026-09-25)**; was the current focus. Training throughput, first, because a faster step means more experiments in the same time. Quick measurement of TF32, bf16 autocast and `torch.compile` on M2d, and of the snapshot-probe cost, before deciding which to take through the adoption gates | ~1 h of GPU for the quick screen | **screened** ([`../log/P26_quick_screen.md`](../log/P26_quick_screen.md)): TF32 +13–16% with no visible drift; compile + TF32 up to +30% but an erratic rollout; bf16 drifts (7% of argmaxes); staleness check +5% and GAE graph ~+4% bit-identical; snapshot eval 17% of wall |
+| **[P27](P27_ops_block_planning.md)** | **current focus (2026-09-26).** Short-horizon planning inside an ops play: an influence play is solved exactly, and the policy is compared with the alternatives and with its own critic. That tells capacity, learning and data apart for "no plan over a few micro-steps" | probe: minutes per checkpoint | **stages 1–2 done** ([`../log/P27_ops_block_stage1.md`](../log/P27_ops_block_stage1.md)): half of takeable contested battlegrounds missed, but the rollout oracle finds taking one worth −0.8 ± 0.6 pp under this policy's continuation; nothing to train toward |
+| **[P4](P4_setup_macro_action_credit.md)** | **done; A1 adopted as the default 2026-09-26, reverted 2026-09-27 after E5-12.** The setup. Rewritten for E4: the setup follows a critic whose preference oscillates. Arm A (λ = 1 inside the setup block) and arm B (a human setup anchor, as a contrast) against the centred-heads TF32 controls, 2 seeds × 80M | ~1 GPU-h | **screened** ([`../log/P4_setup_arms.md`](../log/P4_setup_arms.md)): A fixes Poland, not West Germany; B holds the human opening on 1 of 2 seeds; strength +27 / +18, inside noise |
 | **[P23](P23_merged_influence_E4_1.md)** | **E4.1**: "influence, first point in X" as one decision | — | **parked** (owner, 2026-09-24): the US seat collapses in 6 of 6 runs from scratch, and the cause is not found ([`../log/P23_E4_1_ab.md`](../log/P23_E4_1_ab.md)) |
-| **[P24](P24_league.md)** | an AlphaStar-style league (main agent, main exploiter reset to the main's early snapshot, league exploiter) with no supervised policy to reset to. A small trainer change (a pool that grows from other runs' directories) plus a driver over `tools/train.py` | 3 concurrent learners; judged at matched **wallclock** | **proposed**, gated on the slow-π_ref replicate and on which warm-start reset dissolves the US seat (P25 closed, P23 parked) |
+| **[P24](P24_league.md)** | an AlphaStar-style league (main agent, main exploiter reset to the main's early snapshot, league exploiter) with no supervised policy to reset to. A small trainer change (a pool that grows from other runs' directories) plus a driver over `tools/train.py` | 3 concurrent learners; judged at matched **wallclock** | **stage 1 done (2026-09-26)** ([`../log/P24_stage1_exploiter_collapse.md`](../log/P24_stage1_exploiter_collapse.md)): main + one greedy-target exploiter from the plateau vs E4-61's own legs: late mean −6 (seed 43), **+65** (seed 44, 57.9% ± 1.2 head to head); pair +30. More seeds before adopting |
 | **[P22](P22_card_lookup_attention.md)** | identity-keyed card lookup — P22-a | ~84k params | **done, rejected**: −154 / −72 at 80M ([`../log/P22_width_probe_and_card_lookup.md`](../log/P22_width_probe_and_card_lookup.md)); archive with the next reorganisation |
 | width probe | `E4-23-03/05`: `entity_proj_dim` 256 → 512 | 2 arms | **done, rejected**: −129 to −291 ([`../log/P22_width_probe_and_card_lookup.md`](../log/P22_width_probe_and_card_lookup.md)) |
 | **[P21](P21_architecture_ladder.md)** | the architecture ladder. **11 of 14 rungs done** — M0, M1, M2, M2d, M2e, M2a, M2b, M2c, M2.5, M2.5c, M2.5b. **Nothing has beaten M2d**: all three removals lose and all three identity additions lose. M3/M4/M5 remain and are **blocked** on the `board_mode`/`card_mode` split that [P22](P22_card_lookup_attention.md) carries | ~1.3 GPU-h per rung | **M2 family closed** |
@@ -99,8 +101,8 @@ running any of them.
 |:---|:---|:---|
 | [P8](P8_teach_the_defcon_conjunction.md) | auxiliary risk head for provoked DEFCON-1 | instruments exist |
 | [P4](P4_setup_macro_action_credit.md) | macro-action credit for placement blocks | rebase the file first |
-| [P2](P2_chance_aware_targets.md) | dice expectation + pre-deal bootstrap in value targets | **read the E3-22 lesson first**: a better offline return estimate lost by 520 Elo. Judge on training outcome, never on offline target quality |
-| [P5](P5_oracle_critic.md) | oracle critic as a deal-side variance reducer | rebase the file first |
+| [P2](P2_chance_aware_targets.md) | dice expectation + pre-deal bootstrap in value targets | **sized 2026-09-28: removes ~7% of one-step error variance (dice 4.3%, deal 2.8%); low priority.** Also **read the E3-22 lesson first**: a better offline return estimate lost by 520 Elo. Judge on training outcome, never on offline target quality |
+| [P5](P5_oracle_critic.md) | oracle critic as a deal-side variance reducer | **shelved 2026-09-28**: the opponent's hand adds +0.3 points of explained variance offline |
 | [reserve](reserve.md) | ideas with triggers — PSRO-lite meta-Nash sampling, optimism/extragradient, per-side capacity | |
 
 ## Archived programmes
@@ -115,6 +117,16 @@ running any of them.
 
 - **Engine:** post-P17. One observation layout; old-layout checkpoints are refused, not misread.
   The observation is not to be changed without asking (`CLAUDE.md`).
+- **Recipe defaults changed since E4-08:**
+  * TF32 and centred per-entity heads (P26, 2026-09-25);
+  * ~~`--block-lambda setup-side` (P4 A1, 2026-09-26)~~ **reverted to `off` on 2026-09-27**
+    ([`../log/E5_12_setup_credit_at_flat_temperature.md`](../log/E5_12_setup_credit_at_flat_temperature.md)):
+    at flat 1.0 it added no strength (−73 / +30) and froze the setup, bad or good. E5-11 is the control;
+  * **`--rollout-temps 1.0 1.0 1.0 1.0`** (2026-09-27, [`../log/E5_06_rollout_temperature.md`](../log/E5_06_rollout_temperature.md)):
+    sampling at the policy plateaus +135/+170 above the old sharpening bands.
+
+  Runs before a change are reproduced with the old flag. `launch_flags.py` reads a missing record as
+  the old value.
 - **Architecture / matched control:** **M2d** — `--arch ladder --ladder-input-mode grouped
   --ladder-aggregation flatten --drop-static --per-entity-heads 64 --ladder-head-entities
   country`, with `--ladder-head-context` and `--ladder-head-static` both on. Its representative is

@@ -116,6 +116,32 @@ def run_head_to_head_report(
     return "".join(lines)
 
 
+def _pack_schedule(M: int, pack_pairs: int) -> List[List[Tuple[int, int]]]:
+    """Every pairing (i < j) of M agents, grouped into packs that involve few distinct agents.
+
+    A pack's cost per step is one forward per distinct agent in it, so the pairings of a pack
+    should share agents: the agents are split into blocks of g = floor(sqrt(pack_pairs)), and a
+    pack is either all g x g pairings between two blocks (2g agents) or the pairings inside
+    several blocks (g agents each), filled up to pack_pairs. Every pairing appears exactly once.
+    """
+    g = max(2, int(pack_pairs ** 0.5))
+    blocks = [list(range(b, min(b + g, M))) for b in range(0, M, g)]
+    packs: List[List[Tuple[int, int]]] = []
+    for x in range(len(blocks)):
+        for y in range(x + 1, len(blocks)):
+            packs.append([(i, j) for i in blocks[x] for j in blocks[y]])
+    inside: List[Tuple[int, int]] = []
+    for blk in blocks:
+        within = [(i, j) for a, i in enumerate(blk) for j in blk[a + 1:]]
+        if inside and len(inside) + len(within) > pack_pairs:
+            packs.append(inside)
+            inside = []
+        inside += within
+    if inside:
+        packs.append(inside)
+    return [p for p in packs if p]
+
+
 def run_massive_tournament(
     model_specs: List[str],
     games_per_side: int = 500,
@@ -129,8 +155,16 @@ def run_massive_tournament(
     track_choices: bool = False,
     log_games: Optional[str] = None,
     auto_advance: bool = True,
+    pack_pairs: int = 25,
+    opening: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Runs high-throughput round-robin tournament across all specified models."""
+    """Runs high-throughput round-robin tournament across all specified models.
+
+    `pack_pairs` pairings are played in one engine batch (BatchMatchRunner.play_packed_matchups),
+    each agent's positions across them in one forward per step; the same deal seeds per game as
+    one pairing at a time. 1 plays pairings one at a time, as before; choice tracking and game
+    logs always do.
+    """
     dev = resolve_device(device)
 
     print("\n" + "=" * 85)
@@ -141,6 +175,11 @@ def run_massive_tournament(
     agents: List[PlayerAgent] = []
     for spec in model_specs:
         agent = load_agent(spec, device=dev)
+        if opening and not getattr(agent, "forced_opening", None):
+            # --opening: every agent's setup is the named opening (a per-agent opening:<name>:
+            # prefix on a spec takes precedence). Named in the report, so the rows say so.
+            setattr(agent, "forced_opening", opening)
+            setattr(agent, "name", f"{agent.name}+{opening}")
         agents.append(agent)
         print(f" Loaded Agent: {agent.name:<35s} (from {spec})")
 
@@ -175,25 +214,36 @@ def run_massive_tournament(
     t_start = time.time()
     matchup_details: Dict[str, Any] = {}
 
-    for i in range(M):
-        for j in range(i + 1, M):
+    all_pairs = [(i, j) for i in range(M) for j in range(i + 1, M)]
+    pack = 1 if (track_choices or log_games) else max(1, int(pack_pairs))
+    groups_of_pairs = _pack_schedule(M, pack) if pack > 1 else [[pr] for pr in all_pairs]
+    results: Dict[Tuple[int, int], Tuple[Dict[str, Any], float]] = {}
+
+    def _play(group: List[Tuple[int, int]]) -> None:
+        t_g = time.time()
+        if len(group) == 1:
+            (gi, gj), = group
+            res = [BatchMatchRunner.play_parallel_matchup(
+                agents[gi], agents[gj], games_per_side=games_per_side, device=dev,
+                temperature=temperature, batch_chunk_size=batch_chunk_size,
+                track_choices=track_choices, log_games_file=log_games,
+                auto_advance=auto_advance)]
+        else:
+            res = BatchMatchRunner.play_packed_matchups(
+                [(agents[gi], agents[gj]) for gi, gj in group], games_per_side=games_per_side,
+                device=dev, temperature=temperature, batch_chunk_size=batch_chunk_size,
+                auto_advance=auto_advance)
+        share = (time.time() - t_g) / len(group)
+        for key, r in zip(group, res):
+            results[key] = (r, share)
+
+    for group in groups_of_pairs:
+        _play(group)
+        for (i, j) in group:
             pair_idx += 1
             agent_a = agents[i]
             agent_b = agents[j]
-            pair_start = time.time()
-
-            m_res = BatchMatchRunner.play_parallel_matchup(
-                agent_a,
-                agent_b,
-                games_per_side=games_per_side,
-                device=dev,
-                temperature=temperature,
-                batch_chunk_size=batch_chunk_size,
-                track_choices=track_choices,
-                log_games_file=log_games,
-                auto_advance=auto_advance,
-            )
-            pair_time = time.time() - pair_start
+            m_res, pair_time = results[(i, j)]
             matchup_key = f"{agent_a.name}_vs_{agent_b.name}"
             matchup_details[matchup_key] = m_res
 
@@ -388,6 +438,10 @@ def main():
                              "closer to its own argmax and wins on temperature rather than on "
                              "strength. Re-rate at 0.0 when the arms differ in entropy.")
     parser.add_argument("--batch-chunk-size", type=int, default=1000, help="Max parallel games executed in a single vectorized batch")
+    parser.add_argument("--pack-pairs", type=int, default=25,
+                        help="Pairings played together in one engine batch, each agent's positions "
+                             "in one forward per step (same deal seeds per game as one at a time). "
+                             "1 = one pairing at a time. Choice tracking and game logs force 1.")
     parser.add_argument("--anchor-model", type=str, default="HeuristicBot", help="Model name to anchor Elo ratings")
     parser.add_argument("--anchor-elo", type=float, default=1500.0, help="Anchor Elo rating value")
     parser.add_argument("--output-report", type=str, default=None, help="Path to save Markdown report")
@@ -400,6 +454,11 @@ def main():
              "200 games took 118s on cpu against 6.4s on cuda, an 18x difference.")
     parser.add_argument("--track-choices", action="store_true", default=False, help="Track and report micro-actions with exactly 1 valid choice")
     parser.add_argument("--log-games", type=str, default=None, help="Path to save per-game JSONL execution logs")
+    parser.add_argument("--opening", type=str, default=None,
+                        help="Every agent's setup is this named opening (tools/lib/openings.py) instead "
+                             "of its own placements. One agent alone: prefix its spec with "
+                             "opening:<name>:. Needed to rate a checkpoint trained with "
+                             "--forced-opening, whose setup was never learned.")
     parser.add_argument("--self-play", action="store_true", default=False, help="Evaluate model against itself")
     # Default ON. The function signature defaulted to True while this flag defaulted to
     # False and line 413 passes it through unconditionally, so every CLI run settled
@@ -442,6 +501,8 @@ def main():
         games_per_side=args.games_per_side,
         temperature=args.temperature,
         batch_chunk_size=args.batch_chunk_size,
+        pack_pairs=args.pack_pairs,
+        opening=args.opening,
         anchor_model=args.anchor_model,
         anchor_elo=args.anchor_elo,
         output_report=out_rep,

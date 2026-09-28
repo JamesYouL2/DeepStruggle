@@ -149,7 +149,7 @@ E4-08-37@240M rates 2179 in the same field.
 
 ## Relaunched with z-loss (E4-59-43, E4-59-44), 2026-09-25
 
-**The change:** `--z-loss-coef 1e-4` (`69d8b01`) adds `1e-4 · mean(logsumexp(policy logits)²)` to
+**The change:** `--z-loss-coef 1e-4` (`e25cc42`) adds `1e-4 · mean(logsumexp(policy logits)²)` to
 the update. Everything else is the E4-57 configuration, with TF32, on the same seeds, 43 and 44.
 `launch_flags.py --diff` against E4-57-43/44 shows only `--z-loss-coef`.
 
@@ -343,7 +343,7 @@ non-country actions (confirmed by the owner). So a shift common to every country
 invisible to the policy, gets no gradient, and random-walks as the head's weights move for other
 reasons.
 
-**The fix, `--ladder-head-center` (`1e820df`), centres `pe_country`'s hidden features across the
+**The fix, `--ladder-head-center` (`72dbc23`), centres `pe_country`'s hidden features across the
 84 countries before its final projection.** The tests confirm three things:
 * every country-only distribution is unchanged;
 * the correction's mean over countries equals the final bias exactly;
@@ -432,4 +432,60 @@ shrank from a typical largest legal logit of 21 at 85M to 0.8 at 120M. Its train
 from 1.22 to 1.85–1.91 over the same stretch. That is the 356-Elo loss recorded as entropy
 inflation ([`../findings/training/entropy_inflation.md`](../findings/training/entropy_inflation.md)),
 now located: the policy's logits flattened wholesale. It was a resume on the drained pool (the
-pre-`3803d5d` bug), so it is confounded, and its cause is not established.
+pre-`4eb58df` bug), so it is confounded, and its cause is not established.
+
+## Stage 1 answered: centred heads stop the divergence (E4-61-43/44), 2026-09-25
+
+**Both runs reached 800M with TF32 and no divergence.**
+* The mean log-normaliser stayed at 3–6 throughout.
+* The largest single value peaked at ~107, against thousands in the uncentred twins.
+* Approximate KL stayed at 0.009–0.02.
+* Neither run pinned at any 40M readout. Seed 43 stayed balanced (0.42–0.68), where every
+  earlier seed-43 run leaned USSR or pinned at 110–140M. That is one seed, so not evidence of a
+  balance effect.
+* The master merge (`5a564f5`) was built and tested after the runs finished: the backend suites
+  gave 1,884 passed and 6 skipped.
+
+**Strength.** `data/reports/long_center_800M.{md,json}`: 31 players, 100 games per side per
+pair, temperature 0, HeuristicBot at 1500.
+
+| step | E4-61-43 (centred) | E4-61-44 (centred) |
+|:---|---:|---:|
+| 80M | 2018 | 1973 |
+| 160M | 2179 | 2162 |
+| 240M | 2308 | 2279 |
+| 320M | 2304 | 2273 |
+| 400M | 2292 | 2295 |
+| 480M | 2336 | 2304 |
+| 560M | 2312 | 2294 |
+| 640M | 2301 | 2355 |
+| 720M | 2322 | **2374** |
+| 800M | 2331 | 2373 |
+
+References in the same field:
+* E4-57-44 (uncentred twin): 2159 @160M, 2226 @240M, 2322 @400M, 2341 @560M, 2349 @590M;
+* E4-57-43: 2198 @160M, 2244 @230M;
+* E4-56-43 (fp32): 2212 @400M, 2213 @800M;
+* E4-08-36@240M: 2297.
+
+**Stage 2, a first reading on quality: no loss at matched steps.**
+
+| seed | step | centred − twin |
+|:---|:---|---:|
+| 43 | 160M | −20 |
+| 43 | 240M (twin @230M) | +64 |
+| 44 | 160M | +2 |
+| 44 | 240M | +53 |
+| 44 | 400M | −27 |
+| 44 | 560M | −47 |
+
+The mean is +4, well inside the ~100 Elo seed spread. This is two seeds, so it is neutral within
+noise, not a measured gain or loss.
+
+**E4-61-44@720–800M is now the strongest model rated (2373–2374).** It is +25 over E4-57-44@590M
+in the same field. Head to head against E4-57-44@590M it wins 58% as USSR and 41–44% as US, which
+is about level. Against E4-08-36@240M it wins 64–73% as USSR and 54–57% as US.
+
+**Growth after 400M is modest but present:** +39 (seed 43) and +78 (seed 44) over 400–800M,
+against +17 for the fp32 run. The centred and TF32 pair beats the fp32 long run at every late
+step: 78–84% as USSR and 47–63% as US against E4-56-43@800M.

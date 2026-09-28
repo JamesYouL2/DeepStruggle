@@ -195,7 +195,7 @@ things are not:
 1. **Injection.** `dec_turns40` has none; every arm since injects human data every iteration at
    weight 1.0. `inject_loss` never appears in its metrics.
 2. **The warm start.** A different ancestor, unrelated to the modern one.
-3. **The engine.** 44 files and +3,832/-470 lines since its base commit `44504c16`, including
+3. **The engine.** 44 files and +3,832/-470 lines since its base commit `0a0f4973`, including
    changes that move the decision stream: Che/Ortega free-coup legality, turn cleanup as its own
    step, Independent Reds, per-card headline frames, Defectors, Shuttle Diplomacy, the China Card
    space race, Grain Sales, trap effective-Ops.

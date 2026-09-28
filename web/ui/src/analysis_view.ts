@@ -14,7 +14,9 @@
  * carries the sum of all of them -- the probability the model puts on choosing influence at all.
  */
 import { GameState } from "./types";
-import { BadgeMark, clearDecorations, criticTableHtml, fmtP, htmlBadge, probColor, svgBadge } from "./trace_view";
+import {
+  BadgeMark, clearDecorations, criticTableHtml, fmtP, htmlBadge, probColor, svgBadge, valueSidesHtml,
+} from "./trace_view";
 import { CriticTrace, PolicyTrace } from "./replay_controls";
 import {
   DEFAULT_HF_REPO, DEFAULT_HF_REVISION, HfModelFile, listHfModels, ModelSource, sourceLabel,
@@ -420,7 +422,13 @@ export class AnalysisPanel {
     this.badge.textContent = a.merged_influence ? "E4.1 view" : "E4 view";
 
     const parts: string[] = [];
-    if (a.critic) parts.push(this.valueBarHtml(a.critic), criticTableHtml(a.critic));
+    if (a.critic) {
+      // The readout is on the position itself (`at: "position"`), so the side to move is the one
+      // whose reading the value head was trained on. A finished game has none.
+      const decider = state?.is_terminal ? null : a.decision_player ?? null;
+      parts.push(valueSidesHtml(a.critic, decider, state?.is_terminal ? state : null),
+                 criticTableHtml(a.critic, decider));
+    }
 
     const pol = a.policy;
     if (!pol || a.choices.length === 0) {
@@ -452,32 +460,6 @@ export class AnalysisPanel {
       }
     }
     this.body.innerHTML = parts.join("");
-  }
-
-  /**
-   * The critic's verdict as one bar. v_win is an expected result in [-1, 1], not a
-   * probability, so the bar is labelled with the value itself. The two perspectives are
-   * averaged into the zero-sum estimate; how far they disagree is the residual row below.
-   */
-  private valueBarHtml(c: CriticTrace): string {
-    const vus = c.v_win_us ?? 0;
-    const vussr = c.v_win_ussr ?? -vus;
-    const v = Math.max(-1, Math.min(1, (vus - vussr) / 2));
-    const vp = ((c.v_vp_us ?? 0) - (c.v_vp_ussr ?? 0)) / 2;
-    const usPct = ((1 + v) / 2) * 100;
-    const leader = v > 0 ? "US" : v < 0 ? "USSR" : "even";
-    return `
-      <div class="analysis-value" title="critic v_win, zero-sum estimate (v_US − v_USSR)/2; +1 = certain US win, −1 = certain USSR win">
-        <div class="analysis-value-bar">
-          <span class="analysis-value-us" style="width:${usPct.toFixed(1)}%"></span>
-          <span class="analysis-value-mid"></span>
-        </div>
-        <div class="analysis-value-text">
-          <span class="us">US ${v >= 0 ? "+" : ""}${v.toFixed(3)}</span>
-          <span class="analysis-value-leader">${leader === "even" ? "even" : `${leader} favoured`} · VP ${vp >= 0 ? "+" : ""}${vp.toFixed(1)}</span>
-          <span class="ussr">USSR ${v <= 0 ? "+" : "−"}${Math.abs(v).toFixed(3)}</span>
-        </div>
-      </div>`;
   }
 
   /**

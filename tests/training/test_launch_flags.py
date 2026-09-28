@@ -83,3 +83,14 @@ def test_runs_before_tf32_and_the_pool_interval_were_fp32_and_pooled_per_snapsho
     rec = recorded(str(tmp_path))
     assert rec["tf32"] is False and rec["pool_every_steps"] == 5_000_000
     assert "tf32" not in unrecorded(str(tmp_path))
+
+
+def test_a_run_recording_no_rollout_temps_used_the_legacy_bands() -> None:
+    """Before 2026-09-27 the default bands were 0.15 0.50 0.10 0.35 and were recorded as None;
+    the default is now 1.0 x 4, so a diff must not read the old None as the new default."""
+    lf = _lf()
+    old = _run({"rollout_temps": None})
+    new = _run({"rollout_temps": [1.0, 1.0, 1.0, 1.0]})
+    assert lf.recorded(old)["rollout_temps"] == [0.15, 0.50, 0.10, 0.35]
+    assert "rollout_temps" in lf.non_default(old)
+    assert "rollout_temps" not in lf.non_default(new)

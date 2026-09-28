@@ -2,7 +2,7 @@
 
 `ActionMask::generate_flat_mask_212` and `StateMachine::step` each decide what is legal, from
 separate code. Where they differ, the mask offers an action the engine refuses: the caller either
-crashes (since `59d2331`) or, before that, silently failed to advance while the trainer credited
+crashes (since `9759746`) or, before that, silently failed to advance while the trainer credited
 the transition anyway.
 
 This plan collapses them to one definition and fixes the rule defects the collapse would otherwise
@@ -58,7 +58,7 @@ player's hand**. The mask survives this because its `SELECT_CARD` branch tests
 **The mask becomes the definition of legality, and `step` validates against it.** Three guards
 stay outside it, because the flat space cannot express them:
 
-1. **`decision_type` must match the context** (`b6874af`). Subsumed by mask membership, but kept as
+1. **`decision_type` must match the context** (`d124cff`). Subsumed by mask membership, but kept as
    a cheap early-out and a clearer error.
 2. **A forced die must be 0..6** on both `primary_id` and `secondary_id`. `ROLL_DIE`'s value is
    *data*, not an index — flat 211 is its only mask entry — so the mask cannot constrain it.

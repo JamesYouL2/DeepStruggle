@@ -15,7 +15,7 @@ import re
 import argparse
 import functools
 import random
-from typing import (Any, Callable, Dict, Final, List, Optional, Sequence, Tuple, TypeVar,
+from typing import (Any, Callable, Dict, Final, List, Optional, Sequence, Set, Tuple, TypeVar,
                     Union, cast)
 import numpy as np
 import torch
@@ -28,7 +28,7 @@ from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward
 from bindings.ts_env import OBS_LAYOUT_NAME, TsVectorizedEnv
 from ai.training.rollout_buffer import RolloutBuffer
-from ai.training.nash_pg import NashPGTrainer
+from ai.training.nash_pg import DEFAULT_ROLLOUT_TEMPS, NashPGTrainer
 from ai.training.start_pool import DEFAULT_TURN_MIX, StartPositionPool
 from ai.eval.agreement import evaluate_dataset
 from ai.training.human_corpus_dataset import HumanCorpusDataset
@@ -671,7 +671,8 @@ class _HumanInjector:
 
     def __init__(self, dataset_path: str, model: nn.Module, device: torch.device,
                  every: int, weight: float, batch_size: int = 512,
-                 holdout_seed: int = 7, holdout_frac: float = 0.2) -> None:
+                 holdout_seed: int = 7, holdout_frac: float = 0.2,
+                 setup_only: bool = False) -> None:
         from ai.training.human_corpus_dataset import HumanCorpusDataset
 
         self.every = max(1, int(every))
@@ -695,6 +696,19 @@ class _HumanInjector:
         self.train_idx = np.flatnonzero(
             np.fromiter((g not in held for g in game), dtype=bool, count=len(game)))
         self.held_out_games = len(held)
+
+        #: P4 arm B: only the setup placements (the observation's phase slot is 0 in SETUP), and
+        #: the policy term only. A human value target at the setup is an outcome ~400 plies away
+        #: from a population whose later play is nothing like ours; the point is the opening.
+        self.setup_only = bool(setup_only)
+        if self.setup_only:
+            from ai.training.rollout_buffer import setup_phase_slot
+            obs_col = self.ds._column("obs")
+            phase = np.asarray(obs_col[:, setup_phase_slot()], dtype=np.float32)
+            setup_rows = phase < (0.5 / 6.0)
+            self.train_idx = self.train_idx[setup_rows[self.train_idx]]
+            if len(self.train_idx) < batch_size:
+                raise ValueError(f"only {len(self.train_idx)} setup samples in {dataset_path}")
 
         self._obs = self.ds._column("obs")
         self._mask = self.ds._column("mask")
@@ -723,10 +737,13 @@ class _HumanInjector:
         self.model.train()
         logits, v_win, v_vp = self.model(b_obs, b_mask)
         denom = b_has.sum().clamp(min=1.0)
-        loss = self.weight * (
-            F.cross_entropy(logits, b_act)
-            + 0.5 * (((v_win.squeeze(-1) - b_val) ** 2 * b_has).sum() / denom)
-            + 0.05 * (((v_vp.squeeze(-1) - b_vp) ** 2 * b_has).sum() / denom))
+        if self.setup_only:
+            loss = self.weight * F.cross_entropy(logits, b_act)
+        else:
+            loss = self.weight * (
+                F.cross_entropy(logits, b_act)
+                + 0.5 * (((v_win.squeeze(-1) - b_val) ** 2 * b_has).sum() / denom)
+                + 0.05 * (((v_vp.squeeze(-1) - b_vp) ** 2 * b_has).sum() / denom))
         self.opt.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -984,12 +1001,17 @@ def evaluate_and_log_snapshot(
     num_baselines: int = 0,
     max_snapshot_opponents: int = 4,
     merged_influence: bool = False,
+    forced_opening: Optional[str] = None,
 ) -> Dict[str, float]:
     dev = resolve_device(device)
     snap_name = f"snapshot_{elapsed_seconds}s"
     # The model is evaluated in the action view it trains in (P23), probes included.
     current_agent = NeuralAgent(model=model, device=dev, name=snap_name,
                                 merged_influence=merged_influence)
+    if forced_opening:
+        # --forced-opening: the run never learns its setup, so its match evals play the opening
+        # it trained from. (The probes below still let the model set up for itself.)
+        setattr(current_agent, "forced_opening", forced_opening)
 
     # Decisive-decision rates. These move long before win rate does, because a forced win
     # or avoidable forced loss arises at well under 1% of decisions -- rare enough to be
@@ -1204,6 +1226,38 @@ def resume_states_in(run_dir: str) -> Dict[int, str]:
     return found
 
 
+#: A league member on disk: `snapshot_<n>steps.pt`, optionally behind a prefix (a published
+#: exploiter snapshot is `<run>_snapshot_<n>steps.pt`). Not `pool_*` or `resume_*`, and not
+#: `snapshot_final.pt` / `snapshot_0s.pt`, which are copies or the untrained start.
+LEAGUE_SNAPSHOT_RE = re.compile(r"(?:^|_)snapshot_(\d+)steps\.pt$")
+
+
+def scan_league_snapshots(dirs: Sequence[str], seen: Set[str],
+                          settle_seconds: float = 20.0) -> List[str]:
+    """P24: snapshot files in `dirs` not in `seen`, oldest first by modification time.
+
+    A file modified within the last `settle_seconds` is left for the next scan rather than read
+    while it may still be being written. Symlinks are followed, and `seen` holds resolved paths,
+    so a snapshot published under two names is taken once.
+    """
+    now = time.time()
+    found: List[Tuple[float, str]] = []
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not LEAGUE_SNAPSHOT_RE.search(f):
+                continue
+            path = os.path.realpath(os.path.join(d, f))
+            if path in seen or not os.path.isfile(path):
+                continue
+            mtime = os.path.getmtime(path)
+            if now - mtime < settle_seconds:
+                continue
+            found.append((mtime, path))
+    return [q for _, q in sorted(found)]
+
+
 def resolve_resume(resume: str) -> str:
     """The resume state a --resume argument names.
 
@@ -1293,6 +1347,8 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
         "adv_std_ema": float(getattr(getattr(trainer, "buffer", None), "adv_std_ema", 0.0)),
         "adv_std_ema_steps": float(getattr(getattr(trainer, "buffer", None), "adv_std_ema_steps", 0.0)),
         "ent_coef_seat": (dict(trainer.ent_coef_seat) if hasattr(trainer, "ent_coef_seat") else None),
+        # --setup-entropy-floor's adaptive coefficient.
+        "setup_ent_coef": float(getattr(trainer, "setup_ent_coef", 0.0)),
     }, path)
 
 
@@ -1324,6 +1380,8 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         _buf.adv_std_ema_steps = float(blob.get("adv_std_ema_steps", 0.0))
     if hasattr(trainer, "ent_coef_seat") and blob.get("ent_coef_seat"):
         trainer.ent_coef_seat = {int(k): float(v) for k, v in blob["ent_coef_seat"].items()}
+    if hasattr(trainer, "setup_ent_coef"):
+        trainer.setup_ent_coef = float(blob.get("setup_ent_coef", 0.0))
     recorded_seed = blob.get("seed", None)
     reseed = seed is not None and (recorded_seed is None or int(recorded_seed) != int(seed))
     if reseed:
@@ -1424,7 +1482,12 @@ def train_pipeline(
     opponent_pfsp_uniform_mix: float = 0.25,
     seat_balance: bool = False,
     seat_balance_max_frac: float = 0.8,
+    league_dirs: Optional[List[str]] = None,
+    league_pool_size: int = 4,
+    league_frac: Optional[float] = None,
     per_seat_adv_norm: bool = False,
+    adv_norm_learner_only: bool = False,
+    opponent_temperature: Optional[float] = None,
     wolf_seat_weight: bool = False,
     wolf_power: float = 1.0,
     wolf_ema_games: float = 2000.0,
@@ -1435,8 +1498,18 @@ def train_pipeline(
     entropy_ceiling: float = 0.0,
     target_kl: float = 0.0,
     entropy_normalize: bool = False,
+    setup_entropy_floor: float = 0.0,
+    setup_entropy_lr: float = 0.01,
+    setup_entropy_max_coef: float = 1.0,
+    setup_mc_credit: bool = False,
+    setup_mc_coef: float = 1.0,
+    setup_mc_min_batch: int = 512,
+    forced_opening: Optional[str] = None,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
+    setup_block_lambda: bool = False,
+    block_lambda: str = "off",
+    inject_setup_only: bool = False,
     cuda_graphs: bool = True,
     start_pool_frac: float = 0.0,
     start_pool_capacity: int = 512,
@@ -1466,6 +1539,21 @@ def train_pipeline(
             "invisible only while no decision compares countries with other actions. E4.1's "
             "merged view does (influence-first-point-in-X against the play modes), so the shift "
             "is part of the policy there. Refused rather than silently changing the policy.")
+    if setup_block_lambda and block_lambda not in ("off", "setup"):
+        raise ValueError(f"--setup-block-lambda is --block-lambda setup; it conflicts with "
+                         f"--block-lambda {block_lambda}.")
+    if inject_setup_only and not (inject_dataset and inject_every > 0):
+        raise ValueError("--inject-setup-only filters --inject-dataset; give it a dataset and "
+                         "--inject-every.")
+    if league_dirs and opponent_frac <= 0.0:
+        raise ValueError("--league-dirs adds opponents to the pool, so it needs --opponent-frac > 0.")
+    if league_dirs and int(league_pool_size) < 1:
+        raise ValueError(f"--league-pool-size must be >= 1, got {league_pool_size}")
+    if league_frac is not None and not league_dirs:
+        raise ValueError("--league-frac sets the league's share of draws; give --league-dirs.")
+    if league_dirs and opponent_checkpoints:
+        raise ValueError("--league-dirs grows the pool from other runs; it is not combined with a "
+                         "fixed --opponent-checkpoints pool.")
     if int(pool_every_steps) <= 0:
         raise ValueError(
             f"pool_every_steps must be positive, got {pool_every_steps}. It sets the rate the "
@@ -1621,7 +1709,9 @@ def train_pipeline(
         "opponent_pool_size": int(opponent_pool_size),
         "reset_opponent_pool": bool(reset_opponent_pool),
         "setup_explore_frac": float(setup_explore_frac),
-        "rollout_temps": list(rollout_temps) if rollout_temps else None,
+        # Always the bands actually used: a record of None means a run from before the default
+        # changed, and so the legacy bands (see nash_pg.LEGACY_ROLLOUT_TEMPS).
+        "rollout_temps": list(rollout_temps) if rollout_temps else list(DEFAULT_ROLLOUT_TEMPS),
         "opponent_checkpoints": list(opponent_checkpoints or []),
         # Recorded because they change what the arm IS, and an unrecorded flag is how a
         # two-factor experiment stays invisible -- snapshot_every_steps was missing for
@@ -1635,7 +1725,12 @@ def train_pipeline(
         "ref_update_freq": ref_update_freq,
         "seat_balance": bool(seat_balance),
         "seat_balance_max_frac": float(seat_balance_max_frac),
+        "league_dirs": [os.path.abspath(d) for d in league_dirs] if league_dirs else None,
+        "league_pool_size": int(league_pool_size),
+        "league_frac": None if league_frac is None else float(league_frac),
         "per_seat_adv_norm": bool(per_seat_adv_norm),
+        "adv_norm_learner_only": bool(adv_norm_learner_only),
+        "opponent_temperature": None if opponent_temperature is None else float(opponent_temperature),
         "wolf_seat_weight": bool(wolf_seat_weight),
         "wolf_power": float(wolf_power),
         "wolf_ema_games": float(wolf_ema_games),
@@ -1646,8 +1741,18 @@ def train_pipeline(
         "entropy_ceiling": float(entropy_ceiling),
         "target_kl": float(target_kl),
         "entropy_normalize": bool(entropy_normalize),
+        "setup_entropy_floor": float(setup_entropy_floor),
+        "setup_entropy_lr": float(setup_entropy_lr),
+        "setup_entropy_max_coef": float(setup_entropy_max_coef),
+        "forced_opening": forced_opening,
+        "setup_mc_credit": bool(setup_mc_credit),
+        "setup_mc_coef": float(setup_mc_coef),
+        "setup_mc_min_batch": int(setup_mc_min_batch),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
+        "setup_block_lambda": bool(setup_block_lambda),
+        "block_lambda": str(block_lambda),
+        "inject_setup_only": bool(inject_setup_only),
         "cuda_graphs": bool(cuda_graphs),
         # The optimisation settings, under their CLI names so tools/scripts/launch_flags.py can
         # diff them. Until 2026-09-24 none of these was recorded, so a run launched with a
@@ -1741,7 +1846,30 @@ def train_pipeline(
     # instead. The pool is rebuilt as the policy moves on; see ai/training/start_pool.py.
     start_pool: Optional[StartPositionPool] = None
     env_start_turns: List[Optional[int]] = [None] * num_envs
-    if start_pool_frac > 0.0:
+    if forced_opening:
+        # Every game starts from a scripted setup (tools/lib/openings.py): each fresh deal has
+        # its fifteen setup placements played by the named opening before the policy sees it, so
+        # the learner never makes -- or is trained on -- a setup decision.
+        if start_pool_frac > 0.0:
+            raise ValueError("--forced-opening and --start-pool-frac are not combined: the start "
+                             "pool's harvested games would still use the policy's own setup")
+        from tools.lib.openings import OPENINGS, play_scripted_setup
+        if forced_opening not in OPENINGS:
+            raise ValueError(f"unknown opening {forced_opening!r}; known: {sorted(OPENINGS)}")
+        _opening_env: List[TsVectorizedEnv] = []
+
+        def _opening_provider(env_idx: int) -> Optional[Any]:
+            return play_scripted_setup(_opening_env[0].runner.get_state(env_idx), str(forced_opening))
+
+        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed,
+                              reward_calculator=reward_calc,
+                              start_provider=_opening_provider,
+                              window_provoked_defcon=window_provoked_defcon)
+        _opening_env.append(env)
+        print(f"[forced opening] every game starts after the '{forced_opening}' setup: "
+              f"USSR {OPENINGS[forced_opening]['USSR']}, US {OPENINGS[forced_opening]['US']}",
+              flush=True)
+    elif start_pool_frac > 0.0:
         mix = dict(DEFAULT_TURN_MIX)
         pool_turns = tuple(t for t in mix if t != 1)
         start_pool = StartPositionPool(turns=pool_turns,
@@ -1812,6 +1940,8 @@ def train_pipeline(
         rollout_temps=rollout_temps,
         merged_influence=merged_influence,
         per_seat_adv_norm=per_seat_adv_norm,
+        adv_norm_learner_only=adv_norm_learner_only,
+        opponent_temperature=opponent_temperature,
         wolf_seat_weight=wolf_seat_weight,
         wolf_power=wolf_power,
         wolf_ema_games=wolf_ema_games,
@@ -1822,8 +1952,16 @@ def train_pipeline(
         entropy_ceiling=entropy_ceiling,
         target_kl=target_kl,
         entropy_normalize=entropy_normalize,
+        setup_entropy_floor=setup_entropy_floor,
+        setup_entropy_lr=setup_entropy_lr,
+        setup_entropy_max_coef=setup_entropy_max_coef,
+        setup_mc_credit=setup_mc_credit,
+        setup_mc_coef=setup_mc_coef,
+        setup_mc_min_batch=setup_mc_min_batch,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
+        setup_block_lambda=setup_block_lambda,
+        block_lambda=block_lambda,
         cuda_graphs=cuda_graphs,
         device=dev,
     )
@@ -1832,7 +1970,40 @@ def train_pipeline(
     # snapshot instead of against itself, so the outcome depends on the learner's actions
     # again and the advantage signal has something to be non-zero about. See
     # ai/training/opponent_pool.py and research/plans/P10_opponent_sampling.md.
-    if opponent_frac > 0.0 and (opponent_checkpoints or opponent_self_pool):
+    _league_seen: Set[str] = set()
+
+    def _league_scan() -> int:
+        """P24: add the league directories' new snapshots to the pool; returns how many.
+
+        Only the newest `league_pool_size` of what is new are loaded -- the league group keeps
+        no more than that, so loading older ones would only evict them again. A snapshot that
+        fails to load is left unseen, to be tried at the next scan.
+        """
+        pool = trainer.opponent_pool
+        if pool is None or not league_dirs:
+            return 0
+        from ai.training.opponent_pool import load_pool as _load
+        new = scan_league_snapshots(league_dirs, _league_seen)
+        _league_seen.update(new)
+        added = 0
+        for q in new[-int(league_pool_size):]:
+            try:
+                net = _load([q], dev)[0]
+            except Exception as exc:
+                print(f"[league] could not load {q} ({exc}); will retry at the next scan",
+                      flush=True)
+                _league_seen.discard(q)
+                continue
+            m = LEAGUE_SNAPSHOT_RE.search(os.path.basename(q))
+            pool.add(net, int(m.group(1)) if m else 0, merged=checkpoint_merged_influence(q),
+                     path=q, group="league")
+            added += 1
+        if added:
+            print(f"[league] +{added} member(s); league group now "
+                  f"{sum(g == 'league' for g in pool.groups)} of {len(pool.nets)}", flush=True)
+        return added
+
+    if opponent_frac > 0.0 and (opponent_checkpoints or opponent_self_pool or league_dirs):
         from ai.training.opponent_pool import OpponentPool, load_pool
 
         _lock = {"us": 1, "ussr": -1, None: None}[opponent_lock_side]
@@ -1841,10 +2012,29 @@ def train_pipeline(
         _saved_pool: Optional[Dict[str, Any]] = None
         _seed_steps: List[int] = []
         _seed_paths: List[str] = []
+        _seed_groups: Optional[List[str]] = None
         if opponent_checkpoints:
             _seed_nets = load_pool(opponent_checkpoints, dev)
             _seed_merged = [checkpoint_merged_influence(p) for p in opponent_checkpoints]
             _src = f"{len(opponent_checkpoints)} fixed snapshot(s)"
+        elif not opponent_self_pool:
+            # P24: a pool made only of other runs' snapshots -- the main exploiter's, which plays
+            # nothing but the main agent's newest. Everything already on disk is marked seen, so
+            # only the newest `league_pool_size` are ever played and later scans add what is new.
+            _found = scan_league_snapshots(league_dirs or [], _league_seen)
+            if not _found:
+                raise RuntimeError(
+                    f"--league-dirs holds no snapshot to play against: {league_dirs}. A league-only "
+                    "pool needs at least one snapshot_<n>steps.pt there before it starts.")
+            _league_seen.update(_found)
+            _new = _found[-int(league_pool_size):]
+            _seed_nets = load_pool(_new, dev)
+            _seed_merged = [checkpoint_merged_influence(p) for p in _new]
+            _seed_groups = ["league"] * len(_new)
+            _seed_steps = [int(m.group(1)) if (m := LEAGUE_SNAPSHOT_RE.search(os.path.basename(q))) else 0
+                           for q in _new]
+            _seed_paths = list(_new)
+            _src = f"{len(_new)} league snapshot(s) from {', '.join(league_dirs or [])}"
         else:
             # On RESUME, rebuild the pool from the snapshots this run already wrote. The resume
             # state carries the model, optimiser, pi_ref, step counts and RNG -- not the pool --
@@ -1943,6 +2133,9 @@ def train_pipeline(
             merged=_seed_merged,
             seat_balance=seat_balance,
             seat_balance_max_frac=seat_balance_max_frac,
+            groups=_seed_groups,
+            league_capacity=int(league_pool_size) if league_dirs else 0,
+            league_frac=league_frac,
         )
         if any(_seed_merged) or merged_influence:
             print(f"[opponent pool] action views (P23): learner "
@@ -1950,6 +2143,9 @@ def train_pipeline(
                   f"{sum(_seed_merged)} E4.1 / {len(_seed_merged) - sum(_seed_merged)} E4", flush=True)
         if opponent_self_pool and not opponent_checkpoints and _saved_pool:
             trainer.opponent_pool.load_state_dict(_saved_pool, _seed_steps, _seed_paths)
+        elif _seed_groups is not None:
+            trainer.opponent_pool.steps = list(_seed_steps)
+            trainer.opponent_pool.paths = list(_seed_paths)
         elif opponent_self_pool and not opponent_checkpoints and _seed_paths:
             # A rebuild has no record to restore, but its members' steps are known and must be
             # kept for the same reason: at step 0 they would be the first evicted.
@@ -1964,8 +2160,20 @@ def train_pipeline(
               f"draw={'PFSP-' + opponent_pfsp_weighting if opponent_pfsp else 'uniform'}"
               + (f" (uniform floor {opponent_pfsp_uniform_mix})" if opponent_pfsp else "")
               + (f", seat-balance=on (max frac {seat_balance_max_frac})" if seat_balance else ""))
+        if league_dirs:
+            print(f"[league] dirs={', '.join(league_dirs)}, capacity={league_pool_size}, "
+                  f"share of draws={'by size' if league_frac is None else league_frac}", flush=True)
+            if opponent_self_pool:
+                _league_scan()
     if per_seat_adv_norm:
         print("[advantages] normalised per seat (--per-seat-adv-norm)", flush=True)
+    if adv_norm_learner_only:
+        print("[advantages] mean and spread from the learner's own transitions "
+              "(--adv-norm-learner-only)", flush=True)
+    if opponent_temperature is not None:
+        print(f"[opponent pool] opponents play at temperature {opponent_temperature:g} "
+              f"({'greedy' if opponent_temperature <= 0 else 'sampled'}; --opponent-temperature)",
+              flush=True)
     if wolf_seat_weight:
         print(f"[wolf] per-seat weights from the self-play USSR share on the {wolf_scope} "
               f"objective: power={wolf_power}, dead zone={wolf_dead_zone} ({wolf_dead_zone_mode}), "
@@ -1988,6 +2196,17 @@ def train_pipeline(
     if entropy_normalize:
         print(f"[entropy] the bonus rewards entropy / log(legal) per decision (--entropy-normalize), "
               f"coefficient {entropy_coef:g}", flush=True)
+    if setup_mc_credit:
+        if forced_opening:
+            raise ValueError("--setup-mc-credit has no setup to credit under --forced-opening")
+        print(f"[setup MC credit] the learner's setup placements are credited with the game result "
+              f"(advantage = result - V), coef {setup_mc_coef:g}, trained in batches of >= "
+              f"{setup_mc_min_batch} once their games end; dropped from the lambda-return surrogate",
+              flush=True)
+    if setup_entropy_floor > 0.0:
+        print(f"[setup entropy floor] {setup_entropy_floor:g} nats on the learner's setup placements; "
+              f"coefficient adapts at lr {setup_entropy_lr:g} within [0, {setup_entropy_max_coef:g}]",
+              flush=True)
     if target_kl > 0.0:
         print(f"[P25 3l] per-seat KL early stop at approx KL {target_kl:g} from the rollout policy "
               f"(--target-kl)", flush=True)
@@ -2026,11 +2245,13 @@ def train_pipeline(
     # resume finds as it finds snapshots.
     pool_every = int(pool_every_steps)
     next_pool_steps = pool_every
+    next_league_scan = 0
     it = 0
 
     injector = None
     if inject_dataset and inject_every > 0:
-        injector = _HumanInjector(inject_dataset, model, dev, inject_every, inject_weight)
+        injector = _HumanInjector(inject_dataset, model, dev, inject_every, inject_weight,
+                                  setup_only=inject_setup_only)
         print(f"Injecting human data from {inject_dataset} every {inject_every} "
               f"iterations at weight {inject_weight}; "
               f"{len(injector.train_idx):,} train samples, "
@@ -2077,6 +2298,7 @@ def train_pipeline(
     evaluate_and_log_snapshot(
         model=model,
         merged_influence=merged_influence,
+        forced_opening=forced_opening,
         opponents=opponents,
         elapsed_seconds=0,
         out_dir=out_dir,
@@ -2244,7 +2466,9 @@ def train_pipeline(
                     "wolf_sp_ussr", "wolf_w_us", "wolf_w_ussr",
                     # P25 3j-3l. approx_kl_* is always present; the rest only with their lever.
                     "approx_kl_us", "approx_kl_ussr", "kl_stop_frac_us", "kl_stop_frac_ussr",
-                    "ent_coef_us", "ent_coef_ussr",
+                    "ent_coef_us", "ent_coef_ussr", "entropy_setup", "setup_ent_coef",
+                    "setup_mc_n", "setup_mc_ready", "setup_mc_pending", "setup_mc_result_mean",
+                    "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss"):
@@ -2341,6 +2565,10 @@ def train_pipeline(
                 print(f"[opponent pool] FAILED to add snapshot at {total_env_steps}: {_e}",
                       flush=True)
 
+        if league_dirs and total_env_steps >= next_league_scan:
+            next_league_scan = total_env_steps + pool_every
+            _league_scan()
+
         if due:
             # Beside the snapshot, not inside it: snapshot_*.pt stays a bare state dict because
             # load_agent, the tournament runner and every eval module read it as one.
@@ -2363,6 +2591,7 @@ def train_pipeline(
             decisive = evaluate_and_log_snapshot(
                 model=model,
                 merged_influence=merged_influence,
+                forced_opening=forced_opening,
                 opponents=opponents,
                 elapsed_seconds=int(elapsed),
                 out_dir=out_dir,
@@ -2396,6 +2625,7 @@ def train_pipeline(
     evaluate_and_log_snapshot(
         model=model,
         merged_influence=merged_influence,
+        forced_opening=forced_opening,
         opponents=opponents,
         elapsed_seconds=int(time.time() - t_start),
         out_dir=out_dir,

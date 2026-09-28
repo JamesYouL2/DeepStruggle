@@ -103,3 +103,49 @@ def test_the_log_rows_carry_probability_chips(browser, traced_replay_server):
     chips = page.locator("#action-log-stream .trace-chip")
     assert chips.count() > 0, "no step in the stream showed a probability chip"
     page.close()
+
+
+def test_the_side_to_move_is_the_highlighted_reading(browser, traced_replay_server):
+    """Only the decider's critic reading is trained: the readout lights that side and dims the
+    other, and the next step's player is the decider of the position a step's critic was read on
+    (the critic is read *after* the step's action)."""
+    import json as _json
+    import urllib.request
+
+    url = f"{traced_replay_server}/api/local/replays/traced_fixture.tslog.json"
+    steps = _json.loads(urllib.request.urlopen(url).read())["steps"]
+
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.goto(f"{traced_replay_server}/?replay=traced_fixture.tslog.json")
+    page.wait_for_selector("#rep-value-ribbon svg path.ribbon-calibrated", timeout=15000)
+    assert page.locator("#rep-value-ribbon path.ribbon-uncalibrated").count() >= 1, (
+        "the untrained reading should be drawn as the faint secondary line")
+
+    seen = set()
+    for i, step in enumerate(steps[:-1]):
+        decider = steps[i + 1]["player"]
+        if decider in seen or decider not in ("US", "USSR") or "critic" not in step:
+            continue
+        page.evaluate(f"window.__wb.replayControls.goToStep({i})")
+        panel = page.locator("#trace-panel")
+        cal = panel.locator(".value-side.calibrated")
+        page.wait_for_function(
+            "d => document.querySelector('#trace-panel .value-side.calibrated')?.dataset.side === d",
+            arg=decider, timeout=5000)
+        other = "USSR" if decider == "US" else "US"
+        assert cal.count() == 1 and cal.get_attribute("data-side") == decider
+        assert panel.locator(f".value-side.uncalibrated[data-side='{other}']").count() == 1
+        assert panel.locator(".trace-critic tr.calibrated").get_attribute("data-side") == decider
+        assert panel.locator(f".trace-critic tr.uncalibrated[data-side='{other}']").count() == 1
+
+        # The number shown is the decider's own P(win) = (1 + v)/2, and the bar is that reading
+        # turned to the US point of view -- never the other side's.
+        v = step["critic"]["v_win_us" if decider == "US" else "v_win_ussr"]
+        assert abs(float(cal.get_attribute("data-p")) - (1 + v) / 2) < 1e-5
+        p_us = (1 + v) / 2 if decider == "US" else 1 - (1 + v) / 2
+        assert abs(float(panel.locator(".value-bar").get_attribute("data-p-us")) - p_us) < 1e-5
+        seen.add(decider)
+        if len(seen) == 2:
+            break
+    assert seen == {"US", "USSR"}, f"the fixture never had both sides to move: {seen}"
+    page.close()

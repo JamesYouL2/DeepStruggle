@@ -125,7 +125,7 @@ it computes information-set values and combines them with a world-state identity
 
 | commit to | means | cost |
 |:---|:---|:---|
-| **world-state value** | a centralised critic that sees the true state, both hands included. Antisymmetry then holds by construction and the telescope is valid. Suphx's oracle guiding; MADDPG/COMA | queued as [`../../../plans/P5_oracle_critic.md`](../../../plans/P5_oracle_critic.md); old implementation recoverable from `574e04a` |
+| **world-state value** | a centralised critic that sees the true state, both hands included. Antisymmetry then holds by construction and the telescope is valid. Suphx's oracle guiding; MADDPG/COMA | queued as [`../../../plans/P5_oracle_critic.md`](../../../plans/P5_oracle_critic.md); old implementation recoverable from `9c74b98` |
 | **information-set value** | per-player trajectories: each player's own GAE over its own decision points, bootstrapping from its next *own* decision, opponent rewards folded in. No cross-perspective bootstrap occurs at all | contained to `compute_gae`, no extra forward passes |
 
 A belief-conditioned value (ReBeL, Student of Games —

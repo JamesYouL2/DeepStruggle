@@ -2585,3 +2585,42 @@ TEST(CardEdgeCasesTest, WarEvents_UnifiedWrapper_Suite) {
         ASSERT_EQ(state.countries[ts::countries::IRAN].us_influence, 2);
     }
 }
+
+// Each modifier carries its own limit (owner's ruling, 2026-09-26): Containment/Brezhnev to at
+// most 4 (5 for the China Card in Asia), Red Scare/Purge to no less than 1 -- a floor on the
+// result -- and Vietnam Revolts beyond either.
+TEST(CardEdgeCasesTest, OpsModifiers_VietnamRevolts_BeyondTheCaps_PurgeFloorOnTheResult) {
+    using namespace ts;
+    const uint8_t burma = countries::BURMA;
+    const uint8_t japan = countries::JAPAN;
+    const uint8_t france = countries::FRANCE;
+
+    // ts-replayer game 219, turn 2 AR6: Truman Doctrine (1 Op) under Purge and Vietnam Revolts
+    // is 1 - 1 + 1 = 1 in Southeast Asia, not 2.
+    GameState s1{};
+    s1.set_flag(effect_bits::PURGE_USSR_ACTIVE);
+    s1.set_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE);
+    ASSERT_EQ(Operations::get_effective_ops_in(s1, card_ids::TRUMAN_DOCTRINE, Player::USSR, burma), 1);
+    ASSERT_EQ(Operations::grant_ops_for_card(s1, card_ids::TRUMAN_DOCTRINE, Player::USSR), 1);
+    ASSERT_EQ(Operations::get_effective_ops_in(s1, card_ids::TRUMAN_DOCTRINE, Player::USSR, france), 1);
+    ASSERT_EQ(Operations::get_effective_ops_in(s1, card_ids::KOREAN_WAR, Player::USSR, burma), 2);
+
+    // Brezhnev caps a 4 at 4; Vietnam Revolts takes it to 5.
+    GameState s2{};
+    s2.set_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
+    s2.set_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE);
+    ASSERT_EQ(Operations::get_effective_ops_in(s2, card_ids::MARSHALL_PLAN, Player::USSR, france), 4);
+    ASSERT_EQ(Operations::get_effective_ops_in(s2, card_ids::MARSHALL_PLAN, Player::USSR, burma), 5);
+
+    // The China Card: Brezhnev cannot lift it past 4 outside Asia or 5 in Asia; Vietnam Revolts
+    // takes it to 6 in Southeast Asia, with or without Brezhnev.
+    ASSERT_EQ(Operations::get_effective_ops_in(s2, card_ids::THE_CHINA_CARD, Player::USSR, france), 4);
+    ASSERT_EQ(Operations::get_effective_ops_in(s2, card_ids::THE_CHINA_CARD, Player::USSR, japan), 5);
+    ASSERT_EQ(Operations::get_effective_ops_in(s2, card_ids::THE_CHINA_CARD, Player::USSR, burma), 6);
+    GameState s3{};
+    s3.set_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE);
+    ASSERT_EQ(Operations::get_effective_ops_in(s3, card_ids::THE_CHINA_CARD, Player::USSR, burma), 6);
+
+    // Vietnam Revolts is the USSR's alone.
+    ASSERT_EQ(Operations::get_effective_ops_in(s3, card_ids::DUCK_AND_COVER, Player::US, burma), 3);
+}

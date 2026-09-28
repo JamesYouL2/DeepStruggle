@@ -3,7 +3,7 @@
 Two E4-08 replicates (M2d, λ 0.98, opponent pool 0.3/12) on new seeds, 36 and 37. Each ran from
 scratch straight to 240M in a single run. Nothing resumed, so the drained-pool confound
 ([`P25_pool_resume_bug.md`](P25_pool_resume_bug.md)) that affected every earlier E4-08 leg past
-80M is absent. They ran on the fixed CUDA-graph code (`9bfceb1`) and the clang engine.
+80M is absent. They ran on the fixed CUDA-graph code (`754f9e1`) and the clang engine.
 `launch_flags.py --diff` against E4-08-03's first leg shows the seed and `--train-steps` only.
 Both finished without a crash.
 

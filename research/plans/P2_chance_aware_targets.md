@@ -1,6 +1,8 @@
 # P2 — Chance-aware value targets
 
-**Status:** queued
+**Status:** **sized offline 2026-09-28, low priority**: averaging over dice and deals would
+remove about 7% of the critic's one-step error variance (dice 4.3%, deal 2.8%), 17% on turn 1 and
+about 5% by turns 8–10. See *Sizing* below.
 **Gate:** P0's chance-variance decomposition puts dice + deal at a substantial share of return
 variance; P1's target form is settled (the expectation is taken over whatever P1 adopted).
 **Needs approval:** **yes** — a batched forced-roll enumeration helper in `bindings/`. It is not
@@ -82,3 +84,32 @@ at turn 8; then Elo.
 ## Runs
 
 (none yet)
+
+## Sizing (2026-09-28)
+
+`tools/scripts/chance_sizing.py` measures what P2 removes directly, rather than P0's
+outcome-level decomposition. Decisions were sampled from E5-11-43@560M's self-play at temperature
+1: 49,869 of them, from 2,000 games. For each, the chosen action is applied to a copy and the
+chance that follows is resolved 16 times with fresh engine seeds, settling as training does. The
+critic's value of each result, from the deciding player's side, gives Var_chance V(s'). That is
+exactly the part of the one-step error delta = V(s') − V(s) that averaging over outcomes removes.
+It is set against Var(delta) as a whole. Report: `data/reports/chance_sizing_e5_11_43.md`.
+
+| | decisions followed by it | share of Var(delta) P2 removes |
+|:---|---:|---:|
+| dice (same turn) | 8.3% | 4.3% |
+| deal (the turn advances) | 1.7% | 2.8% |
+| **both** | 9.8% | **7.1%** |
+
+By turn: 16.6% (turn 1), 9.3% (2–3), 8.0% (4–5), 6.0% (6–7), 4.5% (8–10).
+
+**Reading.** P2 would take about 7% off the variance of the steps the critic's targets and the
+policy's advantages are built from. The share is largest early and shrinks as the late game's own
+swings dominate. This is the chance *as the critic sees it*, which is all P2 can average, because
+it averages the critic's values. A critic that under-reacts to a coup's success would
+under-state the luck here, and P2 would equally fail to remove it. The rest of the one-step
+variance is mostly the sampled actions themselves (at temperature 1, the signal the policy
+gradient needs) and the critic's own inconsistency. That puts P2 behind cheaper levers: it needs a
+new bindings helper and your approval for a ~7% reduction. Together with P5's sizing (the hidden
+hand adds +0.3 points of outcome variance explained), variance reduction in the targets is not
+where this model's limits are.

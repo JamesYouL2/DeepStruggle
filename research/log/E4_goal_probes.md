@@ -55,3 +55,40 @@ over 2,000 openings, positions over 256 self-play games, blunders over 128, deci
 * **More games is not obviously what is missing.** Forced wins are a local, one-decision failure
   that 240M steps have not fixed, and the setup oscillates rather than converging. Both point at
   the training signal for rare or early decisions rather than at scale.
+
+## 2026-09-25: the long runs' best checkpoints against the goal
+
+Report: `data/reports/goal_probes_2026-09-25.{md,json}`, with the same settings as above.
+E4-61-44@720M is the strongest model rated (2374, `long_center_800M`). E4-57-44@590M is next
+(2349), then E4-08-36@240M (2297).
+
+| measurement | human | E4-61-44@720M | E4-61-44@800M | E4-61-43@800M | E4-57-44@590M | E4-56-43@800M | E4-08-36@240M |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| setup/USSR Poland >= 3 | 99.2% | 100.0% | 100.0% | **0.0%** | 100.0% | 100.0% | 100.0% |
+| setup/US West Germany >= 4 | 61.4% | 0.0% | 0.0% | 49.1% | 98.7% | 7.1% | 86.9% |
+| setup/US Iran >= 2 | 96.2% | 100.0% | 91.5% | 100.0% | 76.4% | 87.5% | 13.1% |
+| **setup/all targets** | **57.2%** | 0.0% | 0.0% | 0.0% | **75.1%** | 0.1% | 0.0% |
+| empty battlegrounds, turn 8 | — | 2.47 | 2.83 | 3.91 | 2.46 | 2.28 | **1.58** |
+| uncontrolled battlegrounds, turn 8 | — | 6.71 | 8.91 | 9.41 | 8.12 | 6.25 | **4.74** |
+| own-DEFCON loss with an alternative (τ 0.1) | — | 2.3% | 1.3% | 1.5% | 1.6% | 2.9% | 1.9% |
+| space exit on own/neutral card (τ 0.1) | — | 9.9% | 3.2% | 11.4% | 9.9% | 8.8% | 5.7% |
+| **forced wins taken** | — | 65.8% | 63.0% | 62.0% | 66.0% | 65.6% | 65.5% |
+| avoidable losses avoided | — | 95.3% | 95.6% | 93.1% | 96.2% | 93.7% | 93.5% |
+
+**Elo improved, the goal criteria did not:**
+* **Setup still oscillates.** Two snapshots of one run, 80M apart, take West Germany 0% and 0%.
+  E4-61-43@800M has *lost Poland* (0%), which every checkpoint measured before had solved.
+  E4-57-44@590M happens to hit all four targets 75% of the time, above the human 57%. It is one
+  snapshot of an oscillation, not a solved criterion.
+* **Battleground coverage got worse with long training.** The 560–800M checkpoints leave 2.3–3.9
+  battlegrounds empty and 6.3–9.4 uncontrolled at turn 8. E4-08-36@240M leaves 1.6 and 4.7, and
+  E4-31-03@240M left 0.9 and 3.2 on 09-23. The long runs gained Elo while contesting less of the
+  board.
+* **Forced wins are stuck at 62–66%** in every checkpoint, from 240M to 800M, as they were at
+  59–70% on 09-23. It remains the largest simple mistake.
+* **DEFCON and card disposal are close to fine** at the evaluation temperature: 1.3–2.9% and
+  3–11%.
+
+**What it implies.** Training time and the stability fixes bought Elo, not the named behaviours.
+Every one of the goal's criteria either oscillates or is flat under more training, so reaching
+the goal needs levers aimed at the signal for those decisions, not more steps.

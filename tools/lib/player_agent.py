@@ -348,6 +348,19 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "temperature", float(t_str))
         setattr(agent, "name", f"{agent.name}@T{float(t_str):g}")
         return agent
+    if s.lower().startswith("opening:"):
+        # opening:<name>:<rest-of-spec> -- this agent's setup is the named opening from
+        # tools/lib/openings.py instead of its own placements, for checkpoints trained with
+        # --forced-opening, whose setup was never learned. Read by the batch runner with
+        # getattr(agent, "forced_opening", None), like temperature above.
+        _, name, rest = s.split(":", 2)
+        from tools.lib.openings import OPENINGS
+        if name not in OPENINGS:
+            raise ValueError(f"unknown opening {name!r}; known: {sorted(OPENINGS)}")
+        agent = load_agent(rest, device=device)
+        setattr(agent, "forced_opening", name)
+        setattr(agent, "name", f"{agent.name}+{name}")
+        return agent
     if s.lower().startswith("search:"):
         # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample]]]]
         #

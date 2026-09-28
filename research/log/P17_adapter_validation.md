@@ -11,7 +11,7 @@ adapter.**
 | `28M` vs `36M` | 94.0% (282/300) | 95.7% (287/300) | +1.7pp | 0.92 |
 
 Largest |z| = 0.92 against a two-sided 5% threshold of 1.96. **The merge did not move playing
-strength.** The checkpoints are from `E3-35-28_20260918_001501`; the old engine is `ebfd55d`
+strength.** The checkpoints are from `E3-35-28_20260918_001501`; the old engine is `6046075`
 rebuilt from a `git archive` export.
 
 `snapshot_0s` is **not** untrained, which is how it was first described here and it was wrong.

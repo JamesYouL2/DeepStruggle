@@ -12,6 +12,7 @@ import torch
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
+from tools.lib.openings import ScriptedSetupOverride
 from tools.lib.player_agent import PlayerAgent, NeuralAgent, HeuristicAgent, RandomAgent, load_agent, resolve_device
 from ai.game_length import ply as game_ply
 from tools.lib.tournament_evaluator import classify_game_ending_reason
@@ -188,6 +189,9 @@ class BatchMatchRunner:
                                             [bool(x) for x in np.where(first, mv_a, mv_b)])
             active = np.ones(cur_games, dtype=bool)
             steps = 0
+            open_a = getattr(agent_a, "forced_opening", None)
+            open_b = getattr(agent_b, "forced_opening", None)
+            setup_override = ScriptedSetupOverride(cur_games) if (open_a or open_b) else None
 
             # Temporary arrays for current chunk
             chunk_utils = np.zeros(cur_games, dtype=np.float32)
@@ -327,6 +331,11 @@ class BatchMatchRunner:
                             leg = np.where(masks[idx] > 0)[0]
                             actions[idx] = np.random.choice(leg) if len(leg) > 0 else 0
 
+                if setup_override is not None:
+                    if open_a:
+                        setup_override.apply(actions, obs, masks, d_players, np.where(is_a_turn)[0], open_a)
+                    if open_b:
+                        setup_override.apply(actions, obs, masks, d_players, np.where(is_b_turn)[0], open_b)
                 step_results = runner.step_flat_all(actions.tolist(),
                                                     auto_advance=auto_advance)
                 # 0 = refused. A refused action here means a game silently did not advance and the
@@ -484,6 +493,220 @@ class BatchMatchRunner:
             }
 
         return res
+
+    @staticmethod
+    def play_packed_matchups(
+        pairs: Sequence[Tuple[PlayerAgent, PlayerAgent]],
+        games_per_side: int = 1000,
+        batch_chunk_size: int = 1000,
+        base_seed: int = 10000,
+        device: Optional[Union[torch.device, str]] = None,
+        max_steps: int = 2500,
+        temperature: float = 0.1,
+        deterministic: Optional[bool] = None,
+        auto_advance: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Several matchups in ONE engine batch, one forward per agent per step over all its rows.
+
+        `play_parallel_matchup` plays one pairing at a time with ~2 x games_per_side games, so a
+        field spends its time in a Python loop around forwards of ~100 positions -- the GPU sat at
+        ~35%. Here K pairings share a VectorizedBatchRunner and every agent's positions across
+        all of them go through one forward per step.
+
+        Each game gets exactly the seed `play_parallel_matchup` would give it (the same chunked
+        seed formula, the same seat-swapped copy), and the result dicts have the same fields. So
+        bots and greedy agents reproduce `play_parallel_matchup` game for game, up to float
+        rounding that a different batch composition can introduce; sampled agents reproduce it in
+        distribution only, since the random stream is consumed in a different order. Choice
+        tracking and game logs are not supported here: callers use the one-pair path for those.
+        """
+        dev = resolve_device(device)
+        greedy = (temperature <= 0.05) if deterministic is None else deterministic
+
+        def _temp_for(agent: PlayerAgent) -> Tuple[float, bool]:
+            t = getattr(agent, "temperature", None)
+            if t is None:
+                return temperature, greedy
+            t = float(t)
+            return t, (t <= 0.05) if deterministic is None else deterministic
+
+        if games_per_side <= 0:
+            raise ValueError(f"games_per_side must be positive, got {games_per_side}")
+        gps = int(games_per_side)
+        half_per_chunk = min(gps, batch_chunk_size // 2)
+        chunk_size = half_per_chunk * 2
+        # The seed play_parallel_matchup gives game k of a pairing (k < games_per_side), both seats.
+        seeds = [base_seed + (k // half_per_chunk) * chunk_size + (k % half_per_chunk)
+                 for k in range(gps)]
+
+        P = len(pairs)
+        n = P * 2 * gps
+        runner = ts.VectorizedBatchRunner(n, base_seed)
+        a_is_ussr = np.zeros(n, dtype=bool)          # env seats pair p's agent A as USSR
+        for p in range(P):
+            off = p * 2 * gps
+            for k in range(gps):
+                runner.reset_game(off + k, seeds[k])
+                runner.reset_game(off + gps + k, seeds[k])
+            a_is_ussr[off:off + gps] = True
+        runner.refresh_all()
+
+        agents: List[PlayerAgent] = []
+        index: Dict[int, int] = {}
+        for a, b in pairs:
+            for ag in (a, b):
+                if id(ag) not in index:
+                    index[id(ag)] = len(agents)
+                    agents.append(ag)
+        a_idx = np.repeat(np.array([index[id(a)] for a, _ in pairs]), 2 * gps)
+        b_idx = np.repeat(np.array([index[id(b)] for _, b in pairs]), 2 * gps)
+        ussr_agent = np.where(a_is_ussr, a_idx, b_idx)
+        us_agent = np.where(a_is_ussr, b_idx, a_idx)
+
+        mv = np.array([bool(getattr(ag, "merged_influence", False)) for ag in agents])
+        if mv.any():
+            runner.set_merged_influence([bool(x) for x in mv[us_agent]],
+                                        [bool(x) for x in mv[ussr_agent]])
+
+        temps = [_temp_for(ag) for ag in agents]
+        openings = [getattr(ag, "forced_opening", None) for ag in agents]
+        setup_override = ScriptedSetupOverride(n) if any(openings) else None
+        active = np.ones(n, dtype=bool)
+        utils = np.zeros(n, dtype=np.float32)
+        vps = np.zeros(n, dtype=np.int32)
+        turns = np.zeros(n, dtype=np.int32)
+        plies = np.zeros(n, dtype=np.int32)
+        fin_steps = np.zeros(n, dtype=np.int32)
+        causes = [""] * n
+        t0 = time.time()
+        steps = 0
+        while np.any(active) and steps < max_steps:
+            obs = runner.get_observations()
+            masks = runner.get_action_masks()
+            d_players = np.array(runner.get_decision_players())
+            terms = np.array(runner.get_terminals())
+            newly = active & terms
+            for idx in np.where(newly)[0]:
+                st = runner.get_state(int(idx))
+                utils[idx] = float(ts.Engine.get_terminal_utility(st))
+                vps[idx] = int(st.victory_points)
+                turns[idx] = int(st.turn)
+                plies[idx] = game_ply(int(st.turn), int(st.action_round),
+                                      st.phasing_player == ts.Player.US,
+                                      headline_stage=int(st.headline_stage))
+                fin_steps[idx] = steps
+                causes[idx] = classify_game_ending_reason(st)
+            active = active & (~terms)
+            if not np.any(active):
+                break
+
+            actor = np.where(d_players == -1, ussr_agent, us_agent)
+            actions = np.zeros(n, dtype=np.int32)
+            # Neural agents: the step's observations go to the device ONCE and are split there;
+            # every agent's actions land in one device tensor, read back with one sync per step.
+            # (Row-by-row CPU gathers and a copy + sync per agent were most of the loop's time.)
+            nn_rows = active & np.array([isinstance(agents[x], NeuralAgent) for x in range(len(agents))])[actor]
+            obs_dev = mask_dev = act_dev = None
+            if nn_rows.any():
+                obs_dev = torch.from_numpy(np.asarray(obs)).to(dev).float()
+                mask_dev = torch.from_numpy(np.asarray(masks)).to(dev)
+                act_dev = torch.zeros(n, dtype=torch.long, device=dev)
+            for ai, agent in enumerate(agents):
+                rows = np.where(active & (actor == ai))[0]
+                if len(rows) == 0:
+                    continue
+                t_ag, g_ag = temps[ai]
+                if isinstance(agent, NeuralAgent):
+                    assert obs_dev is not None and mask_dev is not None and act_dev is not None
+                    want = getattr(agent, "obs_size", None)
+                    if want is not None and obs_dev.shape[1] != want:
+                        _assert_width(agent, np.asarray(obs[rows[:1]]))
+                    rows_t = torch.from_numpy(rows).to(dev)
+                    with torch.no_grad():
+                        act_t, _, _, _, _ = agent.model.sample_action(
+                            obs_dev.index_select(0, rows_t), mask_dev.index_select(0, rows_t),
+                            temperature=t_ag, deterministic=g_ag)
+                    act_dev.index_copy_(0, rows_t, act_t.long())
+                elif hasattr(agent, "select_actions_batch"):
+                    picks = agent.select_actions_batch([runner.get_state(int(r)) for r in rows])
+                    actions[rows] = np.asarray(picks)
+                elif hasattr(agent, "select_action"):
+                    for r in rows:
+                        actions[r] = agent.select_action(runner.get_state(int(r)),
+                                                         ts.Player(int(d_players[r])),
+                                                         temperature=t_ag)
+                else:
+                    for r in rows:
+                        leg = np.where(masks[r] > 0)[0]
+                        actions[r] = np.random.choice(leg) if len(leg) > 0 else 0
+            if act_dev is not None:
+                nn_act = act_dev.cpu().numpy().astype(np.int32)
+                actions = np.where(nn_rows, nn_act, actions)
+            if setup_override is not None:
+                for ai, op in enumerate(openings):
+                    if op:
+                        setup_override.apply(actions, obs, masks, d_players,
+                                             np.where(active & (actor == ai))[0], op)
+            step_results = runner.step_flat_all(actions.tolist(), auto_advance=auto_advance)
+            if 0 in step_results:
+                bad = step_results.index(0)
+                raise IllegalActionError(
+                    f"engine refused flat action {int(actions[bad])} in game {bad} of "
+                    f"{len(actions)}; {step_results.count(0)} of the batch refused")
+            steps += 1
+        elapsed = time.time() - t0
+
+        out: List[Dict[str, Any]] = []
+        for p, (agent_a, agent_b) in enumerate(pairs):
+            off = p * 2 * gps
+            c = dict(a_wins=0, b_wins=0, draws=0, a_us_w=0, a_us_l=0, a_us_d=0,
+                     a_ussr_w=0, a_ussr_l=0, a_ussr_d=0)
+            causes_loss_us: Dict[str, int] = {}
+            causes_loss_ussr: Dict[str, int] = {}
+            causes_all: Dict[str, int] = {}
+            v_margin = []
+            for idx in range(off, off + 2 * gps):
+                ussr_is_a = bool(a_is_ussr[idx])
+                u = utils[idx]
+                reason = causes[idx] or "Early Termination"
+                causes_all[reason] = causes_all.get(reason, 0) + 1
+                v_margin.append(-vps[idx] if ussr_is_a else vps[idx])
+                a_won = (u > 0 and not ussr_is_a) or (u < 0 and ussr_is_a)
+                b_won = (u < 0 and not ussr_is_a) or (u > 0 and ussr_is_a)
+                if a_won:
+                    c["a_wins"] += 1
+                    c["a_ussr_w" if ussr_is_a else "a_us_w"] += 1
+                elif b_won:
+                    c["b_wins"] += 1
+                    if ussr_is_a:
+                        c["a_ussr_l"] += 1
+                        causes_loss_ussr[reason] = causes_loss_ussr.get(reason, 0) + 1
+                    else:
+                        c["a_us_l"] += 1
+                        causes_loss_us[reason] = causes_loss_us.get(reason, 0) + 1
+                else:
+                    c["draws"] += 1
+                    c["a_ussr_d" if ussr_is_a else "a_us_d"] += 1
+            sl = slice(off, off + 2 * gps)
+            total = 2 * gps
+            out.append({
+                "agent_a": agent_a.name, "agent_b": agent_b.name,
+                "total_games": total, "games_per_side": gps,
+                "a_wins": c["a_wins"], "b_wins": c["b_wins"], "draws": c["draws"],
+                "win_rate_a": float(c["a_wins"] / total), "win_rate_b": float(c["b_wins"] / total),
+                "a_wins_as_us": c["a_us_w"], "a_losses_as_us": c["a_us_l"], "a_draws_as_us": c["a_us_d"],
+                "win_rate_a_as_us": float(c["a_us_w"] / gps),
+                "a_wins_as_ussr": c["a_ussr_w"], "a_losses_as_ussr": c["a_ussr_l"],
+                "a_draws_as_ussr": c["a_ussr_d"],
+                "win_rate_a_as_ussr": float(c["a_ussr_w"] / gps),
+                "avg_steps": float(np.mean(fin_steps[sl])), "avg_turn": float(np.mean(turns[sl])),
+                "avg_ply": float(np.mean(plies[sl])), "avg_vp_margin_a": float(np.mean(v_margin)),
+                "causes_loss_us": causes_loss_us, "causes_loss_ussr": causes_loss_ussr,
+                "causes_all": causes_all,
+                # The pack's wall time is shared; each pairing reports its share.
+                "elapsed_seconds": elapsed / max(1, P),
+            })
+        return out
 
 
 def compute_mle_elo(

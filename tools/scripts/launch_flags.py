@@ -85,6 +85,20 @@ UNCHECKED_BY_DESIGN = frozenset({
 _BEFORE_RECORDED = {
     "tf32": lambda meta: False,
     "pool_every_steps": lambda meta: meta.get("snapshot_every_steps"),
+    # before --block-lambda existed every run used the ordinary lambda everywhere
+    "block_lambda": lambda meta: "setup" if meta.get("setup_block_lambda") else "off",
+    # P24: no league before it existed
+    "league_pool_size": lambda meta: 4,
+    "adv_norm_learner_only": lambda meta: False,
+    # no setup entropy floor before it existed (2026-09-27)
+    "setup_entropy_floor": lambda meta: 0.0,
+    "setup_entropy_lr": lambda meta: 0.01,
+    "setup_entropy_max_coef": lambda meta: 1.0,
+    "setup_mc_credit": lambda meta: False,
+    "setup_mc_coef": lambda meta: 1.0,
+    "setup_mc_min_batch": lambda meta: 512,
+    # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
+    # below as "unrecorded" for older runs and diffs as the default.
 }
 
 
@@ -109,6 +123,10 @@ def recorded(run_dir: str) -> dict:
             out.setdefault("ladder_head_center", bool(v.get("head_center", False)))
         elif k in dflt:
             out[k] = v
+    # Before 2026-09-27 a run that took the default rollout bands recorded None, and the default
+    # was the sharpening bands; since then the bands actually used are always recorded.
+    if "rollout_temps" in meta and meta["rollout_temps"] is None:
+        out["rollout_temps"] = [0.15, 0.50, 0.10, 0.35]
     return out
 
 

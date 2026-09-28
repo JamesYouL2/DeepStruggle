@@ -197,6 +197,18 @@ struct alignas(64) DecisionContext {
 
     inline void clear_node_counts() noexcept { node_count_bits = {}; }
 
+    // An influence placement spending a card's Ops: the frame begin_op_mode opens. Every Ops
+    // entry opens it with pending_op_card set and resolving_card cleared, while an event's own
+    // placement keeps its card in resolving_card, so the two never share this test.
+    //
+    // Its points must all be spent. CONFIRM_DONE is offered only when the board has no legal
+    // target left -- one point against enemy-controlled countries only, or the China Card's
+    // Asian point with nothing reachable in Asia -- and that is a legitimate end, not a defect.
+    inline bool is_ops_influence_play() const noexcept {
+        return decision_type == DecisionType::POINT_NODE && op_mode == OpMode::INFLUENCE &&
+               pending_op_card != 0 && resolving_card == 0;
+    }
+
     inline void set_start_influence(uint8_t node) noexcept {
         if (node < 64) start_influence_nodes[0] |= (1ULL << node);
         else if (node < 84) start_influence_nodes[1] |= (1ULL << (node - 64));

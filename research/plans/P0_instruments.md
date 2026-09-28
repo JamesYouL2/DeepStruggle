@@ -37,17 +37,17 @@ first place, which nobody has measured.
 This file was written against v2.2 and arm G. Both are gone. The reset:
 
 - **The starred-card bug** — a starred card spent for Operations was deleted from the game, for
-  380 of the repo's 389 commits (`cff2344`, `25d9b70`) — changes the decision stream. Every Elo
+  380 of the repo's 389 commits (`9fa5b05`, `341088e`) — changes the decision stream. Every Elo
   and every probe number in §1–§24 is on a different ladder.
 - **There is one observation layout, v2.3 (3824).** legacy, v2.1 and v2.2 are gone along with
   every argument that named one. Arms A–G cannot be loaded at all, so the first version of this
   file's entire baseline table is void.
 - **The current arms are H (80M), H2 (80/160/240M) and I (80M).** H2 @240M is the strongest at
   93.0% against the anchor (§25.1).
-- `temp_cards` is gone (`49ed564`); the chance node is named (`ctx().pending_roll_type`,
-  `ctx().roll_actor`) (`712bce4`). Probe 3 below used `temp_cards[1]` and no longer can.
-- Europe Control is its own recorded ending (`430ba9b`), and game length is measured in **plies**,
-  not turns (`53f9c1c`).
+- `temp_cards` is gone (`d72b21c`); the chance node is named (`ctx().pending_roll_type`,
+  `ctx().roll_actor`) (`8990ba4`). Probe 3 below used `temp_cards[1]` and no longer can.
+- Europe Control is its own recorded ending (`9f55470`), and game length is measured in **plies**,
+  not turns (`4a4be98`).
 - `../log/variance_and_noise.md` retires the claim that the corrected engine lengthens games — H2 does not
   replicate H's game shape. Nothing here leans on it.
 
@@ -102,7 +102,7 @@ fresh runner — no rollout at all.
 - Report: the 84-wide placement histogram per side; **P(Poland ≥ 3 | USSR)** (`cid 15`);
   **P(West Germany ≥ 4 | US)** (`cid 7`); the distribution over distinct 6- and 7-placements
   (top 10 plus a coverage count); placement entropy per side. Every rate as a Wilson band via
-  `ai/stats.py`, per `71739f9` — a point estimate on 2,000 seeds invites a comparison the noise
+  `ai/stats.py`, per `492fe2c` — a point estimate on 2,000 seeds invites a comparison the noise
   does not support.
 - *Decided:* **yes, condition on Europe Scoring (`cid 2`) in hand.** It is free — the deal
   precedes setup, so `state.get_card_location(2)` is readable at the setup node — reported as a
@@ -161,7 +161,7 @@ a bootstrap CI over states.
 - New parameter `sample_nodes: Literal["decision", "pre_deal", "both"] = "decision"`, and the
   measurement moves onto `ai.eval.rollout`, without which the node is invisible.
 - The pre-deal afterstate is the chance node with `ctx().pending_roll_type == RollType.TURN_CLEANUP`
-  — a named field since `712bce4`; the `temp_cards[1]` this file cited in its first revision no
+  — a named field since `8990ba4`; the `temp_cards[1]` this file cited in its first revision no
   longer exists. `decision_player` is `NONE` there, and `critic_calibration.py:120`'s
   `if side == 0: continue` is exactly what drops it, so evaluate **both perspectives** and store
   both rows.
@@ -232,7 +232,7 @@ Intervention on either is fine and the claim is only that it is spent on one of 
 
 Baselines here, not gates. These are the numbers a later strategy arm has to move.
 
-**Built** as `ai/eval/sequencing.py` (`fa8be41`), with two rules rather than three:
+**Built** as `ai/eval/sequencing.py` (`2205f86`), with two rules rather than three:
 `un_intervention_off_target` and `un_intervention_on_spaceable`, counted through `BlunderCounts`
 so the Wilson bands, the examples and the metric keys are the existing machinery rather than a
 second copy of it.
@@ -274,7 +274,7 @@ in self-play; decide which before quoting it.
 The first rule reads the other way round and is worth saying plainly: when UN Intervention *is*
 spent and a card that must not be played is in hand, it goes to that card 86-88% of the time. The
 model is not misdirecting the tool. The third measure, if it is ever added, is the one that says
-what happens instead -- it joins up with `dcedb8a`'s finding that 82.7% of DEFCON-1 endings are
+what happens instead -- it joins up with `e2eaacc`'s finding that 82.7% of DEFCON-1 endings are
 provoked -- but its bands touch at one point over 31 and 18 opportunities, so it is suggestive
 and nothing more.
 
@@ -282,7 +282,7 @@ and nothing more.
 
 `battleground_value.py` (§12.1 perturbation probe), `position_diagnostics.py` (empty
 battlegrounds at turn 8, ply distribution, DEFCON-1 share), forced-win take rate as a floor. All
-three can be trusted now: `position_diagnostics` was fixed by `6220f32`, and the perturbation
+three can be trusted now: `position_diagnostics` was fixed by `5e306d5`, and the perturbation
 probe by the single-layout refactor. Any number any of them produced on a v2.x checkpoint before
 those two changes is void.
 
@@ -370,15 +370,15 @@ below have a full 5M-step snapshot series.
 
 | row | checkpoint | layout | steps | base commit |
 |:---|:---|:---|---:|:---|
-| v2.3 baseline | `arm_H_v23_corrected/snapshot_final.pt` | v2.3 | 80M | `32902a3` |
-| v2.3 seed B | `arm_H2_v23_seedB` @ 80M and 160M | v2.3 | 80M / 160M | `32902a3` |
-| **strongest** | `arm_H2_cont_160to240/snapshot_final.pt` | v2.3 | 240M | `71739f9` |
-| KL off | `arm_I_no_kl/snapshot_final.pt` | v2.3 | 80M | `c391f2e` |
+| v2.3 baseline | `arm_H_v23_corrected/snapshot_final.pt` | v2.3 | 80M | `e758b6d` |
+| v2.3 seed B | `arm_H2_v23_seedB` @ 80M and 160M | v2.3 | 80M / 160M | `e758b6d` |
+| **strongest** | `arm_H2_cont_160to240/snapshot_final.pt` | v2.3 | 240M | `492fe2c` |
+| KL off | `arm_I_no_kl/snapshot_final.pt` | v2.3 | 80M | `a7426cd` |
 | floor | `heuristic`, `random` | — | — | — |
 | yardstick | human corpus; ITS results for game shape | — | — | — |
 
 **The three base commits do not split the ladder — checked, not assumed.** The only engine or
-bindings source to change between `32902a3` and today is `scoring.cpp`, and the change sets
+bindings source to change between `e758b6d` and today is `scoring.cpp`, and the change sets
 `effect_bits::EUROPE_CONTROL_WIN` at a point where the game is already over: same VP, same phase,
 no decision affected. So H, H2, H2-continued and I share a decision stream and are mutually
 comparable, even though `check_engine_fresh.sh`'s content hash differs across them. Record each

@@ -1,7 +1,7 @@
 # P17 §5 — Grain Sales on a child frame
 
 > **SUPERSEDED — kept for the diagnosis, not the design.** The child frame was abandoned. Grain
-> Sales landed in `aa5ec64` with **no nesting at all**: the offer is the drawn card's own
+> Sales landed in `7057251` with **no nesting at all**: the offer is the drawn card's own
 > resolution node on Grain Sales' frame, converted on a decline and replaced on a play. The
 > owner's card-by-card analysis is what made that possible — once the choice precedes the frame,
 > Grain Sales owes nothing either way and has nothing to come back to. See
@@ -17,7 +17,7 @@
 > caught it. The card now moves into the US hand when drawn.
 
 
-Detail plan for the half of §5 that was attempted, failed and reverted (commit `47f6043` is the
+Detail plan for the half of §5 that was attempted, failed and reverted (commit `8207b14` is the
 clean baseline it must be re-applied to). §5's other half, South African Unrest, is landed.
 
 The goal is unchanged: **`CHOOSE_BRANCH{play, return}` disappears.** The drawn card is pushed as a

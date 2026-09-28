@@ -25,7 +25,7 @@ from ai.models.coldwar_net_v2 import VP_LIMIT
 
 from bindings.ts_env import TsVectorizedEnv
 from bindings.action_encoder import ActionEncoder
-from .rollout_buffer import RolloutBuffer
+from .rollout_buffer import RolloutBuffer, setup_phase_slot
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -118,6 +118,33 @@ def wolf_seat_weights(sp_ussr: float, power: float = 1.0, dead_zone: float = 0.0
     a = x ** float(power)
     b = (1.0 - x) ** float(power)
     return 2.0 * a / (a + b), 2.0 * b / (a + b)
+
+
+#: Rollout temperature bands. The default samples at the policy itself (every band 1.0), so the
+#: log-probabilities PPO records at temperature 1 are the ones the actions were drawn from.
+#: Adopted 2026-09-27 (research/log/E5_06_rollout_temperature.md): from scratch it plateaus
+#: +135/+170 above the old bands and 69-70% head to head, on two seeds.
+DEFAULT_ROLLOUT_TEMPS: Tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+#: The bands every run used before then: all below 1.0, so every environment sampled sharper
+#: than the policy while PPO recorded temperature-1 log-probabilities. A run whose metadata
+#: records no `rollout_temps` used these.
+LEGACY_ROLLOUT_TEMPS: Tuple[float, float, float, float] = (0.15, 0.50, 0.10, 0.35)
+
+
+def opponent_actions(logits: torch.Tensor, actions: torch.Tensor, opp_rows: torch.Tensor,
+                     temperature: float) -> torch.Tensor:
+    """P24: re-choose the frozen opponent's actions at its own temperature.
+
+    `logits` holds each row's deciding network's logits (the opponent's on `opp_rows`, masked to
+    -1e9 off the legal set), and `actions` what the rollout sampled at the learner's temperature.
+    At 0 the opponent plays its argmax -- the policy a greedy tournament measures -- otherwise it
+    samples softmax(logits / temperature). Learner rows are returned unchanged.
+    """
+    if temperature <= 0.0:
+        chosen = logits.argmax(dim=-1)
+    else:
+        chosen = torch.multinomial(F.softmax(logits / temperature, dim=-1), 1).squeeze(1)
+    return torch.where(opp_rows, chosen, actions)
 
 
 def bonus_entropy(entropy: torch.Tensor, mask: torch.Tensor, normalize: bool) -> torch.Tensor:
@@ -254,6 +281,8 @@ class BaseNashPGTrainer:
         rollout_temps: Optional[Sequence[float]] = None,
         merged_influence: bool = False,
         per_seat_adv_norm: bool = False,
+        opponent_temperature: Optional[float] = None,
+        adv_norm_learner_only: bool = False,
         wolf_seat_weight: bool = False,
         wolf_power: float = 1.0,
         wolf_ema_games: float = 2000.0,
@@ -267,9 +296,17 @@ class BaseNashPGTrainer:
         entropy_ceiling_grace_steps: float = 5_000_000.0,
         target_kl: float = 0.0,
         entropy_normalize: bool = False,
+        setup_entropy_floor: float = 0.0,
+        setup_entropy_lr: float = 0.01,
+        setup_entropy_max_coef: float = 1.0,
+        setup_mc_credit: bool = False,
+        setup_mc_coef: float = 1.0,
+        setup_mc_min_batch: int = 512,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
+        setup_block_lambda: bool = False,
+        block_lambda: str = "off",
         device: torch.device | str = "cuda",
     ):
         self.device = torch.device(device if (torch.cuda.is_available() and device == "cuda") else ("cuda" if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"))
@@ -391,6 +428,11 @@ class BaseNashPGTrainer:
             device=self.device,
         )
         self.buffer.per_seat_adv_norm = bool(per_seat_adv_norm)
+        self.buffer.adv_norm_learner_only = bool(adv_norm_learner_only)
+        #: P24: the temperature pool opponents play at in rollouts; None samples them exactly as
+        #: the learner is sampled, as every run before it did.
+        self.opponent_temperature: Optional[float] = (
+            None if opponent_temperature is None else float(opponent_temperature))
         # P25 3j-3l, the levers that act on the collapse loop's own closing points. Each is off at
         # 0 and off leaves the update bitwise unchanged. None is defined together with WoLF or
         # per-seat normalisation, so those combinations are refused rather than half-applied.
@@ -421,6 +463,36 @@ class BaseNashPGTrainer:
         self.target_kl = float(target_kl)
         #: --entropy-normalize: the bonus rewards entropy / log(legal) per decision; see bonus_entropy.
         self.entropy_normalize = bool(entropy_normalize)
+        #: --setup-entropy-floor: a one-sided entropy FLOOR on the learner's setup placements, in
+        #: nats. A setup placement pushed to p ~ 1 is never sampled differently again, and both the
+        #: policy gradient and the ordinary entropy bonus vanish there, so the opening locks,
+        #: good or bad (research/log/E5_11_setup_lock_and_critic_views.md). An extra bonus on setup
+        #: decisions only, whose coefficient moves by lr x (floor - rollout setup entropy) each
+        #: iteration within [0, max_coef]: zero while the setup is above the floor, so it acts
+        #: only once the opening starts to lock. Normalised like the ordinary bonus (per learner
+        #: decision), so a coefficient of 0.01 is the ordinary bonus again on those decisions.
+        if setup_entropy_floor < 0.0 or setup_entropy_lr < 0.0 or setup_entropy_max_coef < 0.0:
+            raise ValueError("setup_entropy_floor, setup_entropy_lr and setup_entropy_max_coef must be >= 0")
+        self.setup_entropy_floor = float(setup_entropy_floor)
+        self.setup_entropy_lr = float(setup_entropy_lr)
+        self.setup_entropy_max_coef = float(setup_entropy_max_coef)
+        self.setup_ent_coef = 0.0
+        #: --setup-mc-credit: the learner's setup placements are credited with the GAME RESULT
+        #: (Monte Carlo, lambda = 1 to the end), not the lambda-return. With gamma 1 and lambda
+        #: 0.98 a setup placement's GAE weights the result by ~0.98^(decisions to the end), i.e.
+        #: <= 0.01, so the setup learns only from the critic's values of the positions just after
+        #: it -- and the critic over-rates unfamiliar openings 3-4x
+        #: (research/log/E5_11_setup_lock_and_critic_views.md). Ataraxos trains its setup on MC
+        #: returns for the same reason. A game outlasts a rollout, so each setup decision waits in
+        #: a per-env pending list until its game ends, then joins a ready batch trained with the
+        #: PPO clip against the log-prob it was sampled with; advantage = result - V(s), the critic
+        #: only as a baseline. Setup rows are dropped from the ordinary surrogate; the entropy
+        #: bonus (and --setup-entropy-floor) and the KL to pi_ref still apply to them there.
+        self.setup_mc_credit = bool(setup_mc_credit)
+        self.setup_mc_coef = float(setup_mc_coef)
+        self.setup_mc_min_batch = int(setup_mc_min_batch)
+        self._setup_pending: List[List[Tuple[Any, ...]]] = [[] for _ in range(self.num_envs)]
+        self._setup_ready: List[Tuple[Any, ...]] = []
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -475,16 +547,19 @@ class BaseNashPGTrainer:
                                       ActionEncoder.FLAT_ACTION_SIZE, self.device)
             # GAE's backward recursion too: ~5,000 elementwise launches per rollout, same kernels.
             self.buffer.graph_gae = True
+        self.buffer.setup_block_lambda = bool(setup_block_lambda)
+        self.buffer.block_lambda = str(block_lambda)
+        self.buffer.block_mode()          # validates
+        #: A2 needs each env's RNG state at every decision; read only when it is used.
+        self._record_rngs = self.buffer.block_mode() == "same-side"
         #: The USSR's smoothed self-play win share. Starts even, and is carried in the resume
         #: state so a resumed run does not relearn it.
         self.wolf_sp_ussr = 0.5
 
-        # Rollout temperature bands. The default four are all BELOW 1.0, so sampling is
-        # softmax(logits / tau) with tau < 1 -- sharper than the policy itself, in every band.
-        # The comment this replaced called that "exploration"; relative to the policy's own
-        # distribution it is the opposite, and nobody has measured whether sharpening rollouts
-        # helps. `rollout_temps` makes the band an argument so that question can be asked.
-        _bands = list(rollout_temps) if rollout_temps else [0.15, 0.50, 0.10, 0.35]
+        # Rollout temperature bands, one per quarter of the environments. The default samples at
+        # the policy (DEFAULT_ROLLOUT_TEMPS); the pre-2026-09-27 bands, all below 1.0, sharpened
+        # every environment and made the policy's argmax blunder universal (LEGACY_ROLLOUT_TEMPS).
+        _bands = list(rollout_temps) if rollout_temps else list(DEFAULT_ROLLOUT_TEMPS)
         if len(_bands) != 4:
             raise ValueError(f"rollout_temps needs exactly 4 values, got {len(_bands)}")
         if any(t <= 0.0 for t in _bands):
@@ -495,9 +570,8 @@ class BaseNashPGTrainer:
             temps[self.num_envs // 4 : self.num_envs // 2] = _bands[1]
             temps[self.num_envs // 2 : 3 * self.num_envs // 4] = _bands[2]
             temps[3 * self.num_envs // 4 :] = _bands[3]
-            if rollout_temps:
-                print(f"[rollout temps] bands {_bands} (default is "
-                      f"[0.15, 0.50, 0.10, 0.35], all sharpening)", flush=True)
+            print(f"[rollout temps] bands {_bands} (default {list(DEFAULT_ROLLOUT_TEMPS)}; before "
+                  f"2026-09-27 {list(LEGACY_ROLLOUT_TEMPS)})", flush=True)
             self.env_temps = torch.from_numpy(temps).unsqueeze(1).to(self.device)
         else:
             self.env_temps = torch.ones((self.num_envs, 1), dtype=torch.float32, device=self.device)
@@ -593,6 +667,79 @@ class BaseNashPGTrainer:
             c = self.ent_coef_seat[code] - self.entropy_ceiling_lr * (float(h) - self.entropy_ceiling)
             self.ent_coef_seat[code] = min(self.ent_coef, max(self.entropy_ceiling_min_coef, c))
 
+    def _setup_mc_record(self, obs_t: torch.Tensor, masks_t: torch.Tensor, actions_t: torch.Tensor,
+                         log_probs_t: torch.Tensor, v_win_t: torch.Tensor, learner_np: np.ndarray,
+                         dp: np.ndarray) -> None:
+        """--setup-mc-credit: file this step's learner setup placements under their env."""
+        setup = np.asarray(self._obs_np)[:, setup_phase_slot()] < (0.5 / 6.0)
+        rows = np.flatnonzero(setup & learner_np)
+        if rows.size == 0:
+            return
+        idx = torch.from_numpy(rows).to(obs_t.device)
+        o, m = obs_t.index_select(0, idx), masks_t.index_select(0, idx)
+        a, lp = actions_t.index_select(0, idx), log_probs_t.index_select(0, idx)
+        v = v_win_t.reshape(-1).index_select(0, idx)
+        for j, i in enumerate(rows):
+            self._setup_pending[int(i)].append((o[j], m[j], a[j], lp[j].detach(), v[j].detach(), int(dp[i])))
+
+    def _setup_mc_resolve(self, completed_episodes: Sequence[Dict[str, Any]]) -> None:
+        """--setup-mc-credit: a finished game's setup placements get its result, seen by their mover."""
+        for ep in completed_episodes:
+            i = int(ep.get("env_idx", -1))
+            if not 0 <= i < self.num_envs or not self._setup_pending[i]:
+                continue
+            util = float(ep.get("terminal_utility", 0.0))            # +1 US win, -1 USSR win
+            for rec in self._setup_pending[i]:
+                self._setup_ready.append(rec + (util * (1.0 if rec[5] == 1 else -1.0),))
+            self._setup_pending[i] = []
+
+    def _setup_mc_update(self) -> Dict[str, float]:
+        """--setup-mc-credit: one clipped policy step on the setup placements whose games ended."""
+        out: Dict[str, float] = {"setup_mc_ready": float(len(self._setup_ready)),
+                                 "setup_mc_pending": float(sum(len(p) for p in self._setup_pending))}
+        n = len(self._setup_ready)
+        if n < max(1, self.setup_mc_min_batch):
+            return out
+        recs, self._setup_ready = self._setup_ready, []
+        obs = torch.stack([r[0] for r in recs])
+        masks = torch.stack([r[1] for r in recs])
+        act = torch.stack([r[2] for r in recs]).long().reshape(-1)
+        old_lp = torch.stack([r[3] for r in recs]).float().reshape(-1)
+        v = torch.stack([r[4] for r in recs]).float().reshape(-1)
+        g = torch.tensor([r[6] for r in recs], dtype=torch.float32, device=obs.device)
+        adv = g - v
+        # Scale only: the critic baseline already centres it, and a state-only baseline cannot
+        # bias the gradient however wrong the critic is.
+        adv_n = adv / adv.std().clamp(min=0.1) if n > 1 else adv
+        self.active_net.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        clip_n = 0.0
+        ratio_dev = 0.0
+        for i in range(0, n, self.batch_size):
+            sl = slice(i, i + self.batch_size)
+            logits = self.active_net(obs[sl], masks[sl])[0].float()
+            lp = F.log_softmax(logits, dim=-1).gather(1, act[sl].unsqueeze(1)).squeeze(1)
+            ratio = torch.exp(torch.clamp(lp - old_lp[sl], -20.0, 20.0))
+            a = adv_n[sl]
+            surr = torch.min(ratio * a, torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * a)
+            loss = -self.setup_mc_coef * surr.sum() / n
+            loss.backward()
+            with torch.no_grad():
+                clip_n += float(((ratio < 1.0 - self.clip_eps) | (ratio > 1.0 + self.clip_eps)).float().sum())
+                ratio_dev += float((ratio - 1.0).abs().sum())
+        nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+        self.optimizer.step()
+        self.active_net.eval()
+        out.update({"setup_mc_n": float(n), "setup_mc_result_mean": float(g.mean()),
+                    "setup_mc_adv_mean": float(adv.mean()), "setup_mc_adv_std": float(adv.std()) if n > 1 else 0.0,
+                    "setup_mc_clip_frac": clip_n / n, "setup_mc_ratio_dev": ratio_dev / n})
+        return out
+
+    def _update_setup_entropy(self, h: float) -> None:
+        """--setup-entropy-floor: move the setup bonus toward holding setup entropy at the floor."""
+        c = self.setup_ent_coef + self.setup_entropy_lr * (self.setup_entropy_floor - float(h))
+        self.setup_ent_coef = min(self.setup_entropy_max_coef, max(0.0, c))
+
     def _graphed_forward(self, obs_t: torch.Tensor, masks_t: torch.Tensor,
                          learner_np: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """The rollout forward as CUDA-graph replays: the learner over every env, and in a mixed
@@ -647,6 +794,9 @@ class BaseNashPGTrainer:
         self.buffer.reset()
         seat_entropy_sum = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
         seat_entropy_n = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
+        setup_entropy_sum = torch.zeros((), device=self.device)
+        setup_entropy_n = torch.zeros((), device=self.device)
+        _setup_slot = setup_phase_slot()
         sp_games = 0.0
         sp_us_wins = 0.0
         completed_episodes: List[Dict[str, Any]] = []
@@ -714,6 +864,9 @@ class BaseNashPGTrainer:
                 # the underlying canonical policy parameterization pi_theta.
                 if self.setup_explore_frac > 0.0:
                     self._force_setup_exploration(actions_t, masks_t)
+                if self.opponent_temperature is not None and not bool(learner_np.all()):
+                    actions_t = opponent_actions(logits, actions_t, ~learner_t,
+                                                 self.opponent_temperature)
 
                 unscaled_log_probs = F.log_softmax(logits, dim=-1)
                 log_probs_t = unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1)
@@ -728,8 +881,21 @@ class BaseNashPGTrainer:
                     _sel = learner_t & (_dp_t == _code)
                     seat_entropy_sum[_code] += (_ent * _sel).sum()
                     seat_entropy_n[_code] += _sel.sum()
+                # The learner's setup placements (global phase slot exactly 0 in SETUP).
+                _setup_sel = learner_t & (obs_t[:, _setup_slot] < (0.5 / 6.0))
+                setup_entropy_sum += (_ent * _setup_sel).sum()
+                setup_entropy_n += _setup_sel.sum()
 
             actions_np = actions_t.cpu().numpy()
+            if self.setup_mc_credit:
+                self._setup_mc_record(obs_t, masks_t, actions_t, log_probs_t, v_win_t,
+                                      np.asarray(learner_np, dtype=bool), _dp)
+            # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
+            # step. A change by the next decision means a chance node came between them.
+            _rngs_np: Optional[np.ndarray] = None
+            if self._record_rngs:
+                _rngs_np = np.array([self.env.runner.get_state(i).rng_state
+                                     for i in range(self.num_envs)], dtype=np.uint64).view(np.int64)
 
             # P15-X4b. MUST happen before the step: `_search_targets` reads the runner's current
             # state, and `buffer.add` below files the answer against `obs_t`, which is s_t. Taken
@@ -787,6 +953,7 @@ class BaseNashPGTrainer:
                 next_values_own=next_own_t,
                 search_pi=search_pi_t,
                 has_search=has_search_t,
+                rngs=_rngs_np,
             )
 
             # v_win is from the *acting* player's perspective; multiplying by the acting
@@ -830,6 +997,8 @@ class BaseNashPGTrainer:
                     # The learner's side was just redrawn, so this env's views may have swapped.
                     self._apply_view_env(_i)
 
+            if self.setup_mc_credit and self._info.get("completed_episodes"):
+                self._setup_mc_resolve(self._info["completed_episodes"])
             if "completed_episodes" in self._info and self._info["completed_episodes"]:
                 # Win rate, ending mix and game length describe how the policy plays. Games
                 # against a frozen pool opponent are a different question and would make a
@@ -904,6 +1073,13 @@ class BaseNashPGTrainer:
             self._update_entropy_ceiling(metrics)
             metrics["ent_coef_us"] = self.ent_coef_seat[1]
             metrics["ent_coef_ussr"] = self.ent_coef_seat[-1]
+        _sn = float(setup_entropy_n.item())
+        if _sn > 0:
+            metrics["entropy_setup"] = float(setup_entropy_sum.item()) / _sn
+            if self.setup_entropy_floor > 0.0:
+                self._update_setup_entropy(metrics["entropy_setup"])
+        if self.setup_entropy_floor > 0.0:
+            metrics["setup_ent_coef"] = self.setup_ent_coef
         metrics.update(self.critic_tracker.metrics())
         # Pool size and span, so a pool that silently stops growing is visible as a flat line
         # rather than being invisible. Without this the mechanism cannot be verified from a run.
@@ -1050,6 +1226,8 @@ class BaseNashPGTrainer:
             self.steps_since_ref_update = 0
 
         combined: Dict[str, Any] = {**rollout_metrics, **train_metrics}
+        if self.setup_mc_credit:
+            combined.update(self._setup_mc_update())
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.
@@ -1156,6 +1334,8 @@ class NashPGTrainer(BaseNashPGTrainer):
         # 3k: this update's per-seat entropy coefficients, as device scalars.
         ent_c_us = torch.tensor(self.ent_coef_seat[1], device=self.device)
         ent_c_ussr = torch.tensor(self.ent_coef_seat[-1], device=self.device)
+        setup_c = self.setup_ent_coef
+        _setup_slot_u = setup_phase_slot()
         # 3l: whether each seat is still updating its policy (1.0) or has been stopped (0.0), and
         # the per-seat approximate KL, accumulated on the device so the check costs no sync.
         seat_act = {1: torch.ones((), dtype=torch.float64, device=self.device),
@@ -1276,6 +1456,10 @@ class NashPGTrainer(BaseNashPGTrainer):
                 # steps, but they must not pull on the policy. Without a pool this is all ones
                 # and the expression reduces to the plain mean.
                 keep = b_learner > 0.5
+                if self.setup_mc_credit:
+                    # Setup placements take their credit from the game result instead
+                    # (_setup_mc_update); the lambda-return reaching them is the critic's.
+                    keep = keep & (b_obs[:, setup_phase_slot()] >= (0.5 / 6.0))
                 if self.adv_filter_quantile > 0.0 and surrogate.numel() > 1:
                     # Keep the samples the policy can actually learn from. The threshold is a
                     # quantile of this minibatch rather than a fixed |A|, so it adapts as the
@@ -1392,6 +1576,11 @@ class NashPGTrainer(BaseNashPGTrainer):
                         _ew = _own_f * torch.where(b_players == 1, seat_act[1],
                                                    seat_act[-1]).to(cur_entropy.dtype)
                     ent_loss = (ent_b * _ew * _c).sum() / _own_n
+                if setup_c > 0.0:
+                    # The setup floor's bonus: raw entropy (the floor is in nats), learner's setup
+                    # placements only, normalised per learner decision like the ordinary bonus.
+                    _setup_f = (b_obs[:, _setup_slot_u] < (0.5 / 6.0)).to(cur_entropy.dtype) * _own_f
+                    ent_loss = ent_loss + setup_c * (cur_entropy * _setup_f).sum() / _own_n
                 policy_loss = (ppo_loss + self.eta * kl_term - ent_loss
                                + self.search_ce_coef * search_ce)
                 # The log-normaliser over the legal actions (masked logits are -1e9, so they add

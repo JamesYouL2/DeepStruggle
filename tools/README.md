@@ -49,7 +49,45 @@ moved from 5M to 10M on 2026-09-24, because at 5M evaluation cost ~17% of a run'
 
 TF32 matmuls are on by default since 2026-09-24 (P26): +15% steps/s on M2d, solo or paired, and no strength cost in a 3-seed A/B (`research/log/P26_quick_screen.md`). `--no-tf32` gives fp32, which is what every run before E4-57 used. The setting is recorded in `metadata.json` as `tf32`.
 
-`--ladder-head-center` centres the per-entity heads' hidden features across entities before
+`--block-lambda {off,setup,setup-side,same-side}` sets where GAE uses λ = 1 inside a decision
+block (P4, `research/log/P4_setup_arms.md`). **The default is `off`** (again since 2026-09-27).
+`setup-side` -- λ = 1 between consecutive setup placements by the same player -- was the default
+for one day: at 80M under the old sharpened rollout bands it fixed the USSR's Poland and was +39,
+but at flat rollout temperature 1.0 it added no strength (−73 / +30 against E5-11) and froze
+whatever opening it had found, including a degenerate one
+(`research/log/E5_12_setup_credit_at_flat_temperature.md`). `same-side` chains every same-mover
+step with no chance node between them, and it was −289. Runs from E5-12 used `setup-side`;
+pass it to reproduce them.
+
+`--setup-entropy-floor <nats>` (off at 0) puts an adaptive entropy floor on the learner's setup
+placements. A setup placement at p ≈ 1 is never resampled, so its opening locks whether or not it
+is any good (E5-11-43 opens Greece 2 in every game, 5 points worse for its own US than a sane
+opening: `research/log/E5_11_setup_lock_and_critic_views.md`). The extra bonus applies to setup
+decisions only. Its coefficient moves by `--setup-entropy-lr` × (floor − the rollout's setup
+entropy) each iteration within [0, `--setup-entropy-max-coef`], so it is zero until the opening
+starts to lock. It is logged as `entropy_setup` (always) and `setup_ent_coef`, and restored on a
+resume. `tools/scripts/setup_oracle.py` measures whether an opening is actually worse.
+
+`--forced-opening <name>` (off by default) starts every training game after a scripted setup from
+`tools/lib/openings.py`. For `human` that is USSR East Germany 1, Poland 4, Yugoslavia 1 and US
+West Germany 4, Italy 3, Iran 2. The learner never makes a setup decision, so its setup is
+untrained. Rate such a checkpoint with the same opening: `tools/tournament.py --opening human`
+applies it to every agent, and an `opening:<name>:<spec>` model spec applies it to one agent only.
+The run's own snapshot match evaluations use the opening automatically; its probes do not.
+
+`--setup-mc-credit` (off by default) credits the learner's setup placements with the **game
+result** (advantage = result − V(s), the critic only as a baseline) instead of the λ-return. With
+γ 1 and λ 0.98, the λ-return reaches the setup only through the critic's values of the positions
+just after it, and the critic over-rates unfamiliar openings three to four times
+(`research/log/E5_11_setup_lock_and_critic_views.md`). This is how Ataraxos trains its setup. A
+game outlasts a rollout, so each placement waits until its game ends. It is then trained in
+batches of at least `--setup-mc-min-batch` (512) with the PPO clip against the log-prob it was
+sampled with. Setup rows leave the ordinary surrogate, but keep the entropy bonus, the floor and
+the KL. Pair it with `--setup-entropy-floor`, because a placement at p ≈ 1 is never compared with
+anything. From scratch the result is a slow teacher: setup entropy stays near uniform for millions
+of steps.
+
+`--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a
 shift common to every country logit is invisible to the policy and gets no gradient. Left free,
 it drifts without limit, and every bit of the long runs' logit level was in `pe_country`. The
@@ -80,7 +118,7 @@ still wins.
 The rollout forwards run as CUDA-graph replays (`ai/training/graphed_forward.py`). Each replays
 the same kernels as eager, so its outputs are bitwise identical, but with one launch instead of
 ~317. The learner's and the pool opponent's graphs are replayed one after the other, never
-concurrently, and all are captured on one stream per cache (`7e260ab`, `9bfceb1`; the module
+concurrently, and all are captured on one stream per cache (`e91b8d2`, `754f9e1`; the module
 docstring says why). After those fixes graphs are worth about +1.2-1.5%. `--no-cuda-graphs` falls
 back to eager.
 
@@ -351,6 +389,23 @@ PYTHONPATH=. .venv/bin/python tools/tournament.py \
   --anchor-elo 1500.0 \
   --output-report <run-dir>/tournament_report.md
 ```
+
+**Pairings are packed** (`--pack-pairs`, default 25). A round robin used to play one pairing at a
+time: ~200 games, two ~100-row forwards per step, the GPU at ~35%. Now the agents are split into
+blocks of ⌊√pack⌋, and a pack plays all pairings between two blocks, or inside several blocks, in
+one engine batch, with one forward per *agent* per step over all its positions
+(`BatchMatchRunner.play_packed_matchups`). Each game keeps the deal seed it had before, with the
+same seat-swapped copy.
+
+On a 33-player field (528 pairings, 100 games per side):
+* tournament time went from 819 s to 250 s (3.3×);
+* 547 of 561 pairings were identical game for game, and the largest Elo difference was 0.4. The
+  rest is float rounding of near-ties at a different batch composition.
+
+Greedy agents and bots reproduce the old path apart from that rounding. Sampled agents reproduce
+it in distribution only. `--pack-pairs 1` plays one pairing at a time, and `--track-choices` or
+`--log-games` force it. The one cost that remains is the heuristic bot, which is pure Python per
+position.
 
 ---
 

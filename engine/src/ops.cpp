@@ -9,53 +9,63 @@
 
 namespace ts {
 
-uint8_t Operations::get_modified_ops(const GameState& state, uint8_t base_ops, Player player, Region target_region) noexcept {
+// Every Ops modifier, with the limit each one carries (owner's ruling, 2026-09-26):
+//
+//   Containment / Brezhnev Doctrine  +1, to at most 4 -- or 5 for the China Card in Asia, its own
+//                                    Asia bonus counted inside that 5;
+//   Red Scare/Purge                  -1, to no less than 1;
+//   China Card in Asia               +1;
+//   Vietnam Revolts                  +1 for the USSR in Southeast Asia, beyond any of those limits
+//                                    (a 4 becomes 5, the China Card 6).
+//
+// The floor of 1 is Red Scare/Purge's, so it applies to the result: under both Purge and Vietnam
+// Revolts a 1-Op card is 1 - 1 + 1 = 1. Flooring Purge's own result before the bonus made it 2 --
+// at turn 2 AR6 of ts-replayer game 219 the USSR plays Truman Doctrine into Burma under both, and
+// the log calls it "1 Ops". Containment/Brezhnev and Purge together net to the printed value.
+static uint8_t combine_ops(const GameState& state, uint8_t base_ops, Player player, bool china,
+                           bool in_asia, bool in_southeast_asia) noexcept {
     if (base_ops == 0 || player == Player::NONE) return 0;
+    const bool raise = (player == Player::US)
+        ? state.has_flag(effect_bits::CONTAINMENT_ACTIVE)
+        : state.has_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
+    const bool purge = state.has_flag(
+        player == Player::US ? effect_bits::PURGE_US_ACTIVE : effect_bits::PURGE_USSR_ACTIVE);
 
-    int16_t ops = static_cast<int16_t>(base_ops);
-
-    if (player == Player::US) {
-        bool containment = state.has_flag(effect_bits::CONTAINMENT_ACTIVE);
-        bool purge = state.has_flag(effect_bits::PURGE_US_ACTIVE);
-        if (containment && purge) {
-            // Net zero modifier: ops unaffected
-        } else if (containment) {
-            ops = std::min<int16_t>(4, ops + 1);
-        } else if (purge) {
-            ops = std::max<int16_t>(1, ops - 1);
-        }
-    } else if (player == Player::USSR) {
-        bool brezhnev = state.has_flag(effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
-        bool purge = state.has_flag(effect_bits::PURGE_USSR_ACTIVE);
-        if (brezhnev && purge) {
-            // Net zero modifier: ops unaffected
-        } else if (brezhnev) {
-            ops = std::min<int16_t>(4, ops + 1);
-        } else if (purge) {
-            ops = std::max<int16_t>(1, ops - 1);
-        }
-        if (state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE) && (target_region == Region::ASIA)) {
-            ops += 1;
-        }
+    int16_t ops = static_cast<int16_t>(base_ops) + (raise ? 1 : 0) - (purge ? 1 : 0);
+    int16_t cap = 4;
+    if (china && in_asia) {
+        ops += 1;
+        cap = 5;
     }
+    if (raise) ops = std::min<int16_t>(ops, std::max<int16_t>(cap, base_ops));
+    if (player == Player::USSR && in_southeast_asia &&
+        state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE)) {
+        ops += 1;
+    }
+    return static_cast<uint8_t>(std::max<int16_t>(ops, 1));
+}
 
-    return static_cast<uint8_t>(std::clamp<int16_t>(ops, 1, 5));
+// `target_region` ASIA grants both regional bonuses up front, as the budget handed to a player
+// about to spend Ops; the state machine withdraws them if the Ops leave the region.
+uint8_t Operations::get_modified_ops(const GameState& state, uint8_t base_ops, Player player, Region target_region) noexcept {
+    const bool asia = (target_region == Region::ASIA);
+    return combine_ops(state, base_ops, player, false, asia, asia);
 }
 
 uint8_t Operations::get_effective_ops(const GameState& state, uint8_t card_id, Player player, Region target_region) noexcept {
     if (card_id < 1 || card_id > 110 || player == Player::NONE) return 0;
+    const bool asia = (target_region == Region::ASIA);
+    return combine_ops(state, CardData::get_card(card_id).ops, player,
+                       card_id == card_ids::THE_CHINA_CARD, asia, asia);
+}
 
-    uint8_t base_ops = CardData::get_card(card_id).ops;
-    uint8_t ops = get_modified_ops(state, base_ops, player, target_region);
-
-    if (card_id == card_ids::THE_CHINA_CARD && target_region == Region::ASIA) {
-        ops += 1;
-    }
-
-    // Ceiling of 6, not 5: the China Card played in Southeast Asia by the USSR with Vietnam
-    // Revolts active is 4 base + 1 (all Ops in Asia) + 1 (all Ops in Southeast Asia). A limit
-    // of 5 silently swallowed one of the two bonuses whenever they stacked.
-    return static_cast<uint8_t>(std::clamp<int16_t>(ops, 1, 6));
+uint8_t Operations::get_effective_ops_in(const GameState& state, uint8_t card_id, Player player,
+                                         uint8_t country_id) noexcept {
+    if (card_id < 1 || card_id > 110 || player == Player::NONE || country_id >= 84) return 0;
+    const auto& c = MapData::get_country(country_id);
+    return combine_ops(state, CardData::get_card(card_id).ops, player,
+                       card_id == card_ids::THE_CHINA_CARD, c.region == Region::ASIA,
+                       c.in_southeast_asia);
 }
 
 uint8_t Operations::grant_ops_for_card(const GameState& state, uint8_t card_id,

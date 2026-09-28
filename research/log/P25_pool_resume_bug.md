@@ -1,4 +1,4 @@
-# The opponent pool drained on every resume (fixed in 3803d5d), and the late collapse
+# The opponent pool drained on every resume (fixed in 4eb58df), and the late collapse
 
 2026-09-24. Plan: [P25](../archive/E4_ladder/plans/P25_collapse_robustness.md), step 3h. Runs: E4-48 in
 [`../runs.md`](../runs.md).
@@ -37,7 +37,7 @@ are unaffected, and that includes the whole P25 stress bench. A comparison betwe
 continuations is still fair, since both were drained in the same way. A continuation compared with
 the pool the design describes is not.
 
-**The fix** (`3803d5d`):
+**The fix** (`4eb58df`):
 * restores the steps;
 * records each member's snapshot path, so a continuation keeps the members earlier legs wrote;
 * keeps the steps in the rebuild fallback too.

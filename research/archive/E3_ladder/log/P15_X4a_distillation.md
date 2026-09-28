@@ -3,7 +3,7 @@
 **Measured 2026-09-17.** Source checkpoint `E3-20-28 @200M` (the peak, not a final). The honest
 searcher answered 75,592 card/play-mode decisions across 400 self-play games at 96 simulations;
 the **raw policy played every move**, so the targets sit on the policy's own distribution. Dataset
-`/workspace/data/datasets/x4a_search_targets.jsonl.gz`, searcher commit `fad0130b0a`, clean tree.
+`/workspace/data/datasets/x4a_search_targets.jsonl.gz`, searcher commit `cfd80a5736`, clean tree.
 
 ## Question one: is the search edge expressible as a policy?
 
