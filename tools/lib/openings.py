@@ -85,3 +85,60 @@ def acting_side(state: ts.GameState) -> str:
     setup, so keying off it sends every US placement down the USSR script.
     """
     return "US" if state.ctx().decision_player == ts.Player.US else "USSR"
+
+
+def play_scripted_setup(state: ts.GameState, opening: str) -> ts.GameState:
+    """A copy of `state`, a fresh game in SETUP, with the whole setup played by `opening`'s script
+    for both sides. Raises if the script does not cover the setup or a placement is illegal, rather
+    than returning a partly scripted opening."""
+    from bindings.settle import SettleMode, settle
+
+    st = state.clone()
+    cursor = {"US": 0, "USSR": 0}
+    for _ in range(4 * SETUP_DECISIONS):
+        if st.current_phase != ts.Phase.SETUP:
+            return st
+        if st.ctx().decision_player == ts.Player.NONE:
+            settle(st, SettleMode.CHANCE)
+            continue
+        idx = scripted_setup_index(st, acting_side(st), opening, cursor)
+        if idx is None:
+            raise RuntimeError(f"the '{opening}' opening ran out before setup ended ({cursor})")
+        ts.Engine.step_flat(st, idx, False)
+        settle(st, SettleMode.CHANCE)
+    raise RuntimeError("setup did not end")
+
+
+class ScriptedSetupOverride:
+    """Replaces an agent's setup placements with a named opening inside a batched game loop.
+
+    One instance per batch of games. Each game keeps a cursor per side, so a side's k-th setup
+    placement is the script's k-th point whichever agent is on the other side, and a scripted side
+    can face a side that sets up for itself. Setup rows are recognised from the observation's phase
+    slot (exactly 0 in SETUP), the test training uses."""
+
+    def __init__(self, num_games: int) -> None:
+        self.cursor = {"US": np.zeros(num_games, dtype=np.int32),
+                       "USSR": np.zeros(num_games, dtype=np.int32)}
+
+    def apply(self, actions: np.ndarray, obs: np.ndarray, masks: np.ndarray,
+              d_players: np.ndarray, rows: np.ndarray, opening: str) -> None:
+        """Overwrite `actions[rows]` in place wherever the row is a setup placement."""
+        from ai.training.rollout_buffer import setup_phase_slot
+
+        rows = np.asarray(rows)
+        if len(rows) == 0:
+            return
+        setup_rows = rows[np.asarray(obs)[rows, setup_phase_slot()] < (0.5 / 6.0)]
+        for r in setup_rows:
+            side = "US" if int(d_players[r]) == 1 else "USSR"
+            k = int(self.cursor[side][r])
+            script = OPENINGS[opening][side]
+            if k >= len(script):
+                raise RuntimeError(f"game {r}: {side} has no scripted placement {k} in '{opening}'")
+            idx = NODE_OFFSET + script[k]
+            if not masks[r][idx]:
+                raise RuntimeError(f"game {r}: {side} placement {k} of '{opening}' (country "
+                                   f"{script[k]}) is not legal here")
+            actions[r] = idx
+            self.cursor[side][r] = k + 1

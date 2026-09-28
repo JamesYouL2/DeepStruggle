@@ -326,9 +326,10 @@ class TsVectorizedEnv:
         if state is None:
             return False
         self.runner.set_state(env_idx, state)
-        # Positions are stored pre-deal, one turn before the turn they target, so the
-        # episode's effective start turn is the next one.
-        self.env_start_turn[env_idx] = int(state.turn) + 1
+        # Pool positions are stored pre-deal, one turn before the turn they target, so the
+        # episode's effective start turn is the next one. A turn-1 state is a scripted opening
+        # (--forced-opening): the pool never stores one, and that episode starts on turn 1.
+        self.env_start_turn[env_idx] = 1 if int(state.turn) <= 1 else int(state.turn) + 1
         return True
 
     def reset_env(self, env_idx: int, seed: Optional[int] = None) -> None:

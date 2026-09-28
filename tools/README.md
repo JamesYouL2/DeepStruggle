@@ -68,6 +68,13 @@ entropy) each iteration within [0, `--setup-entropy-max-coef`], so it is zero un
 starts to lock. It is logged as `entropy_setup` (always) and `setup_ent_coef`, and restored on a
 resume. `tools/scripts/setup_oracle.py` measures whether an opening is actually worse.
 
+`--forced-opening <name>` (off by default) starts every training game after a scripted setup from
+`tools/lib/openings.py`. For `human` that is USSR East Germany 1, Poland 4, Yugoslavia 1 and US
+West Germany 4, Italy 3, Iran 2. The learner never makes a setup decision, so its setup is
+untrained. Rate such a checkpoint with the same opening: `tools/tournament.py --opening human`
+applies it to every agent, and an `opening:<name>:<spec>` model spec applies it to one agent only.
+The run's own snapshot match evaluations use the opening automatically; its probes do not.
+
 `--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a
 shift common to every country logit is invisible to the policy and gets no gradient. Left free,

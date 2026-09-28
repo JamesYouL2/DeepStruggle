@@ -528,6 +528,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "resampled and its opening locks, good or bad "
                              "(research/log/E5_11_setup_lock_and_critic_views.md). 0 is off.")
     parser.add_argument("--setup-entropy-lr", type=float, default=0.01)
+    parser.add_argument("--forced-opening", type=str, default=None,
+                        help="Start every training game after a scripted setup (a name from "
+                             "tools/lib/openings.py, e.g. 'human': USSR East Germany 1, Poland 4, "
+                             "Yugoslavia 1; US West Germany 4, Italy 3, Iran 2). The setup is never "
+                             "learned, so rate the result with tools/tournament.py --opening or an "
+                             "opening:<name>: spec prefix.")
     parser.add_argument("--setup-entropy-max-coef", type=float, default=1.0)
     parser.add_argument("--z-loss-coef", type=float, default=0.0,
                         help="z-loss: coef * mean(logsumexp(policy logits)^2) in the update (PaLM uses "
@@ -768,6 +774,7 @@ def main():
             setup_entropy_floor=args.setup_entropy_floor,
             setup_entropy_lr=args.setup_entropy_lr,
             setup_entropy_max_coef=args.setup_entropy_max_coef,
+            forced_opening=args.forced_opening,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,
             cuda_graphs=not args.no_cuda_graphs,

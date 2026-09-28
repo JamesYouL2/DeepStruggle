@@ -1001,12 +1001,17 @@ def evaluate_and_log_snapshot(
     num_baselines: int = 0,
     max_snapshot_opponents: int = 4,
     merged_influence: bool = False,
+    forced_opening: Optional[str] = None,
 ) -> Dict[str, float]:
     dev = resolve_device(device)
     snap_name = f"snapshot_{elapsed_seconds}s"
     # The model is evaluated in the action view it trains in (P23), probes included.
     current_agent = NeuralAgent(model=model, device=dev, name=snap_name,
                                 merged_influence=merged_influence)
+    if forced_opening:
+        # --forced-opening: the run never learns its setup, so its match evals play the opening
+        # it trained from. (The probes below still let the model set up for itself.)
+        setattr(current_agent, "forced_opening", forced_opening)
 
     # Decisive-decision rates. These move long before win rate does, because a forced win
     # or avoidable forced loss arises at well under 1% of decisions -- rare enough to be
@@ -1496,6 +1501,7 @@ def train_pipeline(
     setup_entropy_floor: float = 0.0,
     setup_entropy_lr: float = 0.01,
     setup_entropy_max_coef: float = 1.0,
+    forced_opening: Optional[str] = None,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
     setup_block_lambda: bool = False,
@@ -1735,6 +1741,7 @@ def train_pipeline(
         "setup_entropy_floor": float(setup_entropy_floor),
         "setup_entropy_lr": float(setup_entropy_lr),
         "setup_entropy_max_coef": float(setup_entropy_max_coef),
+        "forced_opening": forced_opening,
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
         "setup_block_lambda": bool(setup_block_lambda),
@@ -1833,7 +1840,30 @@ def train_pipeline(
     # instead. The pool is rebuilt as the policy moves on; see ai/training/start_pool.py.
     start_pool: Optional[StartPositionPool] = None
     env_start_turns: List[Optional[int]] = [None] * num_envs
-    if start_pool_frac > 0.0:
+    if forced_opening:
+        # Every game starts from a scripted setup (tools/lib/openings.py): each fresh deal has
+        # its fifteen setup placements played by the named opening before the policy sees it, so
+        # the learner never makes -- or is trained on -- a setup decision.
+        if start_pool_frac > 0.0:
+            raise ValueError("--forced-opening and --start-pool-frac are not combined: the start "
+                             "pool's harvested games would still use the policy's own setup")
+        from tools.lib.openings import OPENINGS, play_scripted_setup
+        if forced_opening not in OPENINGS:
+            raise ValueError(f"unknown opening {forced_opening!r}; known: {sorted(OPENINGS)}")
+        _opening_env: List[TsVectorizedEnv] = []
+
+        def _opening_provider(env_idx: int) -> Optional[Any]:
+            return play_scripted_setup(_opening_env[0].runner.get_state(env_idx), str(forced_opening))
+
+        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed,
+                              reward_calculator=reward_calc,
+                              start_provider=_opening_provider,
+                              window_provoked_defcon=window_provoked_defcon)
+        _opening_env.append(env)
+        print(f"[forced opening] every game starts after the '{forced_opening}' setup: "
+              f"USSR {OPENINGS[forced_opening]['USSR']}, US {OPENINGS[forced_opening]['US']}",
+              flush=True)
+    elif start_pool_frac > 0.0:
         mix = dict(DEFAULT_TURN_MIX)
         pool_turns = tuple(t for t in mix if t != 1)
         start_pool = StartPositionPool(turns=pool_turns,
@@ -2252,6 +2282,7 @@ def train_pipeline(
     evaluate_and_log_snapshot(
         model=model,
         merged_influence=merged_influence,
+        forced_opening=forced_opening,
         opponents=opponents,
         elapsed_seconds=0,
         out_dir=out_dir,
@@ -2542,6 +2573,7 @@ def train_pipeline(
             decisive = evaluate_and_log_snapshot(
                 model=model,
                 merged_influence=merged_influence,
+                forced_opening=forced_opening,
                 opponents=opponents,
                 elapsed_seconds=int(elapsed),
                 out_dir=out_dir,
@@ -2575,6 +2607,7 @@ def train_pipeline(
     evaluate_and_log_snapshot(
         model=model,
         merged_influence=merged_influence,
+        forced_opening=forced_opening,
         opponents=opponents,
         elapsed_seconds=int(time.time() - t_start),
         out_dir=out_dir,

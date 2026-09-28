@@ -156,6 +156,7 @@ def run_massive_tournament(
     log_games: Optional[str] = None,
     auto_advance: bool = True,
     pack_pairs: int = 25,
+    opening: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Runs high-throughput round-robin tournament across all specified models.
 
@@ -174,6 +175,11 @@ def run_massive_tournament(
     agents: List[PlayerAgent] = []
     for spec in model_specs:
         agent = load_agent(spec, device=dev)
+        if opening and not getattr(agent, "forced_opening", None):
+            # --opening: every agent's setup is the named opening (a per-agent opening:<name>:
+            # prefix on a spec takes precedence). Named in the report, so the rows say so.
+            setattr(agent, "forced_opening", opening)
+            setattr(agent, "name", f"{agent.name}+{opening}")
         agents.append(agent)
         print(f" Loaded Agent: {agent.name:<35s} (from {spec})")
 
@@ -448,6 +454,11 @@ def main():
              "200 games took 118s on cpu against 6.4s on cuda, an 18x difference.")
     parser.add_argument("--track-choices", action="store_true", default=False, help="Track and report micro-actions with exactly 1 valid choice")
     parser.add_argument("--log-games", type=str, default=None, help="Path to save per-game JSONL execution logs")
+    parser.add_argument("--opening", type=str, default=None,
+                        help="Every agent's setup is this named opening (tools/lib/openings.py) instead "
+                             "of its own placements. One agent alone: prefix its spec with "
+                             "opening:<name>:. Needed to rate a checkpoint trained with "
+                             "--forced-opening, whose setup was never learned.")
     parser.add_argument("--self-play", action="store_true", default=False, help="Evaluate model against itself")
     # Default ON. The function signature defaulted to True while this flag defaulted to
     # False and line 413 passes it through unconditionally, so every CLI run settled
@@ -491,6 +502,7 @@ def main():
         temperature=args.temperature,
         batch_chunk_size=args.batch_chunk_size,
         pack_pairs=args.pack_pairs,
+        opening=args.opening,
         anchor_model=args.anchor_model,
         anchor_elo=args.anchor_elo,
         output_report=out_rep,

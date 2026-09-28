@@ -12,6 +12,7 @@ import torch
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
+from tools.lib.openings import ScriptedSetupOverride
 from tools.lib.player_agent import PlayerAgent, NeuralAgent, HeuristicAgent, RandomAgent, load_agent, resolve_device
 from ai.game_length import ply as game_ply
 from tools.lib.tournament_evaluator import classify_game_ending_reason
@@ -188,6 +189,9 @@ class BatchMatchRunner:
                                             [bool(x) for x in np.where(first, mv_a, mv_b)])
             active = np.ones(cur_games, dtype=bool)
             steps = 0
+            open_a = getattr(agent_a, "forced_opening", None)
+            open_b = getattr(agent_b, "forced_opening", None)
+            setup_override = ScriptedSetupOverride(cur_games) if (open_a or open_b) else None
 
             # Temporary arrays for current chunk
             chunk_utils = np.zeros(cur_games, dtype=np.float32)
@@ -327,6 +331,11 @@ class BatchMatchRunner:
                             leg = np.where(masks[idx] > 0)[0]
                             actions[idx] = np.random.choice(leg) if len(leg) > 0 else 0
 
+                if setup_override is not None:
+                    if open_a:
+                        setup_override.apply(actions, obs, masks, d_players, np.where(is_a_turn)[0], open_a)
+                    if open_b:
+                        setup_override.apply(actions, obs, masks, d_players, np.where(is_b_turn)[0], open_b)
                 step_results = runner.step_flat_all(actions.tolist(),
                                                     auto_advance=auto_advance)
                 # 0 = refused. A refused action here means a game silently did not advance and the
@@ -560,6 +569,8 @@ class BatchMatchRunner:
                                         [bool(x) for x in mv[ussr_agent]])
 
         temps = [_temp_for(ag) for ag in agents]
+        openings = [getattr(ag, "forced_opening", None) for ag in agents]
+        setup_override = ScriptedSetupOverride(n) if any(openings) else None
         active = np.ones(n, dtype=bool)
         utils = np.zeros(n, dtype=np.float32)
         vps = np.zeros(n, dtype=np.int32)
@@ -631,6 +642,11 @@ class BatchMatchRunner:
             if act_dev is not None:
                 nn_act = act_dev.cpu().numpy().astype(np.int32)
                 actions = np.where(nn_rows, nn_act, actions)
+            if setup_override is not None:
+                for ai, op in enumerate(openings):
+                    if op:
+                        setup_override.apply(actions, obs, masks, d_players,
+                                             np.where(active & (actor == ai))[0], op)
             step_results = runner.step_flat_all(actions.tolist(), auto_advance=auto_advance)
             if 0 in step_results:
                 bad = step_results.index(0)

@@ -105,6 +105,12 @@ is the one `step_flat` reads.
   whenever any game ended doubled that cost on most steps, while `reset_env` and `reset_all`
   injected without any refresh. `tests/training/test_env_refresh.py` pins both halves.
 
+  A `start_provider` returns either a mid-game pool position (stored pre-deal, one turn before its
+  target, so the episode's `start_turn` is `state.turn + 1`) or, for `--forced-opening`, a fresh
+  deal whose setup a script has played (`tools/lib/openings.play_scripted_setup`). A turn-1 state is
+  always the latter, so its `start_turn` is 1. `tests/training/test_forced_opening.py` checks that no
+  setup decision reaches the policy, across automatic resets too.
+
 ---
 
 ## 2. Mandatory Documentation Maintenance Rule for Agents
