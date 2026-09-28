@@ -55,3 +55,31 @@ is the same mechanism in a worse place.
   policy locked into early stays, good or bad.
 * **The critic is single-perspective by construction.** Anything that reads it from a fixed side
   (the workbench curve, a search from the opponent's view) sees an untrained output half the time.
+
+## Follow-up: the critic is not blind to the opening, it over-rates the alternatives (2026-09-28)
+
+`tools/scripts/setup_oracle.py` now also reports the critic's view of each opening. That is v_win
+at the first decision after setup (the US headline, so the mover's and trained view), converted
+to US win-rate points (v/2) and paired per deal like the playouts (2,000 deals,
+`data/reports/setup_oracle_critic.txt`):
+
+| alternative − own opening | playouts | critic |
+|:---|---:|---:|
+| E5-11-43@560M (own: Greece 2, Italy 2, France 1, WG 4): WG 4, Italy 3, France 2 | +5.4 ± 1.5 | +16.2 |
+| same: WG 4, Italy 3, Iran 2 | +2.0 ± 1.5 | +15.0 |
+| same: WG 4, Italy 3, France 1, Iran 1 | +4.5 ± 1.5 | +17.0 |
+| E5-11-43@240M (own: France 4, Greece 2, Italy 2, Iran 1): WG 4, Italy 3, France 2 | +0.6 ± 1.5 | +18.4 |
+| same: WG 4, Italy 3, France 1, Iran 1 | +4.1 ± 1.5 | +15.8 |
+| E5-11-44@640M (own: Canada 2, Italy 2, WG 4, Iran 1): WG 4, Italy 3, France 1, Iran 1 | +1.3 ± 1.4 | +5.7 |
+
+**The critic already prefers the sane openings, by three to four times their real worth.** It is
+not the critic that keeps the Greece opening. It is the policy gradient. The setup is never sampled
+differently (p ≈ 1), so the critic's preference for other openings never reaches it: PPO updates
+only the actions taken. With γ = 1 and λ = 0.98, a setup placement's advantage weights the game
+result by about 0.98^(decisions to the end of the game), which is 0.01 or less. So the setup learns
+from nothing but the critic's values of the positions right after it.
+
+This also explains E5-13's drift. Once the floor made alternative openings sampled, their
+advantages came from a critic that over-rates unfamiliar post-setup positions. The setup then
+chased the critic's optimism (Finland, the USSR off Poland) rather than the openings' real value,
+which the playouts measure and training never sees.

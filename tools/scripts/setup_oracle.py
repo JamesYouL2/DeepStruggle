@@ -12,7 +12,9 @@ played by the checkpoint up to the US setup, which is where the branches split:
 
 Every branch is then played to the end once per deal by the checkpoint on both sides, greedily.
 The engine RNG is re-seeded identically in every branch of a deal. What is reported is the US win
-rate and its paired difference from `own`.
+rate and its paired difference from `own`, beside the critic's own difference at the first decision
+after setup (read from the mover's side), in the same units -- whether the critic sees what the
+playouts see.
 
     PYTHONPATH=.:build/release python tools/scripts/setup_oracle.py --checkpoint <snapshot.pt> \\
         --deals 2000 --opening "human=West Germany*4,Italy*2,France,Italy,Iran"
@@ -94,6 +96,19 @@ def play_setup(model: torch.nn.Module, dev: torch.device, start: "ts.GameState",
     return st, placed
 
 
+@torch.no_grad()
+def _critic_us(model: torch.nn.Module, dev: torch.device, states: Sequence["ts.GameState"]) -> np.ndarray:
+    """The critic's v_win from the US side for each state, read from the mover's observation (the
+    only perspective the value head is trained on) and sign-converted."""
+    out = np.zeros(len(states))
+    for i, st in enumerate(states):
+        mover = ts.Player(int(st.ctx().decision_player))
+        o, m = _obs_mask([st], mover, dev)
+        v = float(model(o, m)[1].float().reshape(-1)[0].item())
+        out[i] = v if mover == ts.Player.US else -v
+    return out
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", required=True)
@@ -122,12 +137,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     seeds = [7919 * g + 17 for g in range(a.deals)]
     score = {name: (playouts(model, dev, sts, seeds, 0.0) + 1.0) / 2.0 for name, sts in branches.items()}
-    base = score["own"]
+    critic = {name: _critic_us(model, dev, sts) for name, sts in branches.items()}
+    base, cbase = score["own"], critic["own"]
     for name, sc in score.items():
         d = sc - base
         se = d.std(ddof=1) / np.sqrt(len(d)) if len(d) > 1 else 0.0
+        dc = critic[name] - cbase
+        cse = dc.std(ddof=1) / np.sqrt(len(dc)) if len(dc) > 1 else 0.0
+        # v_win is an expected result in [-1, 1]; half of it is a win-rate difference.
         print(f"{name:32s} US wins {100 * sc.mean():5.1f}%   vs own {100 * d.mean():+5.1f} ± {100 * se:.1f} pp "
-              f"(paired, {len(d)} deals)")
+              f"(paired, {len(d)} deals) | critic vs own {100 * dc.mean() / 2:+5.1f} ± {100 * cse / 2:.1f} pp")
     return 0
 
 
