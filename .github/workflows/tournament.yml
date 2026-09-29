@@ -18,7 +18,6 @@
 #   gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=100 -f runners=16
 #   gh run download <run-id> -n tournament-<run-id> -D data/reports/ci
 #
-# It also runs when this file changes, so a change to the job is exercised by the push itself.
 name: tournament
 
 on:
@@ -39,16 +38,12 @@ on:
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
-  push:
-    paths:
-      - .github/workflows/tournament.yml
 
 permissions:
   contents: read
 
-concurrency:
-  group: tournament-${{ github.ref }}
-  cancel-in-progress: false   # a finished half of a tournament is not worth throwing away
+# No concurrency group: two tournaments on one branch are independent experiments, and a shared
+# group keeps only one of them pending -- a second dispatch silently cancelled the first.
 
 env:
   MODELS: ${{ inputs.models || 'doctrine newest' }}
