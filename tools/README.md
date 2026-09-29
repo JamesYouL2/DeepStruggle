@@ -379,7 +379,19 @@ plays the same games as its checkpoint (the export is verified to pick the same 
 sampled, it draws from its own generator, so it matches in distribution only.
 
 ```bash
-hf download mihaild/deepstruggle E5-11-43_560M.onnx --local-dir data/checkpoints
+PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py            # the newest, as the page picks it
+PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py --path E4-08-36_240M.onnx
+```
+
+### E. On CI
+`.github/workflows/tournament.yml` runs a tournament on a 4-core GitHub runner: by default Doctrine
+against the newest model on Hugging Face (`fetch_hf_model.py`), 100 games a side, `--workers 0
+--shard-pairs 5`. The report lands in the run summary; report, JSON, per-game log and a provenance
+file (commit, engine fingerprint, entrants) are the `tournament-<run id>` artifact.
+
+```bash
+gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=100
+gh run download <run-id> -D data/reports/ci      # collect the artifact
 ```
 
 ---

@@ -256,7 +256,8 @@ PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 ```
 
 Other `tools/` CLIs: `generate_dataset.py` and `build_human_dataset.py` (demonstration datasets),
-`inspect_checkpoints.py` (architecture detected from the weights), `download_ts_replayer.py`
+`inspect_checkpoints.py` (architecture detected from the weights), `fetch_hf_model.py` (the newest
+published ONNX model, as the workbench picks it), `download_ts_replayer.py`
 (cached fetch of the human corpus), `behavioral_test.py` (scripted probes). Full flag reference in
 `tools/README.md`.
 
