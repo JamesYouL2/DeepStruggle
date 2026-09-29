@@ -352,6 +352,67 @@ PYTHONPATH=. .venv/bin/python tools/tournament.py \
   --output-report <run-dir>/tournament_report.md
 ```
 
+### C. Multicore: bots that decide in Python
+A network is batched inside one process and gains little from more; a bot that decides in Python
+(`doctrine`, ~20 s a game; `heuristic_mcts`) plays one decision at a time on one core. `--workers N`
+(0 = every core) cuts each matchup into shards of `--shard-pairs` game pairs (default 10; a pair is
+one deal played from both sides) and plays them in N processes, one thread each
+(`tools/lib/parallel_tournament.py`).
+
+The split plays the same deals as a single process, and each shard reseeds every generator its
+games draw from (the global ones, and any agent's `reseed`), so **results depend on
+`--shard-pairs`, never on `--workers`**. With deterministic agents they equal the one-process run
+exactly. Each worker loads its own copy of every model -- on a small machine, count the memory.
+
+```bash
+PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+  --models doctrine data/checkpoints/E5-11-43_560M.onnx --games-per-side 100 \
+  --device cpu --workers 0 --output-json data/reports/doctrine_vs_E5.json
+```
+
+### D. ONNX models
+A `.onnx` file from `tools/export_onnx.py` -- what the workbench plays, and the only form the
+published models on Hugging Face take -- is an entrant like a checkpoint (`OnnxAgent`, ONNX
+Runtime on CPU). Its name, observation width and action view come from the export's metadata, and
+a file that is not an export, or was made for another observation width, is refused. Greedy, it
+plays the same games as its checkpoint (the export is verified to pick the same favourite move);
+sampled, it draws from its own generator, so it matches in distribution only.
+
+```bash
+PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py            # the newest, as the page picks it
+PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py --path E4-08-36_240M.onnx
+```
+
+### E. Across machines: `--part` and `--pool-parts`
+`--part I/N --output-part part.json` plays every N-th shard of the tournament (starting at the
+I-th) and writes their raw results and game logs; `--pool-parts part*.json` checks that the files
+are one tournament's parts and cover each shard exactly once, merges them, and writes the usual
+report, JSON and `--log-games`. Since a shard's games depend only on the shard, the pooled
+tournament equals one machine playing all of it -- every part must be given the same entrants,
+`--games-per-side` and `--shard-pairs`, and pooling refuses parts that were not.
+
+```bash
+# on machine k of 4
+tools/tournament.py --models doctrine <model.onnx> --games-per-side 200 --device cpu \
+  --workers 0 --shard-pairs 1 --part k/4 --output-part parts/part-k.json
+# anywhere, once all four are in
+tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/pooled.json
+```
+
+### F. On CI
+`.github/workflows/tournament.yml` does exactly that on GitHub runners (4 cores each, about a
+minute of setup): a `plan` job pins `newest` to one Hugging Face file (`fetch_hf_model.py
+--resolve-only`), a matrix of `runners` jobs (default 16) each plays one part, and a `pool` job
+merges them. Defaults: Doctrine against the newest model, 100 games a side, `--shard-pairs 1`.
+The report lands in the run summary; report, JSON, per-game log and a provenance file (commit,
+engine fingerprint, entrants) are the `tournament-<run id>` artifact. A failed runner makes the
+pool fail with the missing shards named; re-run the failed jobs.
+
+```bash
+gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=200 -f runners=16
+gh run download <run-id> -n tournament-<run-id> -D data/reports/ci      # collect the result
+```
+
 ---
 
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)
@@ -580,8 +641,9 @@ there; a trainer must drop them from the value loss and keep them in the policy 
 
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
-- `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers.
-- `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver.
+- `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
+- `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver; plays any subset of a matchup's pairs with their own deals, and merges the parts (`merge_matchup_results`).
+- `tools/lib/parallel_tournament.py`: splits a tournament into shards played in worker processes (`tools/tournament.py --workers`).
 - `tools/lib/tournament_evaluator.py`: diagnostic loss cause classifier (`classify_game_ending_reason`).
 - `tools/lib/self_play.py`: single-game trajectory runner; the one writer of `.tslog.json` replays.
 - `tools/lib/scoring_formatter.py`: regional scoring calculation formatter.

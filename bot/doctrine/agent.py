@@ -1,6 +1,7 @@
 """Doctrine as a tournament agent (`PlayerAgent`) and as a match-loop bot (`BaseBot`)."""
 from __future__ import annotations
 
+import random
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -20,6 +21,13 @@ class DoctrineAgent:
     def __init__(self, name: str = "Doctrine", seed: int = 0, weights: Optional[Weights] = None):
         self.name = name
         self.policy = DoctrinePolicy(weights=weights, seed=seed)
+
+    def reseed(self, seed: int) -> None:
+        """Restart the determinization stream. One stream serves every game this agent plays,
+        so without this a game's outcome depends on what the agent played before it -- and a
+        tournament split across processes (tools/lib/parallel_tournament.py) reseeds per shard
+        so the split does not change the games."""
+        self.policy.rng = random.Random(seed)
 
     def select_action(self, state: ts.GameState, player: ts.Player, temperature: float = 0.1) -> int:
         ctx = state.ctx()

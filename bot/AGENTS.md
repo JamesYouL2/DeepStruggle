@@ -73,8 +73,12 @@ Missile Envy targets) and the Military Ops discount.
 ```bash
 PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us doctrine --ussr heuristic
 PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py --models doctrine heuristic_v2 \
-  --games-per-side 20 --device cpu
+  --games-per-side 20 --device cpu --workers 0
 ```
+
+`--workers 0` plays the games on every core. `DoctrineAgent.reseed` restarts its
+determinization stream, which is what lets a split tournament play the same games whatever the
+number of workers (`tools/lib/parallel_tournament.py`).
 
 ---
 
