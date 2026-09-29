@@ -575,6 +575,22 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         return BatchedMCTSAgent(search_model, name=label,
                                 device=torch.device("cpu") if onnx_base is not None else device,
                                 config=cfg)
+    if s.lower().startswith("roundsearch:"):
+        # roundsearch:<checkpoint>[:reply_top_k[:determinize]] -- dense search of the whole action
+        # round plus the opponent's dense reply to the top-k lines (ai/search/round_search.py).
+        # Needs a GPU: one root search is ~10^5-10^6 network evaluations.
+        parts = s.split(":")
+        k = int(parts[2]) if len(parts) > 2 and parts[2] else 8
+        det = len(parts) > 3 and parts[3].lower().startswith("determin")
+        from ai.search.round_search import RoundSearchAgent, RoundSearchConfig
+
+        onnx_base = OnnxAgent(parts[1]) if parts[1].lower().endswith(".onnx") else None
+        rs_model = (onnx_base.as_module() if onnx_base is not None
+                    else NeuralAgent.from_checkpoint(parts[1], device=device).model)
+        return RoundSearchAgent(
+            rs_model, name=f"roundsearch-k{k}{'-det' if det else ''}",
+            device=torch.device("cpu") if onnx_base is not None else device,
+            config=RoundSearchConfig(reply_top_k=k, determinize=det))
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
         #
