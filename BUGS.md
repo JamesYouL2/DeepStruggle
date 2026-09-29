@@ -72,8 +72,7 @@ It is deferred to a point where that cost is acceptable, not because the fix is 
 War rolls ignored the defender's superpower; the Vietnam Revolts ladder fell back to a card's
 printed Ops rather than the event's grant; UN Intervention could be played as an Event with no companion; We Will Bury You
 skipped a trapped US round; NORAD armed on DEFCON being set to 2 at 2; the Grain Sales route to UN
-Intervention paid neither U-2 Incident nor Flower Power; Flower Power ignored a war card lent to UN
-Intervention; the era decks reshuffled the discard pile in at turns 4 and 8; and Summit counted
+Intervention paid no U-2 Incident; the era decks reshuffled the discard pile in at turns 4 and 8; and Summit counted
 the scoring-only Shuttle Diplomacy and Formosan Resolution.
 
 Each is listed with its source in `engine/AGENTS.md` §10 and pinned by
