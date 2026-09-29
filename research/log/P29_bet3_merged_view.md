@@ -92,3 +92,29 @@ loss about three times as often. Against outside opponents the style loses badly
   * The first plausible cause is P29 bet 4's: at the merged op-choice node the network chooses the
     first placement without seeing the Ops it is spending.
   * Testing that needs the owner's observation approval. It is not re-run here.
+
+## Saturated, or still training? (owner's question, 2026-09-29)
+
+**It saturated.** Both runs' 40M snapshots, 40–560M, were rated in one field with E6-03-44@550M:
+29 models, greedy, 400 games per seat (`data/reports/p29_bet3_trace.{md,json}`). Each Elo value
+carries roughly ±10–15 of noise.
+
+| step | 40M | 80M | 160M | 240M | 320M | 400M | 480M | 520M | 560M |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| E6-09-44 (merged) | 1113 | 1242 | 1379 | 1395 | 1441 | 1482 | 1452 | 1486 | 1478 |
+| E6-03-44 (control) | 1266 | 1390 | 1490 | 1576 | 1664 | 1684 | 1717 | 1701 | 1734 |
+| gap | −152 | −148 | −112 | −181 | −223 | −202 | −265 | −215 | −255 |
+
+Elo gained per stretch:
+
+| stretch | merged | control |
+|:---|---:|---:|
+| 80→240M | +153 | +186 |
+| 240→400M | +87 | +107 |
+| 400→560M | **−4** | **+50** |
+
+* **The merged view levels off around 400M.** The control is still climbing through 560M.
+* **It is behind from the first snapshot and learns more slowly at every stage**, so the gap widens
+  from about −150 to about −250.
+* **A longer run would not close it.** The view is not a slower learner that catches up; at this
+  recipe it learns more slowly and levels off lower.
