@@ -98,24 +98,39 @@ TEST(CardEdgeCasesTest, ChinaCard_OpsModifiers_WithPurge_Containment_Brezhnev_In
     ASSERT_EQ(Operations::get_effective_ops(s4, card_ids::THE_CHINA_CARD, Player::US, Region::ASIA), 5);
 }
 
-TEST(CardEdgeCasesTest, KitchenDebates_RemovedIfLeadInBGs_DiscardedIfNot) {
-    // 1. US leads in battlegrounds -> +2 VP, REMOVED_FROM_GAME
+// The handler awards the VP and nothing else: where the card goes is its caller's business, on the
+// same event_has_effect answer as NATO, Solidarity or Our Man in Tehran. Until E6 the handler
+// placed the card itself and every caller skipped it, which left a Kitchen Debates spent for
+// Operations -- no Event, no handler -- in the US hand.
+TEST(CardEdgeCasesTest, KitchenDebates_HandlerScoresAndLeavesTheCardToItsCaller) {
     GameState s1{};
     s1.countries[countries::WEST_GERMANY].us_influence = 4; // US BG
     s1.countries[countries::PANAMA].us_influence = 3;       // US BG
     s1.victory_points = 0;
+    s1.card_locations[card_ids::KITCHEN_DEBATES] = hand_of(Player::US);
+    ASSERT_TRUE(CardHandlers::event_has_effect(s1, card_ids::KITCHEN_DEBATES, Player::US));
     CardHandlers::trigger_event(s1, card_ids::KITCHEN_DEBATES, Player::US);
     ASSERT_EQ(s1.victory_points, 2);
+    ASSERT_TRUE(in_hand_of(s1.card_locations[card_ids::KITCHEN_DEBATES], Player::US));
+    CardHandlers::relocate_played_card(s1, card_ids::KITCHEN_DEBATES, true, CardHandlers::Handover::Respect);
     ASSERT_EQ(s1.card_locations[card_ids::KITCHEN_DEBATES], CardLocation::REMOVED_FROM_GAME);
 
-    // 2. US does not lead in battlegrounds -> 0 VP, DISCARD_PILE
     GameState s2{};
     s2.countries[countries::EAST_GERMANY].ussr_influence = 4; // USSR BG
     s2.countries[countries::POLAND].ussr_influence = 4;       // USSR BG
     s2.victory_points = 0;
+    ASSERT_TRUE(!CardHandlers::event_has_effect(s2, card_ids::KITCHEN_DEBATES, Player::US));
     CardHandlers::trigger_event(s2, card_ids::KITCHEN_DEBATES, Player::US);
     ASSERT_EQ(s2.victory_points, 0);
-    ASSERT_EQ(s2.card_locations[card_ids::KITCHEN_DEBATES], CardLocation::DISCARD_PILE);
+}
+
+// The bug itself: the US spends its own Kitchen Debates for Operations. No Event runs, so the
+// generic relocation is the only thing that can move it, and it must.
+TEST(CardEdgeCasesTest, KitchenDebates_SpentForOpsByTheUsIsDiscarded) {
+    GameState s{};
+    s.card_locations[card_ids::KITCHEN_DEBATES] = hand_of(Player::US);
+    CardHandlers::relocate_played_card(s, card_ids::KITCHEN_DEBATES, false, CardHandlers::Handover::Ignore);
+    ASSERT_EQ(s.card_locations[card_ids::KITCHEN_DEBATES], CardLocation::DISCARD_PILE);
 }
 
 TEST(CardEdgeCasesTest, MissileEnvy_OpponentHoldsOnlyScoringCards_NoTransfer) {

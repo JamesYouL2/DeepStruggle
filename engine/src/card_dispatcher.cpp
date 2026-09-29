@@ -265,7 +265,6 @@ bool CardHandlers::event_has_effect(const GameState& state, uint8_t card_id, Pla
 void CardHandlers::relocate_played_card(GameState& state, uint8_t card, bool event_occurred,
                                        Handover handover) noexcept {
     if (card == 0 || card > 110) return;
-    if (card == card_ids::KITCHEN_DEBATES) return;
     if (handover == Handover::Respect && keeps_own_card_location(state, card)) return;
 
     if (card == card_ids::SHUTTLE_DIPLOMACY &&

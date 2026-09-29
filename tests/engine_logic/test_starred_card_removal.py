@@ -277,3 +277,55 @@ def test_kitchen_debates_is_discarded_when_the_us_is_behind_on_battlegrounds() -
 def test_kitchen_debates_is_removed_when_its_event_happens() -> None:
     assert _play_as_event(_KITCHEN_DEBATES, _us_leads_battlegrounds) \
         == ts.CardLocation.REMOVED_FROM_GAME
+
+
+def _spend_for_ops(card: int, player: ts.Player, setup) -> ts.CardLocation:
+    """Spend `card` for influence Operations as `player`, and report where it went. Placements
+    take the first legal country, so any board `setup` leaves playable works."""
+    state = ts.GameState()
+    ts.Engine.init_game(state, 909)
+    state.current_phase = ts.Phase.ACTION_ROUND
+    state.turn = 8
+    state.action_round = 1
+    state.phasing_player = player
+    setup(state)
+    ctx = state.ctx()
+    ctx.decision_player = player
+    ctx.decision_type = ts.DecisionType.SELECT_CARD
+    state.set_card_location(card, ts.hand_of(player))
+    assert ts.Engine.try_step(state, ts.MicroAction(ts.DecisionType.SELECT_CARD, card, 0, 0))
+    assert ts.Engine.try_step(state, ts.MicroAction(
+        ts.DecisionType.SELECT_PLAY_MODE, int(ts.Resolution.OPS_INFLUENCE), 0, 0))
+    for _ in range(40):
+        if ts.Engine.is_terminal(state):
+            break
+        ctx = state.ctx()
+        if ctx.decision_player == ts.Player.NONE and ctx.decision_type == ts.DecisionType.ROLL_DIE:
+            ts.Engine.step(state, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+        elif ctx.decision_type == ts.DecisionType.POINT_NODE and ctx.pending_op_card == card:
+            legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(state)))
+            assert legal.size, "no legal placement; the setup left nothing to play"
+            ts.Engine.step_flat(state, int(legal[0]))
+        else:
+            break
+    return state.get_card_location(card)
+
+
+# Kitchen Debates spent for Operations. Until E6 the card's handler placed it and every other path
+# skipped it, so the US spending its own Kitchen Debates -- where no Event runs -- left it in the
+# US hand, playable again every action round (owner's workbench game, turn 7 AR6; 4 of 12 E5
+# self-plays replayed it, once in five straight action rounds).
+@pytest.mark.parametrize("setup", [_us_leads_battlegrounds, _ussr_leads_battlegrounds],
+                         ids=["us-leads", "ussr-leads"])
+def test_kitchen_debates_spent_by_the_us_for_ops_is_discarded(setup) -> None:
+    assert _spend_for_ops(_KITCHEN_DEBATES, ts.Player.US, setup) == ts.CardLocation.DISCARD_PILE
+
+
+def test_kitchen_debates_spent_by_the_ussr_fires_and_leaves_the_game_when_the_us_leads() -> None:
+    assert _spend_for_ops(_KITCHEN_DEBATES, ts.Player.USSR, _us_leads_battlegrounds) \
+        == ts.CardLocation.REMOVED_FROM_GAME
+
+
+def test_kitchen_debates_spent_by_the_ussr_is_discarded_when_its_event_cannot_happen() -> None:
+    assert _spend_for_ops(_KITCHEN_DEBATES, ts.Player.USSR, _ussr_leads_battlegrounds) \
+        == ts.CardLocation.DISCARD_PILE

@@ -1,5 +1,7 @@
 # E6-01 — does a model that knows the corrected deck beat one that does not?
 
+> **Ran on an abandoned intermediate engine** (`c1df6f5`, the era fix alone). On 2026-09-29 E6 was redefined as that fix plus the Kitchen Debates fix ([`../findings/engine/engine_revisions.md`](../findings/engine/engine_revisions.md)). Every arm here, E6-01 and its E5 controls alike, carried the Kitchen Debates bug, so the comparison still isolates the deck change; it says nothing about Kitchen Debates.
+
 **Question (owner, 2026-09-28).** E6 fixes rule 4.4: the era transitions at turns 4 and 8 no
 longer shuffle the discard back into the deck ([`../findings/engine/engine_revisions.md`](../findings/engine/engine_revisions.md),
 *The E5 → E6 boundary*). Every model so far learned the old deck. Does 40M of fine-tuning on E6

@@ -24,7 +24,7 @@ than assumed ([below](#changes-held-inside-e3-by-measurement)).
 | **E3** | `76e7385`, `6381cf4` | 2026-09-11 | the Aldrich Ames discard and the Star Wars pick made mandatory. Everything from P1 onward |
 | **E4** | `7057251`, `0aa3dc0` (P17) | 2026-09-19 | Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space repacked 212 → 220. The registry restarted here ([`../../runs.md`](../../runs.md)) |
 | **E5** | `b19b958`, `8d05d94` | 2026-09-26 | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops play's stop ([below](#the-e4--e5-boundary)) |
-| **E6** | `c1df6f5` | 2026-09-28 | the era transitions no longer shuffle the discard pile back into the deck (rule 4.4): at turns 4 and 8 only the new era's cards join it. Before, every card spent since the last reshuffle came back at turns 4 and 8 ([below](#the-e5--e6-boundary)) |
+| **E6** | `c1df6f5` + *the Kitchen Debates fix* | 2026-09-29 | two rules fixes: the era transitions no longer shuffle the discard back into the deck (rule 4.4), and Kitchen Debates spent for Operations is discarded instead of staying in the US hand. `c1df6f5` alone was briefly called E6 and is abandoned ([below](#the-e5--e6-boundary)) |
 
 ## E1 was not one engine either
 
@@ -148,6 +148,24 @@ implemented it.
 
 The legal mask and the observation layout are unchanged; the decision stream changes from the
 turn-4 deal on. E5 checkpoints load and play on E6, but learned the old deck.
+
+**A second fix joins E6 (2026-09-29): Kitchen Debates spent for Operations.** The owner played
+Kitchen Debates for Operations as the US at turn 6 AR3 and again at turn 7 AR6 of one workbench
+game (`data/ts_workbench_2026-09-28T23-54-31-730Z.tslog.json`); it never left the US hand.
+`relocate_played_card` skipped Kitchen Debates unconditionally, because its handler placed the
+card itself -- a leftover from before `event_has_effect` existed (`0ad8598`, 2026-09-10). A US
+play for Operations runs no Event, so no handler, and the card stayed, playable every action
+round. The fix removes the special case: the handler scores and every caller relocates the card
+on its own `event_has_effect` answer, as for NATO, Solidarity and Our Man in Tehran.
+
+* **Since when:** `0ad8598`, so E3, E4, E5 and the abandoned intermediate E6 all have it.
+* **The models exploit it:** in 4 of 12 E5 self-plays (E5-11-43 and E5-21-43 at 560M) the US
+  replays Kitchen Debates within a turn, once in five straight action rounds (turn 9 of
+  `e5_21_43_560M_selfplay_seed6`) -- a permanent spare card for the US.
+* **The intermediate engine.** `c1df6f5` (the era fix alone) was called E6 for a day. E6-01-43
+  and the first E6-02-44 ran on it; the owner abandoned it and E6 is the two fixes together. The
+  E6-01 finding (40–120M on the corrected deck buys nothing measurable) is a statement about the
+  deck change only, and both of its arms carried the Kitchen Debates bug.
 
 ## Changes held inside E3 by measurement
 

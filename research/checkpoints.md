@@ -37,6 +37,9 @@ What it is worth ([`log/E5_21_setup_credit_plus_league.md`](log/E5_21_setup_cred
   * Neither side has an alternative more than 2.2 ± 1.5 points better.
 * **Self-play is balanced.** Greedy self-play gives US 49.6% over 500 deals.
 * **One seed only (43).**
+* **Trained on E5**, which had both bugs E6 fixed: the discard came back at turns 4 and 8, and Kitchen Debates spent
+  for Operations stayed in the US hand. Its US replays Kitchen Debates in some games
+  ([`findings/engine/engine_revisions.md`](findings/engine/engine_revisions.md), *The E5 → E6 boundary*).
 
 ### Replication recipe
 

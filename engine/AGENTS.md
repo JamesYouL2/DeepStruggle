@@ -455,3 +455,19 @@ from the log (`_set_hand`), so the engine's own deck was never compared against 
 corpus prints `*RESHUFFLE*` at turns 3 and 7 and never at 4 or 8. Held by
 `EraTransitionKeepsTheDiscard.*` (`tests/test_bugs_regression.cpp`) and
 `test_the_era_transitions_leave_the_discard_pile` (`tests/engine_logic/test_hand_knowledge_triggers.py`).
+
+## 11. A card's Event handler does not place the card (fixed in E6, 2026-09-29)
+
+Where a played card goes is decided in one place: every site that fires an Event asks
+`CardHandlers::event_has_effect` first, and `relocate_played_card` then removes a starred card
+whose Event happened and discards everything else. Prerequisites (NATO, Solidarity, ...) live in
+`can_trigger_event`; board conditions (Kitchen Debates, Our Man in Tehran) are cases in
+`event_has_effect`. A handler scores, moves influence, sets flags -- it does not write its own
+`card_locations` entry.
+
+Kitchen Debates broke this until E6: its handler placed the card and `relocate_played_card`
+skipped it unconditionally, so a US play for Operations -- no Event, so no handler -- left it in
+the US hand, playable every action round, and the E5 models learned to replay it. Held by
+`KitchenDebates_*` (`tests/test_card_edge_cases.cpp`) and `test_kitchen_debates_*`
+(`tests/engine_logic/test_starred_card_removal.py`). If a new card seems to need a special case in
+`relocate_played_card`, the condition belongs in `event_has_effect` instead.

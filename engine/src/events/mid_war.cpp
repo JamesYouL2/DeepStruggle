@@ -117,20 +117,18 @@ bool trigger_junta(GameState& state, Player p) noexcept {
 }
 
 bool trigger_kitchen_debates(GameState& state, Player p) noexcept {
-    // The US must control more battlegrounds than the USSR. Asked through event_has_effect for
-    // the same reason Our Man in Tehran does: the condition that decides whether the Event
-    // happens is the condition that decides whether the card leaves the game, and it should not
-    // be written twice.
+    // The US must control more battlegrounds than the USSR. Asked through event_has_effect, as Our
+    // Man in Tehran is: the condition that decides whether the Event happens is the one every
+    // caller already asks before firing it, and relocate_played_card then removes the card or
+    // discards it on that answer -- the same path as NATO or Solidarity, whose prerequisites
+    // live in can_trigger_event.
     //
-    // This card sets its own location -- every caller in the state machine skips it -- because
-    // the Event's outcome is only known here. The generic path would now reach the same answer,
-    // but leaving the card in charge of itself keeps the two from disagreeing.
+    // Until E6 this handler placed the card itself and relocate_played_card skipped Kitchen
+    // Debates unconditionally, so a US play for Operations -- where no Event runs -- left it in
+    // the US hand, playable again every action round.
     if (CardHandlers::event_has_effect(state, card_ids::KITCHEN_DEBATES, p)) {
         state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 2));
         if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
-        state.card_locations[card_ids::KITCHEN_DEBATES] = CardLocation::REMOVED_FROM_GAME;
-    } else {
-        state.card_locations[card_ids::KITCHEN_DEBATES] = CardLocation::DISCARD_PILE;
     }
     return true;
 }
