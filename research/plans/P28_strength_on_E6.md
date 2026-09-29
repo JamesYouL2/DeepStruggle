@@ -187,3 +187,6 @@ effects under ~40 Elo are not run.
 ## Runs
 
 * **Step 0 (2026-09-29): E6-04-44 adopted.** Panel pinned in `data/reports/p28_panel.json` (E6-03-44 @80M / @240M / @550M peak, `heuristic_mcts:16`); late block 500/520/540/560M. By the panel rule E6-04 − E6-03 is US +2.7 ± 0.6, USSR +1.5 ± 0.5 (both seats); the self-play-bar rule had read the same pairings as US +9.6 / USSR +0.3. Empty battlegrounds at turn 8 0.51 vs 1.5–1.7. E6-03-44's trace levels off at ~320M and has no end dip on E6 ([`../log/P28_step0_panel_and_E6_04_verdict.md`](../log/P28_step0_panel_and_E6_04_verdict.md)).
+* **Step 1 (2026-09-29).** Uniform soups of 480–560M beat every snapshot they average, by about 60–85 Elo in both seats. The E6-04-44 soup is 1651 against its best snapshot's 1566, and beats that snapshot 61.7% head to head. Weight averaging therefore goes into step 2b (E6-08-44).
+  Search headroom at 256 simulations: +3.5 ± 3.5 on E6-04-44@520M (step 6's gate fails on the adopted model) and +11 on E6-03-44@550M ([`../log/P28_step1_soups_and_search.md`](../log/P28_step1_soups_and_search.md)).
+  **Correction to the plan:** steps 1–2 did need code. `--lr-schedule`, `--ema-weights` and `weight_soup.py` were added in `27bfc6c`.
