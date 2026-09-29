@@ -27,6 +27,79 @@ A win rate is only meaningful with its opponent, its game count and its side spl
 frozen anchor, the only cross-engine-comparable opponents are the rule-based bots, so every row
 below is against `HeuristicBot` at 50 games a side.
 
+## Best models (owner, 2026-09-29)
+
+Two designations, on the real E6 engine. They supersede E5-21-43@560M, which is kept below as the
+E5-era record. Ratings are from the comprehensive E6 tournament, anchored at HeuristicBot = 1500
+([`log/E6_comprehensive_2026-09-29.md`](log/E6_comprehensive_2026-09-29.md)).
+
+| designation | model | file | sha256 | Elo |
+|:---|:---|:---|:---|---:|
+| **best raw model** (a single training snapshot) | **E6-07-44@700M** | `/workspace/data/checkpoints/E6-07-44_20260929_121304/snapshot_700055552steps.pt` | `34017ae130fe…d9d20a` | 2492 |
+| **best souped model** (uniform average of the last 80M) | **E6-06-44, 680–760M soup** | `/workspace/data/checkpoints/E6-06-44_20260929_121244/soup_680-760M.pt` | `6a3be70cb503…78b0ea` | **2560** |
+
+* **Best raw, E6-07-44@700M.**
+  * It is the top snapshot of raw weights in the tournament.
+  * The EMA snapshots of E6-08-44 rate higher (2503–2517), but they are weight averages, not raw
+    snapshots.
+  * It was trained at a learning rate of 3e-4 until 620M, 1e-4 until 680M, then 3e-5.
+  * Only four late snapshots per arm were rated, so an unrated neighbour (690M, 710M, …) could be
+    level with it.
+* **Best souped, E6-06-44 680–760M.**
+  * It is the top model in the tournament.
+  * It scores 69.4% against E5-21-43@560M and 53.1% against the adopted E6-04-44 soup.
+  * E6-08-44's soup (2555) is level with it head to head (49.4 / 50.6). E6-06's is preferred for
+    its simpler lineage: no averaging in training, per the owner's rule.
+* **Both come from seed 44 only.** Both are a bare state dict in the normal (E4) action view, so
+  every tool loads them.
+
+### Their lineage, and how to reproduce it
+
+Three phases, all through `tools/train.py`, on E6 (`c1df6f5` + `c248bfb`), guarded by
+`tools/scripts/check_engine_fresh.sh`, with the environment
+`PYTHONPATH=.:build/release TRITON_CACHE_DIR=.triton_cache`. The shared flags are:
+
+```bash
+M2D="--arch ladder --ladder-input-mode grouped --ladder-aggregation flatten --ladder-entity-dim 16 \
+  --ladder-entity-proj-dim 256 --ladder-hidden-dim 480 --ladder-res-blocks 4 --drop-static \
+  --per-entity-heads 64 --ladder-head-context --ladder-head-static --ladder-head-entities country"
+COMMON="--reward-scheme blunder_aware --opponent-frac 0.3 --opponent-self-pool --opponent-pool-size 12 \
+  --eval-opponents heuristic random --ladder-head-center --block-lambda off"
+```
+
+**1. E6-03-44, the plain recipe from scratch.** It feeds phase 2 through
+`resume_310050816steps.pt`.
+
+```bash
+.venv/bin/python tools/train.py $M2D $COMMON --rollout-temps 1.0 1.0 1.0 1.0 --seed 44 \
+  --train-steps 560000000 --run-name E6-03-44 --description "..."
+```
+
+**2. E6-04-44 + E6-05-44-g, the league from 310M to 560M.** This is E5-21's `league.py` command
+(below) with `E6-04-44` / `E6-05-44` as the names, `--seed 44`,
+`--main-resume <E6-03-44 dir>/resume_310050816steps.pt` and
+`--league-dir /workspace/data/league/E6-04-44`. The main agent's extra flags are
+`--setup-mc-credit --setup-entropy-floor 0.3 --resume-every-steps 10000000`.
+
+**3. E6-06-44 / E6-07-44, continued from E6-04-44's 560M end state to 760M.** The published
+E6-05 exploiters form a static league pool; there is no exploiter training.
+
+```bash
+MAIN="--league-dirs /workspace/data/league/E6-04-44 --league-pool-size 4 --league-frac 0.5 \
+  --setup-mc-credit --setup-entropy-floor 0.3 --resume-every-steps 10000000"
+.venv/bin/python tools/train.py $M2D $COMMON $MAIN --seed 44 --train-steps 760000000 \
+  --resume <E6-04-44 dir>/resume_state.pt --run-name E6-06-44 --description "..."
+#   E6-07-44: the same plus --lr-schedule step --lr-schedule-every 60000000 --lr-schedule-values 1e-4 3e-5
+```
+
+Then:
+* **Best raw:** E6-07-44's `snapshot_700…steps.pt`.
+* **Best souped:** `tools/scripts/weight_soup.py --snapshots <E6-06-44's 680, 690, …, 760M snapshots>
+  --output soup_680-760M.pt`.
+
+Check each phase with `tools/scripts/launch_flags.py <original dir> --diff <replicate dir>`. As
+with E5-21, a replicate reproduces the recipe, not the weights.
+
 ## E6 models (2026-09-29): the comprehensive tournament
 
 Every E6 arm on its late snapshots and on its last-80M soup, in one field anchored at
@@ -43,9 +116,8 @@ HeuristicBot = 1500 ([`log/E6_comprehensive_2026-09-29.md`](log/E6_comprehensive
 | E6-04-44 snapshots 500–560M (mean) | 2434 | — |
 | E6-03-44 / E6-03-43 snapshots 500–560M (mean) | 2397 / 2393 | — |
 
-The owner designates the best model; the E5 designation below is unchanged until they do.
 
-## Best model: E5-21-43@560M (owner, 2026-09-28)
+## E5-era best model: E5-21-43@560M (owner, 2026-09-28; superseded 2026-09-29)
 
 `/workspace/data/archive/E5_ladder/checkpoints/E5-21-43_20260928_165156/snapshot_560005120steps.pt` (archived 2026-09-29)
 (sha256 `f3213b98e0ba382930a41caadb58ce22c30fae2c14342150a7510cf36775d7c1`, 12.8 MB).
