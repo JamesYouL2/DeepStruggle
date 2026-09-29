@@ -1,0 +1,106 @@
+# Continuous integration: the C++ suite, the backend Python suites and the type check on every
+# push and pull request. The ts-replayer corpus is fetched once and cached, because the download
+# is 300 throttled requests; the whole-corpus conversion test runs on demand, not on every push.
+#
+# tests/web needs the WebAssembly build and a Playwright browser, and tests/differential is WIP
+# (BUGS.md TEST-1), so neither runs here -- see CLAUDE.md for which suite matches which change.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      corpus_full:
+        description: "Also run the whole-corpus conversion test (minutes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CLANG_VERSION: "21"
+  TRITON_CACHE_DIR: .triton_cache
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # external/struggler, which the type check and some tests import
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # The engine is built with clang and CMake refuses any other compiler.
+      - name: Install clang and ninja
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${CLANG_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y "clang-${CLANG_VERSION}" ninja-build libomp-dev
+          sudo update-alternatives --install /usr/bin/clang   clang   "/usr/bin/clang-${CLANG_VERSION}"   100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ "/usr/bin/clang++-${CLANG_VERSION}" 100
+
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          # CPU torch: the runners have no GPU, and the CUDA wheels are gigabytes.
+          .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/pip install -r requirements.txt cmake
+
+      - name: Build the engine and the nanobind extension
+        run: |
+          .venv/bin/cmake -G Ninja -B build/release -S . -DPython_EXECUTABLE="$PWD/.venv/bin/python3"
+          .venv/bin/cmake --build build/release -j "$(nproc)"
+
+      - name: Engine is fresh (stamps the build)
+        run: PATH="$PWD/.venv/bin:$PATH" tools/scripts/check_engine_fresh.sh
+
+      - name: C++ suite
+        run: |
+          ./build/release/engine/ts_tests
+          ./build/release/engine/ts_fuzz --games 2000
+
+      - name: Restore the ts-replayer corpus
+        uses: actions/cache@v4
+        with:
+          path: data/datasets/ts_replayer
+          key: ts-replayer-corpus-v1
+          restore-keys: ts-replayer-corpus-
+
+      - name: Download the ts-replayer corpus
+        # Fills whatever the cache lacks; a game the host will not serve (HTTP 500) is reported,
+        # not fatal, and the tests that need it say so.
+        run: PYTHONPATH=.:build/release .venv/bin/python tools/download_ts_replayer.py || true
+
+      - name: Backend tests
+        run: |
+          PYTHONPATH=.:build/release .venv/bin/python -m pytest -q -n auto \
+            tests/bindings tests/engine_logic tests/replayer tests/training tests/docs
+
+      - name: Whole-corpus conversion
+        if: github.event_name == 'workflow_dispatch' && inputs.corpus_full
+        run: PYTHONPATH=.:build/release .venv/bin/python -m pytest -q -n auto -m corpus_full tests/replayer
+
+      # Explicit paths, never bare: a bare `pyrefly check` can match zero files and still exit 0.
+      - name: Type check
+        # Advisory until the bs4 typing errors in tools/scrape_card_strategies.py (10 of the 14
+        # pyrefly reports on a fresh install) are fixed; then drop this line.
+        continue-on-error: true
+        run: |
+          out=$(PYTHONPATH=.:build/release .venv/bin/pyrefly check ai tools tests web bindings 2>&1) || { echo "$out"; exit 1; }
+          echo "$out" | tail -3
+          if echo "$out" | grep -q "No Python files matched"; then echo "pyrefly matched no files"; exit 1; fi
