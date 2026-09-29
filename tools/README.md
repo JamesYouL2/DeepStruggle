@@ -457,6 +457,19 @@ PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py            # the newest, a
 PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py --path E4-08-36_240M.onnx
 ```
 
+Three wrappers play a published export without training it (all take any spec, `.onnx`
+included):
+
+| spec | what it plays |
+|:---|:---|
+| `search:<model.onnx>:96:determinize` | honest determinized MCTS with the network as prior and value, run through ONNX Runtime (`OnnxModule`) -- CPU-bound, so a job for CI |
+| `safe:<spec>` | the wrapped agent, but a certain win is always taken and a certain loss refused (`tools/lib/safety.py`, on `ai.eval.safety.classify_legal_actions` over a determinized copy) |
+| `ensemble:<a.onnx>+<b.onnx>` | the average of several exports' move probabilities |
+| `temp:<T>:<spec>` | the wrapped agent at a pinned sampling temperature (`temp:0:` = greedy) |
+
+On CI, `newest` and `hf:<file.onnx>` resolve anywhere inside a spec, e.g.
+`-f models="newest safe:newest ensemble:newest+hf:E4-08-36_240M.onnx"`.
+
 ### E. Across machines: `--part` and `--pool-parts`
 `--part I/N --output-part part.json` plays every N-th shard of the tournament (starting at the
 I-th) and writes their raw results and game logs; `--pool-parts part*.json` checks that the files
