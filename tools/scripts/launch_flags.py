@@ -97,6 +97,13 @@ _BEFORE_RECORDED = {
     "setup_mc_credit": lambda meta: False,
     "setup_mc_coef": lambda meta: 1.0,
     "setup_mc_min_batch": lambda meta: 512,
+    # P28 step 2 (2026-09-29): a constant rate and no weight average before these existed.
+    "lr_schedule": lambda meta: "constant",
+    "lr_schedule_every": lambda meta: 60_000_000,
+    "lr_schedule_values": lambda meta: [1e-4, 3e-5],
+    "lr_schedule_span": lambda meta: 200_000_000,
+    "lr_min": lambda meta: 3e-5,
+    "ema_weights": lambda meta: 0.0,
     # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
     # below as "unrecorded" for older runs and diffs as the default.
 }

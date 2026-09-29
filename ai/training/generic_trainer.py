@@ -28,6 +28,7 @@ from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward
 from bindings.ts_env import OBS_LAYOUT_NAME, TsVectorizedEnv
 from ai.training.rollout_buffer import RolloutBuffer
+from ai.training.schedule import WeightEMA, scheduled_lr
 from ai.training.nash_pg import DEFAULT_ROLLOUT_TEMPS, NashPGTrainer
 from ai.training.start_pool import DEFAULT_TURN_MIX, StartPositionPool
 from ai.eval.agreement import evaluate_dataset
@@ -1310,7 +1311,7 @@ def locate_pool_members(saved_pool: Dict[str, Any],
 
 def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
                       total_env_steps: int, elapsed_seconds: float,
-                      seed: Optional[int] = None) -> None:
+                      seed: Optional[int] = None, ema: Any = None) -> None:
     """Everything needed to pick a run back up, except the environment.
 
     The environment is deliberately not saved: `VectorizedBatchRunner` holds 512 live games and
@@ -1349,6 +1350,8 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
         "ent_coef_seat": (dict(trainer.ent_coef_seat) if hasattr(trainer, "ent_coef_seat") else None),
         # --setup-entropy-floor's adaptive coefficient.
         "setup_ent_coef": float(getattr(trainer, "setup_ent_coef", 0.0)),
+        # --ema-weights: the average, beside the live weights it averages. None without the flag.
+        "ema_state_dict": None if ema is None else ema.state_dict(),
     }, path)
 
 
@@ -1403,6 +1406,8 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         "elapsed_seconds": float(blob.get("elapsed_seconds", 0.0)),
         # None for a state written before pools were carried, or for a run that had no pool.
         "opponent_pool": blob.get("opponent_pool"),
+        # None for a state written without --ema-weights; the average then starts from the weights.
+        "ema_state_dict": blob.get("ema_state_dict"),
     }
 
 
@@ -1518,6 +1523,13 @@ def train_pipeline(
     gae_lambda: float = 0.98,
     merged_influence: bool = False,
     tensorboard: bool = True,
+    lr_schedule: str = "constant",
+    lr_schedule_start: Optional[int] = None,
+    lr_schedule_every: int = 60_000_000,
+    lr_schedule_values: Sequence[float] = (1e-4, 3e-5),
+    lr_schedule_span: int = 200_000_000,
+    lr_min: float = 3e-5,
+    ema_weights: float = 0.0,
 ) -> None:
     # Checked first, before a device is resolved or a directory is made: a run whose budget is
     # nonsense should fail having built nothing. Both are in env steps and there is no time flag
@@ -1754,6 +1766,14 @@ def train_pipeline(
         "block_lambda": str(block_lambda),
         "inject_setup_only": bool(inject_setup_only),
         "cuda_graphs": bool(cuda_graphs),
+        # P28 step 2. lr_schedule_start None means "where this run starts", i.e. the resume point.
+        "lr_schedule": str(lr_schedule),
+        "lr_schedule_start": None if lr_schedule_start is None else int(lr_schedule_start),
+        "lr_schedule_every": int(lr_schedule_every),
+        "lr_schedule_values": [float(v) for v in lr_schedule_values],
+        "lr_schedule_span": int(lr_schedule_span),
+        "lr_min": float(lr_min),
+        "ema_weights": float(ema_weights),
         # The optimisation settings, under their CLI names so tools/scripts/launch_flags.py can
         # diff them. Until 2026-09-24 none of these was recorded, so a run launched with a
         # different lr, batch or buffer size, gamma or eval budget passed the drift check.
@@ -2276,9 +2296,11 @@ def train_pipeline(
     # Initial Snapshot (0s / start)
     resume_path = os.path.join(out_dir, RESUME_FILENAME)
     resumed_elapsed = 0.0
+    _ema_state: Optional[Dict[str, Any]] = None
     if resume:
         src = resolve_resume(resume)
         state = load_resume_state(src, model, trainer, seed=seed)
+        _ema_state = state.get("ema_state_dict")
         it = state["iteration"]
         resumed_elapsed = state["elapsed_seconds"]
         # Rewind the clock so elapsed keeps counting from where the run stopped rather than from
@@ -2293,6 +2315,31 @@ def train_pipeline(
     # Restored before anything reads or writes the weights: snapshot_0s.pt claims to be
     # this run's starting point, and an eval of it costs real time, so both have to see
     # the resumed policy rather than a fresh initialisation.
+    # P28 step 2. The schedule counts from where this run starts unless told otherwise, so a
+    # schedule switched on at a resume point leaves the steps already trained as they were.
+    _lr_start = int(trainer.total_env_steps) if lr_schedule_start is None else int(lr_schedule_start)
+
+    def _lr_now(steps: int) -> float:
+        return scheduled_lr(steps, lr, lr_schedule, start=_lr_start, every=int(lr_schedule_every),
+                            values=tuple(float(v) for v in lr_schedule_values),
+                            span=int(lr_schedule_span), lr_min=float(lr_min))
+
+    if lr_schedule != "constant":
+        _plan = (f"x {list(lr_schedule_values)} every {int(lr_schedule_every):,} steps"
+                 if lr_schedule == "step" else
+                 f"cosine to {lr_min:g} over {int(lr_schedule_span):,} steps")
+        print(f"[lr schedule] {lr_schedule}: {lr:g} from {_lr_start:,} steps, then {_plan}; "
+              f"now {_lr_now(int(trainer.total_env_steps)):g}", flush=True)
+    # The rated model: the weight average under --ema-weights, the live weights otherwise. It is
+    # what snapshots, pool members and evaluations see; the live weights keep training.
+    ema: Optional[WeightEMA] = None
+    if ema_weights > 0:
+        ema = WeightEMA(model, float(ema_weights), state=_ema_state)
+        print(f"[ema weights] tau {ema_weights:,.0f} steps; snapshots, pool members and evals use "
+              f"the average ({'restored' if _ema_state is not None else 'started from the weights'})",
+              flush=True)
+    rated = ema.model if ema is not None else model
+
     snap_0_path = os.path.join(out_dir, "snapshot_0s.pt")
     torch.save(model.state_dict(), snap_0_path)
     evaluate_and_log_snapshot(
@@ -2406,7 +2453,15 @@ def train_pipeline(
             print(f"{'=' * 80}\n", flush=True)
 
         it += 1
+        _cur_lr = _lr_now(int(trainer.total_env_steps))
+        if lr_schedule != "constant":
+            for _g in trainer.optimizer.param_groups:
+                _g["lr"] = _cur_lr
+        _steps_before = int(trainer.total_env_steps)
         iteration_metrics = trainer.train_iteration()
+        if ema is not None:
+            ema.update(model, int(trainer.total_env_steps) - _steps_before)
+        iteration_metrics["lr"] = _cur_lr
         if injector is not None:
             iteration_metrics["inject_loss"] = injector.maybe_step(it)
         total_env_steps = trainer.total_env_steps
@@ -2471,7 +2526,9 @@ def train_pipeline(
                     "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
-                    "logit_lse_mean", "logit_lse_absmax", "z_loss"):
+                    "logit_lse_mean", "logit_lse_absmax", "z_loss",
+                    # P28 step 2: the learning rate this iteration ran at
+                    "lr"):
             if _sk in iteration_metrics:
                 step_metrics[_sk] = float(iteration_metrics[_sk])
         # Auxiliary losses only where the term that produces them is switched on. Logged
@@ -2534,7 +2591,7 @@ def train_pipeline(
                 # snapshot to the same name and they would overwrite each other in silence.
                 # Sort these numerically, not lexicographically.
                 f"snapshot_{total_env_steps}steps.pt")
-            torch.save(model.state_dict(), snap_path)
+            torch.save(rated.state_dict(), snap_path)
 
         # Hand the policy to the opponent pool on the pool's own schedule, if it is growing from
         # the run's own history -- from the snapshot file when one was just written, otherwise
@@ -2548,7 +2605,7 @@ def train_pipeline(
                 out_dir, f"pool_{total_env_steps}steps.pt")
             try:
                 if not due:
-                    torch.save(model.state_dict(), member_path)
+                    torch.save(rated.state_dict(), member_path)
                 # deepcopy for the architecture, then overwrite with the snapshot's
                 # weights. There is no model factory that reconstructs an arbitrary
                 # configuration from metadata, and guessing one would be a way to build a
@@ -2573,7 +2630,7 @@ def train_pipeline(
             # Beside the snapshot, not inside it: snapshot_*.pt stays a bare state dict because
             # load_agent, the tournament runner and every eval module read it as one.
             save_resume_state(resume_path, model, trainer, it, total_env_steps, elapsed,
-                              seed=seed)
+                              seed=seed, ema=ema)
             # A step-tagged copy, so this point stays branchable after the next snapshot
             # overwrites resume_state.pt. Gated on its own interval rather than written at
             # every snapshot: a resume file is 48 MB against a snapshot's 13 MB, so at a 5M
@@ -2586,10 +2643,10 @@ def train_pipeline(
                     or total_env_steps - last_tagged_resume >= resume_every_steps):
                 save_resume_state(
                     os.path.join(out_dir, RESUME_AT_STEPS.format(steps=total_env_steps)),
-                    model, trainer, it, total_env_steps, elapsed, seed=seed)
+                    model, trainer, it, total_env_steps, elapsed, seed=seed, ema=ema)
                 last_tagged_resume = total_env_steps
             decisive = evaluate_and_log_snapshot(
-                model=model,
+                model=rated,
                 merged_influence=merged_influence,
                 forced_opening=forced_opening,
                 opponents=opponents,
@@ -2616,14 +2673,14 @@ def train_pipeline(
 
     # Final Snapshot
     final_snap_path = os.path.join(out_dir, "snapshot_final.pt")
-    torch.save(model.state_dict(), final_snap_path)
+    torch.save(rated.state_dict(), final_snap_path)
     # And the resume state, which is otherwise only written at snapshot boundaries -- so a run
     # that ends between them leaves a resume point up to one interval behind its own final
     # weights, and picking it back up would silently repeat those steps.
     save_resume_state(resume_path, model, trainer, it, trainer.total_env_steps,
-                      time.time() - t_start - overhead_seconds, seed=seed)
+                      time.time() - t_start - overhead_seconds, seed=seed, ema=ema)
     evaluate_and_log_snapshot(
-        model=model,
+        model=rated,
         merged_influence=merged_influence,
         forced_opening=forced_opening,
         opponents=opponents,

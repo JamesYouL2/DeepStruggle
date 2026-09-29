@@ -539,6 +539,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--setup-mc-coef", type=float, default=1.0)
     parser.add_argument("--setup-mc-min-batch", type=int, default=512,
                         help="Finished-game setup placements to gather before one MC setup step.")
+    # P28 step 2 (research/plans/P28_strength_on_E6.md): optimiser levers at the plateau.
+    parser.add_argument("--lr-schedule", choices=["constant", "step", "cosine"], default="constant",
+                        help="Learning-rate schedule, in env steps from --lr-schedule-start. constant "
+                             "(the default) keeps --lr throughout; step lowers it to each of "
+                             "--lr-schedule-values in turn every --lr-schedule-every steps; cosine "
+                             "decays it to --lr-min over --lr-schedule-span steps.")
+    parser.add_argument("--lr-schedule-start", type=int, default=None,
+                        help="Env step the schedule counts from. Default: where this run starts "
+                             "(the resume point), so the steps already trained keep their rate.")
+    parser.add_argument("--lr-schedule-every", type=int, default=60_000_000,
+                        help="step schedule: steps between rate changes.")
+    parser.add_argument("--lr-schedule-values", type=float, nargs="+", default=[1e-4, 3e-5],
+                        help="step schedule: the rates after each interval; the last one holds.")
+    parser.add_argument("--lr-schedule-span", type=int, default=200_000_000,
+                        help="cosine schedule: steps from --lr to --lr-min.")
+    parser.add_argument("--lr-min", type=float, default=3e-5, help="cosine schedule: the floor.")
+    parser.add_argument("--ema-weights", type=float, default=0.0,
+                        help="Keep an exponential moving average of the weights with this time "
+                             "constant in env steps (0, the default, keeps none). Snapshots, pool "
+                             "members and evaluations then use the average; the live weights keep "
+                             "training, and the resume state holds both.")
     parser.add_argument("--forced-opening", type=str, default=None,
                         help="Start every training game after a scripted setup (a name from "
                              "tools/lib/openings.py, e.g. 'human': USSR East Germany 1, Poland 4, "
@@ -789,6 +810,13 @@ def main():
             setup_mc_credit=args.setup_mc_credit,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
+            lr_schedule=args.lr_schedule,
+            lr_schedule_start=args.lr_schedule_start,
+            lr_schedule_every=args.lr_schedule_every,
+            lr_schedule_values=args.lr_schedule_values,
+            lr_schedule_span=args.lr_schedule_span,
+            lr_min=args.lr_min,
+            ema_weights=args.ema_weights,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,
             cuda_graphs=not args.no_cuda_graphs,

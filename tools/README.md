@@ -87,6 +87,23 @@ the KL. Pair it with `--setup-entropy-floor`, because a placement at p ≈ 1 is 
 anything. From scratch the result is a slow teacher: setup entropy stays near uniform for millions
 of steps.
 
+`--lr-schedule {constant,step,cosine}` and `--ema-weights <tau>` (P28 step 2, both off by default)
+are the optimiser levers at the plateau (`research/plans/P28_strength_on_E6.md`).
+* **The schedule** counts env steps from `--lr-schedule-start`, which by default is where the run
+  starts, so a schedule switched on at a resume point leaves the steps already trained alone.
+  * `step` lowers `--lr` to each of `--lr-schedule-values` (1e-4 3e-5) in turn, every
+    `--lr-schedule-every` (60M) steps.
+  * `cosine` decays it to `--lr-min` (3e-5) over `--lr-schedule-span` (200M).
+  * The rate each iteration ran at is logged as `lr`.
+* **`--ema-weights`** keeps an exponential moving average of the weights with a time constant of
+  `tau` env steps.
+  * Snapshots, `snapshot_final.pt`, pool members and the run's own evaluations all use the
+    average, so the rated and pooled model is the average.
+  * The live weights keep training, and the resume state holds both.
+
+`tools/scripts/weight_soup.py` averages finished snapshots into one (uniform SWA) for rating, with
+no training.
+
 `--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a
 shift common to every country logit is invisible to the policy and gets no gradient. Left free,
