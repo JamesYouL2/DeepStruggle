@@ -52,10 +52,11 @@ For in-depth architectural and developer documentation, see [`AGENTS.md`](AGENTS
 git clone https://github.com/mihaild/DeepStruggle.git
 cd DeepStruggle
 
-# Set up Python virtual environment
-python3 -m venv .venv
+# Set up the Python environment with uv (https://docs.astral.sh/uv/). --managed-python matters:
+# a distro Python often lacks the headers the nanobind extension is compiled against.
+uv venv --managed-python --python 3.13 .venv
+uv pip install --python .venv/bin/python -r requirements.txt cmake ninja
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
 For a CUDA build of PyTorch, install it from [pytorch.org](https://pytorch.org) first; the rest

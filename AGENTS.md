@@ -225,9 +225,9 @@ graph TD
 ### 3.1 Initial Environment Setup
 ```bash
 # 1. Python virtual environment -- requirements.txt is the source of truth for dependencies
-python3 -m venv .venv
+uv venv --managed-python --python 3.13 .venv   # managed: a distro Python may lack Python.h
+uv pip install --python .venv/bin/python -r requirements.txt cmake ninja
 source .venv/bin/activate
-pip install -r requirements.txt
 
 # 2. Web UI dependencies & production build
 cd web/ui && npm install && npm run build && cd ../..
