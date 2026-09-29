@@ -1,5 +1,7 @@
 # P28 step 2b — EMA weights beat raw snapshots in both seats; the window must be wide
 
+> **Owner's decision (2026-09-29):** averaging does not enter training. Every arm is instead measured twice: on its snapshots and on the soup of its last 80M. The "adopted as the rated model" reading below is superseded by that rule.
+
 Plan: [`../plans/P28_strength_on_E6.md`](../plans/P28_strength_on_E6.md), step 2b.
 
 **Arm.** E6-08-44 is E6-06-44 (E6-04-44 from its 560M end state to 760M, same flags, static league
