@@ -173,8 +173,8 @@ def test_the_page_reads_the_model_as_python_does(browser: Any, server: str, chec
 
 
 def test_the_live_readout_highlights_the_side_to_move(browser: Any, server: str) -> None:
-    """The critic is trained only on the decider's observation: the live panel lights that
-    side's own P(win), dims the other's, fills the bar from the lit one alone, and follows the
+    """The critic is trained only on the decider's observation: the live panel shows each side's
+    own P(victory) and expected VP, lights the decider's and dims the other's, and follows the
     decider as the game moves from the USSR setup to the US setup."""
     page = _open(browser, server + "/")
     _pick_local_model(page)
@@ -195,19 +195,44 @@ def test_the_live_readout_highlights_the_side_to_move(browser: Any, server: str)
         other = "US" if side == "USSR" else "USSR"
         assert body.locator(".value-side.calibrated").count() == 1
         assert body.locator(f".value-side.uncalibrated[data-side='{other}']").count() == 1
-        assert body.locator(".trace-critic tr.calibrated").get_attribute("data-side") == side
 
-        key = "v_win_us" if side == "US" else "v_win_ussr"
-        p_own = (1 + a["critic"][key]) / 2
-        cal = body.locator(".value-side.calibrated")
-        assert abs(float(cal.get_attribute("data-p")) - p_own) < 1e-5
-        p_us = p_own if side == "US" else 1 - p_own
-        assert abs(float(body.locator(".value-bar").get_attribute("data-p-us")) - p_us) < 1e-5
+        # Each side: its own P(victory) = (1 + v_win)/2 and expected VP = v_vp x 20.
+        for s in ("US", "USSR"):
+            box = body.locator(f".value-side[data-side='{s}']")
+            k = s.lower()
+            assert abs(float(box.get_attribute("data-p")) - (1 + a["critic"][f"v_win_{k}"]) / 2) < 1e-5
+            vp = a["critic"][f"v_vp_{k}"] * 20
+            assert abs(float(box.get_attribute("data-vp")) - vp) < 1e-3
+            assert box.locator(".value-side-vp").inner_text() == f"{'+' if vp >= 0 else '−'}{abs(vp):.1f} VP"
+        text = body.inner_text().lower()
+        assert "trained" not in text and "v_win" not in text, "only the two numbers per side"
+    assert not page.errors
 
-        # v_vp is the final margin / 20: the bar's VP is the calibrated side's, in VP.
-        vp = a["critic"]["v_vp_us" if side == "US" else "v_vp_ussr"] * 20 * (1 if side == "US" else -1)
-        text = body.locator(".value-bar-vp").inner_text()
-        assert text == f"VP {'US' if vp >= 0 else 'USSR'} +{abs(vp):.1f}", text
+
+def test_a_countrys_probability_never_covers_its_influence(browser: Any, server: str) -> None:
+    """The badge sits in the corner right of the influence boxes, inside the country's card."""
+    page = _open(browser, server + "/")
+    _pick_local_model(page)   # the USSR setup: every Eastern European country is a choice
+    page.wait_for_selector(".svg-country-node rect.trace-choice-badge")
+    report = page.evaluate("""() => [...document.querySelectorAll('.svg-country-node')]
+        .filter(g => g.querySelector('rect.trace-choice-badge'))
+        .map(g => {
+          const bb = e => { const b = e.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; };
+          return { name: g.dataset.name, badge: bb(g.querySelector('rect.trace-choice-badge')),
+                   text: bb(g.querySelector('text.trace-choice-badge')),
+                   card: bb(g.querySelector('rect.country-card-bg')),
+                   inf: [...g.querySelectorAll('rect.inf-box')].map(bb) };
+        })""")
+    assert len(report) >= 6, report
+    overlap = lambda a, b: a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+    for c in report:
+        b, card = c["badge"], c["card"]
+        assert card[0] <= b[0] and b[2] <= card[2] and card[1] <= b[1] and b[3] <= card[3], c
+        assert len(c["inf"]) == 2 and not any(overlap(b, i) for i in c["inf"]), c
+        # The number itself fits its box: the HTML badge's CSS once reached the SVG text too and
+        # drew it at 10 map units, spilling over the influence while the box sat where it should.
+        t = c["text"]
+        assert b[0] - 0.2 <= t[0] and t[2] <= b[2] + 0.2 and b[1] - 0.2 <= t[1] and t[3] <= b[3] + 0.2, c
     assert not page.errors
 
 

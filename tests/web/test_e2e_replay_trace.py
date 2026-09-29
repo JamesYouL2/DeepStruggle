@@ -86,13 +86,13 @@ def test_the_value_ribbon_and_readout_panel_render_for_a_traced_replay(browser,
     assert page.locator(".trace-choice-played").count() >= 1, (
         "the move that was actually played is not marked")
 
-    # The critic's prediction for both sides, to five decimals, is the panel's job.
-    critic = page.locator("#trace-panel .trace-critic")
-    assert critic.count() == 1, "no critic block"
-    assert critic.locator("tr.row-us").count() == 1 and critic.locator("tr.row-ussr").count() == 1
+    # The critic for both sides: P(victory) and expected VP each.
     import re as _re
-    assert _re.search(r"[+-]\d\.\d{5}", critic.inner_text()), (
-        f"expected five-decimal predictions, got: {critic.inner_text()!r}")
+    for s in ("US", "USSR"):
+        box = page.locator(f"#trace-panel .value-side[data-side='{s}']")
+        assert box.count() == 1, f"no critic reading for {s}"
+        assert _re.fullmatch(r"\d+\.\d%", box.locator(".value-side-p").inner_text()), box.inner_text()
+        assert _re.fullmatch(r"[+−]\d+\.\d VP", box.locator(".value-side-vp").inner_text()), box.inner_text()
     page.close()
 
 
@@ -135,15 +135,10 @@ def test_the_side_to_move_is_the_highlighted_reading(browser, traced_replay_serv
         other = "USSR" if decider == "US" else "US"
         assert cal.count() == 1 and cal.get_attribute("data-side") == decider
         assert panel.locator(f".value-side.uncalibrated[data-side='{other}']").count() == 1
-        assert panel.locator(".trace-critic tr.calibrated").get_attribute("data-side") == decider
-        assert panel.locator(f".trace-critic tr.uncalibrated[data-side='{other}']").count() == 1
 
-        # The number shown is the decider's own P(win) = (1 + v)/2, and the bar is that reading
-        # turned to the US point of view -- never the other side's.
+        # The lit number is the decider's own P(victory) = (1 + v)/2.
         v = step["critic"]["v_win_us" if decider == "US" else "v_win_ussr"]
         assert abs(float(cal.get_attribute("data-p")) - (1 + v) / 2) < 1e-5
-        p_us = (1 + v) / 2 if decider == "US" else 1 - (1 + v) / 2
-        assert abs(float(panel.locator(".value-bar").get_attribute("data-p-us")) - p_us) < 1e-5
         seen.add(decider)
         if len(seen) == 2:
             break

@@ -783,6 +783,48 @@ body {
   max-height: 100%;
 }
 
+/* The effects that last for this turn, across the top of the map (cards_view.ts). Clear of the
+   zoom controls on the left; the strip itself lets clicks through to the map. */
+.map-turn-effects {
+  position: absolute;
+  top: 10px;
+  left: 56px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  pointer-events: none;
+}
+.turn-effects-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.turn-effects-none {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.turn-effect {
+  pointer-events: auto;
+  cursor: help;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: rgba(15, 23, 42, 0.88);
+  color: var(--text-main);
+  white-space: nowrap;
+}
+.turn-effect.side-us { border-color: var(--us-blue); color: var(--us-blue-light); }
+.turn-effect.side-ussr { border-color: var(--ussr-red); color: var(--ussr-red-light); }
+.turn-effect.side-both { border-color: var(--warning); color: var(--warning); }
+
 .map-viewport-controls {
   position: absolute;
   top: 12px;
@@ -1835,7 +1877,7 @@ body {
 }
 
 /* A probability painted on the thing you would click to choose it. */
-.trace-choice-badge {
+span.trace-choice-badge {
   display: inline-block;
   margin-left: 6px;
   padding: 0 4px;
@@ -1860,42 +1902,8 @@ body {
   outline: 2px solid var(--warning);
   outline-offset: -2px;
 }
-.trace-choice-badge.played {
+span.trace-choice-badge.played {
   background: rgba(245, 158, 11, 0.18);
-}
-
-.trace-critic {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-main);
-}
-.trace-critic th {
-  text-align: right;
-  color: var(--text-dim);
-  font-weight: 500;
-  font-size: 9px;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 2px;
-}
-.trace-critic td {
-  text-align: right;
-  padding: 2px 0;
-  font-variant-numeric: tabular-nums;
-}
-.trace-critic td:first-child, .trace-critic th:first-child {
-  text-align: left;
-  color: var(--text-dim);
-  font-weight: 600;
-}
-.trace-critic .row-us td:first-child { color: var(--us-blue-light); }
-.trace-critic .row-ussr td:first-child { color: var(--ussr-red-light); }
-.trace-critic .trace-residual td {
-  color: var(--text-dim);
-  font-size: 10px;
-  border-top: 1px solid var(--border-color);
 }
 
 /* Live model analysis panel (analysis_view.ts). */
@@ -1944,40 +1952,26 @@ body {
   font-size: 11px;
   word-break: break-word;
 }
-/* The critic, each side's own P(win) (trace_view.ts valueSidesHtml, in the replay readout and
-   the live analysis panel). Only the side to move is trained, so its card is lit and the other
-   is dimmed; the compact bar below is filled from the lit one alone, as P(US wins). */
+/* The critic (trace_view.ts valueSidesHtml, in the replay readout and the live analysis
+   panel): each side's P(victory) and expected VP from its own point of view. The side to move is
+   shown plainly, the other dimmed. */
 .value-sides {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .value-side {
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding: 5px 7px;
+  padding: 5px 8px;
   background: rgba(0, 0, 0, 0.2);
   cursor: help;
   transition: opacity 0.2s ease;
 }
-.value-side-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 4px;
-}
 .value-side-name { font-weight: 800; font-size: 11px; letter-spacing: 0.4px; }
 .value-side.us .value-side-name { color: var(--us-blue-light); }
 .value-side.ussr .value-side-name { color: var(--ussr-red-light); }
-.value-side-tag {
-  font-size: 8.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
 .value-side-p {
   font-family: var(--font-mono);
   font-size: 18px;
@@ -1986,48 +1980,15 @@ body {
   color: var(--text-main);
   font-variant-numeric: tabular-nums;
 }
-.value-side-sub {
+.value-side-vp {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 11px;
   color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .value-side.calibrated.us { border-color: var(--us-blue); background: rgba(37, 99, 235, 0.16); }
 .value-side.calibrated.ussr { border-color: var(--ussr-red); background: rgba(220, 38, 38, 0.16); }
-.value-side.calibrated .value-side-tag { color: var(--warning); }
-.value-side.uncalibrated { opacity: 0.42; border-style: dashed; }
-.value-bar-wrap { margin-bottom: 8px; cursor: help; }
-.value-bar {
-  position: relative;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--ussr-red);
-}
-.value-bar-us {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--us-blue);
-  transition: width 0.25s ease;
-}
-.value-bar-mid {
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: rgba(255, 255, 255, 0.6);
-}
-.value-bar-text {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 3px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
-}
-.value-bar-text .us { color: var(--us-blue-light); }
-.value-bar-text .ussr { color: var(--ussr-red-light); }
+.value-side.uncalibrated { opacity: 0.4; }
 .value-result {
   margin-bottom: 8px;
   padding: 4px 6px;
@@ -2037,10 +1998,6 @@ body {
   font-size: 11px;
   font-weight: 700;
 }
-.trace-critic tr.uncalibrated td { opacity: 0.45; }
-.trace-critic tr.calibrated td { color: var(--text-main); font-weight: 700; }
-.trace-critic tr.calibrated.row-us td:first-child { color: var(--us-blue-light); }
-.trace-critic tr.calibrated.row-ussr td:first-child { color: var(--ussr-red-light); }
 .analysis-who.us { color: var(--us-blue-light); }
 .analysis-who.ussr { color: var(--ussr-red-light); }
 .analysis-choices {

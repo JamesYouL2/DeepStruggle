@@ -52,7 +52,18 @@ web/ui/
 
 1. **Interactive SVG Deluxe Map (`map_view.ts`)**:
    - Renders all 84 countries with regional color coding, battleground badges, stability indicators, and US/USSR influence counts.
+   - **Control is the card's fill**: blue for a US-controlled country, red for a USSR one, the
+     controller's influence box outlined in white (`data-control` on the node). Not the border
+     alone, because a legal target's border is replaced by the pulsing highlight.
    - Highlights valid country targets with dynamic glowing borders when a `POINT_NODE` decision is active.
+   - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge in the
+     corner right of the influence boxes, placed from `rect.inf-us`, so it never covers a
+     number. The HTML badge's CSS is scoped to `span.trace-choice-badge`: unscoped, it reached the
+     SVG text and drew it at 10 map units.
+   - **This turn's effects** (`#map-turn-effects`, `CardsView.renderTurnEffects`) run across the
+     top of the map: every flag whose `EFFECT_INFO_MAP` duration is `TURN`, the card's text on
+     hover. Permanent and conditional effects, and the Space Race attempt flags, stay in the
+     right rail's effects panel.
    - Mouse pan and zoom, with metadata loaded autonomously and re-rendered on arrival.
 2. **Layout: cards on the left, the board, the HUD rail on the right (`index.html`, `style.css`)**:
    - `.main-content` is a three-column grid: `#cards-sidebar` (the hands panel -- USSR / US /
@@ -116,16 +127,14 @@ web/ui/
    - **Which critic reading is believed.** The value head is trained only on the observation of
      the side to move, so of the two readings (`v_win_us` from the US observation, `v_win_ussr`
      from the USSR one) only the decider's is calibrated; the other is untrained extrapolation
-     and can be far off. `trace_view.ts` `valueSidesHtml` shows each side's own P(win) =
-     (1 + v)/2 with the decider's card lit ("to move · trained") and the other dimmed
-     ("untrained"), a compact bar filled from the calibrated reading alone as P(US wins), and the
-     predicted final VP margin (`v_vp` × `VP_LIMIT` = 20) -- each side's own on its card, the
-     calibrated side's on the bar. `criticTableHtml` lights and dims its rows the same way. Live,
+     and can be far off. `trace_view.ts` `valueSidesHtml` shows, for each side, just its own
+     P(victory) = (1 + v_win)/2 and expected final VP margin (`v_vp` × `VP_LIMIT` = 20), with the
+     decider's card lit and the other dimmed -- no labels, bar or raw table. Live,
      the decider is `analysis.decision_player` (the readout is on the position itself); in a
      replay it is `replayDecider()`: the critic is read *after* the step's action, so the decider
      is the **next** step's `player` (the last step falls back to its snapshot's decision
      context). A terminal position has no decider -- its snapshot's stale decision context is
-     ignored -- so both readings are dimmed and the bar gives way to the result. The replay's
+     ignored -- so both readings are dimmed and the result is shown below them. The replay's
      value ribbon and the log rows' `ΔP` chip plot the calibrated reading as P(US wins); the
      untrained one is only the ribbon's faint dashed line. `tests/web/test_value_readings.py`
      pins the rules on the TypeScript itself; the E2E tests check them on screen.
@@ -178,10 +187,11 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | test | holds |
 |:---|:---|
 | `test_wasm_engine.py` | the WebAssembly engine is the native one: 200 whole games, and display JSON / save JSON / observations / masks at every step of games driven by clicks |
-| `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,039 steps) |
+| `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
+| `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
-| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
+| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |

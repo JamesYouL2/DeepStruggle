@@ -15,7 +15,7 @@
  */
 import { GameState } from "./types";
 import {
-  BadgeMark, clearDecorations, criticTableHtml, fmtP, htmlBadge, probColor, svgBadge, valueSidesHtml,
+  BadgeMark, clearDecorations, fmtP, htmlBadge, probColor, svgBadge, valueSidesHtml,
 } from "./trace_view";
 import { CriticTrace, PolicyTrace } from "./replay_controls";
 import {
@@ -426,8 +426,7 @@ export class AnalysisPanel {
       // The readout is on the position itself (`at: "position"`), so the side to move is the one
       // whose reading the value head was trained on. A finished game has none.
       const decider = state?.is_terminal ? null : a.decision_player ?? null;
-      parts.push(valueSidesHtml(a.critic, decider, state?.is_terminal ? state : null),
-                 criticTableHtml(a.critic, decider));
+      parts.push(valueSidesHtml(a.critic, decider, state?.is_terminal ? state : null));
     }
 
     const pol = a.policy;

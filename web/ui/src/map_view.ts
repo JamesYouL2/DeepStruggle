@@ -473,6 +473,7 @@ export class MapView {
       g.setAttribute("class", `svg-country-node ${isLegal ? "legal-target" : ""}`);
       g.setAttribute("data-id", c.id.toString());
       g.setAttribute("data-name", c.name);
+      g.setAttribute("data-control", controlledBy);
 
       // Card Background
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -495,7 +496,13 @@ export class MapView {
         strokeWidth = "2.4";
       }
 
-      rect.setAttribute("fill", c.battleground ? "#1E1B4B" : "#0F172A");
+      // Control is carried by the fill, not only the border: a country that is a legal target has
+      // its border overridden by the pulsing highlight (style.css), which is exactly when it
+      // matters most who holds it.
+      const fill = controlledBy === "US" ? "#1E40AF"
+        : controlledBy === "USSR" ? "#991B1B"
+        : c.battleground ? "#1E1B4B" : "#0F172A";
+      rect.setAttribute("fill", fill);
       rect.setAttribute("stroke", borderColor);
       rect.setAttribute("stroke-width", strokeWidth);
       g.appendChild(rect);
@@ -552,15 +559,17 @@ export class MapView {
       const infBoxW = 8.8, infBoxH = 5.6;
       const ussrBoxX = x - boxW/2 + 1.6;
       const ussrBoxY = y + boxH/2 - infBoxH - 1.2;
+      // The controller's own box is outlined in white: the influence that holds the country.
       const ussrRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      ussrRect.setAttribute("class", "inf-box inf-ussr");
       ussrRect.setAttribute("x", ussrBoxX.toString());
       ussrRect.setAttribute("y", ussrBoxY.toString());
       ussrRect.setAttribute("width", infBoxW.toString());
       ussrRect.setAttribute("height", infBoxH.toString());
       ussrRect.setAttribute("rx", "1.0");
       ussrRect.setAttribute("fill", ussrInf > 0 ? "#DC2626" : "#0F172A");
-      ussrRect.setAttribute("stroke", "#EF4444");
-      ussrRect.setAttribute("stroke-width", ussrInf > 0 ? "1.0" : "0.6");
+      ussrRect.setAttribute("stroke", controlledBy === "USSR" ? "#FFFFFF" : "#EF4444");
+      ussrRect.setAttribute("stroke-width", controlledBy === "USSR" ? "1.1" : ussrInf > 0 ? "1.0" : "0.6");
       g.appendChild(ussrRect);
 
       const ussrText = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -577,14 +586,15 @@ export class MapView {
       const usBoxX = ussrBoxX + infBoxW + 2.0;
       const usBoxY = ussrBoxY;
       const usRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      usRect.setAttribute("class", "inf-box inf-us");
       usRect.setAttribute("x", usBoxX.toString());
       usRect.setAttribute("y", usBoxY.toString());
       usRect.setAttribute("width", infBoxW.toString());
       usRect.setAttribute("height", infBoxH.toString());
       usRect.setAttribute("rx", "1.0");
       usRect.setAttribute("fill", usInf > 0 ? "#2563EB" : "#0F172A");
-      usRect.setAttribute("stroke", "#3B82F6");
-      usRect.setAttribute("stroke-width", usInf > 0 ? "1.0" : "0.6");
+      usRect.setAttribute("stroke", controlledBy === "US" ? "#FFFFFF" : "#3B82F6");
+      usRect.setAttribute("stroke-width", controlledBy === "US" ? "1.1" : usInf > 0 ? "1.0" : "0.6");
       g.appendChild(usRect);
 
       const usText = document.createElementNS("http://www.w3.org/2000/svg", "text");

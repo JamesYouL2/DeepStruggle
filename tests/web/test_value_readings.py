@@ -57,19 +57,20 @@ def test_the_calibrated_reading_is_the_next_players(tmp_path: Any) -> None:
     assert [o["decider"] for o in out] == ["US", "USSR", "US"]
     assert out[0]["calibrated"] == ["US"] and out[0]["uncalibrated"] == ["USSR"]
     assert out[1]["calibrated"] == ["USSR"] and out[1]["uncalibrated"] == ["US"]
-    assert out[0]["table_calibrated"] == ["US"] and out[1]["table_calibrated"] == ["USSR"]
 
     # The calibrated reading as P(US wins): (1 + v_us)/2 when the US decides, 1 - (1 + v_ussr)/2
-    # when the USSR does. The bar is filled from it; the untrained reading is only the faint line.
-    assert abs(out[0]["p_us"] - 0.4) < 1e-9 and abs(out[0]["bar_p_us"] - 0.4) < 1e-6
-    assert abs(out[1]["p_us"] - 0.35) < 1e-9 and abs(out[1]["bar_p_us"] - 0.35) < 1e-6
+    # when the USSR does -- what the ribbon plots; the untrained reading is only the faint line.
+    assert abs(out[0]["p_us"] - 0.4) < 1e-9
+    assert abs(out[1]["p_us"] - 0.35) < 1e-9
     assert abs(out[0]["p_us_other"] - (1 - 0.995)) < 1e-9
     assert abs(out[1]["p_us_other"] - 0.95) < 1e-9
 
-    # v_vp is the margin / 20: each side's own margin, and the bar's from the calibrated side.
-    assert out[0]["side_vp"] == ["−2.0", "+1.0"]
-    assert out[0]["bar_vp"] == "VP USSR +2.0"
-    assert out[1]["bar_vp"] == "VP US +3.0"   # the USSR expects to finish 3 VP behind
+    # Each side shows its own P(victory) = (1 + v)/2 and expected VP = v_vp x 20, US first.
+    assert out[0]["side_p"] == [0.4, 0.995]
+    assert out[0]["side_vp"] == ["−2.0 VP", "+1.0 VP"]
+    assert out[1]["side_vp"] == ["+4.0 VP", "−3.0 VP"]
+    # Just those two numbers per side: no "trained" / "untrained" label, no raw table.
+    assert "trained" not in out[0]["text"].lower() and "v_win" not in out[0]["text"]
 
     # The move chip compares calibrated values: 40% -> 35% -> 55%, not raw v_win_us.
     assert out[0]["chip"] is None
@@ -87,7 +88,5 @@ def test_a_terminal_position_has_no_decider(tmp_path: Any) -> None:
     out = _run(tmp_path, steps)
     assert out[1]["decider"] is None and out[1]["p_us"] is None
     assert out[1]["calibrated"] == [] and sorted(out[1]["uncalibrated"]) == ["US", "USSR"]
-    assert out[1]["table_calibrated"] == []
-    assert out[1]["bar_p_us"] is None, "a finished game has no calibrated reading to fill a bar"
     assert out[1]["result"] is not None and "USSR won" in out[1]["result"]
     assert out[1]["chip"] is None

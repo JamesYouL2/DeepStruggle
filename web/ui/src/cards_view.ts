@@ -283,7 +283,9 @@ export const EFFECT_INFO_MAP: Record<string, EffectInfo> = {
     duration: "PERMANENT",
     description: "Prevents #56 Muslim Revolution from being played as an Event."
   },
-  IRANIAN_HOSTAGE_CRISIS_PLAYED: {
+  // The engine's own name for the bit (bindings/state_json.cpp), shortened there: keyed as
+  // `..._PLAYED` this entry never matched and the panel showed the raw flag instead.
+  IRANIAN_HOSTAGE_CRISIS_PLAY: {
     name: "Iranian Hostage Crisis",
     cardId: 82,
     cardName: "Iranian Hostage Crisis",
@@ -423,6 +425,7 @@ export class CardsView {
 
     // Render Active Effects and Context Stack
     this.renderFlags(state);
+    this.renderTurnEffects(state);
     this.renderContextStack(state);
   }
 
@@ -706,6 +709,24 @@ export class CardsView {
       `;
       flagsContainer.appendChild(cardEl);
     });
+  }
+
+  /**
+   * The effects that last for this turn only, on top of the map where they are always in view:
+   * every flag whose `EFFECT_INFO_MAP` duration is TURN. The Space Race attempt flags are not in
+   * the map and so never appear here; permanent and conditional effects stay in the side panel.
+   */
+  private renderTurnEffects(state: GameState) {
+    const strip = document.getElementById("map-turn-effects");
+    if (!strip) return;
+    const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+    const chips = (state.flags || [])
+      .map(f => ({ flag: f, info: EFFECT_INFO_MAP[f] }))
+      .filter(e => e.info && e.info.duration === "TURN")
+      .map(({ flag, info }) =>
+        `<span class="turn-effect side-${info.side.toLowerCase()}" data-flag="${flag}" title="${esc(`${info.cardName}: ${info.description}`)}">${esc(info.name.replace(/ Active$/, ""))}</span>`);
+    strip.innerHTML = `<span class="turn-effects-label">This turn</span>`
+      + (chips.length ? chips.join("") : `<span class="turn-effects-none">no effects</span>`);
   }
 
   private renderContextStack(state: GameState) {

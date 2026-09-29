@@ -7,8 +7,8 @@
  *   - a probability chip on each log row, and a chip for the calibrated value's move;
  *   - **a probability on every choosable thing** -- each card in hand, each mode button, each
  *     country on the map -- for the decision about to be made from the position on screen;
- *   - the readout panel: each side's own chance of winning -- the side to move highlighted, since
- *     only its reading is trained -- and the raw predictions for both sides to five decimals.
+ *   - the readout panel: each side's P(victory) and expected VP from its own point of view, the
+ *     side to move shown plainly and the other dimmed, since only its reading is trained.
  *
  * **Which decision the board's numbers belong to.** A replay step's snapshot is the position
  * *after* its action, so the board on screen is the node the *next* step was decided at -- its
@@ -76,10 +76,6 @@ export function fmtP(p: number): string {
   return p > 0 ? "<.001" : "0";
 }
 
-/** Fixed-width signed value, the precision the panel promises. */
-function fmt5(v: number | undefined): string {
-  return v === undefined ? "–" : (v >= 0 ? "+" : "") + v.toFixed(5);
-}
 
 // -- which critic reading to believe ------------------------------------------------------------
 //
@@ -94,10 +90,6 @@ export type Side = "US" | "USSR";
 
 /** `v_vp` is the predicted final VP margin divided by this (the automatic-victory threshold). */
 export const VP_LIMIT = 20;
-
-const CALIBRATED_NOTE = "trained on the side to move: this is the reading to believe";
-const UNCALIBRATED_NOTE = "not the side to move: the value head is never trained on this side's observation here, so this reading is untrained extrapolation";
-const TERMINAL_NOTE = "game over: no side is to move, so neither reading is a trained one";
 
 export function asSide(p: string | undefined | null): Side | null {
   return p === "US" || p === "USSR" ? p : null;
@@ -174,10 +166,10 @@ export function resultText(state: GameState | null | undefined): string {
 }
 
 /**
- * Each side's own estimated chance of winning, with the side to move -- the one reading that is
- * trained -- highlighted and the other dimmed, then a compact bar filled from the calibrated
- * reading alone as P(US wins). `decider` null with `terminal` set is a finished game: both are
- * dimmed and the bar gives way to the result.
+ * The critic, for both sides: each side's P(victory) = (1 + v_win)/2 and its expected final VP
+ * margin, v_vp × 20, both from that side's own point of view. The side to move is shown plainly
+ * and the other dimmed (only the decider's reading is the one the value head is trained on). A
+ * finished game has no side to move: both are dimmed and the result is given below.
  */
 export function valueSidesHtml(c: CriticTrace, decider: Side | null,
                                terminal?: GameState | null): string {
@@ -186,40 +178,18 @@ export function valueSidesHtml(c: CriticTrace, decider: Side | null,
     const vp = s === "US" ? c.v_vp_us : c.v_vp_ussr;
     const cls = s.toLowerCase();
     const status = decider === s ? "calibrated" : "uncalibrated";
-    const note = decider === s ? CALIBRATED_NOTE : terminal ? TERMINAL_NOTE
-      : decider ? UNCALIBRATED_NOTE : "no side to move here, so neither reading is a trained one";
-    const tag = decider === s ? "to move · trained" : terminal ? "game over" : decider ? "untrained" : "no decider";
     const p = v === undefined ? null : pWin(v);
+    const evp = vp === undefined ? null : vp * VP_LIMIT;
     return `
-      <div class="value-side ${cls} ${status}" data-side="${s}" data-p="${p === null ? "" : p.toFixed(6)}"
-           title="${s}'s own estimate of its chance to win: (1 + v_win_${cls})/2${v === undefined ? "" : ` = (1 ${v >= 0 ? "+" : "−"} ${Math.abs(v).toFixed(4)})/2`}. ${note}">
-        <div class="value-side-head"><span class="value-side-name">${s}</span><span class="value-side-tag">${tag}</span></div>
+      <div class="value-side ${cls} ${status}" data-side="${s}" data-p="${p === null ? "" : p.toFixed(6)}" data-vp="${evp === null ? "" : evp.toFixed(4)}"
+           title="${s}'s own view: P(victory) = (1 + v_win)/2, expected final VP margin = v_vp × ${VP_LIMIT}${decider && decider !== s ? ` (${decider} is to move)` : ""}">
+        <div class="value-side-name">${s}</div>
         <div class="value-side-p">${p === null ? "–" : pct(p)}</div>
-        <div class="value-side-sub">wins, own view${vp === undefined ? "" : ` · VP ${signed1(vp * VP_LIMIT)}`}</div>
+        <div class="value-side-vp">${evp === null ? "–" : signed1(evp)} VP</div>
       </div>`;
   };
   const parts = [`<div class="value-sides" data-decider="${decider ?? "none"}">${side("US")}${side("USSR")}</div>`];
-  const cal = calibratedValue(c, decider);
-  if (cal) {
-    // The predicted final VP margin from the calibrated side, turned to the US point of view.
-    const vpRaw = cal.decider === "US" ? c.v_vp_us : c.v_vp_ussr;
-    const vpUs = vpRaw === undefined ? undefined : (cal.decider === "US" ? 1 : -1) * vpRaw * VP_LIMIT;
-    const vpText = vpUs === undefined ? "" : `VP ${vpUs >= 0 ? "US" : "USSR"} +${Math.abs(vpUs).toFixed(1)}`;
-    parts.push(`
-      <div class="value-bar-wrap" title="The calibrated reading only (${cal.decider}, the side to move), as P(US wins); the predicted final VP margin is ${cal.decider}'s own, ×${VP_LIMIT}">
-        <div class="value-bar" data-p-us="${cal.pUs.toFixed(6)}">
-          <span class="value-bar-us" style="width:${(cal.pUs * 100).toFixed(1)}%"></span>
-          <span class="value-bar-mid"></span>
-        </div>
-        <div class="value-bar-text">
-          <span class="us">US ${pct(cal.pUs)}</span>
-          <span class="value-bar-vp">${vpText}</span>
-          <span class="ussr">USSR ${pct(1 - cal.pUs)}</span>
-        </div>
-      </div>`);
-  } else if (terminal) {
-    parts.push(`<div class="value-result" title="${TERMINAL_NOTE}">${resultText(terminal)}</div>`);
-  }
+  if (!decider && terminal) parts.push(`<div class="value-result">${resultText(terminal)}</div>`);
   return parts.join("");
 }
 
@@ -370,16 +340,19 @@ export function htmlBadge(p: number, mark: BadgeMark, note?: string): HTMLElemen
   return span;
 }
 
+/**
+ * A country's probability, small, in the free corner right of its influence boxes: placed from
+ * the US box (`rect.inf-us`, the rightmost one, map_view.ts) so it can never cover a number.
+ */
 export function svgBadge(g: Element, p: number, played: boolean, note?: string): void {
   const rect = g.querySelector("rect.country-card-bg");
-  if (!rect) return;
-  const bx = parseFloat(rect.getAttribute("x") || "0");
-  const by = parseFloat(rect.getAttribute("y") || "0");
-  const bw = parseFloat(rect.getAttribute("width") || "0");
-  const bh = parseFloat(rect.getAttribute("height") || "0");
-  const w = 12.4, h = 5.6;
-  const x = bx + bw - w - 1.2;
-  const y = by + bh - h - 1.2;
+  const inf = g.querySelector("rect.inf-us");
+  if (!rect || !inf) return;
+  const num = (e: Element, a: string) => parseFloat(e.getAttribute(a) || "0");
+  const right = num(rect, "x") + num(rect, "width") - 1.0;
+  const x = num(inf, "x") + num(inf, "width") + 1.4;
+  const w = right - x, h = 4.4;
+  const y = num(inf, "y") + (num(inf, "height") - h) / 2;
 
   const NS = "http://www.w3.org/2000/svg";
   const box = document.createElementNS(NS, "rect");
@@ -388,19 +361,19 @@ export function svgBadge(g: Element, p: number, played: boolean, note?: string):
   box.setAttribute("y", y.toString());
   box.setAttribute("width", w.toString());
   box.setAttribute("height", h.toString());
-  box.setAttribute("rx", "1.0");
+  box.setAttribute("rx", "0.8");
   box.setAttribute("fill", played ? "#422006" : "#0F172A");
   box.setAttribute("stroke", played ? "var(--warning)" : probColor(p));
-  box.setAttribute("stroke-width", played ? "1.0" : "0.7");
+  box.setAttribute("stroke-width", played ? "0.7" : "0.45");
   g.appendChild(box);
 
   const text = document.createElementNS(NS, "text");
   text.setAttribute("class", "trace-choice-badge");
   text.setAttribute("x", (x + w / 2).toString());
-  text.setAttribute("y", (y + h / 2 + 1.2).toString());
+  text.setAttribute("y", (y + h / 2 + 0.9).toString());
   text.setAttribute("text-anchor", "middle");
   text.setAttribute("fill", played ? "#FDE68A" : "#E2E8F0");
-  text.setAttribute("font-size", "3.4");
+  text.setAttribute("font-size", "2.6");
   text.setAttribute("font-weight", "bold");
   text.textContent = fmtP(p);
   if (note) {
@@ -474,27 +447,6 @@ export function decorateChoices(policy: PolicyTrace | undefined, state: GameStat
 
 // -- the right-rail panel ---------------------------------------------------------------------
 
-/**
- * The raw readings to five decimals. The side to move -- whose reading is the trained one -- is
- * highlighted and the other dimmed, as in `valueSidesHtml`; with no decider both are dimmed.
- */
-export function criticTableHtml(critic: CriticTrace, decider: Side | null = null): string {
-  const row = (s: Side, v: number | undefined, vp: number | undefined) => {
-    const cal = decider === s;
-    const title = cal ? CALIBRATED_NOTE : decider ? UNCALIBRATED_NOTE : "no side to move: neither reading is a trained one";
-    return `<tr class="row-${s.toLowerCase()} ${cal ? "calibrated" : "uncalibrated"}" data-side="${s}" title="${title}">`
-      + `<td>${s}${cal ? " ◂" : ""}</td><td>${fmt5(v)}</td><td>${fmt5(vp)}</td></tr>`;
-  };
-  return `
-    <table class="trace-critic">
-      <tr><th>prediction</th><th>v_win</th><th>v_vp</th></tr>
-      ${row("US", critic.v_win_us, critic.v_vp_us)}
-      ${row("USSR", critic.v_win_ussr, critic.v_vp_ussr)}
-      <tr class="trace-residual" title="A zero-sum critic must put these at zero; whatever is left is model error">
-        <td>residual</td><td>${fmt5(critic.win_residual)}</td><td>${fmt5(critic.vp_residual)}</td></tr>
-    </table>`;
-}
-
 function nextDecisionHtml(pol: PolicyTrace | undefined, index: number): string {
   if (!pol) {
     return `<div class="trace-empty">No recorded decision from this position.</div>`;
@@ -548,7 +500,6 @@ export function renderTracePanel(steps: ReplayStep[], index: number): void {
     const terminal = current?.state_snapshot?.is_terminal ? current.state_snapshot : null;
     sections.push(`<div class="trace-section-label">POSITION ON SCREEN — after step ${index + 1}${decider ? `, <span class="analysis-who ${decider.toLowerCase()}">${decider}</span> to move` : ""}</div>`);
     sections.push(valueSidesHtml(critic, decider, terminal));
-    sections.push(criticTableHtml(critic, decider));
   }
   sections.push(`<div class="trace-section-label">NEXT DECISION — from this position</div>`);
   sections.push(nextDecisionHtml(nextPolicy, index));
