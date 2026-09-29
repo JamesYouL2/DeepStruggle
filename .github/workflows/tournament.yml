@@ -153,7 +153,7 @@ jobs:
           {
             echo "commit: $GITHUB_SHA"
             echo "ref: $GITHUB_REF"
-            echo "engine_fingerprint: $(PYTHONPATH=. .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "entrants: ${{ needs.plan.outputs.specs }}"
             echo "hugging_face: $HF_REPO ${{ needs.plan.outputs.hf_files }}"
             echo "games_per_side: $GAMES_PER_SIDE"
@@ -167,7 +167,7 @@ jobs:
         run: |
           {
             echo '```'; cat reports/provenance.txt; echo '```'
-            [ -f reports/tournament.md ] && cat reports/tournament.md
+            if [ -f reports/tournament.md ]; then cat reports/tournament.md; else echo "No report: see the pool step."; fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
