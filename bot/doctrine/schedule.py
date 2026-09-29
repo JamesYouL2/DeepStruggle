@@ -11,7 +11,8 @@ occurrence mass is summed over the same buckets:
 
 The deck walk is simpler than struggler's -- a fixed deal size per era rather than its measured
 per-turn one -- which is the fidelity this port gives up first. Everything reads public
-information only: our hand, the opponent's hand *count*, the pile size, and the discard pile.
+information only: our hand, the opponent's cards we have seen and the *count* of the rest, the
+pile size, and the discard pile.
 """
 from __future__ import annotations
 
@@ -62,17 +63,22 @@ def urgency(state: ts.GameState, me: ts.Player, t: Terrain, w: Weights) -> Tuple
     opp = ts.Player.USSR if me == ts.Player.US else ts.Player.US
     turn = int(state.turn)
     horizon = LAST_TURN - turn
-    theirs = len(_hand(state, opp))
+    # Only the opponent's cards we cannot see compete with the pile for an unseen card. A card of
+    # theirs we know is accounted for by name in `mass`, so counting it here would make every
+    # unseen scoring card likelier to be in their hand the more of their hand we know.
+    theirs = sum(1 for c in _hand(state, opp) if not ts.known_to_opponent(state.get_card_location(c)))
     pile = sum(1 for c in range(1, 111) if state.get_card_location(c) == ts.CardLocation.DRAW_DECK)
 
     # Walk the pile forward: when does it run out, and what share of it is dealt before then?
     reshuffle_in = horizon + 1
     remaining = pile
+    shortfall = 0      # cards the exhausting deal takes from the recycled pile
     for k in range(1, horizon + 1):
         remaining += _ENTERING[turn + k]
         deal = _deal_size(turn + k)
         if deal >= remaining:
             reshuffle_in = k
+            shortfall = deal - remaining
             break
         remaining -= deal
     pile_dealt = 1.0 if reshuffle_in <= horizon else (
@@ -86,7 +92,9 @@ def urgency(state: ts.GameState, me: ts.Player, t: Terrain, w: Weights) -> Tuple
                       (ts.CardLocation.UNAVAILABLE, ts.CardLocation.REMOVED_FROM_GAME))
         entered += sum(_ENTERING[turn + k] for k in range(1, reshuffle_in + 1))
         recycled = max(1, entered - 2 * 9)
-        deals = sum(_deal_size(turn + k) for k in range(reshuffle_in + 1, horizon + 1))
+        # The deal that empties the old pile finishes from the reshuffled one, so its unfilled
+        # part is drawn from the recycled cards too, before any later deal.
+        deals = shortfall + sum(_deal_size(turn + k) for k in range(reshuffle_in + 1, horizon + 1))
         after = min(1.0, deals / recycled)
 
     final = FINAL_SCORING_ODDS[min(LAST_TURN, max(1, turn)) - 1] * w.scoring_final
