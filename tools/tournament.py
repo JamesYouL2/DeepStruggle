@@ -129,13 +129,21 @@ def run_massive_tournament(
     track_choices: bool = False,
     log_games: Optional[str] = None,
     auto_advance: bool = True,
+    workers: int = 1,
+    shard_pairs: int = 10,
 ) -> Dict[str, Any]:
-    """Runs high-throughput round-robin tournament across all specified models."""
+    """Runs high-throughput round-robin tournament across all specified models.
+
+    `workers` > 1 splits every matchup into shards of `shard_pairs` game pairs and plays them in
+    that many processes (tools/lib/parallel_tournament.py). The games are the same deals either
+    way; see that module for what makes the split reproducible.
+    """
     dev = resolve_device(device)
 
     print("\n" + "=" * 85)
     print(f" INITIALIZING TOURNAMENT EVALUATOR: {len(model_specs)} Models, {games_per_side * 2} Games/Pair")
-    print(f" Device: {dev} | Chunk Size: {batch_chunk_size}")
+    print(f" Device: {dev} | Chunk Size: {batch_chunk_size}"
+          + (f" | Workers: {workers} x {shard_pairs} pairs/shard" if workers > 1 else ""))
     print("=" * 85)
 
     agents: List[PlayerAgent] = []
@@ -175,16 +183,56 @@ def run_massive_tournament(
     t_start = time.time()
     matchup_details: Dict[str, Any] = {}
 
-    for i in range(M):
-        for j in range(i + 1, M):
-            pair_idx += 1
-            agent_a = agents[i]
-            agent_b = agents[j]
-            pair_start = time.time()
+    def record(i: int, j: int, m_res: Dict[str, Any], pair_time: float) -> None:
+        nonlocal pair_idx
+        pair_idx += 1
+        agent_a = agents[i]
+        agent_b = agents[j]
+        matchup_key = f"{agent_a.name}_vs_{agent_b.name}"
+        matchup_details[matchup_key] = m_res
 
+        w_a = m_res["a_wins"]
+        w_b = m_res["b_wins"]
+        d = m_res["draws"]
+        tot = m_res["total_games"]
+
+        win_matrix[i, j] = w_a
+        win_matrix[j, i] = w_b
+        loss_matrix[i, j] = w_b
+        loss_matrix[j, i] = w_a
+        draw_matrix[i, j] = d
+        draw_matrix[j, i] = d
+        total_matrix[i, j] = tot
+        total_matrix[j, i] = tot
+
+        ussr_win_matrix[i, j] = m_res["a_wins_as_ussr"]
+        ussr_win_matrix[j, i] = m_res["a_losses_as_us"]
+        us_win_matrix[i, j] = m_res["a_wins_as_us"]
+        us_win_matrix[j, i] = m_res["a_losses_as_ussr"]
+
+        wr_a = (w_a / tot) * 100.0
+        print(
+            f"[{pair_idx:2d}/{total_pairs:2d}] {agent_a.name:<25s} vs {agent_b.name:<25s} -> "
+            f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({wr_a:5.1f}% win) in {pair_time:5.1f}s"
+        )
+
+    matchups = [(i, j) for i in range(M) for j in range(i + 1, M)]
+    if workers > 1:
+        from tools.lib.parallel_tournament import run_matchups_parallel
+
+        # Wall time since the tournament started: shards of every matchup run at once, so a
+        # matchup has no start time of its own.
+        run_matchups_parallel(
+            model_specs, matchups, games_per_side, workers, shard_pairs,
+            device=str(dev), temperature=temperature, batch_chunk_size=batch_chunk_size,
+            track_choices=track_choices, log_games=log_games, auto_advance=auto_advance,
+            on_matchup_done=lambda p, r: record(p[0], p[1], r, time.time() - t_start))
+    else:
+        for i, j in matchups:
+            pair_start = time.time()
             m_res = BatchMatchRunner.play_parallel_matchup(
-                agent_a,
-                agent_b,
+                agents[i],
+                agents[j],
                 games_per_side=games_per_side,
                 device=dev,
                 temperature=temperature,
@@ -193,34 +241,7 @@ def run_massive_tournament(
                 log_games_file=log_games,
                 auto_advance=auto_advance,
             )
-            pair_time = time.time() - pair_start
-            matchup_key = f"{agent_a.name}_vs_{agent_b.name}"
-            matchup_details[matchup_key] = m_res
-
-            w_a = m_res["a_wins"]
-            w_b = m_res["b_wins"]
-            d = m_res["draws"]
-            tot = m_res["total_games"]
-
-            win_matrix[i, j] = w_a
-            win_matrix[j, i] = w_b
-            loss_matrix[i, j] = w_b
-            loss_matrix[j, i] = w_a
-            draw_matrix[i, j] = d
-            draw_matrix[j, i] = d
-            total_matrix[i, j] = tot
-            total_matrix[j, i] = tot
-
-            ussr_win_matrix[i, j] = m_res["a_wins_as_ussr"]
-            ussr_win_matrix[j, i] = m_res["a_losses_as_us"]
-            us_win_matrix[i, j] = m_res["a_wins_as_us"]
-            us_win_matrix[j, i] = m_res["a_losses_as_ussr"]
-
-            wr_a = (w_a / tot) * 100.0
-            print(
-                f"[{pair_idx:2d}/{total_pairs:2d}] {agent_a.name:<25s} vs {agent_b.name:<25s} -> "
-                f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({wr_a:5.1f}% win) in {pair_time:5.1f}s"
-            )
+            record(i, j, m_res, time.time() - pair_start)
 
     total_tournament_time = time.time() - t_start
     total_games_played = np.sum(total_matrix) // 2
@@ -237,12 +258,20 @@ def run_massive_tournament(
             os.makedirs(os.path.dirname(os.path.abspath(output_report)), exist_ok=True)
             with open(output_report, "w", encoding="utf-8") as f:
                 f.write(report_text)
-        return {
+        head_to_head = {
             "models": model_names,
             "elo_ratings": elo_ratings,
             "matchup": matchup_details[m_key],
+            "games_per_side": games_per_side,
+            "temperature": temperature,
             "total_time_seconds": total_tournament_time,
         }
+        if output_json:
+            os.makedirs(os.path.dirname(os.path.abspath(output_json)), exist_ok=True)
+            with open(output_json, "w", encoding="utf-8") as f:
+                f.write(json.dumps(head_to_head, indent=2))
+            print(f"Saved JSON Tournament Data to: {output_json}")
+        return head_to_head
 
     # Full Round-Robin Tournament Report
     sorted_indices = sorted(range(M), key=lambda idx: elo_ratings[model_names[idx]], reverse=True)
@@ -398,6 +427,15 @@ def main():
              "The default was cpu, which contradicted this module's own function "
              "signature and made every tournament far slower than it needed to be -- "
              "200 games took 118s on cpu against 6.4s on cuda, an 18x difference.")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Processes to play games in, one core each; 0 = every core. Above 1, "
+                             "each matchup is split into shards of --shard-pairs game pairs. Worth "
+                             "it for bots that decide in Python (doctrine, heuristic_mcts); a "
+                             "network-only field is already batched and gains little.")
+    parser.add_argument("--shard-pairs", type=int, default=10,
+                        help="Game pairs (one deal played from both sides) per shard with "
+                             "--workers > 1. Results depend on this, not on --workers: at a fixed "
+                             "value any number of workers plays the same games.")
     parser.add_argument("--track-choices", action="store_true", default=False, help="Track and report micro-actions with exactly 1 valid choice")
     parser.add_argument("--log-games", type=str, default=None, help="Path to save per-game JSONL execution logs")
     parser.add_argument("--self-play", action="store_true", default=False, help="Evaluate model against itself")
@@ -450,6 +488,8 @@ def main():
         track_choices=args.track_choices,
         log_games=args.log_games,
         auto_advance=args.auto_advance,
+        workers=args.workers if args.workers > 0 else (os.cpu_count() or 1),
+        shard_pairs=args.shard_pairs,
     )
 
 
