@@ -383,15 +383,34 @@ PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py            # the newest, a
 PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py --path E4-08-36_240M.onnx
 ```
 
-### E. On CI
-`.github/workflows/tournament.yml` runs a tournament on a 4-core GitHub runner: by default Doctrine
-against the newest model on Hugging Face (`fetch_hf_model.py`), 100 games a side, `--workers 0
---shard-pairs 5`. The report lands in the run summary; report, JSON, per-game log and a provenance
-file (commit, engine fingerprint, entrants) are the `tournament-<run id>` artifact.
+### E. Across machines: `--part` and `--pool-parts`
+`--part I/N --output-part part.json` plays every N-th shard of the tournament (starting at the
+I-th) and writes their raw results and game logs; `--pool-parts part*.json` checks that the files
+are one tournament's parts and cover each shard exactly once, merges them, and writes the usual
+report, JSON and `--log-games`. Since a shard's games depend only on the shard, the pooled
+tournament equals one machine playing all of it -- every part must be given the same entrants,
+`--games-per-side` and `--shard-pairs`, and pooling refuses parts that were not.
 
 ```bash
-gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=100
-gh run download <run-id> -D data/reports/ci      # collect the artifact
+# on machine k of 4
+tools/tournament.py --models doctrine <model.onnx> --games-per-side 200 --device cpu \
+  --workers 0 --shard-pairs 1 --part k/4 --output-part parts/part-k.json
+# anywhere, once all four are in
+tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/pooled.json
+```
+
+### F. On CI
+`.github/workflows/tournament.yml` does exactly that on GitHub runners (4 cores each, about a
+minute of setup): a `plan` job pins `newest` to one Hugging Face file (`fetch_hf_model.py
+--resolve-only`), a matrix of `runners` jobs (default 16) each plays one part, and a `pool` job
+merges them. Defaults: Doctrine against the newest model, 100 games a side, `--shard-pairs 1`.
+The report lands in the run summary; report, JSON, per-game log and a provenance file (commit,
+engine fingerprint, entrants) are the `tournament-<run id>` artifact. A failed runner makes the
+pool fail with the missing shards named; re-run the failed jobs.
+
+```bash
+gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=200 -f runners=16
+gh run download <run-id> -n tournament-<run-id> -D data/reports/ci      # collect the result
 ```
 
 ---

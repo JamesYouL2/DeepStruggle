@@ -8,7 +8,8 @@
 whose last commit is latest, ties broken by path. So a tournament run by CI against "the newest
 model" plays the model a visitor to the page gets by default.
 
-Prints the downloaded file's path as the last line of output, for a shell to capture. Needs no
+Prints the downloaded file's path as the last line of output, for a shell to capture;
+`--resolve-only` prints the file's path in the repo instead and downloads nothing. Needs no
 token: the default repo is public. Standard library only, so it runs before anything is installed.
 """
 from __future__ import annotations
@@ -78,6 +79,9 @@ def main(argv: List[str]) -> int:
     ap.add_argument("--revision", default=DEFAULT_REVISION)
     ap.add_argument("--path", default=None, help="a file in the repo; default the newest .onnx")
     ap.add_argument("--out-dir", default="data/checkpoints")
+    ap.add_argument("--resolve-only", action="store_true",
+                    help="print the path the download would take, and download nothing -- to pin "
+                         "one file before several machines each fetch it")
     args = ap.parse_args(argv)
 
     path = args.path
@@ -90,6 +94,9 @@ def main(argv: List[str]) -> int:
             print(f"  {d or '(no date)':<25s} {p}")
         path = models[0][0]
         print(f"fetch_hf_model: newest is {path}")
+    if args.resolve_only:
+        print(path)
+        return 0
     print(download(args.repo, args.revision, path, args.out_dir))
     return 0
 
