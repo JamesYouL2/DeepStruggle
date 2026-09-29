@@ -180,7 +180,7 @@ TEST(RulesAudit, GrainSalesUNIntervention_PaysTheU2Rider) {
     ASSERT_EQ(s.ctx().decision_type, DecisionType::SELECT_OP_MODE);
 }
 
-TEST(RulesAudit, GrainSalesUNIntervention_OnAWarCardChargesFlowerPower) {
+TEST(RulesAudit, GrainSalesUNIntervention_OnAWarCardChargesNoFlowerPower) {
     GameState s = action_round_for(Player::US);
     s.set_flag(effect_bits::FLOWER_POWER_ACTIVE);
     s.card_locations[card_ids::KOREAN_WAR] = hand_of(Player::USSR);
@@ -188,7 +188,8 @@ TEST(RulesAudit, GrainSalesUNIntervention_OnAWarCardChargesFlowerPower) {
     ASSERT_FALSE(CardHandlers::trigger_event(s, card_ids::GRAIN_SALES, Player::US));
     ASSERT_FALSE(CardHandlers::handle_event_step(
         s, MicroAction{DecisionType::SELECT_CARD, card_ids::UN_INTERVENTION, 0, 0}));
-    ASSERT_EQ(s.victory_points, -2);
+    // A lent war card is not played for its own Ops or Event (ts-replayer game 304, T7 AR7).
+    ASSERT_EQ(s.victory_points, 0);
 }
 
 // --- Era entry does not reshuffle the discard pile ---------------------------------------------
