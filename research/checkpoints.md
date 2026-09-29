@@ -27,6 +27,24 @@ A win rate is only meaningful with its opponent, its game count and its side spl
 frozen anchor, the only cross-engine-comparable opponents are the rule-based bots, so every row
 below is against `HeuristicBot` at 50 games a side.
 
+## E6 models (2026-09-29): the comprehensive tournament
+
+Every E6 arm on its late snapshots and on its last-80M soup, in one field anchored at
+HeuristicBot = 1500 ([`log/E6_comprehensive_2026-09-29.md`](log/E6_comprehensive_2026-09-29.md)):
+
+| model | Elo | vs E5-21-43@560M |
+|:---|---:|---:|
+| **`E6-06-44_*/soup_680-760M.pt`** | **2560** | 69.4% |
+| `E6-08-44_*/soup_680-760M.pt` | 2555 | 69.1% |
+| `E6-04-44_*/soup_480-560M.pt` | 2541 | 64.8% |
+| E6-08-44 snapshots 700–760M (mean) | 2508 | — |
+| E6-06-44 snapshots 700–760M (mean) | 2467 | — |
+| E5-21-43@560M (E5 best, on E6) | 2441 | — |
+| E6-04-44 snapshots 500–560M (mean) | 2434 | — |
+| E6-03-44 / E6-03-43 snapshots 500–560M (mean) | 2397 / 2393 | — |
+
+The owner designates the best model; the E5 designation below is unchanged until they do.
+
 ## Best model: E5-21-43@560M (owner, 2026-09-28)
 
 `/workspace/data/archive/E5_ladder/checkpoints/E5-21-43_20260928_165156/snapshot_560005120steps.pt` (archived 2026-09-29)
