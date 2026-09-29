@@ -24,7 +24,7 @@ than assumed ([below](#changes-held-inside-e3-by-measurement)).
 | **E3** | `76e7385`, `6381cf4` | 2026-09-11 | the Aldrich Ames discard and the Star Wars pick made mandatory. Everything from P1 onward |
 | **E4** | `7057251`, `0aa3dc0` (P17) | 2026-09-19 | Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space repacked 212 → 220. The registry restarted here ([`../../runs.md`](../../runs.md)) |
 | **E5** | `b19b958`, `8d05d94` | 2026-09-26 | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops play's stop ([below](#the-e4--e5-boundary)) |
-| **E6** | `c1df6f5` + *the Kitchen Debates fix* | 2026-09-29 | two rules fixes: the era transitions no longer shuffle the discard back into the deck (rule 4.4), and Kitchen Debates spent for Operations is discarded instead of staying in the US hand. `c1df6f5` alone was briefly called E6 and is abandoned ([below](#the-e5--e6-boundary)) |
+| **E6** | `c1df6f5` + `c248bfb` | 2026-09-29 | two rules fixes: the era transitions no longer shuffle the discard back into the deck (rule 4.4), and Kitchen Debates spent for Operations is discarded instead of staying in the US hand. `c1df6f5` alone was briefly called E6 and is abandoned ([below](#the-e5--e6-boundary)) |
 
 ## E1 was not one engine either
 
