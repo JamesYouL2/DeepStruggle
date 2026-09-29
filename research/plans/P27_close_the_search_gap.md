@@ -1,6 +1,6 @@
 # P27 — close the network's gap to its own search, with CI compute
 
-**Status: proposed (2026-09-29).** Written so a session with no context can pick it up. Everything
+**Status: in progress (2026-09-29).** Step 1 is done and step 8 shipped (PRs [#6](https://github.com/JamesYouL2/DeepStruggle/pull/6) and [#7](https://github.com/JamesYouL2/DeepStruggle/pull/7), both merged); steps 2–7 remain. Written so a session with no context can pick it up. Everything
 here is CPU-bound and runs on GitHub Actions (`.github/workflows/tournament.yml`), not the GPU box;
 only step 4 needs a GPU, and step 8 is browser code.
 
@@ -13,9 +13,9 @@ search acceptable as a diagnostic and a distillation source. So the ~55 Elo is t
 and the questions are which of the cheap wrappers recovers some of it without search, and what the
 search knows that the net does not.
 
-Ready on branch `feat/e5-wrappers` (commits `70c1296`, `d737521`, `1bf4631`, `d909d98`), **[PR
-#6](https://github.com/JamesYouL2/DeepStruggle/pull/6) opened 2026-09-29, not yet merged**:
-`safe:`, `ensemble:`, `temp:` and `search:` specs
+On `main` since 2026-09-29 ([PR
+#6](https://github.com/JamesYouL2/DeepStruggle/pull/6); it was branch `feat/e5-wrappers`, commits
+`70c1296`, `d737521`, `1bf4631`, `d909d98`): `safe:`, `ensemble:`, `temp:` and `search:` specs
 (`tools/lib/player_agent.py`, `tools/lib/safety.py`, `tools/README.md` §D), a `temperature` input
 on the workflow, and the visit tie-break.
 
@@ -44,7 +44,7 @@ gh run download <id> -n tournament-<id> -D data/reports/ci      # tournament.md 
 ## Steps, in order
 
 1. **Open the PR** for `feat/e5-wrappers` and merge, so the workflow inputs exist on `main`.
-   (PR #6 is open; the merge is the half that remains.)
+   **Done** ([PR #6](https://github.com/JamesYouL2/DeepStruggle/pull/6), merged 2026-09-29).
 2. **Safety layer alone** — `safe:hf:E5-11-43_560M.onnx` against the raw net, T=0, 1,024 a side.
    The goal probes found the networks taking a certain win only 59–70% of the time and losing to
    their own DEFCON choice in 1–8% of games; the sweep still shows ~3% own-DEFCON losses. Ceiling
@@ -71,7 +71,9 @@ gh run download <id> -n tournament-<id> -D data/reports/ci      # tournament.md 
    a game per core) was played against `newest` once in a 200-game CI run, whose result is not
    recorded in `research/`. Repeat at 512 a side with search-64 and record it; it is the only
    opponent that reasons about the board with a different method.
-8. **A searcher in the page — diagnostic and teacher, not the product.** Independent of steps
+8. **A searcher in the page — diagnostic and teacher, not the product — DONE** ([PR
+   #7](https://github.com/JamesYouL2/DeepStruggle/pull/7), merged 2026-09-29:
+   `web/ui/src/search/mcts.ts`, pinned by `tests/web/test_page_search.py`). Independent of steps
    1–7, any time. The GitHub Pages workbench already carries every primitive the searcher needs:
    `WasmEngine.snapshot()/restore()` (the 4 KB trivially-copyable `GameState`),
    `step`/`mask`/`observation`/`decodeFlat`, and `Model.run(obs, masks, rows)` — the batched
@@ -90,17 +92,28 @@ gh run download <id> -n tournament-<id> -D data/reports/ci      # tournament.md 
      card locations, and `HAND_*_KNOWN` vs `HAND_*_UNKNOWN` marks what we have seen — so
      reshuffling the hidden pool needs no C++ change and no `build_web.sh --engine` rebuild. A
      native export is a later optimisation, not a starting requirement.
-   * **One position at a time, N determinized trees** (dmcts's shape: an independent tree per
-     sample, root visits summed). N leaves per iteration make one N-row forward through
-     `Model.run`, and no virtual loss is needed.
+   * **One position at a time, one tree per search.** The plan first said N determinized trees
+     with one N-row forward (dmcts's shape); what shipped is the CLI searcher's own shape — one
+     sampled world per search and 64 simulations on one tree, because `search:…:64:determinize`
+     determinizes once per search, not once per simulation, and 64 split over 8 worlds plays
+     8-sim trees, far shallower than the budget this player is defined by. No virtual loss
+     either way.
    * **The singleton state is the searcher's.** The WASM engine holds one `g_state` shared with
-     the session: snapshot the root, search, restore before returning — and run between frames or
-     in a Web Worker (a worker needs no COOP/COEP headers, which Pages does not send; without
-     them onnxruntime-web stays single-threaded, which at 64 sims is fine).
+     the session: snapshot the root, search, restore before returning — and while it runs the
+     page refuses moves (`searchRunning` in `main.ts`), which is what shipped instead of "run
+     between frames or in a Web Worker". A worker stays the option if the pause ever matters (a
+     worker needs no COOP/COEP headers, which Pages does not send; without them onnxruntime-web
+     stays single-threaded, which at 64 sims is fine).
 
-   Acceptance: it plays legal moves at 64 sims in the Pages build and agrees with the CI
-   wrapper's pick on a fixed set of positions — a disagreement is a port bug until proven to be
-   determinization sampling. Its numbers, like every pair-internal search number, do not enter
+   Acceptance, as amended when it shipped: it plays legal moves at 64 sims in the Pages build
+   and agrees with the CI wrapper's pick on a fixed set of positions — a disagreement is a port
+   bug until proven to be determinization sampling **or the one settle deviation the port
+   carries**: children settle die rolls only (`SettleMode.CHANCE`), because
+   `Engine::auto_advance_step` is a hand-written per-event state machine the page's engine API
+   does not expose, and the engine is not ours to change here. `tests/web/test_page_search.py`
+   pins the tie-break (one simulation plays the net's argmax; ties break by value then prior),
+   the determinize counts and the byte-identical restore. Its numbers, like every pair-internal
+   search number, do not enter
    [`../checkpoints.md`](../checkpoints.md).
 
 ## Traps found so far

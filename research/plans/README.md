@@ -88,7 +88,7 @@ where it was measured and where it is healthy.
 |:---|:---|
 | [P7](P7_human_data.md) 7b–7d | 7a is done — conversion, BC warmup and injection all have log entries. The arms remain |
 | [P13](P13_one_game_driver.md) | one game driver — removes the five-loop divergence that has already produced search bugs |
-| [P27](P27_close_the_search_gap.md) | close the raw E5 network's ~55 Elo gap to its own 64-sim search: `safe:`/`ensemble:` wrappers, search-target distillation, and where search wins — all on CI except distillation and the 64-sim searcher in the page, kept as a diagnostic and teacher | **proposed** (2026-09-29); gated on merging [PR #6](https://github.com/JamesYouL2/DeepStruggle/pull/6) ([`../log/E5_search_budget_sweep.md`](../log/E5_search_budget_sweep.md)) |
+| [P27](P27_close_the_search_gap.md) | close the raw E5 network's ~55 Elo gap to its own 64-sim search: `safe:`/`ensemble:` wrappers, search-target distillation, and where search wins — all on CI except distillation and the 64-sim searcher in the page, kept as a diagnostic and teacher | **in progress** (2026-09-29): step 1 done ([PR #6](https://github.com/JamesYouL2/DeepStruggle/pull/6)) and the page searcher shipped ([PR #7](https://github.com/JamesYouL2/DeepStruggle/pull/7)); the wrappers' measurement, distillation and where-search-wins remain ([`../log/E5_search_budget_sweep.md`](../log/E5_search_budget_sweep.md)) |
 | [P11](P11_scaling_out.md) | running the programme in parallel on rented GPUs. Nothing rented, no money spent |
 
 ### Behind the ladder
