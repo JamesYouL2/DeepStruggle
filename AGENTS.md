@@ -145,8 +145,9 @@ graph TD
 │
 ├── web/                        # Web Workbench -- runs in the browser (see web/ui/AGENTS.md)
 │   ├── ui/                     # Vite + TypeScript + SVG: the map, HUD, tracks, replay controls,
-│   │                           # the game session (src/game), model analysis (src/analysis) and
-│   │                           # the WebAssembly engine loader (src/engine)
+│   │                           # the game session (src/game), model analysis (src/analysis),
+│   │                           # the WebAssembly engine loader (src/engine) and a 64-sim
+│   │                           # search kept as a diagnostic (src/search)
 │   └── server/                 # Local files server & replay writer (see web/server/AGENTS.md)
 │       ├── main.py             # the page + /api/local/{info,models,replays}
 │       ├── local_files.py      # checkpoint listing and on-demand ONNX export cache
@@ -393,6 +394,11 @@ The workbench serves three purposes, all in the page:
   side's P(victory) and expected VP, the side to move -- the only reading the value head is
   trained on -- highlighted and the other dimmed; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
   *Auto-play* (none / USSR / US) makes that side play by itself.
+* **Search as a diagnostic** -- *⌕ Search 64* answers "what would a search do here?" with a
+  64-simulation determinized search over the model's own prior and value, and *by search-64*
+  beside *Auto-play* makes that side play by search, so a person can play against it. Search is
+  kept as a teacher and a probe opponent here, not the product: the product is the no-search
+  network.
 
 The address bar always carries `pos` (the position itself), `model` and `auto`, updated with
 `replaceState`, so copying it shares the exact board. The engine badge shows the page engine's
