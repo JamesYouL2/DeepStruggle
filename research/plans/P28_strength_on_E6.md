@@ -1,188 +1,173 @@
-# P28 — Strength on E6: past the ~1M-game plateau
+# P28 — Strength on E6: big bets from scratch, not a squeeze at the tail
 
-**Status:** proposed (2026-09-29). Written from scratch for E6; the E5 record is cited only where
-a mechanism was measured there and nothing on E6 contradicts it.
-**Gate:** step 0 (the panel and the E6-04 verdict) before any arm is *judged*; steps 1–2 need no
-new code; steps 3–5 are trainer/model changes; step 6 is engineering.
-**Needs approval:** none of it touches `engine/` or the observation. Step 4 adds output heads
-(model only). Step 5 is an architecture arm on the existing ladder flags.
+**Status:** proposed (2026-09-29; restructured the same day at the owner's direction — *focus on
+potentially very large improvements from scratch rather than 100 more Elo at the end*).
+**Gate:** step 0 (the panel) before any arm is *judged*. Each bet is a from-scratch arm on the
+control recipe, judged at the plateau against E6-03-44.
+**Needs approval:** bet 4 is an observation proposal (owner-held; stated with its cost in floats
+and waits). Nothing else touches `engine/` or the observation. Bets 1–3 are model, trainer and
+action-view changes on flags that exist or are small.
 
 ## What exists
 
 | run | what | role here |
 |:---|:---|:---|
-| **E6-03-44** | the control recipe (E5-11's: M2d, flat rollout temperature 1.0, pool 0.3/12, `--block-lambda off`) from scratch to 560M on the real E6, no league | the matched control for every arm below; the source of E6-04's 310M state; three panel members |
-| **E6-04-44** | league (main + exploiter, `--league-frac 0.5`) + game-result setup credit + setup entropy floor 0.3, from E6-03-44's 310M state | the replication of E5-21's recipe on a new seed and engine; whether it is *adopted* is step 0's first verdict |
+| **E6-03-44** | the control recipe (M2d, flat rollout temperature 1.0, pool 0.3/12, `--block-lambda off`) from scratch to 560M on E6, no league | the matched control for every bet; panel members |
+| **E6-04-44** | league + game-result setup credit + setup entropy floor 0.3, from E6-03-44's 310M state | the E5-21 recipe replicated on a new seed and engine; its verdict (step 0) decides which recipe the bets run on |
 
-Both are seed 44. Nothing else on E6 is needed to start.
+Both are seed 44. From-scratch arms on M2d run ~50k steps/s, so **560M is ~3h solo** — a big bet
+costs one evening per seed. That is what makes this ordering affordable.
 
-## The plateau, as measured (E5, expected to transfer; step 0 confirms on E6)
+## Why big bets, and which
 
-Training levels off at roughly 320–560M steps — about a million games — and the last 240M of an
-800M run are 49.9% / 51.5% against its own 480–560M. Three things stand behind it, each with a
-lever this plan tests:
+Every large gain in this project has been structural, not a tuning: the country per-entity head
+(+282), the positional board path (+109), the decision context in the observation (+92), the
+rollout temperature (+135/+170), the late-E3 bundle over an MLP (+447). Tuning levers have
+returned tens of Elo at best. And the plateau's measured causes are structural too:
 
-1. **A step-size noise floor.** The learning rate is a constant 3e-4 with no schedule, no weight
-   averaging and a fixed batch. Adjacent late snapshots swing ±8 pp (±40 Elo) against the same
-   opponent, and continuations past the peak *dip*. Nothing has ever been scheduled or averaged.
-2. **A critic that cannot price moves the policy cannot yet convert.** Half of takeable contested
-   battlegrounds are missed, but the rollout oracle finds taking one worth −0.8 ± 0.6 pp under
-   the policy's own continuation ([`../log/P27_ops_block_stage1.md`](../log/P27_ops_block_stage1.md));
-   the critic's sign agrees with playouts 49–65% of the time where they differ by ≥10 points.
-   The terminal-only signal cannot teach a move whose value needs follow-up competence the
-   policy lacks — a self-play local optimum. The critic is also what search leaves and setup
-   credit depend on.
-3. **Capacity is untested at the asymptote.** M2d is 3.2M parameters, chosen at 80M matched
-   steps with throughput as an axis; every larger or attention-bearing variant lost *at 80M*,
-   which selects for fast early learning, not for where a run levels off. No larger net has a
-   clean long run.
+* the critic cannot price a move the policy cannot yet convert (P27's rollout oracle: taking a
+  contested battleground is worth −0.8 ± 0.6 pp under the policy's own continuation; sign
+  agreement with playouts 49–65%) — a self-play local optimum that a terminal-only signal
+  cannot leave;
+* hand composition is unrepresentable — there is no card↔card path, so "I hold no scoring card,
+  so this event is safe" reaches the policy only through pooled statistics
+  ([`../findings/training/forward_pass_trace.md`](../findings/training/forward_pass_trace.md));
+* a 3.2M-parameter net whose asymptote was only ever judged at 80M matched steps, a screen that
+  selects for fast early learning;
+* no plan over a few micro-steps inside an ops play (P27), with the one representation that
+  makes an ops play a single decision (E4.1, P23) parked after collapses that — this is the
+  confound — all ran under the old sharpening rollout bands, before flat 1.0 was adopted.
 
-Measured small and **not on this plan**: hidden information (the opponent's hand adds +0.3
-points of explained variance), chance-aware value targets (~7% of one-step variance), human
-BC/injection at 300 games, exploration temperature (flat 1.0 adopted), further setup work, and
-more league seeds — the league keeps weak setups punished but did not lift the plateau on
-either seed it ran on.
+**One rule for all of it: judged at the plateau, never at 80M.** An arm is compared with its
+control at 480/520/560M, pooled over the late snapshots, against the fixed panel. A bet that is
+behind at 80M and ahead at 560M is a win; the 80M screen is kept for throughput questions only.
 
-## One rule that changes for this plan
+## Step 0 — the measurement floor (CPU; a day)
 
-**Everything is judged at the plateau, never at 80M.** An arm is compared with its control at
-480/520/560M (pooled over the late snapshots), against the fixed panel below. The ladder's
-80M-matched-steps screen stays for *throughput* questions only.
+A frozen panel, rated greedily, ≥200 games per seat per pairing, pinned by sha256: E6-03-44 at a
+weak rung (~80M), a mid rung (~240M) and its **trace peak** in 480–560M (never the final
+snapshot; every lineage on record peaks then declines), plus its four late snapshots; E6-04-44's
+four late snapshots; `heuristic_mcts:16` as an out-of-lineage style; E6-03-43 when it exists.
+A seat's bar is the *panel's* mean result in that seat against the control, not one model's
+self-play (the E5 rule mis-read three arms through one lineage's seat profile).
 
-## Steps
+**First verdict:** E6-04-44 vs E6-03-44 at the late block by that rule, plus openings and the
+goal probes. Adopted → the bets run on E6-04's recipe and control against it; not adopted → on
+E6-03's.
 
-### 0 — The panel and the first verdict (CPU; a day)
+## The bets — each from scratch to 560M, seed 44 first, seed 43 to confirm
 
-A frozen reference panel, rated greedily, ≥200 games per seat per pairing, pinned by sha256:
+### Bet 1 — Architecture at the asymptote: card↔card attention and a wider trunk
 
-* **E6-03-44** at three roles chosen on its fixed-reference trace, not by step count: a weak
-  end (~80M, ~300–400 Elo below the plateau), a mid rung (~240M), and the **trace peak** in
-  480–560M — never the final snapshot, since every lineage on record peaks then declines —
-  plus its four late snapshots for the pooled sixteen-pairing comparisons.
-* **E6-04-44**'s four late snapshots.
-* **`heuristic_mcts:16`** — an out-of-lineage style whose leaf explicitly prices battleground
-  control; vary `prior_temperature`, not sims, if a finer dial is wanted.
-* **E6-03-43** joins when it exists (step 2 launches it).
+The test the ladder never ran. Two arms: **M3** (card↔card self-attention over the 110 card
+tokens, the rung blocked on the `board_mode`/`card_mode` split, which is the first engineering
+item here) and **a wider/deeper M2d** (`--ladder-hidden-dim 768 --ladder-res-blocks 8`).
+Judged at 560M matched games *and* at matched wallclock. **Expected size if right:** the
+largest of any bet — the hand-composition gap is a whole class of decisions (what to hold,
+what to space, when an event is safe) the current net can only approximate. **Kill:** behind
+the control at 560M on both seeds at matched games → capacity is not the plateau's cause.
 
-**Per-seat rule, revised.** A seat's bar is the *panel's* mean result in that seat against the
-arm's control, not one model's self-play — the E5 rule read three unrelated arms with the same
-+US/−USSR split because the reference lineage's USSR had specialised against its own weak US.
+### Bet 2 — Auxiliary targets: final ownership and VP margin
 
-**First verdict.** E6-04-44 vs E6-03-44 at 480/520/560M by the revised rule, plus openings
-(`setup_oracle.py`) and the goal probes (forced wins taken, battlegrounds at turn 8, card
-disposal, own-DEFCON losses). Adopted → E6-04 is the recipe steps 2–5 build on and control
-against; not adopted → E6-03 is, and the league stays a setup-punisher for later.
+KataGo's lever, aimed squarely at "the critic cannot price what the policy cannot convert".
+Two heads on the trunk, off by default, trained from the terminal state the buffer already
+holds: **who controls each country at game end** (84-way multi-label; battlegrounds at
+minimum) and **final VP margin**. No observation change. The trunk learns that West Germany is
+worth holding *before* the policy can convert it, which is also what search leaves need.
+**Read first:** critic sign agreement with playouts and P27's take-rate, then Elo. **Expected
+size:** KataGo-class sample efficiency — plausibly a plateau shift, since it supplies exactly
+the signal the self-play outcome withholds. Decide before running: loss weights (0.1 / 0.1
+first), all countries vs battlegrounds only.
 
-### 1 — Zero-training checks (an afternoon)
+### Bet 3 — The merged-influence action view (E4.1), re-run on the fixed recipe
 
-* **Weight soup.** Average E6-03-44's and E6-04-44's 480–560M snapshots (uniform SWA), rate
-  each soup against the panel. A soup that beats its own best snapshot says the plateau is
-  partly snapshot noise and makes step 2's EMA the default rated model.
-* **Search headroom on E6.** Honest search at 256 sims on the trace peak vs its raw policy,
-  100 games per seat. This is the gate for step 6: below +5 pp there is no teacher.
-* **The plateau trace itself.** E6-03-44's Elo vs the panel by 40M, so the E6 plateau step
-  and peak are numbers, not the E5 ones assumed.
+P23 built "influence, first point in X" as one decision (composed of the two E4 steps, bit-
+identical to E4 when off) and parked it after the US seat collapsed in 6 of 6 from-scratch
+runs. Every one of those ran under the old rollout bands (0.15 / 0.50 / 0.10 / 0.35), which
+flat 1.0 has since replaced and which were themselves collapse-prone. The cause was never
+found; the confound was never named. Re-run E4.1 from scratch on the flat-1.0 recipe, seed 44
+vs E6-03-44. **Expected size if right:** ~11% fewer decisions per game and an ops play as a
+unit the policy can plan over — the P27 failure in representation form. **Kill:** the US seat
+collapses again and does not recover → the audit P23's status asks for, not a third run.
 
-### 2 — Optimizer levers at the plateau (flags; ~1.5h per arm)
+### Bet 4 — The ops budget in the observation (owner-held; proposal, then wait)
 
-Two arms under the two-arm limit, plus the second control seed:
+At an op-choice node the network does not see the Ops it is spending (`PENDING_OPS_VALUE` is
+set at commit; `observation.cpp:348`). P23 stage 6 already proposes bringing it back. Cost:
+a handful of global floats, no per-entity vector. Precedent: the decision context was +92, the
+last observation change that mattered. Stated here so it can be approved or declined before
+the bet-3 arm runs, since the two compound. **Not run without approval.**
 
-* **2a `--lr-schedule`:** from the recipe's 560M end state, +200M with the learning rate
-  stepped 3e-4 → 1e-4 → 3e-5 every 60M (cosine as the alternative cell), against the
-  constant-LR continuation at matched steps. Read: late-snapshot spread first (it should
-  shrink), panel Elo second.
-* **2b `--ema-weights`:** an exponential average of the weights (τ ≈ 10M steps) as the *rated*
-  and *pooled* model, the raw weights still training. Free if 1's soup helps.
-* **E6-03-43**: the control recipe on seed 43 to 560M — the second panel lineage and the seed
-  replicate every adoption below needs.
-* 2c, only if 2a moves: buffer 128 → 256 at the plateau (the same mechanism at higher cost).
+### Bet 5 — Search-driven training from scratch (engineering; gated)
 
-**Decision.** Adopt a schedule if the late spread halves and panel Elo is not worse; it becomes
-the default tail of every long run. Expected size: +20–60 Elo. If nothing moves, the plateau is
-not the step size, and steps 3–5 carry the plan.
+The regime change: search targets throughout training, not a tail. It paid +150–260 Elo on
+E3/E4 while the raw policy was weak and shrank to +7 pp on E5 because the leaves share the
+student's critic — so it is gated on **bet 2 or bet 1 landing** (a critic search can use) and
+on a re-measured headroom (256-sim honest search on the best new model ≥ +5 pp). Then: move
+the tree to C++ over the batched engine (P13's one-driver work is the prerequisite; the Python
+tree is ~1,900× slower per decision), and run the distillation arm from scratch — search
+targets only, never search-driven data. This is the largest engineering item and the largest
+possible ceiling change, in that order.
 
-### 3 — Opponents from outside the lineage (flags; ~3h per arm)
+### Combining
 
-The pool and the exploiters descend from the same weights and cannot punish a weakness they
-share. `--league-dirs` already loads other runs' snapshots:
-
-* **3a cross-lineage pool:** seed 44's arm carries seed 43's snapshots in its pool and vice
-  versa, at the league fraction.
-* **3b `heuristic_mcts:16` in the pool** at 5–10% of games (CPU cost measured first; it is
-  1.6 s per game at 96 sims, far less at 16) — an opponent that punishes empty battlegrounds
-  by construction.
-
-From the plateau state, +200M each, judged as in step 2. Adopt whichever beats its control in
-both seats; both together as a follow-up cell.
-
-### 4 — Auxiliary targets for the critic (model change; a day + ~3.5h per arm)
-
-KataGo's lever, aimed at mechanism 2: two small heads on the trunk, off by default, trained
-from the terminal state the buffer already holds — **final control of each country** (84-way
-multi-label; the 29 battlegrounds at minimum) and **final VP margin**. No observation change.
-The trunk learns that a battleground is worth holding *before* the policy can convert it,
-which is also what search leaves need.
-
-From scratch to 560M on the step-0 recipe, seed 44 against E6-03/04-44, then seed 43. Read,
-in order: critic sign agreement with playouts (the E5-15 instrument) and the P27 take-rate
-before Elo. Decide before running: loss weights (first cell 0.1 / 0.1), whether the ownership
-target is all countries or battlegrounds only.
-
-### 5 — Capacity at the asymptote (overnight; ~6h per arm)
-
-The test the ladder never ran: **wider/deeper M2d** (`--ladder-hidden-dim 768
---ladder-res-blocks 8`) and **M3** (card↔card attention, once its board/card split is
-unblocked) against M2d, from scratch to **560M matched games** and at matched wallclock, seed
-44 then 43. A bigger net that plateaus later and higher makes steps 2–4 multiplicative; one
-that does not vindicates 3.2M parameters and closes the capacity question.
-
-### 6 — A compiled searcher, then expert iteration (engineering; after 4–5)
-
-Gated by step 1's headroom re-measured on the best step-4/5 model: search distillation paid
-+150–260 Elo on E3/E4 when the raw policy was weak and shrank to +7 pp on E5 because the
-leaves share the student's critic. If the gate passes, move the tree to C++ over the batched
-engine (P13's one-driver work is the prerequisite; today the Python tree is ~1,900× slower per
-decision) and run the distillation arm with search targets only, never search-driven data.
+When two bets land on both seeds, the next arm is their combination from scratch; they are
+expected to compound (a bigger net with a better-taught critic; a merged view with a visible
+ops budget).
 
 ## Sequencing under the two-arm limit
 
-| slot | arms |
-|:---|:---|
-| now | E6-03-43 (control seed 2) ‖ 2a LR schedule from E6-03-44@560M |
-| next | 2a on E6-04-44 (or 2b) ‖ 3a/3b from the plateau |
-| after step 4's build | 4 seed 44 ‖ 4 seed 43 |
-| overnight | 5, one configuration per night |
-| last | 6 |
+| slot | arms | note |
+|:---|:---|:---|
+| now | **E6-03-43** (control, seed 2) ‖ **bet 3** E4.1 from scratch, seed 44 | bet 3 needs no build; the control seed is needed by every verdict |
+| next | **bet 2** aux heads, seed 44 ‖ **bet 1** wider M2d, seed 44 | bet 2 is ~a day of model work; M3 waits for the mode split |
+| then | seed-43 replicates of whatever leads | |
+| overnight | **bet 1** M3 once unblocked; bet 4 if approved, on top of bet 3 | |
+| last | **bet 5** | after the gate |
 
-Step 1 runs on the CPU alongside the first slot. Roughly **35–45 GPU-hours** through step 5.
+Step 0 runs on the CPU alongside the first slot. About **30–40 GPU-hours** through the seed-43
+replicates, before bet 5.
+
+## Polish — after a bet lands, not before
+
+Kept because they are real and cheap, demoted because they are tail levers: an LR schedule from
+the plateau state (constant 3e-4, never scheduled; late snapshots swing ±40 Elo), EMA weights
+as the rated model, a weight soup of late snapshots (zero training — worth one afternoon at any
+point as a *measurement* of snapshot noise), cross-lineage pools via `--league-dirs`, and
+`heuristic_mcts:16` in the pool. Run them on the recipe that wins above, as its final tail.
+
+## Not on this plan, measured small
+
+Hidden information (the opponent's hand adds +0.3 points of explained variance), chance-aware
+value targets (~7% of one-step variance), human BC/injection at 300 games, more setup work,
+more league seeds (the league keeps setups punished; it did not lift the plateau on either
+seed).
 
 ## Measure
 
-The panel (step 0) for everything; late-snapshot spread as the step-2 instrument; critic sign
-agreement and P27 take-rate as the step-4 instruments; the goal probes on every adopted model.
-Seed variance is ~95–100 Elo between seeds, so every adoption needs the seed-43 replicate, and
-effects under ~40 Elo are not run.
+The panel for everything; per-seat by the panel rule; the goal probes (forced wins taken,
+battlegrounds at turn 8, card disposal, own-DEFCON losses) on every adopted model; for bet 2
+the critic instruments first. Seed variance is ~95–100 Elo, so nothing is adopted from one
+seed, and effects under ~40 Elo are not run.
 
 ## Decision rules
 
 * 0: E6-04 adopted iff it beats E6-03 in both seats by the panel rule at the late block.
-* 2: adopt a schedule iff late spread halves at Elo not worse; EMA adopted iff the soup or the
-  EMA beats the best raw snapshot.
-* 3: adopt iff both seats improve against the control by the panel rule.
-* 4: adopt iff critic sign agreement rises *and* Elo is not worse; a probe-only gain is logged
-  as a critic result and kept for step 6.
-* 5: adopt a larger net only at matched wallclock; a matched-games-only win is recorded as
-  "capacity-bound, throughput-limited" and routes to P18/P26.
-* 6: run only if the gate passes on the current best model.
+* 1: adopt at matched wallclock; a matched-games-only win is "capacity-bound, throughput-
+  limited" and routes to P18/P26 before adoption.
+* 2: adopt iff critic sign agreement rises *and* Elo is not worse on both seeds.
+* 3: adopt iff both seats beat the control by the panel rule; a repeated non-recovering US
+  collapse closes it pending the P23 audit.
+* 4: owner's call; if approved, one-factor on top of the bet-3 recipe.
+* 5: run only if the headroom gate passes on the best model from 1–4.
 
 ## Follow-ups
 
-* 2 adopted → re-run the 800M question on the scheduled recipe: does the tail keep paying?
-* 3b adopted → a stronger out-of-lineage opponent (`heuristic_mcts` with a flatter prior) as
-  the dial.
-* 4 adopted → the ownership head is the natural target for a per-country *value* probe that
-  replaces the P27 oracle's "nothing to train toward".
-* 5 adopted → rerun 2–4 on the larger net; they compound.
+* Any bet adopted → the polish levers, as its tail.
+* Bet 1 adopted → rerun bets 2–3 on the larger net.
+* Bet 2 adopted → the ownership head becomes a per-country value probe that replaces P27's
+  "nothing to train toward".
+* Bet 5 adopted → search as the evaluation exploiter for approximate exploitability.
 
 ## Runs
 

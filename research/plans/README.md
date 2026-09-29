@@ -75,7 +75,7 @@ where it was measured and where it is healthy.
 
 ### Queued, unblocked
 
-**Next for strength (2026-09-29): [P28](P28_strength_on_E6.md)** — the E6 plan past the ~1M-game plateau: a frozen panel and the E6-04 verdict, then an LR schedule and weight averaging, out-of-lineage opponents, KataGo-style auxiliary targets, capacity judged at 560M rather than 80M, and a compiled searcher last. The line below is the E4-era note it supersedes.
+**Next for strength (2026-09-29): [P28](P28_strength_on_E6.md)** — big bets from scratch, judged at the plateau rather than at 80M: a frozen panel and the E6-04 verdict, then card↔card attention and a wider trunk, KataGo-style ownership/VP auxiliary heads, the E4.1 merged-influence view re-run on the flat-temperature recipe (its collapses all predate that fix), the ops budget in the observation (owner's approval), and search-driven training from scratch once a critic can carry it. Tail levers (LR schedule, EMA, soups, cross-lineage pools) are polish after a bet lands. The line below is the E4-era note it supersedes.
 
 **Next for strength, after P26:** a clean replicate of the slow-π_ref switch (`--ref-update-freq 5000000` from 80M or 160M), branched from E4-08-36 and E4-08-37's resume states so their straight 240M runs are the same-seed controls ([`../log/E4_clean_replicates.md`](../log/E4_clean_replicates.md)).
 
