@@ -18,14 +18,13 @@
 #   gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=100 -f runners=16
 #   gh run download <run-id> -n tournament-<run-id> -D data/reports/ci
 #
-# It also runs when this file changes, so a change to the job is exercised by the push itself.
 name: tournament
 
 on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face"
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file"
         default: "doctrine newest"
       games_per_side:
         description: "Games per side per matchup"
@@ -36,25 +35,25 @@ on:
       shard_pairs:
         description: "Game pairs per shard (results depend on this, not on the runner count)"
         default: "1"
+      temperature:
+        description: "Sampling temperature for every network entrant; <= 0.05 plays the argmax. A search entrant always plays its argmax, so compare one at 0"
+        default: "0.1"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
-  push:
-    paths:
-      - .github/workflows/tournament.yml
 
 permissions:
   contents: read
 
-concurrency:
-  group: tournament-${{ github.ref }}
-  cancel-in-progress: false   # a finished half of a tournament is not worth throwing away
+# No concurrency group: two tournaments on one branch are independent experiments, and a shared
+# group keeps only one of them pending -- a second dispatch silently cancelled the first.
 
 env:
   MODELS: ${{ inputs.models || 'doctrine newest' }}
   GAMES_PER_SIDE: ${{ inputs.games_per_side || '100' }}
   RUNNERS: ${{ inputs.runners || '16' }}
   SHARD_PAIRS: ${{ inputs.shard_pairs || '1' }}
+  TEMPERATURE: ${{ inputs.temperature || '0.1' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
 jobs:
@@ -71,20 +70,36 @@ jobs:
       - name: Pin the entrants and list the parts
         id: plan
         # fetch_hf_model.py is standard library only, so the runner's own python3 will do.
+        # Anywhere in a spec -- a bare entrant or inside safe:/search:/temp:/ensemble: --
+        # `newest` becomes the newest .onnx in $HF_REPO and `hf:<file.onnx>` that file, each
+        # pinned here and fetched by every play runner.
         run: |
-          specs=""; hf_files=""
-          for m in $MODELS; do
-            if [ "$m" = "newest" ]; then
-              f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
-              hf_files="$hf_files $f"
-              m="data/checkpoints/$(basename "$f")"
-            fi
-            specs="$specs $m"
-          done
-          echo "specs=${specs# }" >> "$GITHUB_OUTPUT"
-          echo "hf_files=${hf_files# }" >> "$GITHUB_OUTPUT"
-          echo "parts=$(python3 -c "import json; print(json.dumps(list(range(1, int('$RUNNERS') + 1))))")" >> "$GITHUB_OUTPUT"
-          echo "entrants: ${specs# }  (from Hugging Face: ${hf_files# })  runners: $RUNNERS"
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          repo, specs = os.environ["HF_REPO"], os.environ["MODELS"].split()
+          files = []
+          def local(f):
+              if f not in files:
+                  files.append(f)
+              return "data/checkpoints/" + os.path.basename(f)
+          newest = None
+          out = []
+          for m in specs:
+              if re.search(r"(^|[:+])newest($|[:+])", m):
+                  if newest is None:
+                      newest = subprocess.run(
+                          ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
+                          check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
+                  m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
+              m = re.sub(r"hf:([\w.\-/]+\.onnx)", lambda g: local(g.group(1)), m)
+              out.append(m)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"specs={' '.join(out)}\n")
+              f.write(f"hf_files={' '.join(files)}\n")
+              f.write(f"parts={json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1)))}\n")
+          print("entrants:", " ".join(out), " (from Hugging Face:", " ".join(files) + ")",
+                " runners:", os.environ["RUNNERS"])
+          PY
 
   play:
     needs: plan
@@ -111,7 +126,7 @@ jobs:
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
             --models ${{ needs.plan.outputs.specs }} \
             --games-per-side "$GAMES_PER_SIDE" --device cpu \
-            --workers 0 --shard-pairs "$SHARD_PAIRS" \
+            --workers 0 --shard-pairs "$SHARD_PAIRS" --temperature "$TEMPERATURE" \
             --part "${{ matrix.part }}/$RUNNERS" --output-part "parts/part-${{ matrix.part }}.json"
 
       - uses: actions/upload-artifact@v4
@@ -158,6 +173,7 @@ jobs:
             echo "hugging_face: $HF_REPO ${{ needs.plan.outputs.hf_files }}"
             echo "games_per_side: $GAMES_PER_SIDE"
             echo "shard_pairs: $SHARD_PAIRS"
+            echo "temperature: $TEMPERATURE"
             echo "runners: $RUNNERS (parts received: $(ls parts/part-*.json 2>/dev/null | wc -l))"
           } > reports/provenance.txt
           cat reports/provenance.txt

@@ -385,6 +385,10 @@ class OnnxAgent:
     def reseed(self, seed: int) -> None:
         self.rng = np.random.default_rng(seed)
 
+    def as_module(self) -> "OnnxModule":
+        """This network as a torch module, for code written against one (the searcher)."""
+        return OnnxModule(self)
+
     def logits(self, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
         out = self.session.run(["logits"], {"obs": np.ascontiguousarray(obs, dtype=np.float32),
                                             "mask": np.ascontiguousarray(masks, dtype=np.uint8)})
@@ -416,6 +420,77 @@ class OnnxAgent:
         return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
 
 
+class OnnxModule(nn.Module):
+    """An `OnnxAgent`'s network as a torch module: `forward(obs, mask)` returns (logits, v_win,
+    v_vp) as `ColdWarNetV2.forward` does, computed by ONNX Runtime on CPU.
+
+    Lets code written against a torch model -- the batched searcher above all -- run a published
+    export, for which no .pt exists. Inference only: there is nothing to train, and the single
+    registered buffer exists so that `next(module.parameters())`-style device lookups work."""
+
+    def __init__(self, agent: "OnnxAgent"):
+        super().__init__()
+        self.agent = agent
+        self.register_parameter("_device_anchor", nn.Parameter(torch.zeros(1), requires_grad=False))
+
+    def forward(self, obs: torch.Tensor, mask: Optional[torch.Tensor] = None
+                ) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
+        o = obs.detach().cpu().numpy().astype(np.float32, copy=False)
+        m = (np.ones((o.shape[0], ActionEncoder.FLAT_ACTION_SIZE), dtype=np.uint8) if mask is None
+             else mask.detach().cpu().numpy().astype(np.uint8, copy=False))
+        logits, v_win, v_vp = self.agent.session.run(
+            None, {"obs": np.ascontiguousarray(o), "mask": np.ascontiguousarray(m)})
+        return (torch.from_numpy(np.asarray(logits)), torch.from_numpy(np.asarray(v_win)),
+                torch.from_numpy(np.asarray(v_vp)))
+
+
+class EnsembleAgent:
+    """Several exported networks playing as one: each move from the average of their policies
+    (probabilities, not logits, so no member's logit scale dominates). Members must share the
+    observation width and action view."""
+
+    def __init__(self, members: "list[OnnxAgent]", seed: int = 0):
+        if len(members) < 2:
+            raise ValueError("an ensemble needs at least two members")
+        if len({m.merged_influence for m in members}) != 1:
+            raise ValueError("ensemble members decide in different action views")
+        self.members = members
+        self.obs_size = members[0].obs_size
+        self.merged_influence = members[0].merged_influence
+        self.name = "ens(" + "+".join(m.name for m in members) + ")"
+        self.rng = np.random.default_rng(seed)
+
+    def reseed(self, seed: int) -> None:
+        self.rng = np.random.default_rng(seed)
+
+    def act_batch(self, obs: np.ndarray, masks: np.ndarray, temperature: float,
+                  greedy: bool) -> np.ndarray:
+        probs = np.zeros(masks.shape, dtype=np.float64)
+        for m in self.members:
+            z = m.logits(obs, masks)
+            z -= z.max(axis=1, keepdims=True)
+            p = np.exp(z)
+            probs += p / p.sum(axis=1, keepdims=True)
+        probs /= len(self.members)
+        if greedy:
+            return probs.argmax(axis=1).astype(np.int32)
+        z = np.log(np.maximum(probs, 1e-300)) / max(temperature, 1e-4)
+        z -= z.max(axis=1, keepdims=True)
+        cdf = np.cumsum(np.exp(z) * (masks > 0), axis=1)
+        u = self.rng.random(len(cdf)) * cdf[:, -1]
+        picks = (cdf <= u[:, None]).sum(axis=1)
+        over = picks >= masks.shape[1]
+        picks[over] = probs[over].argmax(axis=1)
+        return picks.astype(np.int32)
+
+    def select_action(self, state: ts.GameState, player: ts.Player,
+                      temperature: float = 0.1) -> int:
+        obs = np.asarray(ts.extract_observation(state, player), dtype=np.float32)[None, :]
+        mask = np.asarray(ActionEncoder.get_legal_mask(state, self.merged_influence),
+                          dtype=np.uint8)[None, :]
+        return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
+
+
 def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAgent:
     """Factory function loading agents from string specifier (random, heuristic, or checkpoint path)."""
     s = spec.strip()
@@ -433,6 +508,15 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "temperature", float(t_str))
         setattr(agent, "name", f"{agent.name}@T{float(t_str):g}")
         return agent
+    if s.lower().startswith("ensemble:"):
+        # ensemble:<a.onnx>+<b.onnx>[+...] -- the average of several exports' policies.
+        return EnsembleAgent([OnnxAgent(p) for p in s.split(":", 1)[1].split("+")])
+    if s.lower().startswith("safe:"):
+        # safe:<rest-of-spec> -- the wrapped agent, but a certain win is always taken and a
+        # certain loss refused when anything else is legal (tools/lib/safety.py).
+        from tools.lib.safety import SafetyAgent
+
+        return SafetyAgent(load_agent(s.split(":", 1)[1], device=device))
     if s.lower().startswith("search:"):
         # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample]]]]
         #
@@ -453,7 +537,11 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         subsample = float(parts[5]) if len(parts) > 5 and parts[5] else 1.0
         from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 
-        base = NeuralAgent.from_checkpoint(path, device=device)
+        # An export (the published models) runs in ONNX Runtime through OnnxModule; the search
+        # code only ever calls forward(obs, mask).
+        onnx_base = OnnxAgent(path) if path.lower().endswith(".onnx") else None
+        search_model = (onnx_base.as_module() if onnx_base is not None
+                        else NeuralAgent.from_checkpoint(path, device=device).model)
         # advance_root=False because the CLIs hand over a state they have NOT settled --
         # tools/tournament.py only auto-advances under --auto-advance, and play_match.py steps
         # decision by decision. With the default True the searcher settles its own root, so at a
@@ -469,7 +557,11 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         tag = "" if node_filter == "all" else "-card"
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
-        return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
+        if onnx_base is not None:
+            label = f"{onnx_base.name}+{label}"
+        return BatchedMCTSAgent(search_model, name=label,
+                                device=torch.device("cpu") if onnx_base is not None else device,
+                                config=cfg)
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
         #
