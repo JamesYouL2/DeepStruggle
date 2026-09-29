@@ -412,14 +412,14 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         return HeuristicAgent()
     if s.lower() in ["heuristic_v2", "heuristicbotv2", "heuristicv2", "heur2"]:
         return HeuristicV2Agent()
-    # brinkman[:seed] -- struggler's strategic bot ported onto ts_engine (bot/brinkman). Searches a
+    # doctrine[:seed] -- struggler's strategic bot ported onto ts_engine (bot/doctrine). Searches a
     # determinized copy of the state, so unlike heuristic_mcts it never reads the opponent's hand.
-    if s.lower() == "brinkman" or s.lower().startswith("brinkman:"):
-        from bot.brinkman import BrinkmanAgent
+    if s.lower() == "doctrine" or s.lower().startswith("doctrine:"):
+        from bot.doctrine import DoctrineAgent
 
         parts = s.split(":")
         seed = int(parts[1]) if len(parts) > 1 and parts[1] else 0
-        return BrinkmanAgent(seed=seed)
+        return DoctrineAgent(seed=seed)
     # heuristic_mcts[:sims] -- MCTS with a rules-derived leaf value and no checkpoint. Registered
     # here as well as in tools/play_match.py so it can enter a tournament: a reference opponent
     # that only works in one-off matches cannot anchor a ladder.

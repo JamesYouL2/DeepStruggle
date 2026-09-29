@@ -15,9 +15,9 @@ This directory contains pure bot client implementations, baseline heuristics, an
 - [`neural_bot.py`](neural_bot.py): `NeuralBot` deep reinforcement learning player driven by `ColdWarNet` PyTorch checkpoints. The architecture (V1 or V2) is detected from the weights; a checkpoint from a retired architecture is refused outright by `tools.lib.player_agent.reject_retired_architecture` rather than partially loaded.
 - [`exploratory_bot.py`](exploratory_bot.py): `ExploratoryBot` agent designed to explore diverse decision paths, Space Race, Realignments, and Coups.
 - [`strategic_bot.py`](strategic_bot.py): `StrategicBot` high-level strategic agent prioritizing DEFCON-2 containment, coups, realignments, and Space Race safety with rich strategy/commentary generation.
-- [`brinkman/`](brinkman/): `Brinkman`, the struggler project's strategic bot ported onto
-  ts_engine (section 3). `BrinkmanAgent` is the tournament `PlayerAgent` (`load_agent("brinkman")`);
-  `BrinkmanBot` the match-loop bot (`play_match.py --us brinkman`).
+- [`doctrine/`](doctrine/): `Doctrine`, the struggler project's strategic bot ported onto
+  ts_engine (section 3). `DoctrineAgent` is the tournament `PlayerAgent` (`load_agent("doctrine")`);
+  `DoctrineBot` the match-loop bot (`play_match.py --us doctrine`).
 - [`event_heavy_bot.py`](event_heavy_bot.py): `EventHeavyBot` agent maximizing card event play and event-first timing.
 - [`human_bot.py`](human_bot.py): `HumanBot` interactive terminal CLI player prompting the user for numbered choices.
 
@@ -40,14 +40,14 @@ PYTHONPATH=. .venv/bin/python tools/play_match.py --us heuristic --ussr strategi
 
 ---
 
-## 3. Brinkman
+## 3. Doctrine
 
 A port of struggler's `StrategicPlayer` (`src/struggler/bots/strategic/`), aiming at comparable
 playing strength rather than decision-for-decision fidelity.
 
 * `evaluator.py` -- struggler's board value, ported term for term with its shipped default
   weights and its fitted per-country weights (`data/fitted_country_weights.json`, renamed to
-  ts_engine's country names). `tests/training/test_brinkman.py` pins it to struggler's own
+  ts_engine's country names). `tests/training/test_doctrine.py` pins it to struggler's own
   output on a fixed board, to 1e-12.
 * `schedule.py` -- each region's future scoring mass (struggler's `schedule.py` and
   `public_cards.py`), with a simpler deck walk. Public information only.
@@ -63,12 +63,16 @@ playing strength rather than decision-for-decision fidelity.
   at DEFCON 2, and a card choice that leaves fewer safe plays than rounds to fill is charged the
   game (all of it at DEFCON 2, struggler's measured 0.43 of it at 3).
 
+Measured with `tools/tournament.py` (2026-09-29): 40-0 against HeuristicBotV2 (20 games a side)
+and 48-2 against HeuristicMCTS16 (25 a side; it searches the true state, so it sees this bot's
+hand). About 20 s a game on one core.
+
 Not yet ported: the one-ply reply look-ahead, the hand-value terms (holding a card, Ask Not,
 Missile Envy targets) and the Military Ops discount.
 
 ```bash
-PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us brinkman --ussr heuristic
-PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py --models brinkman heuristic_v2 \
+PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us doctrine --ussr heuristic
+PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py --models doctrine heuristic_v2 \
   --games-per-side 20 --device cpu
 ```
 

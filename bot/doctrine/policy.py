@@ -1,4 +1,4 @@
-"""Brinkman's decision policy: struggler's value function, searched with ts_engine.
+"""Doctrine's decision policy: struggler's value function, searched with ts_engine.
 
 struggler's `StrategicPlayer` prices every option by hand -- a greedy influence plan, a coup's
 six rolls, an event run in a sandbox copy of its Python engine. Here the C++ engine is the
@@ -35,8 +35,8 @@ import numpy as np
 
 import ts_engine as ts
 
-from bot.brinkman import evaluator as ev
-from bot.brinkman import schedule
+from bot.doctrine import evaluator as ev
+from bot.doctrine import schedule
 
 DT = ts.DecisionType
 CONFIRM_DONE = 208
@@ -113,7 +113,7 @@ class _Context:
     cache: Dict[Tuple[int, ...], float] = field(default_factory=dict)
 
 
-class BrinkmanPolicy:
+class DoctrinePolicy:
     """Chooses a flat action for the player to move."""
 
     def __init__(self, weights: Optional[ev.Weights] = None, seed: int = 0):

@@ -1,4 +1,4 @@
-"""Brinkman (bot/brinkman): struggler's strategic bot, ported onto ts_engine.
+"""Doctrine (bot/doctrine): struggler's strategic bot, ported onto ts_engine.
 
 What these pin:
 
@@ -17,9 +17,9 @@ from typing import List, Tuple
 import pytest
 
 import ts_engine as ts
-from bot.brinkman import BrinkmanAgent
-from bot.brinkman import evaluator as ev
-from bot.brinkman.policy import BrinkmanPolicy, determinize, legal_actions
+from bot.doctrine import DoctrineAgent
+from bot.doctrine import evaluator as ev
+from bot.doctrine.policy import DoctrinePolicy, determinize, legal_actions
 
 # Influence (US, USSR) per country 0..83 and a per-region urgency (plus Southeast Asia's), both
 # arbitrary; the values below are struggler's evaluator on exactly this board.
@@ -64,10 +64,10 @@ def test_every_country_has_a_fitted_weight() -> None:
 
 
 def _to_first_action_round(seed: int) -> ts.GameState:
-    """Setup and headline played by Brinkman, up to the USSR's first card choice."""
+    """Setup and headline played by Doctrine, up to the USSR's first card choice."""
     state = ts.GameState()
     ts.Engine.init_game(state, seed)
-    bot = BrinkmanAgent(seed=seed)
+    bot = DoctrineAgent(seed=seed)
     while not (state.current_phase == ts.Phase.ACTION_ROUND
                and state.ctx().decision_type == ts.DecisionType.SELECT_CARD):
         c = state.ctx()
@@ -95,12 +95,12 @@ def test_choice_does_not_depend_on_the_opponents_hidden_cards() -> None:
     b = determinize(other, me, random.Random(1))
     assert [a.get_card_location(c) for c in range(1, 111)] == [b.get_card_location(c) for c in range(1, 111)]
     # ...and so is the choice made on it.
-    assert BrinkmanPolicy(seed=1).choose(state) == BrinkmanPolicy(seed=1).choose(other)
+    assert DoctrinePolicy(seed=1).choose(state) == DoctrinePolicy(seed=1).choose(other)
 
 
 def test_plays_a_turn_with_only_legal_actions() -> None:
     state = _to_first_action_round(7)
-    bot = BrinkmanAgent(seed=7)
+    bot = DoctrineAgent(seed=7)
     turn = int(state.turn)
     steps = 0
     while not ts.Engine.is_terminal(state) and int(state.turn) == turn and steps < 400:
@@ -125,7 +125,7 @@ def test_plays_scoring_cards_when_it_must() -> None:
     state.action_round = 6
     for c in (1, 3, 4):
         state.set_card_location(c, ts.hand_of(me))
-    action = BrinkmanPolicy(seed=0).choose(state)
+    action = DoctrinePolicy(seed=0).choose(state)
     assert action + 1 in (1, 3)
 
 
@@ -147,4 +147,4 @@ def test_does_not_keep_a_card_it_cannot_play_at_defcon_2() -> None:
     state.set_card_location(cia, ts.hand_of(me))
     state.set_card_location(socialist, ts.hand_of(me))
     assert me == ts.Player.USSR
-    assert BrinkmanPolicy(seed=0).choose(state) == cia - 1
+    assert DoctrinePolicy(seed=0).choose(state) == cia - 1

@@ -35,7 +35,7 @@ graph TD
         Random["RandomBot Baseline"]
         Exploratory["ExploratoryBot Baseline"]
         Strategic["StrategicBot Realist Agent"]
-        Brinkman["Brinkman (struggler's strategic bot on ts_engine)"]
+        Doctrine["Doctrine (struggler's strategic bot on ts_engine)"]
         EventHeavy["EventHeavyBot Agent"]
         Human["HumanBot Interactive CLI"]
         BaseBot --> Heuristic
@@ -43,7 +43,7 @@ graph TD
         BaseBot --> NeuralBotClient
         BaseBot --> Exploratory
         BaseBot --> Strategic
-        BaseBot --> Brinkman
+        BaseBot --> Doctrine
         BaseBot --> EventHeavy
         BaseBot --> Human
     end

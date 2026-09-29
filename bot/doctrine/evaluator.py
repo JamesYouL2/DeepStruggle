@@ -1,4 +1,4 @@
-"""Brinkman's board value: struggler's evaluator terms on ts_engine's map.
+"""Doctrine's board value: struggler's evaluator terms on ts_engine's map.
 
 A port of `struggler/bots/strategic/evaluator.py`, which was written as pure functions over an
 indexed snapshot precisely so that it could be moved. The terms are unchanged -- country value

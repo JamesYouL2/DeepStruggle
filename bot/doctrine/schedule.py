@@ -19,7 +19,7 @@ from typing import Dict, List, Tuple
 
 import ts_engine as ts
 
-from bot.brinkman.evaluator import (AFRICA, ASIA, CENTRAL_AMERICA, EUROPE, MIDDLE_EAST, N_COUNTRIES,
+from bot.doctrine.evaluator import (AFRICA, ASIA, CENTRAL_AMERICA, EUROPE, MIDDLE_EAST, N_COUNTRIES,
                                     SOUTH_AMERICA, Terrain, Weights)
 
 LAST_TURN = 10
