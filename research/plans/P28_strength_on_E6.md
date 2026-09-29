@@ -1,6 +1,6 @@
 # P28 — Strength on E6: past the ~1M-game plateau
 
-**Status:** proposed (2026-09-29). Written from scratch for E6; the E5 record is cited only where
+**Status:** in progress (2026-09-29): step 0 done, E6-04-44 adopted. Written from scratch for E6; the E5 record is cited only where
 a mechanism was measured there and nothing on E6 contradicts it.
 **Gate:** step 0 (the panel and the E6-04 verdict) before any arm is *judged*; steps 1–2 need no
 new code; steps 3–5 are trainer/model changes; step 6 is engineering.
@@ -186,4 +186,4 @@ effects under ~40 Elo are not run.
 
 ## Runs
 
-(none yet)
+* **Step 0 (2026-09-29): E6-04-44 adopted.** Panel pinned in `data/reports/p28_panel.json` (E6-03-44 @80M / @240M / @550M peak, `heuristic_mcts:16`); late block 500/520/540/560M. By the panel rule E6-04 − E6-03 is US +2.7 ± 0.6, USSR +1.5 ± 0.5 (both seats); the self-play-bar rule had read the same pairings as US +9.6 / USSR +0.3. Empty battlegrounds at turn 8 0.51 vs 1.5–1.7. E6-03-44's trace levels off at ~320M and has no end dip on E6 ([`../log/P28_step0_panel_and_E6_04_verdict.md`](../log/P28_step0_panel_and_E6_04_verdict.md)).
