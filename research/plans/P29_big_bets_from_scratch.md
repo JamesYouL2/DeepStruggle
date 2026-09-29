@@ -177,4 +177,4 @@ from one seed, and effects under ~40 Elo are not run.
 
 ## Runs
 
-(none yet)
+* **Bet 3, E6-09-44** (2026-09-29): launched on the plain E6-03 recipe, seed 44, solo, against E6-03-44 ([`../runs.md`](../runs.md)).
