@@ -92,6 +92,12 @@ def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: 
     if clean_spec == "exploratory":
         return ExploratoryBot(role), "ExploratoryBot"
 
+    # brinkman -- struggler's strategic bot ported onto ts_engine. Searches a determinized copy
+    # of the engine state, so it needs `select_from_state` (wants_game_state), like heuristic_mcts.
+    if clean_spec == "brinkman":
+        from bot.brinkman import BrinkmanBot
+        return BrinkmanBot(role), "Brinkman"
+
     # heuristic_mcts[:sims] -- MCTS with a rules-derived leaf value and NO checkpoint, so it is
     # available as a reference opponent before any network exists. Difficulty is `sims`.
     # Searches the true state, so it sees the opponent's hand: a benchmark, not a deployable bot.
@@ -182,7 +188,7 @@ def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: 
 
     raise ValueError(
         f"Unknown agent specification '{agent_spec}'. "
-        f"Choose from: heuristic, random, strategic, event_heavy, exploratory, human, or a .pt checkpoint path."
+        f"Choose from: heuristic, random, strategic, event_heavy, exploratory, brinkman, human, or a .pt checkpoint path."
     )
 
 
