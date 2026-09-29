@@ -9,6 +9,8 @@ The naming scheme — what `E4-02-01` means, when the engine letter bumps — is
 [`method/run_nomenclature.md`](method/run_nomenclature.md). For *what we concluded* about a
 question rather than a particular arm, start from [`questions.md`](questions.md).
 
+**Pre-E6 checkpoints archived 2026-09-29.** The E4, E5 and intermediate-E6 run directories named below are under `/workspace/data/archive/{E4_ladder,E5_ladder,E6_intermediate}/checkpoints/` ([`checkpoints.md`](checkpoints.md)).
+
 **Ladder reset 2026-09-19.** E3 and everything before it ran on the pre-P17 engine, whose action
 space, Grain Sales decision stream and Missile Envy card handling all differ. No number from it is
 comparable, so the registry restarts here. The old one, with its findings distilled, is

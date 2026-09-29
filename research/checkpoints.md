@@ -4,6 +4,16 @@ One row per rated checkpoint, with its measured strength and the field that meas
 themselves are [`runs.md`](runs.md); this file answers the narrower "which model do I load, and how
 good is it".
 
+**Pre-E6 checkpoints archived 2026-09-29** (owner). Everything trained before the real E6 now lives under `/workspace/data/archive/`, not `data/checkpoints/`:
+
+| archive | contents |
+|:---|:---|
+| `E4_ladder/checkpoints/` | E4 and E4.1, incl. the aborted and lambda-0.99 runs and `E4_1_warmup.pt` |
+| `E5_ladder/checkpoints/` | E5, with the E5 league dirs in `E5_ladder/league/` (links rewritten) |
+| `E6_intermediate/checkpoints/` | E6-01 and the first E6-02, on the abandoned era-fix-only engine |
+
+The snapshot resolver (`data/logs/p25/resolve.py`) searches the archives, so `E5-21-43@560M` still resolves. `data/checkpoints/` holds only real-E6 runs, which is also all the workbench lists.
+
 **Ladder reset 2026-09-19.** Pre-P17 checkpoints cannot be loaded on this engine at all — their
 policy head is 212 wide against the current 220, and `check_checkpoint_layout` refuses them by
 width rather than letting them misread. They are in
@@ -19,7 +29,7 @@ below is against `HeuristicBot` at 50 games a side.
 
 ## Best model: E5-21-43@560M (owner, 2026-09-28)
 
-`/workspace/data/checkpoints/E5-21-43_20260928_165156/snapshot_560005120steps.pt`
+`/workspace/data/archive/E5_ladder/checkpoints/E5-21-43_20260928_165156/snapshot_560005120steps.pt` (archived 2026-09-29)
 (sha256 `f3213b98e0ba382930a41caadb58ce22c30fae2c14342150a7510cf36775d7c1`, 12.8 MB).
 
 What it is worth ([`log/E5_21_setup_credit_plus_league.md`](log/E5_21_setup_credit_plus_league.md)):
