@@ -478,8 +478,7 @@ with its fix reverted:
 | **UN Intervention** is an Event only with an opponent-associated card in hand | offered and fizzled, which cancelled a pending We Will Bury You for nothing | Card text; FAQ card #32 |
 | **We Will Bury You** settles on a trapped US round | a Quagmire discard round skipped the check and the 3 VP waited for the next card play | Card text: UN Intervention was not played in that round |
 | **NORAD** arms on DEFCON *moving* to 2 | Cuban Missile Crisis or How I Learned setting 2 at 2 armed it | Card text: "moved to 2" |
-| **U-2 Incident** and **Flower Power** reach UN Intervention played through Grain Sales | the route paid neither | Card text |
-| **Flower Power** charges a war card lent to UN Intervention | 0 VP, and a test asserted it | Card text: "used for Operations or an Event". `CardInteractionTest.FlowerPower_ChargesWhenWarCardPlayedViaUNInterventionByUS` |
+| **U-2 Incident** reaches UN Intervention played through Grain Sales | the route paid nothing | Card text |
 | **Summit** counts regions without Shuttle Diplomacy or Formosan Resolution | both scoring-only effects moved Summit's die | FAQ card #73; card #35 "for scoring purposes only". `Scoring::dominates_or_controls` |
 
 **Checked and left as it was: event-granted Ops take the Ops modifiers.** Containment, Brezhnev

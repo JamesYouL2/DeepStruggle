@@ -798,12 +798,10 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
             if (chosen_card >= 1 && chosen_card <= 110 && in_hand_of(state.card_locations[chosen_card], p)) {
                 if (CardData::get_card(chosen_card).side == opp && !CardData::is_scoring_card(chosen_card)) {
                     state.card_locations[chosen_card] = CardLocation::DISCARD_PILE;
-                    // The companion's Operations are the US's to spend, so a war card lent to UN
-                    // Intervention is a war card "used for Operations" under Flower Power.
-                    if (!charge_flower_power_for_ops(state, p, chosen_card)) {
-                        state.ctx().resolving_card = 0;
-                        return true;
-                    }
+                    // No Flower Power charge for a war card lent to UN Intervention: the card is
+                    // not played for its own Operations or Event. The human log of ts-replayer
+                    // game 304 (turn 7 AR7, Arab-Israeli War under Flower Power) records no VP
+                    // change, and the FAQ is silent on the case.
                     state.ctx().pending_op_card = chosen_card;
                     // Region::ASIA grants the conditional bonuses up front exactly as a normal
                     // Ops play does, leaving the budget ladder to withdraw them if the player
@@ -1124,10 +1122,9 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                 state.card_locations[card_ids::UN_INTERVENTION] = CardLocation::DISCARD_PILE;
                 state.card_locations[drawn_card] = hand_of(Player::US, /*known=*/true);
                 // UN Intervention is played here as surely as through its own handler, so U-2
-                // Incident's rider and Flower Power are owed the same way; this route had
-                // neither.
-                if (!pay_u2_incident_rider(state) ||
-                    !charge_flower_power_for_ops(state, Player::US, drawn_card)) {
+                // Incident's rider is owed the same way; this route had none. Flower Power is
+                // not charged for the lent card, as in UN Intervention's own handler.
+                if (!pay_u2_incident_rider(state)) {
                     state.ctx().resolving_card = 0;
                     return true;
                 }

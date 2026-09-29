@@ -90,7 +90,7 @@ TEST(CardInteractionTest, FlowerPower_NoVP_WhenWarCardSpacedByUS) {
     ASSERT_EQ(state.victory_points, 2);
 }
 
-TEST(CardInteractionTest, FlowerPower_ChargesWhenWarCardPlayedViaUNInterventionByUS) {
+TEST(CardInteractionTest, FlowerPower_NoVP_WhenWarCardPlayedViaUNInterventionByUS) {
     ts::GameState state{};
     state.set_flag(ts::effect_bits::FLOWER_POWER_ACTIVE);
     state.card_locations[ts::card_ids::ARAB_ISRAELI_WAR] = ts::hand_of(ts::Player::US);
@@ -100,12 +100,10 @@ TEST(CardInteractionTest, FlowerPower_ChargesWhenWarCardPlayedViaUNInterventionB
     ts::CardHandlers::trigger_event(state, ts::card_ids::UN_INTERVENTION, ts::Player::US);
     ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, ts::card_ids::ARAB_ISRAELI_WAR, 0, 0});
 
-    // Flower Power charges "every US played War card, used for Operations or an Event". UN
-    // Intervention cancels the war's Event and hands the US its Operations, so the card is
-    // played and used for Operations -- the same charge as playing it for Ops outright, which
-    // the engine already made. This test used to assert 0 VP on the reading that a cancelled
-    // Event owes nothing; the card names Operations use explicitly.
-    ASSERT_EQ(state.victory_points, -2);
+    // A war card lent to UN Intervention is neither played for its own Operations nor for its
+    // Event, so Flower Power charges nothing. ts-replayer game 304 (turn 7 AR7, the US lends
+    // Arab-Israeli War with Flower Power active) records no VP change; the FAQ is silent.
+    ASSERT_EQ(state.victory_points, 0);
 }
 
 TEST(CardInteractionTest, FlowerPower_CampDavidBlocksArabIsraeliWar_NoVPForArabIsraeliWar_ButAwardsForBrushWar) {
