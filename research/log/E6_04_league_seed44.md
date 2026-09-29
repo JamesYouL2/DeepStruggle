@@ -50,12 +50,13 @@ Results against those bars:
 | | E6-04-44 (seed 44, E6) | *E5-21-43 (seed 43, E5)* |
 |:---|---:|---:|
 | overall vs the plain run, late block (9 pairings) | **54.4%** | *54.6%* |
-| as US vs bar | **+10.0 ± 1.0** | *+11.8 ± 2.6* |
-| as USSR vs bar | **−0.4 ± 1.0** | *−0.8 ± 2.6* |
+| as US vs bar | **+10.0 ± 1.1** | *+11.8 ± 2.6* |
+| as USSR vs bar | **−0.4 ± 1.1** | *−0.8 ± 2.6* |
 | Elo at 480 / 520 / 560M | 2409 / 2432 / 2422 | *2315 / 2340 / 2344 (another field)* |
 | plain run at 480 / 520 / 560M | 2386 / 2369 / 2408 | *E5-11: 2293 / 2303 / 2297* |
 
-The ± values are 95% intervals.
+The ± values are one standard error, arm and bar together, as in the E5-21 log. The bars are three
+1,000-game self-plays, and their uncertainty dominates: arm alone would be ± 0.5.
 
 **Against the previous best, E5-21-43@560M, on E6** (1,000 per seat, ± 2.2):
 
@@ -89,8 +90,9 @@ Opening check, 2,000 paired deals (`e6_0{3,4}_44_560m_setup_oracle_{us,ussr}.txt
   * The overall result is the same: 54.4% against 54.6%.
   * So is the per-seat shape: a large gain in the US seat (+10.0 against +11.8) and the USSR seat
     level with its bar (−0.4 against −0.8).
-  * By the letter of the rule it is again **not accepted**. The USSR seat is 0.4 below its bar,
-    within one standard error; the US seat is about 20 standard errors above.
+  * **Accepted** under the owner's amended rule (2026-09-29): significantly above the bar in one
+    seat (US, +10.0 ± 1.1, about 9 standard errors) and neutral in the other (USSR, −0.4 ± 1.1).
+    The original wording, above the bar in both seats, would have rejected it by 0.4 points.
   * It is the most consistent arm result in the registry.
 * **The mechanism is the same, even though the opening did not move.**
   * The plain run's US opening is not locked on a bad choice this time: it plays West Germany 4 /

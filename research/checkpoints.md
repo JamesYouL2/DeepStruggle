@@ -26,9 +26,11 @@ What it is worth ([`log/E5_21_setup_credit_plus_league.md`](log/E5_21_setup_cred
 
 * **Elo 2344**, the highest in its round robin (`data/reports/e5_21_rr_43.md`).
 * **Against E5-11-43**, the previous best, over the late block: 54.6% overall.
-  * Per seat against E5-11's self-play bars: US +11.8 ± 2.6, USSR −0.8 ± 2.6. By the letter of
-    the owner's per-seat rule it is not accepted, since the USSR seat is a third of a standard
-    error short.
+  * Per seat against E5-11's self-play bars: US +11.8 ± 2.6, USSR −0.8 ± 2.6. That is accepted
+    under the owner's per-seat rule as amended on 2026-09-29: above the bar in one seat, neutral in
+    the other.
+  * Replicated on seed 44 and E6 by E6-04-44: US +10.0 ± 1.1, USSR −0.4 ± 1.1
+    ([`log/E6_04_league_seed44.md`](log/E6_04_league_seed44.md)).
 * **Past 560M the same run does not improve.** The 720M continuation plateaus and then dips to
   2267.
 * **Openings:**

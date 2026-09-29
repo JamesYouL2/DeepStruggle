@@ -45,6 +45,7 @@ self-play at each step.
 
 E5-11 is at 2293 / 2303 / 2297 at the same steps, so E5-21 leads by +22, +37 and +47, growing.
 
+**Accepted under the owner's amended rule (2026-09-29):** above the bar in one seat, not significantly below it in the other. Under the original wording, above both bars, it was not accepted:
 **By the letter of the rule, not accepted.** The USSR seat is 0.8 below its bar, a third of a
 standard error. The US seat is 4.5 standard errors above its bar. Overall it is +4.6 points
 (about +32 Elo) against E5-11 and +5.1 against E5-17. It is the first arm that neither loses the
