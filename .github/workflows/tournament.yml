@@ -1,0 +1,103 @@
+# A tournament on CI: by default Doctrine against the newest model published on Hugging Face (the
+# one the workbench loads by default), on every core of the runner (tools/tournament.py --workers).
+# The Markdown report goes to the run summary; report, JSON and per-game log are uploaded as the
+# `tournament-<run id>` artifact, with the engine fingerprint and commit they were measured on.
+#
+# Run it from the Actions tab or `gh workflow run tournament.yml -f models="doctrine newest"`.
+# It also runs when this file changes, so a change to the job is exercised by the push itself.
+name: tournament
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face"
+        default: "doctrine newest"
+      games_per_side:
+        description: "Games per side per matchup"
+        default: "100"
+      shard_pairs:
+        description: "Game pairs per shard (results depend on this, not on the worker count)"
+        default: "5"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+  push:
+    paths:
+      - .github/workflows/tournament.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tournament-${{ github.ref }}
+  cancel-in-progress: false   # a finished half of a tournament is not worth throwing away
+
+env:
+  MODELS: ${{ inputs.models || 'doctrine newest' }}
+  GAMES_PER_SIDE: ${{ inputs.games_per_side || '100' }}
+  SHARD_PAIRS: ${{ inputs.shard_pairs || '5' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  tournament:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330   # under the 6 h job limit, so the artifact step still gets to run
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Resolve the entrants
+        id: entrants
+        run: |
+          specs=""
+          for m in $MODELS; do
+            if [ "$m" = "newest" ]; then
+              m=$(.venv/bin/python tools/fetch_hf_model.py --repo "$HF_REPO" --out-dir data/checkpoints | tail -1)
+            fi
+            specs="$specs $m"
+          done
+          echo "specs=${specs# }" >> "$GITHUB_OUTPUT"
+          echo "entrants: ${specs# }"
+
+      - name: Tournament
+        run: |
+          mkdir -p reports
+          export PATH="$PWD/.venv/bin:$PATH"   # cmake, should the freshness check rebuild
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+            --models ${{ steps.entrants.outputs.specs }} \
+            --games-per-side "$GAMES_PER_SIDE" --device cpu \
+            --workers 0 --shard-pairs "$SHARD_PAIRS" \
+            --output-report reports/tournament.md --output-json reports/tournament.json \
+            --log-games reports/games.jsonl
+
+      - name: Provenance
+        if: always()
+        run: |
+          mkdir -p reports
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "ref: $GITHUB_REF"
+            echo "engine_fingerprint: $(PYTHONPATH=. .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "entrants: ${{ steps.entrants.outputs.specs }}"
+            echo "games_per_side: $GAMES_PER_SIDE"
+            echo "shard_pairs: $SHARD_PAIRS"
+            echo "cores: $(nproc)"
+          } > reports/provenance.txt
+          cat reports/provenance.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```'; cat reports/provenance.txt; echo '```'
+            [ -f reports/tournament.md ] && cat reports/tournament.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tournament-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
