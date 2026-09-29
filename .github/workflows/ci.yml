@@ -67,7 +67,12 @@ jobs:
           .venv/bin/cmake --build build/release -j "$(nproc)"
 
       - name: Engine is fresh (stamps the build)
-        run: PATH="$PWD/.venv/bin:$PATH" tools/scripts/check_engine_fresh.sh
+        # A fresh checkout has no stamp, so the first run stamps the build and exits 1 by design
+        # (it is telling a chained command not to run). The second run must exit 0.
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          tools/scripts/check_engine_fresh.sh || true
+          tools/scripts/check_engine_fresh.sh
 
       - name: C++ suite
         run: |
