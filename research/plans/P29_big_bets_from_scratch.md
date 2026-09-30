@@ -178,4 +178,4 @@ from one seed, and effects under ~40 Elo are not run.
 ## Runs
 
 * **Bet 3, E6-09-44** (2026-09-29): **not adopted.** No collapse under flat 1.0, so P23's collapses were the old bands. But it is ~235 Elo weaker than E6-03-44 in both seats, on snapshots and soup (head to head 21% / 19%). The first lead is bet 4, since the merged op-choice node does not show the Ops being spent ([`../log/P29_bet3_merged_view.md`](../log/P29_bet3_merged_view.md)).
-* **Bet 1, wider M2d, E6-10-44** (2026-09-29): launched on E6-03-44's recipe with a 768 × 8 trunk (11.2M parameters), solo ([`../runs.md`](../runs.md)).
+* **Bet 1, wider M2d, E6-10-44** (2026-09-30): **not adopted.** A 768 × 8 trunk (11.2M parameters, r = 0.665) is level with M2d at matched games on Elo, but behind it against the panel and on soups (45.4%), and clearly behind at matched wall-clock (38–45%). Capacity is not what holds the plateau; M3 (card↔card attention) is a separate mechanism and stays open ([`../log/P29_bet1_wider_m2d.md`](../log/P29_bet1_wider_m2d.md)).
