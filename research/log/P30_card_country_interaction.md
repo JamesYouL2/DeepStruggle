@@ -1,4 +1,4 @@
-# P30 (2026-09-30): card <-> country interaction is learned by the policy; the critic shows no missed one
+# P30 (2026-09-30): card <-> country interaction is learned by the policy, at about the right size
 
 The owner's question: M2d and the shallow trunk have no explicit card <-> country mechanism. Is the
 interaction not needed, or needed and just not learned? Tool:
@@ -78,12 +78,45 @@ mean of within-block:
 The strongest model's value is the most additive in board and cards. Value-side interaction does
 not track strength here.
 
+## 4. Is the size right? The paired-rollout oracle at both margins
+
+`tools/scripts/scoring_region_oracle.py`, E6-12-44@560M: starts of influence plays from its own
+self-play (20,000). For each region, 100 positions where the mover holds that region's scoring
+card and 100 where it does not. Two branches per position, each played to the end 16 times by the
+net on both sides, greedy, dice paired. Mover's win-rate change in percentage points, ± SE
+(`data/reports/p30_scoring_region_oracle{,_out}.{md,json}`).
+
+| region | **in**: policy placed nothing there, force one point in (holds / not) | **out**: policy placed there, force every point elsewhere (holds / not) | interaction, out (holds − not) |
+|:---|---:|---:|---:|
+| Europe | +0.3 / +1.6 | −1.7 / +0.3 | −2.0 ± 2.2 |
+| Asia | −4.1 / −0.0 | −1.9 / −1.6 | −0.3 ± 2.0 |
+| Middle East | −1.0 / −4.4 | −0.7 / −1.2 | +0.5 ± 2.0 |
+| Africa | −3.3 / −3.8 | −3.0 / +1.0 | −4.0 ± 2.0 |
+| Central America | +1.5 / −1.9 | −2.5 / +0.5 | −3.0 ± 1.7 |
+| South America | −2.8 / −2.9 | −2.0 / +0.0 | −2.1 ± 1.7 |
+| Southeast Asia | −2.3 / −0.5 | −0.6 / −2.3 | +1.7 ± 2.2 |
+| **all** | **−1.7 ± 0.6 / −1.7 ± 0.7** (interaction +0.0 ± 0.9) | **−1.8 ± 0.6 / −0.5 ± 0.5** | **−1.3 ± 0.8** |
+
+* **No under-placement.** Where the net skips a region, forcing a point in costs 1.7 points whether
+  or not it holds the scoring card.
+* **No over-placement.** Where the net places in a region, taking those points away costs 1.8
+  points when it holds the card, and 0.5 when it does not.
+* **The interaction is real but small.** Holding the card makes the net's own points in that
+  region worth about 1.3 points more (1.6 SE). It is concentrated in the mid-war regions (Africa
+  −4.0, Central America −3.0, South America −2.1), which are the regions where the net's
+  counterfactual shift is largest (section 1).
+* **Limits.** Both sides are played by the same net, so this says the choice is right *within
+  its own play*. The interventions are one-point moves. The positions are selected on the net's
+  own choice.
+
 ## Reading
 
 * **The interaction is learned, not absent.** The policy conditions placement on held scoring
   cards in every trained E6 net, most of all in the shallow one, through the trunk's context
   vector. There is no need for an explicit mechanism to get it.
 * **The critic is not visibly missing it**, with the observational caveat above.
-* **Whether the learned amount is right** is the open question, and only an intervention
-  answers it: the P27 paired-rollout oracle with placements forced into the scoring card's
-  region, with and without the card in hand.
+* **The learned amount looks right at the one-point margin.** Neither adding a point where the
+  net skips a region nor removing its points where it places them improves on the net, with or
+  without the card. The true interaction is modest (about 1–4 points per decision, mid-war regions
+  first), and the net has learned it about as far as its own play can tell. There is no sign
+  here that an explicit card↔country mechanism would find missing strength.
