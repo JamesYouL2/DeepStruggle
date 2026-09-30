@@ -52,6 +52,32 @@ OPENING_USSR = [_EG, _POLAND, _POLAND, _POLAND, _POLAND, _AUSTRIA]
 OPENING_US = [_WG, _WG, _WG, _WG, _ITALY, _ITALY, _ITALY, _ITALY, _IRAN]
 
 
+#: A card's ways out at DEFCON 2 (`DoctrinePolicy._exits_at_two`).
+SAFE, SPACE_ONLY, FATAL = "safe", "space_only", "fatal"
+SPACE_MODE = RESOLUTION + 1      # SELECT_PLAY_MODE: Event, Space, Ops (influence, coup, realign)
+
+
+def space_attempts_left(state: ts.GameState, p: ts.Player) -> int:
+    """Space Race attempts `p` has left this turn: one, or two with Animal in Space (the engine's
+    `SpaceRace::has_animal_in_space` -- own track at 2 or more, the opponent's below 2)."""
+    mine = int(state.us_space_track if p == ts.Player.US else state.ussr_space_track)
+    theirs = int(state.ussr_space_track if p == ts.Player.US else state.us_space_track)
+    allowed = 2 if mine >= 2 and theirs < 2 else 1
+    if mine >= 8:
+        return 0
+    return max(0, allowed - int(state.get_space_turns_used(p)))
+
+
+def hand_survives(exits: Sequence[str], space_slots: int, china: bool, rounds: int) -> bool:
+    """Whether a hand can fill `rounds` action rounds at DEFCON 2 without a certain loss.
+
+    A SAFE card fills a round; a SPACE_ONLY card fills one only by using a space attempt, of
+    which there are `space_slots`; a FATAL card can only be held. The China Card fills one."""
+    safe = sum(1 for e in exits if e == SAFE)
+    spaced = min(space_slots, sum(1 for e in exits if e == SPACE_ONLY))
+    return safe + spaced + (1 if china else 0) >= rounds
+
+
 def side_index(p: ts.Player) -> int:
     return ev.US if p == ts.Player.US else ev.USSR
 
@@ -174,12 +200,16 @@ class DoctrinePolicy:
     def _defcon_hazard(self, world: ts.GameState, ctx: _Context, candidates: List[int]) -> Dict[int, float]:
         """What each card choice risks by the hand it leaves behind.
 
-        struggler's DEFCON whole-hand survival search, reduced to its core: at DEFCON 2 some
-        cards cannot be played at all without losing -- an opponent's Event that degrades DEFCON
-        or hands them a coup in our round, with no Space Race to hide it in. If the cards we
-        keep hold fewer safe plays than the rounds we still have to fill, one of those rounds
-        loses the game. Each decision on its own was fine in the game that found this (CIA
-        Created as the USSR's last card at DEFCON 2); the loss was in the hand."""
+        struggler's DEFCON whole-hand survival search: at DEFCON 2 some cards cannot be played
+        at all without losing -- an opponent's Event that degrades DEFCON or hands them a coup in
+        our round -- and some survive only through the Space Race. If the hand we keep cannot
+        fill the rounds we still have to play, one of those rounds loses the game. Each decision
+        on its own was fine in the game that found this (CIA Created as the USSR's last card at
+        DEFCON 2); the loss was in the hand.
+
+        The accounting is joint: a card that survives only by being spaced needs one of the
+        turn's space attempts, and one attempt cannot dispose of two such cards
+        (`hand_survives`)."""
         defcon = int(world.defcon)
         if defcon > 3:
             return {}
@@ -190,18 +220,23 @@ class DoctrinePolicy:
         rounds_after = max(0, ctx.rounds_left - 1)
         if rounds_after == 0:
             return {}
-        fatal = {c: self._fatal_at_two(world, c, ctx) for c in hand}
+        exits = {c: self._exits_at_two(world, c, ctx) for c in hand}
+        slots = space_attempts_left(world, me)
         swing = ev.GAME_SWING_VP * ctx.vp_price
         out: Dict[int, float] = {}
         for a in candidates:
             played = a + 1 if a < 110 else 0
-            safe = sum(1 for c in hand if c != played and not fatal[c]) + (1 if china and played != 6 else 0)
-            if safe < rounds_after:
+            kept = [exits[c] for c in hand if c != played]
+            # Playing a card that survives only in space spends this turn's attempt on it now.
+            left = slots - (1 if played in exits and exits[played] == SPACE_ONLY and defcon <= 2 else 0)
+            if not hand_survives(kept, max(0, left), china and played != 6, rounds_after):
                 out[a] = p_two * swing
         return out
 
-    def _fatal_at_two(self, world: ts.GameState, card: int, ctx: _Context) -> bool:
-        """Whether every way of playing `card` in a later round of ours, at DEFCON 2, loses."""
+    def _exits_at_two(self, world: ts.GameState, card: int, ctx: _Context) -> str:
+        """How `card` can be played in a later round of ours at DEFCON 2 without certainly
+        losing: SAFE (some play other than the Space Race survives), SPACE_ONLY (only spacing it
+        does) or FATAL (nothing does)."""
         sim = world.clone()
         sim.defcon = 2
         sim.phasing_player = ctx.me
@@ -211,22 +246,24 @@ class DoctrinePolicy:
         local = _Context(me=ctx.me, urgency=ctx.urgency, vp_price=ctx.vp_price,
                          rounds_left=ctx.rounds_left, root_key=self._round_key(sim))
         if not ts.Engine.try_step_flat(sim, card - 1):
-            return False
-        if ts.Engine.is_terminal(sim):
-            return self.static(sim, side_index(ctx.me), local) < 0
-        if sim.ctx().decision_type != DT.SELECT_PLAY_MODE:
-            v = self._settle(sim, local)
-            return v <= -0.5 * ev.GAME_SWING_VP * ctx.vp_price
-        worst_ok = False
-        for mode in legal_actions(sim):
-            child = sim.clone()
-            if not ts.Engine.try_step_flat(child, mode):
-                continue
-            if self._settle(child, local, nest=2) > -0.5 * ev.GAME_SWING_VP * ctx.vp_price:
-                worst_ok = True
-                break
-        ctx.evaluations += local.evaluations
-        return not worst_ok
+            return SAFE
+        try:
+            if ts.Engine.is_terminal(sim):
+                return FATAL if self._certain_loss(self.static(sim, side_index(ctx.me), local), local) else SAFE
+            if sim.ctx().decision_type != DT.SELECT_PLAY_MODE:
+                return FATAL if self._certain_loss(self._settle(sim, local), local) else SAFE
+            spaced = False
+            for mode in legal_actions(sim):
+                child = sim.clone()
+                if not ts.Engine.try_step_flat(child, mode):
+                    continue
+                if not self._certain_loss(self._settle(child, local, nest=2), local):
+                    if mode != SPACE_MODE:
+                        return SAFE
+                    spaced = True
+            return SPACE_ONLY if spaced else FATAL
+        finally:
+            ctx.evaluations += local.evaluations
 
     # -- setup and forced plays ---------------------------------------------------------------
 
@@ -275,9 +312,14 @@ class DoctrinePolicy:
         s = side_index(me)
         pos = ev.Position.of(state, self.t)
         base = self._board(pos, s, state, ctx)
+        # Eligibility is read from the root board, never from `pos` inside the loop: each
+        # candidate adds and removes a point, and a refresh in between would let the previous
+        # candidate's hypothetical influence extend reach to the next country.
+        reach = list(pos.reach[s])
+        control = list(pos.control)
         best = 0.0
         for i in range(ev.N_COUNTRIES):
-            if not pos.reach[s][i] or pos.control[i] == 1 - s:
+            if not reach[i] or control[i] == 1 - s:
                 continue
             pos.inf[s][i] += 1
             pos.refresh(self.t)
@@ -296,13 +338,26 @@ class DoctrinePolicy:
         ctx.evaluations += 1
         return ev.board_value(self.t, pos, s, self.w, ctx.urgency, overrides)
 
+    #: An ongoing position's value is squashed strictly inside the terminal values: at most this
+    #: share of the game swing, however lopsided the board.
+    ONGOING_CAP = 0.999
+
     def static(self, state: ts.GameState, s: int, ctx: _Context) -> float:
-        """The value of a position to side `s`, in struggler's raw board units."""
+        """The value of a position to side `s`, on one bounded scale.
+
+        A finished game is worth +/- the game swing (40 VP at this decision's VP price). An
+        ongoing one is struggler's raw board value -- board, VP and Military Ops -- mapped
+        through `swing * ONGOING_CAP * tanh(raw / swing)`. The raw value is unbounded and
+        routinely comes near the swing (a measured 5% of positions within 12% of it, extremes
+        at 1.3x), so without the map the search could prefer losing outright to continuing a bad
+        game, or pass up a win for a good board. The map is monotone, so it never reorders two
+        ongoing positions; it only changes how dice outcomes average when values are large, and
+        every value stays finite, so expectations over chance remain well defined."""
+        swing = ev.GAME_SWING_VP * ctx.vp_price
         if ts.Engine.is_terminal(state):
             vp = int(state.victory_points)
             won = vp > 0 if s == ev.US else vp < 0
             lost = vp < 0 if s == ev.US else vp > 0
-            swing = ev.GAME_SWING_VP * ctx.vp_price
             return swing if won else -swing if lost else 0.0
         key = (s,) + self._board_key(state)
         cached = ctx.cache.get(key)
@@ -319,8 +374,16 @@ class DoctrinePolicy:
         theirs = int(state.ussr_mil_ops if s == ev.US else state.us_mil_ops)
         deficit = max(0, defcon - mine) - max(0, defcon - theirs)
         value -= self.w.military * deficit * ctx.vp_price / max(1, ctx.rounds_left)
+        value = self.ONGOING_CAP * swing * math.tanh(value / swing)
         ctx.cache[key] = value
         return value
+
+    def _certain_loss(self, value: float, ctx: _Context) -> bool:
+        """Whether a backed-up value can only come from lines that all end in our loss. An ongoing
+        position is worth more than -ONGOING_CAP x swing, and dice average over outcomes, so only
+        a value at the loss itself is certain -- a low board is not."""
+        swing = ev.GAME_SWING_VP * ctx.vp_price
+        return value <= -swing * (1.0 - 1e-9)
 
     @staticmethod
     def _board_key(state: ts.GameState) -> Tuple[int, ...]:
