@@ -133,6 +133,28 @@ TEST(RulesAudit, WeWillBuryYou_SettlesOnAQuagmireDiscardRound) {
     ASSERT_EQ(s.ctx().decision_type, DecisionType::ROLL_DIE);
 }
 
+TEST(RulesAudit, WeWillBuryYou_SettlesOnAQuagmireRoundWithNoLegalDiscard) {
+    // Nothing in the US hand is worth 2 Ops, so the trap takes nothing and the round is passed.
+    // It is still the US's "next action round" and UN Intervention was not played in it: the
+    // 3 VP are owed now, not deferred to the next round the US plays a card in.
+    GameState s = action_round_for(Player::US);
+    s.set_flag(effect_bits::QUAGMIRE_ACTIVE);
+    s.set_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
+    s.card_locations[card_ids::TRUMAN_DOCTRINE] = hand_of(Player::US);   // 1 Op: not a legal discard
+
+    uint8_t mask[256];
+    size_t mask_size = 0;
+    ActionMask::generate_mask(s, mask, &mask_size);
+    ASSERT_EQ(mask[0], 1);                              // only the pass is offered
+    ASSERT_EQ(mask[card_ids::TRUMAN_DOCTRINE], 0);
+
+    ASSERT_TRUE(Engine::step(s, MicroAction{DecisionType::SELECT_CARD, 0, 0, 0}));
+    ASSERT_EQ(s.victory_points, -3);
+    ASSERT_FALSE(s.has_flag(effect_bits::WE_WILL_BURY_YOU_PENDING));
+    ASSERT_EQ(s.card_locations[card_ids::TRUMAN_DOCTRINE], hand_of(Player::US));   // nothing was taken
+    ASSERT_EQ(s.phasing_player, Player::USSR);           // the round is over
+}
+
 // --- NORAD arms on a move to DEFCON 2, not on a setting of 2 at 2 -----------------------------
 
 TEST(RulesAudit, CubanMissileCrisisAtDefcon2_DoesNotArmNorad) {

@@ -65,10 +65,11 @@ public:
                                      Handover handover) noexcept;
 
     // Flower Power: "The USSR receives 2 VP for every US played War card, used for Operations or
-    // an Event". Called wherever the US spends a card's Operations -- a play for Ops, event-first
-    // or ops-first, and the companion UN Intervention lends its Ops from -- so the charge has one
-    // definition. (A war card played as its Event is charged where the war is rolled.) Returns
-    // false if the charge ended the game, and the caller must stop.
+    // an Event". Called from commit_card_to_ops, where the US spends a card's own Operations --
+    // a play for Ops, event-first or ops-first -- so the charge has one definition. A war card
+    // lent to UN Intervention is not charged (see the UN Intervention handler), and a war card
+    // played as its Event is charged where the war is rolled. Returns false if the charge ended
+    // the game, and the caller must stop.
     static bool charge_flower_power_for_ops(GameState& state, Player p, uint8_t card) noexcept;
 
     // UN Intervention was played as an Event: U-2 Incident's rider, "if UN Intervention is

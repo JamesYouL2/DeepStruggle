@@ -492,7 +492,8 @@ affected" -- is contradicted by the rulebook, which outranks it. The audit brief
 the strength of that line; the `*_OpsModifiers_Suite` tests in `test_card_edge_cases.cpp` pin the
 rulebook's reading.
 
-Each of these moves the decision stream, so the engine behind every checkpoint changed; see
-`research/findings/engine/engine_revisions.md`. The human corpus (`tests/replayer`) passes with
-them in place.
+Each of these moves the decision stream, so the engine behind every checkpoint changed: the
+engine with them is **E7**. Every fix is on a rare situation, so E7 is expected not to differ
+measurably from E6; see `research/findings/engine/engine_revisions.md`. The human corpus
+(`tests/replayer`) passes with them in place.
 

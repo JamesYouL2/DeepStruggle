@@ -98,6 +98,7 @@ column of [`../runs.md`](../runs.md) is what maps them back.
 | **E4** | `7057251`, `0aa3dc0` | P17: Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space 212 → 220. |
 | **E5** | `b19b958`, `8d05d94` | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops stop. |
 | **E6** | `c1df6f5` + `c248bfb` | the era transitions at turns 4 and 8 no longer shuffle the discard back into the deck (rule 4.4), and Kitchen Debates spent for Operations is discarded. `c1df6f5` alone was briefly E6 and is abandoned; E6-01 and the first E6-02 ran on it. |
+| **E7** | `acc68d6`–`9cd3ed9`, merged as `dec2768` (the 2026-09-28 rules audit) | seven rules fixes: war rolls count the defender's superpower, the region-bonus ladder falls back to an event's modified grant, UN Intervention is an Event only with a companion in hand, We Will Bury You settles on a trapped round, NORAD arms only on a move to DEFCON 2, U-2 Incident reaches UN Intervention through Grain Sales, Summit ignores the scoring-only card effects. Expected **not** to differ measurably from E6: every fix is on a rare situation. |
 
 Each boundary is a *batch* rather than a commit — eight further engine and observation commits
 landed with the starred-card fix on 2026-09-10 — and what each one changed, with what it

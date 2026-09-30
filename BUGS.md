@@ -76,7 +76,9 @@ Intervention paid no U-2 Incident; and Summit counted
 the scoring-only Shuttle Diplomacy and Formosan Resolution.
 
 Each is listed with its source in `engine/AGENTS.md` §12 and pinned by
-`engine/tests/test_rules_audit.cpp`. All change the decision stream.
+`engine/tests/test_rules_audit.cpp`. All change the decision stream: the engine with them is
+**E7**, expected not to differ measurably from E6 because every fix is on a rare situation
+(`research/findings/engine/engine_revisions.md`).
 
 The audit also found the era decks reshuffling the discard pile in at turns 4 and 8; `main` had
 already fixed that independently (`c1df6f5`, engine letter E6), so it is not part of ENG-2.

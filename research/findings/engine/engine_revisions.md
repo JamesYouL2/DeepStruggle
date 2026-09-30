@@ -25,6 +25,7 @@ than assumed ([below](#changes-held-inside-e3-by-measurement)).
 | **E4** | `7057251`, `0aa3dc0` (P17) | 2026-09-19 | Grain Sales flattened to one decision, Missile Envy's starred-card removal fixed, action space repacked 212 → 220. The registry restarted here ([`../../runs.md`](../../runs.md)) |
 | **E5** | `b19b958`, `8d05d94` | 2026-09-26 | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops play's stop ([below](#the-e4--e5-boundary)) |
 | **E6** | `c1df6f5` + `c248bfb` | 2026-09-29 | two rules fixes: the era transitions no longer shuffle the discard back into the deck (rule 4.4), and Kitchen Debates spent for Operations is discarded instead of staying in the US hand. `c1df6f5` alone was briefly called E6 and is abandoned ([below](#the-e5--e6-boundary)) |
+| **E7** | `acc68d6`–`9cd3ed9`, merged as `dec2768` | 2026-09-30 | the 2026-09-28 rules audit: seven rules fixes, each on a rare situation (`BUGS.md` ENG-2, `engine/AGENTS.md` §12). Expected not to differ measurably from E6 ([below](#the-e6--e7-boundary)) |
 
 ## E1 was not one engine either
 
@@ -196,17 +197,34 @@ model was given*). `check_obs_width` and `check_checkpoint_layout` now refuse by
 catches a changed *width* and cannot catch changed *content* at the same width. What each layout
 was worth is [`../../log/observation_layout.md`](../../log/observation_layout.md).
 
-## The 2026-09-28 rules audit moves the decision stream
+## The E6 → E7 boundary
 
-Seven rules fixes (`BUGS.md` ENG-2, `engine/AGENTS.md` §12). They change what is legal and what it
-is worth -- Brush War odds, when UN Intervention is an Event, when We Will Bury You pays --
-so by [`../../method/run_nomenclature.md`](../../method/run_nomenclature.md)
-this is a letter boundary, and every E6 checkpoint now plays a game it was not trained on. The
-deterministic walk in `tests/engine_logic/test_observation_golden.py` diverged at decision 311 of
-480; every observation before that point was bit-identical, so the extractor is unchanged and only
-the game moved. The golden
-was regenerated for that reason. **The letter itself has not been bumped** -- naming the next
-engine is the owner's call.
+**The 2026-09-28 rules audit, seven rules fixes** (`BUGS.md` ENG-2, `engine/AGENTS.md` §12, each
+pinned by `engine/tests/test_rules_audit.cpp`): war rolls count the defender's superpower as an
+adjacent controlled country (rule 2.1.5); the Vietnam Revolts / China Card budget ladder falls back
+to an event's modified grant rather than the card's printed Ops; UN Intervention is an Event only
+with an opponent-associated card in hand; We Will Bury You settles on a Quagmire-trapped US round;
+NORAD arms only when DEFCON *moves* to 2; U-2 Incident's rider reaches UN Intervention played
+through Grain Sales; Summit counts regions without Shuttle Diplomacy or Formosan Resolution.
+
+They change what is legal and what it is worth -- Brush War odds, when UN Intervention is an
+Event, when We Will Bury You pays -- so by
+[`../../method/run_nomenclature.md`](../../method/run_nomenclature.md) this is a letter boundary,
+and every E6 checkpoint now plays a game it was not trained on. The deterministic walk in
+`tests/engine_logic/test_observation_golden.py` diverged at decision 311 of 480; every observation
+before that point was bit-identical, so the extractor is unchanged and only the game moved. The
+golden was regenerated for that reason. The legal mask's shape and the observation layout are
+unchanged; E6 checkpoints load and play on E7.
+
+**E7 is expected not to differ measurably from E6.** Every one of the seven is a rare situation:
+a war rolled against a country bordering the defender's superpower, an Olympic boycott under
+Vietnam Revolts, UN Intervention held without a companion, We Will Bury You landing on a Quagmire
+round, Cuban Missile Crisis at DEFCON 2, UN Intervention drawn through Grain Sales, Summit under
+Shuttle Diplomacy. None changes the deck, the deal or the ordinary Ops play, and the human corpus
+converts unchanged (`tests/replayer`, whole-corpus run included). The E5 → E6 boundary, a change to
+every deck from turn 4 on, bought nothing measurable on re-training (E6-01); this one is smaller.
+Treat E6 measurements as comparable to E7 ones until an E7 re-run of an E6 arm says otherwise,
+and record that re-run here when it happens.
 
 ## Open, and worth knowing
 
