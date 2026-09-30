@@ -2,7 +2,7 @@
 
 **Status: proposed (2026-09-29).** Written so a session with no context can pick it up. Everything
 here is CPU-bound and runs on GitHub Actions (`.github/workflows/tournament.yml`), not the GPU box;
-only step 4 needs a GPU.
+only step 4 needs a GPU, and step 8 is browser code.
 
 ## Where it starts
 
@@ -13,8 +13,9 @@ search acceptable as a diagnostic and a distillation source. So the ~55 Elo is t
 and the questions are which of the cheap wrappers recovers some of it without search, and what the
 search knows that the net does not.
 
-Ready on branch `feat/e5-wrappers` (commits `70c1296`, `d737521`, `1bf4631`, `d909d98`), **not
-yet on `main`, no PR opened**: `safe:`, `ensemble:`, `temp:` and `search:` specs
+Ready on branch `feat/e5-wrappers` (commits `70c1296`, `d737521`, `1bf4631`, `d909d98`), **[PR
+#6](https://github.com/JamesYouL2/DeepStruggle/pull/6) opened 2026-09-29, not yet merged**:
+`safe:`, `ensemble:`, `temp:` and `search:` specs
 (`tools/lib/player_agent.py`, `tools/lib/safety.py`, `tools/README.md` §D), a `temperature` input
 on the workflow, and the visit tie-break.
 
@@ -43,6 +44,7 @@ gh run download <id> -n tournament-<id> -D data/reports/ci      # tournament.md 
 ## Steps, in order
 
 1. **Open the PR** for `feat/e5-wrappers` and merge, so the workflow inputs exist on `main`.
+   (PR #6 is open; the merge is the half that remains.)
 2. **Safety layer alone** — `safe:hf:E5-11-43_560M.onnx` against the raw net, T=0, 1,024 a side.
    The goal probes found the networks taking a certain win only 59–70% of the time and losing to
    their own DEFCON choice in 1–8% of games; the sweep still shows ~3% own-DEFCON losses. Ceiling
@@ -69,6 +71,37 @@ gh run download <id> -n tournament-<id> -D data/reports/ci      # tournament.md 
    a game per core) was played against `newest` once in a 200-game CI run, whose result is not
    recorded in `research/`. Repeat at 512 a side with search-64 and record it; it is the only
    opponent that reasons about the board with a different method.
+8. **A searcher in the page — diagnostic and teacher, not the product.** Independent of steps
+   1–7, any time. The GitHub Pages workbench already carries every primitive the searcher needs:
+   `WasmEngine.snapshot()/restore()` (the 4 KB trivially-copyable `GameState`),
+   `step`/`mask`/`observation`/`decodeFlat`, and `Model.run(obs, masks, rows)` — the batched
+   prior+value interface `ai/search/batched_mcts.py` calls. What is missing is a TypeScript port
+   of the search loop. **The alignment is fixed before it is written:** the product is the
+   no-search network (the goal above), and search in the page exists only as a diagnostic and a
+   distillation teacher — (a) a human can play against search on the Pages deployment, and (b)
+   the page can show where search disagrees with the raw net, which is step 5's question asked
+   interactively. **64 simulations, not more**: the knee of the sweep's curve, and 128 buys
+   nothing. The measuring instrument stays the CI wrapper
+   `search:hf:E5-11-43_560M.onnx:64:determinize`; the page copy is a port held to it.
+
+   The easy version, deliberately:
+
+   * **Determinization by save-JSON round trip.** `ts_save_json()` / `ts_load_save_json()` carry
+     card locations, and `HAND_*_KNOWN` vs `HAND_*_UNKNOWN` marks what we have seen — so
+     reshuffling the hidden pool needs no C++ change and no `build_web.sh --engine` rebuild. A
+     native export is a later optimisation, not a starting requirement.
+   * **One position at a time, N determinized trees** (dmcts's shape: an independent tree per
+     sample, root visits summed). N leaves per iteration make one N-row forward through
+     `Model.run`, and no virtual loss is needed.
+   * **The singleton state is the searcher's.** The WASM engine holds one `g_state` shared with
+     the session: snapshot the root, search, restore before returning — and run between frames or
+     in a Web Worker (a worker needs no COOP/COEP headers, which Pages does not send; without
+     them onnxruntime-web stays single-threaded, which at 64 sims is fine).
+
+   Acceptance: it plays legal moves at 64 sims in the Pages build and agrees with the CI
+   wrapper's pick on a fixed set of positions — a disagreement is a port bug until proven to be
+   determinization sampling. Its numbers, like every pair-internal search number, do not enter
+   [`../checkpoints.md`](../checkpoints.md).
 
 ## Traps found so far
 
