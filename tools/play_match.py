@@ -166,6 +166,50 @@ def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: 
         label = f"Search({sims}{'/det' if determinize else ''}, {os.path.basename(path)})"
         return _SearchBot(role), label
 
+    # agent:<load_agent spec>, and the tournament-only specs directly (roundsearch:, safe:,
+    # ensemble:) -- any tournament PlayerAgent in the match loop, so its games get a full replay.
+    # Like search: above, it needs the engine state rather than the JSON view.
+    if clean_spec.startswith(("agent:", "roundsearch:", "safe:", "ensemble:")):
+        from bindings.action_encoder import ActionEncoder
+        from tools.lib.player_agent import load_agent
+
+        spec = clean_spec.split(":", 1)[1] if clean_spec.startswith("agent:") else clean_spec
+        agent = load_agent(spec, device=device)
+        player = ts.Player.US if role.upper() == "US" else ts.Player.USSR
+
+        class _AgentBot(BaseBot):
+            """A tournament PlayerAgent behind the match loop's bot interface."""
+
+            wants_game_state = True
+
+            def __init__(self, role):
+                super().__init__(role, name=agent.name)
+
+            def select_action(self, state, legal_actions):
+                raise NotImplementedError(
+                    "agent bots need the engine GameState; the match loop must route through "
+                    "select_from_state (see wants_game_state)")
+
+            def select_from_state(self, state) -> Dict[str, Any]:
+                flat = int(agent.select_action(state, player, temperature))
+                if not np.asarray(ActionEncoder.get_legal_mask(state))[flat]:
+                    raise RuntimeError(
+                        f"{agent.name} returned flat action {flat}, illegal at decision_type="
+                        f"{int(state.ctx().decision_type)}")
+                ma = ts.decode_flat_action(state, flat)
+                return {
+                    "decision_type": int(ma.decision_type),
+                    "primary_id": int(ma.primary_id),
+                    "secondary_id": int(ma.secondary_id),
+                    "flags": int(ma.flags),
+                }
+
+            def reset(self):
+                if hasattr(agent, "reset"):
+                    agent.reset()
+
+        return _AgentBot(role), agent.name
+
     # Neural bot resolution
     model_path: Optional[str] = None
     if clean_spec.startswith("neural:"):
