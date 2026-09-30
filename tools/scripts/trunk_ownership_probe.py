@@ -110,8 +110,23 @@ def fit_probe(make: Callable[[], nn.Module], x_fit: torch.Tensor, y_fit: torch.T
     held = np.isin(game_fit, np.random.default_rng(seed + 1).choice(games, max(1, len(games) // 10), replace=False))
     val = torch.from_numpy(np.flatnonzero(held)).to(dev)
     tr = torch.from_numpy(np.flatnonzero(~held)).to(dev)
-    net = make().to(dev)
-    opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-4)
+    # Standardise each input feature on the fitting set: trunks differ in scale by orders of
+    # magnitude (E6-10-44's hidden vector grows ~38x over training), and an unscaled probe then
+    # measures conditioning rather than content. Constant features are left at unit scale.
+    s1 = torch.zeros(x_fit.shape[1], device=dev, dtype=torch.float64)
+    s2 = torch.zeros_like(s1)
+    for k in range(0, x_fit.shape[0], 8192):
+        xb = x_fit[k:k + 8192].double()
+        s1 += xb.sum(0)
+        s2 += (xb * xb).sum(0)
+    mu = s1 / x_fit.shape[0]
+    sd = (s2 / x_fit.shape[0] - mu * mu).clamp_min(0).sqrt()
+    mu, sd = mu.float(), torch.where(sd > 1e-6, sd, torch.ones_like(sd)).float()
+    inner = make().to(dev)
+
+    def net(x: torch.Tensor) -> torch.Tensor:
+        return inner((x.float() - mu) / sd)
+    opt = torch.optim.AdamW(inner.parameters(), lr=1e-3, weight_decay=1e-4)
 
     def ce(idx: torch.Tensor) -> float:
         with torch.no_grad():
@@ -124,7 +139,7 @@ def fit_probe(make: Callable[[], nn.Module], x_fit: torch.Tensor, y_fit: torch.T
 
     best, best_state, stale, used = float("inf"), None, 0, 0
     for ep in range(epochs):
-        net.train()
+        inner.train()
         order = tr[torch.randperm(tr.numel(), device=dev)]
         for k in range(0, order.numel(), 1024):
             j = order[k:k + 1024]
@@ -132,19 +147,19 @@ def fit_probe(make: Callable[[], nn.Module], x_fit: torch.Tensor, y_fit: torch.T
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
-        net.eval()
+        inner.eval()
         v = ce(val)
         used = ep + 1
         if v < best - 1e-4:
             best, stale = v, 0
-            best_state = {k: t.detach().clone() for k, t in net.state_dict().items()}
+            best_state = {k: t.detach().clone() for k, t in inner.state_dict().items()}
         else:
             stale += 1
             if stale >= 3:
                 break
     assert best_state is not None
-    net.load_state_dict(best_state)
-    net.eval()
+    inner.load_state_dict(best_state)
+    inner.eval()
     with torch.no_grad():
         p = torch.cat([torch.softmax(net(x_test[k:k + 8192].float()).view(-1, N_COUNTRIES, 3), -1)
                        for k in range(0, x_test.shape[0], 8192)]).cpu().numpy()
