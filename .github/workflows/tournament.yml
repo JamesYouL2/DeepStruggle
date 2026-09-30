@@ -91,7 +91,8 @@ jobs:
                           ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
                           check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
                   m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
-              m = re.sub(r"hf:([\w.\-/]+\.onnx)", lambda g: local(g.group(1)), m)
+              # Any character but a spec separator: published names carry '@' (E6-06-44@soup_680-760.onnx).
+              m = re.sub(r"hf:([^\s:+]+\.onnx)", lambda g: local(g.group(1)), m)
               out.append(m)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"specs={' '.join(out)}\n")
