@@ -157,6 +157,8 @@ def run_massive_tournament(
     auto_advance: bool = True,
     pack_pairs: int = 25,
     opening: Optional[str] = None,
+    workers: int = 1,
+    shard_pairs: int = 10,
 ) -> Dict[str, Any]:
     """Runs high-throughput round-robin tournament across all specified models.
 
@@ -164,23 +166,32 @@ def run_massive_tournament(
     each agent's positions across them in one forward per step; the same deal seeds per game as
     one pairing at a time. 1 plays pairings one at a time, as before; choice tracking and game
     logs always do.
+
+    `workers` > 1 splits every matchup into shards of `shard_pairs` game pairs and plays them in
+    that many processes (tools/lib/parallel_tournament.py) instead of packing. The games are the
+    same deals either way; see that module for what makes the split reproducible.
     """
     dev = resolve_device(device)
 
     print("\n" + "=" * 85)
     print(f" INITIALIZING TOURNAMENT EVALUATOR: {len(model_specs)} Models, {games_per_side * 2} Games/Pair")
-    print(f" Device: {dev} | Chunk Size: {batch_chunk_size}")
+    print(f" Device: {dev} | Chunk Size: {batch_chunk_size}"
+          + (f" | Workers: {workers} x {shard_pairs} pairs/shard" if workers > 1 else ""))
     print("=" * 85)
 
     agents: List[PlayerAgent] = []
+    worker_specs: List[str] = []
     for spec in model_specs:
         agent = load_agent(spec, device=dev)
+        worker_spec = spec
         if opening and not getattr(agent, "forced_opening", None):
             # --opening: every agent's setup is the named opening (a per-agent opening:<name>:
             # prefix on a spec takes precedence). Named in the report, so the rows say so.
             setattr(agent, "forced_opening", opening)
             setattr(agent, "name", f"{agent.name}+{opening}")
+            worker_spec = f"opening:{opening}:{spec}"
         agents.append(agent)
+        worker_specs.append(worker_spec)
         print(f" Loaded Agent: {agent.name:<35s} (from {spec})")
 
     # Names must be distinct AND attributable. They used to be disambiguated by appending #1 and
@@ -214,63 +225,72 @@ def run_massive_tournament(
     t_start = time.time()
     matchup_details: Dict[str, Any] = {}
 
-    all_pairs = [(i, j) for i in range(M) for j in range(i + 1, M)]
-    pack = 1 if (track_choices or log_games) else max(1, int(pack_pairs))
-    groups_of_pairs = _pack_schedule(M, pack) if pack > 1 else [[pr] for pr in all_pairs]
-    results: Dict[Tuple[int, int], Tuple[Dict[str, Any], float]] = {}
+    def record(i: int, j: int, m_res: Dict[str, Any], pair_time: float) -> None:
+        nonlocal pair_idx
+        pair_idx += 1
+        agent_a = agents[i]
+        agent_b = agents[j]
+        matchup_key = f"{agent_a.name}_vs_{agent_b.name}"
+        matchup_details[matchup_key] = m_res
 
-    def _play(group: List[Tuple[int, int]]) -> None:
-        t_g = time.time()
-        if len(group) == 1:
-            (gi, gj), = group
-            res = [BatchMatchRunner.play_parallel_matchup(
-                agents[gi], agents[gj], games_per_side=games_per_side, device=dev,
-                temperature=temperature, batch_chunk_size=batch_chunk_size,
-                track_choices=track_choices, log_games_file=log_games,
-                auto_advance=auto_advance)]
-        else:
-            res = BatchMatchRunner.play_packed_matchups(
-                [(agents[gi], agents[gj]) for gi, gj in group], games_per_side=games_per_side,
-                device=dev, temperature=temperature, batch_chunk_size=batch_chunk_size,
-                auto_advance=auto_advance)
-        share = (time.time() - t_g) / len(group)
-        for key, r in zip(group, res):
-            results[key] = (r, share)
+        w_a = m_res["a_wins"]
+        w_b = m_res["b_wins"]
+        d = m_res["draws"]
+        tot = m_res["total_games"]
 
-    for group in groups_of_pairs:
-        _play(group)
-        for (i, j) in group:
-            pair_idx += 1
-            agent_a = agents[i]
-            agent_b = agents[j]
-            m_res, pair_time = results[(i, j)]
-            matchup_key = f"{agent_a.name}_vs_{agent_b.name}"
-            matchup_details[matchup_key] = m_res
+        win_matrix[i, j] = w_a
+        win_matrix[j, i] = w_b
+        loss_matrix[i, j] = w_b
+        loss_matrix[j, i] = w_a
+        draw_matrix[i, j] = d
+        draw_matrix[j, i] = d
+        total_matrix[i, j] = tot
+        total_matrix[j, i] = tot
 
-            w_a = m_res["a_wins"]
-            w_b = m_res["b_wins"]
-            d = m_res["draws"]
-            tot = m_res["total_games"]
+        ussr_win_matrix[i, j] = m_res["a_wins_as_ussr"]
+        ussr_win_matrix[j, i] = m_res["a_losses_as_us"]
+        us_win_matrix[i, j] = m_res["a_wins_as_us"]
+        us_win_matrix[j, i] = m_res["a_losses_as_ussr"]
 
-            win_matrix[i, j] = w_a
-            win_matrix[j, i] = w_b
-            loss_matrix[i, j] = w_b
-            loss_matrix[j, i] = w_a
-            draw_matrix[i, j] = d
-            draw_matrix[j, i] = d
-            total_matrix[i, j] = tot
-            total_matrix[j, i] = tot
+        wr_a = (w_a / tot) * 100.0
+        print(
+            f"[{pair_idx:2d}/{total_pairs:2d}] {agent_a.name:<25s} vs {agent_b.name:<25s} -> "
+            f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({wr_a:5.1f}% win) in {pair_time:5.1f}s"
+        )
 
-            ussr_win_matrix[i, j] = m_res["a_wins_as_ussr"]
-            ussr_win_matrix[j, i] = m_res["a_losses_as_us"]
-            us_win_matrix[i, j] = m_res["a_wins_as_us"]
-            us_win_matrix[j, i] = m_res["a_losses_as_ussr"]
+    matchups = [(i, j) for i in range(M) for j in range(i + 1, M)]
+    if workers > 1:
+        from tools.lib.parallel_tournament import run_matchups_parallel
 
-            wr_a = (w_a / tot) * 100.0
-            print(
-                f"[{pair_idx:2d}/{total_pairs:2d}] {agent_a.name:<25s} vs {agent_b.name:<25s} -> "
-                f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({wr_a:5.1f}% win) in {pair_time:5.1f}s"
-            )
+        # Workers load their agents afresh from specs, so --opening travels as each spec's own
+        # opening:<name>: prefix -- the same agent load_agent builds for that prefix.
+        # Wall time since the tournament started: shards of every matchup run at once, so a
+        # matchup has no start time of its own.
+        run_matchups_parallel(
+            worker_specs, matchups, games_per_side, workers, shard_pairs,
+            device=str(dev), temperature=temperature, batch_chunk_size=batch_chunk_size,
+            track_choices=track_choices, log_games=log_games, auto_advance=auto_advance,
+            on_matchup_done=lambda p, r: record(p[0], p[1], r, time.time() - t_start))
+    else:
+        pack = 1 if (track_choices or log_games) else max(1, int(pack_pairs))
+        groups_of_pairs = _pack_schedule(M, pack) if pack > 1 else [[pr] for pr in matchups]
+        for group in groups_of_pairs:
+            t_g = time.time()
+            if len(group) == 1:
+                (gi, gj), = group
+                res = [BatchMatchRunner.play_parallel_matchup(
+                    agents[gi], agents[gj], games_per_side=games_per_side, device=dev,
+                    temperature=temperature, batch_chunk_size=batch_chunk_size,
+                    track_choices=track_choices, log_games_file=log_games,
+                    auto_advance=auto_advance)]
+            else:
+                res = BatchMatchRunner.play_packed_matchups(
+                    [(agents[gi], agents[gj]) for gi, gj in group], games_per_side=games_per_side,
+                    device=dev, temperature=temperature, batch_chunk_size=batch_chunk_size,
+                    auto_advance=auto_advance)
+            share = (time.time() - t_g) / len(group)
+            for (i, j), m_res in zip(group, res):
+                record(i, j, m_res, share)
 
     total_tournament_time = time.time() - t_start
     total_games_played = np.sum(total_matrix) // 2
@@ -287,12 +307,20 @@ def run_massive_tournament(
             os.makedirs(os.path.dirname(os.path.abspath(output_report)), exist_ok=True)
             with open(output_report, "w", encoding="utf-8") as f:
                 f.write(report_text)
-        return {
+        head_to_head = {
             "models": model_names,
             "elo_ratings": elo_ratings,
             "matchup": matchup_details[m_key],
+            "games_per_side": games_per_side,
+            "temperature": temperature,
             "total_time_seconds": total_tournament_time,
         }
+        if output_json:
+            os.makedirs(os.path.dirname(os.path.abspath(output_json)), exist_ok=True)
+            with open(output_json, "w", encoding="utf-8") as f:
+                f.write(json.dumps(head_to_head, indent=2))
+            print(f"Saved JSON Tournament Data to: {output_json}")
+        return head_to_head
 
     # Full Round-Robin Tournament Report
     sorted_indices = sorted(range(M), key=lambda idx: elo_ratings[model_names[idx]], reverse=True)
@@ -452,6 +480,15 @@ def main():
              "The default was cpu, which contradicted this module's own function "
              "signature and made every tournament far slower than it needed to be -- "
              "200 games took 118s on cpu against 6.4s on cuda, an 18x difference.")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Processes to play games in, one core each; 0 = every core. Above 1, "
+                             "each matchup is split into shards of --shard-pairs game pairs. Worth "
+                             "it for bots that decide in Python (doctrine, heuristic_mcts); a "
+                             "network-only field is already batched and gains little.")
+    parser.add_argument("--shard-pairs", type=int, default=10,
+                        help="Game pairs (one deal played from both sides) per shard with "
+                             "--workers > 1. Results depend on this, not on --workers: at a fixed "
+                             "value any number of workers plays the same games.")
     parser.add_argument("--track-choices", action="store_true", default=False, help="Track and report micro-actions with exactly 1 valid choice")
     parser.add_argument("--log-games", type=str, default=None, help="Path to save per-game JSONL execution logs")
     parser.add_argument("--opening", type=str, default=None,
@@ -511,6 +548,8 @@ def main():
         track_choices=args.track_choices,
         log_games=args.log_games,
         auto_advance=args.auto_advance,
+        workers=args.workers if args.workers > 0 else (os.cpu_count() or 1),
+        shard_pairs=args.shard_pairs,
     )
 
 
