@@ -75,3 +75,29 @@ Trunk probes match again: the critic's AUC is 0.809 against 0.814.
 as USSR; on seed 43 it is better as USSR and level or better as US. Both seeds win head to head
 (56.6% and 59.7% on snapshots; 53.8% and 56.2% on the SWA). It runs about 18% faster with 58% fewer
 parameters.
+
+## The E6-04 league on the shallow trunk: E6-13-44 (2026-09-30)
+
+E6-04-44's league arm (the P24 league from 310M with the setup credit) on the shallow trunk:
+E6-12-44 resumed at `resume_310050816steps.pt` to 560M, main E6-13-44 with exploiter E6-14-44. The
+flag diff against E6-04-44 is the block count only. The field is the panel plus E6-13-44, E6-12-44
+and E6-04-44, each on its 500–560M snapshots and 480–560M SWA; greedy, 1,000 games per seat
+(`data/reports/p30_shallow_league_rr.{md,json}`).
+
+| E6-13-44 against | block | US | USSR | head to head |
+|:---|:---|---:|---:|---:|
+| E6-12-44 (same trunk, no league) | snapshots | +1.3 ± 0.6 | **+2.3 ± 0.5** | 51.3% |
+| | SWA | +1.5 ± 1.0 | +0.4 ± 1.0 | 50.8% |
+| E6-04-44 (same league, M2d) | snapshots | **+5.2 ± 0.6** | −0.5 ± 0.5 | 52.1% |
+| | SWA | −0.1 ± 1.0 | **−3.5 ± 1.0** | **45.6%** |
+
+Elo in this field: SWAs E6-04-44 1615, E6-13-44 1589, E6-12-44 1574; snapshots E6-13-44 1521–1537,
+E6-12-44 1507–1527, E6-04-44 1501–1525.
+
+* **The league adds a little on the shallow trunk.** On snapshots it passes the owner's rule
+  (USSR +2.3, US +1.3), about +10 Elo; the SWA reading is level. That is smaller than the league's
+  effect on M2d (E6-04 against E6-03).
+* **Against the same league on M2d it depends on the reading.** On snapshots the shallow trunk is
+  ahead (US +5.2, 52.1%). On the SWA the M2d league is ahead (USSR −3.5, 45.6% head to head) and is
+  the strongest model in the field. As on E6-12-44, averaging gains M2d more than the shallow trunk
+  (E6-04-44: +100 Elo from its snapshots to its SWA; E6-13-44: +60).
