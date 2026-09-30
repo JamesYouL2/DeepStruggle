@@ -116,6 +116,9 @@ How they are trained:
 * The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+* `tools/scripts/aux_ownership_probe.py --checkpoint <snapshot>` rates the ownership head per country
+  against the country's usual final controller and against its current controller, overall and
+  on the games where the usual controller did not win it.
 
 `tools/scripts/average_weights.py` averages finished checkpoints uniformly, for rating, with no
 training: one run's late snapshots give its **SWA** (`<run>/swa_480-560M.pt`), and branches of one
