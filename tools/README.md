@@ -465,6 +465,7 @@ included):
 | `search:<model.onnx>:96:determinize` | honest determinized MCTS with the network as prior and value, run through ONNX Runtime (`OnnxModule`) -- CPU-bound, so a job for CI |
 | `safe:<spec>` | the wrapped agent, but a certain win is always taken and a certain loss refused (`tools/lib/safety.py`, on `ai.eval.safety.classify_legal_actions` over a determinized copy) |
 | `ensemble:<a.onnx>+<b.onnx>` | the average of several exports' move probabilities |
+| `roundsearch:<model>:2:p_own=0.9:beam=32` | dense search of the whole action round with the opponent's reply to the top-k lines (`ai/search/round_search.py`); any `RoundSearchConfig` field is set as `<field>=<value>` and named in the entrant, so pruned trees (`p_own`/`p_opp`/`p_reply`, `max_branch`, `beam`, `max_leaves`) enter a tournament side by side. Unpruned it needs a GPU |
 | `temp:<T>:<spec>` | the wrapped agent at a pinned sampling temperature (`temp:0:` = greedy) |
 
 On CI, `newest` and `hf:<file.onnx>` resolve anywhere inside a spec, e.g.

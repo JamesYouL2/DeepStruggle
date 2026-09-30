@@ -576,21 +576,22 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
                                 device=torch.device("cpu") if onnx_base is not None else device,
                                 config=cfg)
     if s.lower().startswith("roundsearch:"):
-        # roundsearch:<checkpoint>[:reply_top_k[:determinize]] -- dense search of the whole action
-        # round plus the opponent's dense reply to the top-k lines (ai/search/round_search.py).
-        # Needs a GPU: one root search is ~10^5-10^6 network evaluations.
-        parts = s.split(":")
-        k = int(parts[2]) if len(parts) > 2 and parts[2] else 8
-        det = len(parts) > 3 and parts[3].lower().startswith("determin")
-        from ai.search.round_search import RoundSearchAgent, RoundSearchConfig
+        # roundsearch:<checkpoint>[:reply_top_k[:determinize]][:<field>=<value>...] -- dense
+        # search of the whole action round plus the opponent's dense reply to the top-k lines
+        # (ai/search/round_search.py). Any RoundSearchConfig field can be set by name, so a
+        # tournament can enter a pruned tree: roundsearch:<ckpt>:2:p_own=0.9:beam=32:max_leaves=20000.
+        # Unpruned it needs a GPU: one root search is ~10^5-10^6 network evaluations.
+        from ai.search.round_search import RoundSearchAgent, round_search_config
 
+        parts = s.split(":")
+        config, label = round_search_config(parts[2:])
         onnx_base = OnnxAgent(parts[1]) if parts[1].lower().endswith(".onnx") else None
         rs_model = (onnx_base.as_module() if onnx_base is not None
                     else NeuralAgent.from_checkpoint(parts[1], device=device).model)
         return RoundSearchAgent(
-            rs_model, name=f"roundsearch-k{k}{'-det' if det else ''}",
+            rs_model, name=f"roundsearch-{label}",
             device=torch.device("cpu") if onnx_base is not None else device,
-            config=RoundSearchConfig(reply_top_k=k, determinize=det))
+            config=config)
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
         #

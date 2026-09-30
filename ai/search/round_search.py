@@ -47,7 +47,7 @@ from __future__ import annotations
 import hashlib
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -93,6 +93,49 @@ class RoundSearchConfig:
     #: the searched line changes the position, the lookup misses, and a fresh search runs.
     follow_plan: bool = True
     plan_capacity: int = 200_000
+
+
+def round_search_config(options: Sequence[str]) -> Tuple[RoundSearchConfig, str]:
+    """A config from an agent spec's options, and a label naming what differs from the default.
+
+    Positional, as before: `reply_top_k`, then anything starting "determin". After or among them,
+    `<field>=<value>` sets any RoundSearchConfig field by name (`p_own=0.9`, `beam=32`,
+    `max_leaves=20000`), so a tournament entrant can be a pruned tree. An unknown field or a value
+    that does not parse is refused rather than ignored.
+    """
+    cfg = RoundSearchConfig()
+    names = {f.name for f in fields(RoundSearchConfig)}
+    overrides: List[str] = []
+    positional = 0
+    for opt in options:
+        if not opt:
+            positional += 1
+            continue
+        if "=" in opt:
+            key, raw = opt.split("=", 1)
+            if key not in names:
+                raise ValueError(f"roundsearch: unknown option {key!r}; known: {sorted(names)}")
+            default = getattr(cfg, key)
+            if isinstance(default, bool):
+                if raw.lower() not in ("0", "1", "true", "false"):
+                    raise ValueError(f"roundsearch: {key} takes true/false, not {raw!r}")
+                value: object = raw.lower() in ("1", "true")
+            else:
+                value = type(default)(raw)
+            setattr(cfg, key, value)
+            overrides.append(f"{key}{raw}")
+        elif positional == 0:
+            cfg.reply_top_k = int(opt)
+            positional += 1
+        elif positional == 1:
+            cfg.determinize = opt.lower().startswith("determin")
+            positional += 1
+        else:
+            raise ValueError(f"roundsearch: unexpected option {opt!r}; use <field>=<value>")
+    label = f"k{cfg.reply_top_k}" + ("-det" if cfg.determinize else "")
+    label += "".join(f"-{o}" for o in overrides if not o.startswith(("reply_top_k", "determinize")))
+    return cfg, label
+
 
 
 @dataclass
