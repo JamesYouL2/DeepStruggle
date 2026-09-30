@@ -137,6 +137,13 @@ inline bool handle_war_step(GameState& state, uint8_t card_id, Player p, const M
         for (uint8_t i = 0; i < c_info.num_neighbors; ++i) {
             if (Scoring::is_controlled_by(state, c_info.neighbors[i], opp)) mod--;
         }
+        // The defender's own superpower counts as one more adjacent controlled country. Rule
+        // 2.1.5 gives the superpower spaces "the same benefits as adjacent controlled countries
+        // for the purposes of events", and the FAQ spells it out under Brush War as a reversal
+        // of an earlier ruling. The neighbour list above holds only the 84 countries, so the
+        // superpower was never counted: a USSR Brush War on Mexico, or a US one on Afghanistan,
+        // rolled a point better than the rules allow.
+        if (MapData::is_adjacent_to_superpower(target, opp)) mod--;
 
         // 3. Roll Die & Record DieRollRecord
         uint8_t forced_roll = action.primary_id;
