@@ -1331,8 +1331,9 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
 
                     if (china_card || vietnam_bonus) {
                         // A card played for Operations takes every Ops modifier and its limit
-                        // (get_effective_ops_in). Ops an event granted take none of them -- FAQ,
-                        // "Ops from events are not affected" -- only the Vietnam Revolts bonus.
+                        // (get_effective_ops_in). Ops an event granted were modified when they
+                        // were granted (rule 7.4.3), so the coup takes that grant as it stands
+                        // outside the bonus regions -- ops_plain -- plus the Vietnam Revolts bonus.
                         const uint8_t plain = Operations::plain_budget(state, op_card, p);
                         if (plain == Operations::get_effective_ops(state, op_card, p, Region::NONE_REGION)) {
                             coup_ops = Operations::get_effective_ops_in(state, op_card, p, cid);

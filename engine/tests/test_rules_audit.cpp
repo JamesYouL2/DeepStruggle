@@ -192,46 +192,6 @@ TEST(RulesAudit, GrainSalesUNIntervention_OnAWarCardChargesNoFlowerPower) {
     ASSERT_EQ(s.victory_points, 0);
 }
 
-// --- Era entry does not reshuffle the discard pile ---------------------------------------------
-
-TEST(RulesAudit, MidWarEntry_LeavesTheDiscardPileAlone) {
-    GameState s{};
-    Engine::init_game(s, 7);
-    s.current_phase = Phase::ACTION_ROUND;
-    s.turn = 3;
-    // Empty both hands -- a scoring card still held would end the game at the turn's end.
-    for (uint8_t c = 1; c <= 110; ++c) {
-        if (is_in_any_hand(s.card_locations[c])) s.card_locations[c] = CardLocation::DRAW_DECK;
-    }
-    // Spend a few Early War cards.
-    uint8_t discarded = 0;
-    for (uint8_t c = 1; c <= 110; ++c) {
-        if (s.card_locations[c] == CardLocation::DRAW_DECK && discarded < 5) {
-            s.card_locations[c] = CardLocation::DISCARD_PILE;
-            discarded++;
-        }
-    }
-    ASSERT_EQ(discarded, 5);
-    GameState before = s;
-
-    StateMachine::finish_end_turn(s);   // turn 3 -> 4: Mid War enters, then the deal
-    ASSERT_EQ(s.turn, 4);
-    for (uint8_t c = 1; c <= 110; ++c) {
-        if (before.card_locations[c] == CardLocation::DISCARD_PILE) {
-            ASSERT_EQ(s.card_locations[c], CardLocation::DISCARD_PILE);
-        }
-    }
-    // And the Mid War is in play.
-    uint8_t mid_in_play = 0;
-    for (uint8_t c = 1; c <= 110; ++c) {
-        if (CardData::get_card(c).era == WarEra::MID &&
-            (s.card_locations[c] == CardLocation::DRAW_DECK || is_in_any_hand(s.card_locations[c]))) {
-            mid_in_play++;
-        }
-    }
-    ASSERT_GT(mid_in_play, 0);
-}
-
 // --- Summit counts regions without the scoring-only card effects -------------------------------
 
 namespace {

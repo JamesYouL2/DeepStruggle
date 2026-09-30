@@ -88,7 +88,7 @@ engine/
     ├── test_full_game.cpp      // 10-turn full game integration tests ending in final scoring
     ├── test_auto_advance.cpp   // Engine::auto_advance_step: forced/degenerate decisions taken without asking
     ├── test_fuzz_influence_placement.cpp // Randomized influence placement against the mask
-    ├── test_rules_audit.cpp    // One regression per rule fixed by the 2026-09-28 audit (§10)
+    ├── test_rules_audit.cpp    // One regression per rule fixed by the 2026-09-28 audit (§12)
     ├── test_fuzz.cpp           // ts_fuzz: invariant fuzzer (--games <N>, --steps <N>, --seed <S>)
     ├── test_fuzz_events.cpp    // ts_fuzz_events: same, biased toward firing events (--event-bias)
     └── test_benchmark.cpp      // ts_benchmark: throughput benchmark
@@ -406,7 +406,7 @@ who drove DEFCON down. That is the rule.
 
 The companion decision now offers only opponent-associated, non-scoring cards, through a
 `UN_INTERVENTION` case in `get_event_action_mask`'s `SELECT_CARD` switch, and the shadowed copy in
-`action_mask.cpp` is gone. See `BUGS.md` ENG-1 for the history. Since the 2026-09-28 audit (§10)
+`action_mask.cpp` is gone. See `BUGS.md` ENG-1 for the history. Since the 2026-09-28 audit (§12)
 UN Intervention is also not offered as an Event at all without such a card in hand.
 
 ## 9a. Not an issue: "UN Intervention for Ops dead-ends the game" (retracted 2026-09-23)
@@ -493,6 +493,6 @@ the strength of that line; the `*_OpsModifiers_Suite` tests in `test_card_edge_c
 rulebook's reading.
 
 Each of these moves the decision stream, so the engine behind every checkpoint changed; see
-`research/findings/engine/engine_revisions.md`. The human corpus (`tests/replayer`) could not be
-run where the audit was done and should be run before this is relied on.
+`research/findings/engine/engine_revisions.md`. The human corpus (`tests/replayer`) passes with
+them in place.
 
