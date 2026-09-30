@@ -480,6 +480,38 @@ it in distribution only. `--pack-pairs 1` plays one pairing at a time, and `--tr
 `--log-games` force it. The one cost that remains is the heuristic bot, which is pure Python per
 position.
 
+### C. Multicore: bots that decide in Python
+A network is batched inside one process and gains little from more; a bot that decides in Python
+(`heuristic_mcts`) plays one decision at a time on one core. `--workers N`
+(0 = every core) cuts each matchup into shards of `--shard-pairs` game pairs (default 10; a pair is
+one deal played from both sides) and plays them in N processes, one thread each
+(`tools/lib/parallel_tournament.py`).
+
+The split plays the same deals as a single process, and each shard reseeds every generator its
+games draw from (the global ones, and any agent's `reseed`), so **results depend on
+`--shard-pairs`, never on `--workers`**. With deterministic agents they equal the one-process run
+exactly. Each worker loads its own copy of every model -- on a small machine, count the memory. `--workers`
+replaces pairing packing (`--pack-pairs` applies to a one-process run only), and `--opening`
+reaches each worker as its specs' `opening:<name>:` prefix.
+
+```bash
+PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+  --models heuristic_mcts data/checkpoints/E5-11-43_560M.onnx --games-per-side 100 \
+  --device cpu --workers 0 --output-json data/reports/heuristic_mcts_vs_E5.json
+```
+
+### D. ONNX models
+A `.onnx` file from `tools/export_onnx.py` -- what the workbench plays, and the only form the
+published models on Hugging Face take -- is an entrant like a checkpoint (`OnnxAgent`, ONNX
+Runtime on CPU). Its name, observation width and action view come from the export's metadata, and
+a file that is not an export, or was made for another observation width, is refused. Greedy, it
+plays the same games as its checkpoint (the export is verified to pick the same favourite move);
+sampled, it draws from its own generator, so it matches in distribution only.
+
+```bash
+hf download mihaild/deepstruggle E5-11-43_560M.onnx --local-dir data/checkpoints
+```
+
 ---
 
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)
@@ -708,8 +740,9 @@ there; a trainer must drop them from the value loss and keep them in the policy 
 
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
-- `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers.
-- `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver.
+- `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
+- `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver; plays any subset of a matchup's pairs with their own deals, and merges the parts (`merge_matchup_results`).
+- `tools/lib/parallel_tournament.py`: splits a tournament into shards played in worker processes (`tools/tournament.py --workers`).
 - `tools/lib/tournament_evaluator.py`: diagnostic loss cause classifier (`classify_game_ending_reason`).
 - `tools/lib/self_play.py`: single-game trajectory runner; the one writer of `.tslog.json` replays.
 - `tools/lib/scoring_formatter.py`: regional scoring calculation formatter.

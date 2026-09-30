@@ -332,6 +332,91 @@ class NeuralAgent:
         return int(action_t.item())
 
 
+class OnnxAgent:
+    """A network exported by tools/export_onnx.py, run in ONNX Runtime -- the file the workbench
+    plays, and the only form in which the published models exist (the Hugging Face repo carries
+    no .pt).
+
+    The graph takes (obs, mask) and returns masked logits, so action selection is
+    `ColdWarNetV2.sample_action` over those logits: argmax when greedy, else a sample at the given
+    temperature. The export itself is verified against torch (same favourite move, probabilities
+    within 1e-3), so a greedy game matches the checkpoint's; a sampled one draws from this agent's
+    own generator rather than torch's, and matches in distribution only.
+
+    Everything needed to run the file travels in its metadata, and is checked here as the page
+    checks it: the format tag, and the observation width against this engine's.
+    """
+
+    FORMAT = "ts-onnx-v1"
+
+    def __init__(self, path: str, name: Optional[str] = None, seed: int = 0):
+        import onnxruntime as ort
+
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"ONNX model not found: {path}")
+        opts = ort.SessionOptions()
+        # One thread per torch thread: a tournament worker pins torch to one thread so that N
+        # workers use N cores, and ONNX Runtime would otherwise start a pool the size of the
+        # machine in each of them.
+        opts.intra_op_num_threads = max(1, torch.get_num_threads())
+        opts.inter_op_num_threads = 1
+        self.session = ort.InferenceSession(path, sess_options=opts,
+                                            providers=["CPUExecutionProvider"])
+        meta: Dict[str, str] = dict(self.session.get_modelmeta().custom_metadata_map)
+        if meta.get("ts.format") != self.FORMAT:
+            raise ValueError(
+                f"{path} is not a {self.FORMAT} export (ts.format={meta.get('ts.format')!r}); "
+                f"make one with tools/export_onnx.py")
+        self.obs_size = int(meta["ts.obs_size"])
+        if self.obs_size != int(ts.OBS_SIZE):
+            raise ValueError(
+                f"{path} reads an observation of width {self.obs_size}, but this engine emits "
+                f"{int(ts.OBS_SIZE)}: it was exported from a retired layout and would misread "
+                f"every slot")
+        action_size = int(meta.get("ts.action_size", ActionEncoder.FLAT_ACTION_SIZE))
+        if action_size != ActionEncoder.FLAT_ACTION_SIZE:
+            raise ValueError(f"{path} has {action_size} actions, this engine "
+                             f"{ActionEncoder.FLAT_ACTION_SIZE}")
+        #: P23 / E4.1: decides in the merged-influence view; read by every harness building masks.
+        self.merged_influence = meta.get("ts.merged_influence") == "true"
+        self.name = name or meta.get("ts.label") or os.path.splitext(os.path.basename(path))[0]
+        self.engine_fingerprint = meta.get("ts.engine_fingerprint", "")
+        self.rng = np.random.default_rng(seed)
+
+    def reseed(self, seed: int) -> None:
+        self.rng = np.random.default_rng(seed)
+
+    def logits(self, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
+        out = self.session.run(["logits"], {"obs": np.ascontiguousarray(obs, dtype=np.float32),
+                                            "mask": np.ascontiguousarray(masks, dtype=np.uint8)})
+        return np.asarray(out[0], dtype=np.float64)
+
+    def act_batch(self, obs: np.ndarray, masks: np.ndarray, temperature: float,
+                  greedy: bool) -> np.ndarray:
+        """One action per row, as `sample_action` would choose it from these logits."""
+        logits = self.logits(obs, masks)
+        if greedy:
+            return logits.argmax(axis=1).astype(np.int32)
+        z = logits / max(temperature, 1e-4)
+        z -= z.max(axis=1, keepdims=True)
+        p = np.exp(z)
+        cdf = np.cumsum(p, axis=1)
+        u = self.rng.random(len(cdf)) * cdf[:, -1]
+        # The first index whose cdf exceeds u. An illegal action adds nothing to the cdf, so it
+        # can never be that index; a u that rounds up to the total falls back to the argmax.
+        picks = (cdf <= u[:, None]).sum(axis=1)
+        over = picks >= logits.shape[1]
+        picks[over] = logits[over].argmax(axis=1)
+        return picks.astype(np.int32)
+
+    def select_action(self, state: ts.GameState, player: ts.Player,
+                      temperature: float = 0.1) -> int:
+        obs = np.asarray(ts.extract_observation(state, player), dtype=np.float32)[None, :]
+        mask = np.asarray(ActionEncoder.get_legal_mask(state, self.merged_influence),
+                          dtype=np.uint8)[None, :]
+        return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
+
+
 def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAgent:
     """Factory function loading agents from string specifier (random, heuristic, or checkpoint path)."""
     s = spec.strip()
@@ -440,4 +525,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         sims = int(parts[1]) if len(parts) > 1 and parts[1] else 64
         return make_heuristic_mcts_agent(
             name=f"HeuristicMCTS{sims}", config=HeuristicMCTSConfig(simulations=sims))
+    # A tools/export_onnx.py export: the form the workbench plays and Hugging Face publishes.
+    if s.lower().endswith(".onnx"):
+        return OnnxAgent(s)
     return NeuralAgent.from_checkpoint(s, device=device)
