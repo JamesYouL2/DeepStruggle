@@ -48,6 +48,24 @@ export interface LiveAnalysis {
 /** Which side auto-play moves for; "" is off. */
 export type AutoSide = "" | "US" | "USSR";
 
+/** How auto-play picks its move: the model's favourite, or a 64-simulation search. */
+export type AutoBy = "model" | "search64";
+
+/**
+ * What the panel shows after a search (search/mcts.ts): the root's moves by visit count. A
+ * diagnostic -- search is a teacher and an opponent to probe, never the product.
+ */
+export interface SearchDisplay {
+  rows: Array<{ idx: number; name: string; visits: number; qUs: number; prior: number }>;
+  action: number | null;
+  ms: number;
+  worlds: number;
+  simulations: number;
+  worldMismatch: boolean;
+  /** The model's own argmax here, to say where search and the net disagree. */
+  favouriteIdx: number | null;
+}
+
 /** A model the user picked: where from, and for a dropped file, its bytes. */
 export interface ModelPick {
   source: ModelSource;
@@ -109,6 +127,10 @@ export class AnalysisPanel {
   private error: string | null = null;
   private lastAnalysis: LiveAnalysis | null = null;
   private auto: AutoSide = "";
+  private autoBy: AutoBy = "model";
+  private searchInfo: SearchDisplay | null = null;
+  private searchError: string | null = null;
+  private searchRunning = false;
 
   private sourceSelect = el<HTMLSelectElement>("analysis-source-select");
   private runSelect = el<HTMLSelectElement>("analysis-run-select");
@@ -119,6 +141,8 @@ export class AnalysisPanel {
   private fileInput = el<HTMLInputElement>("analysis-file-input");
   private favButton = el<HTMLButtonElement>("btn-play-favourite");
   private autoSelect = el<HTMLSelectElement>("analysis-autoplay-select");
+  private searchSelect = el<HTMLSelectElement>("analysis-search-select");
+  private searchButton = el<HTMLButtonElement>("btn-search-move");
   private body = el<HTMLElement>("analysis-body");
   private badge = el<HTMLElement>("analysis-status");
   private info = el<HTMLElement>("analysis-model-info");
@@ -127,11 +151,18 @@ export class AnalysisPanel {
     private onPick: (pick: ModelPick | null) => void,
     private onPlayFlat: (flatIdx: number) => void,
     private onAutoSideChange: (side: AutoSide) => void = () => {},
+    private onSearch: () => void = () => {},
   ) {
     this.autoSelect.addEventListener("change", () => {
       this.setAutoSide(this.autoSelect.value as AutoSide);
       this.onAutoSideChange(this.auto);
     });
+    this.searchSelect.addEventListener("change", () => {
+      this.autoBy = this.searchSelect.value === "search64" ? "search64" : "model";
+      this.onAutoSideChange(this.auto);
+      this.renderBody();
+    });
+    this.searchButton.addEventListener("click", () => this.onSearch());
     this.sourceSelect.addEventListener("change", () => {
       // Switching source loads nothing by itself: a checkpoint's first use is an export, and a
       // model the user did not pick should not cost that or replace the one on screen.
@@ -258,9 +289,35 @@ export class AnalysisPanel {
     if (idx !== null) this.onPlayFlat(idx);
   }
 
-  /** The side that plays the model's favourite by itself ("" = nobody). */
+  /** The side that plays by itself ("" = nobody). */
   public get autoSide(): AutoSide {
     return this.auto;
+  }
+
+  /** What auto-play plays: the model's favourite, or a 64-simulation search. */
+  public get autoByWhat(): AutoBy {
+    return this.autoBy;
+  }
+
+  // ---- search (a diagnostic; search/mcts.ts runs it) -------------------------------------------
+
+  public setSearchRunning(on: boolean): void {
+    this.searchRunning = on;
+    this.renderBody();
+  }
+
+  /** Show what the search said (null clears; `error` explains a failure). */
+  public setSearchResult(d: SearchDisplay | null, error: string | null = null): void {
+    this.searchInfo = d;
+    this.searchError = error;
+    this.renderBody();
+  }
+
+  /** The position moved on: whatever the search said about the old one is not about this one. */
+  public clearSearch(): void {
+    this.searchInfo = null;
+    this.searchError = null;
+    this.searchRunning = false;
   }
 
   /** Set the auto-play side programmatically (from the URL); does not notify. */
@@ -398,6 +455,10 @@ export class AnalysisPanel {
     const a = this.lastAnalysis;
     this.renderInfo();
     this.favButton.disabled = this.favourite() === null;
+    this.searchButton.disabled = this.searchRunning || !a?.policy;
+    this.searchButton.title = a?.policy
+      ? "Run a 64-simulation determinized search on the open decision (a diagnostic: search is a teacher, not the product)"
+      : "No decision to search";
     const fav = a?.choices.find(c => c.idx === a.policy?.argmax_idx);
     this.favButton.title = fav ? `Play the model's most likely move: ${fav.name ?? "#" + fav.idx} (F)` : "No decision to make";
 
@@ -458,7 +519,60 @@ export class AnalysisPanel {
         parts.push(`<div class="trace-note trace-hint">+${a.choices.length - TOP_LISTED} more — every option's probability is on the cards, buttons and map</div>`);
       }
     }
+    parts.push(this.searchHtml());
     this.body.innerHTML = parts.join("");
+  }
+
+  /**
+   * The search block: what 64 simulations do here, and how that differs from the raw net. Rows
+   * are clickable like a choice's, so the searched move can be played straight from the list.
+   */
+  private searchHtml(): string {
+    const d = this.searchInfo;
+    const out: string[] = [];
+    out.push(`<div class="trace-section-label">SEARCH-64 <span class="analysis-info-dim">determinized MCTS · diagnostic</span></div>`);
+    if (this.searchRunning) {
+      out.push(`<div class="trace-empty">searching… 64 simulations on a sampled world (about a second)</div>`);
+      return out.join("");
+    }
+    if (this.searchError) {
+      out.push(`<div class="analysis-error">${esc(this.searchError)}</div>`);
+      return out.join("");
+    }
+    if (!d) {
+      out.push(`<div class="trace-note trace-hint">Press Search 64 to see what the move would be with 64 simulations behind it — and where search disagrees with the network.</div>`);
+      return out.join("");
+    }
+    if (d.action === null) {
+      out.push(`<div class="trace-empty">Nothing to search here.</div>`);
+      return out.join("");
+    }
+    const disagree = d.favouriteIdx !== null && d.action !== d.favouriteIdx;
+    const favName = this.lastAnalysis?.choices.find(c => c.idx === d.favouriteIdx)?.name ?? `#${d.favouriteIdx}`;
+    if (disagree) {
+      out.push(`<div class="analysis-search-note">⚑ disagrees with the model — search plays <b>${esc(this.rowName(d, d.action))}</b>, the net favours ${esc(favName)}</div>`);
+    } else {
+      out.push(`<div class="analysis-search-note">agrees with the model's favourite</div>`);
+    }
+    if (d.worldMismatch) {
+      out.push(`<div class="analysis-search-note">the sampled world made legal what this state does not; the pick falls back to the net's greedy move</div>`);
+    }
+    const rows = d.rows.slice(0, TOP_LISTED).map(r => {
+      const isPick = r.idx === d.action;
+      const q = Number.isFinite(r.qUs) ? `${r.qUs >= 0 ? "+" : "−"}${Math.abs(r.qUs).toFixed(2)}` : "—";
+      return `
+        <div class="analysis-choice${isPick ? " favourite" : ""}" data-flat-idx="${r.idx}" title="Click to play this move (searched: ${r.visits}/${d.simulations} visits, mean value ${q} from the US side)">
+          <span class="analysis-choice-name">${isPick ? "★ " : ""}${esc(r.name)}</span>
+          <span class="analysis-choice-p">${r.visits}/${d.simulations} · q ${q} · p ${fmtP(r.prior)}</span>
+        </div>`;
+    });
+    out.push(`<div class="analysis-choices">${rows.join("")}</div>`);
+    out.push(`<div class="trace-note trace-hint">${d.simulations} simulations on ${d.worlds} sampled world${d.worlds === 1 ? "" : "s"} · ${d.ms} ms</div>`);
+    return out.join("");
+  }
+
+  private rowName(d: SearchDisplay, idx: number): string {
+    return d.rows.find(r => r.idx === idx)?.name ?? `#${idx}`;
   }
 
   /**

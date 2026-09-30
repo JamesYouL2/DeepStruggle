@@ -147,7 +147,7 @@
             </div>
             <div id="analysis-model-info" class="analysis-model-info hidden"></div>
             <button id="btn-play-favourite" class="btn btn-primary btn-sm" title="Play the model's most likely move (F)" disabled>★ Play favourite</button>
-            <label class="analysis-autoplay" title="This side plays the model's favourite automatically; you play the other">
+            <label class="analysis-autoplay" title="This side plays by itself; you play the other">
               Auto-play
               <select id="analysis-autoplay-select" class="analysis-select">
                 <option value="">none</option>
@@ -155,6 +155,14 @@
                 <option value="US">US</option>
               </select>
             </label>
+            <label class="analysis-search-by" title="What auto-play plays: the model's favourite, or a 64-simulation determinized search -- a diagnostic opponent to play against">
+              by
+              <select id="analysis-search-select" class="analysis-select">
+                <option value="model">model</option>
+                <option value="search64">search-64</option>
+              </select>
+            </label>
+            <button id="btn-search-move" class="btn btn-secondary btn-sm" title="Run a 64-simulation determinized search on the open decision (a diagnostic: search is a teacher, not the product)" disabled>⌕ Search 64</button>
           </div>
           <div id="analysis-body" class="trace-body"></div>
         </div>

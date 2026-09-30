@@ -21,6 +21,8 @@ import { GameSession } from "./game/session";
 import { decodePosition, encodePosition } from "./game/position";
 import { Model, sourceFromParam, sourceToParam } from "./analysis/model";
 import { analyze } from "./analysis/readout";
+import { PageSearcher, SEARCH_64, SearchResult } from "./search/mcts";
+import { actionName } from "./game/names";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
@@ -62,6 +64,12 @@ export class TSApp {
   private urlModel: string | null = null;
   private urlAuto: AutoSide = "";
   private autoPlayTimer: number | null = null;
+  /**
+   * A search borrows the engine singleton until it finishes (search/mcts.ts): the board is
+   * restored from node snapshots throughout, so anything the user does in the meantime would be
+   * clobbered. Everything that moves the engine refuses while this is set.
+   */
+  private searchRunning = false;
 
   constructor() {
     this.parseQueryParams();
@@ -92,6 +100,7 @@ export class TSApp {
         this.syncUrl();
         this.maybeAutoPlay();
       },
+      () => { void this.runSearchNow(this.version); },
     );
     this.analysisPanel.setAutoSide(this.urlAuto);
     this.analysisPanel.show(!this.isReplayMode);
@@ -222,6 +231,7 @@ export class TSApp {
     const version = ++this.version;
     this.liveState = this.session.state();
     this.liveAnalysis = undefined;
+    this.analysisPanel.clearSearch();
     if (!this.isReplayMode) {
       this.state = this.liveState;
       this.renderState();
@@ -253,6 +263,39 @@ export class TSApp {
       this.maybeAutoPlay();
     } catch (e) {
       if (key === this.modelKey) this.analysisPanel.setError(`The model failed on this position: ${e}`);
+    }
+  }
+
+  /**
+   * The 64-simulation diagnostic search on the open decision (search/mcts.ts). The engine is
+   * borrowed for its duration (searchRunning), and a result for a position the board has since
+   * left is dropped. Returns what it picked, for auto-play to act on.
+   */
+  private async runSearchNow(version: number): Promise<SearchResult | null> {
+    if (this.searchRunning || !this.engine || !this.model || this.isReplayMode) return null;
+    if (version !== this.version) return null;
+    this.searchRunning = true;
+    this.analysisPanel.setSearchRunning(true);
+    try {
+      const searcher = new PageSearcher(this.engine, this.model, this.model.meta.mergedInfluence, SEARCH_64);
+      const res = await searcher.search();
+      if (version !== this.version) return null;
+      this.analysisPanel.setSearchResult({
+        rows: res.rows.map(r => ({
+          idx: r.idx, name: actionName(this.engine!, r.idx), visits: r.visits, qUs: r.qUs, prior: r.prior,
+        })),
+        action: res.action, ms: res.ms, worlds: res.worlds, simulations: res.simulations,
+        worldMismatch: res.worldMismatch, favouriteIdx: this.analysisPanel.favourite(),
+      });
+      return res;
+    } catch (e) {
+      if (version === this.version) {
+        this.analysisPanel.setSearchResult(null, `The search failed on this position: ${e instanceof Error ? e.message : e}`);
+      }
+      return null;
+    } finally {
+      this.searchRunning = false;
+      this.analysisPanel.setSearchRunning(false);
     }
   }
 
@@ -644,6 +687,10 @@ export class TSApp {
    */
   private sendAction(action: MicroAction) {
     if (this.isReplayMode || !this.session) return;
+    if (this.searchRunning) {
+      this.refused("a search is running — the board is borrowed until it finishes");
+      return;
+    }
     const why = this.session.apply(action, action.secondary_id ?? 0);
     if (why) {
       this.refused(why);
@@ -658,6 +705,10 @@ export class TSApp {
    */
   private sendFlatAction(flatIdx: number, forcedDie: number = this.actionHud.selectedDieRoll) {
     if (this.isReplayMode || !this.session) return;
+    if (this.searchRunning) {
+      this.refused("a search is running — the board is borrowed until it finishes");
+      return;
+    }
     const why = this.session.applyFlat(flatIdx, this.model?.meta.mergedInfluence ?? false, forcedDie);
     if (why) {
       this.refused(why);
@@ -667,9 +718,11 @@ export class TSApp {
   }
 
   /**
-   * Auto-play: when the side to move is the auto-play side, play the model's favourite after a
-   * short pause (so a person can follow the moves). Re-armed on every readout; a pending move is
-   * dropped if the position changes before it fires.
+   * Auto-play: when the side to move is the auto-play side, play its move after a short pause
+   * (so a person can follow the moves). The move is the model's favourite, or -- set beside the
+   * selector -- a 64-simulation search, which makes the page a way to play AGAINST search (a
+   * diagnostic opponent). Re-armed on every readout; a pending move is dropped if the position
+   * changes before it fires.
    */
   private maybeAutoPlay() {
     if (this.autoPlayTimer !== null) {
@@ -677,9 +730,25 @@ export class TSApp {
       this.autoPlayTimer = null;
     }
     if (this.isReplayMode) return;
+    const version = this.version;
+    if (this.analysisPanel.autoByWhat === "search64") {
+      const side = this.analysisPanel.autoSide;
+      const decider = this.engine ? (this.engine.decisionPlayer() > 0 ? "US" : this.engine.decisionPlayer() < 0 ? "USSR" : "") : "";
+      if (!side || decider !== side || !this.model) return;
+      this.autoPlayTimer = window.setTimeout(() => {
+        this.autoPlayTimer = null;
+        void (async () => {
+          if (this.isReplayMode || version !== this.version) return;
+          const res = await this.runSearchNow(version);
+          if (!res || res.action === null || this.isReplayMode || version !== this.version) return;
+          // Always the engine's own die: the manual die selector is for the moves you make.
+          this.sendFlatAction(res.action, 0);
+        })();
+      }, AUTO_PLAY_DELAY_MS);
+      return;
+    }
     const idx = this.analysisPanel.autoPlayMove();
     if (idx === null) return;
-    const version = this.version;
     this.autoPlayTimer = window.setTimeout(() => {
       this.autoPlayTimer = null;
       if (this.isReplayMode || version !== this.version) return;
@@ -695,6 +764,10 @@ export class TSApp {
    */
   private cancelAction() {
     if (this.isReplayMode || !this.session || !this.engine) return;
+    if (this.searchRunning) {
+      this.refused("a search is running — the board is borrowed until it finishes");
+      return;
+    }
     if (this.autoPlayTimer !== null) {
       window.clearTimeout(this.autoPlayTimer);
       this.autoPlayTimer = null;
@@ -710,6 +783,10 @@ export class TSApp {
 
   private sendDebugOverride(override: any) {
     if (!this.session) return;
+    if (this.searchRunning) {
+      this.refused("a search is running — the board is borrowed until it finishes");
+      return;
+    }
     let why: string | null = null;
     if (override.op === "set_country") why = this.session.setCountry(override.country_id, override.us, override.ussr);
     else if (override.op === "set_defcon") why = this.session.setDefcon(override.defcon);
@@ -785,6 +862,10 @@ export class TSApp {
     // New Game: a fresh seed, in the page. The link then names the new position.
     document.getElementById("btn-new-game")?.addEventListener("click", () => {
       if (!this.session) return;
+      if (this.searchRunning) {
+        this.refused("a search is running — the board is borrowed until it finishes");
+        return;
+      }
       this.session.newGame(Math.floor(Math.random() * 1_000_000));
       if (this.isReplayMode) this.setReplayMode(false);
       renderTracePanel([], 0);
