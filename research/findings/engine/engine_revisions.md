@@ -226,6 +226,23 @@ every deck from turn 4 on, bought nothing measurable on re-training (E6-01); thi
 Treat E6 measurements as comparable to E7 ones until an E7 re-run of an E6 arm says otherwise,
 and record that re-run here when it happens.
 
+**The re-run (2026-09-30): E7-01-44, E6-12-44's recipe on E7 -- level.** The shallow-trunk recipe
+(no league, seed 44, from scratch to 560M) retrained on E7, and both measured *on E7* against the
+pinned panel (`research/runs.md`, `data/reports/e7_01_44_*`):
+
+| E7-01-44 against E6-12-44 | US | USSR | head to head |
+|:---|---:|---:|---:|
+| 500–560M snapshots | −1.6 ± 0.6 | +0.5 ± 0.5 | 47.1% ± 0.3 |
+| 480–560M SWA | −1.4 ± 1.0 | +0.0 ± 1.0 | 49.8% ± 1.1 |
+
+The trace (one field, every 40M) crosses back and forth early and ends 11 Elo apart over 400–560M.
+The pre-registered bounds were head to head within 50 ± 3% and each seat within ±3 points, about
+the spread between seeds 43 and 44; both readings are inside them. The E6-trained net plays E7 as
+well as the E7-trained one, so **E6 measurements stay comparable to E7 ones.** One difference that
+is not strength: the E7 run trained at ~88k steps/s against E6-12-44's ~96k, which the engine
+benchmarks do not reproduce (raw stepping and the vectorised env, E6 against E7, are level); it is
+under investigation.
+
 ## Open, and worth knowing
 
 * **One arm has been re-run across a letter boundary: E5-01**, E4-61's configuration on E5, with
