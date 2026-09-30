@@ -86,10 +86,19 @@ jobs:
           key: ts-replayer-corpus-v1
           restore-keys: ts-replayer-corpus-
 
-      - name: Download the ts-replayer corpus
-        # Fills whatever the cache lacks; a game the host will not serve (HTTP 500) is reported,
-        # not fatal, and the tests that need it say so.
-        run: PYTHONPATH=.:build/release .venv/bin/python tools/download_ts_replayer.py || true
+      - name: Fetch the ts-replayer corpus snapshot
+        # The corpus host throttles (300 requests) and fails on some games, so CI takes the
+        # snapshot attached to the `corpus-v1` release of JamesYouL2/deepstruggle. Skipped on a
+        # cache hit.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(ls -A data/datasets/ts_replayer 2>/dev/null)" ]; then
+            gh release download corpus-v1 -R JamesYouL2/deepstruggle --pattern ts_replayer_corpus.tar.gz --dir "$RUNNER_TEMP"
+            mkdir -p data/datasets
+            tar -xzf "$RUNNER_TEMP/ts_replayer_corpus.tar.gz" -C data/datasets
+          fi
+          ls data/datasets/ts_replayer | wc -l
 
       - name: Backend tests
         run: |
