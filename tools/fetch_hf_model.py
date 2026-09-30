@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Download a published ONNX model from Hugging Face -- by default the newest one.
+
+    PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py                     # newest upload
+    PYTHONPATH=. .venv/bin/python tools/fetch_hf_model.py --path E4-08-36_240M.onnx
+
+"Newest" is the workbench's rule (web/ui/src/analysis/model.ts, `listHfModels`): the `.onnx` file
+whose last commit is latest, ties broken by path. So a tournament run by CI against "the newest
+model" plays the model a visitor to the page gets by default.
+
+Prints the downloaded file's path as the last line of output, for a shell to capture. Needs no
+token: the default repo is public. Standard library only, so it runs before anything is installed.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import urllib.parse
+import urllib.request
+from typing import Dict, List, Optional, Sequence, Tuple
+
+DEFAULT_REPO = "mihaild/deepstruggle"   # web/ui/src/analysis/model.ts DEFAULT_HF_REPO
+DEFAULT_REVISION = "main"
+
+_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
+
+
+def order_newest_first(entries: Sequence[Dict[str, object]]) -> List[Tuple[str, str]]:
+    """(path, date) of every .onnx file in a tree listing, newest first, as the page orders it."""
+    files: List[Tuple[str, str]] = []
+    for e in entries:
+        path = e.get("path")
+        if e.get("type") != "file" or not isinstance(path, str) or not path.endswith(".onnx"):
+            continue
+        commit = e.get("lastCommit")
+        date = commit.get("date") if isinstance(commit, dict) else None
+        files.append((path, date if isinstance(date, str) else ""))
+    # ISO-8601 times order as strings. Newest first; within one date, by path ascending.
+    files.sort(key=lambda f: f[0])
+    files.sort(key=lambda f: f[1], reverse=True)
+    return files
+
+
+def list_models(repo: str, revision: str) -> List[Tuple[str, str]]:
+    if not _REPO_RE.match(repo):
+        raise ValueError("a Hugging Face repo must look like owner/name")
+    entries: List[Dict[str, object]] = []
+    url: Optional[str] = (f"https://huggingface.co/api/models/{repo}/tree/"
+                          f"{urllib.parse.quote(revision, safe='')}?recursive=true&expand=true")
+    while url:
+        with urllib.request.urlopen(url, timeout=60) as res:
+            entries.extend(json.load(res))
+            m = _NEXT_RE.search(res.headers.get("Link") or "")
+            url = m.group(1) if m else None
+    return order_newest_first(entries)
+
+
+def download(repo: str, revision: str, path: str, out_dir: str) -> str:
+    dest = os.path.join(out_dir, os.path.basename(path))
+    os.makedirs(out_dir, exist_ok=True)
+    url = (f"https://huggingface.co/{repo}/resolve/{urllib.parse.quote(revision, safe='')}/"
+           f"{urllib.parse.quote(path)}")
+    tmp = dest + ".part"
+    with urllib.request.urlopen(url, timeout=300) as res, open(tmp, "wb") as f:
+        while chunk := res.read(1 << 20):
+            f.write(chunk)
+    os.replace(tmp, dest)   # never leave a truncated file under the real name
+    return dest
+
+
+def main(argv: List[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--repo", default=DEFAULT_REPO)
+    ap.add_argument("--revision", default=DEFAULT_REVISION)
+    ap.add_argument("--path", default=None, help="a file in the repo; default the newest .onnx")
+    ap.add_argument("--out-dir", default="data/checkpoints")
+    args = ap.parse_args(argv)
+
+    path = args.path
+    if path is None:
+        models = list_models(args.repo, args.revision)
+        if not models:
+            print(f"fetch_hf_model: {args.repo}@{args.revision} has no .onnx files", file=sys.stderr)
+            return 1
+        for p, d in models:
+            print(f"  {d or '(no date)':<25s} {p}")
+        path = models[0][0]
+        print(f"fetch_hf_model: newest is {path}")
+    print(download(args.repo, args.revision, path, args.out_dir))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
