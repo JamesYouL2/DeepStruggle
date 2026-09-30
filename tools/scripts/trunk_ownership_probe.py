@@ -49,7 +49,7 @@ from tools.scripts.aux_ownership_probe import N_COUNTRIES, _absolute_class, _con
 @torch.no_grad()
 def collect(agent: NeuralAgent, games: int, envs: int, seed: int, sample_frac: float,
             temperature: float, dev: torch.device, game_offset: int) -> Dict[str, np.ndarray]:
-    """Sampled positions of `agent`'s self-play: observation, mover, board then, final board, winner."""
+    """Sampled positions of `agent`'s self-play: observation, legal mask, mover, board then, final board, winner."""
     model: Any = agent.model
     env = TsVectorizedEnv(num_envs=envs, base_seed=seed)
     env.record_final_control = True
@@ -63,10 +63,12 @@ def collect(agent: NeuralAgent, games: int, envs: int, seed: int, sample_frac: f
     while done_games < games or any(pending):
         dp = np.asarray(env.runner.get_decision_players(), dtype=np.int8)
         ob = np.asarray(obs)
+        mk = np.asarray(masks)
         for i in np.flatnonzero(sampling & (dp != 0) & (rng.random(envs) < sample_frac)):
             st = env.runner.get_state(int(i))
-            pending[int(i)].append({"obs": ob[i].astype(np.float16), "mover": int(dp[i]),
-                                    "turn": int(st.turn), "now": _absolute_class(_control(st))})
+            pending[int(i)].append({"obs": ob[i].astype(np.float16), "mask": mk[i].astype(bool),
+                                    "mover": int(dp[i]), "turn": int(st.turn),
+                                    "now": _absolute_class(_control(st))})
         o = torch.from_numpy(ob).float().to(dev)
         m = torch.from_numpy(np.asarray(masks)).to(dev)
         logits = model(o, m)[0].float()
@@ -85,7 +87,8 @@ def collect(agent: NeuralAgent, games: int, envs: int, seed: int, sample_frac: f
             done_games += 1
             if done_games >= games:
                 sampling[i] = False
-    return {k: np.stack([r[k] for r in rows]) for k in ("obs", "mover", "turn", "now", "final", "winner", "game")}
+    return {k: np.stack([r[k] for r in rows])
+            for k in ("obs", "mask", "mover", "turn", "now", "final", "winner", "game")}
 
 
 def mover_frame(final: np.ndarray, mover: np.ndarray) -> np.ndarray:
