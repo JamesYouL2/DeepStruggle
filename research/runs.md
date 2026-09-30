@@ -25,6 +25,18 @@ Averaging is not part of any training recipe: `--ema-weights` stays off until th
 
 **Acceptance rule (owner; amended 2026-09-29).** Against a control, per seat against the control's own greedy self-play rate in that seat: an arm is accepted when it is significantly above the bar in at least one seat and not significantly below it in the other. The original rule (2026-09-28) required above the bar in both seats; under the amendment E5-21-43 and E6-04-44 are accepted, E5-15 passes on seed 43 only, and E5-16 and E5-17 (USSR about two standard errors below) stay rejected.
 
+## E7 — the 2026-09-28 rules audit
+
+Engine baseline (2026-09-30): seven rules fixes, each on a rare situation (the PR #2 rules audit,
+merged as `dec2768`; named E7 in `b604035`). Observation v2.3 and the action space unchanged; E6
+checkpoints load and play on E7. Expected not to differ measurably from E6:
+[`findings/engine/engine_revisions.md`](findings/engine/engine_revisions.md), *The E6 → E7 boundary*.
+Engine fingerprint `5419a582…`.
+
+| arm | what it varied | budget | directory | result |
+|:---|:---|:---|:---|:---|
+| **E7-01-44** | The E7 re-run of an E6 arm (owner, 2026-09-30): E6-12-44's recipe exactly -- the shallow trunk (`--ladder-res-blocks 0`), no league, seed 44, from scratch to 560M, solo -- on E7. Control: E6-12-44. Both are measured **on E7**: a same-field trace every 40M (E7-01-44 against E6-12-44 at matched steps), and at 500–560M the panel rule and head to head on snapshots and the 480–560M SWA. **Pre-registered:** E7 is "not significant strength-wise" if E7-01-44 and E6-12-44 are level -- head to head within about 50 ± 3% and each seat within about ±3 points against the panel -- the size of the seed-to-seed differences between E6-12-44 and E6-12-43. A larger gap in E7-01-44's favour means the E6-trained net is handicapped by the new rules; in E6-12-44's favour, that the E7 recipe learns worse. Result recorded here and in `engine_revisions.md` | 0 → 560M | `E7-01-44_*` | *running* |
+
 ## E6 — the era transitions keep the discard, and Kitchen Debates leaves the hand
 
 Engine baseline (2026-09-29): two rules fixes. At turns 4 and 8 the new era's cards join the
