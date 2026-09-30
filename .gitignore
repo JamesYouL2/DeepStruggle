@@ -9,6 +9,7 @@ docs/strategy/
 # Everything else in rules/ (cards.json, map.json, rules.json/.md, flags.json, etc.) is this
 # project's own derived data/spec and is committed.
 rules/Rules_Final.pdf
+rules/TS_Rules_Deluxe.pdf
 
 # Build & CMake
 build*/
@@ -68,3 +69,4 @@ data/checkpoints/*
 .triton_cache/
 
 .claude
+.vast_host
