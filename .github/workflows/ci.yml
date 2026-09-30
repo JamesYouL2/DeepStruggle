@@ -37,11 +37,10 @@ jobs:
         with:
           submodules: true   # external/struggler, which the type check and some tests import
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.txt
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
 
       # The engine is built with clang and CMake refuses any other compiler.
       - name: Install clang and ninja
@@ -55,11 +54,12 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          # CPU torch: the runners have no GPU, and the CUDA wheels are gigabytes.
-          .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/pip install -r requirements.txt cmake
+          # A uv-managed Python: it ships the headers the extension compiles against.
+          uv venv --managed-python --python 3.13 .venv
+          # CPU torch first: the runners have no GPU, and the CUDA wheels are gigabytes. The
+          # requirements pass then finds torch already satisfied.
+          uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --python .venv/bin/python -r requirements.txt cmake
 
       - name: Build the engine and the nanobind extension
         run: |
