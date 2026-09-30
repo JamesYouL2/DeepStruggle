@@ -110,6 +110,24 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: Turns `reuse_subtree` off: the cut is measured from the root, and a carried subtree's cuts
     #: were measured from the previous one.
     truncate_half_rounds: int = 0
+    #: Gumbel AlphaZero's root (Danihelka et al., 2022): 0 keeps PUCT at the root; k > 0 samples
+    #: k candidate moves by Gumbel-top-k over the network's log-priors, splits the budget among
+    #: them by sequential halving, and plays the survivor with the best g + logit + sigma(q).
+    #: PUCT at the root cannot overrule a confident prior on a small budget -- an alternative
+    #: with prior p is first visited after ~1/p simulations, so at the E6 model's opening
+    #: (Hungary at 99.9%) Poland was first tried near 9,400 and overtook Hungary near 30,000.
+    #: The halving tries every candidate from the first phase. Interior nodes stay PUCT.
+    #:
+    #: Turns `reuse_subtree` and root Dirichlet noise off: the halving schedule assumes a fresh
+    #: root, and the Gumbel sample is the root's exploration.
+    gumbel_k: int = 0
+    #: Scale of the Gumbel sample. 0 takes the top k by prior and breaks nothing at random.
+    gumbel_scale: float = 1.0
+    #: sigma(q) = (gumbel_c_visit + max visits) * gumbel_c_scale * q, with q the mover's value
+    #: min-max rescaled over the root's children, as mctx does (an unvisited child's value is the
+    #: root's own). Defaults are mctx's (maxvisit_init=50, value_scale=0.1).
+    gumbel_c_visit: float = 50.0
+    gumbel_c_scale: float = 0.1
 
 
 @dataclass
@@ -132,6 +150,60 @@ class _BNode:
     half_rounds: int = 0
     #: Past the `truncate_half_rounds` horizon: a leaf whose network value is final.
     cutoff: bool = False
+    #: The move a Gumbel root chose (an index into `actions`), when the root used one.
+    gumbel_pick: Optional[int] = None
+
+
+class _Halving:
+    """Sequential halving over a root's Gumbel-top-k candidates.
+
+    Phases = ceil(log2(k)). In each, every surviving candidate is visited
+    max(1, floor(budget / (phases * survivors))) times, then the better half by
+    g + logit + sigma(q) survives. Visits left after the last phase go round the survivors.
+    """
+
+    def __init__(self, root: _BNode, cfg: "BatchedMCTSConfig", budget: int,
+                 rng: np.random.RandomState) -> None:
+        self.root, self.cfg, self.budget = root, cfg, budget
+        k = min(cfg.gumbel_k, len(root.actions))
+        logits = np.log(np.maximum(np.asarray(root.priors, dtype=np.float64), 1e-30))
+        gumbel = rng.gumbel(size=len(logits)) * cfg.gumbel_scale
+        self.score0 = logits + gumbel
+        self.alive: List[int] = [int(i) for i in np.argsort(-self.score0, kind="stable")[:k]]
+        self.phases = max(1, math.ceil(math.log2(k))) if k > 1 else 1
+        self._queue: List[int] = []
+        self._phase = 0
+
+    def _sigma_q(self) -> np.ndarray:
+        """sigma of each root child's value from the mover's side, min-max rescaled to [0, 1]."""
+        r = self.root
+        sign = 1.0 if r.mover == int(ts.Player.US) else -1.0
+        q = np.array([sign * r.w[i] / r.n[i] if r.n[i] > 0 else sign * r.value_us
+                      for i in range(len(r.actions))])
+        lo, hi = float(q.min()), float(q.max())
+        q01 = (q - lo) / max(hi - lo, 1e-8)
+        return (self.cfg.gumbel_c_visit + max(r.n)) * self.cfg.gumbel_c_scale * q01
+
+    def _score(self) -> np.ndarray:
+        return self.score0 + self._sigma_q()
+
+    def next_action(self) -> int:
+        if not self._queue:
+            if self._phase > 0 and len(self.alive) > 1 and self._phase <= self.phases:
+                sc = self._score()
+                keep = max(1, len(self.alive) // 2)
+                self.alive = sorted(self.alive, key=lambda i: -sc[i])[:keep]
+            if self._phase < self.phases:
+                per = max(1, self.budget // (self.phases * len(self.alive)))
+                self._queue = [i for i in self.alive for _ in range(per)]
+            else:
+                self._queue = list(self.alive)
+            self._phase += 1
+        return self._queue.pop(0)
+
+    def pick(self) -> int:
+        sc = self._score()
+        return max(self.alive, key=lambda i: sc[i])
 
 
 def _half_round(state: ts.GameState) -> Tuple[int, int, int, int]:
@@ -261,14 +333,19 @@ class BatchedMCTS:
                 best_v, best_i = v, i
         return best_i
 
-    def _descend(self, root: _BNode) -> Tuple[List[Tuple[_BNode, int]], _BNode]:
-        """Walk to a leaf. Returns the path taken and the leaf reached (possibly unexpanded)."""
+    def _descend(self, root: _BNode,
+                 root_idx: Optional[int] = None) -> Tuple[List[Tuple[_BNode, int]], _BNode]:
+        """Walk to a leaf. Returns the path taken and the leaf reached (possibly unexpanded).
+        `root_idx` fixes the move taken at the root (a Gumbel root's schedule)."""
         path: List[Tuple[_BNode, int]] = []
         node = root
         while True:
             if node.terminal or not node.expanded or node.cutoff:
                 return path, node
-            idx = self._select(node)
+            if node is root and root_idx is not None:
+                idx = root_idx
+            else:
+                idx = self._select(node)
             path.append((node, idx))
             action = node.actions[idx]
             child = node.children.get(action)
@@ -314,7 +391,7 @@ class BatchedMCTS:
         counts, so a caller choosing a move can see the values and priors behind them."""
         cfg = self.cfg
         reuse = (cfg.reuse_subtree and not cfg.determinize and cfg.truncate_half_rounds == 0
-                 and keys is not None)
+                 and cfg.gumbel_k == 0 and keys is not None)
         # A concrete list, so the type checker can see the indexing below is guarded. `reuse`
         # already encodes `keys is not None`, but that narrowing does not survive the variable.
         key_list: List[object] = list(keys) if keys is not None else []
@@ -345,7 +422,8 @@ class BatchedMCTS:
                 continue
             # Root noise belongs to a fresh search. Re-applying it to an inherited tree would
             # perturb priors that its existing visit counts were already collected under.
-            if not was_inherited and cfg.dirichlet_frac > 0.0 and len(r.actions) > 1:
+            if (not was_inherited and cfg.dirichlet_frac > 0.0 and cfg.gumbel_k == 0
+                    and len(r.actions) > 1):
                 noise = self._np_rng.dirichlet([cfg.dirichlet_alpha] * len(r.actions))
                 f = cfg.dirichlet_frac
                 r.priors = [(1.0 - f) * pr + f * float(nz) for pr, nz in zip(r.priors, noise)]
@@ -357,18 +435,29 @@ class BatchedMCTS:
                      if (r is not None and not r.terminal and r.actions) else 0
                      for r in roots]
 
+        halving: List[Optional[_Halving]] = [
+            _Halving(r, cfg, remaining[i], self._np_rng)
+            if (cfg.gumbel_k > 0 and r is not None and not r.terminal and len(r.actions) > 1
+                and remaining[i] > 0) else None
+            for i, r in enumerate(roots)]
+
         while any(remaining):
             pending: List[Tuple[List[Tuple[_BNode, int]], _BNode]] = []
             for i, r in enumerate(roots):
                 if r is None or r.terminal or not r.actions or remaining[i] <= 0:
                     continue
                 remaining[i] -= 1
-                pending.append(self._descend(r))
+                h = halving[i]
+                pending.append(self._descend(r, h.next_action() if h is not None else None))
             # Every tree contributed at most one leaf, so a single batch completes the round.
             self._evaluate_batch([leaf for _, leaf in pending
                                   if not leaf.terminal and not leaf.expanded])
             for path, leaf in pending:
                 self._backup(path, leaf.value_us)
+
+        for r, h in zip(roots, halving):
+            if r is not None and h is not None:
+                r.gumbel_pick = h.pick()
 
         if reuse:
             for i, r in enumerate(roots):
@@ -426,7 +515,8 @@ class BatchedMCTS:
                 legal = np.flatnonzero(mask)
                 picks.append(int(legal[0]) if len(legal) else 0)
             else:
-                picks.append(int(r.actions[self._most_visited(r)]))
+                idx = r.gumbel_pick if r.gumbel_pick is not None else self._most_visited(r)
+                picks.append(int(r.actions[idx]))
         return picks
 
     @staticmethod
