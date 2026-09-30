@@ -39,15 +39,13 @@ def format_loss_causes(causes: Dict[str, int], total_losses: int) -> str:
 
 
 def run_head_to_head_report(
-    agent_a: PlayerAgent,
-    agent_b: PlayerAgent,
+    name_a: str,
+    name_b: str,
     matchup: Dict[str, Any],
     elo_ratings: Dict[str, float],
     elapsed_time: float,
 ) -> str:
     """Formats a detailed head-to-head match report for exactly two agents."""
-    name_a = agent_a.name
-    name_b = agent_b.name
     tot = matchup["total_games"]
     w_a = matchup["a_wins"]
     w_b = matchup["b_wins"]
@@ -159,6 +157,8 @@ def run_massive_tournament(
     opening: Optional[str] = None,
     workers: int = 1,
     shard_pairs: int = 10,
+    part: Optional[Tuple[int, int]] = None,
+    output_part: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Runs high-throughput round-robin tournament across all specified models.
 
@@ -170,6 +170,10 @@ def run_massive_tournament(
     `workers` > 1 splits every matchup into shards of `shard_pairs` game pairs and plays them in
     that many processes (tools/lib/parallel_tournament.py) instead of packing. The games are the
     same deals either way; see that module for what makes the split reproducible.
+
+    `part=(index, count)` plays only that part of the shards -- one machine's share of a
+    tournament spread over several -- and writes them to `output_part` instead of reporting.
+    `pool_tournament_parts` turns a complete set of parts into the tournament's report.
     """
     dev = resolve_device(device)
 
@@ -212,53 +216,43 @@ def run_massive_tournament(
 
     M = len(agents)
     model_names = [a.name for a in agents]
-
-    win_matrix = np.zeros((M, M), dtype=np.int32)
-    loss_matrix = np.zeros((M, M), dtype=np.int32)
-    draw_matrix = np.zeros((M, M), dtype=np.int32)
-    ussr_win_matrix = np.zeros((M, M), dtype=np.int32)
-    us_win_matrix = np.zeros((M, M), dtype=np.int32)
-    total_matrix = np.zeros((M, M), dtype=np.int32)
-
-    total_pairs = (M * (M - 1)) // 2
-    pair_idx = 0
+    matchups = [(i, j) for i in range(M) for j in range(i + 1, M)]
+    results: Dict[Tuple[int, int], Dict[str, Any]] = {}
     t_start = time.time()
-    matchup_details: Dict[str, Any] = {}
 
     def record(i: int, j: int, m_res: Dict[str, Any], pair_time: float) -> None:
-        nonlocal pair_idx
-        pair_idx += 1
-        agent_a = agents[i]
-        agent_b = agents[j]
-        matchup_key = f"{agent_a.name}_vs_{agent_b.name}"
-        matchup_details[matchup_key] = m_res
-
-        w_a = m_res["a_wins"]
-        w_b = m_res["b_wins"]
-        d = m_res["draws"]
-        tot = m_res["total_games"]
-
-        win_matrix[i, j] = w_a
-        win_matrix[j, i] = w_b
-        loss_matrix[i, j] = w_b
-        loss_matrix[j, i] = w_a
-        draw_matrix[i, j] = d
-        draw_matrix[j, i] = d
-        total_matrix[i, j] = tot
-        total_matrix[j, i] = tot
-
-        ussr_win_matrix[i, j] = m_res["a_wins_as_ussr"]
-        ussr_win_matrix[j, i] = m_res["a_losses_as_us"]
-        us_win_matrix[i, j] = m_res["a_wins_as_us"]
-        us_win_matrix[j, i] = m_res["a_losses_as_ussr"]
-
-        wr_a = (w_a / tot) * 100.0
+        results[(i, j)] = m_res
+        w_a, w_b, d, tot = m_res["a_wins"], m_res["b_wins"], m_res["draws"], m_res["total_games"]
         print(
-            f"[{pair_idx:2d}/{total_pairs:2d}] {agent_a.name:<25s} vs {agent_b.name:<25s} -> "
-            f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({wr_a:5.1f}% win) in {pair_time:5.1f}s"
+            f"[{len(results):2d}/{len(matchups):2d}] {model_names[i]:<25s} vs {model_names[j]:<25s} -> "
+            f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({(w_a / tot) * 100.0:5.1f}% win) in {pair_time:5.1f}s"
         )
 
-    matchups = [(i, j) for i in range(M) for j in range(i + 1, M)]
+    if part is not None:
+        from tools.lib.parallel_tournament import (plan_shards, run_shards, select_part,
+                                                   write_part)
+        if not output_part:
+            raise ValueError("a part of a tournament needs output_part to write its shards to")
+        mine = select_part(plan_shards(matchups, games_per_side, shard_pairs), *part)
+        print(f" Part {part[0] + 1} of {part[1]}: {len(mine)} shard(s) of {shard_pairs} pair(s)")
+        played = run_shards(
+            worker_specs, mine, games_per_side, max(1, workers), device=str(dev),
+            temperature=temperature, batch_chunk_size=batch_chunk_size,
+            track_choices=track_choices, capture_games=True, auto_advance=auto_advance,
+            on_shard_done=lambda r: print(
+                f"  shard {r.shard.pair}#{r.shard.index}: {r.result['a_wins']}W - "
+                f"{r.result['b_wins']}L - {r.result['draws']}D", flush=True))
+        config = {
+            "models": model_names, "matchups": [list(m) for m in matchups],
+            "games_per_side": games_per_side, "shard_pairs": shard_pairs,
+            "temperature": temperature, "batch_chunk_size": batch_chunk_size,
+            "track_choices": track_choices, "auto_advance": auto_advance,
+            "anchor_model": anchor_model, "anchor_elo": anchor_elo,
+        }
+        write_part(output_part, config, part, played, time.time() - t_start)
+        print(f"Saved part {part[0] + 1}/{part[1]} to: {output_part}")
+        return {"part": list(part), "shards": len(played)}
+
     if workers > 1:
         from tools.lib.parallel_tournament import run_matchups_parallel
 
@@ -292,7 +286,74 @@ def run_massive_tournament(
             for (i, j), m_res in zip(group, res):
                 record(i, j, m_res, share)
 
-    total_tournament_time = time.time() - t_start
+    return report_tournament(
+        model_names, results, games_per_side, temperature, time.time() - t_start,
+        anchor_model=anchor_model, anchor_elo=anchor_elo,
+        output_report=output_report, output_json=output_json)
+
+
+def pool_tournament_parts(
+    part_paths: List[str],
+    output_report: Optional[str] = None,
+    output_json: Optional[str] = None,
+    log_games: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The report of a tournament played in parts on several machines (`--part`), from their
+    part files. Refuses a set that is not exactly one tournament's shards."""
+    from tools.lib.parallel_tournament import merge_shards, pool_parts, write_games_log
+
+    config, shards, wall = pool_parts(part_paths)
+    print(f" Pooled {len(part_paths)} part(s): {len(shards)} shard(s), "
+          f"slowest part {wall:.1f}s")
+    if log_games:
+        write_games_log(log_games, shards)
+    merged = merge_shards(shards)
+    results = {(int(a), int(b)): merged[(int(a), int(b))] for a, b in config["matchups"]}
+    return report_tournament(
+        list(config["models"]), results, int(config["games_per_side"]),
+        float(config["temperature"]), wall,
+        anchor_model=str(config["anchor_model"]), anchor_elo=float(config["anchor_elo"]),
+        output_report=output_report, output_json=output_json)
+
+
+def report_tournament(
+    model_names: List[str],
+    results: Dict[Tuple[int, int], Dict[str, Any]],
+    games_per_side: int,
+    temperature: float,
+    total_tournament_time: float,
+    *,
+    anchor_model: str = "HeuristicBot",
+    anchor_elo: float = 1500.0,
+    output_report: Optional[str] = None,
+    output_json: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Elo, matrices and reports from each matchup's result, keyed by (row, column) index."""
+    M = len(model_names)
+    win_matrix = np.zeros((M, M), dtype=np.int32)
+    loss_matrix = np.zeros((M, M), dtype=np.int32)
+    draw_matrix = np.zeros((M, M), dtype=np.int32)
+    ussr_win_matrix = np.zeros((M, M), dtype=np.int32)
+    us_win_matrix = np.zeros((M, M), dtype=np.int32)
+    total_matrix = np.zeros((M, M), dtype=np.int32)
+    matchup_details: Dict[str, Any] = {}
+
+    for (i, j), m_res in results.items():
+        matchup_details[f"{model_names[i]}_vs_{model_names[j]}"] = m_res
+        w_a, w_b, d, tot = m_res["a_wins"], m_res["b_wins"], m_res["draws"], m_res["total_games"]
+        win_matrix[i, j] = w_a
+        win_matrix[j, i] = w_b
+        loss_matrix[i, j] = w_b
+        loss_matrix[j, i] = w_a
+        draw_matrix[i, j] = d
+        draw_matrix[j, i] = d
+        total_matrix[i, j] = tot
+        total_matrix[j, i] = tot
+        ussr_win_matrix[i, j] = m_res["a_wins_as_ussr"]
+        ussr_win_matrix[j, i] = m_res["a_losses_as_us"]
+        us_win_matrix[i, j] = m_res["a_wins_as_us"]
+        us_win_matrix[j, i] = m_res["a_losses_as_ussr"]
+
     total_games_played = np.sum(total_matrix) // 2
 
     # Compute Bradley-Terry MLE Elo ratings
@@ -300,8 +361,8 @@ def run_massive_tournament(
 
     # If exactly 2 models, print detailed head-to-head report
     if M == 2:
-        m_key = f"{agents[0].name}_vs_{agents[1].name}"
-        report_text = run_head_to_head_report(agents[0], agents[1], matchup_details[m_key], elo_ratings, total_tournament_time)
+        m_key = f"{model_names[0]}_vs_{model_names[1]}"
+        report_text = run_head_to_head_report(model_names[0], model_names[1], matchup_details[m_key], elo_ratings, total_tournament_time)
         print(report_text)
         if output_report:
             os.makedirs(os.path.dirname(os.path.abspath(output_report)), exist_ok=True)
@@ -489,6 +550,17 @@ def main():
                         help="Game pairs (one deal played from both sides) per shard with "
                              "--workers > 1. Results depend on this, not on --workers: at a fixed "
                              "value any number of workers plays the same games.")
+    parser.add_argument("--part", type=str, default=None, metavar="I/N",
+                        help="Play only part I of N (1-based) of the tournament's shards and write "
+                             "them to --output-part, for a tournament spread over N machines. "
+                             "Every part must use the same entrants, --games-per-side, "
+                             "--shard-pairs, temperature and chunk size; --pool-parts checks it.")
+    parser.add_argument("--output-part", type=str, default=None,
+                        help="Where --part writes its shards (JSON).")
+    parser.add_argument("--pool-parts", nargs="+", default=None, metavar="PART_JSON",
+                        help="Report a tournament from the part files of all N --part runs, "
+                             "without playing a game. Refuses a set that misses or repeats a "
+                             "shard. Honours --output-report, --output-json and --log-games.")
     parser.add_argument("--track-choices", action="store_true", default=False, help="Track and report micro-actions with exactly 1 valid choice")
     parser.add_argument("--log-games", type=str, default=None, help="Path to save per-game JSONL execution logs")
     parser.add_argument("--opening", type=str, default=None,
@@ -508,6 +580,23 @@ def main():
                              "a run with it is not comparable with a run without.")
 
     args = parser.parse_args()
+
+    if args.pool_parts:
+        pool_tournament_parts(args.pool_parts, output_report=args.output_report,
+                              output_json=args.output_json, log_games=args.log_games)
+        return
+
+    part: Optional[Tuple[int, int]] = None
+    if args.part:
+        try:
+            i_str, n_str = args.part.split("/")
+            part = (int(i_str) - 1, int(n_str))
+        except ValueError:
+            parser.error(f"--part must look like I/N, got {args.part!r}")
+        if not 0 <= part[0] < part[1]:
+            parser.error(f"--part {args.part}: I must be in 1..N")
+        if not args.output_part:
+            parser.error("--part needs --output-part")
 
     models = list(args.models) if args.models else []
     if args.checkpoint_dir and os.path.exists(args.checkpoint_dir):
@@ -550,6 +639,8 @@ def main():
         auto_advance=args.auto_advance,
         workers=args.workers if args.workers > 0 else (os.cpu_count() or 1),
         shard_pairs=args.shard_pairs,
+        part=part,
+        output_part=args.output_part,
     )
 
 

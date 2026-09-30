@@ -498,6 +498,22 @@ sampled, it draws from its own generator, so it matches in distribution only.
 hf download mihaild/deepstruggle E5-11-43_560M.onnx --local-dir data/checkpoints
 ```
 
+### E. Across machines: `--part` and `--pool-parts`
+`--part I/N --output-part part.json` plays every N-th shard of the tournament (starting at the
+I-th) and writes their raw results and game logs; `--pool-parts part*.json` checks that the files
+are one tournament's parts and cover each shard exactly once, merges them, and writes the usual
+report, JSON and `--log-games`. Since a shard's games depend only on the shard, the pooled
+tournament equals one machine playing all of it -- every part must be given the same entrants,
+`--games-per-side` and `--shard-pairs`, and pooling refuses parts that were not.
+
+```bash
+# on machine k of 4
+tools/tournament.py --models heuristic_mcts <model.onnx> --games-per-side 200 --device cpu \
+  --workers 0 --shard-pairs 1 --part k/4 --output-part parts/part-k.json
+# anywhere, once all four are in
+tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/pooled.json
+```
+
 ---
 
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)
