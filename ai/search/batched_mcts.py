@@ -274,6 +274,18 @@ class BatchedMCTS:
         `keys` identifies each position's stream so its subtree can be carried forward by
         `advance()`. Required only when `reuse_subtree` is set.
         """
+        out: List[Tuple[List[int], np.ndarray]] = []
+        for r in self._search(states, keys):
+            if r is None or r.terminal or not r.actions:
+                out.append(([], np.zeros(0)))
+            else:
+                out.append((r.actions, np.array(r.n, dtype=float)))
+        return out
+
+    def _search(self, states: Sequence[ts.GameState],
+                keys: Optional[Sequence[object]] = None) -> List[Optional[_BNode]]:
+        """The search behind `run`, returning each position's root node rather than its visit
+        counts, so a caller choosing a move can see the values and priors behind them."""
         cfg = self.cfg
         reuse = cfg.reuse_subtree and not cfg.determinize and keys is not None
         # A concrete list, so the type checker can see the indexing below is guarded. `reuse`
@@ -331,15 +343,11 @@ class BatchedMCTS:
             for path, leaf in pending:
                 self._backup(path, leaf.value_us)
 
-        out: List[Tuple[List[int], np.ndarray]] = []
-        for i, r in enumerate(roots):
-            if r is None or r.terminal or not r.actions:
-                out.append(([], np.zeros(0)))
-            else:
-                out.append((r.actions, np.array(r.n, dtype=float)))
-            if reuse and r is not None:
-                self._trees[key_list[i]] = r
-        return out
+        if reuse:
+            for i, r in enumerate(roots):
+                if r is not None:
+                    self._trees[key_list[i]] = r
+        return roots
 
     def advance(self, key: object, action: int, chance_intervened: bool) -> None:
         """Carry this stream's tree down to the child under `action`, or drop it.
@@ -384,17 +392,40 @@ class BatchedMCTS:
 
     def best_actions(self, states: Sequence[ts.GameState]) -> List[int]:
         """Most-visited action per position; falls back to the first legal action."""
-        res = self.run(states)
         picks: List[int] = []
-        for (actions, visits), st in zip(res, states):
-            if not actions:
+        for r, st in zip(self._search(states), states):
+            if r is None or r.terminal or not r.actions:
                 mask = np.asarray(ActionEncoder.get_legal_mask(st))
                 legal = np.flatnonzero(mask)
                 picks.append(int(legal[0]) if len(legal) else 0)
             else:
-                picks.append(int(actions[max(range(len(visits)),
-                                                key=visits.__getitem__)]))
+                picks.append(int(r.actions[self._most_visited(r)]))
         return picks
+
+    @staticmethod
+    def _most_visited(root: _BNode) -> int:
+        """Index of the move to play: most visits, then the better mean value for the mover,
+        then the higher prior.
+
+        Visit counts tie often at small budgets -- at two simulations whenever the favourite's
+        first visit sends the second to the runner-up -- and resolving a tie by list position
+        played whichever move the engine happened to enumerate first. A 2-simulation search
+        scored 47.7% against its own network at 512 games a side, where it should have matched
+        it. With the value, then the prior, breaking ties, one simulation plays exactly the
+        network's argmax.
+        """
+        us_moves = root.mover == int(ts.Player.US)
+
+        def key(i: int) -> Tuple[float, float, float]:
+            n = root.n[i]
+            if n > 0:
+                q = root.w[i] / n
+                q = q if us_moves else -q
+            else:
+                q = -math.inf
+            return (n, q, root.priors[i])
+
+        return max(range(len(root.actions)), key=key)
 
     def reset(self) -> None:
         self._rng = random.Random(self.cfg.seed)
