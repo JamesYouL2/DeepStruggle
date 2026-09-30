@@ -15,6 +15,9 @@ This directory contains pure bot client implementations, baseline heuristics, an
 - [`neural_bot.py`](neural_bot.py): `NeuralBot` deep reinforcement learning player driven by `ColdWarNet` PyTorch checkpoints. The architecture (V1 or V2) is detected from the weights; a checkpoint from a retired architecture is refused outright by `tools.lib.player_agent.reject_retired_architecture` rather than partially loaded.
 - [`exploratory_bot.py`](exploratory_bot.py): `ExploratoryBot` agent designed to explore diverse decision paths, Space Race, Realignments, and Coups.
 - [`strategic_bot.py`](strategic_bot.py): `StrategicBot` high-level strategic agent prioritizing DEFCON-2 containment, coups, realignments, and Space Race safety with rich strategy/commentary generation.
+- [`doctrine/`](doctrine/): `Doctrine`, the struggler project's strategic bot ported onto
+  ts_engine (section 3). `DoctrineAgent` is the tournament `PlayerAgent` (`load_agent("doctrine")`);
+  `DoctrineBot` the match-loop bot (`play_match.py --us doctrine`).
 - [`event_heavy_bot.py`](event_heavy_bot.py): `EventHeavyBot` agent maximizing card event play and event-first timing.
 - [`human_bot.py`](human_bot.py): `HumanBot` interactive terminal CLI player prompting the user for numbered choices.
 
@@ -37,7 +40,62 @@ PYTHONPATH=. .venv/bin/python tools/play_match.py --us heuristic --ussr strategi
 
 ---
 
-## 3. Mandatory Documentation Maintenance Rule for Agents
+## 3. Doctrine
+
+A port of struggler's `StrategicPlayer` (`src/struggler/bots/strategic/`), aiming at comparable
+playing strength rather than decision-for-decision fidelity.
+
+* `evaluator.py` -- struggler's board value, ported term for term with its shipped default
+  weights and its fitted per-country weights (`data/fitted_country_weights.json`, renamed to
+  ts_engine's country names). `tests/training/test_doctrine.py` pins it to struggler's own
+  output on a fixed board, to 1e-12.
+* `schedule.py` -- each region's future scoring mass (struggler's `schedule.py` and
+  `public_cards.py`), with a simpler deck walk. Public information only.
+* `policy.py` -- the search. struggler prices options by hand and runs events in a copy of its
+  Python engine; here the C++ engine is the sandbox. Each option is played out on a clone of a
+  **determinized** state (the opponent's hidden cards and the deck reshuffled, so nothing hidden
+  is read) to the end of the action round, then valued. Card, play-mode, Ops-mode and event-branch
+  choices are searched; influence points and targets are chosen greedily, point by point, as
+  struggler does; the first die on a line is averaged over its faces, later ones take the middle
+  roll.
+
+* The DEFCON whole-hand survival search, reduced: at DEFCON 3 or below each card in hand is tried
+  at DEFCON 2 and classed as safe, survivable only by the Space Race, or fatal (every play a
+  certain loss). A card choice whose kept hand cannot fill the rounds left -- counting each space
+  attempt once, so one attempt cannot dispose of two space-only cards -- is charged the game (all
+  of it at DEFCON 2, struggler's measured 0.43 of it at 3).
+* One value scale: a finished game is +/- 40 VP at the decision's VP price, and an ongoing
+  position's raw board value is squashed strictly inside that (`swing * 0.999 * tanh(raw /
+  swing)`), so a win or loss always outranks any ongoing board. The raw value alone is unbounded
+  and was measured past the swing.
+
+Fixed from the 2026-09-28 port audit (`docs/notes/codex/2026-09-28-doctrine-port-audit.md` on
+the `docs/doctrine-port-audit-2026-09-28` branch), each pinned by a test in
+`tests/training/test_doctrine.py` that fails with its fix reverted: F1 the value scale above; F2
+the joint space-attempt accounting; F3 the one-Op price, whose candidates are now read from the
+root board; F4 the scoring schedule, which now counts the reshuffle deal's draws from the recycled
+pile; F5 the schedule's unseen-card odds, which no longer count opponent cards we have seen.
+
+Measured with `tools/tournament.py` (2026-09-29): 40-0 against HeuristicBotV2 (20 games a side)
+and 48-2 against HeuristicMCTS16 (25 a side; it searches the true state, so it sees this bot's
+hand). About 20 s a game on one core.
+
+Not yet ported: the one-ply reply look-ahead, the hand-value terms (holding a card, Ask Not,
+Missile Envy targets) and the Military Ops discount.
+
+```bash
+PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us doctrine --ussr heuristic
+PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py --models doctrine heuristic_v2 \
+  --games-per-side 20 --device cpu --workers 0
+```
+
+`--workers 0` plays the games on every core. `DoctrineAgent.reseed` restarts its
+determinization stream, which is what lets a split tournament play the same games whatever the
+number of workers (`tools/lib/parallel_tournament.py`).
+
+---
+
+## 4. Mandatory Documentation Maintenance Rule for Agents
 
 > [!IMPORTANT]
 > **Keep Bot Documentation Synchronized**:

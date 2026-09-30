@@ -35,6 +35,7 @@ graph TD
         Random["RandomBot Baseline"]
         Exploratory["ExploratoryBot Baseline"]
         Strategic["StrategicBot Realist Agent"]
+        Doctrine["Doctrine (struggler's strategic bot on ts_engine)"]
         EventHeavy["EventHeavyBot Agent"]
         Human["HumanBot Interactive CLI"]
         BaseBot --> Heuristic
@@ -42,6 +43,7 @@ graph TD
         BaseBot --> NeuralBotClient
         BaseBot --> Exploratory
         BaseBot --> Strategic
+        BaseBot --> Doctrine
         BaseBot --> EventHeavy
         BaseBot --> Human
     end
@@ -174,6 +176,7 @@ graph TD
 │   │   ├── tournament_evaluator.py # Matchup runner & loss cause classifier
 │   │   ├── self_play.py        # Self-play simulation & .tslog.json recorder
 │   │   ├── batch_tournament.py # Vectorized batch tournament runner & Bradley-Terry MLE
+│   │   ├── parallel_tournament.py # Tournament shards over worker processes (--workers)
 │   │   ├── scoring_formatter.py # Regional scoring audit calculation helper
 │   │   └── checkpoint_utils.py # Checkpoint scanning and architecture detection
 │   └── scripts/                # Shell automation scripts
