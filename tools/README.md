@@ -117,14 +117,24 @@ How they are trained:
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
 `--aux-card-events W` (P30, default 0 = off) adds a per-card head on the trunk. For every card in the
-mover's hand it predicts what the card's event would do on this board (VP, DEFCON, the six regional
-margins, battlegrounds and influence of each side) and what its Ops could take (countries and
-battlegrounds within reach, best coup chance). The engine labels a sampled fraction of decisions
-(`--aux-card-sample-frac`, default 0.005) at the moment they are made (`ai/training/card_event_targets.py`).
-The loss is masked MSE on fixed-scale standardised targets, in its own optimiser step every
-`--aux-card-min-batch` (2048) labelled positions. The head predicts all 110 cards; the loss reads the
-held cards' slots, so card identity sits in the output weights and the board must come through the trunk.
-Metrics: `card_aux_loss`, `card_aux_r2` (explained share of the standardised variance), `card_aux_n`,
+mover's hand it predicts 17 numbers (`ai/training/card_event_targets.py`):
+
+* **Ops reach (5):** the card's effective Ops with every modifier the engine applies (Red Scare/Purge,
+  Containment/Brezhnev, the China Card in Asia, Vietnam Revolts -- a replica of
+  `Operations::combine_ops`, checked against the engine's own grants in `tests/training/test_card_event_aux.py`);
+  the countries and battlegrounds it could bring under control (two Ops a point while the opponent
+  controls); the best coup chance with SALT and Death Squads, excluding coups that lose the game.
+* **Event outcome (12):** what its event would do on this board -- VP, DEFCON, the six regional margins,
+  battlegrounds and influence of each side. Events with choices are played out on a clone, each choice
+  taken greedily by whoever makes it, for their own best fixed score.
+
+The engine labels a sampled fraction of decisions (`--aux-card-sample-frac`, default 0.0005 -- a label costs
+~2 ms of Python, so this is ~10% of the time at 96k steps/s) into a FIFO buffer (`--aux-card-buffer`, 65,536).
+Once `--aux-card-min-batch` positions are in it, every iteration takes `--aux-card-steps` (4) optimiser steps on
+minibatches of `--aux-card-batch` (512) drawn from it. The loss is masked MSE on fixed-scale standardised
+targets. The head predicts all 110 cards; the loss reads the held cards' slots, so card identity sits in the
+output weights and the board must come through the trunk.
+Metrics: `card_aux_loss`, `card_aux_r2` (explained share of the standardised variance), `card_aux_labelled`,
 `card_aux_label_s` (seconds spent labelling per iteration -- the throughput cost). Why:
 `research/log/P30_card_board_targets.md`; probe the result with `tools/scripts/card_board_probe.py --frozen`.
 

@@ -576,11 +576,19 @@ def build_parser() -> argparse.ArgumentParser:
                              "margins, battlegrounds, influence) and what its Ops could take -- labelled "
                              "by the engine at the decision (ai.training.card_event_targets); masked MSE "
                              "on standardised targets. 0, the default, builds no head. Ladder only.")
-    parser.add_argument("--aux-card-sample-frac", type=float, default=0.005,
-                        help="Fraction of decisions labelled for --aux-card-events (each costs engine "
-                             "calls in Python; watch card_aux_label_s against the iteration time).")
+    parser.add_argument("--aux-card-sample-frac", type=float, default=0.0005,
+                        help="Fraction of decisions labelled for --aux-card-events. A label costs ~2 ms "
+                             "of engine calls in Python, so 0.0005 is ~50 a second at 96k steps/s, ~10%% "
+                             "of the time; watch card_aux_label_s against the iteration time.")
     parser.add_argument("--aux-card-min-batch", type=int, default=2048,
-                        help="Labelled positions to gather before one --aux-card-events step.")
+                        help="Labelled positions in the buffer before --aux-card-events steps begin.")
+    parser.add_argument("--aux-card-buffer", type=int, default=65536,
+                        help="FIFO buffer of labelled positions that the --aux-card-events steps draw from.")
+    parser.add_argument("--aux-card-steps", type=int, default=4,
+                        help="--aux-card-events optimiser steps per iteration, each on one minibatch "
+                             "drawn from the buffer.")
+    parser.add_argument("--aux-card-batch", type=int, default=512,
+                        help="Positions per --aux-card-events minibatch.")
     parser.add_argument("--ema-weights", type=float, default=0.0,
                         help="Keep an exponential moving average of the weights with this time "
                              "constant in env steps (0, the default, keeps none). Snapshots, pool "
@@ -843,6 +851,9 @@ def main():
             aux_card_coef=args.aux_card_events,
             aux_card_sample_frac=args.aux_card_sample_frac,
             aux_card_min_batch=args.aux_card_min_batch,
+            aux_card_buffer=args.aux_card_buffer,
+            aux_card_steps=args.aux_card_steps,
+            aux_card_batch=args.aux_card_batch,
             lr_schedule=args.lr_schedule,
             lr_schedule_start=args.lr_schedule_start,
             lr_schedule_every=args.lr_schedule_every,

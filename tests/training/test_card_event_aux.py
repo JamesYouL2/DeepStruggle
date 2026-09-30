@@ -12,8 +12,9 @@ import ts_engine as ts
 
 from ai.models.coldwar_net_v2 import create_like
 from ai.models.ladder_net import CARD_AUX_DIM, create_ladder_net, ladder_config_from_state_dict
-from ai.training.card_event_targets import (AUX_DIM, AUX_MEAN, AUX_SCALE, CARD_OFFSET, GLOBAL_OFFSET, SCORING,
-                                            aux_label, held_cards, label)
+from ai.training.card_event_targets import (AUX_DIM, AUX_MEAN, AUX_SCALE, BREZHNEV, CARD_OFFSET, CONTAINMENT,
+                                            GLOBAL_OFFSET, N_T2, OPS, PURGE_US, PURGE_USSR, SCORING, VIETNAM,
+                                            aux_label, effective_ops, held_cards, label)
 from ai.training.nash_pg import NashPGTrainer
 from bindings.ts_env import TsVectorizedEnv
 
@@ -28,7 +29,7 @@ M2D: Dict[str, Any] = dict(
 
 
 def test_head_is_absent_by_default_and_recovered_from_the_weights() -> None:
-    assert CARD_AUX_DIM == AUX_DIM
+    assert CARD_AUX_DIM == AUX_DIM == N_T2 + 12
     plain = create_ladder_net("cpu", **M2D)
     assert not plain.card_aux and not any(k.startswith("card_aux_") for k in plain.state_dict())
     net = create_ladder_net("cpu", **{**M2D, "card_aux": True})
@@ -80,6 +81,46 @@ def test_labels_cover_the_hand_and_the_scoring_vp_follows_the_regional_margin() 
     assert np.corrcoef(xs, ys)[0, 1] > 0.9           # scoring now pays the margin, from the mover's side
 
 
+def test_effective_ops_is_the_engines_grant_under_every_modifier() -> None:
+    """At real card plays, every combination of the five Ops flags: the replica's Ops (with the
+    regional bonuses granted up front, as `Operations::grant_ops_for_card` does) must be the budget
+    the engine hands the player on choosing influence."""
+    env = TsVectorizedEnv(num_envs=32, base_seed=4)
+    obs, masks, _ = env.reset_all()
+    rng = np.random.default_rng(1)
+    cases: List[tuple] = []
+    for _ in range(3000):
+        dp = np.asarray(env.runner.get_decision_players())
+        mk = np.asarray(masks)
+        for i in np.flatnonzero(dp != 0):
+            st = env.runner.get_state(int(i))
+            c = st.ctx()
+            if (int(c.decision_type) == 2 and mk[i][112] and int(c.pending_op_card) > 0
+                    and int(st.current_phase) == int(ts.Phase.ACTION_ROUND)):
+                cases.append((st.clone(), ts.Player(int(dp[i]))))
+        if len(cases) >= 60:
+            break
+        obs, masks, *_ = env.step(np.array([int(rng.choice(np.flatnonzero(m))) for m in mk]))
+    assert len(cases) >= 60
+    bits = [CONTAINMENT, BREZHNEV, PURGE_US, PURGE_USSR, VIETNAM]
+    compared, changed = 0, 0
+    for st, p in cases:
+        card = int(st.ctx().pending_op_card)
+        for combo in range(32):
+            x = st.clone()
+            pe = int(x.persistent_effects)
+            for k, b in enumerate(bits):
+                pe = (pe | b) if combo >> k & 1 else (pe & ~b)
+            x.persistent_effects = pe
+            if not ts.Engine.try_step_flat(x, 112, True, False) or int(x.ctx().pending_op_card) != card:
+                continue
+            want = effective_ops(x, card, p, True, True)
+            assert int(x.ctx().pending_ops_value) == want, (card, combo)
+            compared += 1
+            changed += want != int(OPS[card])
+    assert compared >= 1000 and changed >= 100          # the modifiers were exercised, not just the base
+
+
 def test_the_update_lowers_its_loss_on_a_fixed_batch() -> None:
     torch.manual_seed(0)
     net = create_ladder_net("cpu", **{**M2D, "card_aux": True})
@@ -95,14 +136,15 @@ def test_the_update_lowers_its_loss_on_a_fixed_batch() -> None:
     y[~m] = 0.0
 
     def fake() -> SimpleNamespace:
-        return SimpleNamespace(active_net=net, optimizer=opt, batch_size=32, max_grad_norm=10.0,
-                               aux_card_coef=1.0, aux_card_min_batch=n, _card_label_seconds=0.0,
+        return SimpleNamespace(active_net=net, optimizer=opt, max_grad_norm=10.0, aux_card_coef=1.0,
+                               aux_card_min_batch=n, aux_card_steps=2, aux_card_batch=32,
+                               _card_label_seconds=0.0, _card_labelled=n,
                                _card_ready=[(obs[i], cards[i], y[i], m[i]) for i in range(n)])
 
     first = _update(fake())
-    for _ in range(30):
+    for _ in range(40):
         last = _update(fake())
-    assert first["card_aux_n"] == n and last["card_aux_loss"] < first["card_aux_loss"]
+    assert first["card_aux_n"] == 2 * 32 and last["card_aux_loss"] < first["card_aux_loss"]
     small = fake()
     small._card_ready = small._card_ready[:10]
     assert "card_aux_n" not in _update(small)

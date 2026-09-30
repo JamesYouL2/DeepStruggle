@@ -307,8 +307,11 @@ class BaseNashPGTrainer:
         aux_sample_frac: float = 0.1,
         aux_min_batch: int = 4096,
         aux_card_coef: float = 0.0,
-        aux_card_sample_frac: float = 0.005,
+        aux_card_sample_frac: float = 0.0005,
         aux_card_min_batch: int = 2048,
+        aux_card_buffer: int = 65536,
+        aux_card_steps: int = 4,
+        aux_card_batch: int = 512,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
@@ -520,12 +523,20 @@ class BaseNashPGTrainer:
         #: P30, --aux-card-events: for every card in the mover's hand, what its event would do on
         #: this board and what its Ops could take (ai.training.card_event_targets), predicted by a
         #: per-card head on the trunk (LadderNet.forward_card_aux). Labelled by the engine at the
-        #: moment of the decision, so a sampled position (--aux-card-sample-frac) is ready at once;
-        #: the labelled batch trains in its own step once --aux-card-min-batch are ready.
+        #: moment of the decision, so a sampled position (--aux-card-sample-frac) is ready at once.
+        #: Labelling costs engine calls in Python, so few positions are labelled; they go into a
+        #: FIFO buffer (--aux-card-buffer) and, once --aux-card-min-batch are in it, every iteration
+        #: takes --aux-card-steps optimiser steps on minibatches of --aux-card-batch drawn from it.
+        #: Reusing the buffer is the point: P29 bet 2 trained each labelled batch once, a few hundred
+        #: steps in a run, and its head never reached the trunk.
         self.aux_card_coef = float(aux_card_coef)
         self.aux_card_sample_frac = float(aux_card_sample_frac)
         self.aux_card_min_batch = int(aux_card_min_batch)
+        self.aux_card_buffer = int(aux_card_buffer)
+        self.aux_card_steps = int(aux_card_steps)
+        self.aux_card_batch = int(aux_card_batch)
         self._card_ready: List[Tuple[Any, np.ndarray, np.ndarray, np.ndarray]] = []
+        self._card_labelled = 0
         self._card_label_seconds = 0.0
         if self.aux_card_coef > 0.0 and not getattr(self.active_net, "card_aux", False):
             raise ValueError("--aux-card-events needs a network built with the card-event head")
@@ -772,42 +783,47 @@ class BaseNashPGTrainer:
             lab = aux_label(st, ts.Player(int(dp[i])), o_np[j], int(np.random.randint(1, 1 << 30)))
             if lab is not None:
                 self._card_ready.append((o16[j], *lab))
+                self._card_labelled += 1
+        if len(self._card_ready) > self.aux_card_buffer:
+            del self._card_ready[:len(self._card_ready) - self.aux_card_buffer]
         self._card_label_seconds += time.perf_counter() - t0
 
     def _card_aux_update(self) -> Dict[str, float]:
-        """Card-event target: one step on the labelled positions, masked MSE on the standardised
-        targets at the held cards."""
+        """Card-event target: --aux-card-steps optimiser steps, each on a minibatch drawn from the
+        buffer; masked MSE on the standardised targets at the held cards."""
         out: Dict[str, float] = {"card_aux_ready": float(len(self._card_ready)),
+                                 "card_aux_labelled": float(self._card_labelled),
                                  "card_aux_label_s": float(self._card_label_seconds)}
         self._card_label_seconds = 0.0
         n = len(self._card_ready)
-        if n < max(1, self.aux_card_min_batch):
+        if n < max(1, self.aux_card_min_batch) or self.aux_card_steps <= 0:
             return out
-        recs, self._card_ready = self._card_ready, []
-        dev = recs[0][0].device
-        obs = torch.stack([r[0] for r in recs]).float()
-        cards = torch.from_numpy(np.stack([r[1] for r in recs]).astype(np.int64)).to(dev)
-        y = torch.from_numpy(np.stack([r[2] for r in recs])).to(dev)
-        m = torch.from_numpy(np.stack([r[3] for r in recs])).to(dev)
-        n_lab = float(m.sum())
         net = cast(Any, self.active_net)
         net.train()
-        self.optimizer.zero_grad(set_to_none=True)
-        se_sum = 0.0
-        for k in range(0, n, self.batch_size):
-            sl = slice(k, k + self.batch_size)
-            pred = net.forward_card_aux(obs[sl]).float()                       # (b, 110, D)
-            idx = (cards[sl] - 1).clamp_min(0).unsqueeze(-1).expand(-1, -1, pred.shape[-1])
+        se_sum, lab_sum = 0.0, 0.0
+        for _ in range(self.aux_card_steps):
+            pick = np.random.randint(0, n, size=min(self.aux_card_batch, n))
+            recs = [self._card_ready[int(k)] for k in pick]
+            dev = recs[0][0].device
+            obs = torch.stack([r[0] for r in recs]).float()
+            cards = torch.from_numpy(np.stack([r[1] for r in recs]).astype(np.int64)).to(dev)
+            y = torch.from_numpy(np.stack([r[2] for r in recs])).to(dev)
+            m = torch.from_numpy(np.stack([r[3] for r in recs])).to(dev)
+            pred = net.forward_card_aux(obs).float()                           # (b, 110, D)
+            idx = (cards - 1).clamp_min(0).unsqueeze(-1).expand(-1, -1, pred.shape[-1])
             g = torch.gather(pred, 1, idx)                                     # (b, 12, D)
-            se = ((g - y[sl]) ** 2 * m[sl]).sum()
+            n_lab = float(m.sum())
+            se = ((g - y) ** 2 * m).sum()
+            self.optimizer.zero_grad(set_to_none=True)
             (self.aux_card_coef * se / max(1.0, n_lab)).backward()
+            nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+            self.optimizer.step()
             se_sum += float(se.detach())
-        nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
-        self.optimizer.step()
+            lab_sum += n_lab
         net.eval()
         # the targets are standardised, so 1 - mse is the explained share of their variance
-        out.update({"card_aux_n": float(n), "card_aux_loss": se_sum / max(1.0, n_lab),
-                    "card_aux_r2": 1.0 - se_sum / max(1.0, n_lab)})
+        out.update({"card_aux_n": float(self.aux_card_steps * min(self.aux_card_batch, n)),
+                    "card_aux_loss": se_sum / max(1.0, lab_sum), "card_aux_r2": 1.0 - se_sum / max(1.0, lab_sum)})
         return out
 
     def _aux_update(self) -> Dict[str, float]:

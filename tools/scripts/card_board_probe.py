@@ -49,11 +49,11 @@ if _root not in sys.path:
 
 from ai.models.ladder_net import create_ladder_net  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
-from tools.scripts.card_board_targets import (CARD_OFFSET, CARD_W, GLOBAL_OFFSET, N_CARDS, N_COUNTRIES,  # noqa: E402
-                                              BOARD_W, SCORING, T2_NAMES, T4_NAMES)
+from ai.training.card_event_targets import (BOARD_W, CARD_OFFSET, CARD_W, GLOBAL_OFFSET, N_CARDS,  # noqa: E402
+                                            N_COUNTRIES, N_T2, SCORING, T2_NAMES, T4_NAMES)
 from tools.scripts.trunk_state_probe import auc  # noqa: E402
 
-D2, D4 = 4, 12
+D2, D4 = N_T2, 12
 D = D2 + 1 + D4
 SHALLOW: Dict[str, Any] = {
     "input_mode": "grouped", "aggregation": "flatten", "entity_dim": 16, "entity_proj_dim": 256,

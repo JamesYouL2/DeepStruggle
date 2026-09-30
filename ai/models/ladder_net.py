@@ -37,9 +37,9 @@ from bindings.action_encoder import ActionEncoder
 
 #: Countries the ownership head predicts: all 84 (P29 bet 2).
 AUX_OWN_COUNTRIES = 84
-#: outputs per card of the card-event head: 4 ops-arithmetic + 12 event-outcome targets
+#: outputs per card of the card-event head: 5 Ops-reach + 12 event-outcome targets
 #: (ai.training.card_event_targets.AUX_DIM; restated here so the model does not import the engine).
-CARD_AUX_DIM = 16
+CARD_AUX_DIM = 17
 #: How the observation is read before the trunk.
 INPUT_MODES: Tuple[str, ...] = ("flat", "grouped", "entity")
 #: How per-entity tokens become a fixed-size vector. Only meaningful for `input_mode="entity"`.

@@ -114,8 +114,11 @@ _BEFORE_RECORDED = {
     "aux_min_batch": lambda meta: 4096,
     # P30 (2026-09-30): no card-event target before it existed.
     "aux_card_events": lambda meta: 0.0,
-    "aux_card_sample_frac": lambda meta: 0.005,
+    "aux_card_sample_frac": lambda meta: 0.0005,
     "aux_card_min_batch": lambda meta: 2048,
+    "aux_card_buffer": lambda meta: 65536,
+    "aux_card_steps": lambda meta: 4,
+    "aux_card_batch": lambda meta: 512,
     # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
     # below as "unrecorded" for older runs and diffs as the default.
 }
