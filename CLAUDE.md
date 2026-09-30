@@ -18,16 +18,18 @@ The AI, simulation engine, web workbench, and training infrastructure for a Delu
 ## Build & environment setup
 
 ```bash
-# Python venv — requirements.txt is the source of truth for dependencies
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+# Python venv (uv) — requirements.txt is the source of truth for dependencies. --managed-python
+# because a distro Python often lacks the headers the extension compiles against; cmake and ninja
+# come from the venv too, so no system make is needed (configure with `cmake -G Ninja` below).
+uv venv --managed-python --python 3.13 .venv && source .venv/bin/activate
+uv pip install -r requirements.txt cmake ninja
 
 # Web UI
 cd web/ui && npm install && npm run build && cd ../..
 
 # C++ engine + nanobind extension (root CMake orchestrates engine/ and bindings/)
 # Needs clang: apt-get install clang   (no root: tools/scripts/install_clang_userspace.sh)
-cmake -B build/release -S . -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3
+cmake -G Ninja -B build/release -S . -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3
 cmake --build build/release -j
 ```
 

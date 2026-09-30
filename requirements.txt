@@ -1,7 +1,7 @@
 # Python dependencies for ts_ai.
 #
-#     python3 -m venv .venv && source .venv/bin/activate
-#     pip install -r requirements.txt
+#     uv venv --managed-python --python 3.13 .venv && source .venv/bin/activate
+#     uv pip install -r requirements.txt
 #
 # The versions are the ones the project is developed and tested against, floored rather than
 # pinned: a newer patch release is fine, an older one may not be. `ts_engine` itself is not here
