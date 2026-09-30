@@ -202,3 +202,51 @@ def test_a_file_that_is_not_an_export_is_refused(exported: Dict[str, str], tmp_p
     onnx.save_model(proto, str(bare))
     with pytest.raises(ValueError, match="not a ts-onnx-v1 export"):
         OnnxAgent(str(bare))
+
+
+# -- parts: one tournament over several machines ---------------------------------------------
+
+def _play_parts(tmp_path, count: int, config: Dict[str, Any]) -> List[str]:
+    from tools.lib.parallel_tournament import run_shards, select_part, write_part
+
+    shards = plan_shards([(0, 1)], games_per_side=4, shard_pairs=1)
+    paths = []
+    for i in range(count):
+        played = run_shards(["random", "heuristic"], select_part(shards, i, count), 4, workers=1,
+                            device="cpu", capture_games=True)
+        path = str(tmp_path / f"part{i}.json")
+        write_part(path, config, (i, count), played, 1.0)
+        paths.append(path)
+    return paths
+
+
+_CONFIG: Dict[str, Any] = {"models": ["RandomBot", "HeuristicBot"], "matchups": [[0, 1]],
+                           "games_per_side": 4, "shard_pairs": 1, "temperature": 0.1}
+
+
+def test_pooled_parts_equal_one_machine_playing_every_shard(tmp_path) -> None:
+    from tools.lib.parallel_tournament import merge_shards, pool_parts, write_games_log
+
+    paths = _play_parts(tmp_path, 3, _CONFIG)
+    config, shards, _ = pool_parts(paths)
+    assert config == _CONFIG
+    whole = run_matchups_parallel(["random", "heuristic"], [(0, 1)], games_per_side=4,
+                                  workers=1, shard_pairs=1, device="cpu",
+                                  log_games=str(tmp_path / "whole.jsonl"))
+    _assert_same_result(merge_shards(shards)[(0, 1)], whole[(0, 1)])
+    write_games_log(str(tmp_path / "pooled.jsonl"), shards)
+    assert _log(str(tmp_path / "pooled.jsonl")) == _log(str(tmp_path / "whole.jsonl"))
+
+
+def test_pooling_refuses_a_missing_or_repeated_shard_or_a_different_tournament(tmp_path) -> None:
+    from tools.lib.parallel_tournament import pool_parts
+
+    paths = _play_parts(tmp_path, 2, _CONFIG)
+    with pytest.raises(ValueError, match="missing"):
+        pool_parts(paths[:1])
+    with pytest.raises(ValueError, match="more than one part"):
+        pool_parts([paths[0], paths[0], paths[1]])
+    (tmp_path / "other").mkdir()
+    other = _play_parts(tmp_path / "other", 2, {**_CONFIG, "temperature": 1.0})
+    with pytest.raises(ValueError, match="different tournament"):
+        pool_parts([paths[0], other[1]])
