@@ -1,0 +1,341 @@
+{
+ "_source": "struggler src/struggler/bots/strategic/fitted_country_weights.json, keys renamed to ts_engine country names",
+ "weights": {
+  "Canada": {
+   "US": 0.376544,
+   "USSR": 1.393955
+  },
+  "United Kingdom": {
+   "US": 0.381448,
+   "USSR": 0.394065
+  },
+  "Norway": {
+   "US": 0.355624,
+   "USSR": 0.38682
+  },
+  "Sweden": {
+   "US": 0.346869,
+   "USSR": 0.383659
+  },
+  "Denmark": {
+   "US": 0.369243,
+   "USSR": 0.398768
+  },
+  "Finland": {
+   "US": 1.328398,
+   "USSR": 0.370645
+  },
+  "Benelux": {
+   "US": 0.369124,
+   "USSR": 0.398172
+  },
+  "West Germany": {
+   "US": 2.558613,
+   "USSR": 3.402686
+  },
+  "France": {
+   "US": 3.175214,
+   "USSR": 2.327299
+  },
+  "Spain/Portugal": {
+   "US": 0.358976,
+   "USSR": 0.393415
+  },
+  "Italy": {
+   "US": 2.553135,
+   "USSR": 2.637268
+  },
+  "Greece": {
+   "US": 0.367265,
+   "USSR": 0.397507
+  },
+  "Turkey": {
+   "US": 0.350477,
+   "USSR": 0.391346
+  },
+  "Austria": {
+   "US": 0.341328,
+   "USSR": 0.379955
+  },
+  "East Germany": {
+   "US": 3.09584,
+   "USSR": 2.173976
+  },
+  "Poland": {
+   "US": 4.267622,
+   "USSR": 2.167366
+  },
+  "Czechoslovakia": {
+   "US": 0.331494,
+   "USSR": 0.374013
+  },
+  "Hungary": {
+   "US": 0.334214,
+   "USSR": 0.376791
+  },
+  "Yugoslavia": {
+   "US": 0.352446,
+   "USSR": 0.387672
+  },
+  "Romania": {
+   "US": 1.318159,
+   "USSR": 0.364382
+  },
+  "Bulgaria": {
+   "US": 0.352393,
+   "USSR": 0.388807
+  },
+  "Lebanon": {
+   "US": 0.2821,
+   "USSR": 0.227296
+  },
+  "Syria": {
+   "US": 0.260904,
+   "USSR": 0.269977
+  },
+  "Israel": {
+   "US": 1.659941,
+   "USSR": 1.544867
+  },
+  "Iraq": {
+   "US": 1.616211,
+   "USSR": 1.602568
+  },
+  "Iran": {
+   "US": 1.656767,
+   "USSR": 1.569714
+  },
+  "Jordan": {
+   "US": 0.294885,
+   "USSR": 0.208418
+  },
+  "Gulf States": {
+   "US": 0.262852,
+   "USSR": 0.227181
+  },
+  "Saudi Arabia": {
+   "US": 1.61039,
+   "USSR": 1.596276
+  },
+  "Egypt": {
+   "US": 1.646704,
+   "USSR": 1.580136
+  },
+  "Libya": {
+   "US": 1.655637,
+   "USSR": 1.570982
+  },
+  "Afghanistan": {
+   "US": 1.26437,
+   "USSR": 0.311404
+  },
+  "Pakistan": {
+   "US": 2.027495,
+   "USSR": 2.301395
+  },
+  "India": {
+   "US": 1.980853,
+   "USSR": 2.255057
+  },
+  "Burma": {
+   "US": 0.280103,
+   "USSR": 0.325131
+  },
+  "Laos/Cambodia": {
+   "US": 0.274574,
+   "USSR": 0.319294
+  },
+  "Thailand": {
+   "US": 2.009204,
+   "USSR": 2.230275
+  },
+  "Vietnam": {
+   "US": 0.274577,
+   "USSR": 0.32114
+  },
+  "Malaysia": {
+   "US": 0.288625,
+   "USSR": 0.329088
+  },
+  "Indonesia": {
+   "US": 0.279503,
+   "USSR": 0.31964
+  },
+  "Philippines": {
+   "US": 0.289707,
+   "USSR": 0.317964
+  },
+  "Australia": {
+   "US": 0.299057,
+   "USSR": 0.311974
+  },
+  "Taiwan": {
+   "US": 0.271068,
+   "USSR": 0.313771
+  },
+  "North Korea": {
+   "US": 2.916787,
+   "USSR": 2.110168
+  },
+  "South Korea": {
+   "US": 1.910102,
+   "USSR": 2.121556
+  },
+  "Japan": {
+   "US": 1.84881,
+   "USSR": 3.263915
+  },
+  "Morocco": {
+   "US": 0.294036,
+   "USSR": 0.286558
+  },
+  "Algeria": {
+   "US": 1.87779,
+   "USSR": 1.884625
+  },
+  "Tunisia": {
+   "US": 0.295527,
+   "USSR": 0.288853
+  },
+  "West African States": {
+   "US": 0.29594,
+   "USSR": 0.28966
+  },
+  "Saharan States": {
+   "US": 0.294217,
+   "USSR": 0.288372
+  },
+  "Sudan": {
+   "US": 0.292399,
+   "USSR": 0.286612
+  },
+  "Ivory Coast": {
+   "US": 0.297166,
+   "USSR": 0.290906
+  },
+  "Nigeria": {
+   "US": 1.903759,
+   "USSR": 1.875312
+  },
+  "Ethiopia": {
+   "US": 0.292821,
+   "USSR": 0.287478
+  },
+  "Somalia": {
+   "US": 0.293815,
+   "USSR": 0.288142
+  },
+  "Cameroon": {
+   "US": 0.293637,
+   "USSR": 0.288322
+  },
+  "Zaire": {
+   "US": 1.888822,
+   "USSR": 1.882814
+  },
+  "Kenya": {
+   "US": 0.294222,
+   "USSR": 0.288543
+  },
+  "Angola": {
+   "US": 1.905112,
+   "USSR": 1.884371
+  },
+  "Zimbabwe": {
+   "US": 0.293084,
+   "USSR": 0.287935
+  },
+  "SE African States": {
+   "US": 0.293468,
+   "USSR": 0.288341
+  },
+  "Botswana": {
+   "US": 0.294723,
+   "USSR": 0.288976
+  },
+  "South Africa": {
+   "US": 1.898759,
+   "USSR": 1.883379
+  },
+  "Mexico": {
+   "US": 2.285325,
+   "USSR": 2.814203
+  },
+  "Guatemala": {
+   "US": 0.219991,
+   "USSR": 0.423152
+  },
+  "El Salvador": {
+   "US": 0.213862,
+   "USSR": 0.412506
+  },
+  "Honduras": {
+   "US": 0.211311,
+   "USSR": 0.415955
+  },
+  "Costa Rica": {
+   "US": 0.202956,
+   "USSR": 0.445724
+  },
+  "Nicaragua": {
+   "US": 0.218299,
+   "USSR": 0.41951
+  },
+  "Panama": {
+   "US": 2.275575,
+   "USSR": 1.824604
+  },
+  "Cuba": {
+   "US": 2.385576,
+   "USSR": 2.750269
+  },
+  "Haiti": {
+   "US": 0.220385,
+   "USSR": 0.421794
+  },
+  "Dominican Rep": {
+   "US": 0.214886,
+   "USSR": 0.413146
+  },
+  "Colombia": {
+   "US": 0.293577,
+   "USSR": 0.286927
+  },
+  "Ecuador": {
+   "US": 0.29499,
+   "USSR": 0.284147
+  },
+  "Peru": {
+   "US": 0.298116,
+   "USSR": 0.28619
+  },
+  "Venezuela": {
+   "US": 2.000618,
+   "USSR": 1.968462
+  },
+  "Bolivia": {
+   "US": 0.294699,
+   "USSR": 0.282912
+  },
+  "Brazil": {
+   "US": 1.99687,
+   "USSR": 1.977581
+  },
+  "Paraguay": {
+   "US": 0.30111,
+   "USSR": 0.287572
+  },
+  "Chile": {
+   "US": 1.927174,
+   "USSR": 2.011178
+  },
+  "Argentina": {
+   "US": 1.938844,
+   "USSR": 2.013042
+  },
+  "Uruguay": {
+   "US": 0.304577,
+   "USSR": 0.291341
+  }
+ }
+}
