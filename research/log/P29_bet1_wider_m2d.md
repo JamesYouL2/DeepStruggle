@@ -58,3 +58,28 @@ are bet minus control; ± is one standard error.
   net does not level off higher at 560M, and costs a third of the throughput. The capacity
   question closes for M2d-style trunks. M3, card↔card attention, is a different mechanism and
   stays open.
+
+## Plateaued, or still climbing? (owner's question, 2026-09-30)
+
+Both runs' 40M snapshots, 40–560M, were rated in one field with E6-03-44@550M: 29 models, greedy,
+400 games per seat (`data/reports/p29_bet1_trace.{md,json}`). Each value carries roughly ±10–15.
+
+| step | 80M | 160M | 240M | 320M | 360M | 400M | 440M | 480M | 520M | 560M |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| E6-10-44 (768 × 8) | 1337 | 1455 | 1482 | 1506 | 1516 | 1549 | 1561 | 1569 | 1586 | 1582 |
+| E6-03-44 (M2d) | 1338 | 1427 | 1494 | 1585 | 1597 | 1610 | 1625 | 1618 | 1598 | 1622 |
+| gap | −1 | +28 | −11 | −79 | −81 | −61 | −64 | −49 | −12 | −40 |
+
+Elo gained per stretch:
+
+| stretch | E6-10-44 | E6-03-44 |
+|:---|---:|---:|
+| 80→240M | +145 | +156 |
+| 240→400M | +67 | +117 |
+| 400→560M | **+33** | **+12** |
+
+**Still climbing, slowly, where the control has plateaued.**
+* The larger net lags through 240–440M (by up to about −80) and closes to −12 / −40 by 520–560M.
+* Head to head at 520M and 560M it scores 53.9% and 51.0%.
+* Its last 80M gain (+13) is within noise, so the rate is small. A longer run might put it level
+  with or just above M2d. It would still lose at matched wall-clock, where M2d is ~1.5× faster.
