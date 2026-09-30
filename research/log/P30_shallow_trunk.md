@@ -54,5 +54,24 @@ wins taken 64.2% against 62.1%, avoidable losses avoided 95.2% against 94.8%. Th
 * **M2d's four residual blocks buy no strength at the plateau** on seed 44. They cost 58% of the
   parameters and 16% of the throughput. They helped only early (to about 100M).
 * **Depth is not where the trunk loses the state.** The input projections are.
-* **Not adopted yet.** One seed, and the USSR seat is borderline under the acceptance rule. A seed-43
-  replicate (E6-12-43 against E6-03-43) is the next check.
+* **Seed 43 replicates it (below).** Both seeds pass the pre-registered rule, so the shallow trunk is
+  ready for the owner's adoption decision.
+
+## Seed 43: E6-12-43 against E6-03-43
+
+The same recipe at seed 43, from scratch to 560M, and the same evaluation
+(`data/reports/p30_shallow43_{rr,trace,goal_probes,state_probe}.{md,json}`):
+
+| block | US | USSR | head to head | Elo (arm, control) |
+|:---|---:|---:|---:|:---|
+| **500–560M snapshots** | **+2.7 ± 0.6** | **+9.6 ± 0.6** | **59.7%** (US 61.6, USSR 57.8) | 1544–1578 against 1461–1524 |
+| **480–560M SWA** | +0.0 ± 1.0 | **+6.1 ± 1.0** | **56.2%** (US 60.6, USSR 51.8) | 1625 against 1578 |
+
+The same-field trace (every 40M, 400 games per seat) shows the same shape as seed 44: behind at
+80–120M, ahead from 160M on, and +69 at 560M, with the gap widest late (+96 to +106 at 480–520M).
+Trunk probes match again: the critic's AUC is 0.809 against 0.814.
+
+**Both seeds pass the acceptance rule.** On seed 44 the shallow trunk was better as US and borderline
+as USSR; on seed 43 it is better as USSR and level or better as US. Both seeds win head to head
+(56.6% and 59.7% on snapshots; 53.8% and 56.2% on the SWA). It runs about 18% faster with 58% fewer
+parameters.
