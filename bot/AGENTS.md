@@ -60,8 +60,21 @@ playing strength rather than decision-for-decision fidelity.
   roll.
 
 * The DEFCON whole-hand survival search, reduced: at DEFCON 3 or below each card in hand is tried
-  at DEFCON 2, and a card choice that leaves fewer safe plays than rounds to fill is charged the
-  game (all of it at DEFCON 2, struggler's measured 0.43 of it at 3).
+  at DEFCON 2 and classed as safe, survivable only by the Space Race, or fatal (every play a
+  certain loss). A card choice whose kept hand cannot fill the rounds left -- counting each space
+  attempt once, so one attempt cannot dispose of two space-only cards -- is charged the game (all
+  of it at DEFCON 2, struggler's measured 0.43 of it at 3).
+* One value scale: a finished game is +/- 40 VP at the decision's VP price, and an ongoing
+  position's raw board value is squashed strictly inside that (`swing * 0.999 * tanh(raw /
+  swing)`), so a win or loss always outranks any ongoing board. The raw value alone is unbounded
+  and was measured past the swing.
+
+Fixed from the 2026-09-28 port audit (`docs/notes/codex/2026-09-28-doctrine-port-audit.md` on
+the `docs/doctrine-port-audit-2026-09-28` branch), each pinned by a test in
+`tests/training/test_doctrine.py` that fails with its fix reverted: F1 the value scale above; F2
+the joint space-attempt accounting; F3 the one-Op price, whose candidates are now read from the
+root board; F4 the scoring schedule, which now counts the reshuffle deal's draws from the recycled
+pile; F5 the schedule's unseen-card odds, which no longer count opponent cards we have seen.
 
 Measured with `tools/tournament.py` (2026-09-29): 40-0 against HeuristicBotV2 (20 games a side)
 and 48-2 against HeuristicMCTS16 (25 a side; it searches the true state, so it sees this bot's
