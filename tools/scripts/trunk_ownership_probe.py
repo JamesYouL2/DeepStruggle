@@ -49,7 +49,7 @@ from tools.scripts.aux_ownership_probe import N_COUNTRIES, _absolute_class, _con
 @torch.no_grad()
 def collect(agent: NeuralAgent, games: int, envs: int, seed: int, sample_frac: float,
             temperature: float, dev: torch.device, game_offset: int) -> Dict[str, np.ndarray]:
-    """Sampled positions of `agent`'s self-play: observation, mover, board then, final board."""
+    """Sampled positions of `agent`'s self-play: observation, mover, board then, final board, winner."""
     model: Any = agent.model
     env = TsVectorizedEnv(num_envs=envs, base_seed=seed)
     env.record_final_control = True
@@ -78,13 +78,14 @@ def collect(agent: NeuralAgent, games: int, envs: int, seed: int, sample_frac: f
             if not sampling[i]:
                 continue
             final = _absolute_class(np.asarray(ep["final_control"]))
+            winner = {"US": 1, "USSR": -1}.get(str(ep.get("winner")), 0)
             for r in pending[i]:
-                rows.append({**r, "final": final, "game": game_offset + done_games})
+                rows.append({**r, "final": final, "winner": winner, "game": game_offset + done_games})
             pending[i] = []
             done_games += 1
             if done_games >= games:
                 sampling[i] = False
-    return {k: np.stack([r[k] for r in rows]) for k in ("obs", "mover", "turn", "now", "final", "game")}
+    return {k: np.stack([r[k] for r in rows]) for k in ("obs", "mover", "turn", "now", "final", "winner", "game")}
 
 
 def mover_frame(final: np.ndarray, mover: np.ndarray) -> np.ndarray:
