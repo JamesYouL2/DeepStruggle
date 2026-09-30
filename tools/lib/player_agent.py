@@ -531,8 +531,10 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
 
         return SafetyAgent(load_agent(s.split(":", 1)[1], device=device))
     if s.lower().startswith("search:"):
-        # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample]]]]
+        # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample]]]][:<field>=<value>...]
         #
+        # `<field>=<value>` sets any BatchedMCTSConfig field by name, e.g.
+        # `truncate_half_rounds=1` to keep the tree inside the half action round being decided.
         # `node_filter` is "all" (every decision -- what the ~+27pp measurement used) or
         # "card" (SELECT_CARD / SELECT_PLAY_MODE only, P3's proposal). `subsample` is the
         # fraction of those actually searched, e.g. 0.125 for P3's "1 in 8". Where search is
@@ -540,7 +542,24 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         #
         # Exposed here rather than left to callers so that search games go through the same
         # CLIs, and therefore the same replay writer, as every other match.
-        parts = s.split(":")
+        from dataclasses import fields as _fields
+
+        from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
+
+        parts = [x for x in s.split(":") if "=" not in x]
+        overrides: Dict[str, Any] = {}
+        known = {f.name: f for f in _fields(BatchedMCTSConfig)}
+        for opt in (x for x in s.split(":") if "=" in x):
+            key, raw = opt.split("=", 1)
+            if key not in known:
+                raise ValueError(f"search: unknown option {key!r}; known: {sorted(known)}")
+            default = getattr(BatchedMCTSConfig(), key)
+            if isinstance(default, bool):
+                if raw.lower() not in ("0", "1", "true", "false"):
+                    raise ValueError(f"search: {key} takes true/false, not {raw!r}")
+                overrides[key] = raw.lower() in ("1", "true")
+            else:
+                overrides[key] = type(default)(raw)
         path = parts[1]
         sims = int(parts[2]) if len(parts) > 2 and parts[2] else 64
         determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
@@ -548,7 +567,6 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         if len(parts) > 4 and parts[4]:
             node_filter = "card_playmode" if parts[4].lower().startswith("card") else parts[4]
         subsample = float(parts[5]) if len(parts) > 5 and parts[5] else 1.0
-        from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 
         # An export (the published models) runs in ONNX Runtime through OnnxModule; the search
         # code only ever calls forward(obs, mask).
@@ -567,8 +585,13 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
                                 auto_advance=True, advance_root=False,
                                 determinize=determinize,
                                 node_filter=node_filter, subsample=subsample)
+        for key, value in overrides.items():
+            setattr(cfg, key, value)
         tag = "" if node_filter == "all" else "-card"
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
+        for key, value in overrides.items():
+            tag += (f"-trunc{value}" if key == "truncate_half_rounds"
+                    else f"-{key}{str(value).lower() if isinstance(value, bool) else value}")
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         if onnx_base is not None:
             label = f"{onnx_base.name}+{label}"

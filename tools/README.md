@@ -463,6 +463,7 @@ included):
 | spec | what it plays |
 |:---|:---|
 | `search:<model.onnx>:96:determinize` | honest determinized MCTS with the network as prior and value, run through ONNX Runtime (`OnnxModule`) -- CPU-bound, so a job for CI |
+| `search:<model.onnx>:96:determinize:truncate_half_rounds=1` | the same, cut at a depth of N half action rounds: a line's first node past the Nth boundary is valued by the network and never expanded, so 1 keeps the tree inside the half round being decided. Any `BatchedMCTSConfig` field can be set as `<field>=<value>` and is named in the entrant |
 | `safe:<spec>` | the wrapped agent, but a certain win is always taken and a certain loss refused (`tools/lib/safety.py`, on `ai.eval.safety.classify_legal_actions` over a determinized copy) |
 | `ensemble:<a.onnx>+<b.onnx>` | the average of several exports' move probabilities |
 | `temp:<T>:<spec>` | the wrapped agent at a pinned sampling temperature (`temp:0:` = greedy) |

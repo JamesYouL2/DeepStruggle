@@ -101,6 +101,15 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: Fraction of the decisions passing `node_filter` that are actually searched, chosen per
     #: decision from the searcher's own RNG. P3's first guess is 1 in 8.
     subsample: float = 1.0
+    #: Depth limit in half action rounds (one player's turn in one action round; each headline
+    #: is one too). 0 searches to the budget with no limit. N cuts a line once it has crossed N
+    #: half-round boundaries: the first node past the Nth is valued by the network and never
+    #: expanded, so 1 keeps the whole tree inside the half round being decided. A terminal state
+    #: inside the horizon still takes its exact utility; one beyond it is never reached.
+    #:
+    #: Turns `reuse_subtree` off: the cut is measured from the root, and a carried subtree's cuts
+    #: were measured from the previous one.
+    truncate_half_rounds: int = 0
 
 
 @dataclass
@@ -119,6 +128,18 @@ class _BNode:
     #: An expanded node has had its priors filled in from a network evaluation. A node created
     #: during descent starts unexpanded and is completed by the batch it belongs to.
     expanded: bool = False
+    #: Half-round boundaries crossed between the root and this node.
+    half_rounds: int = 0
+    #: Past the `truncate_half_rounds` horizon: a leaf whose network value is final.
+    cutoff: bool = False
+
+
+def _half_round(state: ts.GameState) -> Tuple[int, int, int, int]:
+    """Which half action round a state is in: one player's turn in one action round, or one
+    headline. An extra round by the same player is a new `action_round`, and a decision the
+    opponent makes inside the round (an interrupt event) leaves the phasing player alone."""
+    return (int(state.turn), int(state.current_phase), int(state.action_round),
+            int(state.phasing_player))
 
 
 class BatchedMCTS:
@@ -245,7 +266,7 @@ class BatchedMCTS:
         path: List[Tuple[_BNode, int]] = []
         node = root
         while True:
-            if node.terminal or not node.expanded:
+            if node.terminal or not node.expanded or node.cutoff:
                 return path, node
             idx = self._select(node)
             path.append((node, idx))
@@ -257,6 +278,11 @@ class BatchedMCTS:
                 ts.Engine.step_flat(nxt, action)
                 settle(nxt, self.cfg.auto_advance)
                 child = self._make_node(nxt)
+                horizon = self.cfg.truncate_half_rounds
+                if horizon > 0 and not child.terminal:
+                    child.half_rounds = node.half_rounds + (
+                        _half_round(nxt) != _half_round(node.state))
+                    child.cutoff = child.half_rounds >= horizon
                 node.children[action] = child
                 return path, child
             node = child
@@ -287,7 +313,8 @@ class BatchedMCTS:
         """The search behind `run`, returning each position's root node rather than its visit
         counts, so a caller choosing a move can see the values and priors behind them."""
         cfg = self.cfg
-        reuse = cfg.reuse_subtree and not cfg.determinize and keys is not None
+        reuse = (cfg.reuse_subtree and not cfg.determinize and cfg.truncate_half_rounds == 0
+                 and keys is not None)
         # A concrete list, so the type checker can see the indexing below is guarded. `reuse`
         # already encodes `keys is not None`, but that narrowing does not survive the variable.
         key_list: List[object] = list(keys) if keys is not None else []
