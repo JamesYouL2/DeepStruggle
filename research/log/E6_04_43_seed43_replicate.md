@@ -12,7 +12,7 @@ E6-05-43-g). `launch_flags --diff` against E6-04-44 shows only the seed and the 
 * The main agent's win rate against its 16-member pool stayed at about 0.69–0.70.
 
 **Pre-registered.** Against E6-03-43 at the late block, 500–560M, per seat against the pinned panel,
-on snapshots and on the 480–560M soup, by the owner's rule. Openings and goal probes at 560M.
+on snapshots and on the 480–560M SWA, by the owner's rule. Openings and goal probes at 560M.
 
 ## Result
 
@@ -22,7 +22,7 @@ are E6-04-43 minus E6-03-43; ± is one standard error.
 | reading | panel, US | panel, USSR | head to head (US / USSR) | Elo |
 |:---|---:|---:|---:|:---|
 | snapshots 500–560M | +0.1 ± 0.6 | **+6.9 ± 0.6** | **57.1%** (60.9 / 53.3) | 1543 vs 1495 |
-| soups 480–560M | −1.1 ± 1.3 | **+7.1 ± 1.3** | **57.5%** (63.6 / 51.4) | 1639 vs 1584 |
+| SWAs 480–560M | −1.1 ± 1.3 | **+7.1 ± 1.3** | **57.5%** (63.6 / 51.4) | 1639 vs 1584 |
 
 **Accepted.** In both readings E6-04-43 is significantly better in one seat and not worse in the
 other. Head to head it wins 57% on either reading.
@@ -52,7 +52,7 @@ other. Head to head it wins 57% on either reading.
   | 44 | +2.7 | +1.5 | 54.4% | +37 |
   | 43 | +0.1 | +6.9 | 57.1% | +48 |
 
-  The soups agree: 57.5% on seed 43 and 58.0% on seed 44.
+  The SWAs agree: 57.5% on seed 43 and 58.0% on seed 44.
 * **The seat that gains differs by seed.** Mostly US on seed 44, all USSR on seed 43. The recipe's
   gain is real, but not tied to one seat.
 * **This is the first replicated adoption on E6.** Every P29 bet is judged against the plain E6-03

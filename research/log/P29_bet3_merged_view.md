@@ -8,7 +8,7 @@ It ran without `--ladder-head-center`, which the trainer refuses in the merged v
 
 **Pre-registered.**
 * **Strength:** against E6-03-44 at the late block (500/520/540/560M), on snapshots and on the
-  480–560M soup, per seat against the panel. The owner's rule applies: better in one seat and not
+  480–560M SWA, per seat against the panel. The owner's rule applies: better in one seat and not
   worse in the other.
 * **Collapse:** a US seat pinned at ≤ 10% that has not recovered by 240M closes the bet.
 
@@ -37,21 +37,21 @@ standard error.
 | | US | USSR |
 |:---|---:|---:|
 | snapshots (500–560M) | **−35.3 ± 0.6** | **−25.0 ± 0.6** |
-| soups (480–560M) | **−30.1 ± 1.3** | **−22.6 ± 1.3** |
+| SWAs (480–560M) | **−30.1 ± 1.3** | **−22.6 ± 1.3** |
 
 **Head to head:**
 
 | | overall | US | USSR |
 |:---|---:|---:|---:|
 | snapshots | 21.1% | 16.4 | 25.9 |
-| soups | 19.4% | 16.6 | 22.1 |
+| SWAs | 19.4% | 16.6 | 22.1 |
 
-**Elo:** snapshots 1377 against 1612, soups 1465 against 1694, about −235 on either reading.
+**Elo:** snapshots 1377 against 1612, SWAs 1465 against 1694, about −235 on either reading.
 
 ## A sanity check on the evaluation
 
 * Packed tournaments give each agent its own view (`batch_tournament.py:181–188`).
-* The loader builds E6-09-44's snapshots and soup with `merged_influence=True` and
+* The loader builds E6-09-44's snapshots and SWA with `merged_influence=True` and
   `head_center=False`, as trained. E6-03-44's are built with the E4 view and centred heads.
 * The gap is therefore not an evaluation artefact.
 
@@ -81,7 +81,7 @@ loss about three times as often. Against outside opponents the style loses badly
 
 ## Verdict: bet 3 not adopted
 
-* **Both seats are far worse than the control, on snapshots and on the soup.** At −235 Elo the
+* **Both seats are far worse than the control, on snapshots and on the SWA.** At −235 Elo the
   gap is more than twice the between-seed variance (~100), so a seed-43 replicate would not change
   the decision.
 * **What it settles.**

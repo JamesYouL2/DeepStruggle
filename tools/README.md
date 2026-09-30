@@ -117,8 +117,9 @@ How they are trained:
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
 
-`tools/scripts/weight_soup.py` averages finished snapshots into one (uniform SWA) for rating, with
-no training.
+`tools/scripts/average_weights.py` averages finished checkpoints uniformly, for rating, with no
+training: one run's late snapshots give its **SWA** (`<run>/swa_480-560M.pt`), and branches of one
+trained state give a **model soup**.
 
 `--ladder-head-center` (**on by default since 2026-09-25**: auto, i.e. on for per-entity heads in the E4 view, following the checkpoint on a resume or warm start, off with `--merged-influence`; `--no-ladder-head-center` for the old heads) centres the per-entity heads' hidden features across entities before
 their final projection. In E4 no decision compares country actions with other actions, so a

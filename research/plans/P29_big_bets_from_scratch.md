@@ -43,7 +43,7 @@ From-scratch arms on M2d run ~50k steps/s: **560M is ~3h solo**, one evening per
 what makes this ordering affordable, and why every bet here restarts from zero rather than
 resuming a plateaued state whose habits it would inherit.
 
-**Measured on snapshots and on the soup (owner, 2026-09-29).** Every bet and its control is rated twice: on its late snapshots, and on the uniform soup of its last 80M. Averaging does not enter training ([P28](P28_strength_on_E6.md), *Measurement rule*).
+**Measured on snapshots and on the SWA (owner, 2026-09-29).** Every bet and its control is rated twice: on its late snapshots, and on the SWA of its last 80M. Averaging does not enter training ([P28](P28_strength_on_E6.md), *Measurement rule*).
 
 **One rule for all of it: judged at the plateau, never at 80M.** Each bet is compared with
 its control (E6-03-44, or E6-04-44 if P28 step 0 adopts that recipe) at 480/520/560M, pooled
@@ -166,7 +166,7 @@ from one seed, and effects under ~40 Elo are not run.
 
 ## Follow-ups
 
-* Any bet adopted → P28's polish levers as its tail (LR schedule, EMA, soup, cross-lineage
+* Any bet adopted → P28's polish levers as its tail (LR schedule, EMA, SWA, cross-lineage
   pools).
 * Bet 1 adopted → rerun bets 2–3 on the larger net.
 * Bet 2 adopted → the ownership head becomes a per-country *value* probe that replaces P27's
@@ -177,6 +177,6 @@ from one seed, and effects under ~40 Elo are not run.
 
 ## Runs
 
-* **Bet 3, E6-09-44** (2026-09-29): **not adopted.** No collapse under flat 1.0, so P23's collapses were the old bands. But it is ~235 Elo weaker than E6-03-44 in both seats, on snapshots and soup (head to head 21% / 19%). The first lead is bet 4, since the merged op-choice node does not show the Ops being spent ([`../log/P29_bet3_merged_view.md`](../log/P29_bet3_merged_view.md)).
-* **Bet 1, wider M2d, E6-10-44** (2026-09-30): **not adopted.** A 768 × 8 trunk (11.2M parameters, r = 0.665) is level with M2d at matched games on Elo, but behind it against the panel and on soups (45.4%), and clearly behind at matched wall-clock (38–45%). Capacity is not what holds the plateau; M3 (card↔card attention) is a separate mechanism and stays open ([`../log/P29_bet1_wider_m2d.md`](../log/P29_bet1_wider_m2d.md)).
+* **Bet 3, E6-09-44** (2026-09-29): **not adopted.** No collapse under flat 1.0, so P23's collapses were the old bands. But it is ~235 Elo weaker than E6-03-44 in both seats, on snapshots and SWA (head to head 21% / 19%). The first lead is bet 4, since the merged op-choice node does not show the Ops being spent ([`../log/P29_bet3_merged_view.md`](../log/P29_bet3_merged_view.md)).
+* **Bet 1, wider M2d, E6-10-44** (2026-09-30): **not adopted.** A 768 × 8 trunk (11.2M parameters, r = 0.665) is level with M2d at matched games on Elo, but behind it against the panel and on SWAs (45.4%), and clearly behind at matched wall-clock (38–45%). Capacity is not what holds the plateau; M3 (card↔card attention) is a separate mechanism and stays open ([`../log/P29_bet1_wider_m2d.md`](../log/P29_bet1_wider_m2d.md)).
 * **Bet 2, code (2026-09-30):** `--aux-ownership` / `--aux-vp-margin`, with heads on the trunk and labels from each game's end (all 84 countries, mover's frame), trained on a 10% sample of positions in their own step. A CPU smoke run learned ownership from 29% to about 80% accuracy in 30k steps. Default weights 0.1 / 0.1, as the plan decided. Not yet run.

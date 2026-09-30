@@ -29,14 +29,15 @@ below is against `HeuristicBot` at 50 games a side.
 
 ## Best models (owner, 2026-09-29)
 
-Two designations, on the real E6 engine. They supersede E5-21-43@560M, which is kept below as the
-E5-era record. Ratings are from the comprehensive E6 tournament, anchored at HeuristicBot = 1500
+Three designations, on the real E6 engine (the model soup added 2026-09-30). They supersede E5-21-43@560M, which is kept below as the
+E5-era record. Ratings are from the comprehensive E6 tournament (the soup's from its own field), anchored at HeuristicBot = 1500
 ([`log/E6_comprehensive_2026-09-29.md`](log/E6_comprehensive_2026-09-29.md)).
 
 | designation | model | file | sha256 | Elo |
 |:---|:---|:---|:---|---:|
 | **best raw model** (a single training snapshot) | **E6-07-44@700M** | `/workspace/data/checkpoints/E6-07-44_20260929_121304/snapshot_700055552steps.pt` | `34017ae130fe…d9d20a` | 2492 |
-| **best souped model** (uniform average of the last 80M) | **E6-06-44, 680–760M soup** | `/workspace/data/checkpoints/E6-06-44_20260929_121244/soup_680-760M.pt` | `6a3be70cb503…78b0ea` | **2560** |
+| **best SWA model** (uniform average of the last 80M) | **E6-06-44, 680–760M SWA** | `/workspace/data/checkpoints/E6-06-44_20260929_121244/swa_680-760M.pt` | `6a3be70cb503…78b0ea` | **2560** |
+| **best model soup** (average of branches of one trained state; 2026-09-30) | **E6-06/07/08-44 at 760M** | `/workspace/data/checkpoints/_soups/shared_start_E6-06+07+08_760M.pt` | `fa21df467d80…bf73e6` | 1775 in its own field, **+45 over the best SWA** there (1730) |
 
 * **Best raw, E6-07-44@700M.**
   * It is the top snapshot of raw weights in the tournament.
@@ -45,12 +46,20 @@ E5-era record. Ratings are from the comprehensive E6 tournament, anchored at Heu
   * It was trained at a learning rate of 3e-4 until 620M, 1e-4 until 680M, then 3e-5.
   * Only four late snapshots per arm were rated, so an unrated neighbour (690M, 710M, …) could be
     level with it.
-* **Best souped, E6-06-44 680–760M.**
+* **Best SWA, E6-06-44 680–760M.**
   * It is the top model in the tournament.
-  * It scores 69.4% against E5-21-43@560M and 53.1% against the adopted E6-04-44 soup.
-  * E6-08-44's soup (2555) is level with it head to head (49.4 / 50.6). E6-06's is preferred for
+  * It scores 69.4% against E5-21-43@560M and 53.1% against the adopted E6-04-44 SWA.
+  * E6-08-44's SWA (2555) is level with it head to head (49.4 / 50.6). E6-06's is preferred for
     its simpler lineage: no averaging in training, per the owner's rule.
-* **Both come from seed 44 only.** Both are a bare state dict in the normal (E4) action view, so
+* **Best model soup, E6-06/07/08-44 at 760M** ([`log/model_soups_2026-09-30.md`](log/model_soups_2026-09-30.md)).
+  * The uniform average of the three 760M snapshots of the continuations of E6-04-44@560M:
+    E6-06-44 (constant rate), E6-07-44 (stepped rate) and E6-08-44 (EMA snapshots).
+  * It is the strongest model measured. It was rated in a separate field, where it scores 1775
+    against 1730 for the best SWA, beats its ingredients 65–70%, and is about 4–5 points better in
+    both seats against the panel.
+  * Souping the three 680–760M SWAs instead gives a level model (1773, 50.0% head to head).
+  * It is an evaluation device like the SWA: no averaging enters training.
+* **All three come from seed 44 only.** Each is a bare state dict in the normal (E4) action view, so
   every tool loads them.
 
 ### Their lineage, and how to reproduce it
@@ -94,22 +103,25 @@ MAIN="--league-dirs /workspace/data/league/E6-04-44 --league-pool-size 4 --leagu
 
 Then:
 * **Best raw:** E6-07-44's `snapshot_700…steps.pt`.
-* **Best souped:** `tools/scripts/weight_soup.py --snapshots <E6-06-44's 680, 690, …, 760M snapshots>
-  --output soup_680-760M.pt`.
+* **Best SWA:** `tools/scripts/average_weights.py --snapshots <E6-06-44's 680, 690, …, 760M snapshots>
+  --output swa_680-760M.pt`.
+* **Best model soup:** E6-08-44 is E6-06-44 plus `--ema-weights 10000000`. Then
+  `tools/scripts/average_weights.py --snapshots <E6-06-44, E6-07-44 and E6-08-44's 760M snapshots>
+  --output shared_start_E6-06+07+08_760M.pt`.
 
 Check each phase with `tools/scripts/launch_flags.py <original dir> --diff <replicate dir>`. As
 with E5-21, a replicate reproduces the recipe, not the weights.
 
 ## E6 models (2026-09-29): the comprehensive tournament
 
-Every E6 arm on its late snapshots and on its last-80M soup, in one field anchored at
+Every E6 arm on its late snapshots and on its last-80M SWA, in one field anchored at
 HeuristicBot = 1500 ([`log/E6_comprehensive_2026-09-29.md`](log/E6_comprehensive_2026-09-29.md)):
 
 | model | Elo | vs E5-21-43@560M |
 |:---|---:|---:|
-| **`E6-06-44_*/soup_680-760M.pt`** | **2560** | 69.4% |
-| `E6-08-44_*/soup_680-760M.pt` | 2555 | 69.1% |
-| `E6-04-44_*/soup_480-560M.pt` | 2541 | 64.8% |
+| **`E6-06-44_*/swa_680-760M.pt`** | **2560** | 69.4% |
+| `E6-08-44_*/swa_680-760M.pt` | 2555 | 69.1% |
+| `E6-04-44_*/swa_480-560M.pt` | 2541 | 64.8% |
 | E6-08-44 snapshots 700–760M (mean) | 2508 | — |
 | E6-06-44 snapshots 700–760M (mean) | 2467 | — |
 | E5-21-43@560M (E5 best, on E6) | 2441 | — |

@@ -1,11 +1,11 @@
-"""tools/scripts/weight_soup.py: a uniform average of snapshots, refusing to mix architectures."""
+"""tools/scripts/average_weights.py: a uniform average of snapshots, refusing to mix architectures."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from tools.scripts.weight_soup import soup
+from tools.scripts.average_weights import average
 
 
 def _save(tmp_path, name: str, w: float, steps: int, shape=(2, 2)) -> str:
@@ -16,7 +16,7 @@ def _save(tmp_path, name: str, w: float, steps: int, shape=(2, 2)) -> str:
 
 def test_floats_are_averaged_and_integer_buffers_come_from_the_last(tmp_path) -> None:
     paths = [_save(tmp_path, "a.pt", 1.0, 10), _save(tmp_path, "b.pt", 3.0, 20)]
-    out = soup(paths)
+    out = average(paths)
     assert torch.allclose(out["lin.weight"], torch.full((2, 2), 2.0))
     assert int(out["bn.num_batches_tracked"]) == 20
 
@@ -24,4 +24,4 @@ def test_floats_are_averaged_and_integer_buffers_come_from_the_last(tmp_path) ->
 def test_different_shapes_refuse_to_mix(tmp_path) -> None:
     paths = [_save(tmp_path, "a.pt", 1.0, 10), _save(tmp_path, "b.pt", 3.0, 20, shape=(3, 2))]
     with pytest.raises(ValueError):
-        soup(paths)
+        average(paths)

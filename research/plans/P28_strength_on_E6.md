@@ -50,8 +50,8 @@ it; not adopted → on E6-03's, and the league stays a setup-punisher for later.
 
 ## Step 1 — zero-training checks (an afternoon, CPU)
 
-* **Weight soup.** Average E6-03-44's and E6-04-44's 480–560M snapshots (uniform SWA), rate
-  each soup against the panel. A soup that beats its own best snapshot measures how much of
+* **SWA.** Average E6-03-44's and E6-04-44's 480–560M snapshots (uniform), rate
+  each SWA against the panel. An SWA that beats its own best snapshot measures how much of
   the plateau is snapshot noise.
 * **Search headroom on E6.** Honest search at 256 sims on the trace peak vs its raw policy,
   100 games per seat — the baseline for P29 bet 5's gate.
@@ -83,7 +83,7 @@ more league seeds.
 Every arm, and every control, is measured twice:
 
 * on its **snapshots**, the late block against the panel;
-* on the **uniform soup of its last 80M** (`tools/scripts/weight_soup.py`, one snapshot every 10M).
+* on the **SWA of its last 80M** (`tools/scripts/average_weights.py`, one snapshot every 10M).
 
 Both readings are reported. Averaging does not enter training: `--ema-weights` stays off in every
 recipe until the owner says otherwise.
@@ -98,26 +98,32 @@ recipe until the owner says otherwise.
   * Empty battlegrounds at turn 8: 0.51 for E6-04 against 1.5–1.7 for E6-03.
   * E6-03-44's trace levels off at about 320M, and has no end dip on E6.
   * Log: [`../log/P28_step0_panel_and_E6_04_verdict.md`](../log/P28_step0_panel_and_E6_04_verdict.md).
-* **Step 0 replicated (2026-09-30):** E6-04-43 against E6-03-43 on seed 43. Panel US +0.1 / USSR +6.9 on snapshots and −1.1 / +7.1 on soups; 57% head to head. E6-04 is adopted on both seeds ([`../log/E6_04_43_seed43_replicate.md`](../log/E6_04_43_seed43_replicate.md)).
+* **Step 0 replicated (2026-09-30):** E6-04-43 against E6-03-43 on seed 43. Panel US +0.1 / USSR +6.9 on snapshots and −1.1 / +7.1 on SWAs; 57% head to head. E6-04 is adopted on both seeds ([`../log/E6_04_43_seed43_replicate.md`](../log/E6_04_43_seed43_replicate.md)).
 * **Step 1 (2026-09-29).**
-  * Uniform soups of 480–560M beat every snapshot they average, by about 60–85 Elo in both seats.
-    The E6-04-44 soup rates 1651 against its best snapshot's 1566, and beats that snapshot 61.7%
+  * Uniform SWAs of 480–560M beat every snapshot they average, by about 60–85 Elo in both seats.
+    The E6-04-44 SWA rates 1651 against its best snapshot's 1566, and beats that snapshot 61.7%
     head to head.
   * Search headroom at 256 simulations: +3.5 ± 3.5 on E6-04-44@520M, so P29 bet 5's gate fails on
     the adopted model; +11 on E6-03-44@550M.
-  * Log: [`../log/P28_step1_soups_and_search.md`](../log/P28_step1_soups_and_search.md).
-  * These steps needed code after all: `--lr-schedule`, `--ema-weights` and `weight_soup.py`, added in
-    `27bfc6c`.
+  * Log: [`../log/P28_step1_swa_and_search.md`](../log/P28_step1_swa_and_search.md).
+  * These steps needed code after all: `--lr-schedule`, `--ema-weights` and `average_weights.py` (then
+    `weight_soup.py`), added in `27bfc6c`.
 * **Polish, LR schedule (E6-06-44 ‖ E6-07-44, 2026-09-29): not adopted.**
   * Stepping the rate to 3e-5 did not shrink the late spread: SD 1.99 against 2.03 points.
-  * Raw snapshots at the lower rate are +3.4 as USSR against the panel, but the soups reverse it.
-    The constant-rate 680–760M soup (1662) beats the scheduled one 57.8%, and beats the 480–560M
-    soup 53.7%.
+  * Raw snapshots at the lower rate are +3.4 as USSR against the panel, but the SWAs reverse it.
+    The constant-rate 680–760M SWA (1662) beats the scheduled one 57.8%, and beats the 480–560M
+    SWA 53.7%.
   * Log: [`../log/P28_step2a_lr_schedule.md`](../log/P28_step2a_lr_schedule.md).
 * **Polish, EMA weights (E6-08-44, 2026-09-29): not adopted into training.**
   * τ 10M EMA snapshots beat the matched raw ones by the panel rule (US +2.1 ± 0.6, USSR +7.3 ± 0.6)
     and halve the spread beyond noise.
-  * They still lose to the 80M uniform soup (41–43%), and a soup of the EMA snapshots is level with
-    a soup of the raw ones (48.0 ± 1.6).
-  * The owner's rule since: measure every arm on its snapshots and on its 80M soup.
+  * They still lose to the 80M SWA (41–43%), and an SWA of the EMA snapshots is level with
+    an SWA of the raw ones (48.0 ± 1.6).
+  * The owner's rule since: measure every arm on its snapshots and on its 80M SWA.
   * Log: [`../log/P28_step2b_ema_weights.md`](../log/P28_step2b_ema_weights.md).
+* **Model soup of the step-2 branches (2026-09-30).** Everything above called a "soup" is an SWA
+  (one run's trajectory); the owner renamed it. A true model soup, the uniform average of
+  E6-06/07/08-44's 760M snapshots (all branched from E6-04-44@560M), rates +45 over the best SWA in
+  one field (1775 against 1730), beats its ingredients 65–70% and gains 4–5 points per seat against
+  the panel; souping their SWAs instead is level (1773). It is now the strongest model measured
+  ([`../log/model_soups_2026-09-30.md`](../log/model_soups_2026-09-30.md)).

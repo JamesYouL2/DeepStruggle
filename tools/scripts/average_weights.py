@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Average the weights of several snapshots of one run into a "soup" (uniform SWA).
+"""Average the weights of several checkpoints into one, uniformly.
 
-P28 step 1 (`research/plans/P28_strength_on_E6.md`): if the late snapshots of a run swing around a
-plateau because of step-size noise rather than because they play differently, their average should
-play at least as well as the best of them. The soup is written as a bare state dict, the format of
-`snapshot_*.pt`, so every tournament and probe loads it as it loads a snapshot.
+Two uses, named differently in the research record:
 
-Floating-point tensors are averaged; integer buffers (a BatchNorm's `num_batches_tracked`) are taken
-from the last snapshot given. Snapshots of different architectures, or of different runs, refuse to
-mix: keys and shapes must match exactly.
+* **SWA** -- the snapshots of *one run* along its trajectory, e.g. its last 80M, one every 10M
+  (P28 step 1, `research/plans/P28_strength_on_E6.md`). If the late snapshots swing around a plateau
+  because of step-size noise rather than because they play differently, their average plays at
+  least as well as the best of them. Every arm is rated on its snapshots and on this. Written as
+  `<run>/swa_<from>-<to>M.pt`.
+* **Model soup** -- separately trained branches of one trained state, e.g. E6-06/07/08-44, all
+  continued from E6-04-44@560M (`research/log/model_soups_2026-09-30.md`).
 
-    PYTHONPATH=.:build/release python tools/scripts/weight_soup.py \\
+The result is a bare state dict, the format of `snapshot_*.pt`, so every tournament and probe loads
+it as it loads a snapshot. Floating-point tensors are averaged; integer buffers (a BatchNorm's
+`num_batches_tracked`) are taken from the last checkpoint given. Checkpoints of different
+architectures refuse to mix: keys and shapes must match exactly.
+
+    PYTHONPATH=.:build/release python tools/scripts/average_weights.py \\
         --snapshots <run>/snapshot_480..steps.pt <run>/snapshot_490..steps.pt ... \\
-        --output <run>/soup_480-560M.pt
+        --output <run>/swa_480-560M.pt
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from typing import Dict, List, Optional, Sequence
 import torch
 
 
-def soup(paths: Sequence[str]) -> Dict[str, torch.Tensor]:
+def average(paths: Sequence[str]) -> Dict[str, torch.Tensor]:
     """The uniform average of the state dicts at `paths`."""
     if not paths:
         raise ValueError("no snapshots to average")
@@ -53,10 +59,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output", required=True)
     a = ap.parse_args(argv)
     if os.path.exists(a.output):
-        raise SystemExit(f"{a.output} exists; refusing to overwrite a soup that may already be rated")
-    torch.save(soup(a.snapshots), a.output)
+        raise SystemExit(f"{a.output} exists; refusing to overwrite an average that may already be rated")
+    torch.save(average(a.snapshots), a.output)
     digest = hashlib.sha256(open(a.output, "rb").read()).hexdigest()
-    print(f"soup of {len(a.snapshots)} snapshots -> {a.output} (sha256 {digest[:12]})")
+    print(f"average of {len(a.snapshots)} snapshots -> {a.output} (sha256 {digest[:12]})")
     return 0
 
 
