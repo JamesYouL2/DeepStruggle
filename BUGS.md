@@ -65,6 +65,25 @@ It is deferred to a point where that cost is acceptable, not because the fix is 
 
 ---
 
+## ENG-2 — rules audit, 2026-09-28: seven rules the engine got wrong
+
+**Area:** engine · **Severity:** medium · **Status:** FIXED (2026-09-28)
+
+War rolls ignored the defender's superpower; the Vietnam Revolts ladder fell back to a card's
+printed Ops rather than the event's grant; UN Intervention could be played as an Event with no companion; We Will Bury You
+skipped a trapped US round; NORAD armed on DEFCON being set to 2 at 2; the Grain Sales route to UN
+Intervention paid no U-2 Incident; and Summit counted
+the scoring-only Shuttle Diplomacy and Formosan Resolution.
+
+Each is listed with its source in `engine/AGENTS.md` §12 and pinned by
+`engine/tests/test_rules_audit.cpp`. All change the decision stream.
+
+The audit also found the era decks reshuffling the discard pile in at turns 4 and 8; `main` had
+already fixed that independently (`c1df6f5`, engine letter E6), so it is not part of ENG-2.
+`tests/replayer` passes against the human corpus with these fixes in place.
+
+---
+
 ## TEST-1 — the differential fuzzing suite does not run
 
 **Area:** tests · **Severity:** low · **Status:** open

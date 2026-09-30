@@ -45,6 +45,15 @@ public:
     static uint8_t grant_ops_for_card(const GameState& state, uint8_t card_id, Player player) noexcept;
     static uint8_t grant_ops(const GameState& state, uint8_t base_ops, Player player) noexcept;
 
+    // The same two grants, written into the current frame together with the unbonused base the
+    // region ladder falls back to (DecisionContext::ops_plain). Every site that hands a player
+    // Ops goes through one of these.
+    static void grant_card_ops_to_ctx(GameState& state, uint8_t card_id, Player player) noexcept;
+    static void grant_event_ops_to_ctx(GameState& state, uint8_t base_ops, Player player) noexcept;
+
+    // What the budget in the current frame is worth outside its bonus regions.
+    static uint8_t plain_budget(const GameState& state, uint8_t op_card, Player player) noexcept;
+
     // Influence Placement
     static bool can_place_influence(const GameState& state, Player p, uint8_t country_id) noexcept;
     static uint8_t get_influence_cost(const GameState& state, Player p, uint8_t country_id) noexcept;

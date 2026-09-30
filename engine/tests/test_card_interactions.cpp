@@ -100,7 +100,9 @@ TEST(CardInteractionTest, FlowerPower_NoVP_WhenWarCardPlayedViaUNInterventionByU
     ts::CardHandlers::trigger_event(state, ts::card_ids::UN_INTERVENTION, ts::Player::US);
     ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, ts::card_ids::ARAB_ISRAELI_WAR, 0, 0});
 
-    // Arab-Israeli War was used for Ops, event canceled -> Flower Power gives 0 VP
+    // A war card lent to UN Intervention is neither played for its own Operations nor for its
+    // Event, so Flower Power charges nothing. ts-replayer game 304 (turn 7 AR7, the US lends
+    // Arab-Israeli War with Flower Power active) records no VP change; the FAQ is silent.
     ASSERT_EQ(state.victory_points, 0);
 }
 

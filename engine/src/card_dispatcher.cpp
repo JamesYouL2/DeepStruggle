@@ -156,6 +156,23 @@ bool CardHandlers::can_trigger_event(const GameState& state, uint8_t card_id, Pl
             return state.turn < 8; // Not in Late War
         case card_ids::STAR_WARS:
             return state.us_space_track > state.ussr_space_track;
+        case card_ids::UN_INTERVENTION: {
+            // "Play this card simultaneously with a card containing an opponent's associated
+            // Event" -- without such a card there is nothing to play it with, so it is not an
+            // Event the player can choose. It used to be offered anyway and fizzle, and a
+            // fizzled UN Intervention is still "UN Intervention played as an Event": a US hand
+            // with no USSR card in it could spend one round on it and cancel We Will Bury You's
+            // 3 VP for nothing. The FAQ's test is the star, "regardless of whether the Event can
+            // occur or not", so this asks the card's side and not can_trigger_event.
+            const Player opp = get_opponent(player);
+            for (uint8_t c = 1; c <= 110; ++c) {
+                if (in_hand_of(state.card_locations[c], player) &&
+                    CardData::get_card(c).side == opp && !CardData::is_scoring_card(c)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         default:
             return true;
     }
@@ -274,6 +291,34 @@ void CardHandlers::relocate_played_card(GameState& state, uint8_t card, bool eve
     }
     state.card_locations[card] = (CardData::get_card(card).one_time && event_occurred)
         ? CardLocation::REMOVED_FROM_GAME : CardLocation::DISCARD_PILE;
+}
+
+bool CardHandlers::charge_flower_power_for_ops(GameState& state, Player p, uint8_t card) noexcept {
+    // Only for a war that can actually happen. Camp David Accords stops Arab-Israeli War being
+    // played as an event at all, so playing it for Operations sets off no war and costs nothing:
+    // at turn 8 AR2 of ts-replayer game 105 the US coups Guatemala with it under both effects and
+    // the log records no VP change.
+    if (p != Player::US || !CardData::is_war_card(card) ||
+        !state.has_flag(effect_bits::FLOWER_POWER_ACTIVE) ||
+        !can_trigger_event(state, card, p)) {
+        return true;
+    }
+    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 2));
+    if (state.victory_points <= -20) {
+        state.current_phase = Phase::GAME_OVER;
+        return false;
+    }
+    return true;
+}
+
+bool CardHandlers::pay_u2_incident_rider(GameState& state) noexcept {
+    if (!state.has_flag(effect_bits::U2_INCIDENT_ACTIVE)) return true;
+    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
+    if (state.victory_points <= -20) {
+        state.current_phase = Phase::GAME_OVER;
+        return false;
+    }
+    return true;
 }
 
 bool CardHandlers::trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept {
@@ -606,7 +651,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                         return true;
                     }
                     state.ctx().pending_op_card = card_ids::OLYMPIC_GAMES;
-                    state.ctx().pending_ops_value = Operations::grant_ops(state, 4, sponsor);
+                    Operations::grant_event_ops_to_ctx(state, 4, sponsor);
                     state.ctx().decision_player = sponsor;
                     state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
                     state.ctx().resolving_card = 0;
@@ -744,19 +789,19 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
         }
 
         case card_ids::UN_INTERVENTION: {
-            if (state.has_flag(effect_bits::U2_INCIDENT_ACTIVE)) {
-                state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-                if (state.victory_points <= -20) {
-                    state.current_phase = Phase::GAME_OVER;
-                    state.ctx().resolving_card = 0;
-                    return true;
-                }
+            if (!pay_u2_incident_rider(state)) {
+                state.ctx().resolving_card = 0;
+                return true;
             }
             uint8_t chosen_card = action.primary_id;
             Player opp = get_opponent(p);
             if (chosen_card >= 1 && chosen_card <= 110 && in_hand_of(state.card_locations[chosen_card], p)) {
                 if (CardData::get_card(chosen_card).side == opp && !CardData::is_scoring_card(chosen_card)) {
                     state.card_locations[chosen_card] = CardLocation::DISCARD_PILE;
+                    // No Flower Power charge for a war card lent to UN Intervention: the card is
+                    // not played for its own Operations or Event. The human log of ts-replayer
+                    // game 304 (turn 7 AR7, Arab-Israeli War under Flower Power) records no VP
+                    // change, and the FAQ is silent on the case.
                     state.ctx().pending_op_card = chosen_card;
                     // Region::ASIA grants the conditional bonuses up front exactly as a normal
                     // Ops play does, leaving the budget ladder to withdraw them if the player
@@ -764,7 +809,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                     // printed Ops: at turn 2 AR4 of ts-replayer game 108 the USSR named CIA
                     // Created under Vietnam Revolts and placed influence in two Southeast
                     // Asian countries, where the engine could afford only one.
-                    state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, chosen_card, p);
+                    Operations::grant_card_ops_to_ctx(state, chosen_card, p);
                     // UN Intervention uses the named card's Ops "without triggering the Event".
                     // advance_after_ops otherwise sees an opponent card sitting in
                     // pending_op_card on the default OPS_FIRST branch and fires it -- turn 1
@@ -850,13 +895,9 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                 uint8_t ussr_dom_count = 0;
 
                 for (uint8_t r = 0; r < 6; ++r) {
-                    auto summary = Scoring::evaluate_region(state, static_cast<Region>(r));
-                    if (summary.us_status == RegionalStatus::DOMINATION || summary.us_status == RegionalStatus::CONTROL) {
-                        us_dom_count++;
-                    }
-                    if (summary.ussr_status == RegionalStatus::DOMINATION || summary.ussr_status == RegionalStatus::CONTROL) {
-                        ussr_dom_count++;
-                    }
+                    const Region region = static_cast<Region>(r);
+                    if (Scoring::dominates_or_controls(state, region, Player::US)) us_dom_count++;
+                    if (Scoring::dominates_or_controls(state, region, Player::USSR)) ussr_dom_count++;
                 }
 
                 uint8_t forced_us = (action.primary_id >= 1 && action.primary_id <= 6) ? action.primary_id : 0;
@@ -937,8 +978,9 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
         }
         case card_ids::HOW_I_LEARNED_TO_STOP_WORRYING: {
             uint8_t new_defcon = std::clamp(action.primary_id, static_cast<uint8_t>(1), static_cast<uint8_t>(5));
+            // "Moved to 2" for NORAD: choosing 2 while DEFCON already stands at 2 moves nothing.
+            if (new_defcon == 2 && state.defcon != 2) state.defcon_dropped_to_2 = 1;
             state.defcon = new_defcon;
-            if (state.defcon == 2) state.defcon_dropped_to_2 = 1;
             if (state.defcon == 1) {
                 resolve_defcon_one_loss(state, state.ctx().decision_player);
             }
@@ -993,7 +1035,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                 // Transition to Ops in CA/SA. The event's own Ops, so Influence is barred
                 // from these and not from the player's own -- see the SELECT_OP_MODE handler.
                 state.ctx().pending_op_card = card_ids::JUNTA;
-                state.ctx().pending_ops_value = Operations::grant_ops(state, 2, state.ctx().decision_player);
+                Operations::grant_event_ops_to_ctx(state, 2, state.ctx().decision_player);
                 state.ctx().event_granted_ops = 1;
                 state.ctx().resolving_card = 0;
                 state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
@@ -1038,7 +1080,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                 return done;
             } else {
                 state.ctx().pending_op_card = chosen_card;
-                state.ctx().pending_ops_value = Operations::grant_ops_for_card(state, chosen_card, p_player);
+                Operations::grant_card_ops_to_ctx(state, chosen_card, p_player);
                 state.ctx().decision_player = p_player;
                 state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
                 state.ctx().timing_branch = 255;
@@ -1079,9 +1121,15 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
                 // setting only timing_branch.
                 state.card_locations[card_ids::UN_INTERVENTION] = CardLocation::DISCARD_PILE;
                 state.card_locations[drawn_card] = hand_of(Player::US, /*known=*/true);
+                // UN Intervention is played here as surely as through its own handler, so U-2
+                // Incident's rider is owed the same way; this route had none. Flower Power is
+                // not charged for the lent card, as in UN Intervention's own handler.
+                if (!pay_u2_incident_rider(state)) {
+                    state.ctx().resolving_card = 0;
+                    return true;
+                }
                 state.ctx().pending_op_card = drawn_card;
-                state.ctx().pending_ops_value =
-                    Operations::grant_ops_for_card(state, drawn_card, Player::US);
+                Operations::grant_card_ops_to_ctx(state, drawn_card, Player::US);
                 state.ctx().decision_player = Player::US;
                 state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
                 state.ctx().timing_branch = 255;
@@ -1103,7 +1151,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
             // marked known -- the US has seen it, and that is exactly what the location records.
             state.card_locations[drawn_card] = hand_of(Player::USSR, /*known=*/true);
             state.ctx().pending_op_card = card_ids::GRAIN_SALES;
-            state.ctx().pending_ops_value = Operations::grant_ops(state, 2, Player::US);
+            Operations::grant_event_ops_to_ctx(state, 2, Player::US);
             state.ctx().resolving_card = 0;
             state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
             return false;

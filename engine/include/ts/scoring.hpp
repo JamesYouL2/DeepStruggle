@@ -34,6 +34,10 @@ public:
     // Evaluates a region and returns detailed score breakdown
     static RegionScoreSummary evaluate_region(const GameState& state, Region r, bool is_final_scoring = false) noexcept;
 
+    // Whether `p` Dominates or Controls `r` on the board as it stands, with no scoring-only card
+    // effect applied (Summit's modifier).
+    static bool dominates_or_controls(const GameState& state, Region r, Player p) noexcept;
+
     // Scores a region, updates state.victory_points (clamped to [-20, 20]), checks instant win
     static void score_region(GameState& state, Region r) noexcept;
 

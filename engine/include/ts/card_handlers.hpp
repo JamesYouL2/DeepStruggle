@@ -63,6 +63,18 @@ public:
     // handler sets its own location, the outcome being known only there.
     static void relocate_played_card(GameState& state, uint8_t card, bool event_occurred,
                                      Handover handover) noexcept;
+
+    // Flower Power: "The USSR receives 2 VP for every US played War card, used for Operations or
+    // an Event". Called wherever the US spends a card's Operations -- a play for Ops, event-first
+    // or ops-first, and the companion UN Intervention lends its Ops from -- so the charge has one
+    // definition. (A war card played as its Event is charged where the war is rolled.) Returns
+    // false if the charge ended the game, and the caller must stop.
+    static bool charge_flower_power_for_ops(GameState& state, Player p, uint8_t card) noexcept;
+
+    // UN Intervention was played as an Event: U-2 Incident's rider, "if UN Intervention is
+    // played later this turn, either by the US or the USSR, the USSR receives an additional 1
+    // VP". Every route that plays UN Intervention calls this. Returns false if the game ended.
+    static bool pay_u2_incident_rider(GameState& state) noexcept;
 };
 
 } // namespace ts

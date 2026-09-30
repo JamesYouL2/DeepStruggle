@@ -88,6 +88,7 @@ engine/
     ├── test_full_game.cpp      // 10-turn full game integration tests ending in final scoring
     ├── test_auto_advance.cpp   // Engine::auto_advance_step: forced/degenerate decisions taken without asking
     ├── test_fuzz_influence_placement.cpp // Randomized influence placement against the mask
+    ├── test_rules_audit.cpp    // One regression per rule fixed by the 2026-09-28 audit (§12)
     ├── test_fuzz.cpp           // ts_fuzz: invariant fuzzer (--games <N>, --steps <N>, --seed <S>)
     ├── test_fuzz_events.cpp    // ts_fuzz_events: same, biased toward firing events (--event-bias)
     └── test_benchmark.cpp      // ts_benchmark: throughput benchmark
@@ -193,6 +194,8 @@ preloads into the uninstrumented Python interpreter; the test executables keep t
 ### Run Unit Tests:
 ```bash
 ./build/release/engine/ts_tests
+# Only the tests whose name contains a substring:
+TS_TEST_FILTER=RulesAudit ./build/release/engine/ts_tests
 # Or with sanitizers:
 ./build_san/engine/ts_tests
 ```
@@ -399,27 +402,12 @@ who drove DEFCON down. That is the rule.
 
 ---
 
-## 9. Known issue: UN Intervention's companion mask is unfiltered
+## 9. Fixed: UN Intervention's companion mask was unfiltered (ENG-1)
 
-UN Intervention (#32) is played simultaneously with a card carrying the opponent's associated
-Event, so its companion must be an opponent-associated, non-scoring card. **The action mask offers
-every card in hand**, scoring cards and the player's own included.
-
-`trigger_un_intervention` (`src/events/early_war.cpp`) sets `ctx().resolving_card`, so
-`action_mask.cpp`'s `if (ctx.resolving_card != 0)` branch fires first and delegates to
-`get_event_action_mask`, whose `SELECT_CARD` switch has no `UN_INTERVENTION` case and falls
-through to `default:` -- every card in hand. The correct filter lives just below that branch
-(`pending_op_card == UN_INTERVENTION && is_opponent_card(i, p)`) and is shadowed, so it never runs.
-
-The illegal choice is then absorbed silently: the resolver (`src/card_dispatcher.cpp`) re-checks
-the rule and on failure clears `resolving_card` and returns. Nothing is corrupted -- the companion
-stays in hand -- but UN Intervention goes to the discard pile with no event fired and no Ops
-granted, so the player loses a whole action round with no error reported.
-
-**Unfixed.** The fix is a `case card_ids::UN_INTERVENTION:` in `get_event_action_mask`'s
-`SELECT_CARD` switch mirroring the resolver's own test, deletion of the shadowed branch rather
-than a second copy of the rule, and a regression test pinning the companion mask to opponent
-non-scoring cards. It changes the decision stream, so it is an engine change under §2.
+The companion decision now offers only opponent-associated, non-scoring cards, through a
+`UN_INTERVENTION` case in `get_event_action_mask`'s `SELECT_CARD` switch, and the shadowed copy in
+`action_mask.cpp` is gone. See `BUGS.md` ENG-1 for the history. Since the 2026-09-28 audit (§12)
+UN Intervention is also not offered as an Event at all without such a card in hand.
 
 ## 9a. Not an issue: "UN Intervention for Ops dead-ends the game" (retracted 2026-09-23)
 
@@ -471,3 +459,40 @@ the US hand, playable every action round, and the E5 models learned to replay it
 `KitchenDebates_*` (`tests/test_card_edge_cases.cpp`) and `test_kitchen_debates_*`
 (`tests/engine_logic/test_starred_card_removal.py`). If a new card seems to need a special case in
 `relocate_played_card`, the condition belongs in `event_has_effect` instead.
+
+---
+
+## 12. Rules audit, 2026-09-28
+
+Every card handler, the Ops/coup/realignment/war code, scoring, the space race and the turn
+sequence were read against the card text (`rules/cards.json`), the Deluxe rules
+(`rules/rules.md`), the FAQ and the struggler engine's rulings table. The map and the card table
+were diffed against struggler's data files field by field and are identical. What the audit
+changed, each pinned by `tests/test_rules_audit.cpp` (or the test named) and each shown to fail
+with its fix reverted:
+
+| rule | before | source |
+|:---|:---|:---|
+| A war's defender's **superpower** counts as an adjacent controlled country (-1) | only the 84 countries were counted: a USSR Brush War on Mexico, a US one on Afghanistan, rolled a point too high | Rule 2.1.5 (superpower spaces count for "events and realignments"); FAQ under Brush War (a reversal of an earlier ruling) |
+| The region-bonus ladder falls back to the event's **modified grant**, not the card's printed Ops | an Olympic boycott under Vietnam Revolts fell to the card's printed 2 on leaving Southeast Asia, losing two of the event's four Ops | `DecisionContext::ops_plain`, set by `Operations::grant_*_ops_to_ctx`. Rule 7.4.3 for "modified" |
+| **UN Intervention** is an Event only with an opponent-associated card in hand | offered and fizzled, which cancelled a pending We Will Bury You for nothing | Card text; FAQ card #32 |
+| **We Will Bury You** settles on a trapped US round | a Quagmire discard round skipped the check and the 3 VP waited for the next card play | Card text: UN Intervention was not played in that round |
+| **NORAD** arms on DEFCON *moving* to 2 | Cuban Missile Crisis or How I Learned setting 2 at 2 armed it | Card text: "moved to 2" |
+| **U-2 Incident** reaches UN Intervention played through Grain Sales | the route paid nothing | Card text |
+| **Summit** counts regions without Shuttle Diplomacy or Formosan Resolution | both scoring-only effects moved Summit's die | FAQ card #73; card #35 "for scoring purposes only". `Scoring::dominates_or_controls` |
+
+**Checked and left as it was: event-granted Ops take the Ops modifiers.** Containment, Brezhnev
+Doctrine and Red Scare/Purge apply to Ops an Event grants (CIA Created, Lone Gunman, ABM Treaty,
+the Olympic boycott, Grain Sales, KAL-007, Glasnost) and to the coups Junta, Che, Ortega and Tear
+Down This Wall make with their card's value. Deluxe rule 7.4.3: those Operations "are treated as if
+a card had been played for its Operations Point Value ... subject to all the restrictions of rule
+6.0 and other events limiting their placement or value", and 7.4.2's Example 3 is CIA Created under
+Containment, worth 2. The FAQ line struggler's rulings table quotes -- "Ops from events are not
+affected" -- is contradicted by the rulebook, which outranks it. The audit briefly reversed this on
+the strength of that line; the `*_OpsModifiers_Suite` tests in `test_card_edge_cases.cpp` pin the
+rulebook's reading.
+
+Each of these moves the decision stream, so the engine behind every checkpoint changed; see
+`research/findings/engine/engine_revisions.md`. The human corpus (`tests/replayer`) passes with
+them in place.
+
