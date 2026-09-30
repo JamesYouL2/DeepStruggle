@@ -507,6 +507,10 @@ gh run download <run-id> -n tournament-<run-id> -D data/reports/ci      # collec
 Plays a match between any pair of agents, supports two distinct checkpoints, provides interactive
 CLI terminal play, and writes standardized `.tslog.json` replays for the Web Workbench.
 
+Any tournament entrant plays too: `agent:<load_agent spec>` (e.g.
+`agent:search:<model>:64:truncate_half_rounds=1`), or `safe:` and `ensemble:` specs directly. A tournament's game log keeps no moves, so this is how to see what
+an entrant actually did in a game.
+
 ```bash
 # 1. Pit two neural checkpoints against each other:
 PYTHONPATH=. .venv/bin/python tools/play_match.py \
