@@ -101,6 +101,22 @@ are the optimiser levers at the plateau (`research/plans/P28_strength_on_E6.md`)
     average, so the rated and pooled model is the average.
   * The live weights keep training, and the resume state holds both.
 
+`--aux-ownership <w>` and `--aux-vp-margin <w>` (P29 bet 2; 0, the default, is off) add two
+small heads on the trunk. They are trained from each game's end:
+* **ownership:** who controls each of the 84 countries (mine / opponent's / neither, in the mover's
+  frame; cross-entropy);
+* **VP margin:** the final VP margin (VP/20; squared error).
+
+How they are trained:
+* A game outlasts a rollout, so `--aux-sample-frac` (0.1) of decisions wait per env, at half
+  precision, until their game ends. `TsVectorizedEnv.record_final_control` reads control just
+  before the auto-reset.
+* Once `--aux-min-batch` (4096) labelled positions are ready, they train in their own optimizer
+  step, as the setup credit does.
+* The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
+  record the heads by their weights (`aux_own_head.*`), so they load anywhere.
+* Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+
 `tools/scripts/weight_soup.py` averages finished snapshots into one (uniform SWA) for rating, with
 no training.
 

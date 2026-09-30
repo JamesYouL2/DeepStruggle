@@ -555,6 +555,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr-schedule-span", type=int, default=200_000_000,
                         help="cosine schedule: steps from --lr to --lr-min.")
     parser.add_argument("--lr-min", type=float, default=3e-5, help="cosine schedule: the floor.")
+    # P29 bet 2 (research/plans/P29_big_bets_from_scratch.md): auxiliary targets from each game's end.
+    parser.add_argument("--aux-ownership", type=float, default=0.0,
+                        help="Weight of an auxiliary head predicting who controls each of the 84 "
+                             "countries at game end (mine / opponent's / neither, in the mover's "
+                             "frame; cross-entropy). 0, the default, builds no aux heads. Ladder "
+                             "architecture only.")
+    parser.add_argument("--aux-vp-margin", type=float, default=0.0,
+                        help="Weight of an auxiliary head predicting the final VP margin (mover's "
+                             "frame, VP/20; squared error). 0 is off.")
+    parser.add_argument("--aux-sample-frac", type=float, default=0.1,
+                        help="Fraction of decisions kept (at half precision) until their game ends "
+                             "and labelled for the aux targets.")
+    parser.add_argument("--aux-min-batch", type=int, default=4096,
+                        help="Labelled positions to gather before one aux training step.")
     parser.add_argument("--ema-weights", type=float, default=0.0,
                         help="Keep an exponential moving average of the weights with this time "
                              "constant in env steps (0, the default, keeps none). Snapshots, pool "
@@ -810,6 +824,10 @@ def main():
             setup_mc_credit=args.setup_mc_credit,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
+            aux_own_coef=args.aux_ownership,
+            aux_vp_coef=args.aux_vp_margin,
+            aux_sample_frac=args.aux_sample_frac,
+            aux_min_batch=args.aux_min_batch,
             lr_schedule=args.lr_schedule,
             lr_schedule_start=args.lr_schedule_start,
             lr_schedule_every=args.lr_schedule_every,

@@ -222,6 +222,8 @@ class TsVectorizedEnv:
         self.num_envs = num_envs
         self.base_seed = base_seed
         self.auto_reset = auto_reset
+        # Off unless a trainer wants the ownership target (P29 bet 2); see step().
+        self.record_final_control = False
         self.observation_size = obs_size()
         # Optional source of mid-game start positions. Called with an env index after that
         # env resets; returning a GameState starts it there instead of from a fresh deal,
@@ -422,6 +424,10 @@ class TsVectorizedEnv:
         # turn 7 AR1 and one that ran to turn 7 AR7 share a turn number, and a game that
         # went the distance reads 11 because finish_end_turn increments before testing.
         terminal_plies = np.zeros(self.num_envs, dtype=np.int16)
+        # P29 bet 2's ownership target: who controls each country when the game ends, read here
+        # because the auto-reset below discards the terminal state. Only when a trainer asks for
+        # it (record_final_control), since it costs 84 engine calls per finished game.
+        final_control: Dict[int, np.ndarray] = {}
         done_idx = np.flatnonzero(dones)
         if len(done_idx):
             # Only a handful of the envs finish on any given step, so walk the terminal
@@ -448,6 +454,10 @@ class TsVectorizedEnv:
                 terminal_plies[i] = _game_ply(
                     int(st.turn), int(st.action_round), st.phasing_player == ts.Player.US,
                     headline_stage=int(st.headline_stage))
+                if self.record_final_control:
+                    # +1 US, -1 USSR, 0 neither (ts.Player's own values).
+                    final_control[i] = np.array(
+                        [int(ts.Scoring.get_country_control(st, c)) for c in range(84)], dtype=np.int8)
 
         # Retrieve state pointers for any terminal environments (or all environments if reward calculator requires it)
         states: List[Optional[ts.GameState]] = []
@@ -492,6 +502,8 @@ class TsVectorizedEnv:
                         "ending_reason": ending_reasons[i],
                         "start_turn": int(self.env_start_turn[i]),
                     })
+                    if i in final_control:
+                        completed_episodes[-1]["final_control"] = final_control[i]
                     new_seed = int(np.random.randint(1, 1_000_000_000))
                     self.runner.reset_game(i, new_seed)
                     # Inject before on_env_reset so the reward calculator sees the position

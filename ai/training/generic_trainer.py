@@ -1509,6 +1509,10 @@ def train_pipeline(
     setup_mc_credit: bool = False,
     setup_mc_coef: float = 1.0,
     setup_mc_min_batch: int = 512,
+    aux_own_coef: float = 0.0,
+    aux_vp_coef: float = 0.0,
+    aux_sample_frac: float = 0.1,
+    aux_min_batch: int = 4096,
     forced_opening: Optional[str] = None,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
@@ -1665,7 +1669,10 @@ def train_pipeline(
         # `tools/scripts/launch_flags.py --diff` is blind to exactly the kind of drift invariant
         # 15 exists to catch, which is how 34 M2d arms were launched with no record of the shape
         # they trained. None for non-ladder runs.
-        "ladder_config": (dict(ladder_config) if ladder_config else None),
+        # The aux heads are built from --aux-* rather than a --ladder-* flag, but they are part of
+        # the network, so the record says so (only when they exist: older runs stay comparable).
+        "ladder_config": ({**dict(ladder_config), **({"aux_heads": True} if (aux_own_coef > 0.0
+                          or aux_vp_coef > 0.0) else {})} if ladder_config else None),
         # Each defaults to `seed`; recorded resolved so a run says which streams it actually used.
         "seed_init": (seed if seed_init is None else int(seed_init)),
         "seed_sampling": (seed if seed_sampling is None else int(seed_sampling)),
@@ -1760,6 +1767,11 @@ def train_pipeline(
         "setup_mc_credit": bool(setup_mc_credit),
         "setup_mc_coef": float(setup_mc_coef),
         "setup_mc_min_batch": int(setup_mc_min_batch),
+        # P29 bet 2: auxiliary ownership / VP-margin targets (0 = off).
+        "aux_own_coef": float(aux_own_coef),
+        "aux_vp_coef": float(aux_vp_coef),
+        "aux_sample_frac": float(aux_sample_frac),
+        "aux_min_batch": int(aux_min_batch),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
         "setup_block_lambda": bool(setup_block_lambda),
@@ -1810,7 +1822,9 @@ def train_pipeline(
         if not ladder_config:
             raise ValueError("--arch ladder requires a ladder configuration; see "
                              "research/plans/P21_architecture_ladder.md")
-        model = create_ladder_net(dev, categorical_value=categorical_value, **ladder_config)
+        _aux = aux_own_coef > 0.0 or aux_vp_coef > 0.0
+        model = create_ladder_net(dev, categorical_value=categorical_value,
+                                  **{**ladder_config, "aux_heads": _aux})
     elif arch == "mlp":
         from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
         model = create_coldwar_net_mlp(dev, categorical_value=categorical_value,
@@ -1978,6 +1992,10 @@ def train_pipeline(
         setup_mc_credit=setup_mc_credit,
         setup_mc_coef=setup_mc_coef,
         setup_mc_min_batch=setup_mc_min_batch,
+        aux_own_coef=aux_own_coef,
+        aux_vp_coef=aux_vp_coef,
+        aux_sample_frac=aux_sample_frac,
+        aux_min_batch=aux_min_batch,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
         setup_block_lambda=setup_block_lambda,
@@ -2524,6 +2542,8 @@ def train_pipeline(
                     "ent_coef_us", "ent_coef_ussr", "entropy_setup", "setup_ent_coef",
                     "setup_mc_n", "setup_mc_ready", "setup_mc_pending", "setup_mc_result_mean",
                     "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
+                    # P29 bet 2's auxiliary targets
+                    "aux_n", "aux_ready", "aux_pending", "aux_own_loss", "aux_own_acc", "aux_vp_loss",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss",

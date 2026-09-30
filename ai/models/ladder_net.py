@@ -35,6 +35,8 @@ from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
                                       ColdWarNetV2, static_input_mask)
 from bindings.action_encoder import ActionEncoder
 
+#: Countries the ownership head predicts: all 84 (P29 bet 2).
+AUX_OWN_COUNTRIES = 84
 #: How the observation is read before the trunk.
 INPUT_MODES: Tuple[str, ...] = ("flat", "grouped", "entity")
 #: How per-entity tokens become a fixed-size vector. Only meaningful for `input_mode="entity"`.
@@ -75,6 +77,7 @@ class LadderNet(ColdWarNetV2):
                  num_attn_heads: int,
                  categorical_value: bool,
                  head_center: bool = False,
+                 aux_heads: bool = False,
                  **kwargs: Any) -> None:
         if input_mode not in INPUT_MODES:
             raise ValueError(f"input_mode must be one of {INPUT_MODES}; got {input_mode!r}")
@@ -310,6 +313,28 @@ class LadderNet(ColdWarNetV2):
         if self.head_center:
             self.register_buffer("pe_center", torch.ones(()))
 
+        # P29 bet 2: auxiliary targets read off the trunk, trained from each game's end -- who
+        # controls every country (mine / the opponent's / neither, in the mover's frame) and the
+        # final VP margin. KataGo's ownership and score heads: the trunk learns what holding a
+        # country is worth before the policy can take it. Used by the training loss only, never
+        # by the policy or the value; forward() is untouched. Built only when asked for, and
+        # recovered from the weights (`aux_own_head.*`) like every other optional part.
+        self.aux_heads = bool(aux_heads)
+        if self.aux_heads:
+            self.aux_own_head = nn.Sequential(
+                nn.Linear(hidden_dim, 256), nn.GELU(), nn.Linear(256, AUX_OWN_COUNTRIES * 3))
+            self.aux_vp_head = nn.Sequential(
+                nn.Linear(hidden_dim, 128), nn.GELU(), nn.Linear(128, 1))
+
+    def forward_aux(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The auxiliary predictions: ownership logits (B, 84, 3) -- mine / opponent's / neither --
+        and the final VP margin (B, 1) in the mover's frame, VP / 20."""
+        if not self.aux_heads:
+            raise RuntimeError("this network was built without aux heads (--aux-ownership / --aux-vp-margin)")
+        h, _attn, _tokens = self._encode(obs)
+        own = self.aux_own_head(h).view(-1, AUX_OWN_COUNTRIES, 3)
+        return own, self.aux_vp_head(h)
+
 
     def _card_lookup(self, card_raw: torch.Tensor, pre: torch.Tensor,
                      b: int) -> torch.Tensor:
@@ -383,6 +408,7 @@ class LadderNet(ColdWarNetV2):
             num_attn_heads=self.ladder_num_attn_heads,
             categorical_value=bool(self.categorical_value),
             head_center=self.head_center,
+            aux_heads=self.aux_heads,
         )
 
 
@@ -656,6 +682,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         num_attn_heads=4,
         head_center="pe_center" in sd,
         categorical_value=any(k.startswith("value_dist_head") for k in sd),
+        aux_heads=any(k.startswith("aux_own_head.") for k in sd),
     )
 
 def create_ladder_net(device: torch.device | str, **config: Any) -> LadderNet:

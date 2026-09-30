@@ -302,6 +302,10 @@ class BaseNashPGTrainer:
         setup_mc_credit: bool = False,
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
+        aux_own_coef: float = 0.0,
+        aux_vp_coef: float = 0.0,
+        aux_sample_frac: float = 0.1,
+        aux_min_batch: int = 4096,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
@@ -493,6 +497,23 @@ class BaseNashPGTrainer:
         self.setup_mc_min_batch = int(setup_mc_min_batch)
         self._setup_pending: List[List[Tuple[Any, ...]]] = [[] for _ in range(self.num_envs)]
         self._setup_ready: List[Tuple[Any, ...]] = []
+        #: P29 bet 2, --aux-ownership / --aux-vp-margin: auxiliary targets from each game's end --
+        #: who controls every country (mine / the opponent's / neither, in the mover's frame) and
+        #: the final VP margin -- read by extra heads on the trunk (LadderNet.forward_aux). A game
+        #: outlasts a rollout, so a sampled fraction of positions (--aux-sample-frac, observations
+        #: kept at half precision) waits per env until its game ends, as the setup credit does, and
+        #: the labelled batch is trained in its own step once --aux-min-batch are ready.
+        self.aux_own_coef = float(aux_own_coef)
+        self.aux_vp_coef = float(aux_vp_coef)
+        self.aux_sample_frac = float(aux_sample_frac)
+        self.aux_min_batch = int(aux_min_batch)
+        self.aux_targets = self.aux_own_coef > 0.0 or self.aux_vp_coef > 0.0
+        self._aux_pending: List[List[Tuple[Any, int]]] = [[] for _ in range(self.num_envs)]
+        self._aux_ready: List[Tuple[Any, np.ndarray, float]] = []
+        if self.aux_targets:
+            if not getattr(self.active_net, "aux_heads", False):
+                raise ValueError("--aux-ownership / --aux-vp-margin need a network built with aux heads")
+            self.env.record_final_control = True
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -693,6 +714,70 @@ class BaseNashPGTrainer:
                 self._setup_ready.append(rec + (util * (1.0 if rec[5] == 1 else -1.0),))
             self._setup_pending[i] = []
 
+    def _aux_record(self, obs_t: torch.Tensor, dp: np.ndarray) -> None:
+        """Aux targets: file a sampled fraction of this step's decisions under their env."""
+        pick = (dp != 0) & (np.random.random(dp.shape[0]) < self.aux_sample_frac)
+        rows = np.flatnonzero(pick)
+        if rows.size == 0:
+            return
+        o = obs_t.index_select(0, torch.from_numpy(rows).to(obs_t.device)).half()
+        for j, i in enumerate(rows):
+            self._aux_pending[int(i)].append((o[j], int(dp[i])))
+
+    def _aux_resolve(self, completed_episodes: Sequence[Dict[str, Any]]) -> None:
+        """Aux targets: a finished game labels its waiting positions, each in its mover's frame."""
+        for ep in completed_episodes:
+            i = int(ep.get("env_idx", -1))
+            if not 0 <= i < self.num_envs or not self._aux_pending[i]:
+                continue
+            ctrl = ep.get("final_control")
+            if ctrl is None:                         # not recorded: nothing to label them with
+                self._aux_pending[i] = []
+                continue
+            vp = float(ep.get("victory_points", 0)) / 20.0
+            for o, mover in self._aux_pending[i]:
+                own = np.asarray(ctrl, dtype=np.int8) * np.int8(mover)     # +1 mine, -1 theirs, 0 neither
+                cls = np.where(own == 1, 0, np.where(own == -1, 1, 2)).astype(np.int64)
+                self._aux_ready.append((o, cls, vp * float(mover)))
+            self._aux_pending[i] = []
+
+    def _aux_update(self) -> Dict[str, float]:
+        """Aux targets: one step on the labelled positions, ownership CE plus VP-margin MSE."""
+        out: Dict[str, float] = {"aux_ready": float(len(self._aux_ready)),
+                                 "aux_pending": float(sum(len(p) for p in self._aux_pending))}
+        n = len(self._aux_ready)
+        if n < max(1, self.aux_min_batch):
+            return out
+        recs, self._aux_ready = self._aux_ready, []
+        dev = recs[0][0].device
+        obs = torch.stack([r[0] for r in recs]).float()
+        cls = torch.from_numpy(np.stack([r[1] for r in recs])).to(dev)
+        vp = torch.tensor([r[2] for r in recs], dtype=torch.float32, device=dev)
+        net = cast(Any, self.active_net)
+        net.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        own_loss_sum = 0.0
+        vp_loss_sum = 0.0
+        correct = 0.0
+        for k in range(0, n, self.batch_size):
+            sl = slice(k, k + self.batch_size)
+            own_logits, vp_pred = net.forward_aux(obs[sl])
+            own_logits = own_logits.float()
+            own_ce = F.cross_entropy(own_logits.reshape(-1, 3), cls[sl].reshape(-1), reduction="sum") / 84.0
+            vp_se = F.mse_loss(vp_pred.float().reshape(-1), vp[sl], reduction="sum")
+            loss = (self.aux_own_coef * own_ce + self.aux_vp_coef * vp_se) / n
+            loss.backward()
+            with torch.no_grad():
+                own_loss_sum += float(own_ce)
+                vp_loss_sum += float(vp_se)
+                correct += float((own_logits.argmax(-1) == cls[sl]).float().sum()) / 84.0
+        nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+        self.optimizer.step()
+        net.eval()
+        out.update({"aux_n": float(n), "aux_own_loss": own_loss_sum / n, "aux_own_acc": correct / n,
+                    "aux_vp_loss": vp_loss_sum / n})
+        return out
+
     def _setup_mc_update(self) -> Dict[str, float]:
         """--setup-mc-credit: one clipped policy step on the setup placements whose games ended."""
         out: Dict[str, float] = {"setup_mc_ready": float(len(self._setup_ready)),
@@ -890,6 +975,8 @@ class BaseNashPGTrainer:
             if self.setup_mc_credit:
                 self._setup_mc_record(obs_t, masks_t, actions_t, log_probs_t, v_win_t,
                                       np.asarray(learner_np, dtype=bool), _dp)
+            if self.aux_targets:
+                self._aux_record(obs_t, np.asarray(_dp))
             # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
             # step. A change by the next decision means a chance node came between them.
             _rngs_np: Optional[np.ndarray] = None
@@ -999,6 +1086,8 @@ class BaseNashPGTrainer:
 
             if self.setup_mc_credit and self._info.get("completed_episodes"):
                 self._setup_mc_resolve(self._info["completed_episodes"])
+            if self.aux_targets and self._info.get("completed_episodes"):
+                self._aux_resolve(self._info["completed_episodes"])
             if "completed_episodes" in self._info and self._info["completed_episodes"]:
                 # Win rate, ending mix and game length describe how the policy plays. Games
                 # against a frozen pool opponent are a different question and would make a
@@ -1228,6 +1317,8 @@ class BaseNashPGTrainer:
         combined: Dict[str, Any] = {**rollout_metrics, **train_metrics}
         if self.setup_mc_credit:
             combined.update(self._setup_mc_update())
+        if self.aux_targets:
+            combined.update(self._aux_update())
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.
