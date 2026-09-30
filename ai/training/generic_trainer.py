@@ -1513,6 +1513,9 @@ def train_pipeline(
     aux_vp_coef: float = 0.0,
     aux_sample_frac: float = 0.1,
     aux_min_batch: int = 4096,
+    aux_card_coef: float = 0.0,
+    aux_card_sample_frac: float = 0.005,
+    aux_card_min_batch: int = 2048,
     forced_opening: Optional[str] = None,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
@@ -1672,7 +1675,8 @@ def train_pipeline(
         # The aux heads are built from --aux-* rather than a --ladder-* flag, but they are part of
         # the network, so the record says so (only when they exist: older runs stay comparable).
         "ladder_config": ({**dict(ladder_config), **({"aux_heads": True} if (aux_own_coef > 0.0
-                          or aux_vp_coef > 0.0) else {})} if ladder_config else None),
+                          or aux_vp_coef > 0.0) else {}),
+                          **({"card_aux": True} if aux_card_coef > 0.0 else {})} if ladder_config else None),
         # Each defaults to `seed`; recorded resolved so a run says which streams it actually used.
         "seed_init": (seed if seed_init is None else int(seed_init)),
         "seed_sampling": (seed if seed_sampling is None else int(seed_sampling)),
@@ -1772,6 +1776,10 @@ def train_pipeline(
         "aux_vp_coef": float(aux_vp_coef),
         "aux_sample_frac": float(aux_sample_frac),
         "aux_min_batch": int(aux_min_batch),
+        # P30: the card-event auxiliary target (0 = off).
+        "aux_card_coef": float(aux_card_coef),
+        "aux_card_sample_frac": float(aux_card_sample_frac),
+        "aux_card_min_batch": int(aux_card_min_batch),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
         "setup_block_lambda": bool(setup_block_lambda),
@@ -1824,7 +1832,7 @@ def train_pipeline(
                              "research/plans/P21_architecture_ladder.md")
         _aux = aux_own_coef > 0.0 or aux_vp_coef > 0.0
         model = create_ladder_net(dev, categorical_value=categorical_value,
-                                  **{**ladder_config, "aux_heads": _aux})
+                                  **{**ladder_config, "aux_heads": _aux, "card_aux": aux_card_coef > 0.0})
     elif arch == "mlp":
         from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
         model = create_coldwar_net_mlp(dev, categorical_value=categorical_value,
@@ -1996,6 +2004,9 @@ def train_pipeline(
         aux_vp_coef=aux_vp_coef,
         aux_sample_frac=aux_sample_frac,
         aux_min_batch=aux_min_batch,
+        aux_card_coef=aux_card_coef,
+        aux_card_sample_frac=aux_card_sample_frac,
+        aux_card_min_batch=aux_card_min_batch,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
         setup_block_lambda=setup_block_lambda,
@@ -2544,6 +2555,7 @@ def train_pipeline(
                     "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
                     # P29 bet 2's auxiliary targets
                     "aux_n", "aux_ready", "aux_pending", "aux_own_loss", "aux_own_acc", "aux_vp_loss",
+                    "card_aux_n", "card_aux_ready", "card_aux_loss", "card_aux_r2", "card_aux_label_s",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss",

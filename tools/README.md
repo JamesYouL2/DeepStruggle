@@ -116,6 +116,18 @@ How they are trained:
 * The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+`--aux-card-events W` (P30, default 0 = off) adds a per-card head on the trunk. For every card in the
+mover's hand it predicts what the card's event would do on this board (VP, DEFCON, the six regional
+margins, battlegrounds and influence of each side) and what its Ops could take (countries and
+battlegrounds within reach, best coup chance). The engine labels a sampled fraction of decisions
+(`--aux-card-sample-frac`, default 0.005) at the moment they are made (`ai/training/card_event_targets.py`).
+The loss is masked MSE on fixed-scale standardised targets, in its own optimiser step every
+`--aux-card-min-batch` (2048) labelled positions. The head predicts all 110 cards; the loss reads the
+held cards' slots, so card identity sits in the output weights and the board must come through the trunk.
+Metrics: `card_aux_loss`, `card_aux_r2` (explained share of the standardised variance), `card_aux_n`,
+`card_aux_label_s` (seconds spent labelling per iteration -- the throughput cost). Why:
+`research/log/P30_card_board_targets.md`; probe the result with `tools/scripts/card_board_probe.py --frozen`.
+
 * `tools/scripts/aux_ownership_probe.py --checkpoint <snapshot>` rates the ownership head per country
   against the country's usual final controller and against its current controller, overall and
   on the games where the usual controller did not win it.

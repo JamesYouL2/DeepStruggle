@@ -3,7 +3,8 @@
 card <-> country interactions and whether a trained net has learned them.
 
 Self-play positions of one or more checkpoints are sampled, and every card in the mover's hand is
-labelled with quantities that depend on that card *and* the board, never on either alone:
+labelled (`ai.training.card_event_targets`, shared with the `--aux-card-events` training target)
+with quantities that depend on that card *and* the board, never on either alone:
 
 * **T2, ops arithmetic** (from the observation's own slots, i.e. the engine's definitions): with
   this card's printed Ops, the countries the mover could bring under control (it can place there,
@@ -50,106 +51,9 @@ import ts_engine as ts  # noqa: E402
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
 
-N_COUNTRIES, BOARD_W, N_CARDS, CARD_W = 84, 26, 110, 14
-CARD_OFFSET = N_COUNTRIES * BOARD_W
-GLOBAL_OFFSET = CARD_OFFSET + N_CARDS * CARD_W
-MY_HAND = 1
-DECISION_TYPE = GLOBAL_OFFSET + 72
-CHINA = 6
-MAX_HAND = 12
-T2_NAMES = ("countries to control", "battlegrounds to control", "best coup chance", "best battleground coup chance")
-T4_NAMES = ("VP", "DEFCON", "margin Europe", "margin Asia", "margin Middle East", "margin Africa",
-            "margin Central America", "margin South America", "my battlegrounds", "their battlegrounds",
-            "my influence", "their influence")
-
-_INFO = {c: ts.CardData.get_card_info(c) for c in range(1, N_CARDS + 1)}
-OPS = np.array([0] + [int(_INFO[c]["ops"]) for c in range(1, N_CARDS + 1)], dtype=np.int64)
-SIDE = {c: str(_INFO[c]["side"]) for c in range(1, N_CARDS + 1)}
-SCORING = sorted(c for c in range(1, N_CARDS + 1) if _INFO[c]["is_scoring"])
-
-
-def _summary(obs: np.ndarray) -> np.ndarray:
-    """The quantities T4 differences, from one observation (mover's side)."""
-    b = obs[:CARD_OFFSET].reshape(N_COUNTRIES, BOARD_W)
-    bg = b[:, 4] > 0.5
-    return np.concatenate([
-        (obs[GLOBAL_OFFSET + 64:GLOBAL_OFFSET + 70] * 20.0),
-        [float(((b[:, 5] > 0.5) & bg).sum()), float(((b[:, 6] > 0.5) & bg).sum()),
-         float((b[:, 0] * 10.0).sum()), float((b[:, 1] * 10.0).sum())]])
-
-
-def t2(obs: np.ndarray, card: int) -> Optional[np.ndarray]:
-    ops = int(OPS[card])
-    if ops <= 0:
-        return None
-    b = obs[:CARD_OFFSET].reshape(N_COUNTRIES, BOARD_W)
-    can_place = b[:, 19] > 0.5
-    mine = b[:, 5] > 0.5
-    bg = b[:, 4] > 0.5
-    deficit = np.rint(b[:, 24] * 5.0)
-    stab = np.rint(b[:, 3] * 5.0)
-    can_coup = b[:, 21] > 0.5
-    reach = can_place & ~mine & (deficit > 0) & (deficit <= ops)
-    p = np.clip(6.0 - 2.0 * stab + ops, 0.0, 6.0) / 6.0
-    best = float(p[can_coup].max()) if can_coup.any() else 0.0
-    best_bg = float(p[can_coup & bg].max()) if (can_coup & bg).any() else 0.0
-    return np.array([float(reach.sum()), float((reach & bg).sum()), best, best_bg], dtype=np.float32)
-
-
-def _ctx(st: "ts.GameState") -> Tuple[int, int, int, int]:
-    c = st.ctx()
-    return int(c.decision_type), int(c.decision_player), int(c.pending_op_card), int(c.remaining_steps)
-
-
-def t3_t4(st: "ts.GameState", mover: "ts.Player", card: int, base_obs: np.ndarray,
-          seeds: Sequence[int]) -> Tuple[Optional[bool], Optional[np.ndarray]]:
-    if card == CHINA:
-        return None, None
-    side = SIDE[card]
-    fire = ts.Player.US if side == "US" else ts.Player.USSR if side == "USSR" else mover
-    can = bool(ts.CardHandlers.can_trigger_event(st, card, fire))
-    if not can:
-        return False, None
-    sign = 1.0 if mover == ts.Player.US else -1.0
-    base = _summary(base_obs)
-    c0 = _ctx(st)
-    deltas: List[np.ndarray] = []
-    for s in seeds:
-        x = st.clone()
-        x.rng_state = int(s)
-        vp0, dc0 = int(x.victory_points), int(x.defcon)
-        ts.CardHandlers.trigger_event(x, card, fire, 0)
-        c1 = _ctx(x)
-        if c1 != c0 and c1[0] != 0:
-            return True, None                         # stops for a choice: T5, not labelled
-        after = _summary(np.asarray(ts.extract_observation(x, mover)))
-        deltas.append(np.concatenate([[sign * (int(x.victory_points) - vp0), float(int(x.defcon) - dc0)],
-                                      after - base]).astype(np.float32))
-    return True, np.mean(deltas, 0)
-
-
-def label(st: "ts.GameState", mover: "ts.Player", obs: np.ndarray, seed: int) -> Dict[str, np.ndarray]:
-    rows = obs[CARD_OFFSET:GLOBAL_OFFSET].reshape(N_CARDS, CARD_W)
-    held = [c for c in range(1, N_CARDS + 1) if rows[c - 1, MY_HAND] > 0.5][:MAX_HAND]
-    cards = np.zeros(MAX_HAND, dtype=np.int16)
-    y2 = np.zeros((MAX_HAND, 4), dtype=np.float32)
-    y3 = np.zeros(MAX_HAND, dtype=np.float32)
-    y4 = np.zeros((MAX_HAND, 12), dtype=np.float32)
-    m2 = np.zeros(MAX_HAND, dtype=bool)
-    m3 = np.zeros(MAX_HAND, dtype=bool)
-    m4 = np.zeros(MAX_HAND, dtype=bool)
-    seeds = (seed * 2 + 1, seed * 2 + 2)
-    for j, c in enumerate(held):
-        cards[j] = c
-        v2 = t2(obs, c)
-        if v2 is not None:
-            y2[j], m2[j] = v2, True
-        can, v4 = t3_t4(st, mover, c, obs, seeds)
-        if can is not None:
-            y3[j], m3[j] = float(can), True
-        if v4 is not None:
-            y4[j], m4[j] = v4, True
-    return {"cards": cards, "y2": y2, "y3": y3, "y4": y4, "m2": m2, "m3": m3, "m4": m4}
+from ai.training.card_event_targets import (BOARD_W, CARD_OFFSET, CARD_W, DECISION_TYPE,  # noqa: E402,F401
+                                            GLOBAL_OFFSET, MAX_HAND, N_CARDS, N_COUNTRIES, SCORING,
+                                            T2_NAMES, T4_NAMES, label)
 
 
 @torch.no_grad()
@@ -173,7 +77,8 @@ def collect(agent: NeuralAgent, games: int, envs: int, seed: int, sample_frac: f
             st = env.runner.get_state(int(i))
             mover = ts.Player(int(dp[i]))
             o = ob[i].astype(np.float32)
-            lab = label(st, mover, o, int(rng.integers(1 << 30)))
+            sd = int(rng.integers(1 << 30))
+            lab = label(st, mover, o, (sd * 2 + 1, sd * 2 + 2))
             if not lab["m2"].any() and not lab["m3"].any():
                 continue
             rows.append({"obs": ob[i].astype(np.float16), "mask": mk[i].astype(bool), "mover": int(dp[i]),

@@ -569,6 +569,18 @@ def build_parser() -> argparse.ArgumentParser:
                              "and labelled for the aux targets.")
     parser.add_argument("--aux-min-batch", type=int, default=4096,
                         help="Labelled positions to gather before one aux training step.")
+    # P30 (research/log/P30_card_board_targets.md): what each held card's event and Ops would do.
+    parser.add_argument("--aux-card-events", type=float, default=0.0,
+                        help="Weight of an auxiliary per-card head predicting, for every card in the "
+                             "mover's hand, what its event would do on this board (VP, DEFCON, regional "
+                             "margins, battlegrounds, influence) and what its Ops could take -- labelled "
+                             "by the engine at the decision (ai.training.card_event_targets); masked MSE "
+                             "on standardised targets. 0, the default, builds no head. Ladder only.")
+    parser.add_argument("--aux-card-sample-frac", type=float, default=0.005,
+                        help="Fraction of decisions labelled for --aux-card-events (each costs engine "
+                             "calls in Python; watch card_aux_label_s against the iteration time).")
+    parser.add_argument("--aux-card-min-batch", type=int, default=2048,
+                        help="Labelled positions to gather before one --aux-card-events step.")
     parser.add_argument("--ema-weights", type=float, default=0.0,
                         help="Keep an exponential moving average of the weights with this time "
                              "constant in env steps (0, the default, keeps none). Snapshots, pool "
@@ -828,6 +840,9 @@ def main():
             aux_vp_coef=args.aux_vp_margin,
             aux_sample_frac=args.aux_sample_frac,
             aux_min_batch=args.aux_min_batch,
+            aux_card_coef=args.aux_card_events,
+            aux_card_sample_frac=args.aux_card_sample_frac,
+            aux_card_min_batch=args.aux_card_min_batch,
             lr_schedule=args.lr_schedule,
             lr_schedule_start=args.lr_schedule_start,
             lr_schedule_every=args.lr_schedule_every,

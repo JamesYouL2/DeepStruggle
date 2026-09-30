@@ -306,6 +306,9 @@ class BaseNashPGTrainer:
         aux_vp_coef: float = 0.0,
         aux_sample_frac: float = 0.1,
         aux_min_batch: int = 4096,
+        aux_card_coef: float = 0.0,
+        aux_card_sample_frac: float = 0.005,
+        aux_card_min_batch: int = 2048,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
@@ -514,6 +517,18 @@ class BaseNashPGTrainer:
             if not getattr(self.active_net, "aux_heads", False):
                 raise ValueError("--aux-ownership / --aux-vp-margin need a network built with aux heads")
             self.env.record_final_control = True
+        #: P30, --aux-card-events: for every card in the mover's hand, what its event would do on
+        #: this board and what its Ops could take (ai.training.card_event_targets), predicted by a
+        #: per-card head on the trunk (LadderNet.forward_card_aux). Labelled by the engine at the
+        #: moment of the decision, so a sampled position (--aux-card-sample-frac) is ready at once;
+        #: the labelled batch trains in its own step once --aux-card-min-batch are ready.
+        self.aux_card_coef = float(aux_card_coef)
+        self.aux_card_sample_frac = float(aux_card_sample_frac)
+        self.aux_card_min_batch = int(aux_card_min_batch)
+        self._card_ready: List[Tuple[Any, np.ndarray, np.ndarray, np.ndarray]] = []
+        self._card_label_seconds = 0.0
+        if self.aux_card_coef > 0.0 and not getattr(self.active_net, "card_aux", False):
+            raise ValueError("--aux-card-events needs a network built with the card-event head")
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -740,6 +755,60 @@ class BaseNashPGTrainer:
                 cls = np.where(own == 1, 0, np.where(own == -1, 1, 2)).astype(np.int64)
                 self._aux_ready.append((o, cls, vp * float(mover)))
             self._aux_pending[i] = []
+
+    def _card_aux_record(self, obs_t: torch.Tensor, dp: np.ndarray) -> None:
+        """Card-event target: label a sampled fraction of this step's decisions with the engine."""
+        import ts_engine as ts
+        from ai.training.card_event_targets import aux_label
+        rows = np.flatnonzero((dp != 0) & (np.random.random(dp.shape[0]) < self.aux_card_sample_frac))
+        if rows.size == 0:
+            return
+        t0 = time.perf_counter()
+        o = obs_t.index_select(0, torch.from_numpy(rows).to(obs_t.device))
+        o_np = o.float().cpu().numpy()
+        o16 = o.half()
+        for j, i in enumerate(rows):
+            st = self.env.runner.get_state(int(i))
+            lab = aux_label(st, ts.Player(int(dp[i])), o_np[j], int(np.random.randint(1, 1 << 30)))
+            if lab is not None:
+                self._card_ready.append((o16[j], *lab))
+        self._card_label_seconds += time.perf_counter() - t0
+
+    def _card_aux_update(self) -> Dict[str, float]:
+        """Card-event target: one step on the labelled positions, masked MSE on the standardised
+        targets at the held cards."""
+        out: Dict[str, float] = {"card_aux_ready": float(len(self._card_ready)),
+                                 "card_aux_label_s": float(self._card_label_seconds)}
+        self._card_label_seconds = 0.0
+        n = len(self._card_ready)
+        if n < max(1, self.aux_card_min_batch):
+            return out
+        recs, self._card_ready = self._card_ready, []
+        dev = recs[0][0].device
+        obs = torch.stack([r[0] for r in recs]).float()
+        cards = torch.from_numpy(np.stack([r[1] for r in recs]).astype(np.int64)).to(dev)
+        y = torch.from_numpy(np.stack([r[2] for r in recs])).to(dev)
+        m = torch.from_numpy(np.stack([r[3] for r in recs])).to(dev)
+        n_lab = float(m.sum())
+        net = cast(Any, self.active_net)
+        net.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        se_sum = 0.0
+        for k in range(0, n, self.batch_size):
+            sl = slice(k, k + self.batch_size)
+            pred = net.forward_card_aux(obs[sl]).float()                       # (b, 110, D)
+            idx = (cards[sl] - 1).clamp_min(0).unsqueeze(-1).expand(-1, -1, pred.shape[-1])
+            g = torch.gather(pred, 1, idx)                                     # (b, 12, D)
+            se = ((g - y[sl]) ** 2 * m[sl]).sum()
+            (self.aux_card_coef * se / max(1.0, n_lab)).backward()
+            se_sum += float(se.detach())
+        nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+        self.optimizer.step()
+        net.eval()
+        # the targets are standardised, so 1 - mse is the explained share of their variance
+        out.update({"card_aux_n": float(n), "card_aux_loss": se_sum / max(1.0, n_lab),
+                    "card_aux_r2": 1.0 - se_sum / max(1.0, n_lab)})
+        return out
 
     def _aux_update(self) -> Dict[str, float]:
         """Aux targets: one step on the labelled positions, ownership CE plus VP-margin MSE."""
@@ -977,6 +1046,8 @@ class BaseNashPGTrainer:
                                       np.asarray(learner_np, dtype=bool), _dp)
             if self.aux_targets:
                 self._aux_record(obs_t, np.asarray(_dp))
+            if self.aux_card_coef > 0.0:
+                self._card_aux_record(obs_t, np.asarray(_dp))
             # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
             # step. A change by the next decision means a chance node came between them.
             _rngs_np: Optional[np.ndarray] = None
@@ -1319,6 +1390,8 @@ class BaseNashPGTrainer:
             combined.update(self._setup_mc_update())
         if self.aux_targets:
             combined.update(self._aux_update())
+        if self.aux_card_coef > 0.0:
+            combined.update(self._card_aux_update())
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.

@@ -37,6 +37,9 @@ from bindings.action_encoder import ActionEncoder
 
 #: Countries the ownership head predicts: all 84 (P29 bet 2).
 AUX_OWN_COUNTRIES = 84
+#: outputs per card of the card-event head: 4 ops-arithmetic + 12 event-outcome targets
+#: (ai.training.card_event_targets.AUX_DIM; restated here so the model does not import the engine).
+CARD_AUX_DIM = 16
 #: How the observation is read before the trunk.
 INPUT_MODES: Tuple[str, ...] = ("flat", "grouped", "entity")
 #: How per-entity tokens become a fixed-size vector. Only meaningful for `input_mode="entity"`.
@@ -78,6 +81,7 @@ class LadderNet(ColdWarNetV2):
                  categorical_value: bool,
                  head_center: bool = False,
                  aux_heads: bool = False,
+                 card_aux: bool = False,
                  **kwargs: Any) -> None:
         if input_mode not in INPUT_MODES:
             raise ValueError(f"input_mode must be one of {INPUT_MODES}; got {input_mode!r}")
@@ -326,6 +330,24 @@ class LadderNet(ColdWarNetV2):
             self.aux_vp_head = nn.Sequential(
                 nn.Linear(hidden_dim, 128), nn.GELU(), nn.Linear(128, 1))
 
+        # P30: the card-event auxiliary target (--aux-card-events). For every card, what its event
+        # would do on this board and what its Ops could take (ai.training.card_event_targets),
+        # read off the trunk so the gradient reaches it: the trained trunks were found to carry no
+        # more of this than an untrained one (research/log/P30_card_board_targets.md). Training
+        # loss only; forward() is untouched. Recovered from the weights (`card_aux_head.*`).
+        self.card_aux = bool(card_aux)
+        if self.card_aux:
+            self.card_aux_head = nn.Sequential(
+                nn.Linear(hidden_dim, 512), nn.GELU(), nn.Linear(512, 110 * CARD_AUX_DIM))
+
+    def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
+        """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
+        ops-arithmetic and event-outcome targets of `ai.training.card_event_targets`."""
+        if not self.card_aux:
+            raise RuntimeError("this network was built without the card-event head (--aux-card-events)")
+        h, _attn, _tokens = self._encode(obs)
+        return self.card_aux_head(h).view(-1, 110, CARD_AUX_DIM)
+
     def forward_aux(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """The auxiliary predictions: ownership logits (B, 84, 3) -- mine / opponent's / neither --
         and the final VP margin (B, 1) in the mover's frame, VP / 20."""
@@ -409,6 +431,7 @@ class LadderNet(ColdWarNetV2):
             categorical_value=bool(self.categorical_value),
             head_center=self.head_center,
             aux_heads=self.aux_heads,
+            card_aux=self.card_aux,
         )
 
 
@@ -683,6 +706,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         head_center="pe_center" in sd,
         categorical_value=any(k.startswith("value_dist_head") for k in sd),
         aux_heads=any(k.startswith("aux_own_head.") for k in sd),
+        card_aux=any(k.startswith("card_aux_head.") for k in sd),
     )
 
 def create_ladder_net(device: torch.device | str, **config: Any) -> LadderNet:
