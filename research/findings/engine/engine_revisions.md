@@ -240,8 +240,20 @@ The pre-registered bounds were head to head within 50 ± 3% and each seat within
 the spread between seeds 43 and 44; both readings are inside them. The E6-trained net plays E7 as
 well as the E7-trained one, so **E6 measurements stay comparable to E7 ones.** One difference that
 is not strength: the E7 run trained at ~88k steps/s against E6-12-44's ~96k, which the engine
-benchmarks do not reproduce (raw stepping and the vectorised env, E6 against E7, are level); it is
-under investigation.
+benchmarks do not reproduce (raw stepping and the vectorised env, E6 against E7, are level). Six
+void training smokes of the recipe, alternating (E7-91..96-44, 60 iterations each, the machine
+otherwise idle), settle it:
+
+| code | engine | median steps/s (two runs) |
+|:---|:---|---:|
+| current | E7 | 93.1k, 92.2k |
+| current | E6 | 89.6k, 89.6k |
+| E6-12-44's own (`99c4603`) | E6 | 92.1k, 92.5k |
+
+Neither the engine nor the code is slower. The same configuration ran at 97–99k (E6-12-44, 13:00),
+84–88k (E7-01-44, 19:45) and 92–93k (the smokes, 22:05) at the same early iterations, so the host's
+throughput varies by about ±7% over a day. Compare steps per second across runs only when they ran
+together or back to back.
 
 ## Open, and worth knowing
 
