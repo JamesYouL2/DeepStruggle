@@ -98,6 +98,7 @@ recipe until the owner says otherwise.
   * Empty battlegrounds at turn 8: 0.51 for E6-04 against 1.5–1.7 for E6-03.
   * E6-03-44's trace levels off at about 320M, and has no end dip on E6.
   * Log: [`../log/P28_step0_panel_and_E6_04_verdict.md`](../log/P28_step0_panel_and_E6_04_verdict.md).
+* **Step 0 replicated (2026-09-30):** E6-04-43 against E6-03-43 on seed 43. Panel US +0.1 / USSR +6.9 on snapshots and −1.1 / +7.1 on soups; 57% head to head. E6-04 is adopted on both seeds ([`../log/E6_04_43_seed43_replicate.md`](../log/E6_04_43_seed43_replicate.md)).
 * **Step 1 (2026-09-29).**
   * Uniform soups of 480–560M beat every snapshot they average, by about 60–85 Elo in both seats.
     The E6-04-44 soup rates 1651 against its best snapshot's 1566, and beats that snapshot 61.7%
