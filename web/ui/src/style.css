@@ -1941,6 +1941,25 @@ span.trace-choice-badge.played {
 .analysis-autoplay .analysis-select { flex: 0 0 auto; }
 .analysis-autoplay.active { color: var(--warning); }
 .analysis-autoplay.active .analysis-select { border-color: var(--warning); }
+.analysis-search-by {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.analysis-search-by .analysis-select { flex: 0 0 auto; }
+#btn-search-move { flex: 1 1 auto; }
+#btn-search-move:disabled { opacity: 0.45; cursor: not-allowed; }
+.analysis-search-note {
+  margin: 4px 0;
+  font-size: 11px;
+  color: var(--warning);
+}
+.analysis-search-note b { color: var(--text-main); }
 .analysis-auto-tag {
   margin-left: 6px;
   color: var(--warning);
