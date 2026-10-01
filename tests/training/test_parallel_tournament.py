@@ -21,9 +21,10 @@ import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, merge_matchup_results
 from tools.lib.game_step import drain_chance
-from tools.lib.parallel_tournament import (MatchOptions, PartConfig, merge_shards, plan_shards,
-                                           pool_parts, run_matchups_parallel, run_shards,
-                                           seed_shard, select_part, write_games_log, write_part)
+from tools.lib.parallel_tournament import (MatchOptions, PartConfig, check_workers_device,
+                                           merge_shards, plan_shards, pool_parts,
+                                           run_matchups_parallel, run_shards, seed_shard,
+                                           select_part, write_games_log, write_part)
 from tools.lib.player_agent import (HeuristicAgent, HeuristicV2Agent, NeuralAgent, OnnxAgent,
                                     load_agent)
 
@@ -157,6 +158,65 @@ def test_seed_shard_restarts_an_agents_own_stream() -> None:
     d.rng.random()
     seed_shard(1234, [HeuristicAgent(), d])
     assert d.rng.getstate() == random.Random(1234 + 1).getstate()
+
+
+def test_a_shard_plays_the_same_games_whatever_its_worker_played_before(tmp_path) -> None:
+    """heuristic_mcts draws its chance nodes from a generator of its own and offers no `reseed`.
+    Agents used to be loaded once per worker, so that stream ran on from one shard into the next:
+    under one worker and under four, 5 of 8 games differed. A shard now loads its agents afresh,
+    so it plays the same games alone as after another shard in the same process."""
+    from tools.lib.parallel_tournament import _run_shard
+
+    opts = MatchOptions(device="cpu", temperature=0.0)
+    first, second = plan_shards([(0, 1)], games_per_side=2, shard_pairs=1)
+    _run_shard("heuristic_mcts:8", "heuristic", second, 2, opts, str(tmp_path / "alone.jsonl"))
+    _run_shard("heuristic_mcts:8", "heuristic", first, 2, opts, str(tmp_path / "before.jsonl"))
+    _run_shard("heuristic_mcts:8", "heuristic", second, 2, opts, str(tmp_path / "after.jsonl"))
+    assert _log(str(tmp_path / "after.jsonl")) == _log(str(tmp_path / "alone.jsonl"))
+
+
+def test_one_worker_plays_the_same_games_as_two() -> None:
+    """--workers 1 plays the shards in one worker process rather than taking the packed path, so
+    the worker count never changes the games -- a sampling agent's included, whose draws depend on
+    what shares its batch."""
+    from tools.tournament import run_massive_tournament
+
+    kw: Dict[str, Any] = dict(games_per_side=3, device="cpu", anchor_model="HeuristicBot",
+                              shard_pairs=1)
+    one = run_massive_tournament(["random", "heuristic"], workers=1, **kw)
+    two = run_massive_tournament(["random", "heuristic"], workers=2, **kw)
+    _assert_same_result(two["matchup"], one["matchup"])
+
+
+def test_a_failing_shard_drops_the_queued_ones(tmp_path, monkeypatch) -> None:
+    """Leaving the pool waits for its work. Without dropping the queue, a shard that failed first
+    was reported only after every other shard had been played."""
+    from tools.lib import parallel_tournament
+
+    logs = tmp_path / "shards"
+    logs.mkdir()
+    # Keep the shard logs: a shard that was played left one, a dropped one did not.
+    monkeypatch.setattr(parallel_tournament.tempfile, "mkdtemp", lambda *a, **k: str(logs))
+    monkeypatch.setattr(parallel_tournament.shutil, "rmtree", lambda *a, **k: None)
+    shards = (plan_shards([(0, 1)], games_per_side=8, shard_pairs=1)[:1]
+              + plan_shards([(1, 2)], games_per_side=8, shard_pairs=1))
+    with pytest.raises(ValueError, match="unknown opening"):
+        run_shards(["opening:no-such-opening:heuristic", "heuristic", "heuristic_v2"], shards, 8,
+                   workers=1, options=MatchOptions(device="cpu"), capture_games=True)
+    # Only what was already handed to the worker's call queue (workers + 1 slots) gets played,
+    # plus one refill racing the cancellation -- not the 8 queued behind the failure.
+    assert len(os.listdir(logs)) <= 3, sorted(os.listdir(logs))
+
+
+def test_more_than_one_worker_is_refused_a_gpu(monkeypatch) -> None:
+    """Each worker loads every network onto the device itself: N workers, N CUDA contexts."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    shards = plan_shards([(0, 1)], games_per_side=1, shard_pairs=1)
+    with pytest.raises(ValueError, match="cannot share a CUDA device"):
+        run_shards(["heuristic", "heuristic_v2"], shards, 1, workers=2,
+                   options=MatchOptions(device="cuda"))
+    check_workers_device(1, "cuda")
+    check_workers_device(4, "cpu")
 
 
 # -- ONNX -----------------------------------------------------------------------------------

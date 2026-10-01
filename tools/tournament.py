@@ -28,9 +28,10 @@ if _root not in sys.path:
 
 from tools.lib.player_agent import PlayerAgent, load_agent, resolve_device
 from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, compute_mle_elo
-from tools.lib.parallel_tournament import (MatchOptions, Pair, Part, PartConfig, merge_shards,
-                                           plan_shards, pool_parts, run_matchups_parallel,
-                                           run_shards, select_part, write_games_log, write_part)
+from tools.lib.parallel_tournament import (MatchOptions, Pair, Part, PartConfig,
+                                           check_workers_device, merge_shards, plan_shards,
+                                           pool_parts, run_matchups_parallel, run_shards,
+                                           select_part, write_games_log, write_part)
 
 
 def _write_text(path: str, text: str, what: str) -> None:
@@ -190,11 +191,11 @@ def _load_entrants(model_specs: List[str], device: torch.device,
 
 
 def _banner(model_specs: List[str], games_per_side: int, dev: torch.device,
-            batch_chunk_size: int, workers: int, shard_pairs: int) -> None:
+            batch_chunk_size: int, workers: Optional[int], shard_pairs: int) -> None:
     print("\n" + "=" * 85)
     print(f" INITIALIZING TOURNAMENT EVALUATOR: {len(model_specs)} Models, {games_per_side * 2} Games/Pair")
     print(f" Device: {dev} | Chunk Size: {batch_chunk_size}"
-          + (f" | Workers: {workers} x {shard_pairs} pairs/shard" if workers > 1 else ""))
+          + (f" | Workers: {workers} x {shard_pairs} pairs/shard" if workers is not None else ""))
     print("=" * 85)
 
 
@@ -217,7 +218,7 @@ def run_massive_tournament(
     auto_advance: bool = True,
     pack_pairs: int = 25,
     opening: Optional[str] = None,
-    workers: int = 1,
+    workers: Optional[int] = None,
     shard_pairs: int = 10,
 ) -> Dict[str, Any]:
     """Runs high-throughput round-robin tournament across all specified models.
@@ -227,12 +228,16 @@ def run_massive_tournament(
     one pairing at a time. 1 plays pairings one at a time, as before; choice tracking and game
     logs always do.
 
-    `workers` > 1 splits every matchup into shards of `shard_pairs` game pairs and plays them in
-    that many processes (tools/lib/parallel_tournament.py) instead of packing. The games are the
-    same deals either way; see that module for what makes the split reproducible. One machine's
-    share of such a tournament is `play_tournament_part`.
+    `workers`, when given, splits every matchup into shards of `shard_pairs` game pairs and plays
+    them in that many processes (tools/lib/parallel_tournament.py) instead of packing -- one worker
+    included, so that at a fixed `shard_pairs` every worker count plays the same games. Packing and
+    sharding play the same deals, but a sampling agent's draws depend on what shares its batch, so
+    only deterministic agents play the same games both ways. One machine's share of a sharded
+    tournament is `play_tournament_part`.
     """
     dev = resolve_device(device)
+    if workers is not None:
+        check_workers_device(workers, device)
     _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
     agents, worker_specs = _load_entrants(model_specs, dev, opening)
     model_names = [a.name for a in agents]
@@ -248,7 +253,7 @@ def run_massive_tournament(
             f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({(w_a / tot) * 100.0:5.1f}% win) in {pair_time:5.1f}s"
         )
 
-    if workers > 1:
+    if workers is not None:
         # Wall time since the tournament started: shards of every matchup run at once, so a
         # matchup has no start time of its own.
         run_matchups_parallel(
@@ -306,6 +311,7 @@ def play_tournament_part(
     shards `run_massive_tournament(workers=...)` would play, written raw to `output_part` with
     their game logs. `pool_tournament_parts` turns a complete set of parts into the report."""
     dev = resolve_device(device)
+    check_workers_device(workers, device)
     _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
     agents, worker_specs = _load_entrants(model_specs, dev, opening)
     matchups = _round_robin(len(agents))
@@ -314,7 +320,7 @@ def play_tournament_part(
     mine = select_part(plan_shards(matchups, games_per_side, shard_pairs), index, count)
     print(f" Part {index + 1} of {count}: {len(mine)} shard(s) of {shard_pairs} pair(s)")
     played = run_shards(
-        worker_specs, mine, games_per_side, max(1, workers),
+        worker_specs, mine, games_per_side, workers,
         MatchOptions(device=str(dev), temperature=temperature, batch_chunk_size=batch_chunk_size,
                      track_choices=track_choices, auto_advance=auto_advance),
         capture_games=True,
@@ -569,15 +575,17 @@ def main():
              "The default was cpu, which contradicted this module's own function "
              "signature and made every tournament far slower than it needed to be -- "
              "200 games took 118s on cpu against 6.4s on cuda, an 18x difference.")
-    parser.add_argument("--workers", type=int, default=1,
-                        help="Processes to play games in, one core each; 0 = every core. Above 1, "
-                             "each matchup is split into shards of --shard-pairs game pairs. Worth "
-                             "it for bots that decide in Python (heuristic_mcts); a "
-                             "network-only field is already batched and gains little.")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="Processes to play games in, one core each; 0 = every core. Given at "
+                             "all (1 included), each matchup is split into shards of --shard-pairs "
+                             "game pairs; omitted, the tournament runs in this process with "
+                             "--pack-pairs. Worth it for bots that decide in Python "
+                             "(heuristic_mcts, search:); a network-only field is already batched "
+                             "and gains little. Above 1 needs --device cpu.")
     parser.add_argument("--shard-pairs", type=int, default=10,
                         help="Game pairs (one deal played from both sides) per shard with "
-                             "--workers > 1. Results depend on this, not on --workers: at a fixed "
-                             "value any number of workers plays the same games.")
+                             "--workers. Results depend on this, not on --workers: at a fixed "
+                             "value any number of workers, 1 included, plays the same games.")
     parser.add_argument("--part", type=str, default=None, metavar="I/N",
                         help="Play only part I of N (1-based) of the tournament's shards and write "
                              "them to --output-part, for a tournament spread over N machines. "
@@ -654,7 +662,13 @@ def main():
         print("Error: Need at least 2 models for an evaluation or tournament (or pass --self-play).")
         sys.exit(1)
 
-    workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
+    workers: Optional[int] = None
+    if args.workers is not None:
+        workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
+        try:
+            check_workers_device(workers, args.device)
+        except ValueError as e:
+            parser.error(str(e))
     if part is not None:
         play_tournament_part(
             models, part, args.output_part,
@@ -667,7 +681,7 @@ def main():
             track_choices=args.track_choices,
             auto_advance=args.auto_advance,
             opening=args.opening,
-            workers=workers,
+            workers=1 if workers is None else workers,
             shard_pairs=args.shard_pairs,
         )
         return

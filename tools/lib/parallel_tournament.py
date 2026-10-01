@@ -8,18 +8,23 @@ in a pool of worker processes, one core each.
 
 **The split does not change the games.** A shard plays the same pairs, with the same deals, as the
 unsplit matchup (`play_parallel_matchup(pairs=...)`), and the shard results merge into the result
-one call would have produced (`merge_matchup_results`). What a shard cannot inherit is the state
+one call would have produced (`merge_matchup_results`). What a shard must not inherit is the state
 an agent carries between games -- a search's determinization stream, a sampling generator -- so
-every shard starts those from a seed of its own (`shard_seed`), and every agent offering
-`reseed(seed)` (`Reseedable`) is reseeded. The outcome of a game then depends on its shard, never
-on the worker that ran it or on what that worker ran before: at a fixed `shard_pairs`, any number
-of workers gives the same results. A torch policy sampling above the greedy threshold draws from
-torch's generator, which is seeded per shard as well.
+every shard loads its agents afresh from their specs, and none outlives its shard. Reusing them
+across a worker's shards is what made `heuristic_mcts`, whose search draws from a generator of its
+own and offers no `reseed`, play different games under one worker than under four. On top of
+that the shard seeds the global generators and every agent offering `reseed(seed)` (`Reseedable`)
+from a seed of its own (`shard_seed`), so shards do not all replay one stream. The outcome of a
+game then depends on its shard, never on the worker that ran it or on what that worker ran
+before: at a fixed `shard_pairs`, any number of workers gives the same results. A torch policy
+sampling above the greedy threshold draws from torch's generator, which is seeded per shard as
+well.
 
 Workers are started with `spawn`, not `fork`: the parent has torch and the engine's OpenMP pool
 loaded, and a forked child of a process with live OpenMP threads can deadlock in libgomp. Each
 worker is pinned to one thread (OMP_NUM_THREADS=1 in its environment, torch.set_num_threads(1)),
-so N workers use N cores rather than N times the machine.
+so N workers use N cores rather than N times the machine. More than one worker is refused a CUDA
+device (`check_workers_device`): each would load every network onto the one GPU.
 """
 from __future__ import annotations
 
@@ -40,7 +45,7 @@ import numpy as np
 import torch
 
 from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, merge_matchup_results
-from tools.lib.player_agent import PlayerAgent, Reseedable, load_agent
+from tools.lib.player_agent import PlayerAgent, Reseedable, load_agent, resolve_device
 
 Pair = Tuple[int, int]
 #: (index, count): one machine's share of a tournament spread over `count` machines, 0-based.
@@ -115,26 +120,28 @@ def seed_shard(seed: int, agents: Sequence[PlayerAgent]) -> None:
             agent.reseed(seed + n)
 
 
+def check_workers_device(workers: int, device: str) -> None:
+    """Refuse a CUDA device to more than one worker. Each worker loads every network onto the
+    device itself, so N workers would open N CUDA contexts on one GPU and contend for it. The
+    device is resolved first: `cuda` on a machine without one means the CPU, and is accepted."""
+    if workers > 1 and resolve_device(device).type == "cuda":
+        raise ValueError(
+            f"{workers} workers cannot share a CUDA device: each would load every network onto "
+            f"it. Pass --device cpu, or play on the GPU in one process (omit --workers).")
+
+
 # -- worker side ------------------------------------------------------------------------------
-
-_AGENTS: Dict[str, PlayerAgent] = {}
-
 
 def _init_worker() -> None:
     torch.set_num_threads(1)
 
 
-def _agent(spec: str, device: str) -> PlayerAgent:
-    # Loaded once per worker: a checkpoint is read from disk once, not once per shard. Nothing an
-    # agent carries between games survives into a shard's results, because seed_shard restarts it.
-    if spec not in _AGENTS:
-        _AGENTS[spec] = load_agent(spec, device=device)
-    return _AGENTS[spec]
-
-
 def _run_shard(spec_a: str, spec_b: str, shard: Shard, games_per_side: int,
                options: MatchOptions, log_path: Optional[str]) -> MatchupResult:
-    a, b = _agent(spec_a, options.device), _agent(spec_b, options.device)
+    # Loaded per shard, never reused (module docstring). A load costs tens of milliseconds -- 27 ms
+    # for a checkpoint, 11 ms for an ONNX export -- against seconds for a shard's games.
+    a = load_agent(spec_a, device=options.device)
+    b = load_agent(spec_b, device=options.device)
     seed_shard(shard_seed(options.base_seed, shard), (a, b))
     return BatchMatchRunner.play_parallel_matchup(
         a, b, games_per_side=games_per_side, base_seed=options.base_seed,
@@ -198,6 +205,7 @@ def run_shards(
     """
     if workers < 1:
         raise ValueError(f"workers must be at least 1, got {workers}")
+    check_workers_device(workers, options.device)
     done: Dict[Shard, ShardResult] = {}
     log_dir = tempfile.mkdtemp(prefix="tournament_shards_") if capture_games else None
     ctx = multiprocessing.get_context("spawn")
@@ -213,18 +221,26 @@ def run_shards(
                             if log_dir else None)
                 futures[pool.submit(_run_shard, specs[i], specs[j], s, games_per_side,
                                     options, log_path)] = (s, log_path)
-            for fut in as_completed(futures):
-                s, log_path = futures[fut]
-                # The result first: a worker that raised wrote no log, and the shard's error is
-                # what to report, not the missing file.
-                result = fut.result()
-                games: List[GameRecord] = []
-                if log_path:
-                    with open(log_path, "r", encoding="utf-8") as f:
-                        games = [json.loads(line) for line in f if line.strip()]
-                done[s] = ShardResult(s, result, games)
-                if on_shard_done is not None:
-                    on_shard_done(done[s])
+            try:
+                for fut in as_completed(futures):
+                    s, log_path = futures[fut]
+                    # The result first: a worker that raised wrote no log, and the shard's error
+                    # is what to report, not the missing file.
+                    result = fut.result()
+                    games: List[GameRecord] = []
+                    if log_path:
+                        with open(log_path, "r", encoding="utf-8") as f:
+                            games = [json.loads(line) for line in f if line.strip()]
+                    done[s] = ShardResult(s, result, games)
+                    if on_shard_done is not None:
+                        on_shard_done(done[s])
+            except BaseException:
+                # Leaving the pool waits for its work, and by default that is every queued shard:
+                # one failure at the start of a long tournament was reported only at its end.
+                # Drop the queue; only the shards already running finish before the error is
+                # raised.
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
     finally:
         if log_dir:
             shutil.rmtree(log_dir, ignore_errors=True)

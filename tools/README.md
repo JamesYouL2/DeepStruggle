@@ -490,13 +490,18 @@ Python (`heuristic_mcts`). `--workers N`
 one deal played from both sides) and plays them in N processes, one thread each
 (`tools/lib/parallel_tournament.py`).
 
-The split plays the same deals as a single process, and each shard reseeds every generator its
-games draw from: the global ones, and any agent's own through `reseed` -- a `search:` entrant's
-determinization, chance-node and subsampling streams, an ONNX agent's sampler. So **results depend
-on `--shard-pairs`, never on `--workers`**. With deterministic agents they equal the one-process run
-exactly. Each worker loads its own copy of every model -- on a small machine, count the memory. `--workers`
-replaces pairing packing (`--pack-pairs` applies to a one-process run only), and `--opening`
-reaches each worker as its specs' `opening:<name>:` prefix.
+The split plays the same deals as a single process. Every shard loads its agents afresh from their
+specs, so nothing an agent carries between games -- a search's own generator, `heuristic_mcts`'s
+included -- crosses from one shard into the next, and it seeds every generator its games draw
+from: the global ones, and any agent's own through `reseed` (a `search:` entrant's
+determinization, chance-node and subsampling streams, an ONNX agent's sampler). So **results depend
+on `--shard-pairs`, never on `--workers`** -- `--workers 1` included, which plays the same shards in
+one worker process. Omitting `--workers` runs the old one-process path with pairing packing
+(`--pack-pairs`); with deterministic agents it plays the same games as the shards, with sampling
+ones the same deals but not the same draws. Each worker loads its own copy of every model -- on a
+small machine, count the memory -- and so more than one worker is refused a CUDA device: pass
+`--device cpu`. If a shard fails, the shards still queued are dropped and the error is raised once
+the running ones finish. `--opening` reaches each worker as its specs' `opening:<name>:` prefix.
 
 ```bash
 PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
