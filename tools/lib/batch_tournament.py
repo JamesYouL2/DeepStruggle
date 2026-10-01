@@ -4,7 +4,9 @@ import os
 import sys
 import time
 import json
-from typing import List, Dict, Any, Tuple, Optional, Sequence, Union
+from dataclasses import dataclass, field
+from typing import (Any, Callable, Dict, List, NotRequired, Optional, Sequence, Tuple,
+                    TypedDict, Union)
 import numpy as np
 import numpy.typing as npt
 import torch
@@ -14,7 +16,8 @@ from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
 from tools.lib.openings import ScriptedSetupOverride
 from bindings.ts_env import model_obs_features
-from tools.lib.player_agent import PlayerAgent, NeuralAgent, HeuristicAgent, RandomAgent, load_agent, resolve_device
+from tools.lib.player_agent import (BatchActor, BatchSelector, HeuristicAgent, NeuralAgent,
+                                    PlayerAgent, RandomAgent, load_agent, resolve_device)
 from ai.game_length import ply as game_ply
 from tools.lib.tournament_evaluator import classify_game_ending_reason
 
@@ -46,16 +49,15 @@ def categorize_flat_action_detailed(action_idx: int) -> str:
 
 
 
-def _assert_width(agent: NeuralAgent, obs: npt.NDArray[np.float32]) -> None:
+def _assert_width(agent: Union[NeuralAgent, BatchActor], obs: npt.NDArray[np.float32]) -> None:
     """A model silently misreads an observation of the wrong width; say so instead.
 
     With the view spec the runner's rows can be wider than an agent's view -- each is written in
     its decider's feature set and zero-padded to the widest set in the match -- so the agent reads
     the first `obs_size` floats of its own rows. Anything narrower than that is an error."""
-    want = getattr(agent, "obs_size", None)
-    if want is not None and obs.shape[1] < want:
+    if obs.shape[1] < agent.obs_size:
         raise ValueError(
-            f"{agent.name} expects an observation of width {want} but the runner produced "
+            f"{agent.name} expects an observation of width {agent.obs_size} but the runner produced "
             f"{obs.shape[1]}: its view was not set on the runner (set_obs_features).")
 
 
@@ -64,6 +66,329 @@ def _agent_features(agent: Any) -> int:
     that is not a network (bots and searchers act on the state)."""
     model = getattr(agent, "model", None)
     return model_obs_features(model) if isinstance(agent, NeuralAgent) and model is not None else 0
+
+
+def _choose_actions(
+    agent: PlayerAgent,
+    indices: npt.NDArray[np.int64],
+    obs: npt.NDArray[np.float32],
+    masks: npt.NDArray[Any],
+    d_players: npt.NDArray[Any],
+    runner: "ts.VectorizedBatchRunner",
+    temperature: float,
+    greedy: bool,
+    dev: torch.device,
+    actions: npt.NDArray[np.int32],
+) -> None:
+    """Fill `actions[indices]` with `agent`'s choices, by the cheapest interface it offers."""
+    if isinstance(agent, NeuralAgent):
+        sel_obs = np.asarray(obs[indices])
+        _assert_width(agent, sel_obs)
+        sel_obs = sel_obs[:, :agent.obs_size]
+        obs_t = torch.from_numpy(sel_obs).float().to(dev)
+        mask_t = torch.from_numpy(masks[indices]).to(dev)
+        with torch.no_grad():
+            act_t, _, _, _, _ = agent.model.sample_action(obs_t, mask_t, temperature=temperature,
+                                                          deterministic=greedy)
+        actions[indices] = act_t.cpu().numpy()
+    elif isinstance(agent, BatchActor):
+        # A network outside torch (OnnxAgent): the same observations and masks, one call.
+        sel_obs = np.asarray(obs[indices])
+        _assert_width(agent, sel_obs)
+        actions[indices] = agent.act_batch(sel_obs[:, :agent.obs_size], masks[indices],
+                                           temperature, greedy)
+    elif isinstance(agent, BatchSelector):
+        # A searcher pays for batching: one call over every game waiting on it,
+        # rather than one call per game. Measured at 64 simulations, a batch of
+        # 256 roots runs at 103 decisions/s against roughly 0.4/s one at a time.
+        sel_states = [runner.get_state(int(idx)) for idx in indices]
+        picks = agent.select_actions_batch(sel_states)
+        for idx, a in zip(indices, picks):
+            actions[idx] = a
+    else:
+        for idx in indices:
+            st = runner.get_state(int(idx))
+            actions[idx] = agent.select_action(st, ts.Player(int(d_players[idx])),
+                                               temperature=temperature)
+
+
+class ChoiceStats(TypedDict):
+    """The `--track-choices` block of a matchup result: how many micro-actions had one choice."""
+
+    us_total_micro_actions: int
+    us_single_choice_micro_actions: int
+    us_single_choice_pct: float
+    ussr_total_micro_actions: int
+    ussr_single_choice_micro_actions: int
+    ussr_single_choice_pct: float
+    overall_total_micro_actions: int
+    overall_single_choice_micro_actions: int
+    overall_single_choice_pct: float
+    avg_per_game: Dict[str, float]
+    category_counts_us: Dict[str, int]
+    category_counts_ussr: Dict[str, int]
+
+
+class MatchupResult(TypedDict):
+    """What one matchup reports: agent A's record from both seats, with averages and causes.
+    `play_parallel_matchup`, `play_packed_matchups` and `merge_matchup_results` all build it
+    through `_matchup_result`, so the three cannot disagree on a field."""
+
+    agent_a: str
+    agent_b: str
+    total_games: int
+    games_per_side: int
+    a_wins: int
+    b_wins: int
+    draws: int
+    win_rate_a: float
+    win_rate_b: float
+    a_wins_as_us: int
+    a_losses_as_us: int
+    a_draws_as_us: int
+    win_rate_a_as_us: float
+    a_wins_as_ussr: int
+    a_losses_as_ussr: int
+    a_draws_as_ussr: int
+    win_rate_a_as_ussr: float
+    avg_steps: float
+    avg_turn: float
+    avg_ply: float
+    avg_vp_margin_a: float
+    causes_loss_us: Dict[str, int]
+    causes_loss_ussr: Dict[str, int]
+    causes_all: Dict[str, int]
+    elapsed_seconds: float
+    choice_stats: NotRequired[ChoiceStats]
+
+
+def _add_counts(into: Dict[str, int], more: Dict[str, int]) -> None:
+    for k, v in more.items():
+        into[k] = into.get(k, 0) + v
+
+
+@dataclass
+class MatchupTally:
+    """Agent A's wins, losses and draws in each seat, with the causes of the losses."""
+
+    a_wins: int = 0
+    b_wins: int = 0
+    draws: int = 0
+    a_wins_as_us: int = 0
+    a_losses_as_us: int = 0
+    a_draws_as_us: int = 0
+    a_wins_as_ussr: int = 0
+    a_losses_as_ussr: int = 0
+    a_draws_as_ussr: int = 0
+    causes_loss_us: Dict[str, int] = field(default_factory=dict)
+    causes_loss_ussr: Dict[str, int] = field(default_factory=dict)
+    causes_all: Dict[str, int] = field(default_factory=dict)
+
+    def record(self, utility: float, a_is_ussr: bool, reason: str) -> None:
+        """One finished game; `utility` is the terminal utility from the US side."""
+        self.causes_all[reason] = self.causes_all.get(reason, 0) + 1
+        a_won = (utility > 0 and not a_is_ussr) or (utility < 0 and a_is_ussr)
+        b_won = (utility < 0 and not a_is_ussr) or (utility > 0 and a_is_ussr)
+        if a_won:
+            self.a_wins += 1
+            if a_is_ussr:
+                self.a_wins_as_ussr += 1
+            else:
+                self.a_wins_as_us += 1
+        elif b_won:
+            self.b_wins += 1
+            if a_is_ussr:
+                self.a_losses_as_ussr += 1
+                self.causes_loss_ussr[reason] = self.causes_loss_ussr.get(reason, 0) + 1
+            else:
+                self.a_losses_as_us += 1
+                self.causes_loss_us[reason] = self.causes_loss_us.get(reason, 0) + 1
+        else:
+            self.draws += 1
+            if a_is_ussr:
+                self.a_draws_as_ussr += 1
+            else:
+                self.a_draws_as_us += 1
+
+    def add(self, other: "MatchupTally") -> None:
+        self.a_wins += other.a_wins
+        self.b_wins += other.b_wins
+        self.draws += other.draws
+        self.a_wins_as_us += other.a_wins_as_us
+        self.a_losses_as_us += other.a_losses_as_us
+        self.a_draws_as_us += other.a_draws_as_us
+        self.a_wins_as_ussr += other.a_wins_as_ussr
+        self.a_losses_as_ussr += other.a_losses_as_ussr
+        self.a_draws_as_ussr += other.a_draws_as_ussr
+        _add_counts(self.causes_loss_us, other.causes_loss_us)
+        _add_counts(self.causes_loss_ussr, other.causes_loss_ussr)
+        _add_counts(self.causes_all, other.causes_all)
+
+    @classmethod
+    def from_result(cls, res: MatchupResult) -> "MatchupTally":
+        return cls(a_wins=res["a_wins"], b_wins=res["b_wins"], draws=res["draws"],
+                   a_wins_as_us=res["a_wins_as_us"], a_losses_as_us=res["a_losses_as_us"],
+                   a_draws_as_us=res["a_draws_as_us"], a_wins_as_ussr=res["a_wins_as_ussr"],
+                   a_losses_as_ussr=res["a_losses_as_ussr"],
+                   a_draws_as_ussr=res["a_draws_as_ussr"],
+                   causes_loss_us=dict(res["causes_loss_us"]),
+                   causes_loss_ussr=dict(res["causes_loss_ussr"]),
+                   causes_all=dict(res["causes_all"]))
+
+
+def _matchup_result(
+    agent_a: str, agent_b: str, n_pairs: int, tally: MatchupTally, *,
+    avg_steps: float, avg_turn: float, avg_ply: float, avg_vp_margin_a: float,
+    elapsed_seconds: float, choice_stats: Optional[ChoiceStats] = None,
+) -> MatchupResult:
+    """A matchup's result from its counts. `n_pairs` is the number of deals played, each from both
+    seats, so the record holds `2 * n_pairs` games."""
+    total = n_pairs * 2
+    res: MatchupResult = {
+        "agent_a": agent_a,
+        "agent_b": agent_b,
+        "total_games": total,
+        "games_per_side": n_pairs,
+        "a_wins": tally.a_wins,
+        "b_wins": tally.b_wins,
+        "draws": tally.draws,
+        "win_rate_a": float(tally.a_wins / max(1, total)),
+        "win_rate_b": float(tally.b_wins / max(1, total)),
+        "a_wins_as_us": tally.a_wins_as_us,
+        "a_losses_as_us": tally.a_losses_as_us,
+        "a_draws_as_us": tally.a_draws_as_us,
+        "win_rate_a_as_us": float(tally.a_wins_as_us / max(1, n_pairs)),
+        "a_wins_as_ussr": tally.a_wins_as_ussr,
+        "a_losses_as_ussr": tally.a_losses_as_ussr,
+        "a_draws_as_ussr": tally.a_draws_as_ussr,
+        "win_rate_a_as_ussr": float(tally.a_wins_as_ussr / max(1, n_pairs)),
+        "avg_steps": avg_steps,
+        "avg_turn": avg_turn,
+        "avg_ply": avg_ply,
+        "avg_vp_margin_a": avg_vp_margin_a,
+        "causes_loss_us": tally.causes_loss_us,
+        "causes_loss_ussr": tally.causes_loss_ussr,
+        "causes_all": tally.causes_all,
+        "elapsed_seconds": elapsed_seconds,
+    }
+    if choice_stats is not None:
+        res["choice_stats"] = choice_stats
+    return res
+
+
+def _choice_stats(
+    tot_us: int, single_us: int, tot_ussr: int, single_ussr: int, total_games: int,
+    category_counts_us: Dict[str, int], category_counts_ussr: Dict[str, int],
+) -> ChoiceStats:
+    """The `choice_stats` block of a matchup result, from its raw counts."""
+    tot_combined = tot_us + tot_ussr
+    single_comb = single_us + single_ussr
+    return {
+        "us_total_micro_actions": tot_us,
+        "us_single_choice_micro_actions": single_us,
+        "us_single_choice_pct": float((single_us / max(1, tot_us)) * 100.0),
+        "ussr_total_micro_actions": tot_ussr,
+        "ussr_single_choice_micro_actions": single_ussr,
+        "ussr_single_choice_pct": float((single_ussr / max(1, tot_ussr)) * 100.0),
+        "overall_total_micro_actions": tot_combined,
+        "overall_single_choice_micro_actions": single_comb,
+        "overall_single_choice_pct": float((single_comb / max(1, tot_combined)) * 100.0),
+        "avg_per_game": {
+            "us_total": float(tot_us / max(1, total_games)),
+            "us_single": float(single_us / max(1, total_games)),
+            "ussr_total": float(tot_ussr / max(1, total_games)),
+            "ussr_single": float(single_ussr / max(1, total_games)),
+            "combined_total": float(tot_combined / max(1, total_games)),
+            "combined_single": float(single_comb / max(1, total_games)),
+        },
+        "category_counts_us": category_counts_us,
+        "category_counts_ussr": category_counts_ussr,
+    }
+
+
+def merge_matchup_results(parts: Sequence[MatchupResult]) -> MatchupResult:
+    """One matchup result from the results of disjoint sets of its game pairs.
+
+    Counts add; the per-game averages are weighted by each part's game count, so the merge equals
+    what one call over every pair would have reported. `elapsed_seconds` is the sum over parts --
+    compute time, not wall clock, which the caller measures itself.
+    """
+    if not parts:
+        raise ValueError("merge_matchup_results needs at least one part")
+    names = {(p["agent_a"], p["agent_b"]) for p in parts}
+    if len(names) != 1:
+        raise ValueError(f"parts come from different matchups: {sorted(names)}")
+    tally = MatchupTally()
+    for p in parts:
+        tally.add(MatchupTally.from_result(p))
+    total = sum(p["total_games"] for p in parts)
+
+    def weighted_mean(value: Callable[[MatchupResult], float]) -> float:
+        return float(sum(value(p) * p["total_games"] for p in parts) / max(1, total))
+
+    stats = [p["choice_stats"] for p in parts if "choice_stats" in p]
+    choice: Optional[ChoiceStats] = None
+    if stats:
+        cat_us: Dict[str, int] = {}
+        cat_ussr: Dict[str, int] = {}
+        for st in stats:
+            _add_counts(cat_us, st["category_counts_us"])
+            _add_counts(cat_ussr, st["category_counts_ussr"])
+        choice = _choice_stats(
+            sum(st["us_total_micro_actions"] for st in stats),
+            sum(st["us_single_choice_micro_actions"] for st in stats),
+            sum(st["ussr_total_micro_actions"] for st in stats),
+            sum(st["ussr_single_choice_micro_actions"] for st in stats),
+            total, cat_us, cat_ussr)
+    return _matchup_result(
+        parts[0]["agent_a"], parts[0]["agent_b"], sum(p["games_per_side"] for p in parts), tally,
+        avg_steps=weighted_mean(lambda p: p["avg_steps"]),
+        avg_turn=weighted_mean(lambda p: p["avg_turn"]),
+        avg_ply=weighted_mean(lambda p: p["avg_ply"]),
+        avg_vp_margin_a=weighted_mean(lambda p: p["avg_vp_margin_a"]),
+        elapsed_seconds=float(sum(p["elapsed_seconds"] for p in parts)),
+        choice_stats=choice)
+
+
+@dataclass(frozen=True)
+class _Chunking:
+    """How a matchup's game pairs are cut into engine batches. A pair's seed and game number are
+    fixed by its index in the FULL matchup, whatever subset of pairs a call plays, so a split
+    matchup plays the deals the unsplit one always has."""
+
+    games_per_side: int
+    half_per_chunk: int     # pairs per batch; the batch holds each pair twice, seats swapped
+
+    @classmethod
+    def of(cls, games_per_side: int, batch_chunk_size: int) -> "_Chunking":
+        return cls(games_per_side, min(games_per_side, batch_chunk_size // 2))
+
+    @property
+    def chunk_size(self) -> int:
+        return self.half_per_chunk * 2
+
+    def pair_seed(self, base_seed: int, k: int) -> int:
+        """The deal of pair `k`, played from both seats."""
+        return base_seed + (k // self.half_per_chunk) * self.chunk_size + (k % self.half_per_chunk)
+
+    def game_index(self, k: int, second_half: bool) -> int:
+        """1-based, as the unsplit loop numbers games: chunk by chunk, first half then second."""
+        c = k // self.half_per_chunk
+        full_half = min(self.games_per_side - c * self.half_per_chunk, self.half_per_chunk)
+        return (c * self.chunk_size + (k % self.half_per_chunk)
+                + (full_half if second_half else 0) + 1)
+
+
+def _agent_temperature(agent: PlayerAgent, temperature: float,
+                       deterministic: Optional[bool]) -> Tuple[float, bool]:
+    """(temperature, greedy) for one agent. An agent may pin its own temperature
+    (`temp:<T>:` in load_agent), which overrides the matchup-wide one: that is what makes a
+    same-weights temperature comparison expressible at all. Greedy is an explicit `deterministic`,
+    else a temperature too low to differ from an argmax."""
+    pinned = getattr(agent, "temperature", None)
+    t = temperature if pinned is None else float(pinned)
+    return t, (t <= 0.05) if deterministic is None else deterministic
+
 
 class BatchMatchRunner:
     """Runs 2 * games_per_side games between two PlayerAgents in parallel via C++ VectorizedBatchRunner."""
@@ -83,7 +408,8 @@ class BatchMatchRunner:
         track_choices: bool = False,
         log_games_file: Optional[str] = None,
         auto_advance: bool = True,
-    ) -> Dict[str, Any]:
+        pairs: Optional[Sequence[int]] = None,
+    ) -> MatchupResult:
         """Play a matchup batched. Action selection matches NeuralAgent.select_action.
 
         temperature/deterministic are the same contract as the one-game-at-a-time path in
@@ -92,23 +418,15 @@ class BatchMatchRunner:
         deterministic=True here while the sequential path sampled at 0.1, so the two
         disagreed on win rate (0.450 vs 0.610 on one 100-game matchup) and could not be
         swapped for one another.
+
+        `pairs` plays only those game pairs (indices into range(games_per_side)), each with the
+        deal it has in the full matchup. That is what lets a matchup be split across processes
+        (tools/lib/parallel_tournament.py) and merged with `merge_matchup_results` without
+        changing which games are played. The result then counts only those pairs.
         """
         dev = resolve_device(device)
-        greedy = (temperature <= 0.05) if deterministic is None else deterministic
-
-        # An agent may pin its own temperature, which then overrides the matchup-wide one. That
-        # is what makes a same-weights temperature comparison expressible at all: without it every
-        # agent in a tournament shares one setting, so a policy cannot be played against itself at
-        # two temperatures. Agents that pin nothing are unaffected.
-        def _temp_for(agent):
-            t = getattr(agent, "temperature", None)
-            if t is None:
-                return temperature, greedy
-            t = float(t)
-            return t, (t <= 0.05) if deterministic is None else deterministic
-
-        temp_a, greedy_a = _temp_for(agent_a)
-        temp_b, greedy_b = _temp_for(agent_b)
+        temp_a, greedy_a = _agent_temperature(agent_a, temperature, deterministic)
+        temp_b, greedy_b = _agent_temperature(agent_b, temperature, deterministic)
 
         # Resume from supplied positions instead of dealing fresh games. Each position is
         # played twice with the sides swapped, which is the same pairing the seeded path
@@ -122,22 +440,15 @@ class BatchMatchRunner:
             raise ValueError(
                 f"games_per_side must be positive, got {games_per_side}; "
                 f"to skip evaluation, do not call play_parallel_matchup")
-        total_games = games_per_side * 2
-        half_per_chunk = min(games_per_side, batch_chunk_size // 2)
-        chunk_size = half_per_chunk * 2
+        chunking = _Chunking.of(games_per_side, batch_chunk_size)
+        half_per_chunk = chunking.half_per_chunk
 
-        a_wins = 0
-        b_wins = 0
-        draws = 0
-
-        a_us_wins = 0
-        a_us_losses = 0
-        a_us_draws = 0
-
-        a_ussr_wins = 0
-        a_ussr_losses = 0
-        a_ussr_draws = 0
-
+        ks = list(range(games_per_side)) if pairs is None else [int(k) for k in pairs]
+        bad = [k for k in ks if not 0 <= k < games_per_side]
+        if bad or len(set(ks)) != len(ks) or not ks:
+            raise ValueError(f"pairs must be distinct indices in range({games_per_side}), got {ks}")
+        n_pairs = len(ks)
+        tally = MatchupTally()
         all_steps = []
         all_turns = []
         # Length in plies alongside turns. A turn number cannot separate a game abandoned
@@ -145,10 +456,6 @@ class BatchMatchRunner:
         # went the distance because finish_end_turn increments before testing its bound.
         all_plies = []
         all_vps = []
-
-        causes_loss_us: Dict[str, int] = {}
-        causes_loss_ussr: Dict[str, int] = {}
-        causes_all: Dict[str, int] = {}
 
         total_micro_us = 0
         total_micro_ussr = 0
@@ -164,28 +471,24 @@ class BatchMatchRunner:
                 pass
 
         t0 = time.time()
-        num_chunks = (total_games + chunk_size - 1) // chunk_size
 
-        for chunk_idx in range(num_chunks):
-            cur_half = min(games_per_side - (chunk_idx * half_per_chunk), half_per_chunk)
-            if cur_half <= 0:
-                break
+        for lo in range(0, n_pairs, half_per_chunk):
+            chunk_ks = ks[lo:lo + half_per_chunk]
+            cur_half = len(chunk_ks)
             cur_games = cur_half * 2
-            seed_start = base_seed + (chunk_idx * chunk_size)
 
-            runner = ts.VectorizedBatchRunner(cur_games, seed_start)
+            runner = ts.VectorizedBatchRunner(cur_games, chunking.pair_seed(base_seed, chunk_ks[0]))
             # Paired deals: env i and env i + cur_half are the same matchup with the sides
             # swapped, so give them the same seed and therefore the same shuffle. Deal luck
             # then cancels between the halves rather than adding variance to the result.
             if start_states is not None:
-                offset = chunk_idx * half_per_chunk
-                for i in range(cur_half):
-                    pos = start_states[offset + i]
+                for i, k in enumerate(chunk_ks):
+                    pos = start_states[k]
                     runner.set_state(i, pos)
                     runner.set_state(i + cur_half, pos)
             else:
-                for i in range(cur_half):
-                    paired_seed = seed_start + i
+                for i, k in enumerate(chunk_ks):
+                    paired_seed = chunking.pair_seed(base_seed, k)
                     runner.reset_game(i, paired_seed)
                     runner.reset_game(i + cur_half, paired_seed)
             runner.refresh_all()
@@ -292,63 +595,12 @@ class BatchMatchRunner:
                     ((np.arange(cur_games) >= cur_half) & (d_players == -1))
                 )
 
-                # Agent A Action Selection
                 if np.any(is_a_turn):
-                    a_indices = np.where(is_a_turn)[0]
-                    if isinstance(agent_a, NeuralAgent):
-                        a_obs = np.asarray(obs[a_indices])
-                        _assert_width(agent_a, a_obs)
-                        a_obs = a_obs[:, :agent_a.obs_size]
-                        obs_t = torch.from_numpy(a_obs).float().to(dev)
-                        mask_t = torch.from_numpy(masks[a_indices]).to(dev)
-                        with torch.no_grad():
-                            act_t, _, _, _, _ = agent_a.model.sample_action(obs_t, mask_t, temperature=temp_a, deterministic=greedy_a)
-                        actions[a_indices] = act_t.cpu().numpy()
-                    elif hasattr(agent_a, "select_actions_batch"):
-                        # A searcher pays for batching: one call over every game waiting on it,
-                        # rather than one call per game. Measured at 64 simulations, a batch of
-                        # 256 roots runs at 103 decisions/s against roughly 0.4/s one at a time.
-                        sel_states = [runner.get_state(int(idx)) for idx in a_indices]
-                        picks = agent_a.select_actions_batch(sel_states)
-                        for idx, a in zip(a_indices, picks):
-                            actions[idx] = a
-                    elif hasattr(agent_a, "select_action"):
-                        for idx in a_indices:
-                            st = runner.get_state(int(idx))
-                            actions[idx] = agent_a.select_action(st, ts.Player(int(d_players[idx])), temperature=temp_a)
-                    else:  # RandomAgent, or anything without a state-based interface
-                        for idx in a_indices:
-                            leg = np.where(masks[idx] > 0)[0]
-                            actions[idx] = np.random.choice(leg) if len(leg) > 0 else 0
-
-                # Agent B Action Selection
+                    _choose_actions(agent_a, np.where(is_a_turn)[0], obs, masks, d_players,
+                                    runner, temp_a, greedy_a, dev, actions)
                 if np.any(is_b_turn):
-                    b_indices = np.where(is_b_turn)[0]
-                    if isinstance(agent_b, NeuralAgent):
-                        b_obs = np.asarray(obs[b_indices])
-                        _assert_width(agent_b, b_obs)
-                        b_obs = b_obs[:, :agent_b.obs_size]
-                        obs_t = torch.from_numpy(b_obs).float().to(dev)
-                        mask_t = torch.from_numpy(masks[b_indices]).to(dev)
-                        with torch.no_grad():
-                            act_t, _, _, _, _ = agent_b.model.sample_action(obs_t, mask_t, temperature=temp_b, deterministic=greedy_b)
-                        actions[b_indices] = act_t.cpu().numpy()
-                    elif hasattr(agent_b, "select_actions_batch"):
-                        # A searcher pays for batching: one call over every game waiting on it,
-                        # rather than one call per game. Measured at 64 simulations, a batch of
-                        # 256 roots runs at 103 decisions/s against roughly 0.4/s one at a time.
-                        sel_states = [runner.get_state(int(idx)) for idx in b_indices]
-                        picks = agent_b.select_actions_batch(sel_states)
-                        for idx, a in zip(b_indices, picks):
-                            actions[idx] = a
-                    elif hasattr(agent_b, "select_action"):
-                        for idx in b_indices:
-                            st = runner.get_state(int(idx))
-                            actions[idx] = agent_b.select_action(st, ts.Player(int(d_players[idx])), temperature=temp_b)
-                    else:  # RandomAgent, or anything without a state-based interface
-                        for idx in b_indices:
-                            leg = np.where(masks[idx] > 0)[0]
-                            actions[idx] = np.random.choice(leg) if len(leg) > 0 else 0
+                    _choose_actions(agent_b, np.where(is_b_turn)[0], obs, masks, d_players,
+                                    runner, temp_b, greedy_b, dev, actions)
 
                 if setup_override is not None:
                     if open_a:
@@ -374,38 +626,12 @@ class BatchMatchRunner:
                 turn = chunk_turns[idx]
                 reason = chunk_causes[idx] or "Early Termination"
 
-                causes_all[reason] = causes_all.get(reason, 0) + 1
+                tally.record(float(term_util), a_is_ussr, reason)
                 all_steps.append(chunk_steps[idx])
                 all_turns.append(turn)
                 all_plies.append(chunk_plies[idx])
 
-                vp_for_a = -vp if a_is_ussr else vp
-                all_vps.append(vp_for_a)
-
-                a_won = (term_util > 0 and not a_is_ussr) or (term_util < 0 and a_is_ussr)
-                b_won = (term_util < 0 and not a_is_ussr) or (term_util > 0 and a_is_ussr)
-
-                if a_won:
-                    a_wins += 1
-                    if a_is_ussr:
-                        a_ussr_wins += 1
-                    else:
-                        a_us_wins += 1
-                elif b_won:
-                    b_wins += 1
-                    clean_reason = reason
-                    if a_is_ussr:
-                        a_ussr_losses += 1
-                        causes_loss_ussr[clean_reason] = causes_loss_ussr.get(clean_reason, 0) + 1
-                    else:
-                        a_us_losses += 1
-                        causes_loss_us[clean_reason] = causes_loss_us.get(clean_reason, 0) + 1
-                else:
-                    draws += 1
-                    if a_is_ussr:
-                        a_ussr_draws += 1
-                    else:
-                        a_us_draws += 1
+                all_vps.append(-vp if a_is_ussr else vp)
 
             if track_choices:
                 total_micro_ussr += int(np.sum(chunk_ussr_total))
@@ -422,7 +648,8 @@ class BatchMatchRunner:
                         term_util = chunk_utils[idx]
                         winner = "USSR" if term_util < 0 else ("US" if term_util > 0 else "DRAW")
 
-                        g_idx = chunk_idx * chunk_size + idx + 1
+                        k = chunk_ks[idx % cur_half]
+                        g_idx = chunking.game_index(k, not a_is_ussr)
                         m_ussr_tot = int(chunk_ussr_total[idx])
                         m_ussr_sgl = int(chunk_ussr_single[idx])
                         m_us_tot = int(chunk_us_total[idx])
@@ -432,7 +659,7 @@ class BatchMatchRunner:
 
                         entry = {
                             "game_index": g_idx,
-                            "seed": seed_start + (idx % cur_half),
+                            "seed": chunking.pair_seed(base_seed, k),
                             "ussr_agent": ussr_agent,
                             "us_agent": us_agent,
                             "winner": winner,
@@ -453,65 +680,18 @@ class BatchMatchRunner:
                         }
                         f_log.write(json.dumps(entry) + "\n")
 
-        elapsed = time.time() - t0
-
-        res: Dict[str, Any] = {
-            "agent_a": agent_a.name,
-            "agent_b": agent_b.name,
-            "total_games": total_games,
-            "games_per_side": games_per_side,
-            "a_wins": a_wins,
-            "b_wins": b_wins,
-            "draws": draws,
-            "win_rate_a": float(a_wins / max(1, total_games)),
-            "win_rate_b": float(b_wins / max(1, total_games)),
-            "a_wins_as_us": a_us_wins,
-            "a_losses_as_us": a_us_losses,
-            "a_draws_as_us": a_us_draws,
-            "win_rate_a_as_us": float(a_us_wins / max(1, games_per_side)),
-            "a_wins_as_ussr": a_ussr_wins,
-            "a_losses_as_ussr": a_ussr_losses,
-            "a_draws_as_ussr": a_ussr_draws,
-            "win_rate_a_as_ussr": float(a_ussr_wins / max(1, games_per_side)),
-            "avg_steps": float(np.mean(all_steps)) if all_steps else 0.0,
-            "avg_turn": float(np.mean(all_turns)) if all_turns else 0.0,
-            "avg_ply": float(np.mean(all_plies)) if all_plies else 0.0,
-            "avg_vp_margin_a": float(np.mean(all_vps)) if all_vps else 0.0,
-            "causes_loss_us": causes_loss_us,
-            "causes_loss_ussr": causes_loss_ussr,
-            "causes_all": causes_all,
-            "elapsed_seconds": elapsed,
-        }
-
+        choice: Optional[ChoiceStats] = None
         if track_choices:
-            tot_us = total_micro_us
-            tot_ussr = total_micro_ussr
-            tot_combined = tot_us + tot_ussr
-            single_comb = single_choice_us + single_choice_ussr
-
-            res["choice_stats"] = {
-                "us_total_micro_actions": tot_us,
-                "us_single_choice_micro_actions": single_choice_us,
-                "us_single_choice_pct": float((single_choice_us / max(1, tot_us)) * 100.0),
-                "ussr_total_micro_actions": tot_ussr,
-                "ussr_single_choice_micro_actions": single_choice_ussr,
-                "ussr_single_choice_pct": float((single_choice_ussr / max(1, tot_ussr)) * 100.0),
-                "overall_total_micro_actions": tot_combined,
-                "overall_single_choice_micro_actions": single_comb,
-                "overall_single_choice_pct": float((single_comb / max(1, tot_combined)) * 100.0),
-                "avg_per_game": {
-                    "us_total": float(tot_us / max(1, total_games)),
-                    "us_single": float(single_choice_us / max(1, total_games)),
-                    "ussr_total": float(tot_ussr / max(1, total_games)),
-                    "ussr_single": float(single_choice_ussr / max(1, total_games)),
-                    "combined_total": float(tot_combined / max(1, total_games)),
-                    "combined_single": float(single_comb / max(1, total_games)),
-                },
-                "category_counts_us": category_counts_us,
-                "category_counts_ussr": category_counts_ussr,
-            }
-
-        return res
+            choice = _choice_stats(
+                total_micro_us, single_choice_us, total_micro_ussr, single_choice_ussr,
+                n_pairs * 2, category_counts_us, category_counts_ussr)
+        return _matchup_result(
+            agent_a.name, agent_b.name, n_pairs, tally,
+            avg_steps=float(np.mean(all_steps)) if all_steps else 0.0,
+            avg_turn=float(np.mean(all_turns)) if all_turns else 0.0,
+            avg_ply=float(np.mean(all_plies)) if all_plies else 0.0,
+            avg_vp_margin_a=float(np.mean(all_vps)) if all_vps else 0.0,
+            elapsed_seconds=time.time() - t0, choice_stats=choice)
 
     @staticmethod
     def play_packed_matchups(
@@ -524,7 +704,7 @@ class BatchMatchRunner:
         temperature: float = 0.1,
         deterministic: Optional[bool] = None,
         auto_advance: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[MatchupResult]:
         """Several matchups in ONE engine batch, one forward per agent per step over all its rows.
 
         `play_parallel_matchup` plays one pairing at a time with ~2 x games_per_side games, so a
@@ -540,23 +720,12 @@ class BatchMatchRunner:
         tracking and game logs are not supported here: callers use the one-pair path for those.
         """
         dev = resolve_device(device)
-        greedy = (temperature <= 0.05) if deterministic is None else deterministic
-
-        def _temp_for(agent: PlayerAgent) -> Tuple[float, bool]:
-            t = getattr(agent, "temperature", None)
-            if t is None:
-                return temperature, greedy
-            t = float(t)
-            return t, (t <= 0.05) if deterministic is None else deterministic
-
         if games_per_side <= 0:
             raise ValueError(f"games_per_side must be positive, got {games_per_side}")
         gps = int(games_per_side)
-        half_per_chunk = min(gps, batch_chunk_size // 2)
-        chunk_size = half_per_chunk * 2
         # The seed play_parallel_matchup gives game k of a pairing (k < games_per_side), both seats.
-        seeds = [base_seed + (k // half_per_chunk) * chunk_size + (k % half_per_chunk)
-                 for k in range(gps)]
+        chunking = _Chunking.of(gps, batch_chunk_size)
+        seeds = [chunking.pair_seed(base_seed, k) for k in range(gps)]
 
         P = len(pairs)
         n = P * 2 * gps
@@ -590,7 +759,7 @@ class BatchMatchRunner:
         if fv.any():
             runner.set_obs_features([int(x) for x in fv[us_agent]], [int(x) for x in fv[ussr_agent]])
 
-        temps = [_temp_for(ag) for ag in agents]
+        temps = [_agent_temperature(ag, temperature, deterministic) for ag in agents]
         openings = [getattr(ag, "forced_opening", None) for ag in agents]
         setup_override = ScriptedSetupOverride(n) if any(openings) else None
         active = np.ones(n, dtype=bool)
@@ -640,7 +809,7 @@ class BatchMatchRunner:
                 t_ag, g_ag = temps[ai]
                 if isinstance(agent, NeuralAgent):
                     assert obs_dev is not None and mask_dev is not None and act_dev is not None
-                    want = int(getattr(agent, "obs_size", obs_dev.shape[1]))
+                    want = agent.obs_size
                     if obs_dev.shape[1] < want:
                         _assert_width(agent, np.asarray(obs[rows[:1]]))
                     rows_t = torch.from_numpy(rows).to(dev)
@@ -649,18 +818,9 @@ class BatchMatchRunner:
                             obs_dev.index_select(0, rows_t)[:, :want], mask_dev.index_select(0, rows_t),
                             temperature=t_ag, deterministic=g_ag)
                     act_dev.index_copy_(0, rows_t, act_t.long())
-                elif hasattr(agent, "select_actions_batch"):
-                    picks = agent.select_actions_batch([runner.get_state(int(r)) for r in rows])
-                    actions[rows] = np.asarray(picks)
-                elif hasattr(agent, "select_action"):
-                    for r in rows:
-                        actions[r] = agent.select_action(runner.get_state(int(r)),
-                                                         ts.Player(int(d_players[r])),
-                                                         temperature=t_ag)
                 else:
-                    for r in rows:
-                        leg = np.where(masks[r] > 0)[0]
-                        actions[r] = np.random.choice(leg) if len(leg) > 0 else 0
+                    _choose_actions(agent, rows, obs, masks, d_players, runner, t_ag, g_ag, dev,
+                                    actions)
             if act_dev is not None:
                 nn_act = act_dev.cpu().numpy().astype(np.int32)
                 actions = np.where(nn_rows, nn_act, actions)
@@ -678,56 +838,22 @@ class BatchMatchRunner:
             steps += 1
         elapsed = time.time() - t0
 
-        out: List[Dict[str, Any]] = []
+        out: List[MatchupResult] = []
         for p, (agent_a, agent_b) in enumerate(pairs):
             off = p * 2 * gps
-            c = dict(a_wins=0, b_wins=0, draws=0, a_us_w=0, a_us_l=0, a_us_d=0,
-                     a_ussr_w=0, a_ussr_l=0, a_ussr_d=0)
-            causes_loss_us: Dict[str, int] = {}
-            causes_loss_ussr: Dict[str, int] = {}
-            causes_all: Dict[str, int] = {}
+            tally = MatchupTally()
             v_margin = []
             for idx in range(off, off + 2 * gps):
                 ussr_is_a = bool(a_is_ussr[idx])
-                u = utils[idx]
-                reason = causes[idx] or "Early Termination"
-                causes_all[reason] = causes_all.get(reason, 0) + 1
+                tally.record(float(utils[idx]), ussr_is_a, causes[idx] or "Early Termination")
                 v_margin.append(-vps[idx] if ussr_is_a else vps[idx])
-                a_won = (u > 0 and not ussr_is_a) or (u < 0 and ussr_is_a)
-                b_won = (u < 0 and not ussr_is_a) or (u > 0 and ussr_is_a)
-                if a_won:
-                    c["a_wins"] += 1
-                    c["a_ussr_w" if ussr_is_a else "a_us_w"] += 1
-                elif b_won:
-                    c["b_wins"] += 1
-                    if ussr_is_a:
-                        c["a_ussr_l"] += 1
-                        causes_loss_ussr[reason] = causes_loss_ussr.get(reason, 0) + 1
-                    else:
-                        c["a_us_l"] += 1
-                        causes_loss_us[reason] = causes_loss_us.get(reason, 0) + 1
-                else:
-                    c["draws"] += 1
-                    c["a_ussr_d" if ussr_is_a else "a_us_d"] += 1
             sl = slice(off, off + 2 * gps)
-            total = 2 * gps
-            out.append({
-                "agent_a": agent_a.name, "agent_b": agent_b.name,
-                "total_games": total, "games_per_side": gps,
-                "a_wins": c["a_wins"], "b_wins": c["b_wins"], "draws": c["draws"],
-                "win_rate_a": float(c["a_wins"] / total), "win_rate_b": float(c["b_wins"] / total),
-                "a_wins_as_us": c["a_us_w"], "a_losses_as_us": c["a_us_l"], "a_draws_as_us": c["a_us_d"],
-                "win_rate_a_as_us": float(c["a_us_w"] / gps),
-                "a_wins_as_ussr": c["a_ussr_w"], "a_losses_as_ussr": c["a_ussr_l"],
-                "a_draws_as_ussr": c["a_ussr_d"],
-                "win_rate_a_as_ussr": float(c["a_ussr_w"] / gps),
-                "avg_steps": float(np.mean(fin_steps[sl])), "avg_turn": float(np.mean(turns[sl])),
-                "avg_ply": float(np.mean(plies[sl])), "avg_vp_margin_a": float(np.mean(v_margin)),
-                "causes_loss_us": causes_loss_us, "causes_loss_ussr": causes_loss_ussr,
-                "causes_all": causes_all,
+            out.append(_matchup_result(
+                agent_a.name, agent_b.name, gps, tally,
+                avg_steps=float(np.mean(fin_steps[sl])), avg_turn=float(np.mean(turns[sl])),
+                avg_ply=float(np.mean(plies[sl])), avg_vp_margin_a=float(np.mean(v_margin)),
                 # The pack's wall time is shared; each pairing reports its share.
-                "elapsed_seconds": elapsed / max(1, P),
-            })
+                elapsed_seconds=elapsed / max(1, P)))
         return out
 
 

@@ -480,6 +480,65 @@ it in distribution only. `--pack-pairs 1` plays one pairing at a time, and `--tr
 `--log-games` force it. The one cost that remains is the heuristic bot, which is pure Python per
 position.
 
+### C. Multicore: search, and bots that decide in Python
+A plain network is batched inside one process and is bound by inference, so it gains little from
+more. A `search:` entrant is not: its tree (selection, state clones, engine steps, backups) runs in
+Python on one core, and only the leaf evaluation is batched -- the GPU sat at ~4% under a 256-sim
+search (`research/log/search_cost_and_coverage.md` §10). The same holds for a bot that decides in
+Python (`heuristic_mcts`). `--workers N`
+(0 = every core) cuts each matchup into shards of `--shard-pairs` game pairs (default 10; a pair is
+one deal played from both sides) and plays them in N processes, one thread each
+(`tools/lib/parallel_tournament.py`).
+
+The split plays the same deals as a single process. Every shard loads its agents afresh from their
+specs, so nothing an agent carries between games -- a search's own generator, `heuristic_mcts`'s
+included -- crosses from one shard into the next, and it seeds every generator its games draw
+from: the global ones, and any agent's own through `reseed` (a `search:` entrant's
+determinization, chance-node and subsampling streams, an ONNX agent's sampler). So **results depend
+on `--shard-pairs`, never on `--workers`** -- `--workers 1` included, which plays the same shards in
+one worker process. Omitting `--workers` runs the old one-process path with pairing packing
+(`--pack-pairs`); with deterministic agents it plays the same games as the shards, with sampling
+ones the same deals but not the same draws. Each worker loads its own copy of every model -- on a
+small machine, count the memory -- and so more than one worker is refused a CUDA device: pass
+`--device cpu`. If a shard fails, the shards still queued are dropped and the error is raised once
+the running ones finish. `--opening` reaches each worker as its specs' `opening:<name>:` prefix.
+
+```bash
+PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+  --models heuristic_mcts data/checkpoints/E5-11-43_560M.onnx --games-per-side 100 \
+  --device cpu --workers 0 --output-json data/reports/heuristic_mcts_vs_E5.json
+```
+
+### D. ONNX models
+A `.onnx` file from `tools/export_onnx.py` -- what the workbench plays, and the only form the
+published models on Hugging Face take -- is an entrant like a checkpoint (`OnnxAgent`, ONNX
+Runtime on CPU). Its name, observation width and action view come from the export's metadata, and
+a file that is not an export, or was made for another observation width, is refused. Greedy, it
+plays the same games as its checkpoint (the export is verified to pick the same favourite move);
+sampled, it draws from its own generator, so it matches in distribution only.
+
+```bash
+hf download mihaild/deepstruggle E5-11-43_560M.onnx --local-dir data/checkpoints
+```
+
+### E. Across machines: `--part` and `--pool-parts`
+`--part I/N --output-part part.json` plays every N-th shard of the tournament (starting at the
+I-th) and writes their raw results and game logs; `--pool-parts part*.json` checks that the files
+are one tournament's parts and cover each shard exactly once, merges them, and writes the usual
+report, JSON and `--log-games`. Since a shard's games depend only on the shard, the pooled
+tournament equals one machine playing all of it -- every part must be given the same entrants,
+`--games-per-side` and `--shard-pairs`, and pooling refuses parts that were not. A part writes its
+shards and nothing else: `--output-report`, `--output-json` and `--log-games` belong to the
+`--pool-parts` run and are refused with `--part`.
+
+```bash
+# on machine k of 4
+tools/tournament.py --models heuristic_mcts <model.onnx> --games-per-side 200 --device cpu \
+  --workers 0 --shard-pairs 1 --part k/4 --output-part parts/part-k.json
+# anywhere, once all four are in
+tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/pooled.json
+```
+
 ---
 
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)
@@ -708,8 +767,9 @@ there; a trainer must drop them from the value loss and keep them in the policy 
 
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
-- `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers.
-- `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver.
+- `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
+- `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver; plays any subset of a matchup's pairs with their own deals, and merges the parts (`merge_matchup_results`).
+- `tools/lib/parallel_tournament.py`: splits a tournament into shards played in worker processes (`tools/tournament.py --workers`).
 - `tools/lib/tournament_evaluator.py`: diagnostic loss cause classifier (`classify_game_ending_reason`).
 - `tools/lib/self_play.py`: single-game trajectory runner; the one writer of `.tslog.json` replays.
 - `tools/lib/scoring_formatter.py`: regional scoring calculation formatter.

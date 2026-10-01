@@ -11,6 +11,8 @@ The batched runner resolves chance nodes inside the engine. Before the fix the t
 disagreed by more than 25 points on the same deterministic matchup.
 """
 
+from typing import Mapping
+
 import numpy as np
 import pytest
 import ts_engine as ts
@@ -56,8 +58,8 @@ def test_batched_and_sequential_agree_exactly_when_deterministic(opponent_is_neu
     b = _agent(2) if opponent_is_neural else HeuristicAgent()
 
     seq = TournamentEvaluator.play_matchup(a, b, games_per_side=6, temperature=0.0)
-    bat = BatchMatchRunner.play_parallel_matchup(a, b, games_per_side=6, device="cpu",
-                                                 temperature=0.0)
+    bat: Mapping[str, object] = BatchMatchRunner.play_parallel_matchup(
+        a, b, games_per_side=6, device="cpu", temperature=0.0)
 
     for field in ["a_wins", "b_wins", "draws", "win_rate_a",
                   "a_wins_as_us", "a_losses_as_us",

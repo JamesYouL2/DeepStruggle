@@ -174,6 +174,7 @@ graph TD
 │   │   ├── tournament_evaluator.py # Matchup runner & loss cause classifier
 │   │   ├── self_play.py        # Self-play simulation & .tslog.json recorder
 │   │   ├── batch_tournament.py # Vectorized batch tournament runner & Bradley-Terry MLE
+│   │   ├── parallel_tournament.py # Tournament shards over worker processes (--workers)
 │   │   ├── scoring_formatter.py # Regional scoring audit calculation helper
 │   │   └── checkpoint_utils.py # Checkpoint scanning and architecture detection
 │   └── scripts/                # Shell automation scripts
