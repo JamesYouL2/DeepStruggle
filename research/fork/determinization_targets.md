@@ -67,14 +67,28 @@ checked by 256 paired playouts of the model's move against search's, hidden card
 | 0.5 | 2.5% | 2 | 1 (+ one at 1.5 SE) |
 
 * **Position 1559, the USSR's turn-10 headline** (VP −4, DEFCON 3): the net headlines Missile Envy at
-  0.997; search finds South African Unrest (prior 0.003). **+34.0 ± 3.8 points** in the playouts.
-  After Missile Envy the USSR loses to its own DEFCON move in ~60% of playouts, almost always at a
-  "We Will Bury You" play at DEFCON 2 (the US headlines We Will Bury You in most of them); after
-  South African Unrest, never. The chain is not fully traced, and an engine rule error in the
-  Missile Envy / We Will Bury You interaction has not been ruled out.
+  0.997; search finds South African Unrest (prior 0.003). The probe's playouts read **+34.0 ± 3.8**,
+  but **that number was inflated by a leak** (below). With the leak fixed, the full headline table
+  (256 pairs, local) is: South African Unrest **+19.9 ± 3.6**, Marine Barracks Bombing +15.6 ± 3.6,
+  The Iron Lady +9.0 ± 3.9, Reagan Bombs Libya +3.1, Sadat −1.0, Chernobyl −3.1, Arms Race −5.1,
+  Voice of America −13.9 — Missile Envy mid-pack at 49.2%. That is the fork owner's reading
+  ("much stronger than almost everything besides South African Unrest and Marine Barracks
+  Bombing"), and South African Unrest is still a real **+20 blind spot**.
+* **The leak: a determinized world knew the opponent's unrevealed headline.** The engine asks the
+  US for its headline first and keeps it in `headline_us_card` while the card stays in the US hand;
+  `ai/search/dmcts.py`'s `determinize` redealt the hand but left the choice, so every world resolved
+  the true US headline (here Soviets Shoot Down KAL-007: DEFCON to 2, after which Missile Envy pulls
+  "We Will Bury You" and its event takes DEFCON to 1). The observation was never affected — the net
+  sees KAL-007 only as an unknown US card. Fixed on `exp/hungary-openings` (`determinize` forgets an
+  unrevealed opponent headline; the engine then asks the opponent again after the mover chooses;
+  `tests/training/test_determinize_headline.py`). **What it touched:** every determinized search at
+  a USSR headline decision — the training searcher of search distillation (E4-28), honest-search
+  ratings (the budget sweep, the Gumbel runs) in their USSR-search games, and the branch oracle's
+  `resample` mode. US headline decisions (chosen first) and every non-headline decision were
+  unaffected, as was `opening_search.py`, whose root is the US headline.
 * Position 4656 (USSR, turn 8, Star Wars, prior 0.002): +6.2 ± 4.1, not confirmed.
-* **Blind spots exist and are rare** — one confirmed in 10,000 sampled decisions — and the one found
-  is decisive and of the known kind (an own-DEFCON loss), set up by a headline.
+* **Blind spots exist and are rare** — one confirmed in 10,000 sampled decisions, a +20 headline —
+  and the probe that found them shared the leak, so its USSR-headline rows should be re-run.
 
 ## What this does not say
 
