@@ -37,23 +37,38 @@ def test_spots_meet_the_rule() -> None:
     assert R.spot(ts.GameState()) is None
 
 
-def test_the_rule_rolls_on_its_best_target_each_time() -> None:
-    col, _ = _spots(1)
-    st = col["spots"][0]["state"]
-    mover = st.ctx().decision_player
-    end, mods = R.drive_rule(st)
-    assert mods and mods[0] == col["spots"][0]["best_net"]       # the first roll takes the best modifier
-    assert not R._in_realign(end, mover, (st.turn, st.action_round))
-    # rule_target agrees with a brute-force reading of its own key on the entered node
-    probe = st.clone()
-    ts.Engine.step_flat(probe, R.REALIGN)
-    R.drain_chance(probe)
-    legal = np.flatnonzero(R._realign_targets(probe))
-    net = R.net_modifiers(probe, mover)
-    opp = influence(probe)[1 if mover == ts.Player.US else 0]
+def test_expected_swing() -> None:
+    assert R.expected_swing(0, 3, 3) == 0.0                     # symmetric dice, symmetric stakes
+    assert R.expected_swing(0, 0, 2) > 0                        # nothing of mine to lose
+    assert R.expected_swing(2, 1, 1) > R.expected_swing(1, 1, 1) > 0 > R.expected_swing(-1, 1, 1)
+    assert R.expected_swing(-3, 0, 1) > 0                       # a long shot is still free
+
+
+def test_the_rule_takes_battlegrounds_first_and_stops_when_nothing_is_worth_a_roll() -> None:
+    col, _ = _spots(2)
     _, bg, _ = country_table()
-    best = max(legal, key=lambda c: (opp[c] > 0, net[c], bool(bg[c]), opp[c]))
-    assert R.rule_target(probe, mover) == best
+    for sp in col["spots"]:
+        st = sp["state"]
+        mover = st.ctx().decision_player
+        side = 0 if mover == ts.Player.US else 1
+        probe = st.clone()
+        ts.Engine.step_flat(probe, R.REALIGN)
+        R.drain_chance(probe)
+        legal = np.flatnonzero(R._realign_targets(probe))
+        net = R.net_modifiers(probe, mover)
+        inf = influence(probe)
+        swing = {int(c): R.expected_swing(int(net[c]), int(inf[side, c]), int(inf[1 - side, c])) for c in legal}
+        worth = [c for c, v in swing.items() if v > 0]
+        got = R.rule_target(probe, mover)
+        if not worth:
+            assert got is None
+            continue
+        assert got == max(worth, key=lambda c: (bool(bg[c]), swing[c]))
+        if any(bg[c] for c in worth):
+            assert bg[got]
+        end, mods = R.drive_rule(st)
+        assert len(mods) <= sp["ops"]
+        assert not R._in_realign(end, mover, (st.turn, st.action_round))
 
 
 def test_branches_are_scored_per_spot() -> None:
