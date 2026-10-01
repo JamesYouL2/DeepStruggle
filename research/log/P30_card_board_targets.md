@@ -104,3 +104,30 @@ The shallow net responds most.
   * T3 is near-constant.
   * The attention fit stopped at the epoch cap.
   * One dataset from two policies, one seed.
+
+## Addendum (2026-10-01): which token path is affordable (C1 sizing)
+
+The 0.90 came from 2 full self-attention layers at d=128 over 195 tokens. In training that
+costs far more than the trunk it would sit beside, so cheaper variants were fitted the same way
+(114k positions, 40-epoch cap, `tools/scripts/card_board_probe.py --archs ...`). Cost is one
+fwd+bwd+Adam step at batch 4096 in bf16, measured while two training arms shared the GPU, so only
+the ratios mean anything:
+
+| token path | params | T4 within-card R² | cost per minibatch (compiled / eager) |
+|:---|---:|---:|---:|
+| shallow trunk, for reference | 2.5M | 0.800 | ~10 ms |
+| full, d=128, 2 layers | 0.34M | **0.903** | 94 / 155 ms |
+| full, d=128, 1 layer | — | 0.776 | — / 66 ms |
+| full, d=64, 2 layers | 0.10M | 0.716 | 58 / 89 ms |
+| full, d=64, 1 layer | — | 0.704 | — / 38 ms |
+| full, d=32, 2 layers | 0.03M | 0.612 | 38 / 57 ms |
+| full, d=32, 1 layer | — | 0.618 | — / 24 ms |
+| cards query countries (one cross block), d=128 | — | 0.757 | — / 30 ms |
+| cards query countries, d=64 | — | 0.680 | — / 17 ms |
+
+* **Only the expensive variant beats the trunk.** Both width (d=128) and a second layer are
+  needed; every cheaper variant falls below the shallow trunk's 0.80. All fits hit the epoch cap,
+  so the small ones may be under-trained, but none was close.
+* **Cost.** With 64 minibatches per iteration (4 epochs × 16), d=128 × 2 layers would make an
+  iteration roughly 4–5× longer: about 12–25 h to 1,200M solo, against ~3 h for the shallow
+  recipe.

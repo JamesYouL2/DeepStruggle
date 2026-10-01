@@ -396,6 +396,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # P30 C1 throughput candidates (full attention costs ~5x the training throughput)
         "attn_d64_l1": (lambda: AttentionCard(64, 1), 5e-4), "attn_d32_l1": (lambda: AttentionCard(32, 1), 5e-4),
         "attn_d128_l1": (lambda: AttentionCard(128, 1), 5e-4),
+        "attn_d64_l2": (lambda: AttentionCard(64, 2), 5e-4), "attn_d32_l2": (lambda: AttentionCard(32, 2), 5e-4),
         "cross_d64": (lambda: CrossCard(64), 5e-4), "cross_d128": (lambda: CrossCard(128), 5e-4)}
     for arch in a.archs:
         make, lr = makers[arch]
