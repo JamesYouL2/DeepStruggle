@@ -72,30 +72,31 @@ of the time against E5/E6 (87% against E4).
 ## Result 3: 4,096 deals at the model's own strength
 
 E6 against itself, the same 4,096 deals under each opening (runs `36799548667`, `36799553935`,
-`36799559256`, commit `d702bd0`):
+`36799559256`, `36807182739`, `36807187343`; commits `d702bd0`, `361c5af`). Score counts a draw as ½.
 
-| USSR opening | USSR wins | USSR controls Italy, T4 | lost EG or Poland by T2 | holds Poland, T8 |
-|:---|---:|---:|---:|---:|
-| Pol 3 / Hun 3 | 50.8 ± 0.8 | 11.9% | 8.5% | 74.4% |
-| Pol 3 / Yug 3 | 52.2 ± 0.8 | 22.6% | 8.2% | 74.2% |
-| EG 4 / Pol 4 / Yug 1 | 51.8 ± 0.8 | 22.5% | 0.0% | 82.3% |
+| USSR opening | USSR score | − Hungary, paired | USSR controls Italy, T4 | lost EG or Poland by T2 | holds Poland, T8 |
+|:---|---:|---:|---:|---:|---:|
+| Pol 3 / Hun 3 | 51.5 | — | 11.9% | 8.5% | 74.4% |
+| Pol 3 / Yug 3 | 52.7 | +1.2 ± 1.0 | 22.6% | 8.2% | 74.2% |
+| EG 4 / Pol 4 / Yug 1 | 52.2 | +0.8 ± 1.0 | 22.5% | 0.0% | 82.3% |
+| EG 4 / Pol 4 / Aut 1 | 51.6 | +0.2 ± 1.0 | 22.5% | 0.0% | 80.8% |
+| EG 4 / Pol 5 | 51.2 | −0.3 ± 1.0 | 11.6% | 0.0% | 88.9% |
 
-Paired by deal: Yugoslavia − Hungary **+1.2 ± 1.0** (95% −0.7 to +3.1); EG 4 / Pol 4 / Yug 1 −
-Hungary **+0.8 ± 1.0**; EG 4 / Pol 4 / Yug 1 − Yugoslavia −0.5 ± 1.0.
-
-* **At E6 strength Hungary is not a 3–5 point strict loss**; it costs about a point against an
-  Italy-adjacent opening, possibly nothing. The pooled +2.2 above leaned on the E4 rung.
-* The board effects replicate at 8× the sample and stay large (Italy doubled; the buffer removes
-  the turn-1 loss and keeps Poland 8 points more often) while the result moves by about a point:
-  the net, on either side, does not convert them.
+* **At E6 strength the five openings are within 1.5 points of each other**; none is significantly
+  better than Hungary (the best, Yugoslavia, at 1.2 standard errors, one of four comparisons).
+  The pooled +2.2 above leaned on the E4 rung.
+* The ordering loosely follows Italy access (Yugoslavia, the buffered Yugoslavia and Austria
+  openings, then Hungary and EG 4 / Pol 5, which keeps Poland best and Italy least).
+* The board effects replicate at 8× the sample and stay large while the result moves by about a
+  point: the net, on either side, does not convert them.
 
 ## Reading
 
 * **The "weak opponents only" hypothesis is not supported up to E6 strength.** Hungary − buffered
   is −0.2 / +2.5 / −0.2 across the rungs: no trend. The rung that would test it properly is a US
   stronger than the model (search-64, pending).
-* **Hungary is at most a small loss to an Italy-adjacent opening: about 1 point at E6 strength**
-  (Result 3), 2–3 against weaker US rungs. The buffered openings are not better at this strength.
+* **At E6 strength the candidate openings are tied within a point or so** (Result 3); Hungary is
+  at most ~1 point worse than an Italy-adjacent opening, 2–3 against weaker US rungs.
 * **Why the lock survives:** the setup locks early (E5-11 by 40M,
   [`../log/E5_11_setup_lock_and_critic_views.md`](../log/E5_11_setup_lock_and_critic_views.md)),
   and a 2-point difference is below what setup credit, a 64-simulation teacher
