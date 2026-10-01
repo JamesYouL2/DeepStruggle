@@ -37,9 +37,11 @@ are kept as the E6 record. Ratings are from one field on E7, anchored at Heurist
 |:---|:---|:---|:---|---:|
 | **best raw model** (a single training snapshot) | **E7-02-44@1,200M** | `/workspace/data/checkpoints/E7-02-44_20260930_222159/snapshot_1200029696steps.pt` | `75b68238138b…080c4b66` | 2526 |
 | **best SWA model** (uniform average of the last 80M) | **E7-02-44, 1,120–1,200M SWA** | `/workspace/data/checkpoints/E7-02-44_20260930_222159/swa_1120-1200M.pt` | `8b205fad425f…1428fbb4` | **2571** |
-| **best model soup** (unchanged) | E6-06/07/08-44 at 760M | `/workspace/data/checkpoints/_soups/shared_start_E6-06+07+08_760M.pt` | `fa21df467d80…bf73e6` | 2562 |
+| **best model soup** (2026-10-01, by the pre-registered rule) | **shallow soup of E7-02/03/04/05-44 at 1,200M** | `/workspace/data/checkpoints/_soups/shallow_E7-02+03+04+05_1200M.pt` | `55a26630519e…6a733fc` | **2613** (its SWA-made twin `shallow_E7-02+03+04+05_swa1120-1200M.pt`, `f124f719177d…`, 2617, is level: 51.4%) |
 
-* **Best overall: a tie** between E7-02-44's SWA and the model soup, 50.8% head to head (±1.1).
+* **Best overall (2026-10-01): the shallow model soup.** It beats E7-02-44's SWA 58.9% and the deep
+  soup of E6-06/07/08-44 58.7% ([`log/E7_shallow_soup.md`](log/E7_shallow_soup.md)). The deep soup and
+  E7-02-44's SWA were level (50.8%) before it.
   E7-02-44's SWA beats the previous best SWA (E6-06-44's) 58.0%. E7-02-44@1,200M beats the previous
   best raw snapshot (E6-07-44@700M) 60.9%.
 * **E7-02-44's recipe is simpler than the soup's.** One run of the shallow trunk
@@ -65,6 +67,10 @@ COMMON="--reward-scheme blunder_aware --opponent-frac 0.3 --opponent-self-pool -
   --resume <E7-01-44 dir>/resume_state.pt --run-name E7-02-44 --description "..."
 # the SWA
 tools/scripts/average_weights.py --snapshots <E7-02-44's 1120, 1130, ..., 1200M snapshots> --output swa_1120-1200M.pt
+# 3. the soup: branch E7-02-44 at resume_870055936steps.pt to 1,200M three ways (E7-03-44 --seed-env/--seed-sampling/
+#    --seed-pool 45; E7-04-44 --lr-schedule step --lr-schedule-every 110000000 --lr-schedule-values 1e-4 3e-5;
+#    E7-05-44 --setup-mc-credit --setup-entropy-floor 0.3), then average the four 1,200M snapshots
+tools/scripts/average_weights.py --snapshots <E7-02/03/04/05-44 1,200M snapshots> --output shallow_E7-02+03+04+05_1200M.pt
 ```
 
 Check each phase with `tools/scripts/launch_flags.py <original dir> --diff <replicate dir>`.
