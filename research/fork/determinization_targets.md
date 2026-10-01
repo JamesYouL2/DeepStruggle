@@ -54,6 +54,28 @@ Where search departs from the prior, by how sure the prior is:
   [`hungary_openings.md`](hungary_openings.md)). Whatever search adds at play time comes from the
   few uncertain decisions.
 
+## Blind spots: root noise on (2026-10-01)
+
+The same probe with Dirichlet root noise in every determinized search (α 1.0), 10,000 positions,
+runs `36811501041` (ε 0.25) and `36811506475` (ε 0.5), commit `1817763`. A **candidate** is a
+position where search's top move has a prior under 5% and at least 5 of 8 worlds pick it; each is
+checked by 256 paired playouts of the model's move against search's, hidden cards redealt per pair.
+
+| ε | search changes the top move | candidates | confirmed |
+|---:|---:|---:|---:|
+| 0.25 | 1.6% | 1 | 1 |
+| 0.5 | 2.5% | 2 | 1 (+ one at 1.5 SE) |
+
+* **Position 1559, the USSR's turn-10 headline** (VP −4, DEFCON 3): the net headlines Missile Envy at
+  0.997; search finds South African Unrest (prior 0.003). **+34.0 ± 3.8 points** in the playouts.
+  After Missile Envy the USSR loses to its own DEFCON move in ~60% of playouts, almost always at a
+  "We Will Bury You" play at DEFCON 2 (the US headlines We Will Bury You in most of them); after
+  South African Unrest, never. The chain is not fully traced, and an engine rule error in the
+  Missile Envy / We Will Bury You interaction has not been ruled out.
+* Position 4656 (USSR, turn 8, Star Wars, prior 0.002): +6.2 ± 4.1, not confirmed.
+* **Blind spots exist and are rare** — one confirmed in 10,000 sampled decisions — and the one found
+  is decisive and of the known kind (an own-DEFCON loss), set up by a headline.
+
 ## What this does not say
 
 * The 8-world sum is the expectation of the one-world target, so this measures **noise**, never

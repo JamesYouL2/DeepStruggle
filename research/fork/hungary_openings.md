@@ -7,8 +7,8 @@ Poland 3, and Hungary gives up the Italy border that Yugoslavia (or Austria) wou
 hypothesis: Hungary was chosen against weak opponents early in training and never revisited.
 
 **Status: interim.** The net-only results and the 4,096-deal mirrors below are complete. The
-search-64 rung (a US stronger than the model) and the deep-search opening comparison
-(`opening_search.yml`) are still running on branch `exp/hungary-openings`; this note is updated
+search-64 rung (a US stronger than the model) and the deep-search comparison with the network's own
+US setup are still running on branch `exp/hungary-openings`; this note is updated
 when they land.
 
 ## Setup
@@ -89,6 +89,28 @@ E6 against itself, the same 4,096 deals under each opening (runs `36799548667`, 
   openings, then Hungary and EG 4 / Pol 5, which keeps Poland best and Italy least).
 * The board effects replicate at 8× the sample and stay large while the result moves by about a
   point: the net, on either side, does not convert them.
+
+## Result 4: deep search agrees with the critic, not the playouts
+
+`opening_search.yml` (run `36807155441`, commit `361c5af`): 400 deals, the fixed US setup, a
+determinized search from the first decision after setup, 4 worlds per budget. USSR value in
+win-probability points; alternatives as a paired difference from Hungary (± ≈ 0.2):
+
+| reading | Pol 3 / Hun 3 | Pol 3 / Yug 3 | EG 4 / Pol 4 / Aut 1 | EG 4 / Pol 4 / Yug 1 | EG 4 / Pol 5 |
+|:---|---:|---:|---:|---:|---:|
+| critic (0 sims) | +2.5 | −3.8 | −5.4 | −2.6 | −2.1 |
+| search 64 | +3.4 | −3.5 | −3.8 | −1.8 | −0.9 |
+| search 1,024 | +5.0 | −2.9 | −3.4 | −1.5 | −1.0 |
+| search 8,192 | +5.7 | −2.8 | −3.0 | −1.4 | −0.4 |
+| playouts (Result 3) | 51.5% | +1.2 | +0.2 | +0.8 | −0.3 |
+
+* **The critic rates Hungary 2–5 points above every alternative, with zero spread across deals**: a
+  fixed per-opening offset, not a reading of the position — the trained opening's habit.
+* **Search moves toward the playouts but slowly**: the Yugoslavia gap closes from −3.8 to −2.8 over
+  8,192 simulations; the playouts put Yugoslavia *ahead* by 1.2.
+* So deep search is precise and biased here, and cannot choose this model's opening; paired-deal
+  playouts are the instrument. The same offset is what setup credit learns from, which is a
+  candidate explanation for the lock.
 
 ## Reading
 
