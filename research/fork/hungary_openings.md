@@ -7,8 +7,7 @@ Poland 3, and Hungary gives up the Italy border that Yugoslavia (or Austria) wou
 hypothesis: Hungary was chosen against weak opponents early in training and never revisited.
 
 **Status: interim.** The net-only results and the 4,096-deal mirrors below are complete. The
-search-64 rung (a US stronger than the model) and the deep-search comparison with the network's own
-US setup are still running on branch `exp/hungary-openings`; this note is updated
+search-64 rung (a US stronger than the model) is still running on branch `exp/hungary-openings`; this note is updated
 when they land.
 
 ## Setup
@@ -108,6 +107,12 @@ win-probability points; alternatives as a paired difference from Hungary (± ≈
   fixed per-opening offset, not a reading of the position — the trained opening's habit.
 * **Search moves toward the playouts but slowly**: the Yugoslavia gap closes from −3.8 to −2.8 over
   8,192 simulations; the playouts put Yugoslavia *ahead* by 1.2.
+* **The same with the network's own US setup** (run `36807180884`): critic Hungary +4.3, the
+  alternatives −1.8 to −5.0 from it; at 8,192 simulations −0.4 to −2.8. The network's US answers
+  **WG 4 / France 3 / Italy 2 / Iran 1 in all 2,000 setups, whatever the USSR opened** — the US
+  setup does not react to the USSR's, so no US punishment of an opening can start at the setup.
+  The USSR is ~1.5 points better off against that US setup than against the fixed one
+  (+7.3 against +5.7 at 8,192), in line with the mirror hint above.
 * So deep search is precise and biased here, and cannot choose this model's opening; paired-deal
   playouts are the instrument. The same offset is what setup credit learns from, which is a
   candidate explanation for the lock.
