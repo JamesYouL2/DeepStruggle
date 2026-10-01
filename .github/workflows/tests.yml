@@ -4,8 +4,9 @@
 # the groups run side by side.
 #
 # tests/replayer is not run here: it needs the human corpus, which is not committed and would be
-# fetched from ts-replayer.fly.dev. Run it locally (CLAUDE.md, "The ts-replayer corpus"). The few
-# corpus-based tests in tests/engine_logic skip when the corpus is absent.
+# fetched from ts-replayer.fly.dev. Run it locally (CLAUDE.md, "The ts-replayer corpus"). The
+# corpus-based tests in tests/engine_logic are excluded by name below rather than left to skip, so
+# a green run does not count them as checked.
 name: tests
 
 on:
@@ -44,7 +45,12 @@ jobs:
       matrix:
         group:
           - name: core
-            paths: tests/bindings tests/engine_logic tests/docs
+            paths: >-
+              tests/bindings tests/engine_logic tests/docs
+              --ignore=tests/engine_logic/test_headline_resolution_order.py
+              --deselect=tests/engine_logic/test_china_card_space_race.py::test_replay_247_converts_end_to_end
+              --deselect=tests/engine_logic/test_cuban_missile_crisis_choice.py::test_replay_264_converts_end_to_end
+              --deselect=tests/engine_logic/test_norad_action_round_scope.py::test_replay_296_gets_past_its_bear_trap_escape
           - name: training
             paths: tests/training
     name: python (${{ matrix.group.name }})
