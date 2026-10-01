@@ -564,7 +564,17 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         #
         # Exposed here rather than left to callers so that search games go through the same
         # CLIs, and therefore the same replay writer, as every other match.
-        parts = s.split(":")
+        # Options ride as key=value parts anywhere after the path, e.g.
+        # search:<onnx>:64:determinize:root_temp=1.5:select=value:min_visits=8 -- the root prior
+        # temperature and the value-based final pick of BatchedMCTSConfig. Positional parts keep
+        # their meaning with the options removed.
+        raw = s.split(":")
+        opts = dict(p.split("=", 1) for p in raw[2:] if "=" in p)
+        unknown = set(opts) - {"root_temp", "select", "min_visits"}
+        if unknown:
+            raise ValueError(f"unknown search option(s) {sorted(unknown)}; "
+                             f"known: root_temp, select, min_visits")
+        parts = raw[:2] + [p for p in raw[2:] if "=" not in p]
         path = parts[1]
         sims = int(parts[2]) if len(parts) > 2 and parts[2] else 64
         determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
@@ -590,9 +600,16 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0,
                                 auto_advance=True, advance_root=False,
                                 determinize=determinize,
-                                node_filter=node_filter, subsample=subsample)
+                                node_filter=node_filter, subsample=subsample,
+                                root_prior_temp=float(opts.get("root_temp", 1.0)),
+                                select=opts.get("select", "visits"),
+                                value_min_visits=int(opts.get("min_visits", 8)))
+        if cfg.select not in ("visits", "value"):
+            raise ValueError(f"select must be 'visits' or 'value', not {cfg.select!r}")
         tag = "" if node_filter == "all" else "-card"
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
+        tag += "" if cfg.root_prior_temp == 1.0 else f"-rt{cfg.root_prior_temp:g}"
+        tag += "" if cfg.select == "visits" else f"-value{cfg.value_min_visits}"
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         if onnx_base is not None:
             label = f"{onnx_base.name}+{label}"

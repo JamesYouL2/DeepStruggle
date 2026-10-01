@@ -101,6 +101,19 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: Fraction of the decisions passing `node_filter` that are actually searched, chosen per
     #: decision from the searcher's own RNG. P3's first guess is 1 in 8.
     subsample: float = 1.0
+    #: Temperature on a fresh root's priors: p ** (1/T), renormalised, before any root noise.
+    #: Above 1 flattens them, so a move the network all but dismisses still gets visits at a small
+    #: budget (KataGo runs a root policy temperature above 1 for the same reason). Interior nodes
+    #: keep the network's priors. 1.0 is the plain search.
+    root_prior_temp: float = 1.0
+    #: How the move to play is chosen from the root. "visits": the most-visited move (ties by
+    #: value, then prior) -- visits follow the prior, so a move can lead on value and still lose
+    #: the count. "value": the best mean value for the mover among moves with at least
+    #: `value_min_visits` visits, so search can overrule the prior once it has evidence; with no
+    #: move over the floor it falls back to "visits". Only the played move changes: `run()`'s
+    #: visit counts, the training target, do not.
+    select: str = "visits"
+    value_min_visits: int = 8
 
 
 @dataclass
@@ -318,6 +331,12 @@ class BatchedMCTS:
                 continue
             # Root noise belongs to a fresh search. Re-applying it to an inherited tree would
             # perturb priors that its existing visit counts were already collected under.
+            # The root temperature likewise: an inherited tree's visits were collected under the
+            # priors it already has.
+            if not was_inherited and cfg.root_prior_temp != 1.0 and len(r.actions) > 1:
+                tempered = [max(pr, 1e-12) ** (1.0 / cfg.root_prior_temp) for pr in r.priors]
+                z = sum(tempered)
+                r.priors = [t / z for t in tempered]
             if not was_inherited and cfg.dirichlet_frac > 0.0 and len(r.actions) > 1:
                 noise = self._np_rng.dirichlet([cfg.dirichlet_alpha] * len(r.actions))
                 f = cfg.dirichlet_frac
@@ -399,8 +418,26 @@ class BatchedMCTS:
                 legal = np.flatnonzero(mask)
                 picks.append(int(legal[0]) if len(legal) else 0)
             else:
-                picks.append(int(r.actions[self._most_visited(r)]))
+                picks.append(int(r.actions[self._choose(r)]))
         return picks
+
+    def _choose(self, root: _BNode) -> int:
+        """Index of the move to play under `select` (see BatchedMCTSConfig)."""
+        if self.cfg.select == "visits":
+            return self._most_visited(root)
+        if self.cfg.select != "value":
+            raise ValueError(f"unknown select {self.cfg.select!r}; 'visits' or 'value'")
+        us_moves = root.mover == int(ts.Player.US)
+        floor = max(1, int(self.cfg.value_min_visits))
+        eligible = [i for i in range(len(root.actions)) if root.n[i] >= floor]
+        if not eligible:
+            return self._most_visited(root)
+
+        def key(i: int) -> Tuple[float, float, float]:
+            q = root.w[i] / root.n[i]
+            return (q if us_moves else -q, root.n[i], root.priors[i])
+
+        return max(eligible, key=key)
 
     @staticmethod
     def _most_visited(root: _BNode) -> int:
