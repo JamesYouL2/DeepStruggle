@@ -149,9 +149,17 @@ def play_branches(state: ts.GameState, branches: Mapping[str, Sequence[int]], pa
         for name, prefix in branches.items():
             # An empty prefix is the policy's own branch: its greedy move from the decision on.
             starts.append((k, name, apply_prefix(base, prefix)))
-    n = len(starts)
+    ends = play_out([st for _, _, st in starts], [mover] * len(starts), act, seed, max_steps)
+    return [{"pair": int(k), "branch": name, **end} for (k, name, _), end in zip(starts, ends)]
+
+
+def play_out(states: Sequence[ts.GameState], movers: Sequence[ts.Player], act: PolicyFn,
+             seed: int = 0, max_steps: int = 4000) -> List[Dict[str, Any]]:
+    """Play every state to the end with `act` on both sides, in one batch. Returns, per state, the
+    outcome from `movers[i]`'s side (1 win, 0.5 draw, 0 loss), the final VP and turn."""
+    n = len(states)
     runner = ts.VectorizedBatchRunner(n, seed)
-    for i, (_, _, st) in enumerate(starts):
+    for i, st in enumerate(states):
         runner.set_state(i, st)
     runner.refresh_all()
     active = np.ones(n, dtype=bool)
@@ -169,11 +177,11 @@ def play_branches(state: ts.GameState, branches: Mapping[str, Sequence[int]], pa
         if refused:
             raise RuntimeError(f"the engine refused a playout action in game {refused[0]}")
     out = []
-    for i, (k, name, _) in enumerate(starts):
+    for i in range(n):
         st = runner.get_state(i)
         u = float(ts.Engine.get_terminal_utility(st))       # + = US
-        u_mover = u if mover == ts.Player.US else -u
-        out.append({"pair": int(k), "branch": name, "score": 1.0 if u_mover > 0 else (0.5 if u_mover == 0 else 0.0),
+        u_mover = u if movers[i] == ts.Player.US else -u
+        out.append({"score": 1.0 if u_mover > 0 else (0.5 if u_mover == 0 else 0.0),
                     "vp": int(st.victory_points), "turn": int(st.turn),
                     "finished": bool(ts.Engine.is_terminal(st))})
     return out
