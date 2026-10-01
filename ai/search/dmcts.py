@@ -75,6 +75,16 @@ def determinize(state: ts.GameState, me: ts.Player, rng: random.Random) -> ts.Ga
     every card `me` has seen stays where it was.
     """
     out = state.clone()
+    # A headline the opponent has chosen but not revealed is hidden too. The engine asks the US
+    # first and keeps the choice in `headline_us_card` while the card stays in the hand, so a
+    # redeal alone left every sampled world resolving the opponent's TRUE headline: a search at
+    # the USSR's headline knew what the US had headlined. Forget the choice; the engine then asks
+    # the opponent again after `me` has chosen, from the hand this world dealt it.
+    if state.current_phase == ts.Phase.HEADLINE and state.headline_stage == 0:
+        if int(me) == int(ts.Player.USSR) and state.headline_us_card:
+            out.headline_us_card = 0
+        elif int(me) == int(ts.Player.US) and state.headline_ussr_card:
+            out.headline_ussr_card = 0
     opp_hand, deck, n_hand = hidden_pool(state, me)
     pool = opp_hand + deck
     if not pool:
