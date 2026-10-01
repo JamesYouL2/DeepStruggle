@@ -141,3 +141,13 @@ def test_a_match_between_two_views_plays_out() -> None:
     b = NeuralAgent(model=create_ladder_net("cpu", **{**M2D, "obs_features": F}), name="ops", device="cpu")
     res = BatchMatchRunner.play_parallel_matchup(a, b, games_per_side=4, batch_chunk_size=8, device="cpu")
     assert res is not None
+
+
+def test_the_training_probes_run_in_the_models_view() -> None:
+    from ai.eval.blunders import measure_blunders_batched
+    from ai.eval.decisive_probe import measure_decisive_batched
+    from ai.eval.position_diagnostics import profile_self_play_batched
+    m = create_ladder_net("cpu", **{**M2D, "obs_features": F}).eval()
+    measure_decisive_batched(m, num_envs=2)
+    measure_blunders_batched(m, num_games=2, temperature=1.0)
+    profile_self_play_batched(m, num_envs=2)

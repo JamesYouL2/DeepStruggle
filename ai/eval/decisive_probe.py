@@ -190,7 +190,7 @@ def measure_decisive_batched(
     import numpy as np
     import torch
 
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
+    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
 
     device = next(model.parameters()).device
     was_training = model.training
@@ -198,6 +198,7 @@ def measure_decisive_batched(
 
     check_obs_width(model)
     env = TsVectorizedEnv(num_envs=num_envs, base_seed=base_seed)
+    env.set_obs_features(model_obs_features(model), model_obs_features(model))  # the model's own view
     obs, masks, _ = env.reset_all()
     if merged_influence:
         env.set_merged_influence(True, True)
