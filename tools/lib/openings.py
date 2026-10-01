@@ -56,6 +56,8 @@ US_WG3_FR3_IT2: Sequence[Tuple[int, int]] = (
 #: borders Italy and West Germany.
 USSR_EG4_POL4_AUT1: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 4), (AUSTRIA, 1))
 CZECHOSLOVAKIA = 16
+#: All six points in the two battlegrounds: East Germany 4, Poland 5.
+USSR_EG4_POL5: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 5))
 #: The other two 3/3/3 openings, for comparison with Poland 3 / Hungary 3: the same six points,
 #: the second 3 in Yugoslavia (borders Italy and Greece) or Czechoslovakia (borders neither).
 USSR_POLAND_YUGOSLAVIA: Sequence[Tuple[int, int]] = ((POLAND, 3), (YUGOSLAVIA, 3))
@@ -84,6 +86,7 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     # The human USSR opening (East Germany 4, Poland 4, Yugoslavia 1): the buffer and the Italy
     # border together.
     "wfi_eg4_pol4_yug1": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_OPENING)},
+    "wfi_eg4_pol5": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_EG4_POL5)},
 }
 
 
