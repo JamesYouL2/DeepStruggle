@@ -54,6 +54,11 @@ AUSTRIA = 13
 #: E6-06-44's own is WG 4 / France 3 / Italy 2.
 US_WG3_FR3_IT2: Sequence[Tuple[int, int]] = (
     (WEST_GERMANY, 3), (FRANCE, 3), (ITALY, 1), (ITALY, 1), (IRAN, 1))
+#: US setups for the fork's setup bake-off (research/fork/), each as seven Western Europe points
+#: then the two bonus points (Iran starts at 1, so "Iran 2" is one bonus point).
+US_WG4_IT4_IR2: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (ITALY, 3), (ITALY, 1), (IRAN, 1))
+US_WG4_FR2_IT2_IR2: Sequence[Tuple[int, int]] = (
+    (WEST_GERMANY, 4), (FRANCE, 2), (ITALY, 1), (ITALY, 1), (IRAN, 1))
 #: The buffered USSR opening: East Germany and Poland each one over control, and Austria, which
 #: borders Italy and West Germany.
 USSR_EG4_POL4_AUT1: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 4), (AUSTRIA, 1))
@@ -89,6 +94,10 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     # border together.
     "wfi_eg4_pol4_yug1": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_OPENING)},
     "wfi_eg4_pol5": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_EG4_POL5)},
+    # US-only setups for the bake-off: the USSR sets up for itself.
+    "us_wg4_it4_ir2": {"US": expand(US_WG4_IT4_IR2)},
+    "us_wg3_fr3_it2_ir2": {"US": expand(US_WG3_FR3_IT2)},
+    "us_wg4_fr2_it2_ir2": {"US": expand(US_WG4_FR2_IT2_IR2)},
 }
 
 
