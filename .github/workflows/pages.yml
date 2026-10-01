@@ -1,13 +1,15 @@
 # The browser workbench on GitHub Pages: the engine compiled to WebAssembly and the page, built
-# from main and published as static files. Nothing runs server-side -- models come from Hugging
+# from main or fork/base (which carries the page searcher) and published as static files -- one
+# site, so it serves whichever branch pushed last. Nothing runs server-side -- models come from Hugging
 # Face or a file dropped on the page, replays from a file.
 #
-# Enable once in the repository: Settings -> Pages -> Source: GitHub Actions.
+# Enable once in the repository: Settings -> Pages -> Source: GitHub Actions, and allow each
+# deploying branch under Settings -> Environments -> github-pages -> Deployment branches.
 name: pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, fork/base]
   workflow_dispatch:
 
 permissions:
