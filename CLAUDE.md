@@ -319,6 +319,19 @@ predate the starred-card fix, so they were trained against a different game; `ch
 `OBS_FLAG_STAGED_CARDS`) as a reserved bit, so the bit is never reused with a different meaning;
 no code path varies on it.
 
+**Optional feature blocks are appended, never inserted (the view spec, 2026-10-01).** An approved
+observation addition is an `obs_features` bit (`engine/include/ts/game_state.hpp`) whose block is
+written *after* the 3,824 base floats, so the base stays bit-identical and every existing checkpoint
+keeps running. A model's set is recorded in its weights (LadderNet's `obs_features` buffer) and in
+the run's `metadata.json`; `tools/train.py --obs-features <name>...` chooses it. There is no default
+to get wrong: `ts.extract_observation_features(state, perspective, features)` requires the set
+(ask it with `bindings.ts_env.model_obs_features(model)`), `ts.obs_size_for(features)` is the width,
+and `check_obs_width` refuses a model handed another set's width. The batch runner holds a set **per
+env and side** (`set_obs_features(us, ussr)`), writes each row in its decider's set and zero-pads to
+the widest, so models with different sets play each other in one batch; each reads its own prefix.
+Blocks so far: `OPS_BUDGET` (bit 1, 3 floats -- the Ops a SELECT_PLAY_MODE card grants after every
+modifier, /5, and each side's per-card modifier; P30 C4). Adding a block still needs the owner.
+
 **AI (`ai/`):** `models/coldwar_net_v2.py` is the baseline (ColdWarNetV2: GNN GraphConv +
 card/country cross-attention + global ResNet with masked action heads); `models/coldwar_net.py`
 holds V1, kept because checkpoints predating V2 name it, and the architecture is detected from a

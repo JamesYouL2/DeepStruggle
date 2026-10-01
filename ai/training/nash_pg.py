@@ -23,7 +23,7 @@ import torch.nn.functional as F
 
 from ai.models.coldwar_net_v2 import VP_LIMIT
 
-from bindings.ts_env import TsVectorizedEnv
+from bindings.ts_env import TsVectorizedEnv, model_obs_features
 from bindings.action_encoder import ActionEncoder
 from .rollout_buffer import RolloutBuffer, setup_phase_slot
 from .critic_tracker import CriticTracker
@@ -427,6 +427,12 @@ class BaseNashPGTrainer:
         #: Which environments are pure self-play. Game statistics are reported over
         #: these only, so a pooled run stays comparable with an unpooled one.
         self._selfplay_mask = np.ones(self.num_envs, dtype=bool)
+        #: The view spec's observation half: the feature set the learner reads (recorded in its
+        #: weights). Every seat of every env gets it -- pool members are snapshots of this run,
+        #: and a member of another feature set fails its strict load rather than misreading.
+        self.obs_features = model_obs_features(active_net)
+        if self.obs_features and self.env is not None:
+            self.env.set_obs_features(self.obs_features, self.obs_features)
         self.buffer = RolloutBuffer(
             buffer_size=self.buffer_size,
             num_envs=self.num_envs,

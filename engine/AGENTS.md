@@ -343,6 +343,17 @@ invariant 10), which means the cost lands on every number measured before it.
 Two standing preferences: a large vector for a rare mechanism is not worth it (a per-country or
 per-card bit serving one card costs 84 or 110 floats), and a partial feature is worse than none.
 
+**An approved addition is an appended block, not an edit of the base.** `obs_features` (in
+`include/ts/game_state.hpp`) names each optional block by a bit and gives its width
+(`extra_width`); `extract_observation_features` (`src/observation.cpp`) writes the base through
+`Observation::extract`, unchanged, then each requested block in bit order. Bit 0 is retired with
+`STAGED_CARDS` and never reused. A new block takes the next bit, appends after the existing ones,
+and is mirrored in `ai/models/ladder_net.OBS_FEATURE_WIDTHS` (a test compares the two). Blocks:
+
+| bit | name | width | contents |
+|:---|:---|---:|:---|
+| 1<<1 | `OPS_BUDGET` | 3 | at SELECT_PLAY_MODE, `Operations::grant_ops_for_card(pending_op_card, decider)/5`, else 0; my per-card Ops modifier; the opponent's (Containment/Brezhnev +1, Red Scare/Purge −1, summed) |
+
 ---
 
 ## 7. Why hand knowledge lives in `CardLocation`

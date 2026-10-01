@@ -1411,6 +1411,21 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
     }
 
 
+#: Observation feature names (`--obs-features`) and their ts.OBS_FEATURE_* bits.
+OBS_FEATURE_BITS: Dict[str, int] = {"ops_budget": 1 << 1}
+
+
+def _obs_feature_names(bits: int) -> List[str]:
+    return [n for n, b in OBS_FEATURE_BITS.items() if bits & b]
+
+
+def obs_feature_bits(names: Sequence[str]) -> int:
+    unknown = [n for n in names if n not in OBS_FEATURE_BITS]
+    if unknown:
+        raise ValueError(f"unknown observation features {unknown}; known: {sorted(OBS_FEATURE_BITS)}")
+    return sum(OBS_FEATURE_BITS[n] for n in set(names))
+
+
 def train_pipeline(
     arch: str = "v2",
     seed: Optional[int] = None,
@@ -1513,6 +1528,7 @@ def train_pipeline(
     aux_vp_coef: float = 0.0,
     aux_sample_frac: float = 0.1,
     aux_min_batch: int = 4096,
+    obs_features: int = 0,
     aux_card_coef: float = 0.0,
     aux_card_sample_frac: float = 0.0005,
     aux_card_min_batch: int = 2048,
@@ -1679,7 +1695,8 @@ def train_pipeline(
         # the network, so the record says so (only when they exist: older runs stay comparable).
         "ladder_config": ({**dict(ladder_config), **({"aux_heads": True} if (aux_own_coef > 0.0
                           or aux_vp_coef > 0.0) else {}),
-                          **({"card_aux": True} if aux_card_coef > 0.0 else {})} if ladder_config else None),
+                          **({"card_aux": True} if aux_card_coef > 0.0 else {}),
+                          **({"obs_features": int(obs_features)} if obs_features else {})} if ladder_config else None),
         # Each defaults to `seed`; recorded resolved so a run says which streams it actually used.
         "seed_init": (seed if seed_init is None else int(seed_init)),
         "seed_sampling": (seed if seed_sampling is None else int(seed_sampling)),
@@ -1780,6 +1797,9 @@ def train_pipeline(
         "aux_sample_frac": float(aux_sample_frac),
         "aux_min_batch": int(aux_min_batch),
         # P30: the card-event auxiliary target (0 = off).
+        # The view spec's observation half (owner, 2026-10-01): appended observation blocks the
+        # network reads, by name; also in the weights as the `obs_features` buffer.
+        "obs_features": _obs_feature_names(int(obs_features)),
         "aux_card_coef": float(aux_card_coef),
         "aux_card_sample_frac": float(aux_card_sample_frac),
         "aux_card_min_batch": int(aux_card_min_batch),
@@ -1838,7 +1858,8 @@ def train_pipeline(
                              "research/plans/P21_architecture_ladder.md")
         _aux = aux_own_coef > 0.0 or aux_vp_coef > 0.0
         model = create_ladder_net(dev, categorical_value=categorical_value,
-                                  **{**ladder_config, "aux_heads": _aux, "card_aux": aux_card_coef > 0.0})
+                                  **{**ladder_config, "aux_heads": _aux, "card_aux": aux_card_coef > 0.0,
+                                     "obs_features": int(obs_features)})
     elif arch == "mlp":
         from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
         model = create_coldwar_net_mlp(dev, categorical_value=categorical_value,

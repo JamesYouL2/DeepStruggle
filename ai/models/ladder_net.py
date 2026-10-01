@@ -36,6 +36,19 @@ from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
 from bindings.action_encoder import ActionEncoder
 
 #: Countries the ownership head predicts: all 84 (P29 bet 2).
+#: Width of each optional observation block, by ts.OBS_FEATURE_* bit (engine/include/ts/game_state.hpp,
+#: obs_features). Restated so the model does not import the engine; tests/bindings check it
+#: against ts.obs_size_for.
+OBS_FEATURE_WIDTHS: Dict[int, int] = {1 << 1: 3}   # OPS_BUDGET
+
+
+def _obs_extra(features: int) -> int:
+    unknown = int(features) & ~sum(OBS_FEATURE_WIDTHS)
+    if unknown:
+        raise ValueError(f"unknown observation feature bits {unknown:#x}")
+    return sum(w for bit, w in OBS_FEATURE_WIDTHS.items() if int(features) & bit)
+
+
 AUX_OWN_COUNTRIES = 84
 #: outputs per card of the card-event head: 5 Ops-reach + 12 event-outcome targets
 #: (ai.training.card_event_targets.AUX_DIM; restated here so the model does not import the engine).
@@ -82,6 +95,7 @@ class LadderNet(ColdWarNetV2):
                  head_center: bool = False,
                  aux_heads: bool = False,
                  card_aux: bool = False,
+                 obs_features: int = 0,
                  **kwargs: Any) -> None:
         if input_mode not in INPUT_MODES:
             raise ValueError(f"input_mode must be one of {INPUT_MODES}; got {input_mode!r}")
@@ -140,6 +154,10 @@ class LadderNet(ColdWarNetV2):
                          graph_layers=0,              # P21 runs without graph convolution
                          self_transform=False,
                          attn_readout=0,
+                         # The view spec (owner, 2026-10-01): optional observation blocks are
+                         # appended right after the 100 globals, so they widen the global slice
+                         # that `global_proj` reads and nothing else moves.
+                         global_features=ColdWarNetV2.GLOBAL_SIZE + _obs_extra(obs_features),
                          **kwargs)
 
         self.input_mode = str(input_mode)
@@ -335,6 +353,12 @@ class LadderNet(ColdWarNetV2):
         # read off the trunk so the gradient reaches it: the trained trunks were found to carry no
         # more of this than an untrained one (research/log/P30_card_board_targets.md). Training
         # loss only; forward() is untouched. Recovered from the weights (`card_aux_head.*`).
+        # The observation feature set (ts.OBS_FEATURE_* bits) this network reads, kept in the
+        # weights so a checkpoint names its own view: width alone cannot tell two equal-width
+        # feature sets apart. A buffer only when non-zero, so base checkpoints are unchanged.
+        self.obs_feature_bits = int(obs_features)
+        if self.obs_feature_bits:
+            self.register_buffer("obs_features", torch.tensor(self.obs_feature_bits, dtype=torch.int64))
         self.card_aux = bool(card_aux)
         if self.card_aux:
             self.card_aux_head = nn.Sequential(
@@ -432,6 +456,7 @@ class LadderNet(ColdWarNetV2):
             head_center=self.head_center,
             aux_heads=self.aux_heads,
             card_aux=self.card_aux,
+            obs_features=self.obs_feature_bits,
         )
 
 
@@ -707,6 +732,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         categorical_value=any(k.startswith("value_dist_head") for k in sd),
         aux_heads=any(k.startswith("aux_own_head.") for k in sd),
         card_aux=any(k.startswith("card_aux_head.") for k in sd),
+        obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
     )
 
 def create_ladder_net(device: torch.device | str, **config: Any) -> LadderNet:

@@ -389,4 +389,38 @@ void extract_observation(const GameState& state, Player perspective,
     Observation::extract(state, perspective, out_buf);
 }
 
+namespace {
+
+// Containment / Brezhnev +1, Red Scare / Purge -1: the shift every card's Ops gets for `p`.
+float ops_modifier(const GameState& state, Player p) noexcept {
+    if (p == Player::NONE) return 0.0f;
+    const bool raise = state.has_flag(p == Player::US ? effect_bits::CONTAINMENT_ACTIVE
+                                                      : effect_bits::BREZHNEV_DOCTRINE_ACTIVE);
+    const bool purge = state.has_flag(p == Player::US ? effect_bits::PURGE_US_ACTIVE
+                                                      : effect_bits::PURGE_USSR_ACTIVE);
+    return static_cast<float>((raise ? 1 : 0) - (purge ? 1 : 0));
+}
+
+}  // namespace
+
+size_t extract_observation_features(const GameState& state, Player perspective, uint32_t features,
+                                    float* out) noexcept {
+    ObservationBufferV23 ob;
+    Observation::extract(state, perspective, &ob);
+    std::memcpy(out, reinterpret_cast<const float*>(&ob), OBS_SIZE_V23 * sizeof(float));
+    size_t at = OBS_SIZE_V23;
+    if (features & obs_features::OPS_BUDGET) {
+        const auto& ctx = state.ctx();
+        const Player decider = ctx.decision_player;
+        out[at + 0] = (ctx.decision_type == DecisionType::SELECT_PLAY_MODE && ctx.pending_op_card != 0 &&
+                       decider != Player::NONE)
+            ? static_cast<float>(Operations::grant_ops_for_card(state, ctx.pending_op_card, decider)) / 5.0f
+            : 0.0f;
+        out[at + 1] = ops_modifier(state, perspective);
+        out[at + 2] = ops_modifier(state, get_opponent(perspective));
+        at += obs_features::OPS_BUDGET_WIDTH;
+    }
+    return at;
+}
+
 } // namespace ts

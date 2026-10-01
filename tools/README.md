@@ -116,6 +116,12 @@ How they are trained:
 * The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+`--obs-features NAME...` (P30, default none) appends optional observation blocks to the base layout
+(`ops_budget`: the Ops the card at a play-mode decision grants after every modifier, and each side's
+per-card Ops modifier -- 3 floats). The set is recorded in the weights and in `metadata.json`, so
+tournaments and the match harness build each agent's observation in its own set, and a model with
+features plays one without in the same batch. See `engine/AGENTS.md` §6a.
+
 `--aux-card-events W` (P30, default 0 = off) adds a per-card head on the trunk. For every card in the
 mover's hand it predicts 17 numbers (`ai/training/card_event_targets.py`):
 

@@ -13,6 +13,7 @@ import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
 from tools.lib.openings import ScriptedSetupOverride
+from bindings.ts_env import model_obs_features
 from tools.lib.player_agent import PlayerAgent, NeuralAgent, HeuristicAgent, RandomAgent, load_agent, resolve_device
 from ai.game_length import ply as game_ply
 from tools.lib.tournament_evaluator import classify_game_ending_reason
@@ -46,13 +47,23 @@ def categorize_flat_action_detailed(action_idx: int) -> str:
 
 
 def _assert_width(agent: NeuralAgent, obs: npt.NDArray[np.float32]) -> None:
-    """A model silently misreads an observation of the wrong width; say so instead."""
+    """A model silently misreads an observation of the wrong width; say so instead.
+
+    With the view spec the runner's rows can be wider than an agent's view -- each is written in
+    its decider's feature set and zero-padded to the widest set in the match -- so the agent reads
+    the first `obs_size` floats of its own rows. Anything narrower than that is an error."""
     want = getattr(agent, "obs_size", None)
-    if want is not None and obs.shape[1] != want:
+    if want is not None and obs.shape[1] < want:
         raise ValueError(
             f"{agent.name} expects an observation of width {want} but the runner produced "
-            f"{obs.shape[1]}. Slicing hides this: the network would read the wrong regions and "
-            f"play badly rather than fail.")
+            f"{obs.shape[1]}: its view was not set on the runner (set_obs_features).")
+
+
+def _agent_features(agent: Any) -> int:
+    """The observation feature set a seated agent reads: its model's, or the base for anything
+    that is not a network (bots and searchers act on the state)."""
+    model = getattr(agent, "model", None)
+    return model_obs_features(model) if isinstance(agent, NeuralAgent) and model is not None else 0
 
 class BatchMatchRunner:
     """Runs 2 * games_per_side games between two PlayerAgents in parallel via C++ VectorizedBatchRunner."""
@@ -187,6 +198,12 @@ class BatchMatchRunner:
                 first = np.arange(cur_games) < cur_half
                 runner.set_merged_influence([bool(x) for x in np.where(first, mv_b, mv_a)],
                                             [bool(x) for x in np.where(first, mv_a, mv_b)])
+            # The view spec's observation half, set the same way: each seat in its agent's view.
+            fa, fb = _agent_features(agent_a), _agent_features(agent_b)
+            if fa or fb:
+                first = np.arange(cur_games) < cur_half
+                runner.set_obs_features([int(x) for x in np.where(first, fb, fa)],
+                                        [int(x) for x in np.where(first, fa, fb)])
             active = np.ones(cur_games, dtype=bool)
             steps = 0
             open_a = getattr(agent_a, "forced_opening", None)
@@ -279,8 +296,9 @@ class BatchMatchRunner:
                 if np.any(is_a_turn):
                     a_indices = np.where(is_a_turn)[0]
                     if isinstance(agent_a, NeuralAgent):
-                        a_obs = obs[a_indices]
+                        a_obs = np.asarray(obs[a_indices])
                         _assert_width(agent_a, a_obs)
+                        a_obs = a_obs[:, :agent_a.obs_size]
                         obs_t = torch.from_numpy(a_obs).float().to(dev)
                         mask_t = torch.from_numpy(masks[a_indices]).to(dev)
                         with torch.no_grad():
@@ -307,8 +325,9 @@ class BatchMatchRunner:
                 if np.any(is_b_turn):
                     b_indices = np.where(is_b_turn)[0]
                     if isinstance(agent_b, NeuralAgent):
-                        b_obs = obs[b_indices]
+                        b_obs = np.asarray(obs[b_indices])
                         _assert_width(agent_b, b_obs)
+                        b_obs = b_obs[:, :agent_b.obs_size]
                         obs_t = torch.from_numpy(b_obs).float().to(dev)
                         mask_t = torch.from_numpy(masks[b_indices]).to(dev)
                         with torch.no_grad():
@@ -567,6 +586,9 @@ class BatchMatchRunner:
         if mv.any():
             runner.set_merged_influence([bool(x) for x in mv[us_agent]],
                                         [bool(x) for x in mv[ussr_agent]])
+        fv = np.array([_agent_features(ag) for ag in agents], dtype=np.int64)
+        if fv.any():
+            runner.set_obs_features([int(x) for x in fv[us_agent]], [int(x) for x in fv[ussr_agent]])
 
         temps = [_temp_for(ag) for ag in agents]
         openings = [getattr(ag, "forced_opening", None) for ag in agents]
@@ -618,13 +640,13 @@ class BatchMatchRunner:
                 t_ag, g_ag = temps[ai]
                 if isinstance(agent, NeuralAgent):
                     assert obs_dev is not None and mask_dev is not None and act_dev is not None
-                    want = getattr(agent, "obs_size", None)
-                    if want is not None and obs_dev.shape[1] != want:
+                    want = int(getattr(agent, "obs_size", obs_dev.shape[1]))
+                    if obs_dev.shape[1] < want:
                         _assert_width(agent, np.asarray(obs[rows[:1]]))
                     rows_t = torch.from_numpy(rows).to(dev)
                     with torch.no_grad():
                         act_t, _, _, _, _ = agent.model.sample_action(
-                            obs_dev.index_select(0, rows_t), mask_dev.index_select(0, rows_t),
+                            obs_dev.index_select(0, rows_t)[:, :want], mask_dev.index_select(0, rows_t),
                             temperature=t_ag, deterministic=g_ag)
                     act_dev.index_copy_(0, rows_t, act_t.long())
                 elif hasattr(agent, "select_actions_batch"):

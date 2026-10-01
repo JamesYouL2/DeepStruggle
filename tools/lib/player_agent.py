@@ -12,7 +12,7 @@ from ai.training.behavioral_cloning import HeuristicPolicy, OldHeuristicPolicy
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from ai.models.coldwar_net_v2 import (ColdWarNetV2, check_checkpoint_layout,
                                      create_coldwar_net_v2)
-from bindings.ts_env import check_obs_width
+from bindings.ts_env import check_obs_width, model_obs_features
 from tools.lib.checkpoint_id import checkpoint_label
 
 ColdWarModel = Union[ColdWarNet, ColdWarNetV2]
@@ -320,7 +320,8 @@ class NeuralAgent:
         player: ts.Player,
         temperature: float = 0.1,
     ) -> int:
-        obs = ts.extract_observation(state, player)
+        # In the model's own view (the view spec): the base layout plus its appended blocks.
+        obs = ts.extract_observation_features(state, player, model_obs_features(self.model))
         mask = ActionEncoder.get_legal_mask(state)
 
         obs_t = torch.from_numpy(obs).float().unsqueeze(0).to(self.device)

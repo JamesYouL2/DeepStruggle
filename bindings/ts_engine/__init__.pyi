@@ -843,6 +843,20 @@ def encode_micro_action(arg0: GameState, arg1: MicroAction, /) -> int: ...
 
 def extract_observation(state: GameState, perspective: Player) -> Annotated[NDArray[numpy.float32], dict(shape=(None,))]: ...
 
+def obs_size_for(features: int) -> int:
+    """
+    Observation width for a feature set: the base 3,824 plus each appended block.
+    """
+
+def extract_observation_features(state: GameState, perspective: Player, features: int) -> Annotated[NDArray[numpy.float32], dict(shape=(None,))]:
+    """
+    The base observation followed by the blocks `features` appends. features=0 is exactly extract_observation(state, perspective).
+    """
+
+OBS_FEATURE_OPS_BUDGET: int = 2
+
+OBS_FEATURES_ALL: int = 2
+
 OBS_FLAG_STAGED_CARDS: int = 1
 
 OBS_SIZE_V23: int = 3824
@@ -869,6 +883,13 @@ class VectorizedBatchRunner:
 
     @property
     def obs_width(self) -> int: ...
+
+    def set_obs_features(self, us: Sequence[int], ussr: Sequence[int]) -> None:
+        """
+        Per env and side, the observation feature set (obs_features bits) that side's model reads. Rows are written in the decider's set and zero-padded to obs_width.
+        """
+
+    def set_obs_features_env(self, env_index: int, us: int, ussr: int) -> None: ...
 
     def reset_game(self, arg0: int, arg1: int, /) -> None: ...
 

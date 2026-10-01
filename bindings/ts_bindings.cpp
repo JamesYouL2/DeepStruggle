@@ -728,6 +728,33 @@ NB_MODULE(ts_engine, m) {
         return nb::ndarray<nb::numpy, float, nb::ndim<1>>(data, 1, shape, owner);
     }, nb::arg("state"), nb::arg("perspective"));
 
+    // The view spec's observation half (owner, 2026-10-01): optional feature blocks appended to
+    // the base layout. `features` has no default anywhere -- a caller names the set its model was
+    // trained with (0 for the base) -- for the reason the old `layout` argument was removed.
+    auto check_features = [](uint32_t features) {
+        if (features & ~ts::obs_features::ALL)
+            throw std::invalid_argument("unknown observation feature bits: " + std::to_string(features));
+    };
+    m.def("obs_size_for", [check_features](uint32_t features) {
+        check_features(features);
+        return static_cast<int>(ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features));
+    }, nb::arg("features"),
+       "Observation width for a feature set: the base 3,824 plus each appended block.");
+    m.def("extract_observation_features",
+          [check_features](const ts::GameState& state, ts::Player perspective, uint32_t features) {
+        check_features(features);
+        const size_t n = ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features);
+        float* data = new float[n];
+        ts::extract_observation_features(state, perspective, features, data);
+        size_t shape[1] = { n };
+        nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+        return nb::ndarray<nb::numpy, float, nb::ndim<1>>(data, 1, shape, owner);
+    }, nb::arg("state"), nb::arg("perspective"), nb::arg("features"),
+       "The base observation followed by the blocks `features` appends. features=0 is exactly "
+       "extract_observation(state, perspective).");
+    m.attr("OBS_FEATURE_OPS_BUDGET") = static_cast<uint32_t>(ts::obs_features::OPS_BUDGET);
+    m.attr("OBS_FEATURES_ALL") = static_cast<uint32_t>(ts::obs_features::ALL);
+
     m.attr("OBS_FLAG_STAGED_CARDS") = static_cast<uint32_t>(ts::obs_flags::STAGED_CARDS);
 
     m.attr("OBS_SIZE_V23") = static_cast<int>(ts::OBS_SIZE_V23);
@@ -770,7 +797,54 @@ NB_MODULE(ts_engine, m) {
         std::vector<uint8_t> merged_us;
         std::vector<uint8_t> merged_ussr;
         size_t num_envs;
-        const size_t obs_width = ts::OBS_SIZE_V23;
+        //: The widest observation any env's decider is configured for: the base layout plus the
+        //: blocks of the largest feature set in use. Every row is written in its own decider's
+        //: feature set and zero-padded to this, so a model reads the first obs_size_for(its set)
+        //: floats of the rows where it decides.
+        size_t obs_width = ts::OBS_SIZE_V23;
+        std::vector<uint32_t> feat_us;
+        std::vector<uint32_t> feat_ussr;
+        uint32_t features_for(size_t idx, ts::Player p) const {
+            if (p == ts::Player::US) return feat_us[idx];
+            if (p == ts::Player::USSR) return feat_ussr[idx];
+            return 0u;
+        }
+        void resize_obs() {
+            size_t w = ts::OBS_SIZE_V23;
+            for (size_t i = 0; i < num_envs; ++i) {
+                w = std::max(w, ts::OBS_SIZE_V23 + ts::obs_features::extra_width(feat_us[i]));
+                w = std::max(w, ts::OBS_SIZE_V23 + ts::obs_features::extra_width(feat_ussr[i]));
+            }
+            obs_width = w;
+            obs_buffer.assign(num_envs * obs_width, 0.0f);
+        }
+        void set_obs_features(const std::vector<uint32_t>& us, const std::vector<uint32_t>& ussr) {
+            if (us.size() != num_envs || ussr.size() != num_envs)
+                throw std::invalid_argument("set_obs_features: one feature set per env for each side");
+            for (size_t i = 0; i < num_envs; ++i) {
+                if ((us[i] | ussr[i]) & ~ts::obs_features::ALL)
+                    throw std::invalid_argument("set_obs_features: unknown observation feature bits");
+                feat_us[i] = us[i];
+                feat_ussr[i] = ussr[i];
+            }
+            resize_obs();
+            refresh_all();
+        }
+        void set_obs_features_env(size_t idx, uint32_t us, uint32_t ussr) {
+            if (idx >= num_envs) throw std::out_of_range("set_obs_features_env: env index");
+            if ((us | ussr) & ~ts::obs_features::ALL)
+                throw std::invalid_argument("set_obs_features_env: unknown observation feature bits");
+            const size_t before = obs_width;
+            feat_us[idx] = us;
+            feat_ussr[idx] = ussr;
+            size_t w = ts::OBS_SIZE_V23;
+            for (size_t i = 0; i < num_envs; ++i) {
+                w = std::max(w, ts::OBS_SIZE_V23 + ts::obs_features::extra_width(feat_us[i]));
+                w = std::max(w, ts::OBS_SIZE_V23 + ts::obs_features::extra_width(feat_ussr[i]));
+            }
+            if (w != before) { obs_width = w; obs_buffer.assign(num_envs * obs_width, 0.0f); refresh_all(); }
+            else refresh_single(idx);
+        }
 
         bool merged_for(size_t idx, ts::Player p) const {
             if (p == ts::Player::US) return merged_us[idx] != 0;
@@ -808,6 +882,8 @@ NB_MODULE(ts_engine, m) {
             mask_buffer.resize(n * ts::FLAT_ACTION_SPACE_SIZE);
             merged_us.assign(n, 0);
             merged_ussr.assign(n, 0);
+            feat_us.assign(n, 0u);
+            feat_ussr.assign(n, 0u);
             for (size_t i = 0; i < n; ++i) {
                 ts::StateMachine::init_new_game(states[i], base_seed + i * 10007 + 1);
             }
@@ -833,10 +909,9 @@ NB_MODULE(ts_engine, m) {
             }
             ts::Player p = (states[idx].ctx().decision_player != ts::Player::NONE)
                 ? states[idx].ctx().decision_player : states[idx].phasing_player;
-            ts::ObservationBufferV23 ob;
-            ts::Observation::extract(states[idx], p, &ob);
-            std::memcpy(&obs_buffer[idx * obs_width], reinterpret_cast<const float*>(&ob),
-                        obs_width * sizeof(float));
+            float* row = &obs_buffer[idx * obs_width];
+            const size_t w = ts::extract_observation_features(states[idx], p, features_for(idx, p), row);
+            if (w < obs_width) std::memset(row + w, 0, (obs_width - w) * sizeof(float));
             ts::Engine::get_flat_action_mask(states[idx], &mask_buffer[idx * ts::FLAT_ACTION_SPACE_SIZE],
                                              merged_for(idx, p));
         }
@@ -966,7 +1041,12 @@ NB_MODULE(ts_engine, m) {
 
     nb::class_<VectorizedBatchRunner>(m, "VectorizedBatchRunner")
         .def(nb::init<size_t, uint64_t>(), nb::arg("num_envs"), nb::arg("base_seed") = 12345)
-        .def_ro("obs_width", &VectorizedBatchRunner::obs_width)
+        .def_prop_ro("obs_width", [](const VectorizedBatchRunner& self) { return self.obs_width; })
+        .def("set_obs_features", &VectorizedBatchRunner::set_obs_features, nb::arg("us"), nb::arg("ussr"),
+             "Per env and side, the observation feature set (obs_features bits) that side's model "
+             "reads. Rows are written in the decider's set and zero-padded to obs_width.")
+        .def("set_obs_features_env", &VectorizedBatchRunner::set_obs_features_env,
+             nb::arg("env_index"), nb::arg("us"), nb::arg("ussr"))
         .def("reset_game", &VectorizedBatchRunner::reset_game)
         .def("refresh_all", &VectorizedBatchRunner::refresh_all)
         .def("set_merged_influence", &VectorizedBatchRunner::set_merged_influence, nb::arg("us"), nb::arg("ussr"),

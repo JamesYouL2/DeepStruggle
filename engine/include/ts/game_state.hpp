@@ -495,6 +495,32 @@ namespace obs_flags {
     constexpr uint32_t STAGED_CARDS  = 1u << 0;
 }
 
+// Optional observation features (the "view spec", owner 2026-10-01). The v2.3 layout above is the
+// base and is always emitted unchanged; each feature set here appends a fixed-width block after
+// it, in bit order. A model is trained with one feature set, its run records it, and every caller
+// names the set it wants -- there is no default, because a defaulted layout argument was once the
+// mechanism behind five separate misreads (a wrong vector returns a number, not an error). Because
+// the blocks are appended, the base prefix of any feature set is bit-identical to the base layout,
+// and a model of one feature set can never be handed another's floats without a width mismatch
+// unless two sets have equal width -- so models record their set by name, not just by width.
+// Bit 0 is obs_flags::STAGED_CARDS, retired, and is never reused.
+namespace obs_features {
+    constexpr uint32_t NONE        = 0u;
+    // The Ops at play: at SELECT_PLAY_MODE the Ops the decider will be granted for the card
+    // (Operations::grant_ops_for_card, every modifier applied), / 5, else 0; then the per-card Ops
+    // modifier now in force for me and for the opponent (Containment / Brezhnev +1, Red Scare /
+    // Purge -1, summed). The base layout shows the raw effect bits but never the Ops a card is
+    // worth at the moment its use is chosen.
+    constexpr uint32_t OPS_BUDGET  = 1u << 1;
+    constexpr uint32_t ALL         = OPS_BUDGET;
+
+    constexpr size_t OPS_BUDGET_WIDTH = 3;
+
+    constexpr size_t extra_width(uint32_t features) noexcept {
+        return ((features & OPS_BUDGET) ? OPS_BUDGET_WIDTH : 0);
+    }
+}
+
 namespace ctx_slots {
     // 72, not 76: legacy reserved 76 globals and only ever wrote 0..71, so v2.2 reclaims
     // the four it left blank rather than carrying them forward as padding.

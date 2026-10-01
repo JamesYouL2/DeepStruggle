@@ -197,6 +197,14 @@ model was given*). `check_obs_width` and `check_checkpoint_layout` now refuse by
 catches a changed *width* and cannot catch changed *content* at the same width. What each layout
 was worth is [`../../log/observation_layout.md`](../../log/observation_layout.md).
 
+**Since 2026-10-01 an addition does not move the base.** The view spec appends optional blocks
+(`obs_features` bits) after the 3,824 base floats; a model's set travels in its weights, and the
+batch runner builds each row in its decider's set, so models of different sets play each other.
+The first block, `OPS_BUDGET` (P30 C4, 3 floats), left the decision stream and the base layout
+bit-identical (48,000 / 48,000 positions; WebAssembly parity unchanged), so no existing checkpoint,
+dataset or Elo anchor is invalidated. The engine fingerprint changed (5419a582… → 1d11c2f2…) only
+because `observation.cpp` did: E7 games, and E7 numbers, are unchanged.
+
 ## The E6 → E7 boundary
 
 **The 2026-09-28 rules audit, seven rules fixes** (`BUGS.md` ENG-2, `engine/AGENTS.md` §12, each

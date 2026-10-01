@@ -8,7 +8,7 @@ import os
 import sys
 import torch
 
-from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup
+from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
 from ai.training.generic_trainer import run_search_distillation
 from tools.lib.data_root import data_path
 from tools.lib.player_agent import load_agent
@@ -569,6 +569,13 @@ def build_parser() -> argparse.ArgumentParser:
                              "and labelled for the aux targets.")
     parser.add_argument("--aux-min-batch", type=int, default=4096,
                         help="Labelled positions to gather before one aux training step.")
+    # The view spec (owner, 2026-10-01): optional observation blocks appended to the base layout.
+    parser.add_argument("--obs-features", nargs="*", default=[], choices=["ops_budget"],
+                        help="Optional observation blocks the network reads, appended after the base "
+                             "v2.3 layout. ops_budget: the Ops the card at play will be granted (at "
+                             "SELECT_PLAY_MODE) and each side's per-card Ops modifier (Containment / "
+                             "Brezhnev / Red Scare). Recorded in the run's metadata and in the weights; "
+                             "every evaluator then builds this view for the model. Ladder only.")
     # P30 (research/log/P30_card_board_targets.md): what each held card's event and Ops would do.
     parser.add_argument("--aux-card-events", type=float, default=0.0,
                         help="Weight of an auxiliary per-card head predicting, for every card in the "
@@ -848,6 +855,7 @@ def main():
             aux_vp_coef=args.aux_vp_margin,
             aux_sample_frac=args.aux_sample_frac,
             aux_min_batch=args.aux_min_batch,
+            obs_features=obs_feature_bits(args.obs_features),
             aux_card_coef=args.aux_card_events,
             aux_card_sample_frac=args.aux_card_sample_frac,
             aux_card_min_batch=args.aux_card_min_batch,

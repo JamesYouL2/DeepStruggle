@@ -91,12 +91,26 @@ def check_obs_width(model: Any) -> int:
     starred-card fix, so they were trained against a different game.
     """
     width = int(getattr(model, "TOTAL_OBS_SIZE", 0) or 0)
-    if width != obs_size():
+    features = model_obs_features(model)
+    expected = int(ts.obs_size_for(features))
+    if width != expected:
         raise ValueError(
-            f"this model reads {width} floats; the engine emits {obs_size()} (layout "
-            f"v2.3). A checkpoint from a retired layout cannot be run: it would load cleanly "
-            f"and misread every input.")
+            f"this model reads {width} floats; the engine emits {expected} for its observation "
+            f"feature set {features:#x} (layout v2.3 + appended blocks). A checkpoint from a "
+            f"retired layout cannot be run: it would load cleanly and misread every input.")
     return width
+
+
+def model_obs_features(model: Any) -> int:
+    """The observation feature set (ts.OBS_FEATURE_* bits) a model reads: 0 for the base layout.
+
+    Recorded in the weights (LadderNet's `obs_features` buffer), so it travels with the checkpoint.
+    Every caller that builds observations for a model must ask for exactly this set --
+    `ts.extract_observation_features(state, player, model_obs_features(model))`, or
+    `TsVectorizedEnv.set_obs_features` for batches. The base functions (`extract_observation`,
+    a runner with no features set) are the set 0, and a model with features refuses them by width.
+    """
+    return int(getattr(model, "obs_feature_bits", 0) or 0)
 
 
 class TsEnv:
@@ -272,6 +286,22 @@ class TsVectorizedEnv:
         # which would otherwise silently return every side to the E4 view.
         self.merged_us = np.zeros(num_envs, dtype=bool)
         self.merged_ussr = np.zeros(num_envs, dtype=bool)
+        # The view spec's observation half: per env and side, the ts.OBS_FEATURE_* bits that
+        # side's model reads (0 = the base layout). Held here for the same reason as the merged
+        # flags -- a new runner on `reset_all(base_seed)` would otherwise drop them.
+        self.obs_features_us = np.zeros(num_envs, dtype=np.uint32)
+        self.obs_features_ussr = np.zeros(num_envs, dtype=np.uint32)
+
+    def set_obs_features(self, us: np.ndarray | int, ussr: np.ndarray | int) -> None:
+        """Every env's per-side observation feature set (an int applies to all envs). Each row of
+        the observation is built in its decider's set and zero-padded to the widest set in use,
+        so `observation_size` becomes that width; a model reads the first
+        `ts.obs_size_for(its set)` floats of the rows where it decides."""
+        self.obs_features_us[:] = us
+        self.obs_features_ussr[:] = ussr
+        self.runner.set_obs_features([int(x) for x in self.obs_features_us],
+                                     [int(x) for x in self.obs_features_ussr])
+        self.observation_size = int(self.runner.obs_width)
 
     def set_merged_influence(self, us: np.ndarray | bool, ussr: np.ndarray | bool) -> None:
         """Set every env's per-side view at once (a bool applies to all envs)."""
@@ -298,6 +328,9 @@ class TsVectorizedEnv:
             if self.merged_us.any() or self.merged_ussr.any():
                 self.runner.set_merged_influence([bool(x) for x in self.merged_us],
                                                  [bool(x) for x in self.merged_ussr])
+            if self.obs_features_us.any() or self.obs_features_ussr.any():
+                self.runner.set_obs_features([int(x) for x in self.obs_features_us],
+                                             [int(x) for x in self.obs_features_ussr])
         else:
             self.runner.refresh_all()
         injected = False

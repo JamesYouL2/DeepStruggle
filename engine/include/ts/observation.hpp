@@ -21,4 +21,10 @@ public:
 void extract_observation(const GameState& state, Player perspective,
                          ObservationBufferV23* out_buf) noexcept;
 
+// The base layout followed by the blocks `features` (obs_features bits) appends, written to `out`,
+// which must hold OBS_SIZE_V23 + obs_features::extra_width(features) floats. Returns that width.
+// Unknown bits are the caller's error and are rejected by the bindings before this is reached.
+size_t extract_observation_features(const GameState& state, Player perspective, uint32_t features,
+                                    float* out) noexcept;
+
 } // namespace ts

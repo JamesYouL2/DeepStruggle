@@ -112,6 +112,8 @@ _BEFORE_RECORDED = {
     "aux_vp_margin": lambda meta: 0.0,
     "aux_sample_frac": lambda meta: 0.1,
     "aux_min_batch": lambda meta: 4096,
+    # The view spec (2026-10-01): no appended observation blocks before they existed.
+    "obs_features": lambda meta: [],
     # P30 (2026-09-30): no card-event target before it existed.
     "aux_card_events": lambda meta: 0.0,
     "aux_card_sample_frac": lambda meta: 0.0005,
