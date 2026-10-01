@@ -1,0 +1,161 @@
+# One world against eight (ai/eval/determinization_targets.py): how noisy the training
+# searcher's one-world target is, and at which decisions the best move depends on the sampled
+# world. Spread over runners like tournament.yml.
+#
+#   positions -- pins the model, plays it against itself at the rollout temperature and writes
+#                the sampled positions once, so every runner searches exactly the same set.
+#   search    -- N runners; runner k searches every N-th position.
+#   pool      -- merges the parts and writes the report.
+#
+#   gh workflow run determinization_probe.yml -f positions=20000 -f runners=16
+#   gh run download <run-id> -n determinization-<run-id> -D data/reports/ci
+#
+name: determinization-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "`newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file"
+        default: "newest"
+      positions:
+        description: "Positions to sample from self-play"
+        default: "4000"
+      runners:
+        description: "Runners to spread the search over"
+        default: "8"
+      worlds:
+        description: "Determinizations per position"
+        default: "8"
+      sims:
+        description: "Simulations per one-world search (the training searcher uses 64)"
+        default: "64"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  MODEL: ${{ inputs.model || 'newest' }}
+  POSITIONS: ${{ inputs.positions || '4000' }}
+  RUNNERS: ${{ inputs.runners || '8' }}
+  WORLDS: ${{ inputs.worlds || '8' }}
+  SIMS: ${{ inputs.sims || '64' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  positions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      file: ${{ steps.pin.outputs.file }}
+      parts: ${{ steps.pin.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the model
+        id: pin
+        run: |
+          if [ "$MODEL" = "newest" ]; then
+            f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
+          else
+            f="${MODEL#hf:}"
+          fi
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+          python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+          echo "model: $f"
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Sample positions
+        run: |
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ steps.pin.outputs.file }}" --out-dir data/checkpoints
+          mkdir -p probe
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/determinization_probe.py positions \
+            --model "data/checkpoints/$(basename "${{ steps.pin.outputs.file }}")" --n "$POSITIONS" --out probe/positions.jsonl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: determinization-positions-${{ github.run_id }}
+          path: probe/positions.jsonl
+          if-no-files-found: error
+
+  search:
+    needs: positions
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.positions.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: determinization-positions-${{ github.run_id }}
+          path: probe/
+
+      - name: Search part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.positions.outputs.file }}" --out-dir data/checkpoints
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/determinization_probe.py search \
+            --model "data/checkpoints/$(basename "${{ needs.positions.outputs.file }}")" \
+            --positions probe/positions.jsonl --part "${{ matrix.part }}/$RUNNERS" \
+            --worlds "$WORLDS" --sims "$SIMS" --small-sims "$(( SIMS / WORLDS ))" \
+            --out "parts/part-${{ matrix.part }}.jsonl"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: determinization-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [positions, search]
+    if: always() && needs.positions.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: determinization-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.jsonl 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/determinization_probe.py report \
+            --parts parts/part-*.jsonl --out-md reports/report.md --out-json reports/report.json
+          cat parts/part-*.jsonl > reports/rows.jsonl
+
+      - name: Provenance and summary
+        if: always()
+        run: |
+          mkdir -p reports
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $HF_REPO ${{ needs.positions.outputs.file }}"
+            echo "positions: $POSITIONS  worlds: $WORLDS  sims: $SIMS  runners: $RUNNERS"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md 2>/dev/null || echo "No report."; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: determinization-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
