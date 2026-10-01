@@ -120,6 +120,35 @@ class AttentionCard(nn.Module):
         return self.out(torch.cat([cards, t[:, :1].expand(-1, N_CARDS, -1)], -1))
 
 
+class CrossCard(nn.Module):
+    """The cheap C1 candidate: card tokens (and one global token) query the country tokens in one
+    cross-attention block; countries do not attend. About a quarter of the cost of a full layer."""
+
+    def __init__(self, d: int = 64, heads: int = 4) -> None:
+        super().__init__()
+        self.country_in = nn.Linear(BOARD_W, d)
+        self.card_in = nn.Linear(CARD_W, d)
+        self.global_in = nn.Linear(100, d)
+        self.country_id = nn.Parameter(torch.randn(N_COUNTRIES, d) * 0.02)
+        self.card_id = nn.Parameter(torch.randn(N_CARDS, d) * 0.02)
+        self.att = nn.MultiheadAttention(d, heads, batch_first=True)
+        self.ln = nn.LayerNorm(d)
+        self.ff = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, 2 * d), nn.GELU(), nn.Linear(2 * d, d))
+        self.norm = nn.LayerNorm(d)
+        self.out = nn.Sequential(nn.Linear(2 * d, d), nn.GELU(), nn.Linear(d, D))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b = x.shape[0]
+        c = self.country_in(x[:, :CARD_OFFSET].view(b, N_COUNTRIES, BOARD_W)) + self.country_id
+        k = self.card_in(x[:, CARD_OFFSET:GLOBAL_OFFSET].view(b, N_CARDS, CARD_W)) + self.card_id
+        g = self.global_in(x[:, GLOBAL_OFFSET:GLOBAL_OFFSET + 100]).unsqueeze(1)
+        q = torch.cat([g, k], 1)
+        a, _ = self.att(self.ln(q), c, c, need_weights=False)
+        q = q + a
+        t = self.norm(q + self.ff(q))
+        return self.out(torch.cat([t[:, 1:], t[:, :1].expand(-1, N_CARDS, -1)], -1))
+
+
 class Targets:
     """Held-card targets, standardised on the fitting rows."""
 
@@ -363,7 +392,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                            "behaviour": {}, "detail": []}
     makers: Dict[str, Tuple[Callable[[], nn.Module], float]] = {
         "shallow": (lambda: LadderCard(0), 1e-3), "m2d": (lambda: LadderCard(4), 1e-3),
-        "attention": (lambda: AttentionCard(), 5e-4), "mlp": (lambda: MLPCard(), 1e-3)}
+        "attention": (lambda: AttentionCard(), 5e-4), "mlp": (lambda: MLPCard(), 1e-3),
+        # P30 C1 throughput candidates (full attention costs ~5x the training throughput)
+        "attn_d64_l1": (lambda: AttentionCard(64, 1), 5e-4), "attn_d32_l1": (lambda: AttentionCard(32, 1), 5e-4),
+        "attn_d128_l1": (lambda: AttentionCard(128, 1), 5e-4),
+        "cross_d64": (lambda: CrossCard(64), 5e-4), "cross_d128": (lambda: CrossCard(128), 5e-4)}
     for arch in a.archs:
         make, lr = makers[arch]
         best_eval: Optional[Dict[str, Any]] = None

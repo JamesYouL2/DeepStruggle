@@ -116,6 +116,14 @@ How they are trained:
 * The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+`--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
+token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
+(a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer
+layers of width `D` run over all 195. The global token's output joins the fusion input; each per-entity
+head reads its own token. It runs in bf16 on the GPU and costs far more than the trunk it sits beside
+(full attention at D=128, L=2 is ~12x the shallow trunk per minibatch), so measure throughput first.
+Recovered from the weights (`tok_*`) like every other axis.
+
 `--obs-features NAME...` (P30, default none) appends optional observation blocks to the base layout
 (`ops_budget`: the Ops the card at a play-mode decision grants after every modifier, and each side's
 per-card Ops modifier -- 3 floats). The set is recorded in the weights and in `metadata.json`, so

@@ -53,6 +53,9 @@ AUX_OWN_COUNTRIES = 84
 #: outputs per card of the card-event head: 5 Ops-reach + 12 event-outcome targets
 #: (ai.training.card_event_targets.AUX_DIM; restated here so the model does not import the engine).
 CARD_AUX_DIM = 17
+#: Attention heads in the C1 token path. Pinned, like the lookup's head width, because the head
+#: count cannot be recovered from the weights.
+TOKEN_HEADS = 4
 #: How the observation is read before the trunk.
 INPUT_MODES: Tuple[str, ...] = ("flat", "grouped", "entity")
 #: How per-entity tokens become a fixed-size vector. Only meaningful for `input_mode="entity"`.
@@ -96,6 +99,8 @@ class LadderNet(ColdWarNetV2):
                  aux_heads: bool = False,
                  card_aux: bool = False,
                  obs_features: int = 0,
+                 token_layers: int = 0,
+                 token_dim: int = 0,
                  **kwargs: Any) -> None:
         if input_mode not in INPUT_MODES:
             raise ValueError(f"input_mode must be one of {INPUT_MODES}; got {input_mode!r}")
@@ -110,6 +115,11 @@ class LadderNet(ColdWarNetV2):
                 "head_context / head_static / head_entities only mean anything with "
                 "--per-entity-heads > 0. Refused rather than silently ignored.")
 
+        if token_layers and input_mode != "grouped":
+            raise ValueError("token_layers is a parallel path beside the grouped projections; "
+                             "it needs input_mode='grouped'.")
+        if token_layers and token_dim <= 0:
+            raise ValueError(f"token_layers={token_layers} needs a positive token_dim")
         tokenless = input_mode in ("flat", "grouped")
         # `grouped` keeps every entity's RAW slots at a fixed offset, so a per-entity head can
         # read country i's own features and reach country i's logit with no learned token space
@@ -285,6 +295,29 @@ class LadderNet(ColdWarNetV2):
             self.cl_out = nn.Linear(hk, hk)
             fused_width += hk
 
+        # P30 C1: card and country tokens with attention, beside the grouped projections. Every
+        # country row and card row becomes a token (a projection of its full row plus a learned
+        # identity), the globals one more; `token_layers` pre-norm transformer layers let any
+        # token read any other -- the card x board interactions the grouped trunk represents only
+        # partly (research/log/P30_card_board_targets.md: 0.80 against 0.90 with attention). The
+        # global token's output joins the fusion input, and each per-entity head reads its own
+        # contextualised token. Canonical 0/0 when off, so the config is recovered from weights.
+        self.token_layers = int(token_layers)
+        self.token_dim = int(token_dim) if self.token_layers else 0
+        if self.token_layers:
+            t = self.token_dim
+            self.tok_country_in = nn.Linear(self.board_features, t)
+            self.tok_card_in = nn.Linear(self.card_features, t)
+            self.tok_global_in = nn.Linear(self.GLOBAL_SIZE, t)
+            self.tok_country_id = nn.Parameter(torch.randn(84, t) * 0.02)
+            self.tok_card_id = nn.Parameter(torch.randn(110, t) * 0.02)
+            layer = nn.TransformerEncoderLayer(t, TOKEN_HEADS, 2 * t, dropout=0.0,
+                                               batch_first=True, norm_first=True)
+            self.tok_enc = nn.TransformerEncoder(layer, self.token_layers,
+                                                 enable_nested_tensor=False)
+            self.tok_norm = nn.LayerNorm(t)
+            fused_width += t
+
         self.fusion_in = nn.Sequential(
             nn.Linear(fused_width, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
 
@@ -299,7 +332,7 @@ class LadderNet(ColdWarNetV2):
             self.pe_trunk = nn.Linear(hidden_dim, k) if self.head_context else None
             # With raw tokens the raw slots arrive in the `raw` slot, so the token slot carries
             # the identity vector instead -- width 0 when there is no identity.
-            tok_w = self.identity_dim if self.raw_tokens else d
+            tok_w = (self.identity_dim + self.token_dim) if self.raw_tokens else d
             # Dropping the constant slots leaves the dynamic ones, which is where the mechanism's
             # content has to be: constants alone would be a fixed per-TYPE bias (arm M2b).
             b_raw = board_in - (0 if self.head_static else len(STATIC_BOARD_SLOTS))
@@ -413,6 +446,21 @@ class LadderNet(ColdWarNetV2):
         w = torch.softmax((q @ k.transpose(-2, -1)) / (dk ** 0.5), dim=-1)
         return self.cl_out((w @ v).view(b, nh * dk))
 
+    def _token_path(self, board_raw: torch.Tensor, card_raw: torch.Tensor, glob: torch.Tensor,
+                    b: int) -> torch.Tensor:
+        """(B, 1 + 84 + 110, token_dim): the global token, then countries, then cards, after
+        `token_layers` of full self-attention."""
+        # bf16 on the GPU: the 195-token attention is the dominant cost of the whole network
+        # (~3.5x faster than TF32 measured at batch 4096), and its output re-enters fp32 at the
+        # fusion. Off the GPU (CPU tournaments, ONNX export) it runs in fp32.
+        with torch.autocast(device_type=board_raw.device.type, dtype=torch.bfloat16,
+                            enabled=board_raw.is_cuda):
+            c = self.tok_country_in(board_raw.view(b, 84, self.board_features)) + self.tok_country_id
+            k = self.tok_card_in(card_raw.view(b, 110, self.card_features)) + self.tok_card_id
+            g = self.tok_global_in(glob).unsqueeze(1)
+            out = self.tok_norm(self.tok_enc(torch.cat([g, c, k], dim=1)))
+        return out.float()
+
     # ------------------------------------------------------------------ config
 
     def _entity_out(self, head: nn.Module, x: torch.Tensor) -> torch.Tensor:
@@ -447,6 +495,8 @@ class LadderNet(ColdWarNetV2):
             card_lookup_heads=self.card_lookup_heads,
             card_lookup_dim=self.card_lookup_dim,
             card_lookup_identity_dim=self.card_lookup_identity_dim,
+            token_layers=self.token_layers,
+            token_dim=self.token_dim,
             drop_static=self.drop_static,
             hidden_dim=self.ladder_hidden_dim,
             num_res_blocks=len(self.res_blocks),
@@ -532,6 +582,11 @@ class LadderNet(ColdWarNetV2):
             pre = torch.cat([e_board, e_card, self.global_proj(glob)], dim=-1)
             if self.card_lookup:
                 pre = torch.cat([pre, self._card_lookup(card_raw, pre, b)], dim=-1)
+            tok_country = tok_cards = None
+            if self.token_layers:
+                t_out = self._token_path(board_raw, card_raw, glob, b)
+                tok_country, tok_cards = t_out[:, 1:85], t_out[:, 85:]
+                pre = torch.cat([pre, t_out[:, 0]], dim=-1)
             h = self.fusion_in(pre)
             if self.raw_tokens:
                 # The tokens are the raw slots themselves. `_policy_logits` concatenates
@@ -545,6 +600,9 @@ class LadderNet(ColdWarNetV2):
                 else:
                     tok_b = b_nodes.new_zeros(b, 84, 0)
                     tok_c = c_nodes.new_zeros(b, 110, 0)
+                if tok_country is not None and tok_cards is not None:
+                    tok_b = torch.cat([tok_b, tok_country], dim=-1)
+                    tok_c = torch.cat([tok_c, tok_cards], dim=-1)
                 tokens = (tok_b, b_nodes, tok_c, c_nodes)
 
         else:  # entity
@@ -690,6 +748,9 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         card_lookup_heads = card_lookup_dim = card_lookup_identity_dim = 0
 
     identity_dim = int(ident.shape[1]) if ident is not None else 0
+    tok_in = sd.get("tok_country_in.weight")
+    token_dim = int(tok_in.shape[0]) if tok_in is not None else 0
+    token_layers = len({k.split(".")[2] for k in sd if k.startswith("tok_enc.layers.")})
     per_entity_heads = (int(pe.shape[0]) if pe is not None
                         else int(sd["pe_country.0.weight"].shape[0]) if has_country
                         else int(sd["pe_card.0.weight"].shape[0]) if has_card else 0)
@@ -699,7 +760,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
     if not (has_country or has_card):
         head_entities, head_context, head_static = "both", True, True
     if has_country or has_card:
-        tok_w = identity_dim if input_mode != "entity" else entity_dim
+        tok_w = (identity_dim + token_dim) if input_mode != "entity" else entity_dim
         ctx_w = per_entity_heads if head_context else 0
         if has_country:
             raw_w = int(sd["pe_country.0.weight"].shape[1]) - tok_w - ctx_w
@@ -723,6 +784,8 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         card_lookup_heads=card_lookup_heads,
         card_lookup_dim=card_lookup_dim,
         card_lookup_identity_dim=card_lookup_identity_dim,
+        token_layers=token_layers,
+        token_dim=token_dim,
         drop_static=drop_static,
         hidden_dim=hidden_dim,
         num_res_blocks=len(blocks),

@@ -62,6 +62,9 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
     failure this repository has already had five times with a defaulted observation layout.
     """
     if args.arch != "ladder":
+        if getattr(args, "ladder_token_layers", 0):
+            raise SystemExit("--ladder-token-layers only applies to --arch ladder; refused rather "
+                             "than silently ignored.")
         for name in (_LADDER_REQUIRED + _LADDER_HEAD_REQUIRED
                      + ("ladder_card_self_attention", "ladder_cross_attention",
                         "ladder_card_lookup", "ladder_card_lookup_heads",
@@ -107,6 +110,9 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         card_lookup_heads=int(args.ladder_card_lookup_heads or 0),
         card_lookup_dim=int(args.ladder_card_lookup_dim or 0),
         card_lookup_identity_dim=int(args.ladder_card_lookup_identity_dim or 0),
+        # P30 C1. Recorded only when on, so the configs of earlier runs stay comparable.
+        **({"token_layers": int(args.ladder_token_layers), "token_dim": int(args.ladder_token_dim)}
+           if args.ladder_token_layers else {}),
     )
 
 
@@ -194,6 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "Scoring -- identical ops, era and is_scoring -- so a query returns an\n"
                           "average over the cards it needed to tell apart. Kept reachable as the\n"
                           "ablation that attributes the gain, not as a variant expected to work.")
+    lad.add_argument("--ladder-token-layers", type=int, default=0,
+                     help="P30 C1: transformer layers over card and country tokens (plus one\n"
+                          "global token), beside the grouped projections; the global token joins\n"
+                          "the fusion input and each per-entity head reads its own token.\n"
+                          "0 (default) = off. --ladder-input-mode grouped only.")
+    lad.add_argument("--ladder-token-dim", type=int, default=128,
+                     help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,
                      help="Centre the per-entity heads' hidden features across entities before "
                           "their final projection, removing the country-logit shift the E4 policy "

@@ -66,6 +66,7 @@ _LADDER = {
     "num_res_blocks": "ladder_res_blocks", "card_lookup": "ladder_card_lookup",
     "card_lookup_heads": "ladder_card_lookup_heads", "card_lookup_dim": "ladder_card_lookup_dim",
     "card_lookup_identity_dim": "ladder_card_lookup_identity_dim",
+    "token_layers": "ladder_token_layers", "token_dim": "ladder_token_dim",
 }
 
 
@@ -145,6 +146,9 @@ def recorded(run_dir: str) -> dict:
                     out[_LADDER[ck]] = cv
             # added 2026-09-25; every ladder config before it had uncentred heads
             out.setdefault("ladder_head_center", bool(v.get("head_center", False)))
+            # P30 C1 (2026-10-01): recorded only when on; off, the width is inert at its default
+            out.setdefault("ladder_token_layers", 0)
+            out.setdefault("ladder_token_dim", 128)
         elif k in dflt:
             out[k] = v
     # Before 2026-09-27 a run that took the default rollout bands recorded None, and the default
