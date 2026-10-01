@@ -1,6 +1,6 @@
 # P29 — Big bets from scratch: the structural changes that could move the ceiling
 
-**Status:** proposed (2026-09-29). Split out of [P28](P28_strength_on_E6.md) at the owner's
+**Status (2026-10-01):** bets 1–3 closed (none adopted); bet 2's idea continues as P30 C2 (the card-event target); bets 4–5 carried into [P30](P30_base_model_quality.md), which supersedes this plan. Originally proposed 2026-09-29. Split out of [P28](P28_strength_on_E6.md) at the owner's
 direction: *focus on potentially very large improvements from scratch, rather than squeezing
 100 more Elo at the end.* P28 keeps the measurement floor and the tail levers; this file is the
 strength programme.
