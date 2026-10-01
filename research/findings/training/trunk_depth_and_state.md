@@ -1,4 +1,4 @@
-# The trunk: depth buys nothing, and what it fails to hold is a learning gap, not a capacity one
+# The trunk: depth buys nothing (and saturates earlier), and what it fails to hold is a learning gap, not a capacity one
 
 Measured 2026-09-30 – 10-01 on E6/E7 (training findings: expected to survive the engine change).
 
@@ -16,7 +16,11 @@ The shallow trunk is `--ladder-res-blocks 0`: observation → grouped projection
 * **Averaging gains the deep net more.** Deep SWAs sit 70–100 Elo above their snapshots, shallow
   ones 50–60. So at 560M, with the league, the deep SWA leads (E6-04-44 against E6-13-44: 45.6%
   for the shallow one).
-* Log: [`../../log/P30_shallow_trunk.md`](../../log/P30_shallow_trunk.md).
+* **At saturation the gap widens** (E7-06-44: M2d continued to 1,200M). The deep recipe plateaus
+  at about 560M while the shallow one gains to about 900M–1B. At 1,200M the shallow trunk wins
+  64.8% on snapshots (US +14.0, USSR +6.1 against the panel) and 57.2% on SWAs (+6.5 / +0.7).
+* Logs: [`../../log/P30_shallow_trunk.md`](../../log/P30_shallow_trunk.md),
+  [`../../log/E7_06_44_deep_to_saturation.md`](../../log/E7_06_44_deep_to_saturation.md).
 
 ## 2. The trunk holds little of the state, and the loss is at the input projections
 

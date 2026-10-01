@@ -13,7 +13,7 @@ product, and averaging does not enter training.
 From [`../findings/training/trunk_depth_and_state.md`](../findings/training/trunk_depth_and_state.md)
 and [`../findings/training/training_length_and_evaluation.md`](../findings/training/training_length_and_evaluation.md):
 
-* **Caveat (2026-10-01): no deep run has reached saturation** (plain M2d stopped at 560M, the league line at 760M), so shallow-over-deep is established at 560M only. **E7-06-44 (E6-03-44 continued to 1,200M) settles it before any candidate is built on the shallow trunk.**
+* **Settled at saturation (2026-10-01, E7-06-44):** the deep trunk plateaus at about 560M and the shallow one ends about +120 Elo above it at 1,200M. At the end the shallow line wins 64.8% on snapshots and 57.2% on SWAs, passing the owner's rule ([`../log/E7_06_44_deep_to_saturation.md`](../log/E7_06_44_deep_to_saturation.md)). The shallow trunk is the base for every candidate below (seed 44; the seed-43 control will cover the second seed).
 * **The base recipe is now the shallow trunk:** E7-01/02-44, `--ladder-res-blocks 0`, no league.
   It beats M2d on two seeds at 560M, saturates at about 900M–1B steps, and its SWA at 1,200M was
   level with the old best model.

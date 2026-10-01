@@ -13,7 +13,9 @@ The shallow recipe (E7-01-44 continued as E7-02-44), traced in one field every 8
 * About +100 Elo from 560M to 880M, then +27 to 1,200M. **It saturates at about 900M–1B steps,**
   roughly 3 h solo.
 * The 1,120–1,200M SWA beats the 480–560M SWA 64.4% (+110 Elo), in both seats.
-* The deep line also kept gaining to 760M (E6-06/07/08-44).
+* **The deep recipe saturates earlier, at about 560M** (E7-06-44, plain M2d to 1,200M: its snapshots
+  stay at about 1,500–1,550 from 560M on). The league line gained only about +20 Elo per 200M
+  from 560M to 760M.
 * **Consequence.** Every arm since P28 was compared at 560M, before saturation. An ordering at 560M
   is a statement about the first 60% of the curve, not about the base model a recipe reaches.
   Logs: [`../../log/E7_02_44_saturation.md`](../../log/E7_02_44_saturation.md).
