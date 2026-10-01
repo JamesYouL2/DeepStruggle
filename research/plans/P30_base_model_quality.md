@@ -83,8 +83,12 @@ is a cheap recipe change to settle at saturation.
 
 ### C4 — The ops budget in the observation (P29 bet 4, owner-held)
 
-Unchanged from P29: a handful of global floats for the Ops being spent. **Not run without the
-owner's approval** (an observation change resets every checkpoint).
+**Approved and running (owner, 2026-10-01) as E7-07-44.** The owner's framing: an observation
+addition is not a decision-stream change, so it is built as a configurable *view spec* -- optional
+blocks appended after the base layout, recorded in the weights, built per decider -- and models of
+different views play each other directly. Three floats (`OPS_BUDGET`, `engine/AGENTS.md` §6a): the
+Ops the card at a play-mode decision grants after every modifier, and each side's per-card
+modifier. The base layout and existing checkpoints are untouched.
 
 ### C5 — Search-driven training (P29 bet 5, gated)
 
@@ -99,4 +103,4 @@ the headroom on the base recipe at saturation before considering it.
 | 2 | C1, seed 44, after its throughput check ‖ C3, seed 44 |
 | 3 | seed-43 replicates of whatever leads |
 
-C4 waits for the owner's decision, and C5 for its gate.
+C4 (E7-07-44) runs alongside the seed-43 control (E7-08-43) in slot 1; C1 is built meanwhile. C5 waits for its gate.
