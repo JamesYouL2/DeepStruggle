@@ -414,6 +414,12 @@ class BatchMatchRunner:
                 if log_games_file:
                     cur_turns = runner.get_turns()
                     for idx in np.where(active)[0]:
+                        # "setup": the board as both setups left it, read at the first step past
+                        # SETUP -- what a side chose when its opening was not forced.
+                        if "setup" not in chunk_boards[idx]:
+                            st_i = runner.get_state(int(idx))
+                            if st_i.current_phase != ts.Phase.SETUP:
+                                chunk_boards[idx]["setup"] = _board_snapshot(st_i)
                         t = int(cur_turns[idx])
                         if t in SNAPSHOT_TURNS and f"t{t}" not in chunk_boards[idx]:
                             chunk_boards[idx][f"t{t}"] = _board_snapshot(runner.get_state(int(idx)))
