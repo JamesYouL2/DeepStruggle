@@ -13,6 +13,11 @@
 name: determinization-probe
 
 on:
+  # A workflow that exists only on a branch cannot be dispatched until GitHub has seen it run;
+  # editing this file on the experiment branch runs it once at the defaults below.
+  push:
+    branches: [exp/hungary-openings]
+    paths: [.github/workflows/determinization_probe.yml]
   workflow_dispatch:
     inputs:
       model:
