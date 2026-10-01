@@ -99,12 +99,14 @@ def collect_positions(model_path: str, n: int, seed: int, games: int = 64,
     return [out[int(i)] for i in sorted(keep)]
 
 
-def _searcher(model_path: str, sims: int, determinize: bool, seed: int):
+def _searcher(model_path: str, sims: int, determinize: bool, seed: int,
+              dirichlet_frac: float = 0.0, dirichlet_alpha: float = 1.0):
     from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
     from tools.lib.player_agent import OnnxAgent
 
     cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
-                            advance_root=False, determinize=determinize, seed=seed)
+                            advance_root=False, determinize=determinize, seed=seed,
+                            dirichlet_frac=dirichlet_frac, dirichlet_alpha=dirichlet_alpha)
     return BatchedMCTS(OnnxAgent(model_path).as_module(), device="cpu", config=cfg)
 
 
@@ -120,13 +122,19 @@ def _on_legal(actions: Sequence[int], visits: np.ndarray, legal: Sequence[int]) 
 
 def search_positions(model_path: str, positions: Sequence[Position], worlds: int = 8,
                      sims: int = 64, small_sims: int = 8, seed: int = 0,
-                     chunk: int = 16) -> List[Dict[str, Any]]:
+                     chunk: int = 16, dirichlet_frac: float = 0.0, dirichlet_alpha: float = 1.0,
+                     indices: Optional[Sequence[int]] = None) -> List[Dict[str, Any]]:
     """Per position: `worlds` one-world targets at `sims`, `worlds` at `small_sims` (the
-    equal-budget split), a privileged target at `sims`, and the network's prior."""
+    equal-budget split), a privileged target at `sims`, and the network's prior.
+
+    `dirichlet_frac` > 0 mixes root noise into every determinized search (each world draws its
+    own), the blind-spot setting: a low-prior move then gets visited, and only one with a real
+    value edge stays on top across worlds. The privileged search stays noise-free.
+    `indices` are the positions' places in the full list, recorded so a row can be traced back."""
     from tools.lib.player_agent import OnnxAgent
 
-    det = _searcher(model_path, sims, True, seed)
-    det_small = _searcher(model_path, small_sims, True, seed + 1)
+    det = _searcher(model_path, sims, True, seed, dirichlet_frac, dirichlet_alpha)
+    det_small = _searcher(model_path, small_sims, True, seed + 1, dirichlet_frac, dirichlet_alpha)
     priv = _searcher(model_path, sims, False, seed + 2)
     net = OnnxAgent(model_path)
     rows: List[Dict[str, Any]] = []
@@ -144,6 +152,7 @@ def search_positions(model_path: str, positions: Sequence[Position], worlds: int
             lg = net.logits(obs, mask)[0][p.legal]
             prior = np.exp(lg - lg.max())
             rows.append({
+                "pos_index": int(indices[c0 + k]) if indices is not None else c0 + k,
                 "decision_type": p.decision_type, "side": p.side, "turn": p.turn,
                 "legal": p.legal,
                 "prior": (prior / prior.sum()).tolist(),
@@ -189,6 +198,8 @@ def _row_metrics(r: Dict[str, Any]) -> Optional[Dict[str, float]]:
         "modal_world_share": float(counts.max() / n),
         "prior_vs_avg_agree": float(int(np.argmax(r["prior"])) == best),
         "prior_vs_avg_tv": _tv(np.asarray(r["prior"]), avg),
+        "changes_top": float(int(np.argmax(r["prior"])) != best),
+        "blind_spot": float(is_blind_spot(r["prior"], avg, counts, n)),
     }
     if small is not None:
         m["split_vs_avg_agree"] = float(int(small.argmax()) == best)
@@ -197,6 +208,72 @@ def _row_metrics(r: Dict[str, Any]) -> Optional[Dict[str, float]]:
         m["privileged_vs_avg_agree"] = float(int(priv.argmax()) == best)
         m["privileged_vs_avg_tv"] = _tv(priv, avg)
     return m
+
+
+#: A blind-spot candidate: search's top move has a prior under BLIND_PRIOR, and at least
+#: BLIND_WORLDS of the worlds pick it -- noise alone, drawn afresh in each world, rarely does that.
+BLIND_PRIOR = 0.05
+BLIND_WORLDS = 5 / 8
+
+
+def is_blind_spot(prior: Sequence[float], avg: np.ndarray, counts: np.ndarray, n: int) -> bool:
+    best = int(avg.argmax())
+    return bool(prior[best] < BLIND_PRIOR and counts[best] / n >= BLIND_WORLDS
+                and int(np.argmax(prior)) != best)
+
+
+def blind_spots(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The candidate positions, each with the move search found and the prior's own top move."""
+    out = []
+    for r in rows:
+        W = [_norm(w) for w in r["worlds"]]
+        if any(w is None for w in W):
+            continue
+        Wn = [w for w in W if w is not None]
+        avg = np.mean(Wn, axis=0)
+        counts = np.bincount([int(w.argmax()) for w in Wn], minlength=len(avg))
+        if is_blind_spot(r["prior"], avg, counts, len(Wn)):
+            best = int(avg.argmax())
+            top = int(np.argmax(r["prior"]))
+            out.append({"pos_index": r["pos_index"], "decision_type": r["decision_type"],
+                        "side": r["side"], "turn": r["turn"],
+                        "search_move": r["legal"][best], "prior_of_search_move": r["prior"][best],
+                        "prior_move": r["legal"][top], "prior_of_prior_move": r["prior"][top],
+                        "worlds_agreeing": int(counts[best])})
+    return out
+
+
+def verify_blind_spots(model_path: str, positions: Sequence[Position],
+                       candidates: Sequence[Dict[str, Any]], pairs: int = 256,
+                       seed: int = 0) -> Tuple[str, List[Dict[str, Any]]]:
+    """Paired playouts at each candidate: the model's own move against the move search found,
+    with the hidden cards redealt per pair (`ai/eval/branch_oracle.py`). A blind spot is real only
+    if the playouts agree with the search."""
+    from ai.eval.branch_oracle import onnx_policy, play_branches
+    from ai.eval.branch_oracle import report as branch_report
+
+    act, _ = onnx_policy(model_path)
+    out: List[Dict[str, Any]] = []
+    lines = ["| position | type | side | turn | search's move | its prior | worlds | search − policy, paired |",
+             "|---:|---|---|---:|---|---:|---:|---:|"]
+    diffs = []
+    for c in candidates:
+        st = ts.state_from_save_json(positions[c["pos_index"]].save)
+        rows = play_branches(st, {"policy": [], "search": [c["search_move"]]}, range(pairs), act,
+                             seed=seed + c["pos_index"])
+        _, js = branch_report(rows)
+        d = js["search"]
+        name = ActionEncoder.get_action_name(st, int(c["search_move"]))
+        out.append({**c, "search_move_name": name, "diff": d["diff"], "se": d["se"]})
+        diffs.append(d["diff"])
+        lines.append(f"| {c['pos_index']} | {c['decision_type']} | {c['side']} | {c['turn']} | {name} | "
+                     f"{c['prior_of_search_move']:.3f} | {c['worlds_agreeing']}/8 | "
+                     f"{100 * d['diff']:+.1f} ± {100 * d['se']:.1f} |")
+    if diffs:
+        m = float(np.mean(diffs))
+        se = float(np.std(diffs, ddof=1) / np.sqrt(len(diffs))) if len(diffs) > 1 else float("nan")
+        lines.append(f"\nMean over {len(diffs)} candidates: **{100 * m:+.1f} ± {100 * se:.1f}** points for the move search found.")
+    return "\n".join(lines) + "\n", out
 
 
 COLUMNS: Tuple[Tuple[str, str], ...] = (
@@ -209,6 +286,8 @@ COLUMNS: Tuple[Tuple[str, str], ...] = (
     ("modal_world_share", "share of worlds on modal move"),
     ("privileged_vs_avg_agree", "privileged vs avg, argmax"),
     ("prior_vs_avg_agree", "net prior vs avg, argmax"),
+    ("changes_top", "search changes the top move"),
+    ("blind_spot", "blind-spot candidate"),
 )
 
 

@@ -34,3 +34,14 @@ def test_a_world_dependent_best_move_is_flagged() -> None:
 
 def test_visits_on_actions_illegal_in_the_real_state_are_dropped() -> None:
     assert _on_legal([3, 5, 9], np.array([10.0, 40.0, 14.0]), [3, 7, 9]) == [10.0, 0.0, 14.0]
+
+
+def test_a_blind_spot_needs_a_low_prior_and_most_worlds() -> None:
+    from ai.eval.determinization_targets import blind_spots
+
+    prior = [0.9, 0.08, 0.02]
+    six_of_eight = [[5.0, 1.0, 58.0]] * 6 + [[60.0, 2.0, 2.0]] * 2
+    four_of_eight = [[5.0, 1.0, 58.0]] * 4 + [[60.0, 2.0, 2.0]] * 4
+    flagged = blind_spots([{**_row(six_of_eight, [64.0, 0.0, 0.0], prior), "pos_index": 0}])
+    assert len(flagged) == 1 and flagged[0]["search_move"] == 9 and flagged[0]["prior_move"] == 3
+    assert blind_spots([{**_row(four_of_eight, [64.0, 0.0, 0.0], prior), "pos_index": 1}]) == []
