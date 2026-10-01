@@ -1,0 +1,133 @@
+# The choice oracle: named alternatives at named decisions, by paired playouts (tools/choice_oracle.py).
+#
+#   gh workflow run choice_oracle.yml -f per=32 -f pairs=128 -f runners=16
+#   gh run download <run-id> -n choice-oracle-<run-id> -D data/reports/ci
+#
+# Each runner finds its own `per` positions per scenario in the model's self-play (seeded by its
+# part number) and plays every branch `pairs` times; the pool job merges the parts.
+name: choice-oracle
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/hungary-openings]
+    paths: [.github/workflows/choice_oracle.yml]
+  workflow_dispatch:
+    inputs:
+      per:
+        description: "Positions per scenario per runner"
+        default: "32"
+      pairs:
+        description: "Paired playouts per branch per position"
+        default: "128"
+      only:
+        description: "Run only scenarios whose name contains this (empty = all)"
+        default: ""
+      runners:
+        description: "Runners (each finds different positions)"
+        default: "16"
+      model:
+        description: "`newest` or hf:<file.onnx>"
+        default: "newest"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PER: ${{ inputs.per || '32' }}
+  PAIRS: ${{ inputs.pairs || '128' }}
+  ONLY: ${{ inputs.only || '' }}
+  RUNNERS: ${{ inputs.runners || '16' }}
+  MODEL: ${{ inputs.model || 'newest' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      file: ${{ steps.pin.outputs.file }}
+      parts: ${{ steps.pin.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the model and list the parts
+        id: pin
+        run: |
+          if [ "$MODEL" = "newest" ]; then
+            f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
+          else
+            f="${MODEL#hf:}"
+          fi
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+          python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/choice_oracle.py run \
+            --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
+            --per "$PER" --pairs "$PAIRS" --seed "${{ matrix.part }}" ${ONLY:+--only "$ONLY"} \
+            --out "parts/part-${{ matrix.part }}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: choice-oracle-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: choice-oracle-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.json 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/choice_oracle.py report \
+            --parts "parts/part-*.json" --out-md reports/report.md --out-json reports/report.json
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
+            echo "positions/scenario/runner: $PER  pairs: $PAIRS  only: ${ONLY:-all}  runners: $RUNNERS"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: choice-oracle-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
