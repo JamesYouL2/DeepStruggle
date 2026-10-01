@@ -1,7 +1,11 @@
 # The engine's C++ suite and the backend Python suite (everything but tests/web, which has its
 # own workflow because it needs Emscripten and a browser). Measured on a 4-worker run: C++ under a
-# second, bindings + engine_logic + docs ~20 s, replayer ~90 s, training ~3 min -- so training is
-# its own job and the groups run side by side.
+# second, bindings + engine_logic + docs ~20 s, training ~3 min -- so training is its own job and
+# the groups run side by side.
+#
+# tests/replayer is not run here: it needs the human corpus, which is not committed and would be
+# fetched from ts-replayer.fly.dev. Run it locally (CLAUDE.md, "The ts-replayer corpus"). The few
+# corpus-based tests in tests/engine_logic skip when the corpus is absent.
 name: tests
 
 on:
@@ -41,28 +45,11 @@ jobs:
         group:
           - name: core
             paths: tests/bindings tests/engine_logic tests/docs
-          - name: replayer
-            paths: tests/replayer
           - name: training
             paths: tests/training
     name: python (${{ matrix.group.name }})
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-
-      # The human corpus is downloaded, never committed. It is fetched from ts-replayer.fly.dev at
-      # one request a second (~5 min), so it is cached and fetched only on a miss; bump the key to
-      # force a refetch. A missing corpus fails tests/replayer rather than skipping it.
-      - name: Restore the ts-replayer corpus
-        if: matrix.group.name != 'training'
-        id: corpus
-        uses: actions/cache@v6
-        with:
-          path: data/datasets/ts_replayer
-          key: ts-replayer-corpus-v1
-      - name: Download the ts-replayer corpus
-        if: matrix.group.name != 'training' && steps.corpus.outputs.cache-hit != 'true'
-        run: python tools/download_ts_replayer.py
-
       - name: pytest
         run: python -m pytest -q -n auto ${{ matrix.group.paths }}
