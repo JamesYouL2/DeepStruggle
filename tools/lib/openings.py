@@ -48,8 +48,10 @@ US_NO_WEST_GERMANY: Sequence[Tuple[int, int]] = (
 PANAMA = 70
 AUSTRIA = 13
 
-#: The setup the E6 models' US converged on (research/log/E6_04_league_seed44.md): seven Western
-#: Europe points (WG 3, France 3, Italy 1), then the bonus on Italy and Iran -- Italy 2, Iran 2.
+#: The fixed US setup of the fork's opening runs (research/fork/hungary_openings.md), chosen by the
+#: owner of the fork: seven Western Europe points (WG 3, France 3, Italy 1), then the bonus on Italy
+#: and Iran -- Italy 2, Iran 2. Close to E5-21's US opening (WG 3 / France 3 / Italy 2 / Iran 1);
+#: E6-06-44's own is WG 4 / France 3 / Italy 2.
 US_WG3_FR3_IT2: Sequence[Tuple[int, int]] = (
     (WEST_GERMANY, 3), (FRANCE, 3), (ITALY, 1), (ITALY, 1), (IRAN, 1))
 #: The buffered USSR opening: East Germany and Poland each one over control, and Austria, which
@@ -77,8 +79,8 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "us_e516_44": {"US": expand(US_E516_44)},
     "ph_west_germany": {"US": expand(US_OPENING), "USSR": expand(USSR_POLAND_HUNGARY)},
     "ph_no_west_germany": {"US": expand(US_NO_WEST_GERMANY), "USSR": expand(USSR_POLAND_HUNGARY)},
-    # The E6 US setup against four USSR openings: the unbuffered 3/3/3 with Hungary (what E6
-    # plays), Yugoslavia or Czechoslovakia, and the buffered 4/4 with Austria.
+    # The fixed US setup (WG 3 / France 3 / Italy 2 / Iran 2) against USSR openings: the unbuffered
+    # 3/3/3 with Hungary (what E6 plays), Yugoslavia or Czechoslovakia, and the buffered ones.
     "wfi_ph": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_HUNGARY)},
     "wfi_eg4_pol4_aut1": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_EG4_POL4_AUT1)},
     "wfi_py": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_YUGOSLAVIA)},

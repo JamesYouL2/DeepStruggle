@@ -13,7 +13,9 @@ branch `exp/hungary-openings`; this note is updated when they land.
 ## Setup
 
 * Openings in [`../../tools/lib/openings.py`](../../tools/lib/openings.py). US always
-  **WG 3 / France 3 / Italy 2 / Iran 2** (the E6 US setup). USSR one of: `wfi_ph` Poland 3 /
+  **WG 3 / France 3 / Italy 2 / Iran 2**, chosen for these runs. It is *not* E6's own US setup:
+  E6-06-44 opens WG 4 / France 3 / Italy 2 in 98–100% of games (run `36796945486`); the fixed one
+  is close to E5-21's (WG 3 / France 3 / Italy 2 / Iran 1). USSR one of: `wfi_ph` Poland 3 /
   Hungary 3, `wfi_py` Poland 3 / Yugoslavia 3, `wfi_pc` Poland 3 / Czechoslovakia 3,
   `wfi_eg4_pol4_aut1` East Germany 4 / Poland 4 / Austria 1, `wfi_eg4_pol4_yug1` East Germany 4 /
   Poland 4 / Yugoslavia 1 (the human opening).
@@ -90,6 +92,9 @@ of the time against E5/E6 (87% against E4).
 * Every alternative is played by a net that practised Hungary; a structural gap is if anything
   understated. Forcing the opening into training (a `--forced-opening` arm) would remove that.
 * The US setup is fixed throughout; whether the answer depends on it is untested. The unforced
-  mirror (51.0% USSR) against the forced one (46.9%) hints the fixed US setup is ~4 points better
-  for the US than E6's own, at 1.3 standard errors.
+  mirror (51.0% USSR, E6's own WG 4 / France 3 / Italy 2) against the forced one (46.9%) hints the
+  fixed US setup is ~4 points better for the US than E6's own, at 1.3 standard errors.
+* **Search-64 picks Poland 3 / Hungary 3 itself**, in 128 of 128 games as USSR (run
+  `36796945486`, search against the raw net, unforced), consistent with 64 simulations being far
+  below the ~30,000 at which plain search leaves Hungary. Search won 53.5% of the 256 games.
 * E4 and E5 were trained on older engines, so the ladder confounds strength with engine fit.
