@@ -491,8 +491,9 @@ one deal played from both sides) and plays them in N processes, one thread each
 (`tools/lib/parallel_tournament.py`).
 
 The split plays the same deals as a single process, and each shard reseeds every generator its
-games draw from (the global ones, and any agent's `reseed`), so **results depend on
-`--shard-pairs`, never on `--workers`**. With deterministic agents they equal the one-process run
+games draw from: the global ones, and any agent's own through `reseed` -- a `search:` entrant's
+determinization, chance-node and subsampling streams, an ONNX agent's sampler. So **results depend
+on `--shard-pairs`, never on `--workers`**. With deterministic agents they equal the one-process run
 exactly. Each worker loads its own copy of every model -- on a small machine, count the memory. `--workers`
 replaces pairing packing (`--pack-pairs` applies to a one-process run only), and `--opening`
 reaches each worker as its specs' `opening:<name>:` prefix.
@@ -521,7 +522,9 @@ I-th) and writes their raw results and game logs; `--pool-parts part*.json` chec
 are one tournament's parts and cover each shard exactly once, merges them, and writes the usual
 report, JSON and `--log-games`. Since a shard's games depend only on the shard, the pooled
 tournament equals one machine playing all of it -- every part must be given the same entrants,
-`--games-per-side` and `--shard-pairs`, and pooling refuses parts that were not.
+`--games-per-side` and `--shard-pairs`, and pooling refuses parts that were not. A part writes its
+shards and nothing else: `--output-report`, `--output-json` and `--log-games` belong to the
+`--pool-parts` run and are refused with `--part`.
 
 ```bash
 # on machine k of 4

@@ -11,7 +11,7 @@ import json
 import math
 import os
 import random
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, cast
 
 import numpy as np
 import pytest
@@ -19,21 +19,24 @@ import torch
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
-from tools.lib.batch_tournament import BatchMatchRunner, merge_matchup_results
+from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, merge_matchup_results
 from tools.lib.game_step import drain_chance
-from tools.lib.parallel_tournament import plan_shards, run_matchups_parallel, seed_shard
+from tools.lib.parallel_tournament import (MatchOptions, PartConfig, merge_shards, plan_shards,
+                                           pool_parts, run_matchups_parallel, run_shards,
+                                           seed_shard, select_part, write_games_log, write_part)
 from tools.lib.player_agent import (HeuristicAgent, HeuristicV2Agent, NeuralAgent, OnnxAgent,
                                     load_agent)
 
 
-def _assert_same_result(got: Dict[str, Any], want: Dict[str, Any]) -> None:
+def _assert_same_result(got: Mapping[str, object], want: Mapping[str, object]) -> None:
     """Equal except for timing; per-game averages merged by weight may differ in the last bit."""
     assert set(got) == set(want)
     for k, v in want.items():
         if k == "elapsed_seconds":
             continue
+        g = got[k]
         if isinstance(v, float):
-            assert math.isclose(got[k], v, rel_tol=1e-12, abs_tol=1e-12), k
+            assert isinstance(g, float) and math.isclose(g, v, rel_tol=1e-12, abs_tol=1e-12), k
         else:
             assert got[k] == v, k
 
@@ -72,8 +75,8 @@ def test_pairs_are_checked() -> None:
 
 
 def test_merge_refuses_parts_of_different_matchups() -> None:
-    a = {"agent_a": "x", "agent_b": "y"}
-    b = {"agent_a": "x", "agent_b": "z"}
+    a = cast(MatchupResult, {"agent_a": "x", "agent_b": "y"})
+    b = cast(MatchupResult, {"agent_a": "x", "agent_b": "z"})
     with pytest.raises(ValueError, match="different matchups"):
         merge_matchup_results([a, b])
 
@@ -105,7 +108,8 @@ def test_workers_play_the_same_games_as_one_process(tmp_path, monkeypatch) -> No
         HeuristicAgent(), HeuristicV2Agent(), games_per_side=4, device="cpu", temperature=0.0,
         log_games_file=str(tmp_path / "whole.jsonl"))
     got = run_matchups_parallel(["heuristic", "heuristic_v2"], [(0, 1)], games_per_side=4,
-                                workers=2, shard_pairs=1, device="cpu", temperature=0.0,
+                                workers=2, shard_pairs=1,
+                                options=MatchOptions(device="cpu", temperature=0.0),
                                 log_games=str(tmp_path / "pool.jsonl"))
     _assert_same_result(got[(0, 1)], whole)
     assert _log(str(tmp_path / "pool.jsonl")) == _log(str(tmp_path / "whole.jsonl"))
@@ -133,7 +137,7 @@ def test_random_play_does_not_depend_on_the_number_of_workers(tmp_path) -> None:
     for w in (1, 3):
         path = str(tmp_path / f"w{w}.jsonl")
         run_matchups_parallel(["random", "heuristic"], [(0, 1)], games_per_side=3, workers=w,
-                              shard_pairs=1, device="cpu", log_games=path)
+                              shard_pairs=1, options=MatchOptions(device="cpu"), log_games=path)
         logs.append(_log(path))
     assert logs[0] == logs[1]
 
@@ -238,7 +242,8 @@ def test_a_determinized_search_does_not_depend_on_the_number_of_workers(
     for w in (1, 2):
         path = str(tmp_path / f"w{w}.jsonl")
         run_matchups_parallel([spec, "heuristic"], [(0, 1)], games_per_side=2, workers=w,
-                              shard_pairs=1, device="cpu", temperature=0.0, log_games=path)
+                              shard_pairs=1, options=MatchOptions(device="cpu", temperature=0.0),
+                              log_games=path)
         logs.append(_log(path))
     assert len(logs[0]) == 4
     assert logs[0] == logs[1]
@@ -257,47 +262,46 @@ def test_a_file_that_is_not_an_export_is_refused(exported: Dict[str, str], tmp_p
 
 # -- parts: one tournament over several machines ---------------------------------------------
 
-def _play_parts(tmp_path, count: int, config: Dict[str, Any]) -> List[str]:
-    from tools.lib.parallel_tournament import run_shards, select_part, write_part
-
+def _play_parts(tmp_path, count: int, config: PartConfig) -> List[str]:
     shards = plan_shards([(0, 1)], games_per_side=4, shard_pairs=1)
     paths = []
     for i in range(count):
         played = run_shards(["random", "heuristic"], select_part(shards, i, count), 4, workers=1,
-                            device="cpu", capture_games=True)
+                            options=MatchOptions(device="cpu"), capture_games=True)
         path = str(tmp_path / f"part{i}.json")
         write_part(path, config, (i, count), played, 1.0)
         paths.append(path)
     return paths
 
 
-_CONFIG: Dict[str, Any] = {"models": ["RandomBot", "HeuristicBot"], "matchups": [[0, 1]],
-                           "games_per_side": 4, "shard_pairs": 1, "temperature": 0.1}
+_CONFIG: PartConfig = {
+    "models": ["RandomBot", "HeuristicBot"], "matchups": [[0, 1]], "games_per_side": 4,
+    "shard_pairs": 1, "temperature": 0.1, "batch_chunk_size": 1000, "track_choices": False,
+    "auto_advance": True, "anchor_model": "HeuristicBot", "anchor_elo": 1500.0,
+}
 
 
 def test_pooled_parts_equal_one_machine_playing_every_shard(tmp_path) -> None:
-    from tools.lib.parallel_tournament import merge_shards, pool_parts, write_games_log
-
     paths = _play_parts(tmp_path, 3, _CONFIG)
-    config, shards, _ = pool_parts(paths)
-    assert config == _CONFIG
+    pooled = pool_parts(paths)
+    assert pooled.config == _CONFIG
     whole = run_matchups_parallel(["random", "heuristic"], [(0, 1)], games_per_side=4,
-                                  workers=1, shard_pairs=1, device="cpu",
+                                  workers=1, shard_pairs=1, options=MatchOptions(device="cpu"),
                                   log_games=str(tmp_path / "whole.jsonl"))
-    _assert_same_result(merge_shards(shards)[(0, 1)], whole[(0, 1)])
-    write_games_log(str(tmp_path / "pooled.jsonl"), shards)
+    _assert_same_result(merge_shards(pooled.shards)[(0, 1)], whole[(0, 1)])
+    write_games_log(str(tmp_path / "pooled.jsonl"), pooled.shards)
     assert _log(str(tmp_path / "pooled.jsonl")) == _log(str(tmp_path / "whole.jsonl"))
 
 
 def test_pooling_refuses_a_missing_or_repeated_shard_or_a_different_tournament(tmp_path) -> None:
-    from tools.lib.parallel_tournament import pool_parts
-
     paths = _play_parts(tmp_path, 2, _CONFIG)
     with pytest.raises(ValueError, match="missing"):
         pool_parts(paths[:1])
     with pytest.raises(ValueError, match="more than one part"):
         pool_parts([paths[0], paths[0], paths[1]])
     (tmp_path / "other").mkdir()
-    other = _play_parts(tmp_path / "other", 2, {**_CONFIG, "temperature": 1.0})
+    hotter = _CONFIG.copy()
+    hotter["temperature"] = 1.0
+    other = _play_parts(tmp_path / "other", 2, hotter)
     with pytest.raises(ValueError, match="different tournament"):
         pool_parts([paths[0], other[1]])

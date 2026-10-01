@@ -27,7 +27,17 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from tools.lib.player_agent import PlayerAgent, load_agent, resolve_device
-from tools.lib.batch_tournament import BatchMatchRunner, compute_mle_elo
+from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, compute_mle_elo
+from tools.lib.parallel_tournament import (MatchOptions, Pair, Part, PartConfig, merge_shards,
+                                           plan_shards, pool_parts, run_matchups_parallel,
+                                           run_shards, select_part, write_games_log, write_part)
+
+
+def _write_text(path: str, text: str, what: str) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(f"Saved {what} to: {path}")
 
 
 def format_loss_causes(causes: Dict[str, int], total_losses: int) -> str:
@@ -114,7 +124,7 @@ def run_head_to_head_report(
     return "".join(lines)
 
 
-def _pack_schedule(M: int, pack_pairs: int) -> List[List[Tuple[int, int]]]:
+def _pack_schedule(M: int, pack_pairs: int) -> List[List[Pair]]:
     """Every pairing (i < j) of M agents, grouped into packs that involve few distinct agents.
 
     A pack's cost per step is one forward per distinct agent in it, so the pairings of a pack
@@ -124,11 +134,11 @@ def _pack_schedule(M: int, pack_pairs: int) -> List[List[Tuple[int, int]]]:
     """
     g = max(2, int(pack_pairs ** 0.5))
     blocks = [list(range(b, min(b + g, M))) for b in range(0, M, g)]
-    packs: List[List[Tuple[int, int]]] = []
+    packs: List[List[Pair]] = []
     for x in range(len(blocks)):
         for y in range(x + 1, len(blocks)):
             packs.append([(i, j) for i in blocks[x] for j in blocks[y]])
-    inside: List[Tuple[int, int]] = []
+    inside: List[Pair] = []
     for blk in blocks:
         within = [(i, j) for a, i in enumerate(blk) for j in blk[a + 1:]]
         if inside and len(inside) + len(within) > pack_pairs:
@@ -140,57 +150,20 @@ def _pack_schedule(M: int, pack_pairs: int) -> List[List[Tuple[int, int]]]:
     return [p for p in packs if p]
 
 
-def run_massive_tournament(
-    model_specs: List[str],
-    games_per_side: int = 500,
-    temperature: float = 0.1,
-    batch_chunk_size: int = 1000,
-    anchor_model: str = "HeuristicBot",
-    anchor_elo: float = 1500.0,
-    output_report: Optional[str] = None,
-    output_json: Optional[str] = None,
-    device: str = "cuda",
-    track_choices: bool = False,
-    log_games: Optional[str] = None,
-    auto_advance: bool = True,
-    pack_pairs: int = 25,
-    opening: Optional[str] = None,
-    workers: int = 1,
-    shard_pairs: int = 10,
-    part: Optional[Tuple[int, int]] = None,
-    output_part: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Runs high-throughput round-robin tournament across all specified models.
+def _load_entrants(model_specs: List[str], device: torch.device,
+                   opening: Optional[str]) -> Tuple[List[PlayerAgent], List[str]]:
+    """Every entrant, loaded, and the spec a worker process loads to get the same agent.
 
-    `pack_pairs` pairings are played in one engine batch (BatchMatchRunner.play_packed_matchups),
-    each agent's positions across them in one forward per step; the same deal seeds per game as
-    one pairing at a time. 1 plays pairings one at a time, as before; choice tracking and game
-    logs always do.
-
-    `workers` > 1 splits every matchup into shards of `shard_pairs` game pairs and plays them in
-    that many processes (tools/lib/parallel_tournament.py) instead of packing. The games are the
-    same deals either way; see that module for what makes the split reproducible.
-
-    `part=(index, count)` plays only that part of the shards -- one machine's share of a
-    tournament spread over several -- and writes them to `output_part` instead of reporting.
-    `pool_tournament_parts` turns a complete set of parts into the tournament's report.
+    With `opening`, every agent's setup is the named opening (tools/lib/openings.py; a per-agent
+    `opening:<name>:` prefix on a spec takes precedence) and its name says so. Workers load their
+    agents afresh from specs, so the opening travels as each spec's own prefix.
     """
-    dev = resolve_device(device)
-
-    print("\n" + "=" * 85)
-    print(f" INITIALIZING TOURNAMENT EVALUATOR: {len(model_specs)} Models, {games_per_side * 2} Games/Pair")
-    print(f" Device: {dev} | Chunk Size: {batch_chunk_size}"
-          + (f" | Workers: {workers} x {shard_pairs} pairs/shard" if workers > 1 else ""))
-    print("=" * 85)
-
     agents: List[PlayerAgent] = []
     worker_specs: List[str] = []
     for spec in model_specs:
-        agent = load_agent(spec, device=dev)
+        agent = load_agent(spec, device=device)
         worker_spec = spec
         if opening and not getattr(agent, "forced_opening", None):
-            # --opening: every agent's setup is the named opening (a per-agent opening:<name>:
-            # prefix on a spec takes precedence). Named in the report, so the rows say so.
             setattr(agent, "forced_opening", opening)
             setattr(agent, "name", f"{agent.name}+{opening}")
             worker_spec = f"opening:{opening}:{spec}"
@@ -213,14 +186,61 @@ def run_massive_tournament(
             + ", ".join(clashes)
             + ". Each is <run>@<steps>, so a repeat means the same checkpoint was entered twice "
               "or two runs share a short name.")
+    return agents, worker_specs
 
-    M = len(agents)
+
+def _banner(model_specs: List[str], games_per_side: int, dev: torch.device,
+            batch_chunk_size: int, workers: int, shard_pairs: int) -> None:
+    print("\n" + "=" * 85)
+    print(f" INITIALIZING TOURNAMENT EVALUATOR: {len(model_specs)} Models, {games_per_side * 2} Games/Pair")
+    print(f" Device: {dev} | Chunk Size: {batch_chunk_size}"
+          + (f" | Workers: {workers} x {shard_pairs} pairs/shard" if workers > 1 else ""))
+    print("=" * 85)
+
+
+def _round_robin(n: int) -> List[Pair]:
+    return [(i, j) for i in range(n) for j in range(i + 1, n)]
+
+
+def run_massive_tournament(
+    model_specs: List[str],
+    games_per_side: int = 500,
+    temperature: float = 0.1,
+    batch_chunk_size: int = 1000,
+    anchor_model: str = "HeuristicBot",
+    anchor_elo: float = 1500.0,
+    output_report: Optional[str] = None,
+    output_json: Optional[str] = None,
+    device: str = "cuda",
+    track_choices: bool = False,
+    log_games: Optional[str] = None,
+    auto_advance: bool = True,
+    pack_pairs: int = 25,
+    opening: Optional[str] = None,
+    workers: int = 1,
+    shard_pairs: int = 10,
+) -> Dict[str, Any]:
+    """Runs high-throughput round-robin tournament across all specified models.
+
+    `pack_pairs` pairings are played in one engine batch (BatchMatchRunner.play_packed_matchups),
+    each agent's positions across them in one forward per step; the same deal seeds per game as
+    one pairing at a time. 1 plays pairings one at a time, as before; choice tracking and game
+    logs always do.
+
+    `workers` > 1 splits every matchup into shards of `shard_pairs` game pairs and plays them in
+    that many processes (tools/lib/parallel_tournament.py) instead of packing. The games are the
+    same deals either way; see that module for what makes the split reproducible. One machine's
+    share of such a tournament is `play_tournament_part`.
+    """
+    dev = resolve_device(device)
+    _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
+    agents, worker_specs = _load_entrants(model_specs, dev, opening)
     model_names = [a.name for a in agents]
-    matchups = [(i, j) for i in range(M) for j in range(i + 1, M)]
-    results: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    matchups = _round_robin(len(agents))
+    results: Dict[Pair, MatchupResult] = {}
     t_start = time.time()
 
-    def record(i: int, j: int, m_res: Dict[str, Any], pair_time: float) -> None:
+    def record(i: int, j: int, m_res: MatchupResult, pair_time: float) -> None:
         results[(i, j)] = m_res
         w_a, w_b, d, tot = m_res["a_wins"], m_res["b_wins"], m_res["draws"], m_res["total_games"]
         print(
@@ -228,46 +248,20 @@ def run_massive_tournament(
             f"{w_a:4d}W - {w_b:4d}L - {d:2d}D ({(w_a / tot) * 100.0:5.1f}% win) in {pair_time:5.1f}s"
         )
 
-    if part is not None:
-        from tools.lib.parallel_tournament import (plan_shards, run_shards, select_part,
-                                                   write_part)
-        if not output_part:
-            raise ValueError("a part of a tournament needs output_part to write its shards to")
-        mine = select_part(plan_shards(matchups, games_per_side, shard_pairs), *part)
-        print(f" Part {part[0] + 1} of {part[1]}: {len(mine)} shard(s) of {shard_pairs} pair(s)")
-        played = run_shards(
-            worker_specs, mine, games_per_side, max(1, workers), device=str(dev),
-            temperature=temperature, batch_chunk_size=batch_chunk_size,
-            track_choices=track_choices, capture_games=True, auto_advance=auto_advance,
-            on_shard_done=lambda r: print(
-                f"  shard {r.shard.pair}#{r.shard.index}: {r.result['a_wins']}W - "
-                f"{r.result['b_wins']}L - {r.result['draws']}D", flush=True))
-        config = {
-            "models": model_names, "matchups": [list(m) for m in matchups],
-            "games_per_side": games_per_side, "shard_pairs": shard_pairs,
-            "temperature": temperature, "batch_chunk_size": batch_chunk_size,
-            "track_choices": track_choices, "auto_advance": auto_advance,
-            "anchor_model": anchor_model, "anchor_elo": anchor_elo,
-        }
-        write_part(output_part, config, part, played, time.time() - t_start)
-        print(f"Saved part {part[0] + 1}/{part[1]} to: {output_part}")
-        return {"part": list(part), "shards": len(played)}
-
     if workers > 1:
-        from tools.lib.parallel_tournament import run_matchups_parallel
-
-        # Workers load their agents afresh from specs, so --opening travels as each spec's own
-        # opening:<name>: prefix -- the same agent load_agent builds for that prefix.
         # Wall time since the tournament started: shards of every matchup run at once, so a
         # matchup has no start time of its own.
         run_matchups_parallel(
             worker_specs, matchups, games_per_side, workers, shard_pairs,
-            device=str(dev), temperature=temperature, batch_chunk_size=batch_chunk_size,
-            track_choices=track_choices, log_games=log_games, auto_advance=auto_advance,
+            MatchOptions(device=str(dev), temperature=temperature,
+                         batch_chunk_size=batch_chunk_size, track_choices=track_choices,
+                         auto_advance=auto_advance),
+            log_games=log_games,
             on_matchup_done=lambda p, r: record(p[0], p[1], r, time.time() - t_start))
     else:
         pack = 1 if (track_choices or log_games) else max(1, int(pack_pairs))
-        groups_of_pairs = _pack_schedule(M, pack) if pack > 1 else [[pr] for pr in matchups]
+        groups_of_pairs = (_pack_schedule(len(agents), pack) if pack > 1
+                           else [[pr] for pr in matchups])
         for group in groups_of_pairs:
             t_g = time.time()
             if len(group) == 1:
@@ -292,6 +286,53 @@ def run_massive_tournament(
         output_report=output_report, output_json=output_json)
 
 
+def play_tournament_part(
+    model_specs: List[str],
+    part: Part,
+    output_part: str,
+    games_per_side: int = 500,
+    temperature: float = 0.1,
+    batch_chunk_size: int = 1000,
+    anchor_model: str = "HeuristicBot",
+    anchor_elo: float = 1500.0,
+    device: str = "cuda",
+    track_choices: bool = False,
+    auto_advance: bool = True,
+    opening: Optional[str] = None,
+    workers: int = 1,
+    shard_pairs: int = 10,
+) -> PartConfig:
+    """One machine's share of a tournament spread over several: part `index` of `count` of the
+    shards `run_massive_tournament(workers=...)` would play, written raw to `output_part` with
+    their game logs. `pool_tournament_parts` turns a complete set of parts into the report."""
+    dev = resolve_device(device)
+    _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
+    agents, worker_specs = _load_entrants(model_specs, dev, opening)
+    matchups = _round_robin(len(agents))
+    t_start = time.time()
+    index, count = part
+    mine = select_part(plan_shards(matchups, games_per_side, shard_pairs), index, count)
+    print(f" Part {index + 1} of {count}: {len(mine)} shard(s) of {shard_pairs} pair(s)")
+    played = run_shards(
+        worker_specs, mine, games_per_side, max(1, workers),
+        MatchOptions(device=str(dev), temperature=temperature, batch_chunk_size=batch_chunk_size,
+                     track_choices=track_choices, auto_advance=auto_advance),
+        capture_games=True,
+        on_shard_done=lambda r: print(
+            f"  shard {r.shard.label}: {r.result['a_wins']}W - {r.result['b_wins']}L - "
+            f"{r.result['draws']}D", flush=True))
+    config: PartConfig = {
+        "models": [a.name for a in agents], "matchups": [list(m) for m in matchups],
+        "games_per_side": games_per_side, "shard_pairs": shard_pairs,
+        "temperature": temperature, "batch_chunk_size": batch_chunk_size,
+        "track_choices": track_choices, "auto_advance": auto_advance,
+        "anchor_model": anchor_model, "anchor_elo": anchor_elo,
+    }
+    write_part(output_part, config, part, played, time.time() - t_start)
+    print(f"Saved part {index + 1}/{count} to: {output_part}")
+    return config
+
+
 def pool_tournament_parts(
     part_paths: List[str],
     output_report: Optional[str] = None,
@@ -300,25 +341,23 @@ def pool_tournament_parts(
 ) -> Dict[str, Any]:
     """The report of a tournament played in parts on several machines (`--part`), from their
     part files. Refuses a set that is not exactly one tournament's shards."""
-    from tools.lib.parallel_tournament import merge_shards, pool_parts, write_games_log
-
-    config, shards, wall = pool_parts(part_paths)
-    print(f" Pooled {len(part_paths)} part(s): {len(shards)} shard(s), "
-          f"slowest part {wall:.1f}s")
+    pooled = pool_parts(part_paths)
+    config = pooled.config
+    print(f" Pooled {len(part_paths)} part(s): {len(pooled.shards)} shard(s), "
+          f"slowest part {pooled.wall_seconds:.1f}s")
     if log_games:
-        write_games_log(log_games, shards)
-    merged = merge_shards(shards)
-    results = {(int(a), int(b)): merged[(int(a), int(b))] for a, b in config["matchups"]}
+        write_games_log(log_games, pooled.shards)
+    merged = merge_shards(pooled.shards)
+    results = {(m[0], m[1]): merged[(m[0], m[1])] for m in config["matchups"]}
     return report_tournament(
-        list(config["models"]), results, int(config["games_per_side"]),
-        float(config["temperature"]), wall,
-        anchor_model=str(config["anchor_model"]), anchor_elo=float(config["anchor_elo"]),
+        config["models"], results, config["games_per_side"], config["temperature"],
+        pooled.wall_seconds, anchor_model=config["anchor_model"], anchor_elo=config["anchor_elo"],
         output_report=output_report, output_json=output_json)
 
 
 def report_tournament(
     model_names: List[str],
-    results: Dict[Tuple[int, int], Dict[str, Any]],
+    results: Dict[Pair, MatchupResult],
     games_per_side: int,
     temperature: float,
     total_tournament_time: float,
@@ -365,9 +404,7 @@ def report_tournament(
         report_text = run_head_to_head_report(model_names[0], model_names[1], matchup_details[m_key], elo_ratings, total_tournament_time)
         print(report_text)
         if output_report:
-            os.makedirs(os.path.dirname(os.path.abspath(output_report)), exist_ok=True)
-            with open(output_report, "w", encoding="utf-8") as f:
-                f.write(report_text)
+            _write_text(output_report, report_text, "Markdown Head-to-Head Report")
         head_to_head = {
             "models": model_names,
             "elo_ratings": elo_ratings,
@@ -377,10 +414,7 @@ def report_tournament(
             "total_time_seconds": total_tournament_time,
         }
         if output_json:
-            os.makedirs(os.path.dirname(os.path.abspath(output_json)), exist_ok=True)
-            with open(output_json, "w", encoding="utf-8") as f:
-                f.write(json.dumps(head_to_head, indent=2))
-            print(f"Saved JSON Tournament Data to: {output_json}")
+            _write_text(output_json, json.dumps(head_to_head, indent=2), "JSON Tournament Data")
         return head_to_head
 
     # Full Round-Robin Tournament Report
@@ -469,10 +503,7 @@ def report_tournament(
     report_text = "".join(report_lines)
 
     if output_report:
-        os.makedirs(os.path.dirname(os.path.abspath(output_report)), exist_ok=True)
-        with open(output_report, "w", encoding="utf-8") as f:
-            f.write(report_text)
-        print(f"Saved Markdown Tournament Report to: {output_report}")
+        _write_text(output_report, report_text, "Markdown Tournament Report")
 
     # Per-pair, per-seat records. `win_matrix` aggregates the two seats into one number, which is
     # the wrong shape for the question a round robin over one lineage's snapshots is usually
@@ -504,10 +535,7 @@ def report_tournament(
     }
 
     if output_json:
-        os.makedirs(os.path.dirname(os.path.abspath(output_json)), exist_ok=True)
-        with open(output_json, "w", encoding="utf-8") as f:
-            f.write(json.dumps(summary_data, indent=2))
-        print(f"Saved JSON Tournament Data to: {output_json}")
+        _write_text(output_json, json.dumps(summary_data, indent=2), "JSON Tournament Data")
 
     print("\n" + report_text)
     return summary_data
@@ -586,7 +614,7 @@ def main():
                               output_json=args.output_json, log_games=args.log_games)
         return
 
-    part: Optional[Tuple[int, int]] = None
+    part: Optional[Part] = None
     if args.part:
         try:
             i_str, n_str = args.part.split("/")
@@ -597,6 +625,13 @@ def main():
             parser.error(f"--part {args.part}: I must be in 1..N")
         if not args.output_part:
             parser.error("--part needs --output-part")
+        # A part writes its raw shards and nothing else; the report, its JSON and the game log
+        # come from --pool-parts over every part.
+        for flag, value in (("--output-report", args.output_report),
+                            ("--output-json", args.output_json),
+                            ("--log-games", args.log_games)):
+            if value:
+                parser.error(f"{flag} does not apply to --part; pass it to --pool-parts")
 
     models = list(args.models) if args.models else []
     if args.checkpoint_dir and os.path.exists(args.checkpoint_dir):
@@ -619,8 +654,23 @@ def main():
         print("Error: Need at least 2 models for an evaluation or tournament (or pass --self-play).")
         sys.exit(1)
 
-    out_rep = args.output_report
-    out_json = args.output_json
+    workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
+    if part is not None:
+        play_tournament_part(
+            models, part, args.output_part,
+            games_per_side=args.games_per_side,
+            temperature=args.temperature,
+            batch_chunk_size=args.batch_chunk_size,
+            anchor_model=args.anchor_model,
+            anchor_elo=args.anchor_elo,
+            device=args.device,
+            track_choices=args.track_choices,
+            auto_advance=args.auto_advance,
+            opening=args.opening,
+            workers=workers,
+            shard_pairs=args.shard_pairs,
+        )
+        return
 
     run_massive_tournament(
         model_specs=models,
@@ -631,16 +681,14 @@ def main():
         opening=args.opening,
         anchor_model=args.anchor_model,
         anchor_elo=args.anchor_elo,
-        output_report=out_rep,
-        output_json=out_json,
+        output_report=args.output_report,
+        output_json=args.output_json,
         device=args.device,
         track_choices=args.track_choices,
         log_games=args.log_games,
         auto_advance=args.auto_advance,
-        workers=args.workers if args.workers > 0 else (os.cpu_count() or 1),
+        workers=workers,
         shard_pairs=args.shard_pairs,
-        part=part,
-        output_part=args.output_part,
     )
 
 

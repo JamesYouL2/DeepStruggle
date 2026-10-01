@@ -955,7 +955,7 @@ def main():
             print(f"\nMatchup: {agent_main.name} vs {opp.name}")
             print(f"  Win Rate: {res['win_rate_a']*100:.1f}% ({res['a_wins']}W - {res['b_wins']}L - {res['draws']}D)")
             print(f"  Avg Turn: {res['avg_turn']:.1f} | Avg Steps: {res['avg_steps']:.0f} | Avg VP Margin: {res['avg_vp_margin_a']:+.1f}")
-            print(f"  Ending Causes: {res['causes']}")
+            print(f"  Ending Causes: {res['causes_all']}")
 
 
 if __name__ == "__main__":

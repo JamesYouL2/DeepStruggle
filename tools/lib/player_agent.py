@@ -1,6 +1,6 @@
 """Player Agent Abstractions for Twilight Struggle Bots and Neural Models."""
 
-from typing import Protocol, Optional, Dict, Any, Union, cast
+from typing import Protocol, Optional, Dict, Any, List, Sequence, Union, cast, runtime_checkable
 import os
 import numpy as np
 import torch
@@ -86,6 +86,42 @@ class PlayerAgent(Protocol):
         temperature: float = 0.1,
     ) -> int:
         """Selects a legal flat action index [0..FLAT_ACTION_SIZE-1]."""
+        ...
+
+
+# The interfaces an agent MAY offer beyond `select_action`. Harnesses test for them with
+# isinstance, which for a runtime-checkable Protocol checks that the attributes exist -- the same
+# test a hasattr would make, but with a type on the other side of it.
+
+@runtime_checkable
+class BatchSelector(Protocol):
+    """Decides a batch of positions in one call (a searcher: one tree per position, stepped
+    together so the network calls batch)."""
+
+    name: str
+
+    def select_actions_batch(self, states: Sequence[ts.GameState]) -> List[int]:
+        ...
+
+
+@runtime_checkable
+class BatchActor(Protocol):
+    """Decides a batch from observations and masks outside torch (`OnnxAgent`). `obs_size` is the
+    width it reads, the first that many floats of each row."""
+
+    name: str
+    obs_size: int
+
+    def act_batch(self, obs: np.ndarray, masks: np.ndarray, temperature: float,
+                  greedy: bool) -> np.ndarray:
+        ...
+
+
+@runtime_checkable
+class Reseedable(Protocol):
+    """Carries a random stream of its own between games, and can restart it."""
+
+    def reseed(self, seed: int) -> None:
         ...
 
 
