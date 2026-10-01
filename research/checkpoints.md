@@ -27,7 +27,49 @@ A win rate is only meaningful with its opponent, its game count and its side spl
 frozen anchor, the only cross-engine-comparable opponents are the rule-based bots, so every row
 below is against `HeuristicBot` at 50 games a side.
 
-## Best models (owner, 2026-09-29)
+## Best models (owner, 2026-10-01)
+
+Designations on E7 (owner, 2026-10-01). They supersede the 2026-09-29 designations below, which
+are kept as the E6 record. Ratings are from one field on E7, anchored at HeuristicBot = 1500
+([`log/E7_02_44_saturation.md`](log/E7_02_44_saturation.md), `data/reports/e7_long_shallow_vs_best.{md,json}`).
+
+| designation | model | file | sha256 | Elo |
+|:---|:---|:---|:---|---:|
+| **best raw model** (a single training snapshot) | **E7-02-44@1,200M** | `/workspace/data/checkpoints/E7-02-44_20260930_222159/snapshot_1200029696steps.pt` | `75b68238138b…080c4b66` | 2526 |
+| **best SWA model** (uniform average of the last 80M) | **E7-02-44, 1,120–1,200M SWA** | `/workspace/data/checkpoints/E7-02-44_20260930_222159/swa_1120-1200M.pt` | `8b205fad425f…1428fbb4` | **2571** |
+| **best model soup** (unchanged) | E6-06/07/08-44 at 760M | `/workspace/data/checkpoints/_soups/shared_start_E6-06+07+08_760M.pt` | `fa21df467d80…bf73e6` | 2562 |
+
+* **Best overall: a tie** between E7-02-44's SWA and the model soup, 50.8% head to head (±1.1).
+  E7-02-44's SWA beats the previous best SWA (E6-06-44's) 58.0%. E7-02-44@1,200M beats the previous
+  best raw snapshot (E6-07-44@700M) 60.9%.
+* **E7-02-44's recipe is simpler than the soup's.** One run of the shallow trunk
+  (`--ladder-res-blocks 0`), no league, no setup credit, trained to saturation (about 900M–1B
+  steps). The soup averages three branches of the deep trunk with the league and setup credit.
+* Both E7-02-44 designations come from seed 44 only.
+
+### E7-02-44's lineage, and how to reproduce it
+
+Two phases through `tools/train.py` on E7 (fingerprint `5419a582…`), guarded by
+`tools/scripts/check_engine_fresh.sh`, with `PYTHONPATH=.:build/release TRITON_CACHE_DIR=.triton_cache`:
+
+```bash
+SHALLOW="--arch ladder --ladder-input-mode grouped --ladder-aggregation flatten --ladder-entity-dim 16 \
+  --ladder-entity-proj-dim 256 --ladder-hidden-dim 480 --ladder-res-blocks 0 --drop-static \
+  --per-entity-heads 64 --ladder-head-context --ladder-head-static --ladder-head-entities country"
+COMMON="--reward-scheme blunder_aware --opponent-frac 0.3 --opponent-self-pool --opponent-pool-size 12 \
+  --eval-opponents heuristic random --ladder-head-center --block-lambda off --rollout-temps 1.0 1.0 1.0 1.0"
+# 1. E7-01-44, from scratch to 560M
+.venv/bin/python tools/train.py $SHALLOW $COMMON --seed 44 --train-steps 560000000 --run-name E7-01-44 --description "..."
+# 2. E7-02-44, the same flags continued to 1,200M
+.venv/bin/python tools/train.py $SHALLOW $COMMON --seed 44 --train-steps 1200000000 \
+  --resume <E7-01-44 dir>/resume_state.pt --run-name E7-02-44 --description "..."
+# the SWA
+tools/scripts/average_weights.py --snapshots <E7-02-44's 1120, 1130, ..., 1200M snapshots> --output swa_1120-1200M.pt
+```
+
+Check each phase with `tools/scripts/launch_flags.py <original dir> --diff <replicate dir>`.
+
+## Best models on E6 (owner, 2026-09-29; superseded 2026-10-01)
 
 Three designations, on the real E6 engine (the model soup added 2026-09-30). They supersede E5-21-43@560M, which is kept below as the
 E5-era record. Ratings are from the comprehensive E6 tournament (the soup's from its own field), anchored at HeuristicBot = 1500
