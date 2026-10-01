@@ -170,11 +170,14 @@ def run_shards(
                                     base_seed, options, log_path)] = (s, log_path)
             for fut in as_completed(futures):
                 s, log_path = futures[fut]
+                # The result first: a worker that raised wrote no log, and the shard's error is
+                # what to report, not the missing file.
+                result = fut.result()
                 games: List[Dict[str, Any]] = []
                 if log_path:
                     with open(log_path, "r", encoding="utf-8") as f:
                         games = [json.loads(line) for line in f if line.strip()]
-                done[s] = ShardResult(s, fut.result(), games)
+                done[s] = ShardResult(s, result, games)
                 if on_shard_done is not None:
                     on_shard_done(done[s])
     finally:

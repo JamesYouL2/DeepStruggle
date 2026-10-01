@@ -108,10 +108,8 @@ def _choose_actions(
             st = runner.get_state(int(idx))
             actions[idx] = agent.select_action(st, ts.Player(int(d_players[idx])),
                                                temperature=temperature)
-    else:  # RandomAgent, or anything without a state-based interface
-        for idx in indices:
-            leg = np.where(masks[idx] > 0)[0]
-            actions[idx] = np.random.choice(leg) if len(leg) > 0 else 0
+    else:
+        raise TypeError(f"{getattr(agent, 'name', agent)!r} offers no way to choose an action")
 
 
 def _choice_stats(
@@ -731,18 +729,9 @@ class BatchMatchRunner:
                             obs_dev.index_select(0, rows_t)[:, :want], mask_dev.index_select(0, rows_t),
                             temperature=t_ag, deterministic=g_ag)
                     act_dev.index_copy_(0, rows_t, act_t.long())
-                elif hasattr(agent, "select_actions_batch"):
-                    picks = agent.select_actions_batch([runner.get_state(int(r)) for r in rows])
-                    actions[rows] = np.asarray(picks)
-                elif hasattr(agent, "select_action"):
-                    for r in rows:
-                        actions[r] = agent.select_action(runner.get_state(int(r)),
-                                                         ts.Player(int(d_players[r])),
-                                                         temperature=t_ag)
                 else:
-                    for r in rows:
-                        leg = np.where(masks[r] > 0)[0]
-                        actions[r] = np.random.choice(leg) if len(leg) > 0 else 0
+                    _choose_actions(agent, rows, obs, masks, d_players, runner, t_ag, g_ag, dev,
+                                    actions)
             if act_dev is not None:
                 nn_act = act_dev.cpu().numpy().astype(np.int32)
                 actions = np.where(nn_rows, nn_act, actions)

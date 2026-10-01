@@ -87,8 +87,20 @@ def test_shards_cover_every_pair_of_every_matchup_once() -> None:
     assert [len(s.pairs) for s in shards if s.pair == (0, 1)] == [3, 3, 1]
 
 
-def test_workers_play_the_same_games_as_one_process(tmp_path) -> None:
-    """Deterministic agents: the pool reproduces the unsplit matchup game for game."""
+def test_workers_play_the_same_games_as_one_process(tmp_path, monkeypatch) -> None:
+    """Deterministic agents: the pool reproduces the unsplit matchup game for game, and leaves
+    no shard logs behind."""
+    import tempfile
+    from tools.lib import parallel_tournament
+
+    made: List[str] = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def spy(*args: Any, **kwargs: Any) -> str:
+        made.append(real_mkdtemp(*args, **kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(parallel_tournament.tempfile, "mkdtemp", spy)
     whole = BatchMatchRunner.play_parallel_matchup(
         HeuristicAgent(), HeuristicV2Agent(), games_per_side=4, device="cpu", temperature=0.0,
         log_games_file=str(tmp_path / "whole.jsonl"))
@@ -97,7 +109,7 @@ def test_workers_play_the_same_games_as_one_process(tmp_path) -> None:
                                 log_games=str(tmp_path / "pool.jsonl"))
     _assert_same_result(got[(0, 1)], whole)
     assert _log(str(tmp_path / "pool.jsonl")) == _log(str(tmp_path / "whole.jsonl"))
-    assert not [p for p in os.listdir(tmp_path) if ".part-" in p], "shard logs left behind"
+    assert made and not any(os.path.exists(d) for d in made), "shard logs left behind"
 
 
 def test_workers_play_the_tournament_opening() -> None:
@@ -201,12 +213,27 @@ def test_sampling_only_ever_picks_legal_actions(exported: Dict[str, str]) -> Non
         assert m[np.arange(len(picks)), picks].all(), f"illegal action sampled at tau={t}"
 
 
+def test_a_search_entrant_restarts_its_own_streams(exported: Dict[str, str]) -> None:
+    """`seed_shard` can only restart what an agent exposes. The search draws its worlds, chance
+    nodes and subsampling from generators of its own, so it must offer `reseed`, and reseeding
+    must put those generators where a fresh search at that seed would start."""
+    agent = load_agent(f"search:{exported['pt']}:2:determinize", device="cpu")
+    mcts = getattr(agent, "mcts")
+    mcts._rng.random()
+    mcts._np_rng.random()
+    seed_shard(99, [HeuristicAgent(), agent])
+    assert mcts._rng.getstate() == random.Random(99 + 1).getstate()
+    assert mcts._np_rng.random() == np.random.RandomState(99 + 1).random()
+
+
 def test_a_determinized_search_does_not_depend_on_the_number_of_workers(
         exported: Dict[str, str], tmp_path) -> None:
-    """Search is what the workers are for: it decides in Python, one tree at a time. A
-    determinizing search samples its worlds from its own stream, so at a fixed shard size one
-    worker and two must still play the same games."""
-    spec = f"search:{exported['pt']}:2:determinize"
+    """Search is what the workers are for: it decides in Python, one tree at a time. A search
+    draws from its own stream -- the worlds it determinizes, the chance nodes it expands, the
+    decisions it subsamples -- so at a fixed shard size one worker and two must still play the
+    same games. 16 simulations, not 2: with 2 the pick is the prior's and never sees a draw, and
+    this test passed while a shard's games depended on what the worker had searched before."""
+    spec = f"search:{exported['pt']}:16:determinize"
     logs: List[Dict[int, Dict[str, Any]]] = []
     for w in (1, 2):
         path = str(tmp_path / f"w{w}.jsonl")

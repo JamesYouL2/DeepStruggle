@@ -427,9 +427,20 @@ class BatchedMCTS:
 
         return max(range(len(root.actions)), key=key)
 
+    def reseed(self, seed: int) -> None:
+        """Restart every stream this search draws from -- the worlds it determinizes, the chance
+        nodes it expands, the decisions it subsamples, the root noise -- at `seed`.
+
+        The streams are this object's own, so the global seeds do not reach them, and a search
+        that plays several games in one process carries them from game to game. A tournament
+        shard calls this so that its games do not depend on what the process searched before
+        (tools/lib/parallel_tournament.py).
+        """
+        self._rng = random.Random(seed)
+        self._np_rng = np.random.RandomState(seed)
+
     def reset(self) -> None:
-        self._rng = random.Random(self.cfg.seed)
-        self._np_rng = np.random.RandomState(self.cfg.seed)
+        self.reseed(self.cfg.seed)
 
 
 class BatchedMCTSAgent:
@@ -450,6 +461,10 @@ class BatchedMCTSAgent:
         # time, which `_featurise` notes costs ~10x more than letting the runner do the batch.
         self.mcts = BatchedMCTS(model, device=device, config=config,
                                 featurise_capacity=featurise_capacity)
+
+    def reseed(self, seed: int) -> None:
+        """Restart the search's own random streams at `seed` (`BatchedMCTS.reseed`)."""
+        self.mcts.reseed(seed)
 
     def _policy_actions(self, states: Sequence[ts.GameState]) -> List[int]:
         """The unsearched fallback: this agent's own greedy policy, in one batched pass."""
