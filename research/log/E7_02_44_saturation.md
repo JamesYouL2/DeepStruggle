@@ -34,3 +34,37 @@ The extra 640M steps are worth about +110 Elo, in both seats equally.
   * where E7-02-44's SWA stands against the current best, the shared-start soup of
     E6-06/07/08-44 at 760M. They have never been in one field.
   * whether the deep recipe also saturates near 900M, and above or below the shallow one.
+
+## Against the current best (2026-10-01)
+
+One field on E7, greedy, 1,000 games per seat, anchored at HeuristicBot = 1500
+(`data/reports/e7_long_shallow_vs_best.{md,json}`):
+
+| Elo | model | panel US / USSR |
+|---:|:---|:---|
+| **2571** | **E7-02-44 SWA 1,120–1,200M** (shallow, no league, one run) | 86.3 / 86.3 |
+| 2562 | shared-start soup of E6-06/07/08-44 at 760M (the designated best model soup) | 85.0 / 86.5 |
+| 2562 | the same soup made from their 680–760M SWAs | 85.6 / 86.2 |
+| 2526 | **E7-02-44@1,200M** (raw snapshot) | 82.7 / 83.6 |
+| 2521 | E6-06-44 SWA 680–760M (the designated best SWA) | 82.9 / 81.8 |
+| 2510 | E6-08-44 SWA 680–760M | 78.3 / 84.3 |
+| 2499 | E6-04-44 SWA 480–560M | 81.1 / 82.0 |
+| 2451 | E6-07-44@700M (the designated best raw snapshot) | 73.3 / 77.0 |
+
+Head to head (seat-paired, ±1.1):
+
+| | the soup | the soup of SWAs | E6-06-44 SWA | E6-08-44 SWA | E6-04-44 SWA | E6-07-44@700M |
+|:---|---:|---:|---:|---:|---:|---:|
+| **E7-02-44 SWA** | **50.8%** | 52.8% | 58.0% | 59.5% | 61.1% | 65.9% |
+| **E7-02-44@1,200M** | 43.9% | 44.1% | 51.6% | 52.6% | 51.4% | **60.9%** |
+
+* **E7-02-44's SWA is level with the best model** (50.8% against the soup, 52.8% against the
+  soup of SWAs). It is one run of the shallow recipe with no league, against an average of three
+  branches of the deep + league line. It beats the designated best SWA 58.0%.
+* **E7-02-44@1,200M is the strongest raw snapshot measured.** It beats the designated best raw
+  snapshot (E6-07-44@700M) 60.9% and is level with the 760M deep SWAs.
+* **The designations are the owner's call.** The candidates are: best raw E7-02-44@1,200M, best
+  SWA E7-02-44 1,120–1,200M. For the best overall model, the soup and E7-02-44's SWA are level.
+* **Next lever.** A shallow model soup: branch E7-02-44 at its saturation point into a few
+  continuations, as E6-06/07/08 branched from E6-04-44. On the deep line that added +42 over its
+  best SWA.
