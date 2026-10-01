@@ -1,0 +1,148 @@
+# Deep search on the USSR opening (ai/eval/opening_search.py): on the same deals, each candidate
+# opening is set up and a determinized search runs from the first decision after setup at several
+# budgets; the USSR's searched value is compared, paired by deal.
+#
+#   plan   -- pins the model and lists the parts (no engine needed).
+#   search -- N runners; runner k takes every N-th deal.
+#   pool   -- merges the parts and writes the report.
+#
+#   gh workflow run opening_search.yml -f deals=400 -f runners=16 -f us_setup=net
+#   gh run download <run-id> -n opening-search-<run-id> -D data/reports/ci
+#
+name: opening-search
+
+on:
+  # A workflow that exists only on a branch cannot be dispatched until GitHub has seen it run;
+  # editing this file on the experiment branch runs it once at the defaults below.
+  push:
+    branches: [exp/hungary-openings]
+    paths: [.github/workflows/opening_search.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "`newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file"
+        default: "newest"
+      deals:
+        description: "Deals, each searched under every candidate opening"
+        default: "400"
+      runners:
+        description: "Runners to spread the deals over"
+        default: "16"
+      budgets:
+        description: "Simulation budgets, space-separated"
+        default: "64 1024 8192"
+      worlds:
+        description: "Determinizations per (deal, opening, budget)"
+        default: "4"
+      us_setup:
+        description: "fixed (WG 3 / France 3 / Italy 2 / Iran 2) or net (the network's own US setup)"
+        default: "fixed"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  MODEL: ${{ inputs.model || 'newest' }}
+  DEALS: ${{ inputs.deals || '400' }}
+  RUNNERS: ${{ inputs.runners || '16' }}
+  BUDGETS: ${{ inputs.budgets || '64 1024 8192' }}
+  WORLDS: ${{ inputs.worlds || '4' }}
+  US_SETUP: ${{ inputs.us_setup || 'fixed' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      file: ${{ steps.pin.outputs.file }}
+      parts: ${{ steps.pin.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the model and list the parts
+        id: pin
+        run: |
+          if [ "$MODEL" = "newest" ]; then
+            f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
+          else
+            f="${MODEL#hf:}"
+          fi
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+          python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+          echo "model: $f"
+
+  search:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Search part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/opening_search.py search \
+            --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
+            --deals "$DEALS" --part "${{ matrix.part }}/$RUNNERS" --budgets $BUDGETS \
+            --worlds "$WORLDS" --us-setup "$US_SETUP" --out "parts/part-${{ matrix.part }}.jsonl"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opening-search-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, search]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: opening-search-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.jsonl 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/opening_search.py report \
+            --parts parts/part-*.jsonl --out-md reports/report.md --out-json reports/report.json
+          cat parts/part-*.jsonl > reports/rows.jsonl
+
+      - name: Provenance and summary
+        if: always()
+        run: |
+          mkdir -p reports
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
+            echo "deals: $DEALS  budgets: $BUDGETS  worlds: $WORLDS  us_setup: $US_SETUP  runners: $RUNNERS"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md 2>/dev/null || echo "No report."; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opening-search-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
