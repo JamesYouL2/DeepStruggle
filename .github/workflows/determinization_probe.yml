@@ -13,11 +13,6 @@
 name: determinization-probe
 
 on:
-  # A workflow that exists only on a branch cannot be dispatched until GitHub has seen it run;
-  # editing this file on the experiment branch runs it once at the defaults below.
-  push:
-    branches: [exp/hungary-openings]
-    paths: [.github/workflows/determinization_probe.yml]
   workflow_dispatch:
     inputs:
       model:
@@ -35,6 +30,15 @@ on:
       sims:
         description: "Simulations per one-world search (the training searcher uses 64)"
         default: "64"
+      dirichlet_frac:
+        description: "Root noise in every determinized search; > 0 looks for blind spots and checks them by playouts"
+        default: "0"
+      dirichlet_alpha:
+        description: "Dirichlet concentration"
+        default: "1.0"
+      verify_pairs:
+        description: "Paired playouts per blind-spot candidate"
+        default: "256"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
@@ -48,6 +52,9 @@ env:
   RUNNERS: ${{ inputs.runners || '8' }}
   WORLDS: ${{ inputs.worlds || '8' }}
   SIMS: ${{ inputs.sims || '64' }}
+  DIRICHLET_FRAC: ${{ inputs.dirichlet_frac || '0' }}
+  DIRICHLET_ALPHA: ${{ inputs.dirichlet_alpha || '1.0' }}
+  VERIFY_PAIRS: ${{ inputs.verify_pairs || '256' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
 jobs:
@@ -113,6 +120,7 @@ jobs:
             --model "data/checkpoints/$(basename "${{ needs.positions.outputs.file }}")" \
             --positions probe/positions.jsonl --part "${{ matrix.part }}/$RUNNERS" \
             --worlds "$WORLDS" --sims "$SIMS" --small-sims "$(( SIMS / WORLDS ))" \
+            --dirichlet-frac "$DIRICHLET_FRAC" --dirichlet-alpha "$DIRICHLET_ALPHA" \
             --out "parts/part-${{ matrix.part }}.jsonl"
 
       - uses: actions/upload-artifact@v4
@@ -146,6 +154,21 @@ jobs:
             --parts parts/part-*.jsonl --out-md reports/report.md --out-json reports/report.json
           cat parts/part-*.jsonl > reports/rows.jsonl
 
+      - uses: actions/download-artifact@v4
+        if: env.DIRICHLET_FRAC != '0'
+        with:
+          name: determinization-positions-${{ github.run_id }}
+          path: probe/
+
+      - name: Check the blind-spot candidates by paired playouts
+        if: env.DIRICHLET_FRAC != '0'
+        run: |
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.positions.outputs.file }}" --out-dir data/checkpoints
+          PYTHONPATH=.:build/release .venv/bin/python tools/determinization_probe.py verify \
+            --model "data/checkpoints/$(basename "${{ needs.positions.outputs.file }}")" \
+            --positions probe/positions.jsonl --parts parts/part-*.jsonl --pairs "$VERIFY_PAIRS" \
+            --out-md reports/blind_spots.md --out-json reports/blind_spots.json
+
       - name: Provenance and summary
         if: always()
         run: |
@@ -155,8 +178,9 @@ jobs:
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "model: $HF_REPO ${{ needs.positions.outputs.file }}"
             echo "positions: $POSITIONS  worlds: $WORLDS  sims: $SIMS  runners: $RUNNERS"
+            echo "dirichlet: frac $DIRICHLET_FRAC alpha $DIRICHLET_ALPHA  verify_pairs: $VERIFY_PAIRS"
           } > reports/provenance.txt
-          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md 2>/dev/null || echo "No report."; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md 2>/dev/null || echo "No report."; cat reports/blind_spots.md 2>/dev/null || true; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
