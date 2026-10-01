@@ -1,0 +1,35 @@
+# Static typing (CLAUDE.md invariant 5): pyrefly must report 0 errors. Paths are passed
+# explicitly -- a bare `pyrefly check` honours .git/info/exclude and can match zero files while
+# exiting 0. The ts_engine stubs are committed (bindings/ts_engine/), so no engine build is needed.
+name: typecheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pyrefly:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true   # pyrefly.toml's search-path names external/struggler/src
+      - uses: ./.github/actions/setup
+        with:
+          build-engine: "false"
+      - name: pyrefly
+        run: |
+          python -m pyrefly check ai tools tests web bindings 2>&1 | tee pyrefly.log
+          if grep -q "No Python files matched" pyrefly.log; then
+            echo "pyrefly checked nothing" >&2
+            exit 1
+          fi

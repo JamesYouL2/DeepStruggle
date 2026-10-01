@@ -1,0 +1,54 @@
+# tests/web: the local server, the page under Playwright, and -- the part that matters for engine
+# changes -- test_wasm_engine.py, which holds the WebAssembly engine bit-identical to the native one.
+# Needs both engine builds, Emscripten, node and a browser.
+name: web
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHONPATH: .:build/release
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    env:
+      EMSDK_VERSION: "6.0.10"   # pinned, as tools/scripts/install_emsdk.sh and pages.yml are
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+
+      - name: Cache Emscripten
+        uses: actions/cache@v6
+        with:
+          path: ~/.local/opt/emsdk
+          key: emsdk-${{ env.EMSDK_VERSION }}
+      - name: Install Emscripten
+        run: tools/scripts/install_emsdk.sh
+
+      - name: Build the WebAssembly engine and the page
+        env:
+          TS_PYTHON: python
+        run: tools/scripts/build_web.sh
+
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+
+      - name: pytest
+        run: python -m pytest -q -n auto tests/web

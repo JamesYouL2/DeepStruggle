@@ -1,5 +1,10 @@
 # Deep Struggle
 
+[![tests](https://github.com/mihaild/DeepStruggle/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mihaild/DeepStruggle/actions/workflows/tests.yml?query=branch%3Amain)
+[![typecheck](https://github.com/mihaild/DeepStruggle/actions/workflows/typecheck.yml/badge.svg?branch=main)](https://github.com/mihaild/DeepStruggle/actions/workflows/typecheck.yml?query=branch%3Amain)
+[![web](https://github.com/mihaild/DeepStruggle/actions/workflows/web.yml/badge.svg?branch=main)](https://github.com/mihaild/DeepStruggle/actions/workflows/web.yml?query=branch%3Amain)
+[![pages](https://github.com/mihaild/DeepStruggle/actions/workflows/pages.yml/badge.svg?branch=main)](https://github.com/mihaild/DeepStruggle/actions/workflows/pages.yml)
+
 Welcome to Deep Struggle! It is a project dedicated to build an AI that plays the Deluxe Edition of **Twilight Struggle** (GMT Games, 2005).
 
 Current status:
