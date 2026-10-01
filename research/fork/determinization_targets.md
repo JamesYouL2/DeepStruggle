@@ -82,5 +82,4 @@ checked by 256 paired playouts of the model's move against search's, hidden card
   whether the averaged target is biased; world sensitivity points to where bias could live.
 * One model, an SWA, which may be smoother than a raw training snapshot.
 * Setup placements (prior ≈ 1) are among the positions and inflate the 0% rows somewhat.
-* Not run with a Gumbel or noisy root; the probe takes a searcher config and would answer that in
-  ~20 minutes of CI.
+* Not run with a Gumbel root (that code is on `feat/mcts-gumbel`); the noisy-root runs are above.
