@@ -201,6 +201,22 @@ def test_sampling_only_ever_picks_legal_actions(exported: Dict[str, str]) -> Non
         assert m[np.arange(len(picks)), picks].all(), f"illegal action sampled at tau={t}"
 
 
+def test_a_determinized_search_does_not_depend_on_the_number_of_workers(
+        exported: Dict[str, str], tmp_path) -> None:
+    """Search is what the workers are for: it decides in Python, one tree at a time. A
+    determinizing search samples its worlds from its own stream, so at a fixed shard size one
+    worker and two must still play the same games."""
+    spec = f"search:{exported['pt']}:2:determinize"
+    logs: List[Dict[int, Dict[str, Any]]] = []
+    for w in (1, 2):
+        path = str(tmp_path / f"w{w}.jsonl")
+        run_matchups_parallel([spec, "heuristic"], [(0, 1)], games_per_side=2, workers=w,
+                              shard_pairs=1, device="cpu", temperature=0.0, log_games=path)
+        logs.append(_log(path))
+    assert len(logs[0]) == 4
+    assert logs[0] == logs[1]
+
+
 def test_a_file_that_is_not_an_export_is_refused(exported: Dict[str, str], tmp_path) -> None:
     import onnx
 

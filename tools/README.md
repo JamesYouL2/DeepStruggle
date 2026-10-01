@@ -480,9 +480,12 @@ it in distribution only. `--pack-pairs 1` plays one pairing at a time, and `--tr
 `--log-games` force it. The one cost that remains is the heuristic bot, which is pure Python per
 position.
 
-### C. Multicore: bots that decide in Python
-A network is batched inside one process and gains little from more; a bot that decides in Python
-(`heuristic_mcts`) plays one decision at a time on one core. `--workers N`
+### C. Multicore: search, and bots that decide in Python
+A plain network is batched inside one process and is bound by inference, so it gains little from
+more. A `search:` entrant is not: its tree (selection, state clones, engine steps, backups) runs in
+Python on one core, and only the leaf evaluation is batched -- the GPU sat at ~4% under a 256-sim
+search (`research/log/search_cost_and_coverage.md` §10). The same holds for a bot that decides in
+Python (`heuristic_mcts`). `--workers N`
 (0 = every core) cuts each matchup into shards of `--shard-pairs` game pairs (default 10; a pair is
 one deal played from both sides) and plays them in N processes, one thread each
 (`tools/lib/parallel_tournament.py`).
