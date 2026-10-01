@@ -6,8 +6,8 @@ and Independent Reds hit an unbuffered 3/3/3, John Paul II and Solidarity are wo
 Poland 3, and Hungary gives up the Italy border that Yugoslavia (or Austria) would give. And the
 hypothesis: Hungary was chosen against weak opponents early in training and never revisited.
 
-**Status: interim.** The net-only results and the 4,096-deal mirrors below are complete. The
-search-64 rung (a US stronger than the model) is still running on branch `exp/hungary-openings`; this note is updated
+**Status: interim.** Everything below is complete except the search-64 rung for Czechoslovakia,
+which is still running on branch `exp/hungary-openings`; this note is updated
 when they land.
 
 ## Setup
@@ -117,11 +117,30 @@ win-probability points; alternatives as a paired difference from Hungary (± ≈
   playouts are the instrument. The same offset is what setup credit learns from, which is a
   candidate explanation for the lock.
 
+## Result 5: a stronger US (search-64) against each opening
+
+Search-64 (`search:…:64:determinize`) plays the US, the net the USSR, 512 deals per opening (runs
+`36823436480` Hungary, `36797743259` Yugoslavia, `36797737559` Austria), compared deal by deal with
+the net playing the US on the same deals (the 512-deal mirrors). The US headlines first, so these
+games are unaffected by the determinization headline leak fixed in `57c6737`.
+
+| USSR opening | vs search-64 US | vs net US | cost of the stronger US |
+|:---|---:|---:|---:|
+| Pol 3 / Hun 3 | 41.1% | 47.9% | −6.7 ± 2.6 |
+| Pol 3 / Yug 3 | 44.0% | 49.3% | −5.3 ± 2.8 |
+| EG 4 / Pol 4 / Aut 1 | 43.1% | 48.0% | −5.0 ± 2.4 |
+
+Extra punishment of Hungary by the stronger US (difference in differences, paired): **+1.5 ± 3.8**
+against Yugoslavia, **+1.8 ± 3.6** against Austria. Against search, Yugoslavia − Hungary is +2.9 ± 2.8.
+
+* **The sign is the fork owner's hypothesis** — a stronger US costs Hungary more — but at about
+  1.5–2 points it is inside the noise of 512 deals. Czechoslovakia is pending.
+
 ## Reading
 
-* **The "weak opponents only" hypothesis is not supported up to E6 strength.** Hungary − buffered
-  is −0.2 / +2.5 / −0.2 across the rungs: no trend. The rung that would test it properly is a US
-  stronger than the model (search-64, pending).
+* **The "weak opponents only" hypothesis is not supported up to E6 strength** (Hungary − buffered
+  −0.2 / +2.5 / −0.2 across the rungs), and the stronger-US rung (Result 5) leans its way by ~1.5–2
+  points without resolving it.
 * **At E6 strength the candidate openings are tied within a point or so** (Result 3); Hungary is
   at most ~1 point worse than an Italy-adjacent opening, 2–3 against weaker US rungs.
 * **Why the lock survives:** the setup locks early (E5-11 by 40M,
