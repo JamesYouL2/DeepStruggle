@@ -443,6 +443,30 @@ class OnnxModule(nn.Module):
         return (torch.from_numpy(np.asarray(logits)), torch.from_numpy(np.asarray(v_win)),
                 torch.from_numpy(np.asarray(v_vp)))
 
+    @property
+    def TOTAL_OBS_SIZE(self) -> int:
+        """The width the export reads, under the name `check_obs_width` looks for."""
+        return int(self.agent.obs_size)
+
+    def sample_action(self, obs: torch.Tensor, mask: torch.Tensor, temperature: float = 1.0,
+                      deterministic: bool = False
+                      ) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]":
+        """`ColdWarNetV2.sample_action` over this export's logits, so the replay writer
+        (`tools/lib/self_play.py`) can play and trace a published model."""
+        logits, v_win, v_vp = self.forward(obs, mask)
+        logits = logits.float()
+        if deterministic:
+            actions = torch.argmax(logits, dim=-1)
+            log_probs = torch.log_softmax(logits, dim=-1)
+            action_log_probs = log_probs.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
+            entropy = -(torch.exp(log_probs) * log_probs).sum(dim=-1)
+        else:
+            dist = torch.distributions.Categorical(logits=logits / max(temperature, 1e-4))
+            actions = dist.sample()
+            action_log_probs = dist.log_prob(actions)
+            entropy = dist.entropy()
+        return actions, action_log_probs, v_win.squeeze(-1), v_vp.squeeze(-1), entropy
+
 
 class EnsembleAgent:
     """Several exported networks playing as one: each move from the average of their policies

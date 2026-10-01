@@ -1,0 +1,76 @@
+# Greedy self-play games of one model, as traced .tslog.json replays for a human to review
+# (tools/review_games.py). Load a replay in the workbench to read it; name a decision and check it
+# with branch_oracle.yml, which takes this run's id.
+#
+#   gh workflow run review_games.yml -f games=8
+#   gh run download <run-id> -n review-games-<run-id> -D data/replays/review
+#
+name: review-games
+
+on:
+  # A workflow that exists only on a branch cannot be dispatched until GitHub has seen it run;
+  # editing this file on the experiment branch runs it once at the defaults below.
+  push:
+    branches: [exp/hungary-openings]
+    paths: [.github/workflows/review_games.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "`newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file"
+        default: "newest"
+      games:
+        description: "Games to play"
+        default: "8"
+      seed_base:
+        description: "Game k is played on seed seed_base + k"
+        default: "9100001"
+      temperature:
+        description: "0 plays the argmax (greedy)"
+        default: "0"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  MODEL: ${{ inputs.model || 'newest' }}
+  GAMES: ${{ inputs.games || '8' }}
+  SEED_BASE: ${{ inputs.seed_base || '9100001' }}
+  TEMPERATURE: ${{ inputs.temperature || '0' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Play the games
+        run: |
+          if [ "$MODEL" = "newest" ]; then
+            f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
+          else
+            f="${MODEL#hf:}"
+          fi
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "$f" --out-dir data/checkpoints
+          mkdir -p review
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/review_games.py \
+            --model "data/checkpoints/$(basename "$f")" --games "$GAMES" --seed-base "$SEED_BASE" \
+            --temperature "$TEMPERATURE" --out-dir review
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $HF_REPO $f"
+          } > review/provenance.txt
+          { echo '```'; cat review/provenance.txt; echo '```'; echo '```json'; cat review/index.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-games-${{ github.run_id }}
+          path: review/
+          if-no-files-found: error

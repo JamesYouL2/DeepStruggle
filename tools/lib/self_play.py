@@ -91,8 +91,11 @@ def generate_self_play_replay(
         agent = load_agent(model, device=dev)
         if isinstance(agent, NeuralAgent):
             active_model = agent.model
+        elif hasattr(agent, "as_module"):
+            # A published ONNX export: the same forward/sample_action surface, run on CPU.
+            active_model = getattr(agent, "as_module")()
         else:
-            raise ValueError(f"Model path {model} did not produce a NeuralAgent")
+            raise ValueError(f"Model path {model} did not produce a network")
     elif isinstance(model, torch.nn.Module):
         active_model = model.to(dev)
     elif hasattr(model, "model"):
