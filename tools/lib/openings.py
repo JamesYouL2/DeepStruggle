@@ -81,6 +81,9 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "wfi_eg4_pol4_aut1": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_EG4_POL4_AUT1)},
     "wfi_py": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_YUGOSLAVIA)},
     "wfi_pc": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_CZECHOSLOVAKIA)},
+    # The human USSR opening (East Germany 4, Poland 4, Yugoslavia 1): the buffer and the Italy
+    # border together.
+    "wfi_eg4_pol4_yug1": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_OPENING)},
 }
 
 
