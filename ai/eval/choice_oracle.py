@@ -33,16 +33,19 @@ from bindings.action_encoder import ActionEncoder
 
 MODE_BASE = int(ActionEncoder.PLAY_MODE_OFFSET)
 EVENT = MODE_BASE + 0
+SPACE = MODE_BASE + 1
 
 
 @dataclass
 class Scenario:
     name: str
-    kind: str                      # "headline" or "event"
+    kind: str                      # "headline", "event" or "space"
     side: str                      # "US" or "USSR"
     cards: Tuple[str, ...]         # headline: (A, B); event: (card,)
     turn: int = 1                  # headline only
     behind: bool = False           # event only: mover behind on VP
+    before_turn: int = 99          # event/space: only before this turn
+    departures: bool = False       # keep only positions where the model does NOT play the alternative
     ids: Tuple[int, ...] = field(default=())
 
     def resolve(self, by_name: Dict[str, int]) -> "Scenario":
@@ -52,7 +55,12 @@ class Scenario:
     def branches(self) -> Dict[str, List[int]]:
         if self.kind == "headline":
             return {"policy": [], self.cards[0]: [self.ids[0] - 1], self.cards[1]: [self.ids[1] - 1]}
+        if self.kind == "space":
+            return {"policy": [], "space": [SPACE]}
         return {"policy": [], "event": [EVENT]}
+
+    def alternative(self) -> Optional[int]:
+        return {"event": EVENT, "space": SPACE}.get(self.kind)
 
 
 SCENARIOS: Tuple[Scenario, ...] = (
@@ -66,15 +74,20 @@ SCENARIOS: Tuple[Scenario, ...] = (
              ("Middle East Scoring", "Defectors")),
     Scenario("US plays Grain Sales to Soviets: event vs the model's choice", "event", "US", ("Grain Sales to Soviets",)),
     Scenario("USSR plays Aldrich Ames Remix: event vs the model's choice", "event", "USSR", ("Aldrich Ames Remix",)),
-    Scenario("US plays Terrorism while behind: event vs the model's choice", "event", "US", ("Terrorism",), behind=True),
-    Scenario("USSR plays Terrorism while behind: event vs the model's choice", "event", "USSR", ("Terrorism",), behind=True),
+    Scenario("USSR holds The Voice of America and lets it fire: space it instead", "space", "USSR",
+             ("The Voice of America",), departures=True),
+    Scenario("USSR holds Colonial Rear Guards and lets it fire: space it instead", "space", "USSR",
+             ("Colonial Rear Guards",), departures=True),
+    Scenario("US holds Decolonization before the Late War and lets it fire: space it instead", "space", "US",
+             ("Decolonization",), before_turn=8, departures=True),
 )
 
 
 def scenarios() -> List[Scenario]:
     info = cards()
     by_name = {str(info[c]["name"]): c for c in info}
-    return [Scenario(s.name, s.kind, s.side, s.cards, s.turn, s.behind).resolve(by_name) for s in SCENARIOS]
+    return [Scenario(s.name, s.kind, s.side, s.cards, s.turn, s.behind, s.before_turn, s.departures).resolve(by_name)
+            for s in SCENARIOS]
 
 
 def _player(side: str) -> ts.Player:
@@ -97,7 +110,8 @@ def matches(sc: Scenario, st: ts.GameState, mask: np.ndarray) -> bool:
                 and all(bool(mask[c - 1]) for c in sc.ids))
     if ctx.decision_type != ts.DecisionType.SELECT_PLAY_MODE or int(ctx.pending_op_card) != sc.ids[0]:
         return False
-    if not mask[EVENT] or mask[MODE_BASE:MODE_BASE + 5].sum() < 2:
+    alt = sc.alternative()
+    if alt is None or not mask[alt] or mask[MODE_BASE:MODE_BASE + 5].sum() < 2 or int(st.turn) >= sc.before_turn:
         return False
     if sc.behind:
         vp = int(st.victory_points) * (1 if sc.side == "US" else -1)
@@ -106,7 +120,7 @@ def matches(sc: Scenario, st: ts.GameState, mask: np.ndarray) -> bool:
 
 
 def collect(act: PolicyFn, scs: Sequence[Scenario], per: int, seed: int, envs: int = 64,
-            headline_games: int = 20_000, full_games: int = 2_000, accept: float = 0.5,
+            headline_games: int = 20_000, full_games: int = 3_000, accept: float = 1.0,
             max_steps: int = 3_000_000) -> Dict[str, List[Tuple[ts.GameState, int]]]:
     """Up to `per` positions per scenario, each with the model's greedy action there. Headline
     scenarios use short games reset after the turn-1 headlines; event scenarios full games, each
@@ -114,7 +128,7 @@ def collect(act: PolicyFn, scs: Sequence[Scenario], per: int, seed: int, envs: i
     out: Dict[str, List[Tuple[ts.GameState, int]]] = {s.name: [] for s in scs}
     rng = np.random.default_rng(seed)
     for phase, budget in (("headline", headline_games), ("event", full_games)):
-        todo = [s for s in scs if s.kind == phase]
+        todo = [s for s in scs if (s.kind == "headline") == (phase == "headline")]
         if not todo:
             continue
         runner = ts.VectorizedBatchRunner(envs, seed * 7 + (1 if phase == "event" else 0))
@@ -142,6 +156,8 @@ def collect(act: PolicyFn, scs: Sequence[Scenario], per: int, seed: int, envs: i
                     continue
                 for s in todo:
                     if len(out[s.name]) >= per or s.name in taken[i] or not matches(s, st, m):
+                        continue
+                    if s.departures and int(acts[i]) == s.alternative():
                         continue
                     if phase == "event" and rng.random() >= accept:
                         continue
