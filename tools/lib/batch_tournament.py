@@ -18,6 +18,30 @@ from ai.game_length import ply as game_ply
 from tools.lib.tournament_evaluator import classify_game_ending_reason
 
 
+#: Turns at whose start a logged game's board is snapshotted (`_board_snapshot`): the state then
+#: is the end of the turn before, after cleanup. Turn 4 is the first Mid War turn, 8 the first Late.
+SNAPSHOT_TURNS: Tuple[int, ...] = (2, 4, 8)
+#: Cards whose location a snapshot records: the Eastern Europe events and their counters
+#: (Independent Reds, Marshall Plan, East European Unrest, John Paul II, Solidarity, Comecon,
+#: Warsaw Pact, NATO, Willy Brandt). Starred ones read REMOVED_FROM_GAME once the event fired.
+SNAPSHOT_CARDS: Tuple[int, ...] = (22, 23, 29, 68, 101, 14, 16, 21, 55)
+
+
+def _board_snapshot(st: "ts.GameState") -> Dict[str, Any]:
+    """Europe influence for both sides (countries 0-20 in map order), DEFCON, VP, and the
+    location of SNAPSHOT_CARDS (`ts.CardLocation` values) -- what a games.jsonl reader needs to
+    ask what the European opening led to, without replaying a game it has no actions for."""
+    d = json.loads(st.to_save_json())
+    return {
+        "turn": int(st.turn),
+        "us": [int(x) for x in d["us_influence"][:21]],
+        "ussr": [int(x) for x in d["ussr_influence"][:21]],
+        "defcon": int(st.defcon),
+        "vp": int(st.victory_points),
+        "cards": {str(c): int(d["card_locations"][c]) for c in SNAPSHOT_CARDS},
+    }
+
+
 def categorize_flat_action_detailed(action_idx: int) -> str:
     """Categorizes a flat action into human-readable semantic categories."""
     if action_idx == ActionEncoder.CONFIRM_DONE_INDEX:
@@ -353,6 +377,9 @@ class BatchMatchRunner:
             chunk_plies = np.zeros(cur_games, dtype=np.int32)
             chunk_steps = np.zeros(cur_games, dtype=np.int32)
             chunk_causes = [""] * cur_games
+            # Board snapshots for the games log only: get_turns() is one call per step, and a
+            # game's state is read only at the step it first reaches a snapshot turn.
+            chunk_boards: List[Dict[str, Any]] = [{} for _ in range(cur_games)]
 
             chunk_ussr_total = np.zeros(cur_games, dtype=np.int32)
             chunk_ussr_single = np.zeros(cur_games, dtype=np.int32)
@@ -377,10 +404,19 @@ class BatchMatchRunner:
                                                     headline_stage=int(st.headline_stage))
                         chunk_steps[idx] = steps
                         chunk_causes[idx] = classify_game_ending_reason(st)
+                        if log_games_file:
+                            chunk_boards[idx]["end"] = _board_snapshot(st)
                     active = active & (~terms)
 
                 if not np.any(active):
                     break
+
+                if log_games_file:
+                    cur_turns = runner.get_turns()
+                    for idx in np.where(active)[0]:
+                        t = int(cur_turns[idx])
+                        if t in SNAPSHOT_TURNS and f"t{t}" not in chunk_boards[idx]:
+                            chunk_boards[idx][f"t{t}"] = _board_snapshot(runner.get_state(int(idx)))
 
                 if track_choices:
                     active_indices = np.where(active)[0]
@@ -536,6 +572,7 @@ class BatchMatchRunner:
                             "total_micro_actions": m_all_tot,
                             "total_single_choice_micro_actions": m_all_sgl,
                             "total_single_choice_pct": round(m_all_sgl / max(1, m_all_tot) * 100.0, 2),
+                            "boards": chunk_boards[idx],
                         }
                         f_log.write(json.dumps(entry) + "\n")
 

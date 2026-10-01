@@ -46,6 +46,20 @@ US_NO_WEST_GERMANY: Sequence[Tuple[int, int]] = (
     (CANADA, 2), (ITALY, 2), (FRANCE, 3), (IRAN, 1), (SOUTH_KOREA, 1))
 
 PANAMA = 70
+AUSTRIA = 13
+
+#: The setup the E6 models' US converged on (research/log/E6_04_league_seed44.md): seven Western
+#: Europe points (WG 3, France 3, Italy 1), then the bonus on Italy and Iran -- Italy 2, Iran 2.
+US_WG3_FR3_IT2: Sequence[Tuple[int, int]] = (
+    (WEST_GERMANY, 3), (FRANCE, 3), (ITALY, 1), (ITALY, 1), (IRAN, 1))
+#: The buffered USSR opening: East Germany and Poland each one over control, and Austria, which
+#: borders Italy and West Germany.
+USSR_EG4_POL4_AUT1: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 4), (AUSTRIA, 1))
+CZECHOSLOVAKIA = 16
+#: The other two 3/3/3 openings, for comparison with Poland 3 / Hungary 3: the same six points,
+#: the second 3 in Yugoslavia (borders Italy and Greece) or Czechoslovakia (borders neither).
+USSR_POLAND_YUGOSLAVIA: Sequence[Tuple[int, int]] = ((POLAND, 3), (YUGOSLAVIA, 3))
+USSR_POLAND_CZECHOSLOVAKIA: Sequence[Tuple[int, int]] = ((POLAND, 3), (CZECHOSLOVAKIA, 3))
 
 #: The US openings E5-16 settled on (research/log/E5_16_setup_mc_credit.md), in placement order:
 #: seven Western Europe points, then the two bonus points where the US already has influence.
@@ -61,6 +75,12 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "us_e516_44": {"US": expand(US_E516_44)},
     "ph_west_germany": {"US": expand(US_OPENING), "USSR": expand(USSR_POLAND_HUNGARY)},
     "ph_no_west_germany": {"US": expand(US_NO_WEST_GERMANY), "USSR": expand(USSR_POLAND_HUNGARY)},
+    # The E6 US setup against four USSR openings: the unbuffered 3/3/3 with Hungary (what E6
+    # plays), Yugoslavia or Czechoslovakia, and the buffered 4/4 with Austria.
+    "wfi_ph": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_HUNGARY)},
+    "wfi_eg4_pol4_aut1": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_EG4_POL4_AUT1)},
+    "wfi_py": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_YUGOSLAVIA)},
+    "wfi_pc": {"US": expand(US_WG3_FR3_IT2), "USSR": expand(USSR_POLAND_CZECHOSLOVAKIA)},
 }
 
 
