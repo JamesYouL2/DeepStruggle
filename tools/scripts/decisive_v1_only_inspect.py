@@ -85,6 +85,7 @@ for _ in range(20000):
                 outcomes[(("mover wins" if util*me > 0 else "mover loses" if util*me < 0 else "game goes on"), end)] += 1
                 if ex is None or (util*me <= 0 and ex[0]*me > 0): ex = (util, end, rolls, steps, vp, dc)
             print(f"    after '{name_action(st, base[0])}' over 60 seeds:", dict(outcomes))
+            assert ex is not None
             print(f"    a trace: rolls {ex[2]}, forced steps {ex[3][:10]}, VP {ex[4]}, DEFCON {ex[5]}, end: {ex[1]}")
     obs, masks, _, dones, info = env.step(acts)
     for i, dn in enumerate(dones):
