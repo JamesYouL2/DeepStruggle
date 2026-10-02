@@ -37,7 +37,7 @@ import ts_engine as ts
 from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start, apply_prefix
 from ai.eval.choice_oracle import _loses_now
 from ai.eval.doctrine_census import MODES, N_CARDS, cards
-from ai.eval.ops_block import CONFIRM_DONE
+from ai.eval.ops_block import CONFIRM_DONE, _in_block
 from ai.eval.reply_probe import _ar_key, is_round_start, position_link
 from bindings.action_encoder import ActionEncoder
 
@@ -145,14 +145,19 @@ def branches(st: ts.GameState, kind: str, probs: np.ndarray, card_branches: int 
 
 
 def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player], keys: Sequence[Tuple[int, int, int, int]],
-              act: PolicyFn, seed: int, max_steps: int = 4000) -> List[float]:
+              act: PolicyFn, seed: int, max_steps: int = 4000,
+              restrict: Optional[Sequence[Optional[Tuple[int, int, np.ndarray]]]] = None) -> List[float]:
     """Play every state to the end with the model on both sides; through the rest of the mover's
     action round an option that loses on the spot is never taken while another exists. Returns the
     mover's score per state (1 win, 0.5 draw, 0 loss).
 
     `movers` and `keys` (the action round) come from the position *before* the forced choice: a
     choice that resolves on its own (a scoring card) hands the next decision to the opponent, and
-    reading the mover off the started state scored those branches from the wrong side."""
+    reading the mover off the started state scored those branches from the wrong side.
+
+    `restrict[i]`, when given, is (card, player, allowed flat actions as a bool mask): while game i
+    is in that player's influence play of that card, its moves are limited to the allowed ones --
+    unless none of them is legal, when the play goes on unrestricted."""
     n = len(starts)
     runner = ts.VectorizedBatchRunner(n, seed)
     for i, st in enumerate(starts):
@@ -167,6 +172,16 @@ def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player], keys:
         obs = np.asarray(runner.get_observations())
         masks = np.asarray(runner.get_action_masks()).copy()
         rows = np.flatnonzero(active)
+        if restrict is not None:
+            for i in (int(x) for x in rows):
+                r = restrict[i]
+                if r is None:
+                    continue
+                st = runner.get_state(i)
+                if _in_block(st, r[0], r[1]):
+                    lim = masks[i].astype(bool) & r[2]
+                    if lim.any():
+                        masks[i] = lim.astype(masks.dtype)
         for i in (int(x) for x in rows):
             if not guarding[i]:
                 continue

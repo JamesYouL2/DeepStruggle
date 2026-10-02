@@ -1,0 +1,139 @@
+# Region weight (tools/region_weight.py): where each side puts its influence, region by region,
+# against the human corpus; and whether keeping an influence play in each region beats the model's.
+#
+#   gh workflow run region_weight.yml -f plays=150 -f pairs=24 -f runners=16
+#   gh run download <run-id> -n region-weight-<run-id> -D data/reports/ci
+#
+# Each runner plays its own greedy self-play (seeded by its part number), tallies its share of the
+# corpus (part k of N), and plays out `plays` influence plays; the pool job merges the parts.
+name: region-weight
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/hungary-openings]
+    paths: [.github/workflows/region_weight.yml]
+  workflow_dispatch:
+    inputs:
+      plays:
+        description: "Influence plays played out per runner"
+        default: "150"
+      pairs:
+        description: "Paired playouts per branch"
+        default: "24"
+      runners:
+        description: "Runners (each takes 1/N of the corpus)"
+        default: "16"
+      model:
+        description: "`newest` or hf:<file.onnx>"
+        default: "newest"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PLAYS: ${{ inputs.plays || '150' }}
+  PAIRS: ${{ inputs.pairs || '24' }}
+  RUNNERS: ${{ inputs.runners || '16' }}
+  MODEL: ${{ inputs.model || 'newest' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      file: ${{ steps.pin.outputs.file }}
+      parts: ${{ steps.pin.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the model and list the parts
+        id: pin
+        run: |
+          if [ "$MODEL" = "newest" ]; then
+            f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
+          else
+            f="${MODEL#hf:}"
+          fi
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+          python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Fetch the ts-replayer corpus snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download corpus-v1 -R JamesYouL2/deepstruggle --pattern ts_replayer_corpus.tar.gz --dir "$RUNNER_TEMP"
+          mkdir -p data/datasets
+          tar -xzf "$RUNNER_TEMP/ts_replayer_corpus.tar.gz" -C data/datasets
+          ls data/datasets/ts_replayer | wc -l
+
+      - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/region_weight.py run \
+            --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
+            --plays "$PLAYS" --pairs "$PAIRS" --part "${{ matrix.part }}/$RUNNERS" \
+            --out "parts/part-${{ matrix.part }}.json.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: region-weight-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: region-weight-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.json.gz 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/region_weight.py report \
+            --parts "parts/part-*.json.gz" --out-md reports/report.md --out-json reports/report.json
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
+            echo "plays/runner: $PLAYS  pairs: $PAIRS  runners: $RUNNERS (corpus-v1)"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: region-weight-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
