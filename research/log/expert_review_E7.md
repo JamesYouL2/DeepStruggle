@@ -1,7 +1,7 @@
 # An expert review of the E7 soup: strengths, card-play leaks, and a forced-win fix (2026-10-02)
 
 **Who and why.** James You (fork `JamesYouL2/DeepStruggle`) is a top-20-to-50 Twilight Struggle
-player. He played the current best model and turned his observations into measurements:
+player who played the current best model and turned those observations into measurements:
 
 * the **doctrine census** -- how often the model departs from a strong player's rule;
 * **paired playouts by the model itself** -- what each departure costs. The cards the mover cannot
@@ -37,10 +37,12 @@ the weaknesses below lower bounds.
   * **decisive wins not taken.** Wargames is declined 429 of 430 times at a winning lead, about 1.5
     points a game, and `safety.py` did not see it -- fixed in this PR. OPEC and Alliance for Progress
     are declined about half the time when the event would reach 20 VP, which `safety.py` does see;
-  * **immediate VP from events undervalued.** OPEC and Alliance for Progress at 5+ VP, Star Wars
-    when ahead, Special Relationship with NATO in effect, Soviets Shoot Down KAL-007 with South Korea
-    US-controlled, Glasnost with The Reformer in play, and above all One Small Step one box behind, which the model never events and which
-    is worth +2.8 to +5.7 points a play for the US. Humans make 1.6-3.3 more VP a game from events;
+  * **immediate VP and space from events undervalued, at specific spots.** One Small Step one box
+    behind, Soviets Shoot Down KAL-007 with South Korea US-controlled, Star Wars, Glasnost with The
+    Reformer in play and Special Relationship with NATO in effect: the model events each 0-1% of the
+    time, and its own playouts value the event at +2 to +6 points a play. Humans make 1.6-3.3 more VP
+    a game from events. Generic rules ("event at k VP", "event when behind in space") do *not* hold;
+    the spots do;
   * **event timing against the hand and the rounds left.** Five Year Plan and Aldrich Ames; the net
     is never told how many rounds it has left;
   * **rarely reached decisions decided poorly.** The choices inside events, such as Aldrich Ames'
@@ -60,8 +62,11 @@ for Ops, the event read "normal". Two things followed:
 * any safety layer built on the classifier never took it.
 
 Now, at DEFCON 2 with a lead over 6, the event is a win. At 6 or less it is not a loss, since the
-branch can still decline to end the game. `tests/training/test_safety_decisive.py` pins both, beside the game's other instant endings (a battleground coup at DEFCON 2 by Ops or by an event's free coup, and not under Nuclear Subs; a scoring card reaching 20 VP; Europe Scoring with Europe controlled), which were already right. It
-also confirms the engine side: the event, then branch 0, ends the game for the mover.
+branch can still decline to end the game. `tests/training/test_safety_decisive.py` pins both,
+beside the game's other instant endings, which were already right: a battleground coup at DEFCON 2,
+by Ops or by an event's free coup, and not under Nuclear Subs; a scoring card reaching 20 VP; Europe
+Scoring with Europe controlled. It also confirms the engine side: the event, then branch 0, ends the
+game for the mover.
 
 This changes what the decisive probe reports from now on: forced wins it never saw are counted.
 
@@ -70,14 +75,12 @@ This changes what the decisive probe reports from now on: forced wins it never s
 | leak | how often | cost (the model's own paired playouts) | evidence |
 |:---|:---|:---|:---|
 | **Wargames declined at a winning lead** | 429 of 430 plays; ~11% of games | 14.3 ± 2.6 pts per decline (it still wins 85.7%): **~1.5 pts a game** | census `36943954436`; 60 positions × 32 pairs |
-| **OPEC not evented at 5+ VP** | evented 24% | event +2.4 ± 0.3 | 363 positions × 128 pairs, `36945382157` |
-| **Star Wars not evented when ahead in space** | evented 0% (census), 26% overall | +1.6 ± 0.6; +2.0 ± 0.7 where it declines | `36945382157`, `36964635572` |
-| **Game-winning OPEC / Alliance for Progress declined** | declined 31 of 58 / 19 of 27 where `safety.py` labels the event a win | +12.8 / +6.7 pts per decline (the model still wins 87% / 93%) | `37034959708` |
+| **Game-winning OPEC / Alliance for Progress declined** | declined 31 of 58 / 19 of 27 where `safety.py` labels the event a win | +12.8 / +6.7 pts per decline (the model still wins 87% / 93%); this is most of what OPEC and Alliance for Progress gain at 5+ VP | `37034959708` |
+| **Star Wars not evented** | evented 0% (census, ahead in space; card-rules bank), 26% overall | +3.8 ± 1.2 over 127 positions (+9.4 ± 2.9 in close games); +1.6 ± 0.6 ahead in space | `37026844506`, `36945382157`, `36964635572` |
 | **Special Relationship not evented with NATO in effect** | evented 0% of 320 positions | **+2.1 ± 0.5** where it scores its 2 VP (301 positions); every Ops mode is worse | 320 positions × 64 pairs, `37034959708` |
 | **Soviets Shoot Down KAL-007 not evented with South Korea US-controlled** | evented 0% of 305 positions at DEFCON 3+ | **+4.2 ± 0.6** (+7.3 ± 1.2 in close games): DEFCON 3 +4.7 ± 0.8, DEFCON 4 +4.2 ± 1.0, DEFCON 5 +1.3 ± 1.2; its Ops play is not even its best Ops mode (influence +0.9) | 305 positions × 64 pairs, `37045332746` |
 | **Glasnost not evented with The Reformer in play** | evented 1% of 320 positions | **+2.3 ± 0.5** (+5.9 ± 1.3 in close games): DEFCON 2 +1.5 ± 0.7, DEFCON 3 +4.4 ± 0.9 | 320 positions × 64 pairs, `37045332746` |
 | **One Small Step not evented one box behind** | evented 0% of 1,489 positions | US: +2.8 ± 0.4 at 1 vs 2, **+5.7 ± 0.5** at 3 vs 4; USSR: −0.2 ± 0.5 at 1 vs 2, +2.9 ± 0.5 at 3 vs 4 | 320-496 positions a side and spot × 64 pairs, `37037507768`, `37037511438` |
-| **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | 512 positions × 128 pairs, `36945382157` |
 | **Five Year Plan timing (USSR)** | last round 55%; two or more other cards in hand 38% | -- | census `36953663726` |
 | **Choices inside events** | -- | Aldrich Ames: best discard −0.8 against Ops, the model's own discard −5.5 (40 positions) | local, 32 pairs |
 
@@ -140,10 +143,11 @@ Ames in an action round.
 bake-off measures +0.2 ± 2.1 (`36970757999`, `36970763934`). Kitchen Debates where its event
 scores 2 VP: the model events it 5% of the time and the event ties its choice, +0.1 ± 0.3 over 400
 positions, whether or not the US still needs Military Ops (`37041009744`). OPEC and Alliance for
-Progress at exactly 5 VP are break-even too (+0.7 ± 0.5, −0.2 ± 0.6): the OPEC row above is mostly
-its larger hauls (`37034959708`). Captured Nazi Scientist into a VP box: the model already events
-it 75% (US) and 86% (USSR) of the time, and the event ties its choice (−0.2 ± 0.2, −0.2 ± 0.1;
-`37045332746`).
+Progress at 5+ VP, short of a game-winning haul, are break-even too (+0.4 ± 0.5, +0.0 ± 0.5; at
+exactly 5 VP +0.7 ± 0.5, −0.2 ± 0.6): the +2.4 and +1.1 the choice oracle measured at 5+ VP
+(`36945382157`) come from the larger and the game-winning hauls (`37034959708`). Captured Nazi
+Scientist into a VP box: the model already events it 75% (US) and 86% (USSR) of the time, and the
+event ties its choice (−0.2 ± 0.2, −0.2 ± 0.1; `37045332746`).
 
 ## Why training may plateau, and what to try
 
@@ -162,8 +166,9 @@ Candidates, cheapest first. All are recipe changes; none touches the engine or t
 4. **Paired-branch advantages at play-mode decisions.** Play each legal mode out with common dice
    and redeals, and use the paired differences as the policy-gradient signal for those actions.
    This gives a signal for moves the policy would never sample.
-5. **Distil the pooled rules a position bank confirms**, as a small auxiliary loss refreshed every
-   ~200M steps. Event when its immediate VP is k or more; decisive moves.
+5. **Distil the rules a position bank confirms**, as a small auxiliary loss refreshed every ~200M
+   steps: the card-specific spots above and decisive moves. Not generic thresholds -- "event when
+   its immediate VP is k or more" loses by the bank (−3.4 ± 0.2 over 2,394 decisions).
 
 Judge each on the census card-play rates and the events-VP gap, not on Elo alone.
 
