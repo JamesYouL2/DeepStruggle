@@ -924,6 +924,19 @@ class BaseNashPGTrainer:
         v = torch.stack([r[4] for r in recs]).float().reshape(-1)
         g = torch.tensor([r[6] for r in recs], dtype=torch.float32, device=obs.device)
         adv = g - v
+        if self.setup_script_frac > 0.0:
+            # The rollout log-prob is stale by the time a game ends -- several PPO updates later.
+            # For the policy's own placements (p ~ 1) that hardly matters; for a scripted one at
+            # p ~ 1e-8 a few nats of drift puts the ratio far outside the clip, which then passes
+            # the gradient of a LOST game at full weight x ratio and blocks that of a won one: the
+            # update drove the scripted openings down and the setup entropy to 0 (E7-10-44's first
+            # launch, voided). Measured from the current policy instead, every ratio starts at 1 and
+            # the single step below is a plain result-minus-baseline policy gradient.
+            with torch.no_grad():
+                old_lp = torch.cat([
+                    F.log_softmax(self.active_net(obs[i:i + self.batch_size], masks[i:i + self.batch_size])[0].float(),
+                                  dim=-1).gather(1, act[i:i + self.batch_size].unsqueeze(1)).squeeze(1)
+                    for i in range(0, n, self.batch_size)])
         # Scale only: the critic baseline already centres it, and a state-only baseline cannot
         # bias the gradient however wrong the critic is.
         adv_n = adv / adv.std().clamp(min=0.1) if n > 1 else adv
@@ -946,6 +959,8 @@ class BaseNashPGTrainer:
         nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
         self.optimizer.step()
         self.active_net.eval()
+        if self.setup_script_frac > 0.0:
+            out["setup_script_lp_mean"] = float(old_lp.mean())
         out.update({"setup_mc_n": float(n), "setup_mc_result_mean": float(g.mean()),
                     "setup_mc_adv_mean": float(adv.mean()), "setup_mc_adv_std": float(adv.std()) if n > 1 else 0.0,
                     "setup_mc_clip_frac": clip_n / n, "setup_mc_ratio_dev": ratio_dev / n})

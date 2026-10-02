@@ -15,11 +15,21 @@ from ai.training import NashPGTrainer
 from tools.lib.openings import HUMAN_OPENING_MIX, NODE_OFFSET, OPENINGS, play_scripted_setup
 
 
-def _trainer(**kw: Any) -> NashPGTrainer:
+def _trainer(shallow: bool = False, **kw: Any) -> NashPGTrainer:
     from bindings.ts_env import TsVectorizedEnv
     torch.manual_seed(0)
     dev = torch.device("cpu")
-    model = create_coldwar_net(dev)
+    if shallow:   # the production trunk: no residual blocks, so no dropout
+        from ai.models.ladder_net import create_ladder_net
+        model: Any = create_ladder_net(dev, input_mode="grouped", aggregation="flatten", entity_dim=16,
+                                       entity_proj_dim=64, card_self_attention=False, cross_attention=False,
+                                       per_entity_heads=16, head_context=True, head_static=True,
+                                       head_entities="country", head_center=True, identity_dim=0,
+                                       drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+                                       card_lookup=False, card_lookup_heads=0, card_lookup_dim=0,
+                                       card_lookup_identity_dim=0, categorical_value=False)
+    else:
+        model = create_coldwar_net(dev)
     env = TsVectorizedEnv(num_envs=8, base_seed=123)
     # 16 steps from a fresh game: almost all of them are setup placements.
     return NashPGTrainer(active_net=model, env=env, num_envs=8, buffer_size=16, lr=3e-4, eta=0.1,
@@ -116,3 +126,17 @@ def test_a_won_scripted_opening_gains_probability() -> None:
     out = t._setup_mc_update()
     assert out["setup_mc_n"] == 8 * 15
     assert float((lp() - before).mean()) > 0.0
+
+
+def test_a_stale_rollout_log_prob_does_not_skew_the_scripted_update() -> None:
+    """Between a placement and its game's end the policy moves; for a scripted action at p ~ 1e-8
+    that drift once put every ratio outside the clip. The update measures from the current policy."""
+    t = _trainer(shallow=True, setup_mc_credit=True, setup_mc_min_batch=1, setup_script_frac=1.0,
+                 setup_script_openings=("human",))
+    t.collect_rollouts()
+    t._setup_mc_resolve([{"env_idx": i, "terminal_utility": 1.0} for i in range(8)])
+    with torch.no_grad():                         # the policy drifts after the placements were made
+        for p in t.active_net.parameters():
+            p.add_(0.05 * torch.randn_like(p))
+    out = t._setup_mc_update()
+    assert out["setup_mc_ratio_dev"] < 1e-4 and out["setup_mc_clip_frac"] == 0.0
