@@ -309,3 +309,49 @@ is: **nothing**, on this question, after roughly 120M steps.
 The two live metrics that remain useful are the ones that do not depend on an opponent's strength:
 `critic_auc` / `critic_brier_skill` (a property of the value head against realised outcomes) and
 the blunder rates (violations of the rules of good play, independent of who is across the table).
+
+## The decisive probe never saw a win that took a second decision
+
+Found reviewing the E7 card play ([`expert_review_E7.md`](expert_review_E7.md)), 2026-10-02. Six
+faults in `ai/eval/safety.py` and the counters built on it, all silent, all fixed together; every
+`decisive_win_take_rate` logged before them is version 1 and does not compare with version 2.
+
+**A rule that never fired.** The Wargames branch rule, written in `6669cf8`, compared the legal
+actions -- flat indices, branch 0 at `BRANCH_OFFSET` (then 203, now 200) -- against `0`. It never
+matched. A later refactor replaced `NODE_OFFSET - 119` with a literal `0` and a comment saying the
+indices were branch indices, which they never were. The branch was labelled only because the forced
+walk happened to reach the game's end.
+
+**Wins behind a second choice were invisible.** The forced walk stops at the first decision with
+more than one option, so Wargames from hand (card, event, branch), Star Wars picking a winning card
+from the discard, and the card Grain Sales drew were never wins. The E7 soup played Wargames for Ops
+429 times of 430 at a winning lead, and the probe counted none of them.
+
+**The card in play was misread.** At a play-mode decision the classifier read `resolving_card`
+first, which names Grain Sales at the play of the card it drew; so a drawn DEFCON card's loss went
+unseen, and the drawn card's Ops took Grain Sales' "risky". The engine reads `pending_op_card`.
+
+**DEFCON rules assumed the decider was phasing.** In the USSR's round, the US eventing a drawn Duck
+and Cover at DEFCON 2 *wins* -- DEFCON 1 defeats the phasing player -- and the rule called it a loss.
+
+**Dice were sampled, not enumerated.** "Every outcome agrees" was tested on six perturbations of
+the RNG, which miss a given face a third of the time, so a line winning on 2-6 was a "forced win"
+about one time in three. The win search now forces each face through the ROLL_DIE action.
+
+**A win was counted once per decision it took.** Taking Wargames scored 3 of 3, playing it for Ops
+1 of 2. Separately, the forced loss probe labelled equally lost placements apart by their Ops cost:
+with the turn's last 2 Ops to place and a scoring card held, a 2-Op country reached the losing turn
+end and read "loss", a 1-Op country read "normal", and the probe counted an unavoidable loss as
+avoidable.
+
+**What stops it recurring.** Wins are now found by a search over the mover's own choices
+(`_search_win`) with no card list; each case is pinned for both sides in
+`tests/training/test_safety_decisive.py`, including that following the labels reaches the win; the
+counters fold one entry per chance to win (`fold_win_opportunities`); and the metrics carry
+`decisive_probe_version`.
+
+**And one instrument that cost what it measured.** The first version of the search multiplied the
+classifier's time by five -- the batched probe went from ~4% to ~12% of training time -- because
+`op_mode` keeps its last value, so an event's own placements read as coups and were searched
+exhaustively (up to 47,000 steps a decision). Coups are now recognised by the roll they lead to, and
+options with the same immediate outcome are searched once; the probe costs ~0.5% more than before.

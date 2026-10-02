@@ -15,16 +15,25 @@ Two exclusions matter for the numbers to mean anything, both learned by getting 
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.safety import classify_legal_actions
+from ai.eval.safety import WinDecision, classify_legal_actions, fold_win_opportunities
 from ai.stats import wilson_interval
 
 # (state, player) -> chosen flat action
 ActionFn = Callable[[ts.GameState, ts.Player], int]
+
+#: Written beside the rates, because the win rate's meaning changed under the same key. Version 2
+#: (2026-10-02): a win is any line of the mover's own choices and dice that win on every face --
+#: Wargames from hand, Star Wars, the card Grain Sales drew, a coup in the opponent's round, a
+#: turn end that wins -- and each chance to win counts once however many decisions it takes, and
+#: not at all where every action wins. Version 1 counted per decision, sampled dice, and missed
+#: every win that needed a second choice.
+#: Rates from runs without the key are version 1 and do not compare.
+DECISIVE_PROBE_VERSION = 2
 
 
 @dataclass
@@ -36,6 +45,13 @@ class DecisiveStats:
     loss_avoidable: int = 0
     loss_taken: int = 0
     loss_forced: int = 0
+
+    def add_wins(self, decisions: Sequence[WinDecision]) -> None:
+        """One game's decisions, in order: each chance to win counts once, however many of the
+        mover's decisions it takes (see `fold_win_opportunities`)."""
+        for _, taken in fold_win_opportunities(decisions):
+            self.win_available += 1
+            self.win_taken += int(taken)
 
     @property
     def win_take_rate(self) -> float:
@@ -67,6 +83,7 @@ class DecisiveStats:
             "decisive_loss_avoid_ci_high": loss_hi,
             "decisive_win_available": float(self.win_available),
             "decisive_loss_avoidable": float(self.loss_avoidable),
+            "decisive_probe_version": float(DECISIVE_PROBE_VERSION),
         }
 
 
@@ -82,6 +99,7 @@ def measure_decisive(
         state = ts.GameState()
         ts.Engine.init_game(state, base_seed + g)
         steps = 0
+        win_decisions: List[WinDecision] = []
         while not ts.Engine.is_terminal(state) and steps < max_steps:
             ctx = state.ctx()
             player = ctx.decision_player if ctx.decision_player != ts.Player.NONE else state.phasing_player
@@ -91,12 +109,9 @@ def measure_decisive(
 
             if kinds:
                 st_out.decisions += 1
-                wins = [a for a, k in kinds.items() if k == "win"]
+                n_wins = sum(1 for k in kinds.values() if k == "win")
                 losses = [a for a, k in kinds.items() if k == "loss"]
-                if wins:
-                    st_out.win_available += 1
-                    if kinds.get(action) == "win":
-                        st_out.win_taken += 1
+                win_decisions.append((player, len(kinds), n_wins, kinds.get(action) == "win"))
                 if losses:
                     if len(losses) < len(kinds):
                         st_out.loss_avoidable += 1
@@ -119,6 +134,7 @@ def measure_decisive(
                    and state.ctx().decision_type == ts.DecisionType.ROLL_DIE):
                 ts.Engine.step(state, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
             steps += 1
+        st_out.add_wins(win_decisions)
     return st_out
 
 INFLUENCE_SLOT = 112
@@ -210,12 +226,10 @@ def measure_decisive_batched(
 
     def flush(i: int) -> None:
         nonlocal episodes
-        for (n_kinds, n_wins, n_losses, chosen_kind) in pending[i]:
+        out.add_wins([(player, n_kinds, n_wins, chosen_kind == "win")
+                      for (player, n_kinds, n_wins, n_losses, chosen_kind) in pending[i]])
+        for (_, n_kinds, n_wins, n_losses, chosen_kind) in pending[i]:
             out.decisions += 1
-            if n_wins:
-                out.win_available += 1
-                if chosen_kind == "win":
-                    out.win_taken += 1
             if n_losses:
                 if n_losses < n_kinds:
                     out.loss_avoidable += 1
@@ -255,7 +269,7 @@ def measure_decisive_batched(
                     continue
                 n_wins = sum(1 for k in kinds.values() if k == "win")
                 n_losses = sum(1 for k in kinds.values() if k == "loss")
-                pending[i].append((len(kinds), n_wins, n_losses, kinds.get(int(actions[i]))))
+                pending[i].append((player, len(kinds), n_wins, n_losses, kinds.get(int(actions[i]))))
 
             obs, masks, _, dones, _ = env.step(actions)
             for i, done in enumerate(dones):
