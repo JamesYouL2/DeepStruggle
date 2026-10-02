@@ -73,3 +73,30 @@ the full-size batch ran out of GPU memory next to C1's own training):
   against 1471), so C1 gained ~140 Elo in 40M where the control gained ~30. Single snapshots carry
   real noise; to be read as a lead it needs several snapshots (e.g. 190–210M, or 4 at 240M).
 * Reports: `data/reports/e7_09_44_rr_200.{md,json}`.
+
+## 240M, four-snapshot SWAs (owner: "SWA of four C1 snapshots vs SWA of four shallow run snapshots")
+
+Each run's 210/220/230/240M snapshots averaged; one field with the panel, 1,000 games per side:
+
+| model | Elo |
+|:---|---:|
+| **E7-09-44 (C1), 210–240M SWA** | **1573** |
+| E7-08-43 (shallow, seed 43), 210–240M SWA | 1544 |
+| E7-07-44 (shallow + C4), 210–240M SWA | 1526 |
+| E7-01-44 (shallow, seed 44, paired control), 210–240M SWA | 1519 |
+
+| C1 SWA against | US (panel) | USSR (panel) | head to head |
+|:---|---:|---:|---:|
+| E7-01-44 SWA (paired control) | **+5.5 ± 1.2** | **+4.6 ± 1.1** | **57.1%** |
+| E7-07-44 SWA | +3.8 ± 1.2 | +3.4 ± 1.1 | 55.0% |
+| E7-08-43 SWA | +5.0 ± 1.2 | −0.5 ± 1.1 | 58.3% |
+| *reference: E7-07-44 against E7-01-44* | +1.7 | +1.2 | 50.8% |
+| *reference: E7-08-43 against E7-01-44* | +0.5 | +5.2 | 55.2% |
+
+* **The 200M lead holds on SWAs.** C1 passes the owner's rule against its paired control (both seats
+  significantly above) and against the other two runs (above in at least one seat, below in none),
+  and is the top model of the field, +29 Elo over the best shallow SWA and +54 over its control.
+* **Size against the seed spread:** the shallow SWAs span 25 Elo among themselves (55.2% at most head
+  to head); C1 is 55–58% against each of them. A lead at the edge of, or beyond, the seed spread --
+  real but not yet a large margin, on one seed of C1.
+* Reports: `data/reports/e7_09_44_rr_swa240.{md,json}`.
