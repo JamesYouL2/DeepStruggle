@@ -15,6 +15,13 @@ mode's (zero where the model already events). "Always event" is their mean. A co
 "event when feature ≥ t (or ≤ t), else the model's move", is chosen on one half of the records
 and scored on the other, both ways round, so the reported gain is out of sample; the rule printed
 is the one chosen on all records.
+
+**Headlines are special and are not covered here.** A headline has no Ops alternative: the choice
+is *which* event to fire, before the opponent's, with both resolved by Ops value. So an action-round
+event rate says nothing about headlines, and they are probed as card choices instead (the choice
+oracle's headline scenarios, `human_disagree`'s "headline" kind). Against the corpus the model
+agrees on 55% of 4,407 headlines and the humans' picks play out no better (−0.8 ± 0.5 all turns,
+−1.7 ± 0.7 turn 1; run 36958653207, 36963933063); the largest gaps in pick rate are a point or two.
 """
 from __future__ import annotations
 
