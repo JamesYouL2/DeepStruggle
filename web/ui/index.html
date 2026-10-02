@@ -159,6 +159,23 @@
           <div id="analysis-body" class="trace-body"></div>
         </div>
 
+        <!-- Section 1a: paired playouts of the model's candidate moves (playouts_view.ts). -->
+        <div class="panel playouts-panel" id="playouts-panel">
+          <div class="panel-header">
+            <h3>PAIRED PLAYOUTS</h3>
+            <span class="playouts-controls">
+              <select id="playouts-pairs" class="analysis-select" title="Pairs per move: each pair is one redeal and one set of dice, played from every move">
+                <option value="16">16 pairs</option>
+                <option value="32" selected>32 pairs</option>
+                <option value="64">64 pairs</option>
+                <option value="128">128 pairs</option>
+              </select>
+              <button id="btn-playouts-run" class="btn btn-primary btn-sm" title="Play the ticked moves out from the same sampled worlds" disabled>Run</button>
+            </span>
+          </div>
+          <div id="playouts-body" class="trace-body"></div>
+        </div>
+
         <!-- Section 1b: What the model believed here, and what its critic thinks of the
              position. Present only for replays that carry a trace; hidden otherwise. -->
         <div class="panel trace-panel hidden" id="trace-panel">

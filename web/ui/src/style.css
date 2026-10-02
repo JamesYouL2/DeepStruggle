@@ -2076,3 +2076,23 @@ span.trace-choice-badge.played {
 .status-badge.stale { background: rgba(245, 158, 11, 0.18); color: var(--warning); border: 1px solid var(--warning); }
 /* A model file being dragged over the page. */
 body.drop-target #map-container { outline: 3px dashed var(--warning); outline-offset: -6px; }
+
+/* ---- Paired playouts (playouts_view.ts) ---------------------------------------------------- */
+.playouts-controls { display: flex; gap: 6px; align-items: center; }
+.playouts-controls .analysis-select { flex: 0 0 auto; }
+.playouts-head, .playouts-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 44px 58px 96px;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+.playouts-head { color: var(--text-secondary, #888); font-size: 11px; padding: 0 0 4px 24px; grid-template-columns: minmax(0, 1fr) 44px 58px 96px; }
+.playouts-row { padding: 3px 0; cursor: pointer; }
+.playouts-row.favourite .playouts-name { font-weight: 600; }
+.playouts-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playouts-p, .playouts-score, .playouts-diff { text-align: right; font-variant-numeric: tabular-nums; }
+.playouts-diff.better { color: var(--success, #3c9); }
+.playouts-diff.worse { color: var(--danger, #e55); }
+/* While playouts hold the engine, the board does not take clicks (moves are refused in main.ts too). */
+body.playouts-busy .map-container, body.playouts-busy #decision-body, body.playouts-busy .card-item { pointer-events: none; opacity: 0.85; }

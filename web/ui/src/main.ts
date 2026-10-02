@@ -16,6 +16,7 @@ import { ReplayControls, ReplayStep } from "./replay_controls";
 import { DebugPanel } from "./debug_panel";
 import { decorateChoices, policyChipHtml, renderTracePanel, renderValueRibbon, setActionSpace } from "./trace_view";
 import { AnalysisPanel, AutoSide, LiveAnalysis, ModelPick } from "./analysis_view";
+import { PlayoutPanel } from "./playouts_view";
 import { WasmEngine } from "./engine/wasm_engine";
 import { GameSession } from "./game/session";
 import { decodePosition, encodePosition } from "./game/position";
@@ -39,6 +40,9 @@ export class TSApp {
   public replayControls: ReplayControls;
   private debugPanel: DebugPanel;
   private analysisPanel: AnalysisPanel;
+  private playoutPanel: PlayoutPanel;
+  /** Paired playouts are swapping game states through the engine: nothing else may touch it. */
+  private playoutsBusy = false;
 
   private engine: WasmEngine | null = null;
   private session: GameSession | null = null;
@@ -95,6 +99,16 @@ export class TSApp {
     );
     this.analysisPanel.setAutoSide(this.urlAuto);
     this.analysisPanel.show(!this.isReplayMode);
+    this.playoutPanel = new PlayoutPanel({
+      engine: () => this.engine ?? null,
+      model: () => this.model,
+      analysis: () => this.liveAnalysis,
+      setBusy: (busy: boolean) => {
+        this.playoutsBusy = busy;
+        document.body.classList.toggle("playouts-busy", busy);
+        if (!busy) this.maybeAutoPlay();
+      },
+    });
     this.actionHud.onRerender = () => this.redecorate();
 
     this.setupGlobalControls();
@@ -217,11 +231,19 @@ export class TSApp {
    * The position changed (a move, an undo, a new game, a loaded link): redraw it, then -- off the
    * critical path -- its link token, the model's readout, and auto-play.
    */
+  /** True (and says why) while paired playouts hold the engine. */
+  private blockedByPlayouts(): boolean {
+    if (!this.playoutsBusy) return false;
+    this.refused("Paired playouts are running -- stop them first.");
+    return true;
+  }
+
   private refresh() {
     if (!this.session) return;
     const version = ++this.version;
     this.liveState = this.session.state();
     this.liveAnalysis = undefined;
+    this.playoutPanel.render();
     if (!this.isReplayMode) {
       this.state = this.liveState;
       this.renderState();
@@ -250,6 +272,7 @@ export class TSApp {
         this.analysisPanel.render(a, this.state);
         this.analysisPanel.decorate(this.state);
       }
+      this.playoutPanel.render();
       this.maybeAutoPlay();
     } catch (e) {
       if (key === this.modelKey) this.analysisPanel.setError(`The model failed on this position: ${e}`);
@@ -257,6 +280,7 @@ export class TSApp {
   }
 
   private async loadModel(pick: ModelPick | null) {
+    if (this.blockedByPlayouts()) return;
     const load = ++this.modelLoads;
     this.analysisOff = !pick;
     this.liveAnalysis = undefined;
@@ -643,7 +667,7 @@ export class TSApp {
    * workbench's affordance for testing the engine, as it did on the server.
    */
   private sendAction(action: MicroAction) {
-    if (this.isReplayMode || !this.session) return;
+    if (this.isReplayMode || !this.session || this.blockedByPlayouts()) return;
     const why = this.session.apply(action, action.secondary_id ?? 0);
     if (why) {
       this.refused(why);
@@ -657,7 +681,7 @@ export class TSApp {
    * panel's list, or auto-play). A composed E4.1 action is applied as its two E4 steps.
    */
   private sendFlatAction(flatIdx: number, forcedDie: number = this.actionHud.selectedDieRoll) {
-    if (this.isReplayMode || !this.session) return;
+    if (this.isReplayMode || !this.session || this.blockedByPlayouts()) return;
     const why = this.session.applyFlat(flatIdx, this.model?.meta.mergedInfluence ?? false, forcedDie);
     if (why) {
       this.refused(why);
@@ -676,7 +700,7 @@ export class TSApp {
       window.clearTimeout(this.autoPlayTimer);
       this.autoPlayTimer = null;
     }
-    if (this.isReplayMode) return;
+    if (this.isReplayMode || this.playoutsBusy) return;
     const idx = this.analysisPanel.autoPlayMove();
     if (idx === null) return;
     const version = this.version;
@@ -694,7 +718,7 @@ export class TSApp {
    * get past it.
    */
   private cancelAction() {
-    if (this.isReplayMode || !this.session || !this.engine) return;
+    if (this.isReplayMode || !this.session || !this.engine || this.blockedByPlayouts()) return;
     if (this.autoPlayTimer !== null) {
       window.clearTimeout(this.autoPlayTimer);
       this.autoPlayTimer = null;
@@ -709,7 +733,7 @@ export class TSApp {
   }
 
   private sendDebugOverride(override: any) {
-    if (!this.session) return;
+    if (!this.session || this.blockedByPlayouts()) return;
     let why: string | null = null;
     if (override.op === "set_country") why = this.session.setCountry(override.country_id, override.us, override.ussr);
     else if (override.op === "set_defcon") why = this.session.setDefcon(override.defcon);
@@ -784,7 +808,7 @@ export class TSApp {
 
     // New Game: a fresh seed, in the page. The link then names the new position.
     document.getElementById("btn-new-game")?.addEventListener("click", () => {
-      if (!this.session) return;
+      if (!this.session || this.blockedByPlayouts()) return;
       this.session.newGame(Math.floor(Math.random() * 1_000_000));
       if (this.isReplayMode) this.setReplayMode(false);
       renderTracePanel([], 0);

@@ -21,7 +21,9 @@ web/ui/
 │   ├── game/                   # session.ts (stepping, undo, log, export), describe.ts (log text),
 │   │                           # names.ts (flat action names), position.ts (link tokens)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
-│   │                           # readout.ts (policy + critic for the position on screen)
+│   │                           # readout.ts (policy + critic for the position on screen),
+│   │                           # playouts.ts (paired playouts of candidate moves)
+│   ├── playouts_view.ts        # the "Paired playouts" panel: pick moves, run, win-rate differences
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
 │   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
@@ -161,6 +163,28 @@ web/ui/
 
 ---
 
+9. **Paired playouts (`analysis/playouts.ts`, `playouts_view.ts`)**: the model's likeliest moves at
+   the open decision (the top three ticked), each played out `pairs` times by the model on both
+   sides, with the win-rate difference against the model's own choice ± one standard error.
+   - **Paired**: pair k samples one world -- the mover's unseen cards redealt between the
+     opponent's hand and the deck (a port of `ai/search/dmcts.py` `determinize`, including its
+     forgetting of an opponent's chosen-but-unrevealed headline) and a fresh dice seed -- and every
+     candidate is played from that world with the same dice, so candidates differ only in the move.
+   - **No suicide in the mover's round**: until the other side's first decision, an option that
+     loses on the spot is never taken while another exists (`losesOnTheSpot`), the guard of the
+     Python probes against untrained follow-ups such as a Star Wars retrieval at DEFCON 2.
+   - **Mechanics**: every (pair, candidate) game is a `GameState` snapshot swapped into the single
+     engine per step, so the network runs on batches; single-move decisions skip it. The page's
+     engine API has no `Engine::auto_advance_step`, so forced decisions are stepped one by one --
+     same games, numbers not bit-identical to the CLI's (a different random stream redeals).
+   - **The engine is borrowed.** The run restores the caller's position before it returns, and
+     `main.ts` refuses moves, undo, debug edits, a new game, a model switch and auto-play while it
+     runs (`playoutsBusy`; the board also takes no clicks). The runner yields to the page every
+     ~30 ms (`yieldToPage`): onnxruntime-web on one thread resolves inside the microtask queue, so
+     without it a run is one task -- the page freezes and a key pressed meanwhile lands after it.
+   - **Cost**, measured in headless Chromium with the E7 soup: three moves × 32 pairs = 96 games in
+     8-11 s (about 8-12 games a second, faster later in the game).
+
 ## 4. Development & Build Commands
 
 ```bash
@@ -191,8 +215,9 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
-| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
+| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, paired playouts (the position handed back untouched, a move refused while they run), and the page on a static server with no API (GitHub Pages) |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
+| `test_page_playouts.py` | `analysis/playouts.ts` under node, with a stub network: the redeal keeps every count and every card the mover has seen, an opponent's unrevealed headline is forgotten, a DEFCON-2 battleground coup loses on the spot, the engine comes back byte-identical, the same move twice pairs to exactly 0, the same seed replays the same games, and Stop ends a run early |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |
 

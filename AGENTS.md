@@ -11,7 +11,7 @@ graph TD
     subgraph WebWorkbench ["Web Workbench (web/) -- runs in the browser"]
         UI["Vite + TypeScript + SVG Deluxe Map (web/ui/)"]
         Session["Game session: stepping, undo, log, links (web/ui/src/game/)"]
-        Analysis["Model analysis: ONNX in onnxruntime-web (web/ui/src/analysis/)"]
+        Analysis["Model analysis and paired playouts: ONNX in onnxruntime-web (web/ui/src/analysis/)"]
         Wasm["ts_engine as WebAssembly (bindings/wasm/)"]
         Replayer["Replay & Timeline Player"]
         Server["Local files server: checkpoints -> ONNX, replays (web/server/)"]

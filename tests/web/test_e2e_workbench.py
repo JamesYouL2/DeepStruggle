@@ -305,6 +305,36 @@ def test_auto_play_undo_and_the_shared_link(browser: Any, server: str) -> None:
     assert not page.errors and not other.errors
 
 
+def test_paired_playouts_run_and_hand_the_position_back(browser: Any, server: str) -> None:
+    # Late in the game, so 48 playouts of this test's (slow, untrained) network finish quickly.
+    import base64
+    import zlib
+    from tests.web.test_page_playouts import _find
+
+    late = _find(lambda s: s.turn >= 10 and s.current_phase == ts.Phase.ACTION_ROUND
+                 and s.ctx().decision_type == ts.DecisionType.SELECT_CARD
+                 and np.asarray(ActionEncoder.get_legal_mask(s)).sum() >= 3)
+    token = base64.urlsafe_b64encode(zlib.compress(late.to_save_json().encode())).decode().rstrip("=")
+    page = _open(browser, server + "/?pos=" + token)
+    _pick_local_model(page)
+    page.wait_for_function("!document.querySelector('#btn-playouts-run').disabled", timeout=60000)
+    # The model's three likeliest moves are ticked by default; the favourite is the reference.
+    assert page.evaluate("document.querySelectorAll('#playouts-body input:checked').length") == 3
+    position = "window.__wb.engine.saveJson()"
+    before = page.evaluate(position)
+    page.select_option("#playouts-pairs", "16")
+    page.click("#btn-playouts-run")
+    # A move is refused while the runner holds the engine (the run may already be over on this
+    # small model; either way no move may land and the position must come back untouched).
+    page.keyboard.press("f")
+    page.wait_for_function("document.querySelector('#playouts-body').innerText.includes('16 pairs')"
+                           " && document.querySelector('#btn-playouts-run').textContent === 'Run'", timeout=300000)
+    body = page.inner_text("#playouts-body")
+    assert "16 pairs × 3 moves" in body and "reference" in body and "%" in body
+    assert page.evaluate(position) == before, "no move may land while the playouts hold the engine"
+    assert not page.errors
+
+
 def test_a_dropped_onnx_file_is_a_model(browser: Any, server: str, checkpoint: Dict[str, str], tmp_path) -> None:
     from tools.export_onnx import export
 
