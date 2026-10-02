@@ -87,7 +87,7 @@ games, drawn per game, both sides' setup is one of the four human variants (USSR
 Poland 4, Yugoslavia or Austria 1; US West Germany 4 with Italy 3 + Iran 3 or Italy 4 + Iran 2), and
 those placements are trained as the policy's own -- the ratio measured from the current policy, the
 credit the game result against the critic. (A first launch measured the ratio from the stale rollout
-log-prob and drove the scripted openings down; voided, fixed in `a196a2b`.) Control: E7-02-44's own
+log-prob and drove the scripted openings down; voided, fixed in `544153d`.) Control: E7-02-44's own
 820M → 1,200M.
 
 **It adopted the human openings within ~20M steps** (sampled at temperature 1, 1,000 deals):
