@@ -37,6 +37,7 @@ import ts_engine as ts
 from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start, apply_prefix
 from ai.eval.choice_oracle import _loses_now
 from ai.eval.doctrine_census import MODES, N_CARDS, cards
+from ai.eval.ops_block import CONFIRM_DONE
 from ai.eval.reply_probe import _ar_key, is_round_start, position_link
 from bindings.action_encoder import ActionEncoder
 
@@ -134,7 +135,11 @@ def branches(st: ts.GameState, kind: str, probs: np.ndarray, card_branches: int 
         legal = [a for a in np.flatnonzero(mask[:N_CARDS])]
         legal.sort(key=lambda a: -probs[a])
         names = {str(info[int(a) + 1]["name"]): int(a) for a in legal[:card_branches]}
+        if mask[CONFIRM_DONE]:
+            names["pass"] = CONFIRM_DONE            # the eighth action round may be declined
     greedy = int(np.argmax(np.where(mask, probs, -1.0)))
+    if greedy not in names.values():
+        names[ActionEncoder.get_action_name(st, greedy)] = greedy
     chosen = next(nm for nm, a in names.items() if a == greedy)
     return names, chosen
 

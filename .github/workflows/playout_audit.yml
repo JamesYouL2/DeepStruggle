@@ -31,6 +31,9 @@ on:
       runners:
         description: "Runners (each finds different positions)"
         default: "16"
+      parts:
+        description: "Only these part numbers, comma-separated (empty = 1..runners), to redo failed parts"
+        default: ""
       model:
         description: "`newest` or hf:<file.onnx>"
         default: "newest"
@@ -47,6 +50,7 @@ env:
   CONFIRM_TOP: ${{ inputs.confirm_top || '48' }}
   CONFIRM_PAIRS: ${{ inputs.confirm_pairs || '384' }}
   RUNNERS: ${{ inputs.runners || '16' }}
+  PARTS: ${{ inputs.parts || '' }}
   MODEL: ${{ inputs.model || 'newest' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
@@ -70,7 +74,7 @@ jobs:
             f="${MODEL#hf:}"
           fi
           echo "file=$f" >> "$GITHUB_OUTPUT"
-          python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+          python3 -c "import json,os; p=os.environ['PARTS']; print('parts=' + json.dumps([int(x) for x in p.split(',')] if p else list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
 
   play:
     needs: plan
@@ -119,7 +123,8 @@ jobs:
         run: |
           mkdir -p reports
           n=$(ls parts/part-*.json.gz 2>/dev/null | wc -l)
-          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          want=$(python3 -c "import json; print(len(json.loads('${{ needs.plan.outputs.parts }}')))")
+          if [ "$n" -ne "$want" ]; then echo "only $n of $want parts arrived; re-run the failed jobs"; exit 1; fi
           PYTHONPATH=.:build/release .venv/bin/python tools/playout_audit.py report \
             --parts "parts/part-*.json.gz" --out-md reports/report.md --out-json reports/report.json.gz
           {

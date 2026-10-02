@@ -49,3 +49,14 @@ def test_audit_rows() -> None:
         assert all(0.0 <= v <= 1.0 for v in r["scores"].values())
     md, summary = A.report(rows, {"model": "x", "pairs": 4})
     assert summary["n"] == len(rows) and "Playout audit" in md
+
+
+def test_the_models_choice_is_always_a_branch() -> None:
+    # A choice outside the listed options (passing the eighth action round, say) becomes a branch of
+    # its own rather than crashing the scan -- here with no cards listed at all.
+    act = _random_policy(3)
+    st, kind = next((s, k) for s, k in A.collect(act, 20, seed=6, envs=4, accept=0.3) if k == "card")
+    probs = np.zeros(220)
+    probs[int(np.flatnonzero(np.asarray(A.ActionEncoder.get_legal_mask(st))[:110])[0])] = 1.0
+    names, chosen = A.branches(st, kind, probs, card_branches=0)
+    assert names[chosen] == int(np.argmax(probs))
