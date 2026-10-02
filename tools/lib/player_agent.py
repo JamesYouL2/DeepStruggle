@@ -45,14 +45,16 @@ def reject_retired_architecture(state_dict: Dict[str, Any]) -> None:
 
 
 def load_checkpoint_into(model: nn.Module, state_dict: Dict[str, Any]) -> None:
-    """Load a checkpoint, tolerating an absent auxiliary DEFCON-risk head.
+    """Load a checkpoint, tolerating an absent auxiliary head (DEFCON risk, card events).
 
     The head was added after these checkpoints were written, so their state dicts have no
     weights for it. Everything else must still match exactly: only keys belonging to the
     aux head may be missing, and unexpected keys are never allowed.
     """
     missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    stale = [k for k in missing if not k.startswith("defcon_risk_head.")]
+    # The card-event head (--aux-card-events) is new by definition when a run without it warm-starts
+    # one with it: it feeds only its own loss, so a fresh head changes no decision.
+    stale = [k for k in missing if not k.startswith(("defcon_risk_head.", "card_aux_head."))]
     if stale or unexpected:
         raise RuntimeError(
             f"checkpoint does not match {type(model).__name__}: "
