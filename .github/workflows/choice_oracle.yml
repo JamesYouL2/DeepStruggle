@@ -21,6 +21,9 @@ on:
       pairs:
         description: "Paired playouts per branch per position"
         default: "128"
+      set:
+        description: "Scenario set: default (the owner's questions) or human (the cards humans event most, forced)"
+        default: "default"
       only:
         description: "Run only scenarios whose name contains this (empty = all)"
         default: ""
@@ -41,6 +44,7 @@ env:
   PER: ${{ inputs.per || '32' }}
   PAIRS: ${{ inputs.pairs || '128' }}
   ONLY: ${{ inputs.only || '' }}
+  SET: ${{ inputs.set || 'default' }}
   RUNNERS: ${{ inputs.runners || '16' }}
   MODEL: ${{ inputs.model || 'newest' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
@@ -85,7 +89,7 @@ jobs:
           python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/choice_oracle.py run \
             --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
-            --per "$PER" --pairs "$PAIRS" --seed "${{ matrix.part }}" ${ONLY:+--only "$ONLY"} \
+            --per "$PER" --pairs "$PAIRS" --seed "${{ matrix.part }}" --set "$SET" ${ONLY:+--only "$ONLY"} \
             --out "parts/part-${{ matrix.part }}.json"
 
       - uses: actions/upload-artifact@v4
@@ -121,7 +125,7 @@ jobs:
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
-            echo "positions/scenario/runner: $PER  pairs: $PAIRS  only: ${ONLY:-all}  runners: $RUNNERS"
+            echo "set: $SET  positions/scenario/runner: $PER  pairs: $PAIRS  only: ${ONLY:-all}  runners: $RUNNERS"
           } > reports/provenance.txt
           { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
 

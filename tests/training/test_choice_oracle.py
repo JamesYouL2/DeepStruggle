@@ -30,3 +30,8 @@ def test_positions_match_and_branches_are_scored() -> None:
             assert all(0.0 <= r[b] <= 1.0 for b in s.branches())
     md, js = C.report([r for s in scs for r in C.play(act, s, found[s.name], 2, 1)], {"model": "random"})
     assert "Asia Scoring − Nasser" in md
+
+
+def test_human_event_cards_resolve() -> None:
+    scs = C.scenarios("human")
+    assert len(scs) == 40 and all(s.departures and s.kind == "event" and len(s.ids) == 1 for s in scs)

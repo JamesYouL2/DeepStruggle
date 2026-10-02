@@ -31,6 +31,8 @@ def main() -> None:
     r.add_argument("--per", type=int, default=24, help="positions per scenario")
     r.add_argument("--pairs", type=int, default=64)
     r.add_argument("--seed", type=int, default=1)
+    r.add_argument("--set", default="default", choices=["default", "human"],
+                   help="default: the owner's named questions; human: the cards humans event most, forced")
     r.add_argument("--only", default=None, help="run only scenarios whose name contains one of these |-separated substrings")
     r.add_argument("--out", required=True)
     p = sub.add_parser("report")
@@ -51,7 +53,7 @@ def main() -> None:
             return str(action)
 
         act, _ = onnx_policy(a.model)
-        scs = [s for s in scenarios() if a.only is None or any(o in s.name for o in a.only.split("|"))]
+        scs = [s for s in scenarios(a.set) if a.only is None or any(o in s.name for o in a.only.split("|"))]
         found = collect(act, scs, a.per, a.seed)
         rows = []
         for s in scs:
@@ -59,18 +61,19 @@ def main() -> None:
             print(f"{s.name}: {len(found[s.name])} positions ({round(time.time() - t0)}s)", flush=True)
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         with open(a.out, "w") as f:
-            json.dump({"meta": {"model": os.path.basename(a.model), "seed": a.seed,
+            json.dump({"meta": {"model": os.path.basename(a.model), "seed": a.seed, "set": a.set,
                                 "seconds": round(time.time() - t0, 1)}, "rows": rows}, f)
     else:
-        rows, model = [], None
+        rows, model, which = [], None, "default"
         for fn in sorted({f for pat in a.parts for f in glob.glob(pat)}):
             with open(fn) as f:
                 part = json.load(f)
             if model not in (None, part["meta"]["model"]):
                 raise SystemExit(f"{fn} was played by {part['meta']['model']}, not {model}")
             model = part["meta"]["model"]
+            which = part["meta"].get("set", "default")
             rows += part["rows"]
-        md, summary = report(rows, {"model": model})
+        md, summary = report(rows, {"model": model, "set": which})
         with open(a.out_md, "w") as f:
             f.write(md)
         with open(a.out_json, "w") as f:

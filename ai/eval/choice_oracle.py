@@ -91,11 +91,44 @@ SCENARIOS: Tuple[Scenario, ...] = (
 )
 
 
-def scenarios() -> List[Scenario]:
+#: The cards strong humans event most, by side: own and neutral cards with the event legal, a
+#: headline counted as an event, scoring cards left out (they have no other mode), at least 25
+#: human plays. From the ts-replayer corpus's 266 distinct games (2026-10-02); (card, human event
+#: rate). The owner's request: force the model to event these where it does not.
+HUMAN_EVENTS: Dict[str, Tuple[Tuple[str, float], ...]] = {
+    "US": (("Defectors", 1.00), ("Star Wars", 1.00), ("The Voice of America", 0.99), ("Junta", 0.98),
+           ("Grain Sales to Soviets", 0.98), ("OAS Founded", 0.94), ("ABM Treaty", 0.94),
+           ("Colonial Rear Guards", 0.94), ("Captured Nazi Scientist", 0.92), ("Brush War", 0.90),
+           ("UN Intervention", 0.89), ("Puppet Governments", 0.87), ("Tear Down this Wall", 0.85),
+           ("Solidarity", 0.84), ("Missile Envy", 0.84), ("Red Scare/Purge", 0.71), ("Camp David Accords", 0.70),
+           ("Panama Canal Returned", 0.69), ("Bear Trap", 0.68), ("John Paul II Elected Pope", 0.66)),
+    "USSR": (("Aldrich Ames Remix", 1.00), ("Junta", 0.99), ("Decolonization", 0.99), ("De-Stalinization", 0.98),
+             ("Liberation Theology", 0.97), ("Brush War", 0.95), ("UN Intervention", 0.93), ("ABM Treaty", 0.91),
+             ("The Reformer", 0.90), ("Captured Nazi Scientist", 0.89), ("Terrorism", 0.81), ("Nasser", 0.78),
+             ("Missile Envy", 0.75), ("Marine Barracks Bombing", 0.75), ("Quagmire", 0.72),
+             ("South African Unrest", 0.72), ("OPEC", 0.71), ("Pershing II Deployed", 0.70),
+             ("Red Scare/Purge", 0.70), ("Allende", 0.69)),
+}
+
+
+def human_event_scenarios() -> Tuple[Scenario, ...]:
+    """Each human top-event card, forced to its event where the model plays it otherwise."""
+    return tuple(Scenario(f"{side} {card}: event (humans {round(100 * rate)}%) vs the model's choice", "event", side,
+                          (card,), departures=True)
+                 for side, rows in HUMAN_EVENTS.items() for card, rate in rows)
+
+
+SETS = ("default", "human")
+
+
+def scenarios(which: str = "default") -> List[Scenario]:
+    if which not in SETS:
+        raise ValueError(f"unknown scenario set {which!r}; known: {SETS}")
     info = cards()
     by_name = {str(info[c]["name"]): c for c in info}
+    base = SCENARIOS if which == "default" else human_event_scenarios()
     return [Scenario(s.name, s.kind, s.side, s.cards, s.turn, s.behind, s.before_turn, s.departures, s.cond)
-            .resolve(by_name) for s in SCENARIOS]
+            .resolve(by_name) for s in base]
 
 
 def _player(side: str) -> ts.Player:
@@ -272,7 +305,7 @@ def report(rows: Sequence[Dict[str, Any]], meta: Dict[str, Any]) -> Tuple[str, D
            "Paired playouts from the model's own positions, hidden cards redealt per pair; score = the "
            "mover's win % (draw ½); ± one standard error over positions.", ""]
     summary: Dict[str, Any] = {"meta": meta, "scenarios": {}}
-    for sc in scenarios():
+    for sc in scenarios(str(meta.get("set", "default"))):
         sel = [r for r in rows if r["scenario"] == sc.name]
         if not sel:
             out += [f"## {sc.name}", "", "no positions found", ""]
