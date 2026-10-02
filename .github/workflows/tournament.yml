@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file"
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx> as in tools/fetch_hf_model.py"
         default: "doctrine newest"
       games_per_side:
         description: "Games per side per matchup"
@@ -44,11 +44,13 @@ on:
 
 permissions:
   contents: read
+  actions: read   # a gh:<run>/<artifact>/<file> entrant is another run's artifact
 
 # No concurrency group: two tournaments on one branch are independent experiments, and a shared
 # group keeps only one of them pending -- a second dispatch silently cancelled the first.
 
 env:
+  GH_TOKEN: ${{ github.token }}
   MODELS: ${{ inputs.models || 'doctrine newest' }}
   GAMES_PER_SIDE: ${{ inputs.games_per_side || '100' }}
   RUNNERS: ${{ inputs.runners || '16' }}
@@ -78,9 +80,15 @@ jobs:
           import json, os, re, subprocess
           repo, specs = os.environ["HF_REPO"], os.environ["MODELS"].split()
           files = []
+          import sys; sys.path.insert(0, "tools")
+          from fetch_hf_model import onnx_name
           def local(f):
+              # Where tools/fetch_hf_model.py puts it: a run-directory .pt is exported to
+              # <run>@<steps>M.onnx, an artifact (gh:<run>/<artifact>/<file>) keeps its file name.
               if f not in files:
                   files.append(f)
+              if f.endswith(".pt"):
+                  return "data/checkpoints/" + onnx_name(f.split(":", 1)[-1])
               return "data/checkpoints/" + os.path.basename(f)
           newest = None
           out = []
@@ -91,7 +99,7 @@ jobs:
                           ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
                           check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
                   m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
-              m = re.sub(r"hf:([\w.\-/]+\.onnx)", lambda g: local(g.group(1)), m)
+              m = re.sub(r"hf:((?:gh:\d+/[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
               out.append(m)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"specs={' '.join(out)}\n")
