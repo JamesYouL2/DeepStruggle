@@ -31,7 +31,7 @@ on:
         description: "Runners (each finds different positions)"
         default: "16"
       model:
-        description: "`newest` or hf:<file.onnx>"
+        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner)"
         default: "newest"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
@@ -86,9 +86,9 @@ jobs:
 
       - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
         run: |
-          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
+          m=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints | tail -1)
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/choice_oracle.py run \
-            --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
+            --model "$m" \
             --per "$PER" --pairs "$PAIRS" --seed "${{ matrix.part }}" --set "$SET" ${ONLY:+--only "$ONLY"} \
             --out "parts/part-${{ matrix.part }}.json"
 
