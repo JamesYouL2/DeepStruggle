@@ -300,6 +300,8 @@ class BaseNashPGTrainer:
         setup_entropy_lr: float = 0.01,
         setup_entropy_max_coef: float = 1.0,
         setup_mc_credit: bool = False,
+        setup_script_frac: float = 0.0,
+        setup_script_openings: Sequence[str] = (),
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
         aux_own_coef: float = 0.0,
@@ -414,6 +416,44 @@ class BaseNashPGTrainer:
         #: can still be live rather than on every step of a ~440-decision episode.
         self._ep_decisions = np.zeros(self.num_envs, dtype=np.int32)
         self._setup_rng = np.random.default_rng(12345)
+
+        # --setup-script-frac (owner, 2026-10-02): in a drawn fraction of games both sides' setup is
+        # played by one of `setup_script_openings` (tools/lib/openings.py), and those placements are
+        # TRAINED as if the policy had chosen them. The stored log-prob is the policy's own, so the
+        # ratio starts at 1 and the clip bounds how fast a scripted placement can rise; the credit is
+        # the game result (--setup-mc-credit, required), so a scripted opening gains probability only
+        # where its games beat the critic's baseline. Drawn afresh for every game.
+        self.setup_script_frac = float(setup_script_frac)
+        self.setup_script_openings: Tuple[str, ...] = tuple(setup_script_openings)
+        self._script_open = np.full(self.num_envs, -1, dtype=np.int32)      # -1: its own setup
+        self._script_cursor = {1: np.zeros(self.num_envs, dtype=np.int32),
+                               -1: np.zeros(self.num_envs, dtype=np.int32)}
+        self._script_rng = np.random.default_rng(67890)
+        self._script_games = np.zeros(2, dtype=np.int64)                   # (scripted, own) games drawn
+        self._script_scripts: List[Dict[int, List[int]]] = []
+        if self.setup_script_frac > 0.0:
+            from tools.lib.openings import NODE_OFFSET as _NODE, OPENINGS
+            if not 0.0 < self.setup_script_frac <= 1.0:
+                raise ValueError("--setup-script-frac must be in (0, 1]")
+            if not self.setup_script_openings:
+                raise ValueError("--setup-script-frac needs at least one opening")
+            if not setup_mc_credit:
+                raise ValueError(
+                    "--setup-script-frac needs --setup-mc-credit: the scripted placements are trained "
+                    "on the game result; through the lambda-return their credit would be the critic's "
+                    "view of openings it has barely seen")
+            if self.setup_explore_frac > 0.0:
+                raise ValueError("--setup-script-frac and --setup-explore-frac both override setup actions")
+            for name in self.setup_script_openings:
+                o = OPENINGS.get(name)
+                if o is None or {"US", "USSR"} - set(o):
+                    raise ValueError(f"opening {name!r} is unknown or does not script both sides")
+                self._script_scripts.append({1: [_NODE + c for c in o["US"]],
+                                             -1: [_NODE + c for c in o["USSR"]]})
+            self._script_draw(np.arange(self.num_envs))
+            print(f"[setup script] {self.setup_script_frac:.0%} of games set up by one of "
+                  f"{list(self.setup_script_openings)} (both sides), trained on with the policy's own "
+                  f"log-prob and the game result as credit", flush=True)
 
         self.optimizer = torch.optim.AdamW(self.active_net.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -1044,6 +1084,11 @@ class BaseNashPGTrainer:
                     actions_t = opponent_actions(logits, actions_t, ~learner_t,
                                                  self.opponent_temperature)
 
+                if self.setup_script_frac > 0.0:
+                    # After every other override, so a scripted game is scripted whoever moves;
+                    # before the log-prob, so the stored one is the policy's own for that action.
+                    self._apply_setup_script(actions_t, masks_t, _dp)
+
                 unscaled_log_probs = F.log_softmax(logits, dim=-1)
                 log_probs_t = unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1)
 
@@ -1092,6 +1137,8 @@ class BaseNashPGTrainer:
             if self.setup_explore_frac > 0.0:
                 self._ep_decisions += 1
                 self._ep_decisions[self._dones_np > 0.5] = 0
+            if self.setup_script_frac > 0.0:
+                self._script_draw(np.flatnonzero(self._dones_np > 0.5))
 
             # V(s_{t+1}, p_t): the resulting state seen by the player who just moved, rather than
             # by whoever moves next. The default bootstrap negates the next step's value, which
@@ -1282,6 +1329,41 @@ class BaseNashPGTrainer:
     def train_step(self) -> Dict[str, float]:
         raise NotImplementedError("Subclasses must implement train_step")
 
+    def _script_draw(self, envs: np.ndarray) -> None:
+        """--setup-script-frac: decide afresh, for each of `envs` (at a game start), whether its
+        setup is scripted and by which opening."""
+        envs = np.asarray(envs, dtype=np.int64)
+        if envs.size == 0:
+            return
+        pick = self._script_rng.random(envs.size) < self.setup_script_frac
+        which = self._script_rng.integers(0, len(self._script_scripts), envs.size)
+        self._script_open[envs] = np.where(pick, which, -1)
+        self._script_cursor[1][envs] = 0
+        self._script_cursor[-1][envs] = 0
+        self._script_games += (int(pick.sum()), int((~pick).sum()))
+
+    def _apply_setup_script(self, actions_t: torch.Tensor, masks_t: torch.Tensor, dp: np.ndarray) -> None:
+        """--setup-script-frac: overwrite the setup placements of scripted games, for whichever agent
+        is moving (a pool opponent's placements are scripted too; only the learner's are trained).
+        Setup rows are recognised from the observation's phase slot (exactly 0 in SETUP)."""
+        setup = np.asarray(self._obs_np)[:, setup_phase_slot()] < (0.5 / 6.0)
+        rows = np.flatnonzero(setup & (self._script_open >= 0) & (dp != 0))
+        if rows.size == 0:
+            return
+        masks_np = masks_t.detach().cpu().numpy()
+        for r in rows:
+            side = int(dp[r])
+            script = self._script_scripts[int(self._script_open[r])][side]
+            k = int(self._script_cursor[side][r])
+            if k >= len(script):
+                raise RuntimeError(f"env {r}: side {side} has no scripted placement {k}")
+            idx = script[k]
+            if not masks_np[r][idx]:
+                raise RuntimeError(f"env {r}: scripted setup placement {k} (flat action {idx}) is "
+                                   f"illegal here -- refusing a partly scripted opening")
+            actions_t[r] = idx
+            self._script_cursor[side][r] = k + 1
+
     def _force_setup_exploration(self, actions_t: torch.Tensor, masks_t: torch.Tensor) -> None:
         """Replace the chosen opening with a uniform legal one, in the designated envs.
 
@@ -1410,6 +1492,9 @@ class BaseNashPGTrainer:
         combined: Dict[str, Any] = {**rollout_metrics, **train_metrics}
         if self.setup_mc_credit:
             combined.update(self._setup_mc_update())
+        if self.setup_script_frac > 0.0:
+            _tot = max(1, int(self._script_games.sum()))
+            combined["setup_script_games_frac"] = float(self._script_games[0]) / _tot
         if self.aux_targets:
             combined.update(self._aux_update())
         if self.aux_card_coef > 0.0:
@@ -1618,6 +1703,11 @@ class NashPGTrainer(BaseNashPGTrainer):
                     # measured before the step; stopping applies from this minibatch on.
                     _k3 = ((ratio - 1.0) - torch.clamp(log_ratio, -20.0, 20.0)).double()
                     _own_b = b_learner > 0.5
+                    if self.setup_mc_credit:
+                        # Setup placements are not in this surrogate (they train in
+                        # _setup_mc_update), so they are not in its KL either. A scripted one
+                        # (--setup-script-frac) has log-prob near -18 and would swamp the statistic.
+                        _own_b = _own_b & (b_obs[:, setup_phase_slot()] >= (0.5 / 6.0))
                     for _code in (1, -1):
                         _sel = (_own_b & (b_players == _code)).double()
                         _cnt = _sel.sum()

@@ -550,6 +550,17 @@ def build_parser() -> argparse.ArgumentParser:
                              "Ataraxos trains its setup. Pair with --setup-entropy-floor: a setup "
                              "played at p ~ 1 is never compared with anything.")
     parser.add_argument("--setup-mc-coef", type=float, default=1.0)
+    parser.add_argument("--setup-script-frac", type=float, default=0.0,
+                        help="Fraction of games (drawn per game) whose setup is played, for BOTH sides, by "
+                             "one of --setup-script-openings, and trained on as if the policy had chosen "
+                             "it: the stored log-prob is the policy's own, and the credit is the game result "
+                             "(requires --setup-mc-credit). Lets the policy play, and be credited for, "
+                             "openings it never samples itself (research/log/E7_shallow_setup_lock.md). "
+                             "0 = off.")
+    parser.add_argument("--setup-script-openings", nargs="+", default=None,
+                        help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
+                             "uniformly per scripted game. Default: the four human variants "
+                             "(HUMAN_OPENING_MIX).")
     parser.add_argument("--setup-mc-min-batch", type=int, default=512,
                         help="Finished-game setup placements to gather before one MC setup step.")
     # P28 step 2 (research/plans/P28_strength_on_E6.md): optimiser levers at the plateau.
@@ -862,6 +873,8 @@ def main():
             setup_entropy_max_coef=args.setup_entropy_max_coef,
             forced_opening=args.forced_opening,
             setup_mc_credit=args.setup_mc_credit,
+            setup_script_frac=args.setup_script_frac,
+            setup_script_openings=args.setup_script_openings,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,

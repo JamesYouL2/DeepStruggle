@@ -25,12 +25,21 @@ SETUP_DECISIONS = 15
 
 WEST_GERMANY, ITALY, EAST_GERMANY, POLAND, YUGOSLAVIA, IRAN = 7, 10, 14, 15, 18, 25
 CANADA, FRANCE, HUNGARY, SOUTH_KOREA = 0, 8, 17, 44
+AUSTRIA = 13
 
 #: The standard human opening, as (country, points) in placement order. The USSR overcontrols
 #: Poland and East Germany by a point each; the US takes West Germany and Italy with a buffer and
 #: spends its two bonus points on Iran.
 USSR_OPENING: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 4), (YUGOSLAVIA, 1))
 US_OPENING: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (ITALY, 3), (IRAN, 2))
+
+
+#: The owner's variants of the human opening (2026-10-02), final influence in brackets. USSR: East
+#: Germany +1 (4), Poland +4, and the last point in Yugoslavia or Austria. US: West Germany 4 and
+#: Italy 3 in Western Europe, then the two bonus points either both in Iran (Iran 3, Italy 3) or one
+#: in Italy and one in Iran (Italy 4, Iran 2).
+USSR_OPENING_AUSTRIA: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 4), (AUSTRIA, 1))
+US_OPENING_ITALY4: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (ITALY, 3), (ITALY, 1), (IRAN, 1))
 
 
 def expand(opening: Sequence[Tuple[int, int]]) -> List[int]:
@@ -57,11 +66,18 @@ US_E516_44: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 2), (FRANCE, 3), (ITALY,
 #: --forced-opening needs both sides.
 OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "human": {"US": expand(US_OPENING), "USSR": expand(USSR_OPENING)},
+    "human_yugo_it4": {"US": expand(US_OPENING_ITALY4), "USSR": expand(USSR_OPENING)},
+    "human_austria_it3": {"US": expand(US_OPENING), "USSR": expand(USSR_OPENING_AUSTRIA)},
+    "human_austria_it4": {"US": expand(US_OPENING_ITALY4), "USSR": expand(USSR_OPENING_AUSTRIA)},
     "us_e516_43": {"US": expand(US_E516_43)},
     "us_e516_44": {"US": expand(US_E516_44)},
     "ph_west_germany": {"US": expand(US_OPENING), "USSR": expand(USSR_POLAND_HUNGARY)},
     "ph_no_west_germany": {"US": expand(US_NO_WEST_GERMANY), "USSR": expand(USSR_POLAND_HUNGARY)},
 }
+
+
+#: The four human-opening pairs --setup-script-frac draws from by default.
+HUMAN_OPENING_MIX: Tuple[str, ...] = ("human", "human_yugo_it4", "human_austria_it3", "human_austria_it4")
 
 
 def scripted_setup_index(state: ts.GameState, side: str, opening: str,

@@ -116,6 +116,15 @@ How they are trained:
 * The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+`--setup-script-frac F` (owner, 2026-10-02; default 0 = off; requires `--setup-mc-credit`) sets up a fraction `F`
+of games, drawn per game, by one of `--setup-script-openings` (default: the four human variants in
+`tools/lib/openings.HUMAN_OPENING_MIX` -- USSR East Germany 4, Poland 4, Yugoslavia or Austria 1; US West Germany 4
+with Italy 3 + Iran 3 or Italy 4 + Iran 2) for both sides, and trains those placements as the policy's own: the
+stored log-prob is the network's, so the PPO ratio starts at 1, and the credit is the game result against the
+critic's baseline. A scripted opening gains probability only where its games beat the baseline, and the network
+learns the middlegames that follow openings it never samples (`research/log/E7_shallow_setup_lock.md`). With
+`--setup-mc-credit` the setup rows are also left out of the per-seat KL statistics, as they are out of the surrogate.
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer

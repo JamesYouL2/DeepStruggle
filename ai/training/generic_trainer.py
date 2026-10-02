@@ -1524,6 +1524,8 @@ def train_pipeline(
     setup_entropy_lr: float = 0.01,
     setup_entropy_max_coef: float = 1.0,
     setup_mc_credit: bool = False,
+    setup_script_frac: float = 0.0,
+    setup_script_openings: Optional[Sequence[str]] = None,
     setup_mc_coef: float = 1.0,
     setup_mc_min_batch: int = 512,
     aux_own_coef: float = 0.0,
@@ -1559,6 +1561,9 @@ def train_pipeline(
     lr_min: float = 3e-5,
     ema_weights: float = 0.0,
 ) -> None:
+    if setup_script_frac > 0.0 and not setup_script_openings:
+        from tools.lib.openings import HUMAN_OPENING_MIX
+        setup_script_openings = list(HUMAN_OPENING_MIX)
     # Checked first, before a device is resolved or a directory is made: a run whose budget is
     # nonsense should fail having built nothing. Both are in env steps and there is no time flag
     # to fall back to, which is the point -- the snapshot cadence used to be derived from
@@ -1791,6 +1796,8 @@ def train_pipeline(
         "setup_entropy_max_coef": float(setup_entropy_max_coef),
         "forced_opening": forced_opening,
         "setup_mc_credit": bool(setup_mc_credit),
+        "setup_script_frac": float(setup_script_frac),
+        "setup_script_openings": (list(setup_script_openings) if setup_script_frac > 0.0 and setup_script_openings else None),
         "setup_mc_coef": float(setup_mc_coef),
         "setup_mc_min_batch": int(setup_mc_min_batch),
         # P29 bet 2: auxiliary ownership / VP-margin targets (0 = off).
@@ -2027,6 +2034,8 @@ def train_pipeline(
         setup_entropy_lr=setup_entropy_lr,
         setup_entropy_max_coef=setup_entropy_max_coef,
         setup_mc_credit=setup_mc_credit,
+        setup_script_frac=setup_script_frac,
+        setup_script_openings=tuple(setup_script_openings or ()),
         setup_mc_coef=setup_mc_coef,
         setup_mc_min_batch=setup_mc_min_batch,
         aux_own_coef=aux_own_coef,
