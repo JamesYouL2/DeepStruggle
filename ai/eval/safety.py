@@ -104,6 +104,17 @@ def classify_legal_actions(
             if card in OPPONENT_COUP_CARDS and OPS_ACTION in out:
                 out[OPS_ACTION] = "risky"
 
+    # --- Wargames, at the play-mode decision ------------------------------------------------
+    # The event's own branch (below) is the second step: playing the card for its event first, at
+    # DEFCON 2, then choosing "give 6 VP and end the game". Classifying only that second step left
+    # the first one "normal", so a model that plays Wargames for Ops at a winning lead was never
+    # counted as declining a forced win -- and the safety layer never took one. Measured on the E7
+    # soup: 429 of 430 such plays went to Ops. The event is a win when the lead survives the 6 VP;
+    # below that it is not a loss, since the branch can still decline to end the game.
+    if (card == WARGAMES and ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and defcon == 2
+            and EVENT_ACTION in out and _vp_for(state, who) - 6 > 0):
+        out[EVENT_ACTION] = "win"
+
     # --- Wargames branch ----------------------------------------------------------------
     if card == WARGAMES and ctx.decision_type == ts.DecisionType.CHOOSE_BRANCH:
         lead = _vp_for(state, who)

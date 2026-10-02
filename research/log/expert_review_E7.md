@@ -1,198 +1,162 @@
-# An expert review of the E7 soup: strengths, leaks, and why training may plateau (2026-10-02)
+# An expert review of the E7 soup: strengths, card-play leaks, and a forced-win fix (2026-10-02)
 
 **Who and why.** James You (fork `JamesYouL2/DeepStruggle`) is a top-20-to-50 Twilight Struggle
-player. He played the current best model and judges it at roughly 1,500-1,800 on a human scale:
-strong, with a few recurring wrong moves. This log turns his observations into numbers. The
-census measures how often the model departs from a strong player's rule. Paired playouts by the
-model itself measure what each departure costs.
+player. He played the current best model and turned his observations into measurements:
 
-**Model.** `shallow_E7-02+03+04+05_1200M.onnx`, the `newest` export, on both sides. Engine
-fingerprint `5419a582ec07…`.
+* the **doctrine census** -- how often the model departs from a strong player's rule;
+* **paired playouts by the model itself** -- what each departure costs. The cards the mover cannot
+  see are redealt for each pair, every branch gets the same dice, and the model plays both sides;
+* comparisons with the human ts-replayer corpus.
 
-**Method.**
-
-* Positions come from the model's own greedy self-play, or from the human ts-replayer corpus.
-* Each alternative is forced, and the model plays on. For the rest of the action round, a move
-  that loses on the spot is never taken while another exists. This guards against untrained
-  follow-ups, such as a Star Wars retrieval of a DEFCON card at DEFCON 2.
-* Each pair redeals the cards the mover cannot see and uses the same dice in every branch, so
-  branches differ only in the decision. ± is one standard error.
-* Everything ran on the fork's CI. The run ids are in the last section. The tools are on the fork
-  branch [`exp/hungary-openings`](https://github.com/JamesYouL2/DeepStruggle/tree/exp/hungary-openings),
-  under `ai/eval/`.
+**Model.** `shallow_E7-02+03+04+05_1200M.onnx`, the `newest` export. Engine fingerprint
+`5419a582ec07…`. Everything ran on the fork's CI, and the run ids are at the end. The tools are on
+the fork branch
+[`exp/hungary-openings`](https://github.com/JamesYouL2/DeepStruggle/tree/exp/hungary-openings),
+under `ai/eval/`.
 
 **The standing caveat.** A playout verdict values a move given how *this* model plays afterwards.
-So a move whose payoff lies in a follow-up the model does not know reads worse than it is.
+A move whose payoff lies in a follow-up the model does not know reads worse than it is. That makes
+the weaknesses below lower bounds.
 
-## Strengths: placement and board judgment hold up
+## Summary
 
-* **Ops placement.** Playout audit, 24,000 sampled decisions: every legal play mode, and the
-  likeliest cards, are each played out. The model's choice is the playout-best on average. Mean
-  split-half regret is −1.4 for play mode and −0.1 for card choice, so there is no broad leak.
-* **Scoring battlegrounds.** In 48,217 influence plays, the model reads scoring-card locations. It
-  takes a takeable battleground 47% of the time when it holds the region's scoring card, 28% when
-  the card is live elsewhere, and 11% when it is discarded. Where it skips a live battleground,
-  taking it scores −0.5 ± 0.1, so it is right. Its points went 82% to other battlegrounds.
-* **Replies.** Determinized search-64 plays the same action round as the net in 91% of 24,000
-  rounds. Where they differ, search gains +0.1 ± 0.2, and exposure to the opponent's reply is
-  unchanged. A missing reply model is not what holds it back.
-* **Against strong humans, on turn 1.** 7,139 turn-1 disagreements with the corpus were played out
-  each way. Human − model is −0.0 ± 0.1. The model's own headline and coup choices score better
-  than the humans' (−1.7 ± 0.7 and −1.2 ± 0.6). The humans' choices inside events score better
-  (+0.6 ± 0.3).
-* **The critic is calibrated.** Over 1.9M readings in 4,001 games, P(US wins) from the side to move
-  matches the result: fitted temperature 1.02, binned squared error 0.0006. The same holds in each
-  era and for each side to move. See §4 for what is not fine.
+* **Board judgment is the model's strength, and it beats strong humans.** Its Ops placement holds
+  up against its own playouts at every level tested:
+  * 24,000 sampled decisions show no regret;
+  * forcing an influence play into any one region costs 1.7-3.7 points;
+  * declining a live scoring battleground is right.
 
-## The leaks, by cost per game
+  Where the human corpus allocates differently -- about twice the Middle East, little Italy or
+  Asian battlegrounds, more scattered non-battlegrounds -- the reviewer's verdict is that the
+  model is right and the humans are wrong.
+* **Replies and defence are fine.** Search-64 plays the same action round as the net 91% of the
+  time and gains +0.1 ± 0.2 where they differ.
+* **The critic is calibrated.** Fitted temperature 1.02 over 1.9M readings. But **the two seats
+  disagree** by about 4 points at every hand-over, which is noise for search.
+* **The weakness is card play, not the board:**
+  * **decisive wins not taken.** Wargames is declined 429 of 430 times at a winning lead, about 1.5
+    points a game, and `safety.py` did not see it -- fixed in this PR;
+  * **immediate VP from events undervalued.** OPEC and Alliance for Progress at 5+ VP, Star Wars
+    when ahead. Humans make 1.6-3.3 more VP a game from events;
+  * **event timing against the hand and the rounds left.** Five Year Plan and Aldrich Ames; the net
+    is never told how many rounds it has left;
+  * **rarely reached decisions decided poorly.** The choices inside events, such as Aldrich Ames'
+    discard.
+* **What it suggests for training.** Card play is the target, and self-play Elo cannot see these
+  leaks, because both seats share them. See the last section.
 
-| leak | how often | cost when it happens | per game |
-|:---|:---|:---|---:|
-| **Wargames declined at a winning lead** | 429 of 430 times; ~11% of games | 14.3 ± 2.6 pts (it still wins 85.7%) | **~1.5 pts** |
-| **OPEC not evented at 5+ VP** | evented 24% | +2.4 ± 0.3 over all such plays | — |
-| **Star Wars not evented when ahead in space** | evented 0% | +1.6 ± 0.6 (+2.0 ± 0.7 where it declines) | — |
-| **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | — |
-| **Five Year Plan timing** (USSR) | see below | Ops-first over event-first +2.1 ± 0.9 | — |
+## The fix in this PR: Wargames at the play-mode decision
 
-**Checked and not confirmed: the South Korea setup bonus.** The model puts one or both US bonus
-points in South Korea in 23% of games. James reads that as clearly wrong, and on 32 human positions
-the human's Italy beat the model's South Korea by +8.1 ± 1.8. But a 4,096-deal bake-off does not
-confirm it. It pinned the model's usual WG 3 / France 3 / Italy 2 / Iran 2 against its own setup,
-on the same deals (fork runs `36970757999` and `36970763934`):
+`classify_legal_actions` recognised Wargames' win only at its `CHOOSE_BRANCH` node -- "give 6 VP
+and end the game", the *second* step. At the decision that matters, play the card for its event or
+for Ops, the event read "normal". Two things followed:
 
-* **Overall.** +0.0 ± 0.5.
-* **On the 927 deals where the model's own setup went outside Europe.** +0.2 ± 2.1.
+* the decisive probe never counted the model declining this win, so
+  [`agent_deficiencies_and_decisiveness.md`](agent_deficiencies_and_decisiveness.md)'s "declining a
+  forced win is usually free" never covered it;
+* any safety layer built on the classifier never took it.
 
-At E7 strength the placement costs nothing measurable, perhaps because neither side exploits it. WG 4 /
-France 2 / Italy 2 / Iran 2, which led an E6 bake-off by +2.1, is −0.6 ± 1.0 here (`36970769645`).
+Now, at DEFCON 2 with a lead over 6, the event is a win. At 6 or less it is not a loss, since the
+branch can still decline to end the game. `tests/training/test_safety_wargames.py` pins both. It
+also confirms the engine side: the event, then branch 0, ends the game for the mover.
 
-**Wargames.** At DEFCON 2 with a lead over 6, the event wins on the spot. The model plays the card
-for Ops instead in 429 of 430 cases (doctrine census, 4,000 games). From those positions it goes on
-to win 85.7% (60 positions × 32 pairs). The case for treating this one apart from the general
-forced-win question
-([`agent_deficiencies_and_decisiveness.md`](agent_deficiencies_and_decisiveness.md): "declining a
-forced win is usually free") is that `ai/eval/safety.py` classifies Wargames only at its
-`CHOOSE_BRANCH` node. At the play-mode decision the event is "normal", so the decisive probe has
-never counted these misses, and the `safe:` wrapper does not take them.
+This changes what the decisive probe reports from now on: forced wins it never saw are counted.
 
-**Event timing and hand management: the action round and the hand.** A strong player holds Five
-Year Plan (USSR) and Aldrich Ames Remix (US) for the last action round, with exactly one other card
-in hand, so the discard can only take that card. Ideally that card is a bad scoring card.
+## The weaknesses, with the playout evidence
 
-* **Five Year Plan.** Played in the last round 55% of the time, and with two or more other cards in
-  hand 38% of the time.
-* **Aldrich Ames.** Played in the last round 79% of the time, with exactly one other card 55% of
-  the time.
-* **Where the misses fall.** They sit one round early, exactly where the round count changes. In
-  turns 1-3, Five Year Plan clusters on round 6, which is right. From turn 4 on, 788 plays fall in
-  round 6 against 1,316 in round 7.
-* **What the net is not told.** It sees the turn and action round raw, and both hand sizes. It is
-  never told rounds left, or whether the opponent replies before the turn ends.
+| leak | how often | cost (the model's own paired playouts) | evidence |
+|:---|:---|:---|:---|
+| **Wargames declined at a winning lead** | 429 of 430 plays; ~11% of games | 14.3 ± 2.6 pts per decline (it still wins 85.7%): **~1.5 pts a game** | census `36943954436`; 60 positions × 32 pairs |
+| **OPEC not evented at 5+ VP** | evented 24% | event +2.4 ± 0.3 | 363 positions × 128 pairs, `36945382157` |
+| **Star Wars not evented when ahead in space** | evented 0% (census), 26% overall | +1.6 ± 0.6; +2.0 ± 0.7 where it declines | `36945382157`, `36964635572` |
+| **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | 512 positions × 128 pairs, `36945382157` |
+| **Five Year Plan timing (USSR)** | last round 55%; two or more other cards in hand 38% | Ops-first over the model's event-first +2.1 ± 0.9 | census `36953663726`; playout audit `36953614691` |
+| **Choices inside events** | -- | Aldrich Ames: best discard −0.8 against Ops, the model's own discard −5.5 (40 positions) | local, 32 pairs |
 
-**Inside events.** The model makes its worst choices in spots it rarely reaches:
+### Notes on each
 
-* **Aldrich Ames' discard.** With a normal US hand, eventing with the playout-best discard is level
-  with Ops (−0.8). With the model's own pick it is −5.5. It discards cards the US would have been
-  forced to event for the USSR (40 positions).
-* **De-Stalinization's removal.** It takes from Syria where humans take from Finland or Romania
-  (+3.3 / +4.8).
-* **Marshall Plan.** It goes into Sweden where humans choose Canada or West Germany (+2 to +3).
-* **The round-8 pass.** Passing the eighth action round is another rarely reached choice.
+**Immediate VP.** A VP ledger credits every VP change to the step that made it: 4,001 self-play
+games against 175 complete corpus games (`36966918630`). Humans earn more from events, the model
+more from the board:
 
-## The VP ledger: humans get VP from events, the model from the board
+| VP per game from | model | humans |
+|:---|---:|---:|
+| events, US | 7.8 | 11.1 |
+| events, USSR | 7.3 | 8.9 |
+| scoring cards | about 1 more for each side | -- |
 
-Every VP change is credited to the step that made it. That is 4,001 self-play games against 175
-complete corpus games, in VP per game:
+The largest event gaps are OPEC, Arms Race, Wargames, Duck and Cover and Alliance for Progress.
+Forcing the events humans favour, but whose value is delayed (John Paul II, Bear Trap, Missile
+Envy), reads *negative* by the model's playouts. That is the standing caveat: the playouts see only
+the immediate cases.
 
-| source | model US | human US | model USSR | human USSR |
-|:---|---:|---:|---:|---:|
-| events | 7.8 | **11.1** | 7.3 | **8.9** |
-| scoring cards | **15.8** | 14.8 | **17.2** | 16.1 |
-| space race | 2.0 | 2.3 | 1.2 | **1.8** |
-| Military Ops shortfall gained | 0.7 | 1.2 | 3.5 | 3.8 |
+**Timing.**
 
-The largest event gaps, human over model, in VP per game:
+* The misses fall one round early, where the count of action rounds changes. In turns 1-3, Five
+  Year Plan clusters on round 6, which is right. From turn 4, 788 plays fall in round 6 against
+  1,316 in round 7.
+* The net sees the turn, the action round and both hand sizes. It is never told the rounds left
+  for each side, or whether the opponent replies before the turn ends.
+* A two- or three-float "rounds left / surplus cards" block, built with the view-spec mechanism of
+  C4, would cost nothing to existing checkpoints.
 
-| event | gap |
-|:---|---:|
-| OPEC | +0.95 |
-| Arms Race | +0.94 |
-| Wargames | +0.65 |
-| Duck and Cover | +0.50 |
-| Alliance for Progress | +0.43 |
-| How I Learned to Stop Worrying | +0.34 |
-| Special Relationship | +0.32 |
+**Choices inside events** were the weakest decision type everywhere:
 
-These are the direct-VP events. The populations differ, since humans play humans, so read this as
-style rather than a controlled comparison.
+* the Aldrich Ames discard;
+* where De-Stalinization removes influence -- humans take it off Finland or Romania, the model off
+  Syria;
+* Marshall Plan's placements;
+* a Star Wars retrieval of a DEFCON card at DEFCON 2, which the playouts above guard against.
 
-**Unresolved.** Forcing the events humans favour, where the model declines, mostly scores
-*negative* by the model's own playouts. That holds for John Paul II −1.5, Bear Trap −2.3 and
-Missile Envy −2.5 to −3.5. These are exactly the delayed-payoff events, where the standing caveat
-bites. The ledger says humans turn events into VP. The playouts can only see the immediate cases.
+On turn 1, the humans' choices inside events beat the model's by +0.6 ± 0.3 over 754 disagreements
+(`36963933063`). These are decisions self-play rarely reaches -- the model never events Aldrich
+Ames in an action round.
 
-## The critic: calibrated, but the two seats disagree
+**Checked and not a leak.** The US setup bonus into South Korea (23% of games): a 4,096-deal
+bake-off measures +0.2 ± 2.1 (`36970757999`, `36970763934`).
 
-Each seat's reading is right on average, but the readings disagree position to position. P(US
-wins) moves **1.07 points per decision when the side to move stays the same, and 4.40 points when
-it changes** (rms 1.95 against 6.43, 1.9M steps). That is about 4 points of noise between the two
-views. It is what makes the workbench curve look swingy. It is also noise that search adds up
-across nodes of both seats, which bears on C5's gate in
-[`P30_base_model_quality.md`](../plans/P30_base_model_quality.md): "a critic that search can
-use". A consistency target, under which the two seats' readings sum to one, would cost no
-observation change.
+## Why training may plateau, and what to try
 
-## Why training may plateau where the playouts can still tell
+The playouts see 2-15 point gaps at specific decisions. RL credits one sampled move, from one
+game's ±1, against a critic whose seats disagree by about 4 points. A move the policy gives
+p ≈ 0.002 (Wargames for the win) is almost never sampled at all.
 
-The playouts above see 2-15 point differences at specific decisions. RL credits one sampled move
-per decision, from one game's ±1, against that critic noise. The playouts compare all moves under
-the same deal and dice. Rare moves, such as Wargames at p ≈ 0.002 or an event the model never plays
-in an action round, are almost never sampled, so they never get a gradient. This reads as a
-signal-to-noise floor, which fits saturation at about 1B steps.
+Candidates, cheapest first. All are recipe changes; none touches the engine or the observation:
 
-**A candidate the record has not tried:** policy iteration on paired-playout labels.
+1. **More exploration at play-mode decisions and choices inside events only.** A temperature or
+   entropy bonus there, so events the policy dislikes still get tried.
+2. **A small potential-based VP shaping**, Φ = c × VP lead. It does not change the optimal policy,
+   and it makes immediate VP visible at the step it happens, beside `--decisiveness-turns`.
+3. **The rounds-left block** above, and **C2** (the card-event target), which teaches the trunk
+   what events do.
+4. **Paired-branch advantages at play-mode decisions.** Play each legal mode out with common dice
+   and redeals, and use the paired differences as the policy-gradient signal for those actions.
+   This gives a signal for moves the policy would never sample.
+5. **Distil the pooled rules a position bank confirms**, as a small auxiliary loss refreshed every
+   ~200M steps. Event when its immediate VP is k or more; decisive moves.
 
-* **Label.** Sample decisions, oversampling the weak kinds above. Play out each candidate with the
-  current net, using common random numbers.
-* **Fine-tune.** Fine-tune the policy toward π′ ∝ π·exp(Q̂/τ), the operator from
-  [P3](../archive/E3_ladder/plans/P3_determinized_search_expert_iteration.md), with a KL bound to
-  the previous net.
-* **Gate.** Gate each round on head-to-head play and the census rates, then relabel with the new
-  net.
+Judge each on the census card-play rates and the events-VP gap, not on Elo alone.
 
-How it relates to what the record has tried:
-
-* **Search distillation.** It moved this lineage by +48 to +166 Elo
-  ([`E4_search_distillation.md`](E4_search_distillation.md) and the X4 logs). The difference here is
-  that no critic sits at the leaves, so the headroom does not shrink with the student's critic.
-* **The standing caveat.** That a verdict holds only "given how this policy plays afterwards" is
-  answered by relabelling each round. Each round's net plays the follow-ups the previous round
-  taught.
-
-James would like to run the first round himself. The net is 1.27M parameters, so a CPU is enough
-and the labels come from free CI. That needs the trainable weights.
+**Request.** Could you share `_soups/shallow_E7-02+03+04+05_1200M.pt`? It is the checkpoint the
+ONNX metadata names, sha256 `55a26630519e78991a90317ea071f395e61d53e01e641cf99224ef3426a733fc`.
+James would like to test items 4-5 as a fine-tune from the soup. The net is 1.27M parameters, so a
+CPU is enough, and the labels come from free CI.
 
 ## Reproduction
 
-All runs are on the fork's CI, model and engine as above, and every report carries a provenance
+All runs are on the fork's CI with the model and engine above. Every report carries a provenance
 block.
 
-* **Doctrine census.**
-  * 4,000 games: `36943954436`.
-  * Hand size at discard events: `36953663726`.
-* **Choice oracle.**
-  * Event and headline questions, 512 positions × 128 pairs: `36941086943`, `36945382157`.
-  * The cards humans event most, forced where the model declines: `36964635572`.
-* **Playout audit.** 24,000 decisions: `36953614691`; parts redone after a fix in `36955589646` and
-  `36958736889`.
-* **Reply probe.** Net against search-64: `36951383335`.
+* **Doctrine census.** `36943954436`; hand size at the discard events `36953663726`.
+* **Choice oracle.** Event and headline questions `36941086943`, `36945382157`; the cards humans
+  event most, forced `36964635572`.
+* **Playout audit.** 24,000 decisions: `36953614691`, with parts redone after a fix in
+  `36955589646` and `36958736889`.
+* **Reply probe.** `36951383335`.
 * **Live scoring battlegrounds.** `36956833709`.
-* **Human disagreements.**
-  * All turns: `36958653207`.
-  * Turn 1: `36963933063`.
+* **Region weight.** `37002909075`.
+* **Human disagreements.** All turns `36958653207`; turn 1 `36963933063`.
 * **VP ledger and calibration.** `36966918630`.
-* **US setup bake-off.** Own setup, and the two pinned setups: `36970757999`, `36970763934`,
-  `36970769645`.
-* **Local measurements**, each with the same paired method: the Wargames cost (60 positions × 32
-  pairs), the Aldrich Ames discard (40 positions × 32 pairs), and the US setup distribution (256
-  games).
+* **US setup bake-off.** `36970757999`, `36970763934`, `36970769645`.
+* **Local measurements, the same paired method.** The Wargames cost (60 positions × 32 pairs) and
+  the Aldrich Ames discard (40 positions × 32 pairs).
