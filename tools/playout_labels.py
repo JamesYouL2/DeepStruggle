@@ -40,6 +40,10 @@ def main() -> None:
     r.add_argument("--decisions", type=int, default=1500)
     r.add_argument("--pairs", type=int, default=24)
     r.add_argument("--k", type=int, default=4, help="candidates per decision (all legal modes at a play-mode decision)")
+    r.add_argument("--targeted", action="store_true", help="oversample the review's weak kinds and the leak spots")
+    r.add_argument("--adaptive", action="store_true", help="rounds of 8 pairs up to --pairs-max, stopping early")
+    r.add_argument("--pairs-max", type=int, default=64)
+    r.add_argument("--verify-pairs", type=int, default=64, help="re-play each confirmed label on fresh dice (0: skip)")
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", required=True)
     p = sub.add_parser("pool")
@@ -52,15 +56,18 @@ def main() -> None:
     if a.cmd == "run":
         t0 = time.time()
         act, probs = onnx_policy(a.model)
-        positions = collect(act, a.decisions, a.seed)
+        positions = collect(act, a.decisions, a.seed, targeted=a.targeted)
         print(f"{len(positions)} decisions ({round(time.time() - t0)}s)", flush=True)
         labels = []
         step = 50
         for lo in range(0, len(positions), step):
-            labels += label(act, probs, positions[lo:lo + step], a.pairs, a.seed * 7_919 + lo, a.k)
+            labels += label(act, probs, positions[lo:lo + step], a.pairs, a.seed * 7_919 + lo, a.k,
+                            adaptive=a.adaptive, pairs_max=a.pairs_max, verify_pairs=a.verify_pairs)
             print(f"  {min(lo + step, len(positions))}/{len(positions)} ({round(time.time() - t0)}s)", flush=True)
         arrays = pack(labels)
-        meta = {"model": os.path.basename(a.model), "pairs": a.pairs, "k": a.k, "seed": a.seed,
+        variant = ("targeted" if a.targeted else "uniform") + (", adaptive" if a.adaptive else f", {a.pairs} pairs")
+        meta = {"model": os.path.basename(a.model), "pairs": a.pairs, "k": a.k, "seed": a.seed, "variant": variant,
+                "adaptive": a.adaptive, "pairs_max": a.pairs_max, "verify_pairs": a.verify_pairs,
                 "seconds": round(time.time() - t0, 1)}
         _save(a.out, meta, arrays)
         print(f"{len(labels)} labels, {meta['seconds']}s")
@@ -69,7 +76,7 @@ def main() -> None:
         for fn in sorted({f for pat in a.parts for f in glob.glob(pat)}):
             with np.load(fn) as z:
                 m = json.loads(str(z["meta"]))
-                key = {k: m[k] for k in ("model", "pairs", "k")}
+                key = {k: m.get(k) for k in ("model", "pairs", "k", "variant", "verify_pairs", "adaptive", "pairs_max")}
                 if meta not in (None, key):
                     raise SystemExit(f"{fn} was labelled as {key}, not {meta}")
                 meta = key

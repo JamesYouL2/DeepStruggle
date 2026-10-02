@@ -35,7 +35,7 @@ from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start, apply_prefix
 from ai.eval.human_disagree import KINDS, kind_of
 from ai.eval.ops_block import CONFIRM_DONE
 from ai.eval.playout_audit import play_safe, suicide
-from ai.eval.reply_probe import _ar_key
+from ai.eval.reply_probe import _ar_key, is_round_start
 from bindings.action_encoder import ActionEncoder
 
 MODE_BASE = int(ActionEncoder.PLAY_MODE_OFFSET)
@@ -46,9 +46,55 @@ KIND_WEIGHT: Dict[str, float] = {"event choice": 5.0, "headline": 4.0, "mode": 3
 ProbsFn = Callable[[ts.GameState], np.ndarray]
 
 
+#: The targeted pilot's extra weight on the kinds of decision the review found weak.
+TARGETED_KIND_WEIGHT: Dict[str, float] = {"event choice": 8.0, "headline": 3.0, "mode": 4.0, "other": 3.0,
+                                          "setup": 1.0, "card": 3.0, "realign": 1.0, "coup": 0.5, "influence": 0.2}
+#: Events whose inside choices the review found weak (by name, resolved to ids at first use).
+WEAK_EVENT_CHOICES = ("Aldrich Ames Remix", "De-Stalinization", "Marshall Plan", "Star Wars", "Che",
+                      "Warsaw Pact Formed", "Comecon", "Suez Crisis", "Decolonization")
+
+
+def _ids(names: Sequence[str]) -> set:
+    from ai.eval.doctrine_census import cards
+    by = {str(v["name"]): k for k, v in cards().items()}
+    return {by[n] for n in names}
+
+
+def leak_spot(st: ts.GameState) -> bool:
+    """A decision of a kind where a focused test found the model leaking: Wargames at a winning
+    lead, OPEC or Alliance for Progress worth 5+ VP, Star Wars while ahead in space, the timing of
+    Five Year Plan (USSR) and Aldrich Ames Remix (US), and the choices inside the weak events."""
+    from ai.eval.doctrine_census import (ALDRICH_AMES, ALLIANCE_FOR_PROGRESS, FIVE_YEAR_PLAN, OPEC, STAR_WARS,
+                                         _hand, card_context)
+    ctx = st.ctx()
+    me = _decider(st)
+    us = me == ts.Player.US
+    lead = int(st.victory_points) * (1 if us else -1)
+    cid = int(ctx.pending_op_card)
+    if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and cid:
+        if cid == 100 and int(st.defcon) == 2 and lead > 6:
+            return True
+        if cid in (OPEC, ALLIANCE_FOR_PROGRESS) and card_context(st, cid).get("event_vp", 0) >= 5 \
+                and us == (cid == ALLIANCE_FOR_PROGRESS):
+            return True
+        if cid == STAR_WARS and us and int(st.us_space_track) > int(st.ussr_space_track):
+            return True
+        if (cid == FIVE_YEAR_PLAN and not us) or (cid == ALDRICH_AMES and us):
+            return True
+    if is_round_start(st):
+        hand = _hand(st, me)
+        if (not us and FIVE_YEAR_PLAN in hand) or (us and ALDRICH_AMES in hand):
+            return True
+    rc = int(ctx.resolving_card)
+    return bool(rc) and rc in _ids(WEAK_EVENT_CHOICES)
+
+
 def collect(act: PolicyFn, n: int, seed: int, envs: int = 32, base: float = 0.004, per_game: int = 8,
-            max_steps: int = 5_000_000) -> List[Tuple[ts.GameState, str]]:
-    """`n` decisions from finished games, each kind kept with probability base × its weight."""
+            targeted: bool = False, leak_p: float = 0.35, max_steps: int = 5_000_000) -> List[Tuple[ts.GameState, str]]:
+    """`n` decisions from finished games, each kept with probability base × its kind's weight; under
+    `targeted`, the review's weights, and a leak spot (`leak_spot`) kept with probability `leak_p`."""
+    weights = TARGETED_KIND_WEIGHT if targeted else KIND_WEIGHT
+    top = max(weights.values())
     rng = np.random.default_rng(seed)
     runner = ts.VectorizedBatchRunner(envs, seed * 37 + 19)
     runner.refresh_all()
@@ -65,11 +111,16 @@ def collect(act: PolicyFn, n: int, seed: int, envs: int = 32, base: float = 0.00
         masks = np.asarray(runner.get_action_masks())
         draws = rng.random(envs)
         for i in range(envs):
-            if taken[i] >= per_game or masks[i].sum() < 2 or draws[i] >= base * 5.0:
+            if taken[i] >= per_game or masks[i].sum() < 2:
+                continue
+            if draws[i] >= max(base * top, leak_p if targeted else 0.0):
                 continue
             st = runner.get_state(i)
             k = kind_of(st)
-            if draws[i] < base * KIND_WEIGHT.get(k, 1.0):
+            keep = draws[i] < base * weights.get(k, 1.0)
+            if targeted and not keep and draws[i] < leak_p and leak_spot(st):
+                keep = True
+            if keep:
                 pool.setdefault(game[i], []).append((st.clone(), k))
                 taken[i] += 1
         runner.step_flat_all([int(x) for x in act(obs, masks)], auto_advance=True)
@@ -105,45 +156,117 @@ def candidates(st: ts.GameState, kind: str, probs: np.ndarray, k: int) -> List[i
     return [greedy] + rest
 
 
+def _paired(sc: np.ndarray, j: int) -> Tuple[float, float, int]:
+    """Mean and standard error of candidate j minus the model's choice (column 0), over the pairs
+    where both were played."""
+    ok = ~np.isnan(sc[:, j]) & ~np.isnan(sc[:, 0])
+    d = sc[ok, j] - sc[ok, 0]
+    if len(d) < 2:
+        return (float(d.mean()) if len(d) else 0.0), float("inf"), int(len(d))
+    return float(d.mean()), float(d.std(ddof=1) / math.sqrt(len(d))), int(len(d))
+
+
+def _play_round(act: PolicyFn, work: Sequence[Tuple[int, ts.GameState, Sequence[int], Sequence[int]]], seed: int,
+                pair_seed: Callable[[int], int], chunk: int) -> Dict[Tuple[int, int, int], float]:
+    """Play (entry, pair, candidate) branches; `work` holds (entry id, state, pair indices, candidate
+    actions). Pair k of an entry uses the same redeal and dice for every candidate."""
+    jobs = [(e, st, k, a) for e, st, ks, cands in work for k in ks for a in cands]
+    out: Dict[Tuple[int, int, int], float] = {}
+    for lo in range(0, len(jobs), chunk):
+        part = jobs[lo:lo + chunk]
+        starts, movers, keys = [], [], []
+        bases: Dict[Tuple[int, int], ts.GameState] = {}
+        for e, st, k, a in part:
+            if (e, k) not in bases:
+                bases[(e, k)] = _pair_start(st, k, pair_seed(e), "resample")
+            starts.append(apply_prefix(bases[(e, k)], [a]))
+            movers.append(_decider(st))
+            keys.append(_ar_key(st))
+        res = play_safe(starts, movers, keys, act, seed + lo)
+        for (e, st, k, a), r in zip(part, res):
+            out[(e, k, a)] = r
+    return out
+
+
 def label(act: PolicyFn, probs_fn: ProbsFn, positions: Sequence[Tuple[ts.GameState, str]], pairs: int, seed: int,
-          k: int = 4, chunk: int = 1536) -> List[Dict[str, Any]]:
-    """One label per position (positions where only one candidate survives are dropped)."""
-    plan = []
+          k: int = 4, adaptive: bool = False, batch: int = 8, pairs_max: int = 64, verify_pairs: int = 0,
+          chunk: int = 1536) -> List[Dict[str, Any]]:
+    """One label per position (positions where only one candidate survives are dropped).
+
+    Fixed: every candidate `pairs` times. Adaptive: rounds of `batch` pairs up to `pairs_max`; after
+    each round a candidate clearly worse than the model's choice (mean + 2 se < 0) is dropped, and
+    the position stops once its best candidate is clearly better (mean − 3 se > 0) or none can be
+    (every mean + 2 se < 1 point). A label is **confirmed** when its best candidate beats the
+    model's choice by more than two standard errors (three when adaptive, since its gaps are looked
+    at after every round). With `verify_pairs`, each confirmed label is
+    re-played -- the model's choice against that best candidate -- on fresh redeals and dice."""
+    entries: List[Dict[str, Any]] = []
     for st, kind in positions:
         p = probs_fn(st)
         cands = candidates(st, kind, p, k)
         if len(cands) >= 2:
-            plan.append((st, kind, cands, p))
+            entries.append({"st": st, "kind": kind, "cands": cands, "p": p, "active": list(range(len(cands))),
+                            "done": False, "sc": np.full((pairs_max if adaptive else pairs, len(cands)), np.nan)})
+    pair_seed = lambda e: seed * 100_003 + e  # noqa: E731
+    # Looking at a gap after every round is a test repeated up to pairs_max / batch times, which
+    # inflates false confirmations; the adaptive variant asks for three standard errors, not two.
+    z = 3.0 if adaptive else 2.0
+    played = 0
+    rounds = [(0, pairs)] if not adaptive else [(r, min(batch, pairs_max - r)) for r in range(0, pairs_max, batch)]
+    for k0, nk in rounds:
+        work = [(e, en["st"], range(k0, k0 + nk), [en["cands"][j] for j in en["active"]])
+                for e, en in enumerate(entries) if not en["done"]]
+        if not work:
+            break
+        res = _play_round(act, work, seed + k0, pair_seed, chunk)
+        played += len(res)
+        for e, en in enumerate(entries):
+            if en["done"]:
+                continue
+            for kk in range(k0, k0 + nk):
+                for j in en["active"]:
+                    en["sc"][kk, j] = res[(e, kk, en["cands"][j])]
+            if not adaptive:
+                continue
+            stats = {j: _paired(en["sc"], j) for j in en["active"] if j}
+            en["active"] = [0] + [j for j in en["active"] if j and stats[j][0] + 2 * stats[j][1] >= 0]
+            live = {j: stats[j] for j in en["active"] if j}
+            if not live or max(m + 2 * se for m, se, _ in live.values()) < 0.01:
+                en["done"] = True
+            elif max(m - z * se for m, se, _ in live.values()) > 0:
+                en["done"] = True
     out: List[Dict[str, Any]] = []
-    lo = 0
-    while lo < len(plan):
-        group, size = [], 0
-        while lo < len(plan) and (not group or size + len(plan[lo][2]) * pairs <= chunk):
-            group.append(plan[lo])
-            size += len(plan[lo][2]) * pairs
-            lo += 1
-        starts, movers, keys = [], [], []
-        for gi, (st, _, cands, _) in enumerate(group):
-            for j in range(pairs):
-                base = _pair_start(st, j, seed * 100_003 + lo * 7 + gi, "resample")
-                for a in cands:
-                    starts.append(apply_prefix(base, [a]))
-                    movers.append(_decider(st))
-                    keys.append(_ar_key(st))
-        flat = play_safe(starts, movers, keys, act, seed + lo)
-        at = 0
-        for st, kind, cands, p in group:
-            nb = len(cands)
-            sc = np.array(flat[at:at + nb * pairs]).reshape(pairs, nb)
-            at += nb * pairs
-            mover = _decider(st)
-            out.append({
-                "obs": np.asarray(ts.extract_observation(st, mover), dtype=np.float32),
-                "mask": np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8),
-                "cands": cands, "q": sc.mean(axis=0), "q_se": sc.std(axis=0, ddof=1) / math.sqrt(pairs),
-                "prior": np.array([p[a] for a in cands], dtype=np.float32),
-                "regret": _split_half(sc), "kind": kind, "side": int(mover == ts.Player.US), "turn": int(st.turn),
-            })
+    for e, en in enumerate(entries):
+        sc = en["sc"]
+        st, cands = en["st"], en["cands"]
+        gains = [_paired(sc, j) if j else (0.0, 0.0, int(np.sum(~np.isnan(sc[:, 0])))) for j in range(len(cands))]
+        best = max(range(1, len(cands)), key=lambda j: gains[j][0] - z * gains[j][1])
+        confirmed = gains[best][0] - z * gains[best][1] > 0
+        full = sc[~np.isnan(sc).any(axis=1)]
+        mover = _decider(st)
+        out.append({
+            "st": st, "obs": np.asarray(ts.extract_observation(st, mover), dtype=np.float32),
+            "mask": np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8),
+            "cands": cands, "q": np.nanmean(sc, axis=0), "gain": np.array([g[0] for g in gains]),
+            "gain_se": np.array([g[1] for g in gains]), "prior": np.array([en["p"][a] for a in cands], dtype=np.float32),
+            "pairs_used": int(np.sum(~np.isnan(sc))), "confirmed": bool(confirmed), "best": int(best),
+            "regret": _split_half(full) if len(full) >= 4 else float("nan"),
+            "kind": en["kind"], "side": int(mover == ts.Player.US), "turn": int(st.turn),
+            "vgain": float("nan"), "vgain_se": float("nan"),
+        })
+    if verify_pairs:
+        conf = [(i, lb) for i, lb in enumerate(out) if lb["confirmed"]]
+        work = [(i, lb["st"], range(1_000_000, 1_000_000 + verify_pairs), [lb["cands"][0], lb["cands"][lb["best"]]])
+                for i, lb in conf]
+        res = _play_round(act, work, seed + 7, pair_seed, chunk) if work else {}
+        for i, lb in conf:
+            d = np.array([res[(i, kk, lb["cands"][lb["best"]])] - res[(i, kk, lb["cands"][0])]
+                          for kk in range(1_000_000, 1_000_000 + verify_pairs)])
+            lb["vgain"] = float(d.mean())
+            lb["vgain_se"] = float(d.std(ddof=1) / math.sqrt(len(d)))
+        played += len(res)
+    for lb in out:
+        lb.pop("st")
     return out
 
 
@@ -163,18 +286,25 @@ def pack(labels: Sequence[Dict[str, Any]], k_max: int = 5) -> Dict[str, np.ndarr
     n = len(labels)
     cands = np.full((n, k_max), -1, dtype=np.int16)
     q = np.zeros((n, k_max), dtype=np.float32)
-    q_se = np.zeros((n, k_max), dtype=np.float32)
+    gain = np.zeros((n, k_max), dtype=np.float32)
+    gain_se = np.zeros((n, k_max), dtype=np.float32)
     prior = np.zeros((n, k_max), dtype=np.float32)
     for i, lb in enumerate(labels):
         m = min(k_max, len(lb["cands"]))
         cands[i, :m] = lb["cands"][:m]
         q[i, :m] = lb["q"][:m]
-        q_se[i, :m] = lb["q_se"][:m]
+        gain[i, :m] = lb["gain"][:m]
+        gain_se[i, :m] = np.minimum(lb["gain_se"][:m], 9.0)
         prior[i, :m] = lb["prior"][:m]
     return {
         "obs": np.stack([lb["obs"] for lb in labels]).astype(np.float16) if n else np.zeros((0, ts.OBS_SIZE), np.float16),
         "mask": np.packbits(np.stack([lb["mask"] for lb in labels]), axis=1) if n else np.zeros((0, 28), np.uint8),
-        "cands": cands, "q": q, "q_se": q_se, "prior": prior,
+        "cands": cands, "q": q, "gain": gain, "gain_se": gain_se, "prior": prior,
+        "pairs_used": np.array([lb["pairs_used"] for lb in labels], dtype=np.int32),
+        "confirmed": np.array([lb["confirmed"] for lb in labels], dtype=bool),
+        "best": np.array([lb["best"] for lb in labels], dtype=np.int8),
+        "vgain": np.array([lb["vgain"] for lb in labels], dtype=np.float32),
+        "vgain_se": np.array([lb["vgain_se"] for lb in labels], dtype=np.float32),
         "regret": np.array([lb["regret"] for lb in labels], dtype=np.float32),
         "kind": np.array([KINDS.index(lb["kind"]) for lb in labels], dtype=np.int8),
         "side": np.array([lb["side"] for lb in labels], dtype=np.int8),
@@ -190,41 +320,58 @@ def soft_target(q: np.ndarray, prior: np.ndarray, tau: float) -> np.ndarray:
     return e / e.sum(axis=-1, keepdims=True)
 
 
-def report(arrays: Dict[str, np.ndarray], meta: Dict[str, Any], taus: Sequence[float] = (0.02, 0.05, 0.1)
-           ) -> Tuple[str, Dict[str, Any]]:
-    """What the labels would teach: per kind, how often the playout-best candidate is not the
-    model's, the split-half regret, and how far a soft target at each τ moves from the prior."""
+def shrunk_gain(gain: np.ndarray, gain_se: np.ndarray) -> np.ndarray:
+    """Each candidate's gain over the model's choice, kept only where it exceeds two standard errors
+    (else 0): the shrinkage rule, so a soft target moves only on evidence."""
+    return np.where(gain - 2 * gain_se > 0, gain, 0.0)
+
+
+def report(arrays: Dict[str, np.ndarray], meta: Dict[str, Any], tau: float = 0.1) -> Tuple[str, Dict[str, Any]]:
+    """What the labels would teach, and how much of it holds up on fresh dice."""
     n = len(arrays["kind"])
-    out = [f"# Playout labels — {meta.get('model', '?')}", "",
-           f"{n} labelled decisions, {meta.get('pairs', '?')} paired playouts per candidate.", "",
-           "| decision | labels | best ≠ model's | split-half regret | " +
-           " | ".join(f"KL(π′‖π) at τ={t}" for t in taus) + " |",
-           "|:---|---:|---:|---:|" + "---:|" * len(taus)]
-    summary: Dict[str, Any] = {"meta": meta, "n": n, "kinds": {}}
+    verify_pairs = int(meta.get("verify_pairs", 0))
+    conf = arrays["confirmed"]
+    label_playouts = int(arrays["pairs_used"].sum())
+    verify_playouts = int(conf.sum()) * 2 * verify_pairs
+    total = label_playouts + verify_playouts
+    v = arrays["vgain"][conf]
+    vse = arrays["vgain_se"][conf]
+    out = [f"# Playout labels — {meta.get('model', '?')} ({meta.get('variant', '?')})", "",
+           f"{n} labelled decisions; {label_playouts} labelling playouts ({label_playouts / max(1, n):.0f} per decision) "
+           f"and {verify_playouts} verification playouts.", "",
+           "A label is **confirmed** when its best candidate beats the model's choice by more than two standard "
+           f"errors (the shrinkage rule). Each confirmed label is re-played on fresh redeals and dice, {verify_pairs} "
+           "pairs: the **verified gain** is what holds up.", ""]
+    summary: Dict[str, Any] = {"meta": meta, "n": n, "playouts": total, "kinds": {}}
+    vm = float(np.nanmean(v)) if len(v) else float("nan")
+    vs = float(np.nanstd(v, ddof=1) / math.sqrt(len(v))) if len(v) > 1 else float("nan")
+    per10k = float(np.nansum(v)) / max(1, total) * 10_000
+    out += ["| | value |", "|:---|---:|",
+            f"| confirmed labels | {int(conf.sum())} ({100 * conf.mean():.1f}%) |",
+            f"| claimed gain of confirmed (mean) | {100 * float(np.mean(arrays['gain'][conf, :].max(axis=1))) if conf.any() else float('nan'):.1f} pts |",
+            f"| **verified gain of confirmed** | **{100 * vm:+.1f} ± {100 * vs:.1f} pts** |",
+            f"| confirmed labels whose verified gain is positive | {100 * float(np.mean(v > 0)) if len(v) else float('nan'):.0f}% |",
+            f"| **verified gain per 10,000 playouts** (points × labels) | **{100 * per10k:.2f}** |", ""]
+    summary.update(confirmed=int(conf.sum()), verified_gain=(vm, vs), per10k=per10k)
+    out += ["## By kind", "", "| decision | labels | playouts per label | confirmed | verified gain of confirmed | "
+            f"KL(π′‖π), shrunk, τ={tau} |", "|:---|---:|---:|---:|---:|---:|"]
     valid = arrays["cands"] >= 0
     for ki, kind in enumerate(KINDS):
         sel = arrays["kind"] == ki
         if not sel.any():
             continue
-        q = np.where(valid[sel], arrays["q"][sel], -np.inf)
-        best_not_model = float(np.mean(np.argmax(q, axis=1) != 0))
-        reg = arrays["regret"][sel]
-        kls = []
-        for t in taus:
-            pr = np.where(valid[sel], arrays["prior"][sel], 0.0)
-            pr = pr / np.maximum(pr.sum(axis=1, keepdims=True), 1e-8)
-            qq = np.where(valid[sel], arrays["q"][sel], 0.0)
-            tgt = soft_target(qq, np.where(valid[sel], pr, 1e-12), t)
-            kl = np.sum(np.where(valid[sel], tgt * (np.log(np.maximum(tgt, 1e-12)) - np.log(np.maximum(pr, 1e-12))), 0.0),
-                        axis=1)
-            kls.append(float(kl.mean()))
-        se = float(reg.std(ddof=1) / math.sqrt(len(reg))) if len(reg) > 1 else float("nan")
-        out.append(f"| {kind} | {int(sel.sum())} | {100 * best_not_model:.0f}% | {100 * reg.mean():+.2f} ± {100 * se:.2f} | " +
-                   " | ".join(f"{x:.3f}" for x in kls) + " |")
-        summary["kinds"][kind] = {"n": int(sel.sum()), "best_not_model": best_not_model,
-                                  "regret": (float(reg.mean()), se), "kl": dict(zip(map(str, taus), kls))}
-    reg = arrays["regret"]
-    if len(reg) > 1:
-        out += ["", f"All decisions: split-half regret {100 * reg.mean():+.2f} ± {100 * reg.std(ddof=1) / math.sqrt(len(reg)):.2f} "
-                "points -- what the playout-best move gains over the model's own, unbiased by choosing the best."]
+        c = conf & sel
+        vv = arrays["vgain"][c]
+        pr = np.where(valid[sel], arrays["prior"][sel], 0.0)
+        pr = pr / np.maximum(pr.sum(axis=1, keepdims=True), 1e-8)
+        g = np.where(valid[sel], shrunk_gain(arrays["gain"][sel], arrays["gain_se"][sel]), 0.0)
+        tgt = soft_target(g, np.where(valid[sel], pr, 1e-12), tau)
+        kl = float(np.mean(np.sum(np.where(valid[sel], tgt * (np.log(np.maximum(tgt, 1e-12)) -
+                                                           np.log(np.maximum(pr, 1e-12))), 0.0), axis=1)))
+        vtxt = (f"{100 * np.nanmean(vv):+.1f} ± {100 * np.nanstd(vv, ddof=1) / math.sqrt(len(vv)):.1f}"
+                if len(vv) > 1 else "—")
+        out.append(f"| {kind} | {int(sel.sum())} | {arrays['pairs_used'][sel].mean():.0f} | "
+                   f"{int(c.sum())} ({100 * c.sum() / sel.sum():.0f}%) | {vtxt} | {kl:.4f} |")
+        summary["kinds"][kind] = {"n": int(sel.sum()), "confirmed": int(c.sum()),
+                                  "verified": float(np.nanmean(vv)) if len(vv) else None, "kl": kl}
     return "\n".join(out) + "\n", summary

@@ -19,8 +19,17 @@ on:
         description: "Decisions labelled per runner"
         default: "1500"
       pairs:
-        description: "Paired playouts per candidate"
+        description: "Paired playouts per candidate (fixed variant)"
         default: "24"
+      variant:
+        description: "Extra flags: '' (uniform), '--targeted', or '--targeted --adaptive'"
+        default: ""
+      pairs_max:
+        description: "Adaptive: most pairs per candidate"
+        default: "64"
+      verify_pairs:
+        description: "Fresh-dice pairs re-playing each confirmed label (0: skip)"
+        default: "64"
       runners:
         description: "Runners (each finds different positions)"
         default: "16"
@@ -37,6 +46,9 @@ permissions:
 env:
   DECISIONS: ${{ inputs.decisions || '1500' }}
   PAIRS: ${{ inputs.pairs || '24' }}
+  VARIANT: ${{ inputs.variant || '' }}
+  PAIRS_MAX: ${{ inputs.pairs_max || '64' }}
+  VERIFY_PAIRS: ${{ inputs.verify_pairs || '64' }}
   RUNNERS: ${{ inputs.runners || '16' }}
   MODEL: ${{ inputs.model || 'newest' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
@@ -81,7 +93,8 @@ jobs:
           python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/playout_labels.py run \
             --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
-            --decisions "$DECISIONS" --pairs "$PAIRS" --seed "${{ matrix.part }}" \
+            --decisions "$DECISIONS" --pairs "$PAIRS" --pairs-max "$PAIRS_MAX" --verify-pairs "$VERIFY_PAIRS" $VARIANT \
+            --seed "${{ matrix.part }}" \
             --out "parts/part-${{ matrix.part }}.npz"
 
       - uses: actions/upload-artifact@v4
@@ -117,7 +130,7 @@ jobs:
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
-            echo "decisions/runner: $DECISIONS  pairs: $PAIRS  runners: $RUNNERS"
+            echo "decisions/runner: $DECISIONS  pairs: $PAIRS  variant: ${VARIANT:-uniform}  pairs_max: $PAIRS_MAX  verify: $VERIFY_PAIRS  runners: $RUNNERS"
           } > reports/provenance.txt
           { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
 

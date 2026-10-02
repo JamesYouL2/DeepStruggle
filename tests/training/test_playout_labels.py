@@ -41,3 +41,20 @@ def test_soft_target_moves_toward_the_better_move() -> None:
     assert t[0, 1] > 0.85 and abs(t.sum() - 1) < 1e-9
     same = P.soft_target(np.array([[0.5, 0.5]]), np.array([[0.9, 0.1]]), tau=0.1)
     assert np.allclose(same, [[0.9, 0.1]])                  # no evidence, no change
+
+
+def test_adaptive_and_verified_labels() -> None:
+    act = _random_policy(4)
+    pos = P.collect(act, 6, seed=5, envs=4, base=0.05, targeted=True)
+    labels = P.label(act, _probs, pos, pairs=4, seed=2, k=3, adaptive=True, batch=4, pairs_max=8, verify_pairs=4)
+    for lb in labels:
+        assert 4 <= lb["pairs_used"] / len(lb["cands"]) * 1.0 or lb["pairs_used"] >= 8
+        assert lb["confirmed"] == (lb["gain"][lb["best"]] - 3 * lb["gain_se"][lb["best"]] > 0)
+        assert (lb["confirmed"] and abs(lb["vgain"]) <= 1) or (not lb["confirmed"] and np.isnan(lb["vgain"]))
+    md, summary = P.report(P.pack(labels), {"model": "x", "verify_pairs": 4, "variant": "t"})
+    assert summary["n"] == len(labels)
+
+
+def test_shrinkage_keeps_only_clear_gains() -> None:
+    g = P.shrunk_gain(np.array([[0.0, 0.05, 0.2]]), np.array([[0.0, 0.04, 0.05]]))
+    assert np.allclose(g, [[0.0, 0.0, 0.2]])
