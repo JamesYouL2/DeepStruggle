@@ -116,6 +116,15 @@ How they are trained:
 * The heads are used only by that loss. `forward()` and the policy are untouched, and checkpoints
   record the heads by their weights (`aux_own_head.*`), so they load anywhere.
 * Metrics: `aux_own_loss`, `aux_own_acc`, `aux_vp_loss`, `aux_n`, `aux_pending`.
+`--play-mode-temp T` (owner, 2026-10-02; default 1.0 = off) samples the learner's play-mode decisions -- event, space
+or Ops for a chosen card -- at temperature `T`, so events the policy rarely plays get tried (the expert review's first
+candidate, `research/log/expert_review_E7.md`). Exploration only: the stored log-prob stays the policy's own. The
+metric `play_mode_event_frac` is the share of the learner's play-mode decisions that chose the event.
+
+**Branching with an added head.** `--resume` accepts a state written without a training-only head the new run builds
+(`--aux-card-events`, `--aux-ownership`, `--aux-vp-margin`): the trunk, policy and value are restored exactly, so the
+branch starts as the saved network, and the head starts fresh with fresh Adam moments. Any other mismatch still refuses.
+
 `--setup-script-frac F` (owner, 2026-10-02; default 0 = off; requires `--setup-mc-credit`) sets up a fraction `F`
 of games, drawn per game, by one of `--setup-script-openings` (default: the four human variants in
 `tools/lib/openings.HUMAN_OPENING_MIX` -- USSR East Germany 4, Poland 4, Yugoslavia or Austria 1; US West Germany 4
