@@ -44,7 +44,7 @@ def test_a_branch_can_add_the_card_event_head(tmp_path: Any) -> None:
     assert all(torch.equal(sa[k], sb[k]) for k in sa)
     assert any(k.startswith("card_aux_head.") for k in sb) and not any(k.startswith("card_aux_head.") for k in sa)
     # so policy and value are the saved network's
-    obs = torch.rand(4, a.active_net.TOTAL_OBS_SIZE)
+    obs = torch.rand(4, int(getattr(a.active_net, "TOTAL_OBS_SIZE")))
     mask = torch.ones(4, 220, dtype=torch.bool)
     with torch.no_grad():
         for x, y in zip(a.active_net(obs, mask), b.active_net(obs, mask)):
