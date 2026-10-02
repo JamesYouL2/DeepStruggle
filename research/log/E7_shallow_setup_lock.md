@@ -79,3 +79,52 @@ temperature 1, 1,000 deals:
 * **To test a USSR that is not locked, the floor would have to hold for each seat's setup
   separately** (a symmetric rule, not side-specific training), or the lock be broken before the
   credit can compare anything -- and on a fresh run, before it forms (80–160M).
+
+## E7-10-44: half the games set up by scripted human openings, trained as its own (2026-10-02)
+
+E7-02-44 branched at 820M to 1,200M with `--setup-mc-credit --setup-script-frac 0.5`: in half the
+games, drawn per game, both sides' setup is one of the four human variants (USSR East Germany 4,
+Poland 4, Yugoslavia or Austria 1; US West Germany 4 with Italy 3 + Iran 3 or Italy 4 + Iran 2), and
+those placements are trained as the policy's own -- the ratio measured from the current policy, the
+credit the game result against the critic. (A first launch measured the ratio from the stale rollout
+log-prob and drove the scripted openings down; voided, fixed in `a196a2b`.) Control: E7-02-44's own
+820M → 1,200M.
+
+**It adopted the human openings within ~20M steps** (sampled at temperature 1, 1,000 deals):
+
+| | USSR | US |
+|:---|:---|:---|
+| E7-02-44@1,200M (control) | Poland 6, 100% | WG 4, Italy 2, South Korea 2, France 1 (71%) |
+| E7-10-44@840M | Poland 4, EG +1, Austria 1 (73%); Poland 5 variants (22%) | the two human variants 61% |
+| E7-10-44@1,200M | Poland 4, EG +1, **Austria 1 (70%)**, **Yugoslavia 1 (26%)** | **WG 4, Italy 3, Iran +2 (67%)**, **WG 4, Italy 4, Iran +1 (24%)** |
+| E7-10-44 1,120–1,200M SWA | Yugoslavia 51%, Austria 42% | Italy 4 + Iran 58%, Italy 3 + Iran 33% |
+
+The game-result credit stayed positive throughout (result − baseline +0.03 to +0.16 per update).
+
+**Strength with its own setups is level** (owner's rule, 1,000 games per side per pairing):
+
+| E7-10-44 against E7-02-44 | US | USSR | head to head |
+|:---|---:|---:|---:|
+| 1,140–1,200M snapshots | +1.1 ± 0.5 | −0.9 ± 0.5 | 51.3% |
+| 1,120–1,200M SWA | +1.9 ± 0.8 | −1.4 ± 0.9 | 48.8% |
+
+**With the human opening forced on both sides it plays better:** E7-10-44@1,200M against
+E7-02-44@1,200M 53.9% (as US 54.9, as USSR 52.8); SWA against SWA 52.6%.
+
+**The setup oracle on E7-10-44@1,200M: every opening is level in the playouts again** -- the human
+variants within ±1.3 pp of its own, and **Poland 6 −0.7 ± 1.4**. But the critic now rates Poland 6
+**17.8 points worse** than its own opening: the mirror image of E7-02-44's critic, which rated the
+human openings 12–19 points worse than Poland 6.
+
+### Reading
+
+* **The opening is not where strength is.** Against itself the network is level whichever of these
+  openings it plays (two checkpoints, both seats, every variant within about two points), and
+  switching its habitual opening from Poland 6 to the human one cost and bought nothing at
+  saturation (51.3% / 48.8%).
+* **What it did buy is breadth:** the network now plays the human opening's middlegames better
+  (53.9% when both sides are forced into them), and its own opening is no longer a single line.
+* **The critic's verdict on openings is familiarity, not value.** Both times it rated its habitual
+  opening ~18 points above alternatives the playouts call level. Any setup credit through the critic
+  (the λ-return) inherits that bias, which is why the game-result credit was needed here.
+* Reports: `data/reports/e7_10_44_rr{,_human}.{md,json}`.
