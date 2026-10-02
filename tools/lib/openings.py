@@ -26,6 +26,7 @@ SETUP_DECISIONS = 15
 WEST_GERMANY, ITALY, EAST_GERMANY, POLAND, YUGOSLAVIA, IRAN = 7, 10, 14, 15, 18, 25
 CANADA, FRANCE, HUNGARY, SOUTH_KOREA = 0, 8, 17, 44
 AUSTRIA = 13
+ROMANIA, AUSTRALIA = 19, 41
 
 #: The standard human opening, as (country, points) in placement order. The USSR overcontrols
 #: Poland and East Germany by a point each; the US takes West Germany and Italy with a buffer and
@@ -40,6 +41,13 @@ US_OPENING: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (ITALY, 3), (IRAN, 2
 #: in Italy and one in Iran (Italy 4, Iran 2).
 USSR_OPENING_AUSTRIA: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 4), (AUSTRIA, 1))
 US_OPENING_ITALY4: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (ITALY, 3), (ITALY, 1), (IRAN, 1))
+
+
+#: A deliberately bad opening, as a control for --setup-script-frac (owner, 2026-10-02): does the
+#: mechanism make the network adopt whatever is forced, or only what wins? USSR all six in Romania;
+#: US all seven Western Europe points in West Germany and both bonus points in Australia.
+USSR_STUPID: Sequence[Tuple[int, int]] = ((ROMANIA, 6),)
+US_STUPID: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 7), (AUSTRALIA, 2))
 
 
 def expand(opening: Sequence[Tuple[int, int]]) -> List[int]:
@@ -69,6 +77,7 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "human_yugo_it4": {"US": expand(US_OPENING_ITALY4), "USSR": expand(USSR_OPENING)},
     "human_austria_it3": {"US": expand(US_OPENING), "USSR": expand(USSR_OPENING_AUSTRIA)},
     "human_austria_it4": {"US": expand(US_OPENING_ITALY4), "USSR": expand(USSR_OPENING_AUSTRIA)},
+    "stupid_romania_australia": {"US": expand(US_STUPID), "USSR": expand(USSR_STUPID)},
     "us_e516_43": {"US": expand(US_E516_43)},
     "us_e516_44": {"US": expand(US_E516_44)},
     "ph_west_germany": {"US": expand(US_OPENING), "USSR": expand(USSR_POLAND_HUNGARY)},

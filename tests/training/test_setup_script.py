@@ -140,3 +140,10 @@ def test_a_stale_rollout_log_prob_does_not_skew_the_scripted_update() -> None:
             p.add_(0.05 * torch.randn_like(p))
     out = t._setup_mc_update()
     assert out["setup_mc_ratio_dev"] < 1e-4 and out["setup_mc_clip_frac"] == 0.0
+
+
+def test_the_stupid_control_opening_is_legal() -> None:
+    st = ts.GameState()
+    ts.Engine.init_game(st, 11)
+    c = play_scripted_setup(st, "stupid_romania_australia").to_dict()["countries"]
+    assert (c["Romania"]["ussr_influence"], c["West Germany"]["us_influence"], c["Australia"]["us_influence"]) == (6, 7, 6)
