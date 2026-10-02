@@ -144,7 +144,10 @@ def event_cost(st: ts.GameState, mover: ts.Player, act: PolicyFn) -> Optional[fl
 
 
 def card_cost(st: ts.GameState, cid: int, mover: ts.Player, act: PolicyFn) -> Optional[float]:
-    """At an action round's first decision: the event cost of playing opponent card `cid` now."""
+    """At an action round's first decision: the event cost of playing opponent card `cid` now (None
+    if the card cannot be played here)."""
+    if not np.asarray(ActionEncoder.get_legal_mask(st))[cid - 1]:
+        return None
     probe = st.clone()
     _step(probe, cid - 1)
     if ts.Engine.is_terminal(probe) or probe.ctx().decision_type != ts.DecisionType.SELECT_PLAY_MODE:

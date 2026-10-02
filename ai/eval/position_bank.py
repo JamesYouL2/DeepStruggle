@@ -106,13 +106,15 @@ def features(st: ts.GameState, act: PolicyFn, probe_cards: bool = True) -> Dict[
                 f["event_gain"] = event_gain(st, mover, act)
     if probe_cards and f["kind"] == "card":
         per = {}
+        legal_now = np.asarray(ActionEncoder.get_legal_mask(st)).astype(bool)
         for c in hand:
             if c == CHINA:
                 continue
-            row: Dict[str, Any] = {"owner": _owner(c, mover), "ops": int(cards().get(c, {}).get("ops", 0))}
+            row: Dict[str, Any] = {"owner": _owner(c, mover), "ops": int(cards().get(c, {}).get("ops", 0)),
+                                   "playable": bool(legal_now[c - 1])}
             if c in SCORING_REGION:
                 row["score"] = score_value(st, c, mover)
-            elif row["owner"] == "opp":
+            elif row["owner"] == "opp" and row["playable"]:
                 row["cost"] = card_cost(st, c, mover, act)
             per[str(c)] = row
         f["hand_cards"] = per
