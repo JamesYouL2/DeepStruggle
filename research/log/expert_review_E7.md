@@ -66,9 +66,9 @@ followed:
 * any safety layer built on the classifier never took it.
 
 Wargames is one case of a general gap, so the fix is general. An action is now a win when a line
-from it ends the game for the mover using only the mover's own choices and single-option steps --
-no opponent decision, no die, no hidden draw, nothing past the current card's play. That covers,
-with no card list:
+from it ends the game for the mover using only the mover's own choices, single-option steps and
+dice that win on every face -- no opponent decision, no hidden draw, nothing past the current card's
+play and the turn end it reaches. That covers, with no card list:
 
 * Wargames at DEFCON 2 with a lead over 6, at the card in hand, its event and its branch;
 * an event from hand whose VP reaches 20;
@@ -76,7 +76,11 @@ with no card list:
   pick when the opponent plays it for Ops;
 * the card Grain Sales drew, whoever played Grain Sales. Choosing Grain Sales is not a win, since
   what it draws is chance -- unless the USSR holds a single card, which the engine draws without
-  the RNG.
+  the RNG;
+* a battleground coup at DEFCON 2 in the opponent's round -- CIA Created or Tear Down This Wall
+  played for Ops -- which takes DEFCON to 1 whatever it rolls and defeats the phasing opponent;
+* a last action round whose turn end wins: Military Ops made up by a coup, a scoring card the
+  opponent still holds, final scoring. Where every action wins this way, no chance is counted.
 
 The card Grain Sales drew is also judged as itself now for losses: the classifier read the card at a
 play-mode decision as Grain Sales, so a drawn DEFCON card's loss went unseen, and the DEFCON rules

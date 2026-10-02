@@ -3,8 +3,10 @@ position, and how the decisive probe counts them.
 
 A win is a line of the mover's own choices: Wargames from hand (card, event, branch), Star Wars
 eventing a winning card from the discard -- the mover's own Star Wars, or the opponent's played for
-Ops -- and the card Grain Sales drew, whoever played Grain Sales. No opponent decision, die or hidden
-draw may sit on the line, so choosing Grain Sales itself, or a war card, is never a win.
+Ops -- the card Grain Sales drew, whoever played Grain Sales, a battleground coup at DEFCON 2 in the
+opponent's round, and Military Ops that win at the turn end. No opponent decision or hidden draw may
+sit on the line, and a die must win on every face, so choosing Grain Sales itself (unless its draw
+is certain), or a war card, is not a win.
 
 The losses pinned here -- a battleground coup at DEFCON 2 (and with Nuclear Subs), and the DEFCON
 cards -- were already right; they are pinned so the classifier cannot regress on them.
@@ -85,7 +87,7 @@ def _lead(side: ts.Player, lead: int) -> int:
 
 def _wins_by_taking_them(st: ts.GameState) -> None:
     """From a position with a win, `find_instant_win` at every step reaches the mover's win --
-    what the safety layer does with the label."""
+    what the safety layer does with the label. A die on the way is rolled: any face wins."""
     mover = st.ctx().decision_player
     s = st.clone()
     for _ in range(12):
@@ -93,6 +95,9 @@ def _wins_by_taking_them(st: ts.GameState) -> None:
             util = float(ts.Engine.get_terminal_utility(s))
             assert (util if mover == US else -util) > 0
             return
+        if s.ctx().decision_type == ts.DecisionType.ROLL_DIE:
+            ts.Engine.step(s, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+            continue
         assert s.ctx().decision_player == mover
         a = find_instant_win(s, mover)
         assert a is not None, f"the line broke off at {s.ctx().decision_type}"
@@ -236,11 +241,59 @@ def test_an_event_from_hand_that_reaches_twenty_is_a_win() -> None:
     assert classify_legal_actions(st)[NUCLEAR_TEST_BAN - 1] != "win"
 
 
-def test_a_win_that_needs_a_die_is_not_one() -> None:
+def test_a_win_that_hangs_on_the_die_is_not_one() -> None:
     st = _us_card_choice()
-    st.victory_points = 19                            # Brush War's 1 VP would do it -- on a roll
+    st.victory_points = 19                            # Brush War's 1 VP would do it -- on a 3-6
     st.set_card_location(BRUSH_WAR, HANDS[US][0])
     assert classify_legal_actions(st)[BRUSH_WAR - 1] != "win"
+
+
+# --- a coup in the opponent's round, and Military Ops at the turn end ------------------------------
+
+CIA_CREATED, EAST_EUROPEAN_UNREST = 26, 29          # a US free coup of 1 Op; a US card of 3 Ops
+OP_COUP = ActionEncoder.OP_MODE_OFFSET + int(ts.OpMode.COUP)
+
+
+def test_a_battleground_coup_in_the_opponents_round_at_defcon_two_is_a_win() -> None:
+    """The USSR plays CIA Created for Ops at DEFCON 2, and the US's free coup takes DEFCON to 1 in
+    the USSR's round -- whatever it rolls -- which defeats the phasing USSR."""
+    st = _card_choice(USSR)
+    st.defcon = 2
+    st.set_country(_cid("Angola"), 0, 2)               # a battleground
+    st.set_country(_cid("Zimbabwe"), 0, 1)             # not one
+    _hand(st, USSR, [CIA_CREATED, EAST_EUROPEAN_UNREST])
+    _step(st, CIA_CREATED - 1)
+    _step(st, EVENT_ACTION)                           # the USSR's Ops, event first
+    c = st.ctx()
+    assert (c.decision_type, c.decision_player) == (ts.DecisionType.SELECT_OP_MODE, US)
+    assert classify_legal_actions(st)[OP_COUP] == "win"
+    _wins_by_taking_them(st)
+    _step(st, OP_COUP)
+    out = classify_legal_actions(st)
+    assert out[NODE_OFFSET + _cid("Angola")] == "win" and out[NODE_OFFSET + _cid("Zimbabwe")] == "normal"
+
+
+def test_military_ops_that_win_at_the_turn_end_are_a_win() -> None:
+    """The US's last action round of the turn, at 18 VP and DEFCON 3. The USSR is 2 Military Ops
+    short, the US 3: a 3-Op coup makes up the US's shortfall, so the turn end gives the US +2 and
+    the game. Influence leaves it at 17; a battleground coup lowers DEFCON and the sums with it."""
+    st = _us_card_choice()
+    st.action_round = 6                               # turn 1 has six
+    st.defcon = 3
+    st.victory_points = 18
+    st.us_mil_ops, st.ussr_mil_ops = 0, 1
+    st.set_country(_cid("Zimbabwe"), 0, 1)
+    st.set_country(_cid("Angola"), 0, 2)
+    _hand(st, US, [EAST_EUROPEAN_UNREST])
+    _hand(st, USSR, [])                               # nor a scoring card held at the turn end
+    assert classify_legal_actions(st)[EAST_EUROPEAN_UNREST - 1] == "win"
+    _wins_by_taking_them(st)
+    _step(st, EAST_EUROPEAN_UNREST - 1)
+    out = classify_legal_actions(st)
+    assert out[COUP_ACTION] == "win" and out[OPS_ACTION] == "normal"
+    _step(st, COUP_ACTION)
+    out = classify_legal_actions(st)
+    assert out[NODE_OFFSET + _cid("Zimbabwe")] == "win" and out[NODE_OFFSET + _cid("Angola")] == "normal"
 
 
 # --- counting: one chance to win, however many decisions it takes ----------------------------------

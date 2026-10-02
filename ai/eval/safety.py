@@ -4,21 +4,27 @@
 loop. The two directions are found differently.
 
 **Wins** are found by search (:func:`_search_win`). An action is a win when a line from it ends
-the game in the mover's favour using nothing but the mover's own choices and steps with a single
-legal action -- no opponent decision, no die, no hidden draw, and nothing past the current card's
-play. At a choice of the mover's, one winning option suffices. That one definition covers every
-way a win hides behind a choice, without a card list:
+the game in the mover's favour using nothing but the mover's own choices, steps with a single legal
+action, and dice that win on every face -- no opponent decision, no hidden draw, and nothing past
+the current card's play and the turn end it reaches. At a choice of the mover's, one winning option
+suffices. That one definition covers every way a win hides behind a choice, without a card list:
 
 * Wargames at DEFCON 2 with a lead over 6: the card from hand, its event, its branch;
 * an event whose VP reaches 20, from hand;
 * Star Wars eventing Wargames or such an event from the discard -- from the mover's own hand, or
   at the pick when the opponent played Star Wars for Ops;
 * the card Grain Sales drew, at its play -- whoever played Grain Sales. Choosing Grain Sales
-  itself is never a win: what it draws is chance.
+  itself is a win only when the USSR holds one card: otherwise what it draws is chance;
+* a battleground coup at DEFCON 2 in the opponent's round (CIA Created or Tear Down This Wall
+  played for Ops): DEFCON 1 defeats the phasing opponent, whatever the coup rolls;
+* a last action round whose turn end wins: Military Ops made up by a coup, a scoring card the
+  opponent still holds, final scoring.
 
-The search is sound but not complete: a win label always rests on a line it stepped to the end.
-At a placement decision it follows one fixed option instead of all of them, which can miss a win
-that needed a different placement and never invents one.
+The search tries one option per group of options with the same immediate outcome
+(:func:`_same_outcome_groups`): influence, realignment and an event's placements are one group, and
+a coup's targets two, battleground or not -- where influence goes can decide the game only at the
+final turn's end. A win label always rests on a line the search stepped to the end; where that
+reading of placements does not hold, it can miss a win, never invent one.
 
 **Losses** keep their rules plus a forced probe (:func:`_probe_forced`): apply the action, follow
 single-option nodes and dice, and report a loss every sampled roll agrees on. A general minimax
@@ -37,7 +43,6 @@ Key engine facts these rules encode, each verified by stepping to a terminal sta
 
 from typing import Dict, Hashable, List, Optional, Sequence, Tuple
 
-import numpy as np
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
@@ -92,7 +97,7 @@ def classify_legal_actions(
     """
     who = player if player is not None else _acting(state)
     ctx = state.ctx()
-    legal = [int(a) for a in np.flatnonzero(ActionEncoder.get_legal_mask(state))]
+    legal = _legal_actions(state)
     out: Dict[int, str] = {a: "normal" for a in legal}
 
     # The card being played. Reading `resolving_card` first named Grain Sales at the play of the
@@ -124,12 +129,12 @@ def classify_legal_actions(
     # wrong -- the branch rule compared flat indices against 0, so it never fired, and the
     # play-mode rule missed the Wargames that Grain Sales draws.
     scope = _scope(state)
-    for a in legal:
-        if out[a] != "normal":
-            continue
+    candidates = [a for a in legal if out[a] == "normal"]
+    for group in _same_outcome_groups(state, candidates, every_target_in_final_turn=True):
         child = state.clone()
-        if _step_without_chance(child, a) and _search_win(child, who, scope, [WIN_SEARCH_BUDGET]):
-            out[a] = "win"
+        if _step_without_chance(child, group[0]) and _search_win(child, who, scope, [WIN_SEARCH_BUDGET]):
+            for a in group:
+                out[a] = "win"
 
     # --- forced losses: VP thresholds, scoring cards, coups ------------------------------
     # Apply each action and follow only FORCED continuations -- chance nodes, and nodes
@@ -140,31 +145,91 @@ def classify_legal_actions(
     #
     # Following only forced steps is what keeps this both cheap and sound: it can miss a
     # decisive line that needed a choice, but it never reports one that does not exist. Its wins
-    # are not used: a win that hangs on a die is not one the mover can take.
-    for a in legal:
-        if out[a] != "normal":
-            continue
-        if _probe_forced(state, a, who) == "loss":
-            out[a] = "loss"
+    # are not used: it samples dice, and the search above steps every face. A placement's targets
+    # lose alike within a group, as they win alike (`_same_outcome_groups`) -- but stopping early
+    # is probed apart: this probe follows no choice, so stopping reaches the turn end (and a held
+    # scoring card) where placing a point stops at the next placement. Probed one by one, targets
+    # split the same way by cost: with the turn's last 2 Ops to place and a scoring card held, a
+    # 2-Op country reached the losing turn end and read "loss" while a 1-Op one read "normal" --
+    # and the probe counted an unavoidable loss as avoidable. The group gives them one label.
+    candidates = [a for a in legal if out[a] == "normal"]
+    for group in _same_outcome_groups(state, candidates, every_target_in_final_turn=True):
+        for part in _split_stop(group):
+            if _probe_forced(state, part[0], who) == "loss":
+                for a in part:
+                    out[a] = "loss"
 
     return out
 
 
 #: Nodes one top-level action's win search may visit. Every line it follows ends within the
-#: current card's play, so a search that runs out has wandered, and reports no win.
+#: current card's play or at the turn end it reaches, so a search that runs out has wandered, and
+#: reports no win.
 WIN_SEARCH_BUDGET = 400
 
-#: The mover's decisions at which the win search tries every option. These route a card to how
-#: it resolves -- which card, which mode, which branch -- and are where a win hides behind a
-#: choice: Wargames' branch, Star Wars' pick, the play of the card Grain Sales drew. At any other
-#: decision (a placement) the search follows one fixed option: trying them all is combinatorial.
-_ROUTING_DECISIONS = frozenset({
-    ts.DecisionType.SELECT_CARD,
-    ts.DecisionType.SELECT_PLAY_MODE,
-    ts.DecisionType.CHOOSE_TIMING_BRANCH,
-    ts.DecisionType.SELECT_OP_MODE,
-    ts.DecisionType.CHOOSE_BRANCH,
-})
+#: The game's last turn: only its end scores the board, so only there can where influence goes
+#: decide the game on the spot.
+FINAL_TURN = 10
+
+BATTLEGROUNDS = frozenset(c for c in range(84) if ts.MapData.get_country_info(c)["battleground"])
+
+
+def _same_outcome_groups(state: ts.GameState, actions: List[int],
+                         every_target_in_final_turn: bool = False) -> List[List[int]]:
+    """`actions` split into groups whose immediate outcome is the same, so the win search can try
+    one of each.
+
+    Every choice that routes a card -- which card, which mode, which branch, which card from the
+    discard -- is its own group: that is where a win hides behind a choice. A placement is not:
+
+    * influence, realignment, an event's placement: where it goes changes no VP, no DEFCON and
+      nobody's turn, so every target ends the same way -- one group;
+    * a coup: the target matters only as battleground or not. A battleground takes DEFCON down,
+      to 1 at DEFCON 2 -- defeating the phasing player, which in the opponent's round (CIA Created,
+      Tear Down This Wall, Grain Sales' Ops) is a win -- and, above 2, to a level that changes both
+      sides' Military Ops at the turn end. Otherwise it only adds Military Ops, whatever the target
+      and whatever it rolls -- two groups.
+
+    The exception is the final turn, whose end scores the board: there the top-level decision tries
+    every target (`every_target_in_final_turn`), and a search inside a line keeps its groups, which
+    can only miss a win.
+    """
+    if state.ctx().decision_type != ts.DecisionType.POINT_NODE or len(actions) < 2:
+        return [[a] for a in actions]
+    if every_target_in_final_turn and int(state.turn) >= FINAL_TURN:
+        return [[a] for a in actions]
+    targets = [a for a in actions if a != CONFIRM_DONE]
+    stop = [CONFIRM_DONE] if CONFIRM_DONE in actions else []
+    if not targets or not _is_coup_target(state, targets[0]):
+        # Stopping early, where allowed, leads first: it reaches whatever follows soonest.
+        return [stop + targets]
+    battle = [a for a in targets if a - NODE_OFFSET in BATTLEGROUNDS]
+    other = [a for a in targets if a - NODE_OFFSET not in BATTLEGROUNDS]
+    return [g for g in (other, battle, stop) if g]
+
+
+def _split_stop(group: List[int]) -> List[List[int]]:
+    rest = [a for a in group if a != CONFIRM_DONE]
+    return [g for g in ([CONFIRM_DONE] if CONFIRM_DONE in group else [], rest) if g]
+
+
+def _is_coup_target(state: ts.GameState, action: int) -> bool:
+    """Whether choosing `action` rolls a coup. Asked of the engine, not of `op_mode`, which keeps
+    its last value: an event's own placement (De-Stalinization, Decolonization) reads COUP after any
+    earlier coup, and treating those as coups cost up to 47,000 steps a decision."""
+    probe = state.clone()
+    try:
+        ts.Engine.step_flat(probe, action)
+    except Exception:
+        return False
+    ctx = probe.ctx()
+    return ctx.decision_type == ts.DecisionType.ROLL_DIE and ctx.pending_roll_type == ts.RollType.COUP
+
+
+def _legal_actions(state: ts.GameState) -> List[int]:
+    # `.nonzero()` on the mask, not `np.flatnonzero`: the search asks this at every step, and the
+    # wrapper's ravel and dispatch were 30% of classifying.
+    return ActionEncoder.get_legal_mask(state).nonzero()[0].tolist()
 
 
 def _scope(state: ts.GameState) -> tuple:
@@ -187,7 +252,8 @@ def _step_without_chance(probe: ts.GameState, action: int) -> bool:
 
 
 def _search_win(probe: ts.GameState, player: ts.Player, scope: tuple, nodes: List[int]) -> bool:
-    """True if `player` can end the game in their favour from `probe` by their own choices alone.
+    """True if `player` can end the game in their favour from `probe` by their own choices alone,
+    whatever the dice.
 
     Consumes `probe`. `nodes` is a shared one-element budget.
     """
@@ -199,28 +265,72 @@ def _search_win(probe: ts.GameState, player: ts.Player, scope: tuple, nodes: Lis
             util = float(ts.Engine.get_terminal_utility(probe))
             return (util if player == ts.Player.US else -util) > 0
         ctx = probe.ctx()
-        # A die, and the end of the turn, stop the line. The turn end is not random, but what it
-        # settles -- Military Ops, a scoring card the opponent still holds, final scoring -- is not
-        # the card's play, and is usually reached by every option alike, dice routes included: a
-        # win there would label the options that roll a die "declined" beside winning siblings.
-        if ctx.decision_type == ts.DecisionType.ROLL_DIE or _scope(probe) != scope:
+        if ctx.decision_type == ts.DecisionType.ROLL_DIE and ctx.pending_roll_type == ts.RollType.TURN_CLEANUP:
+            # The end of the turn the line reached. Military Ops, a scoring card still held and
+            # final scoring are settled here with nothing random; a turn that goes on deals, which
+            # is chance, and is past the card's play anyway.
+            try:
+                ts.Engine.step(probe, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+            except Exception:
+                return False
+            if not ts.Engine.is_terminal(probe):
+                return False
+            continue
+        if _scope(probe) != scope:
             return False
-        legal = [int(a) for a in np.flatnonzero(ActionEncoder.get_legal_mask(probe))]
+        if ctx.decision_type == ts.DecisionType.ROLL_DIE:
+            return _every_roll_wins(probe, player, scope, nodes)
+        legal = _legal_actions(probe)
         if not legal:
             return False
         if len(legal) > 1:
             if _acting(probe) != player:
                 return False                     # an opponent's choice: not the mover's to take
-            if ctx.decision_type in _ROUTING_DECISIONS:
-                for a in legal:
+            groups = _same_outcome_groups(probe, legal)
+            if len(groups) > 1:
+                for group in groups:
                     child = probe.clone()
-                    if _step_without_chance(child, a) and _search_win(child, player, scope, nodes):
+                    if _step_without_chance(child, group[0]) and _search_win(child, player, scope, nodes):
                         return True
                 return False
-            # A placement: one fixed option, stopping early where that is allowed.
-            legal = [CONFIRM_DONE if CONFIRM_DONE in legal else legal[0]]
+            legal = groups[0]
         if not _step_without_chance(probe, legal[0]):
             return False
+
+
+def _every_roll_wins(probe: ts.GameState, player: ts.Player, scope: tuple, nodes: List[int]) -> bool:
+    """A die on the line: every face must win. A battleground coup at DEFCON 2 takes DEFCON to 1
+    whatever it rolls, so it passes; a war card that wins on 3-6 does not.
+
+    Faces are forced through the ROLL_DIE action (`primary_id` the actor's die, `secondary_id` the
+    opponent's), so each is stepped exactly rather than sampled. A roll that uses the second die
+    draws it from the RNG when only the first is forced, which sends it to all 36 pairs; one that
+    draws even then -- Olympic Games' reroll on a tie -- is chance the line cannot vouch for.
+    """
+    def wins(actor: int, opponent: int) -> Optional[bool]:
+        child = probe.clone()
+        before = int(child.rng_state)
+        try:
+            ts.Engine.step(child, ts.MicroAction(ts.DecisionType.ROLL_DIE, actor, opponent, 0))
+        except Exception:
+            return False
+        if int(child.rng_state) != before:
+            return None                          # an unforced die was rolled
+        return _search_win(child, player, scope, nodes)
+
+    for actor in range(1, 7):
+        result = wins(actor, 0)
+        if result is None:
+            break
+        if not result:
+            return False
+    else:
+        return True
+    for actor in range(1, 7):
+        for opponent in range(1, 7):
+            if not wins(actor, opponent):        # None (still drawing) or False
+                return False
+    return True
 
 
 _GOLDEN = 0x9E3779B97F4A7C15
@@ -291,7 +401,7 @@ def _follow_forced(
                     return None      # outcome depends on the die: not forced
             return verdicts.pop() if len(verdicts) == 1 else None
 
-        forced = np.flatnonzero(ActionEncoder.get_legal_mask(probe))
+        forced = _legal_actions(probe)
         if len(forced) != 1:
             return None
         try:

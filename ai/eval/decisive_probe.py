@@ -27,9 +27,11 @@ from ai.stats import wilson_interval
 ActionFn = Callable[[ts.GameState, ts.Player], int]
 
 #: Written beside the rates, because the win rate's meaning changed under the same key. Version 2
-#: (2026-10-02): a win is any line of the mover's own choices -- Wargames from hand, Star Wars,
-#: the card Grain Sales drew -- and each chance to win counts once however many decisions it
-#: takes, where version 1 counted per decision and missed every win that needed a second choice.
+#: (2026-10-02): a win is any line of the mover's own choices and dice that win on every face --
+#: Wargames from hand, Star Wars, the card Grain Sales drew, a coup in the opponent's round, a
+#: turn end that wins -- and each chance to win counts once however many decisions it takes, and
+#: not at all where every action wins. Version 1 counted per decision, sampled dice, and missed
+#: every win that needed a second choice.
 #: Rates from runs without the key are version 1 and do not compare.
 DECISIVE_PROBE_VERSION = 2
 
