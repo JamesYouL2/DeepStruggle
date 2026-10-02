@@ -30,6 +30,7 @@ import ts_engine as ts
 from ai.eval.branch_oracle import PolicyFn, _pair_start, apply_prefix, play_out
 from ai.eval.doctrine_census import N_CARDS, card_context, cards
 from bindings.action_encoder import ActionEncoder
+from tools.lib.game_step import drain_chance
 
 MODE_BASE = int(ActionEncoder.PLAY_MODE_OFFSET)
 EVENT = MODE_BASE + 0
@@ -185,6 +186,48 @@ def collect(act: PolicyFn, scs: Sequence[Scenario], per: int, seed: int, envs: i
     return out
 
 
+def _loses_now(st: ts.GameState, a: int, mover: ts.Player) -> bool:
+    probe = st.clone()
+    ts.Engine.step_flat(probe, int(a))
+    drain_chance(probe, context="choice_oracle safety probe")
+    if not ts.Engine.is_terminal(probe):
+        return False
+    u = float(ts.Engine.get_terminal_utility(probe))
+    return (u < 0) if mover == ts.Player.US else (u > 0)
+
+
+def resolve_safely(st: ts.GameState, act: PolicyFn, max_steps: int = 40) -> ts.GameState:
+    """Finish the mover's current action round from `st` with the model's choices, except that an
+    option which loses the game on the spot is never taken while another exists.
+
+    A forced event's inner choices (the card Star Wars retrieves, the card Aldrich Ames discards)
+    are decisions the model rarely or never reached in training; left to it, it retrieved a DEFCON
+    reducer at DEFCON 2 in 12% of Star Wars events and lost on the spot. A strong player resolves
+    the event without suicide; everything after the action round is the model's."""
+    s = st.clone()
+    mover = s.ctx().decision_player
+    turn_ar = (s.turn, s.action_round, s.current_phase)
+    for _ in range(max_steps):
+        if ts.Engine.is_terminal(s) or (s.turn, s.action_round, s.current_phase) != turn_ar:
+            break
+        ctx = s.ctx()
+        if ctx.decision_player != mover:
+            break
+        mask = np.asarray(ActionEncoder.get_legal_mask(s)).astype(np.uint8)
+        if not mask.any():
+            break
+        legal = np.flatnonzero(mask)
+        safe = [a for a in legal if not _loses_now(s, int(a), mover)]
+        if safe and len(safe) < len(legal):
+            mask = np.zeros_like(mask)
+            mask[safe] = 1
+        obs = np.asarray(ts.extract_observation(s, mover), dtype=np.float32)[None]
+        a = int(act(obs, mask[None])[0])
+        ts.Engine.step_flat(s, a)
+        drain_chance(s, context="choice_oracle safe resolution")
+    return s
+
+
 def play(act: PolicyFn, sc: Scenario, positions: Sequence[Tuple[ts.GameState, int]], pairs: int, seed: int,
          chunk: int = 768, label: Optional[Callable[[int], str]] = None) -> List[Dict[str, Any]]:
     """Every position's branches over `pairs` paired playouts; one row per position."""
@@ -202,7 +245,10 @@ def play(act: PolicyFn, sc: Scenario, positions: Sequence[Tuple[ts.GameState, in
             for k in range(pairs):
                 base = _pair_start(st, k, seed * 100_003 + lo + j, "resample")
                 for nm in names:
-                    starts.append(apply_prefix(base, prefixes[nm]))
+                    start = apply_prefix(base, prefixes[nm])
+                    if sc.kind != "headline":
+                        start = resolve_safely(start, act)     # every branch's action round, without suicide
+                    starts.append(start)
                     movers.append(mover)
         ends = play_out(starts, movers, act, seed)
         for j, (st, chosen) in enumerate(group):
