@@ -38,9 +38,10 @@ the weaknesses below lower bounds.
     points a game, and `safety.py` did not see it -- fixed in this PR. OPEC and Alliance for Progress
     are declined about half the time when the event would reach 20 VP, which `safety.py` does see;
   * **immediate VP and space from events undervalued, at specific spots.** One Small Step one box
-    behind, Soviets Shoot Down KAL-007 with South Korea US-controlled, Star Wars, Glasnost with The
-    Reformer in play and Special Relationship with NATO in effect: the model events each 0-1% of the
-    time, and its own playouts value the event at +2 to +6 points a play. Humans make 1.6-3.3 more VP
+    behind, Soviets Shoot Down KAL-007 with South Korea US-controlled, Star Wars ahead in space,
+    Glasnost with The Reformer in play and Special Relationship with NATO in effect: the model events
+    each 0-1% of the time at those spots (Star Wars 26% overall), and its own playouts value the event
+    at +2 to +6 points a play. Humans make 1.6-3.3 more VP
     a game from events. Generic rules ("event at k VP", "event when behind in space") do *not* hold;
     the spots do;
   * **event timing against the hand and the rounds left.** Five Year Plan and Aldrich Ames; the net
@@ -50,25 +51,46 @@ the weaknesses below lower bounds.
 * **What it suggests for training.** Card play is the target, and self-play Elo cannot see these
   leaks, because both seats share them. See the last section.
 
-## The fix in this PR: Wargames at the play-mode decision
+## The fix in this PR: wins that take more than one decision
 
-`classify_legal_actions` recognised Wargames' win only at its `CHOOSE_BRANCH` node -- "give 6 VP
-and end the game", the *second* step. At the decision that matters, play the card for its event or
-for Ops, the event read "normal". Two things followed:
+`classify_legal_actions` never saw a Wargames win at all. Its forced probe stops at the first
+decision with more than one option, so it stopped at the event's branch; and the hand-written rule
+for that branch compared flat action indices against 0 while the branch sits at
+`ActionEncoder.BRANCH_OFFSET`, so it never fired -- from the day it was written (`6669cf8`). At the
+decision that matters, play the card for its event or for Ops, the event read "normal". Two things
+followed:
 
 * the decisive probe never counted the model declining this win, so
   [`agent_deficiencies_and_decisiveness.md`](agent_deficiencies_and_decisiveness.md)'s "declining a
   forced win is usually free" never covered it;
 * any safety layer built on the classifier never took it.
 
-Now, at DEFCON 2 with a lead over 6, the event is a win. At 6 or less it is not a loss, since the
-branch can still decline to end the game. `tests/training/test_safety_decisive.py` pins both,
-beside the game's other instant endings, which were already right: a battleground coup at DEFCON 2,
-by Ops or by an event's free coup, and not under Nuclear Subs; a scoring card reaching 20 VP; Europe
-Scoring with Europe controlled. It also confirms the engine side: the event, then branch 0, ends the
-game for the mover.
+Wargames is one case of a general gap, so the fix is general. An action is now a win when a line
+from it ends the game for the mover using only the mover's own choices and single-option steps --
+no opponent decision, no die, no hidden draw, nothing past the current card's play. That covers,
+with no card list:
 
-This changes what the decisive probe reports from now on: forced wins it never saw are counted.
+* Wargames at DEFCON 2 with a lead over 6, at the card in hand, its event and its branch;
+* an event from hand whose VP reaches 20;
+* Star Wars eventing Wargames or such an event from the discard -- the mover's own Star Wars, or the
+  pick when the opponent plays it for Ops;
+* the card Grain Sales drew, whoever played Grain Sales. Choosing Grain Sales is not a win, since
+  what it draws is chance -- unless the USSR holds a single card, which the engine draws without
+  the RNG.
+
+The card Grain Sales drew is also judged as itself now for losses: the classifier read the card at a
+play-mode decision as Grain Sales, so a drawn DEFCON card's loss went unseen, and the DEFCON rules
+assumed the decider was phasing, when in the USSR's round taking DEFCON to 1 wins for the US.
+
+`tests/training/test_safety_decisive.py` pins each case for both sides, that following the labels
+reaches the win, and the game's other instant endings, which were already right: a battleground coup
+at DEFCON 2, by Ops or by an event's free coup, and not under Nuclear Subs; a scoring card reaching
+20 VP; Europe Scoring with Europe controlled.
+
+This changes what the decisive probe reports from now on. Forced wins it never saw are counted, and
+each chance to win counts once however many decisions it takes -- Wargames from hand was three
+"win" decisions, one chance -- where a decision at which every action wins is no chance at all. The
+metrics carry `decisive_probe_version` 2 so the rate is not read against earlier runs.
 
 ## The weaknesses, with the playout evidence
 
@@ -155,7 +177,9 @@ The playouts see 2-15 point gaps at specific decisions. RL credits one sampled m
 game's ±1, against a critic whose seats disagree by about 4 points. A move the policy gives
 p ≈ 0.002 (Wargames for the win) is almost never sampled at all.
 
-Candidates, cheapest first. All are recipe changes; none touches the engine or the observation:
+Candidates, cheapest first. All but item 3 are recipe changes that touch neither the engine nor
+the observation; item 3's rounds-left block is a new observation block and needs the owner's
+approval:
 
 1. **More exploration at play-mode decisions and choices inside events only.** A temperature or
    entropy bonus there, so events the policy dislikes still get tried.

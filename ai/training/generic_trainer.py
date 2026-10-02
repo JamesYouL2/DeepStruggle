@@ -345,6 +345,8 @@ _TB_SUPPRESSED: frozenset = frozenset({
     # written to the JSONL.
     "decisive_win_available",
     "decisive_loss_avoidable",
+    # A constant per run, read from the JSONL to tell which definition a rate was measured under.
+    "decisive_probe_version",
     # NOT suppressed any more. These were held back on the assumption that the combined
     # `strategy/battlegrounds` chart would show them -- but SummaryWriter.add_scalars does not
     # draw a chart in the run it is called on. It writes one CHILD RUN DIRECTORY per series

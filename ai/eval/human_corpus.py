@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set,
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.safety import classify_legal_actions
+from ai.eval.safety import classify_legal_actions, fold_win_opportunities
 from tools.lib.ts_replayer_convert import Conversion, convert_game
 
 # Predicted win probability for a batch of (observation, mask) pairs, in the mover's frame.
@@ -70,6 +70,7 @@ class DecisionRecord:
     legal_actions: int
     win_available: bool
     win_taken: bool
+    win_actions: int = 0         # how many legal actions win; all of them means it cannot be declined
     v_win: Optional[float] = None   # critic's prediction for the mover, if a model was given
 
 
@@ -270,6 +271,7 @@ def measure_game(game: Dict[str, Any], value_fn: Optional[ValueFn] = None) -> Ga
             legal_actions=obs.legal_counts[i],
             win_available=bool(wins),
             win_taken=action in wins,
+            win_actions=len(wins),
             v_win=float(values[i]) if values is not None else None,
         ))
     return out
@@ -397,15 +399,18 @@ def summarize_forced_wins(m: CorpusMeasurement) -> ForcedWinSummary:
     per_side: Dict[int, List[int]] = {US: [0, 0], USSR: [0, 0]}
     for g in m.usable_games:
         resolved = g.game_ended and g.us_utility is not None
+        out.decisions += len(g.decisions)
+        # One entry per chance to win, not per decision: Wargames from hand is three decisions
+        # labelled "win" (the card, its event, its branch) and one chance (`fold_win_opportunities`).
+        chances = fold_win_opportunities(
+            [(d.mover, d.legal_actions, d.win_actions, d.win_taken) for d in g.decisions])
         had = False
-        for d in g.decisions:
-            out.decisions += 1
-            if not d.win_available:
-                continue
+        for first, taken in chances:
+            d = g.decisions[first]
             had = True
             out.opportunities += 1
             per_side[d.mover][0] += 1
-            if d.win_taken:
+            if taken:
                 out.taken += 1
                 per_side[d.mover][1] += 1
                 continue

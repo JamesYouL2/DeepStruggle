@@ -1,27 +1,41 @@
 """Detection of decisions that immediately win or lose the game.
 
-Two implementations, for two different jobs:
+:func:`classify_legal_actions` labels each legal action, fast enough to run inside a bot's move
+loop. The two directions are found differently.
 
-* :func:`classify_legal_actions` -- a **rule-based** detector, fast enough to run inside a
-  bot's move loop. Its rules are derived from, and verified against, the engine.
-Coup targets are the one exception: `DecisionContext` does not expose `op_mode` to Python,
-so a coup cannot be told from an influence placement by inspection, and that case applies
-the action and checks for a terminal state instead -- exact, and one step deep.
+**Wins** are found by search (:func:`_search_win`). An action is a win when a line from it ends
+the game in the mover's favour using nothing but the mover's own choices and steps with a single
+legal action -- no opponent decision, no die, no hidden draw, and nothing past the current card's
+play. At a choice of the mover's, one winning option suffices. That one definition covers every
+way a win hides behind a choice, without a card list:
 
-The rule-based path is deliberately the one used in anger. A general minimax over this game
-exhausts any sane node budget on breadth (a single influence-placement node offers 30+
-actions), and a search that returns "unknown" is indistinguishable from one that returns
-"safe" -- which is exactly the failure mode a safety check must not have.
+* Wargames at DEFCON 2 with a lead over 6: the card from hand, its event, its branch;
+* an event whose VP reaches 20, from hand;
+* Star Wars eventing Wargames or such an event from the discard -- from the mover's own hand, or
+  at the pick when the opponent played Star Wars for Ops;
+* the card Grain Sales drew, at its play -- whoever played Grain Sales. Choosing Grain Sales
+  itself is never a win: what it draws is chance.
+
+The search is sound but not complete: a win label always rests on a line it stepped to the end.
+At a placement decision it follows one fixed option instead of all of them, which can miss a win
+that needed a different placement and never invents one.
+
+**Losses** keep their rules plus a forced probe (:func:`_probe_forced`): apply the action, follow
+single-option nodes and dice, and report a loss every sampled roll agrees on. A general minimax
+for losses would exhaust any sane budget on breadth, and a search that returns "unknown" is
+indistinguishable from one that returns "safe" -- which is exactly the failure mode a safety check
+must not have.
 
 Key engine facts these rules encode, each verified by stepping to a terminal state:
 
 * The DEFCON-1 loser is always the **phasing player**, whoever's event fired.
 * An opponent-associated card cannot be played as an event; playing it for **Ops** fires
   the owner's event unavoidably, on either timing branch.
-* Wargames awards the **opponent** 6 VP and ends the game, so it wins only at a lead of 7+.
+* At SELECT_PLAY_MODE the card being played is `pending_op_card`, which is what the engine itself
+  reads there. `resolving_card` is the card whose event *asked* -- Grain Sales, for the card it drew.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Hashable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import ts_engine as ts
@@ -57,17 +71,12 @@ OPPONENT_COUP_CARDS = {
 EVENT_ACTION = PLAY_MODE_ACTION["event"]
 OPS_ACTION = PLAY_MODE_ACTION["ops"]
 NODE_OFFSET = ActionEncoder.NODE_OFFSET   # one source; see bindings/action_encoder.py
+CONFIRM_DONE = ActionEncoder.CONFIRM_DONE_INDEX
 
 
 def _acting(state: ts.GameState) -> ts.Player:
     ctx = state.ctx()
     return ctx.decision_player if ctx.decision_player != ts.Player.NONE else state.phasing_player
-
-
-def _vp_for(state: ts.GameState, player: ts.Player) -> int:
-    """Victory points from `player`'s perspective; +20 wins, -20 loses."""
-    vp = int(state.victory_points)
-    return vp if player == ts.Player.US else -vp
 
 
 def classify_legal_actions(
@@ -86,11 +95,16 @@ def classify_legal_actions(
     legal = [int(a) for a in np.flatnonzero(ActionEncoder.get_legal_mask(state))]
     out: Dict[int, str] = {a: "normal" for a in legal}
 
-    card = int(ctx.resolving_card) or int(ctx.pending_op_card)
+    # The card being played. Reading `resolving_card` first named Grain Sales at the play of the
+    # card it drew, so that card's own DEFCON loss went unseen and its Ops took Grain Sales' "risky".
+    card = int(ctx.pending_op_card)
     defcon = int(state.defcon)
 
     # --- play-mode decisions on a card already selected ---------------------------------
-    if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and card:
+    # Only for the phasing player, whom DEFCON 1 defeats. The other side reaches a play mode
+    # inside the phasing player's round -- the card Grain Sales drew -- and there taking DEFCON to
+    # 1 wins, which the search below finds.
+    if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and card and who == state.phasing_player:
         if defcon <= 2:
             if card in DEFCON_DEGRADING_CARDS:
                 # Firing it loses outright; for an opponent card the only way to fire it is
@@ -104,47 +118,109 @@ def classify_legal_actions(
             if card in OPPONENT_COUP_CARDS and OPS_ACTION in out:
                 out[OPS_ACTION] = "risky"
 
-    # --- Wargames, at the play-mode decision ------------------------------------------------
-    # The event's own branch (below) is the second step: playing the card for its event first, at
-    # DEFCON 2, then choosing "give 6 VP and end the game". Classifying only that second step left
-    # the first one "normal", so a model that plays Wargames for Ops at a winning lead was never
-    # counted as declining a forced win -- and the safety layer never took one. Measured on the E7
-    # soup: 429 of 430 such plays went to Ops. The event is a win when the lead survives the 6 VP;
-    # below that it is not a loss, since the branch can still decline to end the game.
-    if (card == WARGAMES and ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and defcon == 2
-            and EVENT_ACTION in out and _vp_for(state, who) - 6 > 0):
-        out[EVENT_ACTION] = "win"
-
-    # --- Wargames branch ----------------------------------------------------------------
-    if card == WARGAMES and ctx.decision_type == ts.DecisionType.CHOOSE_BRANCH:
-        lead = _vp_for(state, who)
-        # Branch 0 hands the opponent 6 VP and ends the game.
-        # `legal` holds CHOOSE_BRANCH indices here, not flat actions, so branch 0 is 0.
-        # This was written `NODE_OFFSET - 119`, which is 0 only while NODE_OFFSET is 119 --
-        # arithmetic on an unrelated constant that would have silently selected the wrong
-        # branch the moment the flat layout moved.
-        trigger = 0
-        for a in legal:
-            if a == trigger:
-                out[a] = "win" if lead - 6 > 0 else ("loss" if lead - 6 < 0 else "normal")
-
-    # --- forced resolutions: VP thresholds, scoring cards, coups ------------------------
-    # Apply each action and follow only FORCED continuations -- chance nodes, and nodes
-    # with a single legal action. Anything that ends the game along that path is decisive
-    # no matter what either player would have chosen, so this needs no card list and picks
-    # up every VP-threshold crossing (26 sites in the engine), every scoring card that
-    # reaches +/-20, and every coup that takes DEFCON to 1.
-    #
-    # Following only forced steps is what keeps this both cheap and sound: it can miss a
-    # decisive line that needed a choice, but it never reports one that does not exist.
+    # --- wins: the mover's own line to the end of the game ---------------------------------
+    # Wargames needs no rule of its own: event, then branch 0, is such a line exactly when the
+    # lead survives the opponent's 6 VP. Two hand-written Wargames rules lived here and both were
+    # wrong -- the branch rule compared flat indices against 0, so it never fired, and the
+    # play-mode rule missed the Wargames that Grain Sales draws.
+    scope = _scope(state)
     for a in legal:
         if out[a] != "normal":
             continue
-        result = _probe_forced(state, a, who)
-        if result is not None:
-            out[a] = result
+        child = state.clone()
+        if _step_without_chance(child, a) and _search_win(child, who, scope, [WIN_SEARCH_BUDGET]):
+            out[a] = "win"
+
+    # --- forced losses: VP thresholds, scoring cards, coups ------------------------------
+    # Apply each action and follow only FORCED continuations -- chance nodes, and nodes
+    # with a single legal action. Anything that ends the game against the mover along that path
+    # is decisive no matter what either player would have chosen, so this needs no card list and
+    # picks up every VP-threshold crossing (26 sites in the engine), every scoring card that
+    # reaches +/-20, and every coup that takes DEFCON to 1.
+    #
+    # Following only forced steps is what keeps this both cheap and sound: it can miss a
+    # decisive line that needed a choice, but it never reports one that does not exist. Its wins
+    # are not used: a win that hangs on a die is not one the mover can take.
+    for a in legal:
+        if out[a] != "normal":
+            continue
+        if _probe_forced(state, a, who) == "loss":
+            out[a] = "loss"
 
     return out
+
+
+#: Nodes one top-level action's win search may visit. Every line it follows ends within the
+#: current card's play, so a search that runs out has wandered, and reports no win.
+WIN_SEARCH_BUDGET = 400
+
+#: The mover's decisions at which the win search tries every option. These route a card to how
+#: it resolves -- which card, which mode, which branch -- and are where a win hides behind a
+#: choice: Wargames' branch, Star Wars' pick, the play of the card Grain Sales drew. At any other
+#: decision (a placement) the search follows one fixed option: trying them all is combinatorial.
+_ROUTING_DECISIONS = frozenset({
+    ts.DecisionType.SELECT_CARD,
+    ts.DecisionType.SELECT_PLAY_MODE,
+    ts.DecisionType.CHOOSE_TIMING_BRANCH,
+    ts.DecisionType.SELECT_OP_MODE,
+    ts.DecisionType.CHOOSE_BRANCH,
+})
+
+
+def _scope(state: ts.GameState) -> tuple:
+    """The current card's play: a line that leaves it is no longer an immediate win."""
+    return (int(state.turn), int(state.current_phase), int(state.action_round), int(state.phasing_player))
+
+
+def _step_without_chance(probe: ts.GameState, action: int) -> bool:
+    """Applies `action`; False if it was refused or drew on the RNG.
+
+    A die is a ROLL_DIE node, but a hidden draw -- Grain Sales' card, Five Year Plan's discard, a
+    redraw -- happens inside an ordinary step, and the only trace it leaves is `rng_state`.
+    """
+    before = int(probe.rng_state)
+    try:
+        ts.Engine.step_flat(probe, action)
+    except Exception:
+        return False
+    return int(probe.rng_state) == before
+
+
+def _search_win(probe: ts.GameState, player: ts.Player, scope: tuple, nodes: List[int]) -> bool:
+    """True if `player` can end the game in their favour from `probe` by their own choices alone.
+
+    Consumes `probe`. `nodes` is a shared one-element budget.
+    """
+    while True:
+        nodes[0] -= 1
+        if nodes[0] < 0:
+            return False
+        if ts.Engine.is_terminal(probe):
+            util = float(ts.Engine.get_terminal_utility(probe))
+            return (util if player == ts.Player.US else -util) > 0
+        ctx = probe.ctx()
+        # A die, and the end of the turn, stop the line. The turn end is not random, but what it
+        # settles -- Military Ops, a scoring card the opponent still holds, final scoring -- is not
+        # the card's play, and is usually reached by every option alike, dice routes included: a
+        # win there would label the options that roll a die "declined" beside winning siblings.
+        if ctx.decision_type == ts.DecisionType.ROLL_DIE or _scope(probe) != scope:
+            return False
+        legal = [int(a) for a in np.flatnonzero(ActionEncoder.get_legal_mask(probe))]
+        if not legal:
+            return False
+        if len(legal) > 1:
+            if _acting(probe) != player:
+                return False                     # an opponent's choice: not the mover's to take
+            if ctx.decision_type in _ROUTING_DECISIONS:
+                for a in legal:
+                    child = probe.clone()
+                    if _step_without_chance(child, a) and _search_win(child, player, scope, nodes):
+                        return True
+                return False
+            # A placement: one fixed option, stopping early where that is allowed.
+            legal = [CONFIRM_DONE if CONFIRM_DONE in legal else legal[0]]
+        if not _step_without_chance(probe, legal[0]):
+            return False
 
 
 _GOLDEN = 0x9E3779B97F4A7C15
@@ -235,6 +311,37 @@ def find_instant_win(state: ts.GameState, player: Optional[ts.Player] = None) ->
         if kind == "win":
             return action
     return None
+
+
+#: One decision as the win counters see it: (mover, legal actions, winning actions, chose a win).
+WinDecision = Tuple[Hashable, int, int, bool]
+
+
+def fold_win_opportunities(decisions: Sequence[WinDecision]) -> List[Tuple[int, bool]]:
+    """One game's decisions, in order, folded into one entry per chance to win: (index of the
+    decision that opened it, taken).
+
+    A win can take several of the mover's decisions -- Wargames from hand is the card, its event,
+    then its branch -- and every one of them is labelled "win". Counted per decision, taking it
+    scored 3 of 3 and playing the card for Ops 1 of 2, and the card counted three times over a win
+    that takes one decision. Here the chance opens at the first decision offering it, stays open
+    while the same mover keeps taking it, and is taken only if every decision of the line took it.
+
+    A decision at which every legal action wins opens nothing: there is no way to decline it, just
+    as a position where every action loses is not an avoidable loss.
+    """
+    out: List[Tuple[int, bool]] = []
+    continuing: Optional[Hashable] = None       # mover of the open entry, while they keep taking it
+    for i, (mover, n_legal, n_wins, taken) in enumerate(decisions):
+        if n_wins and continuing is not None and continuing == mover:
+            out[-1] = (out[-1][0], out[-1][1] and taken)
+        elif 0 < n_wins < n_legal:
+            out.append((i, taken))
+        else:
+            continuing = None
+            continue
+        continuing = mover if taken else None
+    return out
 
 
 def safe_actions(

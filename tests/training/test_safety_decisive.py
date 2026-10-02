@@ -1,23 +1,36 @@
 """The forced-win and forced-loss cases of `ai/eval/safety.classify_legal_actions`, each on a built
-position: Wargames at the play-mode decision, a battleground coup at DEFCON 2 (and with Nuclear
-Subs), reaching 20 VP, and Europe Scoring with Europe controlled.
+position, and how the decisive probe counts them.
 
-Wargames was recognised only at its CHOOSE_BRANCH node -- the second step. At the decision that
-matters, play the card for its event or for Ops, the event read "normal", so the decisive probe
-never counted a model declining it and the safety layer never took it. The other cases were already
-right; they are pinned here so the classifier cannot regress on any of the game's instant endings.
+A win is a line of the mover's own choices: Wargames from hand (card, event, branch), Star Wars
+eventing a winning card from the discard -- the mover's own Star Wars, or the opponent's played for
+Ops -- and the card Grain Sales drew, whoever played Grain Sales. No opponent decision, die or hidden
+draw may sit on the line, so choosing Grain Sales itself, or a war card, is never a win.
+
+The losses pinned here -- a battleground coup at DEFCON 2 (and with Nuclear Subs), and the DEFCON
+cards -- were already right; they are pinned so the classifier cannot regress on them.
 """
+from typing import List, Tuple
+
 import numpy as np
+import pytest
 import ts_engine as ts
 
-from ai.eval.safety import (EVENT_ACTION, NODE_OFFSET, PLAY_MODE_ACTION, WARGAMES, classify_legal_actions,
-                            find_instant_win)
+from ai.eval.decisive_probe import DecisiveStats
+from ai.eval.positions import PLAY_MODE_ACTION
+from ai.eval.safety import (EVENT_ACTION, NODE_OFFSET, WARGAMES, WinDecision, classify_legal_actions,
+                            find_instant_win, fold_win_opportunities)
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import drain_chance
 
 COUP_ACTION = PLAY_MODE_ACTION["ops_coup"]
+OPS_ACTION = PLAY_MODE_ACTION["ops"]
+BRANCH_0 = ActionEncoder.BRANCH_OFFSET
 NUCLEAR_SUBS_ACTIVE = int(ts.EffectBits.NUCLEAR_SUBS_ACTIVE)
 CA_SCORING, EUROPE_SCORING = 37, 2
+DUCK_AND_COVER, NUCLEAR_TEST_BAN, BRUSH_WAR, GRAIN_SALES, STAR_WARS = 4, 34, 36, 67, 85
+US, USSR = ts.Player.US, ts.Player.USSR
+HANDS = {US: (ts.CardLocation.HAND_US_UNKNOWN, ts.CardLocation.HAND_US_KNOWN),
+         USSR: (ts.CardLocation.HAND_USSR_UNKNOWN, ts.CardLocation.HAND_USSR_KNOWN)}
 
 
 def _legal(st: ts.GameState) -> np.ndarray:
@@ -33,17 +46,30 @@ def _cid(name: str) -> int:
     return int(ts.MapData.get_country_by_name(name))
 
 
-def _us_card_choice(seed: int = 7) -> ts.GameState:
-    """The US choosing a card at its first action round."""
+def _card_choice(side: ts.Player = US, seed: int = 7) -> ts.GameState:
+    """`side` choosing a card at its first action round."""
     st = ts.GameState()
     ts.Engine.init_game(st, seed)
     drain_chance(st, context="test_safety_decisive")
     for _ in range(400):
         if st.current_phase == ts.Phase.ACTION_ROUND and st.ctx().decision_type == ts.DecisionType.SELECT_CARD \
-                and st.ctx().decision_player == ts.Player.US:
+                and st.ctx().decision_player == side:
             return st
         _step(st, int(np.flatnonzero(_legal(st))[0]))
-    raise AssertionError("no US action round reached")
+    raise AssertionError(f"no {side} action round reached")
+
+
+def _us_card_choice(seed: int = 7) -> ts.GameState:
+    return _card_choice(US, seed)
+
+
+def _hand(st: ts.GameState, side: ts.Player, cards: List[int]) -> None:
+    """`side` holds exactly `cards`; what it held goes back to the deck."""
+    for c in range(1, 111):
+        if st.get_card_location(c) in HANDS[side]:
+            st.set_card_location(c, ts.CardLocation.DRAW_DECK)
+    for c in cards:
+        st.set_card_location(c, HANDS[side][0])
 
 
 def _play_card(st: ts.GameState, card: int) -> ts.GameState:
@@ -52,31 +78,197 @@ def _play_card(st: ts.GameState, card: int) -> ts.GameState:
     return st
 
 
+def _lead(side: ts.Player, lead: int) -> int:
+    """`victory_points` for `side` ahead by `lead` (the engine's VP are US-positive)."""
+    return lead if side == US else -lead
+
+
+def _wins_by_taking_them(st: ts.GameState) -> None:
+    """From a position with a win, `find_instant_win` at every step reaches the mover's win --
+    what the safety layer does with the label."""
+    mover = st.ctx().decision_player
+    s = st.clone()
+    for _ in range(12):
+        if ts.Engine.is_terminal(s):
+            util = float(ts.Engine.get_terminal_utility(s))
+            assert (util if mover == US else -util) > 0
+            return
+        assert s.ctx().decision_player == mover
+        a = find_instant_win(s, mover)
+        assert a is not None, f"the line broke off at {s.ctx().decision_type}"
+        ts.Engine.step_flat(s, a)
+    raise AssertionError("the line did not end the game")
+
+
 # --- Wargames ------------------------------------------------------------------------------------
 
-def _wargames_play_mode(lead: int, defcon: int = 2) -> ts.GameState:
-    st = _us_card_choice()
+def _wargames_in_hand(side: ts.Player, lead: int, defcon: int = 2) -> ts.GameState:
+    st = _card_choice(side)
     st.defcon = defcon
-    st.victory_points = lead                      # + is the US
-    _play_card(st, WARGAMES)
-    assert st.ctx().decision_type == ts.DecisionType.SELECT_PLAY_MODE
+    st.victory_points = _lead(side, lead)
+    st.set_card_location(WARGAMES, HANDS[side][0])
     return st
 
 
-def test_wargames_event_is_a_win_at_a_lead_over_six() -> None:
-    st = _wargames_play_mode(lead=7)
+@pytest.mark.parametrize("side", [US, USSR])
+def test_wargames_is_a_win_at_every_step_at_a_lead_over_six(side: ts.Player) -> None:
+    st = _wargames_in_hand(side, lead=7)
+    assert classify_legal_actions(st)[WARGAMES - 1] == "win"         # the card, from hand
+    _wins_by_taking_them(st)
+    _step(st, WARGAMES - 1)
+    out = classify_legal_actions(st)                                  # its play mode
+    assert out[EVENT_ACTION] == "win" and out[OPS_ACTION] == "normal"
+    _step(st, EVENT_ACTION)
+    assert st.ctx().decision_type == ts.DecisionType.CHOOSE_BRANCH
+    out = classify_legal_actions(st)                                  # its branch, a flat index
+    assert out[BRANCH_0] == "win" and out[BRANCH_0 + 1] == "normal"
+
+
+@pytest.mark.parametrize("side", [US, USSR])
+@pytest.mark.parametrize("lead,defcon", [(6, 2), (3, 2), (9, 3)])
+def test_wargames_is_not_a_win_at_six_or_less_or_above_defcon_two(side: ts.Player, lead: int,
+                                                                  defcon: int) -> None:
+    st = _wargames_in_hand(side, lead=lead, defcon=defcon)
+    assert classify_legal_actions(st)[WARGAMES - 1] != "win"
+    _step(st, WARGAMES - 1)
+    assert classify_legal_actions(st)[EVENT_ACTION] == "normal"       # the branch can still decline
+    if defcon == 2:
+        _step(st, EVENT_ACTION)
+        branch = classify_legal_actions(st)[BRANCH_0]
+        assert branch == ("normal" if lead == 6 else "loss")          # a tie at 6, a loss below
+
+
+# --- Grain Sales: the card it drew -----------------------------------------------------------------
+
+def _grain_sales_draw(player: ts.Player, drawn: int, lead: int) -> ts.GameState:
+    """`player` plays Grain Sales -- the US for its event, the USSR for Ops, event first -- at
+    DEFCON 2 with the USSR holding only `drawn` besides; the US then plays the card it drew."""
+    st = _card_choice(player)
+    st.defcon = 2
+    st.victory_points = lead                          # + is the US
+    _hand(st, USSR, [drawn] + ([GRAIN_SALES] if player == USSR else []))
+    if player == US:
+        st.set_card_location(GRAIN_SALES, HANDS[US][0])
+    _step(st, GRAIN_SALES - 1)
+    _step(st, EVENT_ACTION)
+    c = st.ctx()
+    assert (c.decision_type, c.decision_player, int(c.resolving_card), int(c.pending_op_card)) == \
+        (ts.DecisionType.SELECT_PLAY_MODE, US, GRAIN_SALES, drawn)
+    return st
+
+
+@pytest.mark.parametrize("player", [US, USSR])
+def test_the_wargames_grain_sales_drew_is_a_win(player: ts.Player) -> None:
+    st = _grain_sales_draw(player, WARGAMES, lead=7)
     assert classify_legal_actions(st)[EVENT_ACTION] == "win"
-    assert find_instant_win(st) == EVENT_ACTION
-    s = st.clone()                                 # and it is: the event, then branch 0, ends the game
-    _step(s, EVENT_ACTION)
-    _step(s, int(np.flatnonzero(_legal(s))[0]))
-    assert ts.Engine.is_terminal(s) and ts.Engine.get_terminal_utility(s) > 0
+    _wins_by_taking_them(st)
 
 
-def test_wargames_is_not_a_win_at_six_or_less_or_above_defcon_two() -> None:
-    assert classify_legal_actions(_wargames_play_mode(lead=6))[EVENT_ACTION] != "win"
-    assert classify_legal_actions(_wargames_play_mode(lead=3))[EVENT_ACTION] != "win"
-    assert classify_legal_actions(_wargames_play_mode(lead=9, defcon=3))[EVENT_ACTION] != "win"
+def test_choosing_grain_sales_is_a_win_only_when_its_draw_is_certain() -> None:
+    """The draw is chance -- unless the USSR holds one card, when the engine draws it without the RNG."""
+    st = _us_card_choice()
+    st.defcon = 2
+    st.victory_points = 7
+    st.set_card_location(GRAIN_SALES, HANDS[US][0])
+    _hand(st, USSR, [WARGAMES])
+    assert classify_legal_actions(st)[GRAIN_SALES - 1] == "win"
+    _hand(st, USSR, [WARGAMES, BRUSH_WAR])
+    assert classify_legal_actions(st)[GRAIN_SALES - 1] != "win"
+
+
+def test_the_card_grain_sales_drew_is_judged_as_itself() -> None:
+    """Duck and Cover drawn at DEFCON 2: DEFCON 1 defeats the phasing player, so the event loses in
+    the US's own round and wins in the USSR's. The card was read as Grain Sales and neither was seen."""
+    own = _grain_sales_draw(US, DUCK_AND_COVER, lead=0)
+    assert classify_legal_actions(own)[EVENT_ACTION] == "loss"
+    theirs = _grain_sales_draw(USSR, DUCK_AND_COVER, lead=0)
+    assert classify_legal_actions(theirs)[EVENT_ACTION] == "win"
+    _step(theirs, EVENT_ACTION)                       # and the engine agrees
+    assert ts.Engine.is_terminal(theirs) and ts.Engine.get_terminal_utility(theirs) > 0
+
+
+# --- Star Wars: a winning card from the discard ----------------------------------------------------
+
+def _star_wars_position(player: ts.Player, lead: int = 7) -> ts.GameState:
+    st = _card_choice(player)
+    st.defcon = 2
+    st.victory_points = lead
+    st.us_space_track, st.ussr_space_track = 3, 0     # Star Wars needs the US ahead in space
+    st.set_card_location(WARGAMES, ts.CardLocation.DISCARD_PILE)
+    st.set_card_location(BRUSH_WAR, ts.CardLocation.DISCARD_PILE)
+    st.set_card_location(STAR_WARS, HANDS[player][0])
+    return st
+
+
+def test_star_wars_from_hand_is_a_win_with_wargames_in_the_discard() -> None:
+    st = _star_wars_position(US)
+    assert classify_legal_actions(st)[STAR_WARS - 1] == "win"
+    _wins_by_taking_them(st)
+
+
+def test_the_pick_is_a_win_when_the_opponent_plays_star_wars() -> None:
+    st = _star_wars_position(USSR)
+    _step(st, STAR_WARS - 1)
+    _step(st, EVENT_ACTION)                           # the USSR's Ops, event first
+    c = st.ctx()
+    assert (c.decision_type, c.decision_player, int(c.resolving_card)) == \
+        (ts.DecisionType.SELECT_CARD, US, STAR_WARS)
+    out = classify_legal_actions(st)
+    assert out[WARGAMES - 1] == "win" and out[BRUSH_WAR - 1] == "normal"
+    _wins_by_taking_them(st)
+
+
+def test_star_wars_is_not_a_win_without_a_winning_card_to_pick() -> None:
+    st = _star_wars_position(US, lead=6)
+    assert classify_legal_actions(st)[STAR_WARS - 1] != "win"
+
+
+# --- an event's VP, and a die ----------------------------------------------------------------------
+
+def test_an_event_from_hand_that_reaches_twenty_is_a_win() -> None:
+    st = _us_card_choice()
+    st.defcon = 4                                     # Nuclear Test Ban: DEFCON - 2 = 2 VP
+    st.victory_points = 18
+    st.set_card_location(NUCLEAR_TEST_BAN, HANDS[US][0])
+    assert classify_legal_actions(st)[NUCLEAR_TEST_BAN - 1] == "win"
+    _wins_by_taking_them(st)
+    st.victory_points = 17
+    assert classify_legal_actions(st)[NUCLEAR_TEST_BAN - 1] != "win"
+
+
+def test_a_win_that_needs_a_die_is_not_one() -> None:
+    st = _us_card_choice()
+    st.victory_points = 19                            # Brush War's 1 VP would do it -- on a roll
+    st.set_card_location(BRUSH_WAR, HANDS[US][0])
+    assert classify_legal_actions(st)[BRUSH_WAR - 1] != "win"
+
+
+# --- counting: one chance to win, however many decisions it takes ----------------------------------
+
+def _counted(decisions: List[WinDecision]) -> Tuple[int, int]:
+    s = DecisiveStats()
+    s.add_wins(decisions)
+    return s.win_available, s.win_taken
+
+
+def test_a_win_is_counted_once_across_its_decisions() -> None:
+    took: List[WinDecision] = [(US, 7, 1, True), (US, 4, 1, True), (US, 2, 1, True)]   # card, event, branch
+    assert _counted(took) == (1, 1)
+    ops: List[WinDecision] = [(US, 7, 1, True), (US, 4, 1, False)]                     # card, then Ops
+    assert _counted(ops) == (1, 0)
+    declined: List[WinDecision] = [(US, 7, 1, True), (US, 4, 1, True), (US, 2, 1, False)]
+    assert _counted(declined) == (1, 0)
+
+
+def test_separate_chances_count_separately() -> None:
+    seq: List[WinDecision] = [(US, 7, 1, False), (USSR, 5, 0, False), (US, 6, 1, True), (US, 2, 1, True)]
+    assert fold_win_opportunities(seq) == [(0, False), (2, True)]
+
+
+def test_a_win_with_no_way_to_decline_it_is_not_a_chance() -> None:
+    assert _counted([(US, 3, 3, True)]) == (0, 0)
+    # ...but it does not break a line that is already open
+    assert _counted([(US, 7, 1, True), (US, 1, 1, True), (US, 2, 1, True)]) == (1, 1)
 
 
 # --- a battleground coup at DEFCON 2 ---------------------------------------------------------------
