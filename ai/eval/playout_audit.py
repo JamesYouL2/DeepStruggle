@@ -103,14 +103,33 @@ def collect(act: PolicyFn, n: int, seed: int, envs: int = 32, accept: float = 0.
     return kept
 
 
+def suicide(st: ts.GameState, action: int) -> bool:
+    """Does every way of following `action` up lose on the spot? At DEFCON 2 the engine offers a
+    coup when every target is a battleground; forcing it is legal and tells us nothing."""
+    from tools.lib.game_step import drain_chance
+
+    mover = _decider(st)
+    probe = st.clone()
+    ts.Engine.step_flat(probe, int(action))
+    drain_chance(probe, context="playout_audit suicide probe")
+    if ts.Engine.is_terminal(probe):
+        u = float(ts.Engine.get_terminal_utility(probe))
+        return (u < 0) if mover == ts.Player.US else (u > 0)
+    if _decider(probe) != mover:
+        return False
+    legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(probe)))
+    return bool(len(legal)) and all(_loses_now(probe, int(a), mover) for a in legal)
+
+
 def branches(st: ts.GameState, kind: str, probs: np.ndarray, card_branches: int = 4
              ) -> Tuple[Dict[str, int], str]:
     """{branch name: forced action} and the name of the model's own (greedy) choice."""
     info = cards()
     mask = np.asarray(ActionEncoder.get_legal_mask(st)).astype(bool)
     if kind == "mode":
+        greedy0 = int(np.argmax(np.where(mask, probs, -1.0)))
         legal = [MODE_BASE + k for k in range(5) if mask[MODE_BASE + k]]
-        names = {MODES[a - MODE_BASE]: a for a in legal}
+        names = {MODES[a - MODE_BASE]: a for a in legal if a == greedy0 or not suicide(st, a)}
     else:
         legal = [a for a in np.flatnonzero(mask[:N_CARDS])]
         legal.sort(key=lambda a: -probs[a])
@@ -263,7 +282,55 @@ def pooled(rows: Sequence[Dict[str, Any]], min_n: int = 15) -> List[Dict[str, An
     return out
 
 
+def mode_matrix(rows: Sequence[Dict[str, Any]], summary: Dict[str, Any]) -> List[str]:
+    """Every play-mode decision pooled across cards: the model's mode against each alternative,
+    split by whose card it is. Rows read "the model played it for X; Y instead scores ...". """
+    by_name = {str(c["name"]): str(c["side"]).lower() for c in cards().values()}
+    acc: Dict[Tuple[str, str, str], List[float]] = {}
+    chose: Dict[Tuple[str, str], int] = {}
+    for r in rows:
+        if r["kind"] != "mode":
+            continue
+        side = by_name.get(r["card"], "?")
+        owner = "neutral" if side == "neutral" else ("own" if side == r["side"].lower() else "opponent's")
+        chose[(owner, r["chosen"])] = chose.get((owner, r["chosen"]), 0) + 1
+        base = r["scores"][r["chosen"]]
+        for nm, sc in r["scores"].items():
+            if nm != r["chosen"]:
+                acc.setdefault((owner, r["chosen"], nm), []).append(sc - base)
+    out = ["## Mode against mode, all cards", "",
+           "Every play-mode decision pooled across cards, by whose card it is: the model's mode, and what "
+           "each other legal mode scores instead (− means the model's mode was better).", "",
+           "| card | model's mode | times chosen | alternative | situations | alternative − model's |",
+           "|:---|:---|---:|:---|---:|---:|"]
+    table = []
+    for (owner, ch, alt), d in sorted(acc.items()):
+        m, se = _mean_se(d)
+        table.append({"owner": owner, "chosen": ch, "alt": alt, "n": len(d), "gain": m, "se": se})
+        out.append(f"| {owner} | {ch} | {chose[(owner, ch)]} | {alt} | {len(d)} | {100 * m:+.1f} ± {100 * se:.1f} |")
+    summary["mode_matrix"] = table
+    return out + [""]
+
+
+def drop_suicides(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove suicide mode branches from rows written before `branches` dropped them itself,
+    and the rows left with a single branch. The regret stands: a branch that always loses is never
+    the playout-best, so it never entered it."""
+    out = []
+    for r in rows:
+        if r["kind"] == "mode":
+            st = ts.state_from_save_json(r["save"])
+            bad = [nm for nm in r["scores"] if nm != r["chosen"] and suicide(st, MODE_BASE + MODES.index(nm))]
+            if bad:
+                r = {**r, "scores": {k: v for k, v in r["scores"].items() if k not in bad},
+                     "se": {k: v for k, v in r.get("se", {}).items() if k not in bad}}
+        if len(r["scores"]) >= 2:
+            out.append(r)
+    return out
+
+
 def report(rows: Sequence[Dict[str, Any]], meta: Dict[str, Any], top: int = 30) -> Tuple[str, Dict[str, Any]]:
+    rows = drop_suicides(rows)
     out = [f"# Playout audit — {meta.get('model', '?')}", "",
            f"{len(rows)} decisions from the model's greedy self-play, every alternative played out "
            f"{meta.get('pairs', '?')} times with the unseen cards redealt per pair and the same dice in "
@@ -282,6 +349,7 @@ def report(rows: Sequence[Dict[str, Any]], meta: Dict[str, Any], top: int = 30) 
         out.append(f"| {kind} | {len(sel)} | {100 * m:+.2f} ± {100 * se:.2f} | "
                    f"{100 * np.mean([x > 0.05 for x in sel]):.0f}% | {100 * np.mean([x > 0.10 for x in sel]):.0f}% |")
         summary[kind] = {"n": len(sel), "regret": (m, se)}
+    out += mode_matrix(rows, summary)
     pool = pooled(rows)
     summary["pooled"] = pool
     for kind, title, note in (
