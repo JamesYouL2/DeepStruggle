@@ -42,3 +42,34 @@ One field, 1,000 games per side per pairing, with the panel (E6-03-44@80/240/550
 * **So at 80M C1 is an ordinary shallow-recipe run** -- neither the attention gain nor a cost from
   its slow start is visible. 80M is early (the recipe saturates at ~1B); next look at 160M.
 * Reports: `data/reports/e7_09_44_rr_80{,b}.{md,json}`.
+
+## 200M (owner: "check C1@200M strength with matching stages from no-attention shallow trunk")
+
+One field, 1,000 games per side per pairing, panel E6-03-44@80/240/550M (`--batch-chunk-size 250`:
+the full-size batch ran out of GPU memory next to C1's own training):
+
+| model | Elo |
+|:---|---:|
+| **E7-09-44@200M (C1)** | **1563** |
+| E7-08-43@200M (shallow, seed 43) | 1533 |
+| E7-01-44@240M (shallow, seed 44) | 1511 |
+| E7-01-44@200M (shallow, seed 44 -- the paired control) | 1503 |
+| E7-07-44@200M (shallow + C4) | 1499 |
+| E7-01-44@160M | 1471 |
+| E7-09-44@160M (C1) | 1424 |
+
+| C1@200M against | US (panel) | USSR (panel) | head to head |
+|:---|---:|---:|---:|
+| E7-01-44@200M (paired control) | **+4.6 ± 1.3** | **+8.8 ± 1.2** | **56.0%** |
+| E7-07-44@200M | +10.1 ± 1.2 | +6.0 ± 1.2 | 58.2% |
+| E7-08-43@200M | +6.1 ± 1.2 | +4.7 ± 1.2 | 57.5% |
+| *reference: E7-07-44@200M against E7-01-44@200M* | −5.5 | +2.8 | 50.3% |
+| *reference: E7-08-43@200M against E7-01-44@200M* | −1.5 | +4.1 | 53.4% |
+
+* **At 200M C1 is ahead of every shallow run at the same step, in both seats** -- by more than the
+  shallow runs differ among themselves (50–53% between them, 56–58% for C1), and above the control's
+  own 240M snapshot.
+* **But it is one snapshot, and the jump is large:** C1@160M was *below* the control at 160M (1424
+  against 1471), so C1 gained ~140 Elo in 40M where the control gained ~30. Single snapshots carry
+  real noise; to be read as a lead it needs several snapshots (e.g. 190–210M, or 4 at 240M).
+* Reports: `data/reports/e7_09_44_rr_200.{md,json}`.
