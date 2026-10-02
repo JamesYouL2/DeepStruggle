@@ -36,7 +36,7 @@ on:
         description: "`true`: only play-mode decisions on the card-rules targets; `forced`: only the card_rules.FORCED_SETS set named by forced_set (ai/eval/card_rules.py)"
         default: "false"
       forced_set:
-        description: "With targeted=forced: the FORCED_SETS set (vp, kd, oss12, oss34)"
+        description: "With targeted=forced: the FORCED_SETS set (vp, kd, nextvp, oss12, oss34)"
         default: "vp"
       per_card:
         description: "Targeted: decisions per card per runner"

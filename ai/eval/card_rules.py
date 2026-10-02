@@ -33,6 +33,7 @@ import numpy as np
 import ts_engine as ts
 
 from ai.eval.branch_oracle import PolicyFn, _decider
+from ai.eval.ops_block import controlled, influence
 from ai.eval.position_bank import scores
 from ai.eval.rule_oracle import event_gain
 from bindings.action_encoder import ActionEncoder
@@ -232,6 +233,23 @@ def _space_at(spots: Tuple[Tuple[int, int], ...]) -> Callable[[ts.GameState, Pol
     return keep
 
 
+def _south_korea_us(st: ts.GameState, act: PolicyFn) -> bool:
+    """Soviets Shoot Down KAL-007 with South Korea US-controlled (the event's influence or realignment
+    then applies), at DEFCON 3 or more, where its DEFCON drop is not suicide."""
+    legal = np.asarray(ActionEncoder.get_legal_mask(st)).astype(bool)
+    sk = int(ts.MapData.get_country_by_name("South Korea"))
+    return bool(legal[EVENT]) and int(st.defcon) >= 3 and bool(controlled(influence(st), 0)[sk])
+
+
+def _reformer_in_play(st: ts.GameState, act: PolicyFn) -> bool:
+    legal = np.asarray(ActionEncoder.get_legal_mask(st)).astype(bool)
+    return bool(legal[EVENT]) and st.has_flag(int(ts.EffectBits.THE_REFORMER_PLAYED))
+
+
+def _by_defcon(f: Dict[str, Any]) -> str:
+    return f"DEFCON {f['defcon']}"
+
+
 def _by_vp(f: Dict[str, Any]) -> str:
     return f"scores {int(f.get('event_gain') or 0)} VP"
 
@@ -250,6 +268,11 @@ FORCED_SETS: Dict[str, Tuple[Forced, ...]] = {
                   "NATO in effect and the UK US-controlled: 2 influence in Western Europe and 2 VP", _scores_at_least(2), _by_vp),
            Forced("USSR", "OPEC", "5 or more VP", _scores_at_least(5), _by_vp),
            Forced("US", "Alliance for Progress", "5 or more VP", _scores_at_least(5), _by_vp)),
+    # VP or space now, each where the owner says the event is right.
+    "nextvp": (Forced("US", "Captured Nazi Scientist", "into a VP box (the event scores VP)", _scores_at_least(1), _by_space),
+               Forced("USSR", "Captured Nazi Scientist", "into a VP box (the event scores VP)", _scores_at_least(1), _by_space),
+               Forced("US", "Soviets Shoot Down KAL-007", "South Korea US-controlled, DEFCON 3+", _south_korea_us, _by_defcon),
+               Forced("USSR", "Glasnost", "The Reformer in play", _reformer_in_play, _by_defcon)),
     # A 1-Op card whose event scores 2 VP, against the 1-Op coup the model usually plays for Military Ops.
     "kd": (Forced("US", "Kitchen Debates", "the event scores (more battlegrounds than the USSR): 2 VP", _scores_at_least(2),
                   _by_mil_ops),),

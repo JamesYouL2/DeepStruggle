@@ -51,7 +51,7 @@ def main() -> None:
     r.add_argument("--targeted", action="store_true",
                    help="bank only play-mode decisions on ai/eval/card_rules.py's TARGETS (--per-card, --games)")
     r.add_argument("--forced", default=None, metavar="SET",
-                   help="with --targeted: only a card_rules.FORCED_SETS set (vp, kd, oss12, oss34), where its condition holds")
+                   help="with --targeted: only a card_rules.FORCED_SETS set (vp, kd, nextvp, oss12, oss34), where its condition holds")
     r.add_argument("--per-card", type=int, default=12)
     r.add_argument("--games", type=int, default=400)
     p = sub.add_parser("pool")
