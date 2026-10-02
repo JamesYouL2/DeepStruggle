@@ -66,3 +66,42 @@ v1-winning placement won 200/200, the others ~82%), and three play-mode choices 
 170, 234, 449: 1 winning mode of 5, won 200/200; the others 70–78%). Scaled up, ~1 in 5 of the
 v1-only positions, i.e. ~45 per 8,192 games, about 0.7% of v2's chances -- too few to move the cost
 estimate, but a gap in the classifier at the end of a turn.
+
+### What the v1-only positions actually are (owner: "what is a forced win that depends on the dice? and how does an influence placement win?")
+
+Traced by replaying to each position and following the v1-winning action under 60 seeds
+(`tools/scripts/decisive_v1_only_inspect.py`):
+
+**Dice-dependent v1 "wins"** (the 9 that vary with the seed) -- all USSR at VP −17 to −19:
+* **Space Race attempts** (7): the card is spent on the space race (play mode 111 = SPACE) and a
+  success reaches a box worth 2 VP -- USSR to −20. Wins 29–36 of 60 seeds (Cuban Missile Crisis,
+  Indo-Pakistani War, East European Unrest, Bear Trap, The Iron Lady, Five Year Plan).
+* **Summit** (headline and event): its die-off gives the winner 2 VP -- 49–52 of 60.
+* **Brush War**: the war roll for 1 VP -- 17 of 60.
+
+v1 tested 6 die outcomes drawn from mixed RNG streams; with ~50% wins, some positions pass all 6 by
+luck, and these are the ones that did. v2 steps every face and drops them -- correctly.
+
+**The influence placement** (game 406, decision 220): turn 4, action round 7, DEFCON 2, VP −19, the
+USSR placing the Ops of **Special Relationship** (a US card). Only the United Kingdom wins:
+1. The US has 0 Military Ops against DEFCON 2's required 2, so at the end of the turn the USSR gains
+   2 VP -- to −21, a win -- unless something moves VP first.
+2. A US card played for Ops fires its event afterwards: Special Relationship, with NATO active, gives
+   the US 2 VP if it controls the United Kingdom. That would take VP to −17 and the turn end only
+   to −19.
+3. Two USSR Ops in the United Kingdom (US 5, stability 5) make it 5 against 1 -- no longer US
+   controlled -- so the event gives nothing.
+4. The US cannot answer: it is in **Quagmire** and under **Red Scare/Purge**, so its three cards (How
+   I Learned to Stop Worrying, South African Unrest, One Small Step) are worth 1 Op each, none can be
+   discarded to Quagmire, and its action round 7 is a forced pass.
+5. Turn end: −21, USSR wins (200 of 200 playouts; any other placement lets the event through).
+
+**The turn-10 play-mode wins** (games 170, 234, 449): action round 7, the USSR holding a US card (The
+Voice of America, Star Wars, Olympic Games). Spending it on the **space race** fires no event, and
+final scoring then wins whatever the roll; every other mode fires the US event, which gives the US
+enough to change the result.
+
+**Why v2 misses these:** its search follows forced single moves, but only within the current card's
+play -- `_scope` is (turn, phase, action round, phasing player), with the end-of-turn cleanup as the
+one exception. Each of these lines passes through the US's own action round 7 (a forced pass, or a
+single option) before the turn ends, which leaves the scope.
