@@ -63,3 +63,38 @@ def test_a_line_stops_where_it_stops_being_legal() -> None:
     from tools.lib.game_step import drain_chance
     drain_chance(ref, context="test")
     assert out.to_save_json() == ref.to_save_json()     # the first step taken, the illegal rest not
+
+
+def test_targeted_bank_and_card_rules() -> None:
+    from ai.eval import card_rules as C
+    from ai.eval.doctrine_census import cards
+
+    names = {k: str(v["name"]) for k, v in cards().items()}
+    by_name = {v: k for k, v in names.items()}
+    targets = C.target_ids(by_name)
+    assert len(targets) == sum(len(v) for v in C.TARGETS.values())
+    act = _random_policy(3)
+    pos, counts = B.collect_targets(act, targets, per_card=2, games=6, seed=4, envs=4)
+    assert counts and all(sum(row.values()) > 0 for row in counts.values())
+    for st, kind, _ in pos:
+        ctx = st.ctx()
+        side = "US" if ctx.decision_player == ts.Player.US else "USSR"
+        assert kind == "mode" and ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE
+        assert (side, int(ctx.pending_op_card)) in targets
+    recs = B.build(act, _probs, _value, pos, pairs=2, seed=1)
+    md, summary = C.report(recs, names, counts, {"model": "x"})
+    assert "Card event rules" in md
+
+
+def test_a_condition_is_scored_out_of_sample() -> None:
+    from ai.eval import card_rules as C
+
+    # The event gains only at DEFCON 2: the fitted rule says so, and holds on the held-out half.
+    rows = [({"defcon": d, "turn": 1, "ar": 1, "rounds_left": 3, "lead": 0, "hand": 5, "surplus": 2, "space": 0,
+              "space_opp": 0, "short": 0, "short_opp": 0}, 0.2 if d == 2 else -0.1) for d in (2, 3, 4, 5) for _ in range(20)]
+    fit = C.best_condition(rows)
+    assert fit is not None
+    cond, gain = fit
+    assert cond == ("DEFCON", "<=", 2.0) and abs(gain - 0.05) < 1e-9
+    held, conds = C.cross_validated(rows)
+    assert conds == [cond, cond] and abs(float(np.mean(held)) - 0.05) < 1e-9

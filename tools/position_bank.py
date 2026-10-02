@@ -4,7 +4,9 @@
     # one part: 400 decisions from greedy self-play, 32 paired playouts per candidate
     PYTHONPATH=.:build/release .venv/bin/python tools/position_bank.py run \\
         --model data/checkpoints/<model>.onnx --decisions 400 --pairs 32 --seed 1 --out parts/bank-1.json.gz
-    # pool parts into one bank, and ask it every built-in rule
+    # or only play-mode decisions on the card-rules targets (ai/eval/card_rules.py)
+    ... run --model <model>.onnx --targeted --per-card 12 --games 400 --pairs 32 --seed 1 --out parts/bank-1.json.gz
+    # pool parts into one bank, and ask it every built-in rule (or --card-rules)
     ... pool --parts parts/bank-*.json.gz --out bank.json.gz
     ... query --bank bank.json.gz [more banks...] --out-md report.md --out-json report.json
 
@@ -20,10 +22,21 @@ import json
 import os
 import sys
 import time
+from typing import Dict, Iterable
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def merge_counts(parts: Iterable[Dict[str, Dict[str, int]]]) -> Dict[str, Dict[str, int]]:
+    out: Dict[str, Dict[str, int]] = {}
+    for part in parts:
+        for key, row in part.items():
+            tgt = out.setdefault(key, {})
+            for m, n in row.items():
+                tgt[m] = tgt.get(m, 0) + n
+    return out
 
 
 def main() -> None:
@@ -35,6 +48,10 @@ def main() -> None:
     r.add_argument("--pairs", type=int, default=32)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--out", required=True)
+    r.add_argument("--targeted", action="store_true",
+                   help="bank only play-mode decisions on ai/eval/card_rules.py's TARGETS (--per-card, --games)")
+    r.add_argument("--per-card", type=int, default=12)
+    r.add_argument("--games", type=int, default=400)
     p = sub.add_parser("pool")
     p.add_argument("--parts", nargs="+", required=True)
     p.add_argument("--out", required=True)
@@ -42,6 +59,7 @@ def main() -> None:
     q.add_argument("--bank", nargs="+", required=True)
     q.add_argument("--out-md", required=True)
     q.add_argument("--out-json", required=True)
+    q.add_argument("--card-rules", action="store_true", help="ask the card event rules (ai/eval/card_rules.py)")
     a = ap.parse_args()
 
     if a.cmd == "run":
@@ -59,14 +77,24 @@ def main() -> None:
                                                 "mask": np.ascontiguousarray(masks, dtype=np.uint8)})
             return np.asarray(v).reshape(-1)
 
-        positions = collect(act, a.decisions, a.seed)
+        counts: dict = {}
+        if a.targeted:
+            from ai.eval.card_rules import target_ids
+            from ai.eval.doctrine_census import cards
+            from ai.eval.position_bank import collect_targets
+
+            by_name = {str(v["name"]): k for k, v in cards().items()}
+            positions, counts = collect_targets(act, target_ids(by_name), a.per_card, a.games, a.seed)
+        else:
+            positions = collect(act, a.decisions, a.seed)
         print(f"{len(positions)} decisions ({round(time.time() - t0)}s)", flush=True)
         records = []
         for lo in range(0, len(positions), 25):
             records += build(act, probs, value_fn, positions[lo:lo + 25], a.pairs, a.seed * 7_919 + lo)
             print(f"  {min(lo + 25, len(positions))}/{len(positions)} ({round(time.time() - t0)}s)", flush=True)
         meta = {"model": os.path.basename(a.model), "pairs": a.pairs, "seed": a.seed,
-                "engine": fingerprint(), "seconds": round(time.time() - t0, 1)}
+                "engine": fingerprint(), "seconds": round(time.time() - t0, 1), "targeted": a.targeted,
+                "mode_counts": counts}
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         with gzip.open(a.out, "wt") as f:
             json.dump({"meta": meta, "records": records}, f)
@@ -83,7 +111,9 @@ def main() -> None:
         if len(models) > 1 or len(engines) > 1:
             raise SystemExit(f"parts from different models or engines: {models} {engines}")
         with gzip.open(a.out, "wt") as f:
-            json.dump({"meta": {"model": models.pop(), "engine": engines.pop(), "parts": metas}, "records": records}, f)
+            json.dump({"meta": {"model": models.pop(), "engine": engines.pop(), "parts": metas,
+                                "mode_counts": merge_counts(m.get("mode_counts", {}) for m in metas)},
+                       "records": records}, f)
         print(f"{len(records)} records from {len(metas)} parts -> {a.out}")
     else:
         from ai.eval.bank_query import load, report
@@ -96,7 +126,15 @@ def main() -> None:
         if len(models) > 1:
             raise SystemExit(f"banks from different models: {models}")
         records = load(a.bank)
-        md, summary = report(records, meta={"model": models.pop(), "banks": len(a.bank)})
+        if a.card_rules:
+            from ai.eval import card_rules
+            from ai.eval.doctrine_census import cards
+
+            names = {k: str(v["name"]) for k, v in cards().items()}
+            counts = merge_counts(m.get("mode_counts", {}) for m in metas)
+            md, summary = card_rules.report(records, names, counts, {"model": models.pop(), "banks": len(a.bank)})
+        else:
+            md, summary = report(records, meta={"model": models.pop(), "banks": len(a.bank)})
         with open(a.out_md, "w") as f:
             f.write(md)
         with open(a.out_json, "w") as f:

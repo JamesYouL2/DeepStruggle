@@ -26,7 +26,7 @@ candidates cannot be asked of the bank and needs its own run.
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import ts_engine as ts
@@ -222,6 +222,57 @@ def collect(act: PolicyFn, n: int, seed: int, envs: int = 32, base: float = 0.00
     if len(kept) > n:
         kept = [kept[j] for j in sorted(rng.choice(len(kept), n, replace=False))]
     return kept
+
+
+MODE_NAMES = ("event", "space", "influence", "coup", "realign")
+
+
+def collect_targets(act: PolicyFn, targets: Set[Tuple[str, int]], per_card: int, games: int, seed: int,
+                    envs: int = 32, max_steps: int = 5_000_000
+                    ) -> Tuple[List[Tuple[ts.GameState, str, float]], Dict[str, Dict[str, int]]]:
+    """Play-mode decisions on the (side, card) pairs in `targets`, by that side, from greedy
+    self-play: at most `per_card` per pair and one per pair per game, over at most `games` games.
+    Also returns the model's own mode at every play-mode decision passed, as "side|card" -> counts."""
+    runner = ts.VectorizedBatchRunner(envs, seed * 47 + 31)
+    runner.refresh_all()
+    kept: List[Tuple[ts.GameState, str, float]] = []
+    have: Dict[Tuple[str, int], int] = {}
+    counts: Dict[str, Dict[str, int]] = {}
+    seen_in_game: List[Set[Tuple[str, int]]] = [set() for _ in range(envs)]
+    started, finished = envs, 0
+    for _ in range(max_steps):
+        if finished >= games or all(have.get(t, 0) >= per_card for t in targets):
+            break
+        obs = np.asarray(runner.get_observations())
+        masks = np.asarray(runner.get_action_masks())
+        acts = [int(x) for x in act(obs, masks)]
+        for i in range(envs):
+            if not (masks[i][MODE_BASE] or masks[i][MODE_BASE + 1]):
+                continue
+            st = runner.get_state(i)
+            ctx = st.ctx()
+            if ctx.decision_type != ts.DecisionType.SELECT_PLAY_MODE or not int(ctx.pending_op_card):
+                continue
+            key = ("US" if _decider(st) == ts.Player.US else "USSR", int(ctx.pending_op_card))
+            row = counts.setdefault(f"{key[0]}|{key[1]}", {})
+            if MODE_BASE <= acts[i] < MODE_BASE + 5:
+                m = MODE_NAMES[acts[i] - MODE_BASE]
+                row[m] = row.get(m, 0) + 1
+            if (key in targets and have.get(key, 0) < per_card and key not in seen_in_game[i]
+                    and masks[i].sum() >= 2):
+                kept.append((st.clone(), "mode", 1.0))
+                have[key] = have.get(key, 0) + 1
+                seen_in_game[i].add(key)
+        runner.step_flat_all(acts, auto_advance=True)
+        ends = np.flatnonzero(np.array(runner.get_terminals())).tolist()
+        for i in ends:
+            finished += 1
+            runner.reset_game(int(i), seed * 1_000_003 + started)
+            started += 1
+            seen_in_game[i] = set()
+        if ends:
+            runner.refresh_all()
+    return kept, counts
 
 
 def build(act: PolicyFn, probs_fn: ProbsFn, value_fn: ValueFn, positions: Sequence[Tuple[ts.GameState, str, float]],

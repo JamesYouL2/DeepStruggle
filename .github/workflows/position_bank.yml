@@ -2,6 +2,7 @@
 # candidate move played out, saved so later rules are queries rather than new runs.
 #
 #   gh workflow run position_bank.yml -f decisions=400 -f pairs=32 -f runners=16
+#   gh workflow run position_bank.yml -f targeted=true -f per_card=12 -f games=400   # card event rules
 #   gh run download <run-id> -n position-bank-<run-id> -D data/banks
 #
 # Each runner banks `decisions` decisions (seeded by its part number); the pool job concatenates the
@@ -31,6 +32,15 @@ on:
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
+      targeted:
+        description: "`true`: bank only play-mode decisions on the card-rules targets (ai/eval/card_rules.py)"
+        default: "false"
+      per_card:
+        description: "Targeted: decisions per card per runner"
+        default: "12"
+      games:
+        description: "Targeted: self-play games per runner at most"
+        default: "400"
 
 permissions:
   contents: read
@@ -41,6 +51,9 @@ env:
   RUNNERS: ${{ inputs.runners || '16' }}
   MODEL: ${{ inputs.model || 'newest' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+  TARGETED: ${{ inputs.targeted || 'false' }}
+  PER_CARD: ${{ inputs.per_card || '12' }}
+  GAMES: ${{ inputs.games || '400' }}
 
 jobs:
   plan:
@@ -83,6 +96,7 @@ jobs:
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/position_bank.py run \
             --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
             --decisions "$DECISIONS" --pairs "$PAIRS" --seed "${{ matrix.part }}" \
+            $([ "$TARGETED" = "true" ] && echo "--targeted --per-card $PER_CARD --games $GAMES") \
             --out "parts/part-${{ matrix.part }}.json.gz"
 
       - uses: actions/upload-artifact@v4
@@ -115,12 +129,13 @@ jobs:
           PYTHONPATH=.:build/release .venv/bin/python tools/position_bank.py pool \
             --parts "parts/part-*.json.gz" --out reports/bank.json.gz
           PYTHONPATH=.:build/release .venv/bin/python tools/position_bank.py query \
-            --bank reports/bank.json.gz --out-md reports/report.md --out-json reports/report.json
+            --bank reports/bank.json.gz --out-md reports/report.md --out-json reports/report.json \
+            $([ "$TARGETED" = "true" ] && echo "--card-rules")
           {
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
-            echo "decisions/runner: $DECISIONS  pairs: $PAIRS  runners: $RUNNERS"
+            echo "decisions/runner: $DECISIONS  pairs: $PAIRS  runners: $RUNNERS  targeted: $TARGETED (per card $PER_CARD, games $GAMES)"
           } > reports/provenance.txt
           { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
 
