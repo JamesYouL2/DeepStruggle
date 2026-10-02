@@ -1,0 +1,118 @@
+# Distil bank-confirmed event spots into a checkpoint (tools/bank_distill_targets.py), on CPU.
+#
+#   gh workflow run distill.yml --ref exp/hungary-openings \
+#     -f checkpoint="83120a1a3e:E7-04-44_20261001_090354/snapshot_1200029696steps.pt" \
+#     -f spots="37063921450:US:80 37063921450:USSR:80 37063924526:US:80 ..." -f name="E7-04-44@1200M+distill"
+#   gh run download <run-id> -n distill-<run-id> -D data/checkpoints/distill
+#
+# Each spot is <position-bank run id>:<side>:<card id>: every play-mode position of that card and
+# side in that run's bank gets the event as its target. The anchors are the checkpoint's own policy
+# at every decision of its own games, so the rest of the policy is pulled toward where it already is.
+# The result is evaluated like any model: the census and position-bank workflows take
+# `model=hf:gh:<this run id>/distill-<this run id>/<name>.onnx`.
+name: distill
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/hungary-openings]
+    paths: [.github/workflows/distill.yml]
+  workflow_dispatch:
+    inputs:
+      checkpoint:
+        description: "<revision>:<run>/<snapshot>.pt in hf_repo"
+        required: true
+      spots:
+        description: "Space-separated <bank run id>:<US|USSR>:<card id>"
+        required: true
+      name:
+        description: "Output name (<name>.pt, <name>.onnx)"
+        required: true
+      anchor_games:
+        description: "Own-policy anchor games"
+        default: "400"
+      repeat:
+        description: "Copies of each spot position"
+        default: "4"
+      epochs:
+        description: "Distillation epochs"
+        default: "3"
+      lr:
+        description: "Distillation learning rate"
+        default: "1e-4"
+      hf_repo:
+        description: "Hugging Face repo the checkpoint is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+  actions: read   # the position banks are other runs' artifacts
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  CHECKPOINT: ${{ inputs.checkpoint }}
+  SPOTS: ${{ inputs.spots }}
+  NAME: ${{ inputs.name }}
+  ANCHOR_GAMES: ${{ inputs.anchor_games || '400' }}
+  REPEAT: ${{ inputs.repeat || '4' }}
+  EPOCHS: ${{ inputs.epochs || '3' }}
+  LR: ${{ inputs.lr || '1e-4' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  distill:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Fetch the checkpoint and the banks
+        run: |
+          rev="${CHECKPOINT%%:*}"; path="${CHECKPOINT#*:}"
+          mkdir -p work/banks
+          curl -sfL -o work/base.pt "https://huggingface.co/$HF_REPO/resolve/$rev/$path"
+          for id in $(for s in $SPOTS; do echo "${s%%:*}"; done | sort -u); do
+            gh run download "$id" -R "$GITHUB_REPOSITORY" -n "position-bank-$id" -D "work/banks/$id"
+          done
+          args=""
+          for s in $SPOTS; do args="$args --spot work/banks/${s%%:*}/bank.json.gz:${s#*:}"; done
+          echo "SPOT_ARGS=$args" >> "$GITHUB_ENV"
+
+      - name: Anchor games (the checkpoint's own policy)
+        run: |
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/generate_policy_targets.py \
+            --us work/base.pt --ussr work/base.pt --total-games "$ANCHOR_GAMES" --batch-size 64 \
+            --device cpu --seed-offset 7000000 --output-path work/anchors.jsonl.gz
+
+      - name: Export the targets and distil
+        run: |
+          export PYTHONPATH=.:build/release
+          mkdir -p out
+          .venv/bin/python tools/bank_distill_targets.py export $SPOT_ARGS --anchors work/anchors.jsonl.gz \
+            --repeat "$REPEAT" --out work/distill.jsonl.gz | tee out/dataset_meta.json
+          .venv/bin/python tools/bank_distill_targets.py check --checkpoint work/base.pt $SPOT_ARGS > out/check_before.md
+          .venv/bin/python tools/train.py --mode distill --warmup-checkpoint work/base.pt \
+            --distill-dataset work/distill.jsonl.gz --distill-epochs "$EPOCHS" --distill-lr "$LR" \
+            --device cpu --output-dir "out/$NAME.pt" | tee out/distill.log
+          .venv/bin/python tools/bank_distill_targets.py check --checkpoint "out/$NAME.pt" $SPOT_ARGS > out/check_after.md
+          .venv/bin/python tools/export_onnx.py --checkpoint "out/$NAME.pt" --out "out/$NAME.onnx"
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(.venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "checkpoint: $HF_REPO $CHECKPOINT"
+            echo "spots: $SPOTS"
+            echo "anchor games: $ANCHOR_GAMES  repeat: $REPEAT  epochs: $EPOCHS  lr: $LR"
+            echo "evaluate with: model=hf:gh:$GITHUB_RUN_ID/distill-$GITHUB_RUN_ID/$NAME.onnx"
+          } > out/provenance.txt
+          { echo '```'; cat out/provenance.txt; echo '```'; echo '## Before'; cat out/check_before.md;
+            echo; echo '## After'; cat out/check_after.md; echo; echo '```'; grep -E "epoch|wrote" out/distill.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distill-${{ github.run_id }}
+          path: out/
+          if-no-files-found: error

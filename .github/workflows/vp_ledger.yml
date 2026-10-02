@@ -24,7 +24,7 @@ on:
         description: "Runners (each takes 1/N of the corpus)"
         default: "16"
       model:
-        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner)"
+        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner), or hf:gh:<run id>/<artifact>/<file.onnx>"
         default: "newest"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
@@ -32,8 +32,10 @@ on:
 
 permissions:
   contents: read
+  actions: read   # a gh:<run>/<artifact>/<file> model is another run's artifact
 
 env:
+  GH_TOKEN: ${{ github.token }}
   GAMES: ${{ inputs.games || '250' }}
   RUNNERS: ${{ inputs.runners || '16' }}
   MODEL: ${{ inputs.model || 'newest' }}

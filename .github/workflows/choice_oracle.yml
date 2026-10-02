@@ -31,7 +31,7 @@ on:
         description: "Runners (each finds different positions)"
         default: "16"
       model:
-        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner)"
+        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner), or hf:gh:<run id>/<artifact>/<file.onnx>"
         default: "newest"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
@@ -39,8 +39,10 @@ on:
 
 permissions:
   contents: read
+  actions: read   # a gh:<run>/<artifact>/<file> model is another run's artifact
 
 env:
+  GH_TOKEN: ${{ github.token }}
   PER: ${{ inputs.per || '32' }}
   PAIRS: ${{ inputs.pairs || '128' }}
   ONLY: ${{ inputs.only || '' }}

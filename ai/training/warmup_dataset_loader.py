@@ -165,6 +165,21 @@ class WarmupDataset:
                 if max_games is not None and games >= max_games:
                     break
                 game = json.loads(line)
+                if 'save' in game:
+                    # One position rather than a game (tools/bank_distill_targets.py): a save to
+                    # load and a target at it. Same mask authority as a replayed decision.
+                    st = ts.state_from_save_json(game['save'])
+                    p_ = st.ctx().decision_player
+                    mask = np.array(ts.get_flat_action_mask(st, merged), copy=True)
+                    target = np.zeros(mask.shape[0], dtype=np.float32)
+                    for act, vis in zip(game['search_pi']['a'], game['search_pi']['v']):
+                        if 0 <= act < target.shape[0] and mask[act]:
+                            target[act] += float(vis)
+                    if target.sum() > 0:
+                        yield (np.array(ts.extract_observation(st, p_), copy=True), mask,
+                               target / target.sum(), int(st.ctx().decision_type))
+                    games += 1
+                    continue
                 st = ts.GameState()
                 ts.Engine.init_game(st, game['seed'])
                 for a in game['actions']:

@@ -14,6 +14,10 @@ deleted. It is downloaded and exported to ONNX here with `tools/export_onnx.py` 
 built engine and torch, so this form only works after setup), as `<run>@<steps>M.onnx`:
 `83120a1a3e:E7-04-44_20261001_090354/snapshot_1200029696steps.pt` -> `E7-04-44@1200M.onnx`.
 
+A model that only exists as a workflow artifact (a distilled checkpoint, say) is named as
+`gh:<run id>/<artifact name>/<file.onnx>` and fetched with the `gh` CLI, which needs `GH_TOKEN`
+and the repository in `GITHUB_REPOSITORY` (both set in a workflow).
+
 Prints the downloaded file's path as the last line of output, for a shell to capture;
 `--resolve-only` prints the file's path in the repo instead and downloads nothing. Needs no
 token: the default repo is public. Standard library only, so it runs before anything is installed.
@@ -101,6 +105,18 @@ def fetch_checkpoint_as_onnx(repo: str, spec: str, out_dir: str) -> str:
     return out
 
 
+def fetch_artifact(spec: str, out_dir: str) -> str:
+    """`gh:<run id>/<artifact>/<file>`: download that run's artifact and return the file in it."""
+    run_id, artifact, name = spec[len("gh:"):].split("/", 2)
+    dest = os.path.join(out_dir, "_gh", run_id, artifact)
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    subprocess.run(["gh", "run", "download", run_id, "-n", artifact, "-D", dest]
+                   + (["-R", repo] if repo else []), check=True, stdout=sys.stderr)
+    out = os.path.join(out_dir, os.path.basename(name))
+    os.replace(os.path.join(dest, name), out)
+    return out
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--repo", default=DEFAULT_REPO)
@@ -125,7 +141,9 @@ def main(argv: List[str]) -> int:
     if args.resolve_only:
         print(path)
         return 0
-    if path.endswith(".pt"):
+    if path.startswith("gh:"):
+        print(fetch_artifact(path, args.out_dir))
+    elif path.endswith(".pt"):
         print(fetch_checkpoint_as_onnx(args.repo, path, args.out_dir))
     else:
         print(download(args.repo, args.revision, path, args.out_dir))

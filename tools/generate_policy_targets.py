@@ -88,6 +88,8 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--merged-view", action="store_true", default=False,
                     help="P23: play in the E4.1 merged-influence view and record the E4 teachers' "
                          "policy translated exactly into it (see the module docstring)")
+    ap.add_argument("--seed-offset", type=int, default=0,
+                    help="added to every game seed, so parallel parts play different games")
     ap.add_argument("--output-path", required=True)
     ap.add_argument("--device", default="cuda")
     return ap
@@ -187,7 +189,7 @@ def main() -> int:
     with gzip.open(a.output_path, "wt", encoding="utf-8") as out:
         while games_done < a.total_games:
             n = min(a.batch_size, a.total_games - games_done)
-            base_seed = 500_000 + games_done * 10_007 + 1
+            base_seed = 500_000 + a.seed_offset + games_done * 10_007 + 1
             runner = ts.VectorizedBatchRunner(n, base_seed)
             if a.merged_view:
                 runner.set_merged_influence([True] * n, [True] * n)
