@@ -57,7 +57,7 @@ for Ops, the event read "normal". Two things followed:
 * any safety layer built on the classifier never took it.
 
 Now, at DEFCON 2 with a lead over 6, the event is a win. At 6 or less it is not a loss, since the
-branch can still decline to end the game. `tests/training/test_safety_wargames.py` pins both. It
+branch can still decline to end the game. `tests/training/test_safety_decisive.py` pins both, beside the game's other instant endings (a battleground coup at DEFCON 2 by Ops or by an event's free coup, and not under Nuclear Subs; a scoring card reaching 20 VP; Europe Scoring with Europe controlled), which were already right. It
 also confirms the engine side: the event, then branch 0, ends the game for the mover.
 
 This changes what the decisive probe reports from now on: forced wins it never saw are counted.
