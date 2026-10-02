@@ -37,7 +37,8 @@ the weaknesses below lower bounds.
   * **decisive wins not taken.** Wargames is declined 429 of 430 times at a winning lead, about 1.5
     points a game, and `safety.py` did not see it -- fixed in this PR;
   * **immediate VP from events undervalued.** OPEC and Alliance for Progress at 5+ VP, Star Wars
-    when ahead. Humans make 1.6-3.3 more VP a game from events;
+    when ahead, and above all One Small Step one box behind, which the model never events and which
+    is worth +2.8 to +5.7 points a play for the US. Humans make 1.6-3.3 more VP a game from events;
   * **event timing against the hand and the rounds left.** Five Year Plan and Aldrich Ames; the net
     is never told how many rounds it has left;
   * **rarely reached decisions decided poorly.** The choices inside events, such as Aldrich Ames'
@@ -69,6 +70,7 @@ This changes what the decisive probe reports from now on: forced wins it never s
 | **Wargames declined at a winning lead** | 429 of 430 plays; ~11% of games | 14.3 ± 2.6 pts per decline (it still wins 85.7%): **~1.5 pts a game** | census `36943954436`; 60 positions × 32 pairs |
 | **OPEC not evented at 5+ VP** | evented 24% | event +2.4 ± 0.3 | 363 positions × 128 pairs, `36945382157` |
 | **Star Wars not evented when ahead in space** | evented 0% (census), 26% overall | +1.6 ± 0.6; +2.0 ± 0.7 where it declines | `36945382157`, `36964635572` |
+| **One Small Step not evented one box behind** | evented 0% of 1,489 positions | US: +2.8 ± 0.4 at 1 vs 2, **+5.7 ± 0.5** at 3 vs 4; USSR: −0.2 ± 0.5 at 1 vs 2, +2.9 ± 0.5 at 3 vs 4 | 320-496 positions a side and spot × 64 pairs, `37037507768`, `37037511438` |
 | **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | 512 positions × 128 pairs, `36945382157` |
 | **Five Year Plan timing (USSR)** | last round 55%; two or more other cards in hand 38% | -- | census `36953663726` |
 | **Choices inside events** | -- | Aldrich Ames: best discard −0.8 against Ops, the model's own discard −5.5 (40 positions) | local, 32 pairs |
@@ -89,6 +91,22 @@ The largest event gaps are OPEC, Arms Race, Wargames, Duck and Cover and Allianc
 Forcing the events humans favour, but whose value is delayed (John Paul II, Bear Trap, Missile
 Envy), reads *negative* by the model's playouts. That is the standing caveat: the playouts see only
 the immediate cases.
+
+**One Small Step.** One box behind, the event jumps the mover two boxes, past the opponent and into
+the next VP box: from 1 vs 2 into Man in Space, from 3 vs 4 into Lunar Orbit. Positions were taken
+from the model's own self-play wherever the spot arose, and every mode was played out:
+
+| spot | side | positions | model events | event − model | close games (model 25-75%) | best other mode − model |
+|:---|:---|---:|---:|---:|---:|---:|
+| 1 vs 2 | US | 320 | 0% | +2.8 ± 0.4 | +3.4 ± 0.8 | −0.6 (influence) |
+| 1 vs 2 | USSR | 320 | 0% | −0.2 ± 0.5 | −1.0 ± 1.0 | −0.4 (influence) |
+| 3 vs 4 | US | 353 | 0% | **+5.7 ± 0.5** | **+12.6 ± 1.4** | −0.4 (influence) |
+| 3 vs 4 | USSR | 496 | 0% | **+2.9 ± 0.5** | +5.9 ± 1.4 | 0.0 (influence) |
+
+The value is the VP swing of jumping past the opponent, not being behind as such: over all of the
+model's One Small Step plays while behind in space, the event reads −0.5 ± 1.1 for the US and
+−3.5 ± 1.0 for the USSR (`37026844506`). A rule that names the spot is worth a lot, while "event
+when behind" is not -- the same lesson as every other card here.
 
 **Timing.**
 
@@ -158,5 +176,8 @@ block.
 * **Human disagreements.** All turns `36958653207`; turn 1 `36963933063`.
 * **VP ledger and calibration.** `36966918630`.
 * **US setup bake-off.** `36970757999`, `36970763934`, `36970769645`.
+* **Position banks** (every legal mode played out from the model's own positions). Card event
+  rules over the 36 cards humans event most against the model `37026844506`; One Small Step one box
+  behind `37037507768` (1 vs 2) and `37037511438` (3 vs 4).
 * **Local measurements, the same paired method.** The Wargames cost (60 positions × 32 pairs) and
   the Aldrich Ames discard (40 positions × 32 pairs).
