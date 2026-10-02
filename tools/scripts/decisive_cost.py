@@ -10,7 +10,9 @@ it takes); without it each decision offering a win counts once (version 1).
 Cost: a forced win a side missed and then lost the game is a game a player that always takes its
 forced wins would have won in that seat. Delta = mean over games and both seats of
 P(seat missed a win and lost); Elo = 400 log10((0.5 + Delta) / (0.5 - Delta)) against the
-checkpoint itself. First order: it ignores how taking the win earlier would change later play.
+checkpoint itself. Exact under greedy play: taking a forced win ends the game, and the win-taker
+plays the model's own game up to its first missed chance (v2 wins are certain on every die face;
+v1 sampled dice).
 
     PYTHONPATH=<codebase>:build/release python tools/scripts/decisive_cost.py --checkpoint <pt> --games 1024
 """
@@ -53,6 +55,10 @@ def play(model: Any, games: int, base_seed: int, temperature: float, batch: int)
         env.set_obs_features(model_obs_features(model), model_obs_features(model))
         obs, masks, _ = env.reset_all()
         pending: List[List[Tuple[int, int, int, bool]]] = [[] for _ in range(n)]
+        # Every decision offering a win, keyed by its index among the game's non-chance decisions --
+        # a key independent of the classifier, so two versions' records line up on identical games.
+        wins: List[List[Tuple[int, int, int, List[int], int]]] = [[] for _ in range(n)]
+        k_dec = [0] * n
         counted = [False] * n
         result: List[Optional[float]] = [None] * n
         for _ in range(20_000):
@@ -76,10 +82,16 @@ def play(model: Any, games: int, base_seed: int, temperature: float, batch: int)
                 if ctx.decision_type == ts.DecisionType.ROLL_DIE:
                     continue
                 player = ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player
+                k = k_dec[i]
+                k_dec[i] += 1
                 kinds = classify_in_view(st, player, False)
                 if not kinds:
                     continue
                 n_wins = sum(1 for k in kinds.values() if k == "win")
+                if n_wins:
+                    card = int(ctx.resolving_card) or int(ctx.pending_op_card)
+                    wins[i].append((k, int(ctx.decision_type), card,
+                                    sorted(a for a, kd in kinds.items() if kd == "win"), int(actions[i])))
                 pending[i].append((int(player), len(kinds), n_wins, kinds.get(int(actions[i])) == "win"))
             obs, masks, _, dones, info = env.step(actions)
             # The env auto-resets a finished game, so its result is read from the episode record
@@ -92,7 +104,8 @@ def play(model: Any, games: int, base_seed: int, temperature: float, batch: int)
         for i in range(n):
             if result[i] is None:
                 raise RuntimeError(f"game {b0 + i}: finished without an episode record")
-            out.append({"decisions": len(pending[i]), "opps": _opportunities(pending[i]), "us_util": result[i]})
+            out.append({"decisions": len(pending[i]), "opps": _opportunities(pending[i]), "us_util": result[i],
+                        "wins": wins[i]})
     return out
 
 
