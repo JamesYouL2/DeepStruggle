@@ -1,12 +1,12 @@
 # The engine's C++ suite and the backend Python suite (everything but tests/web, which has its
 # own workflow because it needs Emscripten and a browser). Measured on a 4-worker run: C++ under a
-# second, bindings + engine_logic + docs ~20 s, replayer ~90 s, training ~3 min -- so the groups
-# run as separate jobs side by side.
+# second, bindings + engine_logic + docs ~20 s, training ~3 min -- so training is its own job and
+# the groups run side by side.
 #
-# The corpus tests -- tests/replayer and the corpus-based tests in tests/engine_logic -- run on
-# pull requests only. They need the human corpus, which is not committed: it is fetched from
-# ts-replayer.fly.dev and cached. Elsewhere they are excluded by name (CORPUS_TESTS) rather than
-# left to skip, so a green run never counts them as checked.
+# Nothing that needs the ts-replayer corpus runs on GitHub: not tests/replayer, and not the tests
+# elsewhere that read the corpus or the human dataset built from it (CORPUS_TESTS). Run those
+# locally (CLAUDE.md, "The ts-replayer corpus"). They are excluded by name rather than left to
+# skip or fail, so a green run never counts them as checked.
 name: tests
 
 on:
@@ -26,16 +26,15 @@ env:
   # The subprocess tests (e.g. test_import_survives_older_engine) do not inherit pytest.ini's
   # `pythonpath`, so build/release must be on PYTHONPATH itself.
   PYTHONPATH: .:build/release
-  # Tests outside tests/replayer that read the corpus: deselected from `core`, run by `corpus`.
-  # A renamed test drops out of the deselection and would then skip in `core`, so keep this list
-  # in step with the files.
+  # Tests outside tests/replayer that read the corpus, or the human dataset built from it. A
+  # renamed test drops out of the deselection and then skips or fails, so keep this list in step
+  # with the files.
   CORPUS_TESTS: >-
     tests/engine_logic/test_headline_resolution_order.py
     tests/engine_logic/test_china_card_space_race.py::test_replay_247_converts_end_to_end
     tests/engine_logic/test_cuban_missile_crisis_choice.py::test_replay_264_converts_end_to_end
     tests/engine_logic/test_norad_action_round_scope.py::test_replay_296_gets_past_its_bear_trap_escape
-  # Bump to force a refetch of the corpus.
-  CORPUS_CACHE_KEY: ts-replayer-corpus-v1
+    tests/training/test_setup_arms.py::test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term
 
 jobs:
   engine:
@@ -67,52 +66,3 @@ jobs:
           deselect=()
           for t in $CORPUS_TESTS; do deselect+=("--deselect=$t"); done
           python -m pytest -q -n auto ${{ matrix.group.paths }} "${deselect[@]}"
-
-  # A cache saved by a pull-request run is visible only to that pull request; one saved from main
-  # is visible to all of them. So main keeps the corpus cached, and fetches it only when the cache
-  # is gone (evicted after 7 days unused, or a new CORPUS_CACHE_KEY).
-  corpus-cache:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Look up the cached corpus
-        id: lookup
-        uses: actions/cache/restore@v6
-        with:
-          path: data/datasets/ts_replayer
-          key: ${{ env.CORPUS_CACHE_KEY }}
-          lookup-only: true
-      - uses: actions/checkout@v7
-        if: steps.lookup.outputs.cache-hit != 'true'
-      # The downloader imports tools.lib, which imports ts_engine.
-      - uses: ./.github/actions/setup
-        if: steps.lookup.outputs.cache-hit != 'true'
-      - name: Download the corpus
-        if: steps.lookup.outputs.cache-hit != 'true'
-        run: python tools/download_ts_replayer.py
-      - name: Save the corpus
-        if: steps.lookup.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: data/datasets/ts_replayer
-          key: ${{ env.CORPUS_CACHE_KEY }}
-
-  corpus:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - name: Restore the corpus
-        id: corpus
-        uses: actions/cache/restore@v6
-        with:
-          path: data/datasets/ts_replayer
-          key: ${{ env.CORPUS_CACHE_KEY }}
-      # Only before main has cached it; the copy fetched here is not saved (it would be visible
-      # to this pull request alone).
-      - name: Download the corpus
-        if: steps.corpus.outputs.cache-hit != 'true'
-        run: python tools/download_ts_replayer.py
-      - name: pytest
-        run: python -m pytest -q -n auto tests/replayer $CORPUS_TESTS

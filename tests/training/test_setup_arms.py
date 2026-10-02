@@ -92,12 +92,14 @@ def test_per_player_gae_is_refused() -> None:
 
 
 def test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term(tmp_path: Any) -> None:
-    import glob
+    import os
     from ai.models.ladder_net import create_ladder_net
     from ai.training.generic_trainer import _HumanInjector
-    ds = sorted(glob.glob("/workspace/data/datasets/human_corpus_e4"))
-    if not ds:
-        pytest.fail("the human corpus dataset is missing: tools/build_human_dataset.py")
+    from tools.lib.data_root import data_path
+    ds = [data_path("datasets", "human_corpus_e4")]
+    if not os.path.isdir(ds[0]):
+        pytest.fail(f"the human corpus dataset is missing at {ds[0]}: "
+                    f"tools/build_human_dataset.py --out {ds[0]}")
     net = create_ladder_net("cpu", input_mode="grouped", aggregation="flatten", entity_dim=16,
                             entity_proj_dim=64, card_self_attention=False, cross_attention=False,
                             per_entity_heads=16, head_context=True, head_static=True,
