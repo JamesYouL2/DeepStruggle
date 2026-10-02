@@ -49,7 +49,11 @@ def test_card_ids_match_their_names() -> None:
             D.DESTALINIZATION: "De-Stalinization", D.DECOLONIZATION: "Decolonization",
             D.NAZI_SCIENTIST: "Captured Nazi Scientist", D.JUNTA: "Junta", D.TERRORISM: "Terrorism",
             D.FORMOSAN: "Formosan Resolution", D.COMECON: "Comecon", D.NORAD: "NORAD", D.STAR_WARS: "Star Wars",
-            D.OPEC: "OPEC", D.ALLIANCE_FOR_PROGRESS: "Alliance for Progress", D.CHE: "Che"}
+            D.OPEC: "OPEC", D.ALLIANCE_FOR_PROGRESS: "Alliance for Progress", D.CHE: "Che", D.FIVE_YEAR_PLAN: "Five Year Plan"}
     assert {c: info[c]["name"] for c in want} == want
     names = {r["name"] for r in D._map()}
     assert set(D.OPEC_COUNTRIES) <= names
+
+
+def test_last_round() -> None:
+    assert D.is_last_round(3, 6) and not D.is_last_round(4, 6) and D.is_last_round(4, 7) and D.is_last_round(9, 8)

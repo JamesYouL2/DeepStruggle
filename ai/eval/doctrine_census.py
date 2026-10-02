@@ -41,6 +41,7 @@ ALDRICH_AMES, DESTALINIZATION, DECOLONIZATION = 98, 33, 30
 NAZI_SCIENTIST, JUNTA, TERRORISM = 18, 47, 92
 FORMOSAN, COMECON, NORAD = 35, 14, 106
 STAR_WARS, OPEC, ALLIANCE_FOR_PROGRESS, CHE = 85, 61, 78, 107
+FIVE_YEAR_PLAN = 5
 NORDICS = {"Norway": 2, "Sweden": 3, "Finland": 5}
 OPEC_COUNTRIES = ("Egypt", "Iran", "Libya", "Saudi Arabia", "Iraq", "Gulf States", "Venezuela")
 IHC_FLAG = 1 << 36            # effect_bits::IRANIAN_HOSTAGE_CRISIS_PLAY
@@ -205,6 +206,17 @@ def collect(act: PolicyFn, n_games: int, seed: int, envs: int = 32, max_steps: i
 Rule = Tuple[str, Callable[[Dict[str, Any]], bool], Callable[[Dict[str, Any]], bool]]
 
 
+def is_last_round(turn: int, ar: int) -> bool:
+    """The phasing player's last action round of the turn (an eighth, when earned, counts)."""
+    return ar >= (6 if turn <= 3 else 7)
+
+
+def timing_rules() -> List[Tuple[str, int, str]]:
+    """(name, card, side): cards that side holds for its last action round."""
+    return [("USSR plays Five Year Plan in its last action round", FIVE_YEAR_PLAN, "USSR"),
+            ("US plays Aldrich Ames Remix in its last action round", ALDRICH_AMES, "US")]
+
+
 def rules() -> List[Rule]:
     """(name, applies(play), complies(play)) over the logged card plays (all with a real choice)."""
     def own_event(cid: int, side: Optional[str] = None, before: Optional[int] = None) -> Tuple[Callable, Callable]:
@@ -276,6 +288,22 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
         k = sum(complies(r) for r in sel)
         out.append(f"| {name} | {len(sel)} | {_pct(k, len(sel))} |")
         summary["rules"][name] = {"n": len(sel), "complied": k}
+
+    # Timing (the owner, 2026-10-01): an opponent card whose event makes you discard is held for
+    # your last action round, when the discard finds nothing -- or only a bad scoring card.
+    out += ["", "## Timing: discard events held for the last action round", "",
+            "Every play of the card by that side, in any mode, headlines included (a headline is never "
+            "the last round). Last round = round 6 in turns 1–3, round 7 after (an eighth counts too).", "",
+            "| rule | plays | in the last round | headlined | rounds played in |", "|:---|---:|---:|---:|:---|"]
+    for name, cid, side in timing_rules():
+        sel = [r for r in plays if r["card"] == cid and r["side"] == side]
+        nh = sum(1 for h in heads if h["card"] == cid and h["side"] == side)
+        k = sum(1 for r in sel if is_last_round(r["turn"], r["ar"]))
+        n = len(sel) + nh
+        ars = Counter(r["ar"] for r in sel)
+        spread = ", ".join(f"AR{a} {ars[a]}" for a in sorted(ars))
+        out.append(f"| {name} | {n} | {_pct(k, n)} | {_pct(nh, n)} | {spread} |")
+        summary["rules"][name] = {"n": n, "complied": k}
 
     # Per card: own and neutral cards, the mode mix.
     per: Dict[Tuple[int, str], Counter] = defaultdict(Counter)
