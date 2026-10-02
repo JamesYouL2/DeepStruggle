@@ -49,11 +49,22 @@ So a move whose payoff lies in a follow-up the model does not know reads worse t
 | leak | how often | cost when it happens | per game |
 |:---|:---|:---|---:|
 | **Wargames declined at a winning lead** | 429 of 430 times; ~11% of games | 14.3 ± 2.6 pts (it still wins 85.7%) | **~1.5 pts** |
-| **US setup bonus into South Korea** | 23% of games | Italy over South Korea: +8.1 ± 1.8 (32 human positions; likely smaller) | ~1-2 pts |
 | **OPEC not evented at 5+ VP** | evented 24% | +2.4 ± 0.3 over all such plays | — |
 | **Star Wars not evented when ahead in space** | evented 0% | +1.6 ± 0.6 (+2.0 ± 0.7 where it declines) | — |
 | **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | — |
 | **Five Year Plan timing** (USSR) | see below | Ops-first over event-first +2.1 ± 0.9 | — |
+
+**Checked and not confirmed: the South Korea setup bonus.** The model puts one or both US bonus
+points in South Korea in 23% of games. James reads that as clearly wrong, and on 32 human positions
+the human's Italy beat the model's South Korea by +8.1 ± 1.8. But a 4,096-deal bake-off does not
+confirm it. It pinned the model's usual WG 3 / France 3 / Italy 2 / Iran 2 against its own setup,
+on the same deals (fork runs `36970757999` and `36970763934`):
+
+* **Overall.** +0.0 ± 0.5.
+* **On the 927 deals where the model's own setup went outside Europe.** +0.2 ± 2.1.
+
+At E7 strength the placement costs nothing measurable, perhaps because neither side exploits it. WG 4 /
+France 2 / Italy 2 / Iran 2, which led an E6 bake-off by +2.1, is −0.6 ± 1.0 here (`36970769645`).
 
 **Wargames.** At DEFCON 2 with a lead over 6, the event wins on the spot. The model plays the card
 for Ops instead in 429 of 430 cases (doctrine census, 4,000 games). From those positions it goes on
@@ -180,6 +191,8 @@ block.
   * All turns: `36958653207`.
   * Turn 1: `36963933063`.
 * **VP ledger and calibration.** `36966918630`.
+* **US setup bake-off.** Own setup, and the two pinned setups: `36970757999`, `36970763934`,
+  `36970769645`.
 * **Local measurements**, each with the same paired method: the Wargames cost (60 positions × 32
   pairs), the Aldrich Ames discard (40 positions × 32 pairs), and the US setup distribution (256
   games).
