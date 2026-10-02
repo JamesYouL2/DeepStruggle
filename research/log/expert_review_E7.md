@@ -54,7 +54,6 @@ So a move whose payoff lies in a follow-up the model does not know reads worse t
 | **Star Wars not evented when ahead in space** | evented 0% | +1.6 ± 0.6 (+2.0 ± 0.7 where it declines) | — |
 | **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | — |
 | **Five Year Plan timing** (USSR) | see below | Ops-first over event-first +2.1 ± 0.9 | — |
-| **Formosan Resolution** (US) | — | coup over the model's choice +6.5 ± 1.8 (38 positions) | — |
 
 **Wargames.** At DEFCON 2 with a lead over 6, the event wins on the spot. The model plays the card
 for Ops instead in 429 of 430 cases (doctrine census, 4,000 games). From those positions it goes on
