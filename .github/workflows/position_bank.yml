@@ -38,6 +38,9 @@ on:
       forced_set:
         description: "With targeted=forced: the FORCED_SETS set (vp, kd, nextvp, oss12, oss34)"
         default: "vp"
+      cards:
+        description: "With targeted=true: SIDE:ID,... pairs to bank instead of card_rules' TARGETS (every play-mode position)"
+        default: ""
       per_card:
         description: "Targeted: decisions per card per runner"
         default: "12"
@@ -59,6 +62,7 @@ env:
   TARGETED: ${{ inputs.targeted || 'false' }}
   PER_CARD: ${{ inputs.per_card || '12' }}
   FORCED_SET: ${{ inputs.forced_set || 'vp' }}
+  CARDS: ${{ inputs.cards || '' }}
   GAMES: ${{ inputs.games || '400' }}
 
 jobs:
@@ -86,7 +90,7 @@ jobs:
   play:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 330   # under the 6 h job limit; a --cards bank over many card-sides runs long
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +107,7 @@ jobs:
             --model "$m" \
             --decisions "$DECISIONS" --pairs "$PAIRS" --seed "${{ matrix.part }}" \
             $([ "$TARGETED" = "true" ] && echo "--targeted --per-card $PER_CARD --games $GAMES") \
+            $([ "$TARGETED" = "true" ] && [ -n "$CARDS" ] && echo "--cards $CARDS") \
             $([ "$TARGETED" = "forced" ] && echo "--targeted --forced $FORCED_SET --per-card $PER_CARD --games $GAMES") \
             --out "parts/part-${{ matrix.part }}.json.gz"
 
@@ -137,12 +142,13 @@ jobs:
             --parts "parts/part-*.json.gz" --out reports/bank.json.gz
           PYTHONPATH=.:build/release .venv/bin/python tools/position_bank.py query \
             --bank reports/bank.json.gz --out-md reports/report.md --out-json reports/report.json \
-            $([ "$TARGETED" = "true" ] && echo "--card-rules") $([ "$TARGETED" = "forced" ] && echo "--forced $FORCED_SET")
+            $([ "$TARGETED" = "true" ] && [ -z "$CARDS" ] && echo "--card-rules") $([ "$TARGETED" = "forced" ] && echo "--forced $FORCED_SET")
           {
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
             echo "decisions/runner: $DECISIONS  pairs: $PAIRS  runners: $RUNNERS  targeted: $TARGETED ${FORCED_SET} (per card $PER_CARD, games $GAMES)"
+            echo "cards: ${CARDS:-card_rules TARGETS}"
           } > reports/provenance.txt
           { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
 

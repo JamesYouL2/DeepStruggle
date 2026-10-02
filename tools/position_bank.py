@@ -52,6 +52,9 @@ def main() -> None:
                    help="bank only play-mode decisions on ai/eval/card_rules.py's TARGETS (--per-card, --games)")
     r.add_argument("--forced", default=None, metavar="SET",
                    help="with --targeted: only a card_rules.FORCED_SETS set (vp, kd, nextvp, oss12, oss34), where its condition holds")
+    r.add_argument("--cards", default=None, metavar="SIDE:ID,...",
+                   help="with --targeted: these (side, card id) pairs instead of card_rules' TARGETS, every "
+                        "play-mode position of each -- e.g. US:80,USSR:80,US:89")
     r.add_argument("--per-card", type=int, default=12)
     r.add_argument("--games", type=int, default=400)
     p = sub.add_parser("pool")
@@ -90,6 +93,9 @@ def main() -> None:
             if a.forced:
                 keep = forced_keep(a.forced, by_name, act)
                 positions, counts = collect_targets(act, set(keep), a.per_card, a.games, a.seed, keep=keep)
+            elif a.cards:
+                chosen = {(sd, int(c)) for sd, c in (x.split(":") for x in a.cards.split(","))}
+                positions, counts = collect_targets(act, chosen, a.per_card, a.games, a.seed)
             else:
                 positions, counts = collect_targets(act, target_ids(by_name), a.per_card, a.games, a.seed)
         else:
