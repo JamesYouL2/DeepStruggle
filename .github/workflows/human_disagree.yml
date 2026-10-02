@@ -25,6 +25,9 @@ on:
       pairs:
         description: "Paired playouts per branch"
         default: "32"
+      turns:
+        description: "Only spots in these turns, comma-separated (empty = all)"
+        default: ""
       runners:
         description: "Runners (each takes 1/N of the corpus)"
         default: "8"
@@ -42,6 +45,7 @@ env:
   PER_KIND: ${{ inputs.per_kind || '60' }}
   MAX_P: ${{ inputs.max_p || '0.25' }}
   PAIRS: ${{ inputs.pairs || '32' }}
+  TURNS: ${{ inputs.turns || '' }}
   RUNNERS: ${{ inputs.runners || '8' }}
   MODEL: ${{ inputs.model || 'newest' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
@@ -95,7 +99,7 @@ jobs:
           python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/human_disagree.py run \
             --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
-            --part "${{ matrix.part }}/$RUNNERS" --per-kind "$PER_KIND" --max-p "$MAX_P" --pairs "$PAIRS" \
+            --part "${{ matrix.part }}/$RUNNERS" --per-kind "$PER_KIND" --max-p "$MAX_P" --pairs "$PAIRS" ${TURNS:+--turns "$TURNS"} \
             --out "parts/part-${{ matrix.part }}.json.gz"
 
       - uses: actions/upload-artifact@v4
@@ -131,7 +135,7 @@ jobs:
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "model: $HF_REPO ${{ needs.plan.outputs.file }}"
-            echo "per kind/runner: $PER_KIND  max p: $MAX_P  pairs: $PAIRS  runners: $RUNNERS (corpus-v1)"
+            echo "per kind/runner: $PER_KIND  max p: $MAX_P  pairs: $PAIRS  turns: ${TURNS:-all}  runners: $RUNNERS (corpus-v1)"
           } > reports/provenance.txt
           { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
 

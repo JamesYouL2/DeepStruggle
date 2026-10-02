@@ -138,13 +138,16 @@ def scan_game(game: Dict[str, Any], logits_fn: LogitsFn, game_id: int) -> Tuple[
     return rows, states
 
 
-def choose_spots(rows: Sequence[Dict[str, Any]], per_kind: int, max_p: float, seed: int) -> List[Dict[str, Any]]:
+def choose_spots(rows: Sequence[Dict[str, Any]], per_kind: int, max_p: float, seed: int,
+                 turns: Optional[Sequence[int]] = None) -> List[Dict[str, Any]]:
     """Up to `per_kind` disagreements of each kind where the model gave the human's move less
-    than `max_p`, drawn uniformly (so pooled means are not tilted toward the strangest moves)."""
+    than `max_p` (and, given `turns`, only in those turns), drawn uniformly so pooled means are
+    not tilted toward the strangest moves."""
     rng = np.random.default_rng(seed)
     out = []
     for kind in KINDS:
-        pool = [r for r in rows if not r["agree"] and r["kind"] == kind and r["p_human"] < max_p]
+        pool = [r for r in rows if not r["agree"] and r["kind"] == kind and r["p_human"] < max_p
+                and (turns is None or r["turn"] in turns)]
         if len(pool) > per_kind:
             pool = [pool[j] for j in sorted(rng.choice(len(pool), per_kind, replace=False))]
         out += pool

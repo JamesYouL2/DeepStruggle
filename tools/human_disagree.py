@@ -31,6 +31,7 @@ def main() -> None:
     r.add_argument("--per-kind", type=int, default=40, help="disagreements played out per kind of decision")
     r.add_argument("--max-p", type=float, default=0.25, help="only where the model gave the human's move less")
     r.add_argument("--pairs", type=int, default=32)
+    r.add_argument("--turns", default="", help="only spots in these turns, comma-separated (empty = all)")
     r.add_argument("--games", type=int, default=0, help="at most this many games (0 = the whole share)")
     r.add_argument("--out", required=True)
     p = sub.add_parser("report")
@@ -64,11 +65,13 @@ def main() -> None:
             states += sts
         print(f"{len(mine)} games, {len(scan)} decisions, {sum(not r['agree'] for r in scan)} disagreements "
               f"({round(time.time() - t0)}s)", flush=True)
-        spots = choose_spots(scan, a.per_kind, a.max_p, seed=k)
+        turns = [int(t) for t in a.turns.split(",")] if a.turns else None
+        spots = choose_spots(scan, a.per_kind, a.max_p, seed=k, turns=turns)
         played = play(spots, states, act, a.pairs, seed=k)
         for row in scan:
             row.pop("state_index", None)
         meta = {"model": os.path.basename(a.model), "pairs": a.pairs, "max_p": a.max_p, "part": a.part,
+                "turns": a.turns,
                 "seconds": round(time.time() - t0, 1)}
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         with gzip.open(a.out, "wt") as f:
@@ -79,7 +82,7 @@ def main() -> None:
         for fn in sorted({f for pat in a.parts for f in glob.glob(pat)}):
             with gzip.open(fn, "rt") as f:
                 part = json.load(f)
-            key = {k: part["meta"][k] for k in ("model", "pairs", "max_p")}
+            key = {k: part["meta"].get(k, "") for k in ("model", "pairs", "max_p", "turns")}
             if meta not in (None, key):
                 raise SystemExit(f"{fn} was run as {key}, not {meta}")
             meta = key
