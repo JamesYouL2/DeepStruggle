@@ -148,7 +148,17 @@ headroom, so two points of probe noise become −431%. *Check:* aggregate as
 **A classifier that follows only *forced* continuations scores a win taken by another line as a
 decline**, and a simultaneous headline decision cannot be judged as an action round at all.
 *Check:* ask whether the action the player chose also wins, not whether it is in the
-classifier's set; exclude headlines.
+classifier's set; exclude headlines. `safety.py` now searches the mover's own choices, so
+Wargames from hand and the card Grain Sales drew are wins; a decisive rate from before
+`decisive_probe_version` 2 missed them.
+
+**A win that takes several decisions is counted once per decision.** Wargames from hand is three
+"win" decisions; counted each, taking it scored 3/3 and playing it for Ops 1/2. *Check:* fold
+per-decision labels into one entry per chance (`fold_win_opportunities`).
+
+**A rule comparing against a hard-coded index can never fire and still pass.** The Wargames branch
+rule tested flat actions against `0` for a month. *Check:* every classifier rule has a test that
+asserts it labels something, built at the position it names.
 
 **A turn-boundary convention can invert a classification.** A completed game terminates holding
 turn **11** while a human log numbers it turn 10, so `>= 10` caught only turn-10 Wargames.

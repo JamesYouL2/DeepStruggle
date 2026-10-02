@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 import ts_engine as ts
 
+from ai.eval import safety
 from ai.eval.decisive_probe import DecisiveStats
 from ai.eval.positions import PLAY_MODE_ACTION
 from ai.eval.safety import (EVENT_ACTION, NODE_OFFSET, WARGAMES, WinDecision, classify_legal_actions,
@@ -421,3 +422,84 @@ def test_a_free_battleground_coup_at_defcon_two_is_a_loss() -> None:
     out = classify_legal_actions(st)
     assert out[NODE_OFFSET + _cid("Chile")] == "loss"
     assert out[NODE_OFFSET + _cid("Bolivia")] != "loss"
+
+
+# --- one search per group of options with the same immediate outcome -------------------------------
+
+DECOLONIZATION = 30
+
+
+def _ops_placement(card: int = EAST_EUROPEAN_UNREST) -> ts.GameState:
+    st = _us_card_choice()
+    _hand(st, US, [card])
+    _step(st, card - 1)
+    _step(st, OPS_ACTION)
+    assert st.ctx().decision_type == ts.DecisionType.POINT_NODE
+    return st
+
+
+def test_influence_targets_are_one_group_except_in_the_final_turn() -> None:
+    st = _ops_placement()
+    legal = safety._legal_actions(st)
+    assert len(safety._same_outcome_groups(st, legal)) == 1
+    st.turn = safety.FINAL_TURN                      # its end scores the board
+    assert len(safety._same_outcome_groups(st, legal, every_target_in_final_turn=True)) == len(legal)
+
+
+def test_coup_targets_split_by_battleground() -> None:
+    st = _us_card_choice()
+    st.set_country(_cid("Angola"), 0, 2)
+    st.set_country(_cid("Zimbabwe"), 0, 1)
+    _hand(st, US, [EAST_EUROPEAN_UNREST])
+    _step(st, EAST_EUROPEAN_UNREST - 1)
+    _step(st, COUP_ACTION)
+    groups = safety._same_outcome_groups(st, safety._legal_actions(st))
+    assert len(groups) == 2
+    battle = next(g for g in groups if NODE_OFFSET + _cid("Angola") in g)
+    assert all(a - NODE_OFFSET in safety.BATTLEGROUNDS for a in battle)
+    assert NODE_OFFSET + _cid("Zimbabwe") not in battle
+
+
+def test_an_events_placement_is_not_a_coup_whatever_op_mode_says() -> None:
+    """`op_mode` keeps its last value; read as a coup, Decolonization's placement was searched in
+    every combination -- up to 47,000 steps a decision."""
+    st = _us_card_choice()
+    _hand(st, US, [DECOLONIZATION])
+    _step(st, DECOLONIZATION - 1)
+    _step(st, EVENT_ACTION)
+    assert st.ctx().decision_type == ts.DecisionType.POINT_NODE and int(st.ctx().resolving_card) == DECOLONIZATION
+    st.ctx().op_mode = ts.OpMode.COUP
+    assert len(safety._same_outcome_groups(st, safety._legal_actions(st))) == 1
+
+
+def test_grouping_never_changes_a_win_label() -> None:
+    """Against trying each option on its own, over random play."""
+    grouped = safety._same_outcome_groups
+
+    def one_by_one(state: ts.GameState, actions: List[int],
+                   every_target_in_final_turn: bool = False) -> List[List[int]]:
+        if every_target_in_final_turn:
+            return [[a] for a in actions]
+        return grouped(state, actions)
+
+    rng = np.random.default_rng(0)
+    compared = 0
+    for g in range(3):
+        st = ts.GameState()
+        ts.Engine.init_game(st, 9000 + g)
+        for _ in range(3000):
+            if ts.Engine.is_terminal(st):
+                break
+            if st.ctx().decision_type == ts.DecisionType.ROLL_DIE:
+                ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+                continue
+            a = classify_legal_actions(st)
+            safety._same_outcome_groups = one_by_one
+            try:
+                b = classify_legal_actions(st)
+            finally:
+                safety._same_outcome_groups = grouped
+            assert {k for k, v in a.items() if v == "win"} == {k for k, v in b.items() if v == "win"}
+            compared += 1
+            ts.Engine.step_flat(st, int(rng.choice(np.flatnonzero(_legal(st)))))
+    assert compared > 300
