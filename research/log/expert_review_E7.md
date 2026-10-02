@@ -70,7 +70,7 @@ This changes what the decisive probe reports from now on: forced wins it never s
 | **OPEC not evented at 5+ VP** | evented 24% | event +2.4 ± 0.3 | 363 positions × 128 pairs, `36945382157` |
 | **Star Wars not evented when ahead in space** | evented 0% (census), 26% overall | +1.6 ± 0.6; +2.0 ± 0.7 where it declines | `36945382157`, `36964635572` |
 | **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | 512 positions × 128 pairs, `36945382157` |
-| **Five Year Plan timing (USSR)** | last round 55%; two or more other cards in hand 38% | Ops-first over the model's event-first +2.1 ± 0.9 | census `36953663726`; playout audit `36953614691` |
+| **Five Year Plan timing (USSR)** | last round 55%; two or more other cards in hand 38% | -- | census `36953663726` |
 | **Choices inside events** | -- | Aldrich Ames: best discard −0.8 against Ops, the model's own discard −5.5 (40 positions) | local, 32 pairs |
 
 ### Notes on each
