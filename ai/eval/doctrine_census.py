@@ -40,7 +40,9 @@ GRAIN_SALES, VOICE_OF_AMERICA, COLONIAL_REAR_GUARDS = 67, 74, 63
 ALDRICH_AMES, DESTALINIZATION, DECOLONIZATION = 98, 33, 30
 NAZI_SCIENTIST, JUNTA, TERRORISM = 18, 47, 92
 FORMOSAN, COMECON, NORAD = 35, 14, 106
+STAR_WARS, OPEC, ALLIANCE_FOR_PROGRESS, CHE = 85, 61, 78, 107
 NORDICS = {"Norway": 2, "Sweden": 3, "Finland": 5}
+OPEC_COUNTRIES = ("Egypt", "Iran", "Libya", "Saudi Arabia", "Iraq", "Gulf States", "Venezuela")
 IHC_FLAG = 1 << 36            # effect_bits::IRANIAN_HOSTAGE_CRISIS_PLAY
 
 # The owner's turn-1 headline candidates (2026-10-01).
@@ -65,6 +67,30 @@ def _owner(card_side: str, player: str) -> str:
     if card_side == "neutral":
         return "neutral"
     return "own" if card_side.upper() == player else "opp"
+
+
+def _map() -> List[Dict[str, Any]]:
+    with open(os.path.join(_ROOT, "rules", "map.json"), encoding="utf-8") as f:
+        return sorted(json.load(f)["countries"], key=lambda c: int(c["id"]))
+
+
+def card_context(st: ts.GameState, cid: int) -> Dict[str, Any]:
+    """The board facts a conditional rule reads, for the cards that have one: the space race for
+    Star Wars, the VP OPEC and Alliance for Progress would score (`mid_war.cpp`)."""
+    if cid == STAR_WARS:
+        return {"us_space": int(st.us_space_track), "ussr_space": int(st.ussr_space_track)}
+    if cid not in (OPEC, ALLIANCE_FOR_PROGRESS):
+        return {}
+    stab, _, _ = country_table()
+    rows = _map()
+    def ctrl(i: int, us: bool) -> bool:
+        c = st.get_country(i)
+        mine, theirs = (c.us_influence, c.ussr_influence) if us else (c.ussr_influence, c.us_influence)
+        return int(mine) - int(theirs) >= int(stab[i])
+    if cid == OPEC:
+        return {"event_vp": sum(ctrl(int(r["id"]), False) for r in rows if r["name"] in OPEC_COUNTRIES)}
+    return {"event_vp": sum(ctrl(int(r["id"]), True) for r in rows if r["battleground"]
+                            and str(r["region"]).lower().replace(" ", "_") in ("central_america", "south_america"))}
 
 
 def _hand(st: ts.GameState, p: ts.Player) -> List[int]:
@@ -137,7 +163,8 @@ def collect(act: PolicyFn, n_games: int, seed: int, envs: int = 32, max_steps: i
                 plays.append({"game": game_id[i], "turn": turn, "ar": int(st.action_round), "side": side,
                               "card": cid, "owner": own, "mode": mode, "fires": fires,
                               "legal": [MODES[k] for k in np.flatnonzero(modes_legal)],
-                              "vp": vp_mine, "defcon": int(st.defcon), "ihc": _ihc(st)})
+                              "vp": vp_mine, "defcon": int(st.defcon), "ihc": _ihc(st),
+                              **card_context(st, cid)})
             elif node and st.ctx().op_mode == ts.OpMode.COUP and NODE_OFFSET <= a < NODE_OFFSET + 84:
                 ctry = a - NODE_OFFSET
                 first = (turn == 1 and side == "USSR" and side not in first_coup[i]
@@ -209,6 +236,20 @@ def rules() -> List[Rule]:
         ("US never events Formosan Resolution", *never_event(FORMOSAN, "US")),
         ("US never events NORAD", *never_event(NORAD, "US")),
         ("USSR never events Comecon", *never_event(COMECON, "USSR")),
+        ("US always events Star Wars when ahead in space",
+         lambda r: r["card"] == STAR_WARS and r["side"] == "US" and "event" in r["legal"]
+         and r.get("us_space", 0) > r.get("ussr_space", 0),
+         lambda r: r["mode"] == "event"),
+        ("USSR always events OPEC when it scores 5+ VP",
+         lambda r: r["card"] == OPEC and r["side"] == "USSR" and "event" in r["legal"] and r.get("event_vp", 0) >= 5,
+         lambda r: r["mode"] == "event"),
+        ("US always events Alliance for Progress when it scores 5+ VP",
+         lambda r: r["card"] == ALLIANCE_FOR_PROGRESS and r["side"] == "US" and "event" in r["legal"]
+         and r.get("event_vp", 0) >= 5,
+         lambda r: r["mode"] == "event"),
+        ("USSR events Che well over half the time (target: >50%)",
+         lambda r: r["card"] == CHE and r["side"] == "USSR" and "event" in r["legal"],
+         lambda r: r["mode"] == "event"),
         ("Terrorism is evented when behind or after Iranian Hostage Crisis",
          lambda r: r["card"] == TERRORISM and r["owner"] == "neutral" and "event" in r["legal"]
          and (r["vp"] < 0 or (r["ihc"] and r["side"] == "USSR")),
@@ -241,6 +282,10 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
     for r in plays:
         if r["owner"] != "opp" and "event" in r["legal"]:
             per[(r["card"], r["side"])][r["mode"]] += 1
+    for h in heads:                     # a headline is an event play
+        c = info.get(h["card"])
+        if c is not None and _owner(str(c["side"]), h["side"]) != "opp":
+            per[(h["card"], h["side"])]["event"] += 1
     rows = []
     for (cid, side), cnt in per.items():
         n = sum(cnt.values())
@@ -252,7 +297,8 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
     head = ["| card | side | plays | event | ops | space |", "|:---|:---|---:|---:|---:|---:|"]
     fmt = lambda x: f"| {x[1]} | {x[2]} | {x[3]} | {_pct(x[4], x[3])} | {_pct(x[5], x[3])} | {_pct(x[6], x[3])} |"  # noqa: E731
     out += ["", "## Own and neutral cards: event against Ops", "",
-            f"Cards played at least 30 times with the event legal ({len(rows)} card-side pairs).", "",
+            f"Cards played at least 30 times with the event legal ({len(rows)} card-side pairs). "
+            "Headlines count as event plays.", "",
             "**Evented most:**", ""] + head + [fmt(x) for x in rows[:20]]
     out += ["", "**Played for Ops (or spaced) most:**", ""] + head + [fmt(x) for x in rows[::-1][:20]]
     summary["per_card"] = [{"card": x[1], "side": x[2], "n": x[3], "event": x[4], "ops": x[5], "space": x[6]} for x in rows]

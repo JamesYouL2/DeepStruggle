@@ -31,7 +31,7 @@ def main() -> None:
     r.add_argument("--per", type=int, default=24, help="positions per scenario")
     r.add_argument("--pairs", type=int, default=64)
     r.add_argument("--seed", type=int, default=1)
-    r.add_argument("--only", default=None, help="substring: run only scenarios whose name contains it")
+    r.add_argument("--only", default=None, help="run only scenarios whose name contains one of these |-separated substrings")
     r.add_argument("--out", required=True)
     p = sub.add_parser("report")
     p.add_argument("--parts", nargs="+", required=True)
@@ -51,7 +51,7 @@ def main() -> None:
             return str(action)
 
         act, _ = onnx_policy(a.model)
-        scs = [s for s in scenarios() if a.only is None or a.only in s.name]
+        scs = [s for s in scenarios() if a.only is None or any(o in s.name for o in a.only.split("|"))]
         found = collect(act, scs, a.per, a.seed)
         rows = []
         for s in scs:

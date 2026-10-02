@@ -28,7 +28,7 @@ import numpy as np
 import ts_engine as ts
 
 from ai.eval.branch_oracle import PolicyFn, _pair_start, apply_prefix, play_out
-from ai.eval.doctrine_census import N_CARDS, cards
+from ai.eval.doctrine_census import N_CARDS, card_context, cards
 from bindings.action_encoder import ActionEncoder
 
 MODE_BASE = int(ActionEncoder.PLAY_MODE_OFFSET)
@@ -46,6 +46,7 @@ class Scenario:
     behind: bool = False           # event only: mover behind on VP
     before_turn: int = 99          # event/space: only before this turn
     departures: bool = False       # keep only positions where the model does NOT play the alternative
+    cond: str = ""                 # "space_ahead" (US ahead in space) or "event_vp5" (the event scores 5+ VP)
     ids: Tuple[int, ...] = field(default=())
 
     def resolve(self, by_name: Dict[str, int]) -> "Scenario":
@@ -74,6 +75,12 @@ SCENARIOS: Tuple[Scenario, ...] = (
              ("Middle East Scoring", "Defectors")),
     Scenario("US plays Grain Sales to Soviets: event vs the model's choice", "event", "US", ("Grain Sales to Soviets",)),
     Scenario("USSR plays Aldrich Ames Remix: event vs the model's choice", "event", "USSR", ("Aldrich Ames Remix",)),
+    Scenario("US plays Star Wars while ahead in space: event vs the model's choice", "event", "US", ("Star Wars",),
+             cond="space_ahead"),
+    Scenario("USSR plays OPEC worth 5+ VP: event vs the model's choice", "event", "USSR", ("OPEC",), cond="event_vp5"),
+    Scenario("US plays Alliance for Progress worth 5+ VP: event vs the model's choice", "event", "US",
+             ("Alliance for Progress",), cond="event_vp5"),
+    Scenario("USSR plays Che: event vs the model's choice", "event", "USSR", ("Che",)),
     Scenario("USSR holds The Voice of America and lets it fire: space it instead", "space", "USSR",
              ("The Voice of America",), departures=True),
     Scenario("USSR holds Colonial Rear Guards and lets it fire: space it instead", "space", "USSR",
@@ -86,8 +93,8 @@ SCENARIOS: Tuple[Scenario, ...] = (
 def scenarios() -> List[Scenario]:
     info = cards()
     by_name = {str(info[c]["name"]): c for c in info}
-    return [Scenario(s.name, s.kind, s.side, s.cards, s.turn, s.behind, s.before_turn, s.departures).resolve(by_name)
-            for s in SCENARIOS]
+    return [Scenario(s.name, s.kind, s.side, s.cards, s.turn, s.behind, s.before_turn, s.departures, s.cond)
+            .resolve(by_name) for s in SCENARIOS]
 
 
 def _player(side: str) -> ts.Player:
@@ -113,9 +120,12 @@ def matches(sc: Scenario, st: ts.GameState, mask: np.ndarray) -> bool:
     alt = sc.alternative()
     if alt is None or not mask[alt] or mask[MODE_BASE:MODE_BASE + 5].sum() < 2 or int(st.turn) >= sc.before_turn:
         return False
-    if sc.behind:
-        vp = int(st.victory_points) * (1 if sc.side == "US" else -1)
-        return vp < 0
+    if sc.behind and int(st.victory_points) * (1 if sc.side == "US" else -1) >= 0:
+        return False
+    if sc.cond == "space_ahead" and int(st.us_space_track) <= int(st.ussr_space_track):
+        return False
+    if sc.cond == "event_vp5" and card_context(st, sc.ids[0]).get("event_vp", 0) < 5:
+        return False
     return True
 
 

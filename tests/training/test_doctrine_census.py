@@ -40,3 +40,16 @@ def test_rules_read_mode_and_side() -> None:
     assert not co(play(D.VOICE_OF_AMERICA, "USSR", "influence", owner="opp"))
     ap, _ = by["USSR always events De-Stalinization before turn 5"]
     assert ap(play(D.DESTALINIZATION, "USSR", "event", turn=4)) and not ap(play(D.DESTALINIZATION, "USSR", "event", turn=5))
+
+
+def test_card_ids_match_their_names() -> None:
+    info = D.cards()
+    want = {D.GRAIN_SALES: "Grain Sales to Soviets", D.VOICE_OF_AMERICA: "The Voice of America",
+            D.COLONIAL_REAR_GUARDS: "Colonial Rear Guards", D.ALDRICH_AMES: "Aldrich Ames Remix",
+            D.DESTALINIZATION: "De-Stalinization", D.DECOLONIZATION: "Decolonization",
+            D.NAZI_SCIENTIST: "Captured Nazi Scientist", D.JUNTA: "Junta", D.TERRORISM: "Terrorism",
+            D.FORMOSAN: "Formosan Resolution", D.COMECON: "Comecon", D.NORAD: "NORAD", D.STAR_WARS: "Star Wars",
+            D.OPEC: "OPEC", D.ALLIANCE_FOR_PROGRESS: "Alliance for Progress", D.CHE: "Che"}
+    assert {c: info[c]["name"] for c in want} == want
+    names = {r["name"] for r in D._map()}
+    assert set(D.OPEC_COUNTRIES) <= names
