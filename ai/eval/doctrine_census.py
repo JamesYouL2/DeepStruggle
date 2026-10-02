@@ -42,6 +42,8 @@ NAZI_SCIENTIST, JUNTA, TERRORISM = 18, 47, 92
 FORMOSAN, COMECON, NORAD = 35, 14, 106
 STAR_WARS, OPEC, ALLIANCE_FOR_PROGRESS, CHE = 85, 61, 78, 107
 FIVE_YEAR_PLAN = 5
+CHINA = 6
+SCORING_CARDS = frozenset({1, 2, 3, 37, 38, 79, 81})
 NORDICS = {"Norway": 2, "Sweden": 3, "Finland": 5}
 OPEC_COUNTRIES = ("Egypt", "Iran", "Libya", "Saudi Arabia", "Iraq", "Gulf States", "Venezuela")
 IHC_FLAG = 1 << 36            # effect_bits::IRANIAN_HOSTAGE_CRISIS_PLAY
@@ -80,6 +82,11 @@ def card_context(st: ts.GameState, cid: int) -> Dict[str, Any]:
     Star Wars, the VP OPEC and Alliance for Progress would score (`mid_war.cpp`)."""
     if cid == STAR_WARS:
         return {"us_space": int(st.us_space_track), "ussr_space": int(st.ussr_space_track)}
+    if cid in (FIVE_YEAR_PLAN, ALDRICH_AMES):
+        # The cards its discard can hit: the player's hand less the card being played (still in
+        # hand at the play-mode node) and the China Card, which is never discarded.
+        others = [c for c in _hand(st, st.ctx().decision_player) if c not in (cid, CHINA)]
+        return {"hand_other": len(others), "other_scoring": sum(c in SCORING_CARDS for c in others)}
     if cid not in (OPEC, ALLIANCE_FOR_PROGRESS):
         return {}
     stab, _, _ = country_table()
@@ -294,7 +301,12 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
     out += ["", "## Timing: discard events held for the last action round", "",
             "Every play of the card by that side, in any mode, headlines included (a headline is never "
             "the last round). Last round = round 6 in turns 1–3, round 7 after (an eighth counts too).", "",
-            "| rule | plays | in the last round | headlined | rounds played in |", "|:---|---:|---:|---:|:---|"]
+            "The ideal play (the owner): with exactly **one** other card in hand, so the discard can only "
+            "take that card -- a bad scoring card, ideally. Other cards = the hand less the card played "
+            "and the China Card.", "",
+            "| rule | plays | in the last round | headlined | 0 other cards | **1 other card** | 2+ | "
+            "1 other, and it is a scoring card | rounds played in |",
+            "|:---|---:|---:|---:|---:|---:|---:|---:|:---|"]
     for name, cid, side in timing_rules():
         sel = [r for r in plays if r["card"] == cid and r["side"] == side]
         nh = sum(1 for h in heads if h["card"] == cid and h["side"] == side)
@@ -302,8 +314,14 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
         n = len(sel) + nh
         ars = Counter(r["ar"] for r in sel)
         spread = ", ".join(f"AR{a} {ars[a]}" for a in sorted(ars))
-        out.append(f"| {name} | {n} | {_pct(k, n)} | {_pct(nh, n)} | {spread} |")
-        summary["rules"][name] = {"n": n, "complied": k}
+        withh = [r for r in sel if "hand_other" in r]
+        h = Counter(min(int(r["hand_other"]), 2) for r in withh)
+        one = [r for r in withh if r["hand_other"] == 1]
+        sc = sum(1 for r in one if r["other_scoring"])
+        m = len(withh)
+        out.append(f"| {name} | {n} | {_pct(k, n)} | {_pct(nh, n)} | {_pct(h[0], m)} | {_pct(h[1], m)} | "
+                   f"{_pct(h[2], m)} | {sc} of {len(one)} | {spread} |")
+        summary["rules"][name] = {"n": n, "complied": k, "hand_other": [h[0], h[1], h[2]], "one_scoring": sc}
 
     # Per card: own and neutral cards, the mode mix.
     per: Dict[Tuple[int, str], Counter] = defaultdict(Counter)

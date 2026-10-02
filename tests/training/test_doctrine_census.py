@@ -57,3 +57,10 @@ def test_card_ids_match_their_names() -> None:
 
 def test_last_round() -> None:
     assert D.is_last_round(3, 6) and not D.is_last_round(4, 6) and D.is_last_round(4, 7) and D.is_last_round(9, 8)
+
+
+def test_discard_cards_log_the_rest_of_the_hand() -> None:
+    d = D.collect(_random_policy(1), 30, seed=5, envs=8)
+    rows = [r for r in d["plays"] if r["card"] in (D.FIVE_YEAR_PLAN, D.ALDRICH_AMES)]
+    assert rows and all(0 <= r["other_scoring"] <= r["hand_other"] for r in rows)
+    assert {c: D.cards()[c]["name"].endswith("Scoring") for c in D.SCORING_CARDS} == dict.fromkeys(D.SCORING_CARDS, True)
