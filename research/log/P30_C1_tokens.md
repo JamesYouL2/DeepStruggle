@@ -121,8 +121,12 @@ Late snapshots: C1 1495–1503, the shallow runs 1476–1532.
 | E7-07-44 | −4.9 / −4.0, 47.7% | −1.2 / −4.6, 49.3% |
 | E7-08-43 | −1.6 / −5.1, 49.4% | +0.7 / −6.1, 51.4% |
 
-* **By the owner's rule C1 fails at 400M:** significantly below its paired control in both seats on
-  snapshots, below on the SWA; head to head it is level (49–51%).
+* **Behind on snapshots, level on the SWA.** On the late snapshots C1 is significantly below its
+  paired control in both seats (head to head 49.3%). On the SWA it tops the field by 6 Elo and wins
+  head to head 51.2% ± 1.1 (not significant), while scoring 2.6 / 3.2 points lower against the
+  panel (~2.5 SE): level within the noise, either way no lead.
+* **C1 gains the most from averaging:** SWA over late snapshots +77 Elo, against +50 to +65 for the
+  shallow runs -- its snapshots swing more, as the owner expected of the larger model.
 * **The 200–240M lead was a faster start, not a higher level.** From 240M to 400M the shallow runs'
   SWAs rose ~45–50 Elo in this field's scale while C1's barely moved: C1 learns faster early and
   then flattens.
