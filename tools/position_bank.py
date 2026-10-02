@@ -50,6 +50,8 @@ def main() -> None:
     r.add_argument("--out", required=True)
     r.add_argument("--targeted", action="store_true",
                    help="bank only play-mode decisions on ai/eval/card_rules.py's TARGETS (--per-card, --games)")
+    r.add_argument("--forced", action="store_true",
+                   help="with --targeted: only card_rules.FORCED, where the event scores the VP named")
     r.add_argument("--per-card", type=int, default=12)
     r.add_argument("--games", type=int, default=400)
     p = sub.add_parser("pool")
@@ -60,6 +62,7 @@ def main() -> None:
     q.add_argument("--out-md", required=True)
     q.add_argument("--out-json", required=True)
     q.add_argument("--card-rules", action="store_true", help="ask the card event rules (ai/eval/card_rules.py)")
+    q.add_argument("--forced", action="store_true", help="report card_rules.FORCED")
     a = ap.parse_args()
 
     if a.cmd == "run":
@@ -79,12 +82,16 @@ def main() -> None:
 
         counts: dict = {}
         if a.targeted:
-            from ai.eval.card_rules import target_ids
+            from ai.eval.card_rules import forced_targets, target_ids
             from ai.eval.doctrine_census import cards
             from ai.eval.position_bank import collect_targets
 
             by_name = {str(v["name"]): k for k, v in cards().items()}
-            positions, counts = collect_targets(act, target_ids(by_name), a.per_card, a.games, a.seed)
+            if a.forced:
+                gain = forced_targets(by_name)
+                positions, counts = collect_targets(act, set(gain), a.per_card, a.games, a.seed, min_gain=gain)
+            else:
+                positions, counts = collect_targets(act, target_ids(by_name), a.per_card, a.games, a.seed)
         else:
             positions = collect(act, a.decisions, a.seed)
         print(f"{len(positions)} decisions ({round(time.time() - t0)}s)", flush=True)
@@ -126,7 +133,13 @@ def main() -> None:
         if len(models) > 1:
             raise SystemExit(f"banks from different models: {models}")
         records = load(a.bank)
-        if a.card_rules:
+        if a.forced:
+            from ai.eval import card_rules
+            from ai.eval.doctrine_census import cards
+
+            md, summary = card_rules.forced_report(records, {k: str(v["name"]) for k, v in cards().items()},
+                                                   {"model": models.pop(), "banks": len(a.bank)})
+        elif a.card_rules:
             from ai.eval import card_rules
             from ai.eval.doctrine_census import cards
 

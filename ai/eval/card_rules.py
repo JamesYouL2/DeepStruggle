@@ -197,3 +197,60 @@ def report(records: Sequence[Record], names: Dict[int, str], counts: Dict[str, D
             tot = sum(c.values()) or 1
             out.append(f"| {side} | {card} | " + " | ".join(f"{100 * c.get(m, 0) / tot:.0f}%" for m in MODE_NAMES.values()) + " |")
     return "\n".join(out) + "\n", summary
+
+
+#: Forced conditions (the owner's): (side, card, the VP its event must score now, what that means).
+FORCED: Tuple[Tuple[str, str, float, str], ...] = (
+    ("US", "Special Relationship", 2, "NATO in effect and the UK US-controlled: 2 influence in Western Europe and 2 VP"),
+    ("USSR", "OPEC", 5, "5 or more VP"),
+    ("US", "Alliance for Progress", 5, "5 or more VP"),
+)
+
+
+def forced_targets(by_name: Dict[str, int]) -> Dict[Tuple[str, int], float]:
+    return {(side, by_name[card]): vp for side, card, vp, _ in FORCED}
+
+
+def forced_report(records: Sequence[Record], names: Dict[int, str], meta: Optional[Dict[str, Any]] = None
+                  ) -> Tuple[str, Dict[str, Any]]:
+    """Each forced condition: every mode against the model's own, overall, in close games, and by the VP scored."""
+    by_name = {v: k for k, v in names.items()}
+    out = [f"# Forced event conditions — {(meta or {}).get('model', '?')}", "",
+           "Positions from the model's greedy self-play where the condition holds naturally (the event would "
+           f"score the VP shown), every non-suicide mode played out ({records[0]['pairs'] if records else '?'} paired "
+           "playouts each). Each mode minus the model's own choice, in win-rate points, ± one standard error over "
+           "positions; \"close\" keeps positions the model's own move wins 25-75%.", ""]
+    summary: Dict[str, Any] = {"meta": meta or {}, "forced": {}}
+    for side, card, vp, what in FORCED:
+        cid = by_name.get(card)
+        recs = [r for r in records if r["features"]["side"] == side and r["features"].get("card") == cid
+                and (r["features"].get("event_gain") or -99) >= vp]
+        out += [f"## {side} {card}: {what}", ""]
+        if not recs:
+            out += ["No positions.", ""]
+            continue
+        model_event = sum(int(r["candidates"][0]["prefix"][0]) == EVENT for r in recs) / len(recs)
+        ev = [(r, e, float(np.mean(scores(r, 0)))) for r in recs for e in [effects(r)] if e is not None]
+        allm = _mean_se([e for _, e, _ in ev])
+        close = _mean_se([e for _, e, b in ev if 0.25 <= b <= 0.75])
+        n_close = sum(0.25 <= b <= 0.75 for _, _, b in ev)
+        out += [f"{len(recs)} positions; the model events {100 * model_event:.0f}% of them.", "",
+                "| | positions | event − model |", "|:---|---:|---:|",
+                f"| all | {len(ev)} | **{_fmt(*allm)}** |", f"| close | {n_close} | {_fmt(*close)} |"]
+        for v in sorted({int(r["features"]["event_gain"]) for r, _, _ in ev}):
+            xs = [e for r, e, _ in ev if int(r["features"]["event_gain"]) == v]
+            out.append(f"| scores {v} VP | {len(xs)} | {_fmt(*_mean_se(xs))} |")
+        out += ["", "| mode | positions | mode − model |", "|:---|---:|---:|"]
+        for a, m in MODE_NAMES.items():
+            d = []
+            for r in recs:
+                js = [j for j, c in enumerate(r["candidates"]) if j and c["prefix"] == [a]]
+                if js:
+                    x, y = scores(r, js[0]), scores(r, 0)
+                    n = min(len(x), len(y))
+                    d.append(float((x[:n] - y[:n]).mean()))
+            if d:
+                out.append(f"| {m} | {len(d)} | {_fmt(*_mean_se(d))} |")
+        out.append("")
+        summary["forced"][f"{side} {card}"] = {"n": len(recs), "model_event": model_event, "all": allm, "close": close}
+    return "\n".join(out) + "\n", summary

@@ -228,11 +228,14 @@ MODE_NAMES = ("event", "space", "influence", "coup", "realign")
 
 
 def collect_targets(act: PolicyFn, targets: Set[Tuple[str, int]], per_card: int, games: int, seed: int,
-                    envs: int = 32, max_steps: int = 5_000_000
+                    envs: int = 32, max_steps: int = 5_000_000,
+                    min_gain: Optional[Dict[Tuple[str, int], float]] = None
                     ) -> Tuple[List[Tuple[ts.GameState, str, float]], Dict[str, Dict[str, int]]]:
     """Play-mode decisions on the (side, card) pairs in `targets`, by that side, from greedy
     self-play: at most `per_card` per pair and one per pair per game, over at most `games` games.
-    Also returns the model's own mode at every play-mode decision passed, as "side|card" -> counts."""
+    With `min_gain`, a pair it names is kept only where its event would score at least that many VP
+    for the mover (`event_gain`). Also returns the model's own mode at every play-mode decision
+    passed, as "side|card" -> counts."""
     runner = ts.VectorizedBatchRunner(envs, seed * 47 + 31)
     runner.refresh_all()
     kept: List[Tuple[ts.GameState, str, float]] = []
@@ -260,6 +263,9 @@ def collect_targets(act: PolicyFn, targets: Set[Tuple[str, int]], per_card: int,
                 row[m] = row.get(m, 0) + 1
             if (key in targets and have.get(key, 0) < per_card and key not in seen_in_game[i]
                     and masks[i].sum() >= 2):
+                if min_gain and key in min_gain and not (
+                        masks[i][EVENT] and event_gain(st, _decider(st), act) >= min_gain[key]):
+                    continue
                 kept.append((st.clone(), "mode", 1.0))
                 have[key] = have.get(key, 0) + 1
                 seen_in_game[i].add(key)

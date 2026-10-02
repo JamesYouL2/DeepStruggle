@@ -33,7 +33,7 @@ on:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
       targeted:
-        description: "`true`: bank only play-mode decisions on the card-rules targets (ai/eval/card_rules.py)"
+        description: "`true`: only play-mode decisions on the card-rules targets; `forced`: only card_rules.FORCED (ai/eval/card_rules.py)"
         default: "false"
       per_card:
         description: "Targeted: decisions per card per runner"
@@ -97,6 +97,7 @@ jobs:
             --model "data/checkpoints/$(basename "${{ needs.plan.outputs.file }}")" \
             --decisions "$DECISIONS" --pairs "$PAIRS" --seed "${{ matrix.part }}" \
             $([ "$TARGETED" = "true" ] && echo "--targeted --per-card $PER_CARD --games $GAMES") \
+            $([ "$TARGETED" = "forced" ] && echo "--targeted --forced --per-card $PER_CARD --games $GAMES") \
             --out "parts/part-${{ matrix.part }}.json.gz"
 
       - uses: actions/upload-artifact@v4
@@ -130,7 +131,7 @@ jobs:
             --parts "parts/part-*.json.gz" --out reports/bank.json.gz
           PYTHONPATH=.:build/release .venv/bin/python tools/position_bank.py query \
             --bank reports/bank.json.gz --out-md reports/report.md --out-json reports/report.json \
-            $([ "$TARGETED" = "true" ] && echo "--card-rules")
+            $([ "$TARGETED" = "true" ] && echo "--card-rules") $([ "$TARGETED" = "forced" ] && echo "--forced")
           {
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
