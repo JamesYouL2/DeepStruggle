@@ -46,3 +46,28 @@ always small.
   within-run step +0.0027; against a raw advantage std of ~0.2 that is a structured but small
   term (≈ 0.07 SD on the last decision of each run, partly cancelled by λ = 0.98 over the run).
 * Per-side error against the realised result is too noisy to decompose at this size (SE 0.017).
+
+## Overall calibration of the soup's critic (2026-10-02)
+
+Owner: "How well calibrated is critic overall?" Every decision's predicted win probability
+(v + 1)/2, from the mover's side, against whether the mover won; 2,030 self-play games at
+temperature 1 (~1.04M positions), SEs clustered by game (`python -m ai.eval.critic_boundary`).
+
+| | bias (predicted − realised) | ECE | Brier | Brier skill | AUC |
+|:---|---:|---:|---:|---:|---:|
+| all positions | **+0.002 ± 0.0004** | **0.006** | 0.175 | +0.30 | 0.816 |
+| as US | −0.020 ± 0.009 | 0.020 | 0.173 | +0.31 | 0.820 |
+| as USSR | +0.026 ± 0.009 | 0.026 | 0.177 | +0.29 | 0.813 |
+
+Reliability: every bin within ±0.010 of the diagonal except 0.6–0.7 (predicted 0.649, realised
+0.626 ± 0.008). By turn, calibration in the large holds throughout (|bias| ≤ 0.008), while
+discrimination grows from AUC 0.62 / skill +0.04 on turn 1 to AUC 0.96 / skill +0.70 on turn 10.
+By ending: normal games AUC 0.83, held-scoring endings 0.77, **DEFCON-1 endings AUC 0.64 and skill
+0.00** (ECE 0.12).
+
+* **Well calibrated overall:** the diagonal is met to about a point everywhere, ECE 0.6%.
+* **A small side tilt:** both critics rate the USSR's chances ~2 points too high (USSR optimistic
+  +0.026, US pessimistic −0.020, each ~2–3 SE).
+* **Blind to DEFCON-1 endings:** in games that end at DEFCON 1 its predictions say nothing about who
+  wins -- the known scoreboard-shaped critic (`ai/eval/critic_calibration.py`), and those targets are
+  also the ones the blunder window alters.

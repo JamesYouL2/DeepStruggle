@@ -176,6 +176,88 @@ def report(games: Sequence[Game]) -> str:
     return "\n".join(out)
 
 
+def _auc(scores: Any, labels: Any) -> float:
+    """Area under the ROC curve by the rank-sum (Mann-Whitney) formula, ties averaged."""
+    s = np.asarray(scores, dtype=np.float64)
+    y = np.asarray(labels) > 0.5
+    n_pos, n_neg = int(y.sum()), int((~y).sum())
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    order = np.argsort(s, kind="mergesort")
+    ranks = np.empty(s.size, dtype=np.float64)
+    sorted_s = s[order]
+    i = 0
+    while i < s.size:
+        j = i
+        while j + 1 < s.size and sorted_s[j + 1] == sorted_s[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    return float((ranks[y].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
+
+
+def calibration_report(games: Sequence[Game], bins: int = 10) -> str:
+    """Predicted win probability (v + 1) / 2 at every decision, from the mover's side, against
+    whether the mover won. Reliability by bin, bias, ECE, Brier and its skill over the base rate,
+    and AUC; SEs clustered by game. Each game contributes hundreds of correlated positions."""
+    p_l: List[float] = []
+    y_l: List[float] = []
+    g_l: List[int] = []
+    side_l: List[int] = []
+    turn_l: List[int] = []
+    end_l: List[str] = []
+    for gi, g in enumerate(games):
+        if g.us_util == 0.0:
+            continue
+        for d in g.decisions:
+            p_l.append((d.value + 1.0) / 2.0)
+            y_l.append(1.0 if g.us_util * d.side > 0 else 0.0)
+            g_l.append(gi)
+            side_l.append(d.side)
+            turn_l.append(d.turn)
+            end_l.append(g.blunder or "normal")
+    p, y, gid = np.asarray(p_l), np.asarray(y_l), np.asarray(g_l)
+    side, turn, end = np.asarray(side_l), np.asarray(turn_l), np.asarray(end_l)
+    out: List[str] = []
+
+    def summary(sel: Any) -> str:
+        ps, ys, gs = p[sel], y[sel], gid[sel]
+        bias, bse, n = _clustered(list(ps - ys), list(gs))
+        brier = float(np.mean((ps - ys) ** 2))
+        base = float(np.mean(ys))
+        skill = 1.0 - brier / max(base * (1 - base), 1e-9)
+        edges = np.linspace(0, 1, bins + 1)
+        idx = np.clip(np.digitize(ps, edges) - 1, 0, bins - 1)
+        ece = float(sum(abs(ps[idx == b].mean() - ys[idx == b].mean()) * (idx == b).mean()
+                        for b in range(bins) if (idx == b).any()))
+        auc = _auc(ps, ys)
+        return (f"bias {bias:+.4f} ± {bse:.4f}  ECE {ece:.4f}  Brier {brier:.4f}  skill {skill:+.3f}  "
+                f"AUC {auc:.3f}  (n={n:,}, win rate {base:.3f})")
+
+    allsel = np.ones_like(p, dtype=bool)
+    out.append(f"Calibration of v_win at every decision (mover's side), {len(set(g_l)):,} games:")
+    out.append("  all:      " + summary(allsel))
+    out.append("  as US:    " + summary(side == 1))
+    out.append("  as USSR:  " + summary(side == -1))
+    out.append("\nReliability (predicted win probability bin -> realised win rate, game-clustered SE):")
+    edges = np.linspace(0, 1, bins + 1)
+    idx = np.clip(np.digitize(p, edges) - 1, 0, bins - 1)
+    for b in range(bins):
+        sel = idx == b
+        if not sel.any():
+            continue
+        m, se, n = _clustered(list(y[sel]), list(gid[sel]))
+        out.append(f"  [{edges[b]:.1f}, {edges[b + 1]:.1f})  predicted {p[sel].mean():.3f}  realised {m:.3f} ± {se:.3f}"
+                   f"  gap {m - p[sel].mean():+.3f}  (n={n:,})")
+    out.append("\nBy turn:")
+    for t in sorted(set(turn_l)):
+        out.append(f"  turn {t:2d}: " + summary(turn == t))
+    out.append("\nBy how the game ended:")
+    for e in sorted(set(end_l)):
+        out.append(f"  {e:13s}: " + summary(end == e))
+    return "\n".join(out)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     import argparse
     import torch
@@ -194,6 +276,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         games += play(model, dev, num_envs=a.envs, base_seed=a.seed + 1000 * b, temperature=a.temperature)
     print(f"checkpoint {a.checkpoint}, temperature {a.temperature}")
     print(report(games))
+    print()
+    print(calibration_report(games))
     return 0
 
 

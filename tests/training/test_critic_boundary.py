@@ -23,3 +23,9 @@ def test_the_standard_error_is_clustered_by_game() -> None:
     m, se, n = _clustered([1.0, 1.0, 1.0, -1.0, -1.0, -1.0], [0, 0, 0, 1, 1, 1])
     assert m == 0.0 and n == 6
     assert abs(se - (3 * 2 ** 0.5) / 6) < 1e-9
+
+
+def test_auc_by_ranks() -> None:
+    from ai.eval.critic_boundary import _auc
+    assert _auc([0.1, 0.4, 0.35, 0.8], [0, 0, 1, 1]) == 0.75
+    assert _auc([0.5, 0.5], [0, 1]) == 0.5
