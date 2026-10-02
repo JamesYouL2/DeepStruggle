@@ -100,3 +100,35 @@ Each run's 210/220/230/240M snapshots averaged; one field with the panel, 1,000 
   to head); C1 is 55–58% against each of them. A lead at the edge of, or beyond, the seed spread --
   real but not yet a large margin, on one seed of C1.
 * Reports: `data/reports/e7_09_44_rr_swa240.{md,json}`.
+
+## 400M: the lead is gone (pre-registered readout)
+
+One field, 1,000 games per side per pairing: the panel, each run's 370/380/390/400M snapshots and
+its last-80M SWA (320–400M).
+
+| SWA (320–400M) | Elo |
+|:---|---:|
+| E7-09-44 (C1) | 1576 |
+| E7-07-44 (shallow + C4) | 1572 |
+| E7-01-44 (shallow, seed 44, paired control) | 1570 |
+| E7-08-43 (shallow, seed 43) | 1554 |
+
+Late snapshots: C1 1495–1503, the shallow runs 1476–1532.
+
+| C1 against | snapshots: US / USSR (panel), head to head | SWA: US / USSR, head to head |
+|:---|:---|:---|
+| E7-01-44 (paired control) | **−4.6 ± 0.6 / −2.1 ± 0.6**, 49.3% | −2.6 ± 1.1 / −3.2 ± 1.1, 51.2% |
+| E7-07-44 | −4.9 / −4.0, 47.7% | −1.2 / −4.6, 49.3% |
+| E7-08-43 | −1.6 / −5.1, 49.4% | +0.7 / −6.1, 51.4% |
+
+* **By the owner's rule C1 fails at 400M:** significantly below its paired control in both seats on
+  snapshots, below on the SWA; head to head it is level (49–51%).
+* **The 200–240M lead was a faster start, not a higher level.** From 240M to 400M the shallow runs'
+  SWAs rose ~45–50 Elo in this field's scale while C1's barely moved: C1 learns faster early and
+  then flattens.
+* **Seat split:** C1 is weaker as US (40–46% head to head) and stronger as USSR (52–59%).
+* **Cost:** at ~10k steps/s against ~96k, C1 reaches the same strength per step at ~9× the compute.
+* **Decision rule (registered at launch):** continue to saturation only if ahead at 400M. It is not;
+  C1 stops here. C1b (concatenated tokens, identities at full scale) remains the cheaper variant to
+  try if the owner wants another attention arm.
+* Reports: `data/reports/e7_09_44_rr_400.{md,json}`.
