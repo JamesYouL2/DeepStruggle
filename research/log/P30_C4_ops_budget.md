@@ -41,3 +41,40 @@ Asked for by the owner at 320M ("Lets have an intermediate tournament at 320M");
 * **What would decide it:** saturation (~1B) for both lines, and C4 on seed 43 compared with
   E7-08-43, so the arm is judged against seed spread rather than game noise.
 * Reports: `data/reports/e7_07_44_trace_320.{md,json}`, `data/reports/e7_07_44_rr_320.{md,json}`.
+
+## At saturation (1,200M, 2026-10-02)
+
+Trace (one field, 400 games per side per pairing; the control is E7-01-44 to 560M, E7-02-44 after):
+
+| M | C4 E7-07-44 | control (seed 44) | seed 43 E7-08-43 | C4 − control | seed 43 − control |
+|---:|---:|---:|---:|---:|---:|
+| 80 | 1171 | 1261 | 1164 | −91 | −98 |
+| 240 | 1410 | 1389 | 1398 | +21 | +10 |
+| 400 | 1499 | 1481 | 1481 | +18 | +1 |
+| 560 | 1507 | 1531 | 1529 | −25 | −2 |
+| 720 | 1548 | 1590 | 1552 | −41 | −37 |
+| 880 | 1556 | 1627 | 1578 | −71 | −49 |
+| 1,040 | 1594 | 1643 | 1608 | −49 | −35 |
+| 1,200 | 1624 | 1661 | 1604 | −37 | −56 |
+
+Owner's rule at 1,140–1,200M (1,000 games per side per pairing):
+
+| comparison | US | USSR | head to head |
+|:---|---:|---:|---:|
+| C4 against the seed-44 control (E7-02-44), snapshots | −1.6 ± 0.5 | **−5.1 ± 0.5** | 44.0% |
+| the same, 1,120–1,200M SWA | +1.0 ± 0.9 | −3.5 ± 0.9 | 43.8% |
+| *seed 43 against seed 44, unchanged recipe*, snapshots | −6.6 ± 0.5 | −2.8 ± 0.5 | 43.2% |
+| *the same, SWA* | −5.6 ± 0.9 | −2.9 ± 0.9 | 43.4% |
+| C4 against the seed-43 control, snapshots | +5.1 ± 0.5 | −2.3 ± 0.5 | 53.7% |
+| the same, SWA | +6.6 ± 0.9 | −0.6 ± 0.9 | 53.8% |
+
+Elo in the round robin: SWAs E7-02-44 1609, **C4 1582**, E7-08-43 1554; late snapshots ~1567, ~1533, ~1510.
+
+* **By the rule against its paired control, C4 fails** (USSR −5.1 on snapshots, 44% head to head).
+* **But the unchanged recipe on seed 43 fails against seed 44 by as much** (43.2%). Seed 44 is a
+  strong run: the two controls are 55 Elo apart at saturation, and C4 lies between them (−27 / +28).
+* **Reading: no detectable effect of the ops budget at saturation.** With one seed per arm the
+  seed-to-seed spread (~55 Elo) is larger than any effect C4 could plausibly have. A decision would
+  need C4 on seed 43 (paired with E7-08-43), and probably more seeds per arm for every P30 arm.
+* Not pursued further unless the owner wants the seed-43 replicate; reports
+  `data/reports/e7_07_44_{trace,rr}_1200.{md,json}`.
