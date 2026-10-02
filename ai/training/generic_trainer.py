@@ -2594,7 +2594,7 @@ def train_pipeline(
                     "ent_coef_us", "ent_coef_ussr", "entropy_setup", "setup_ent_coef",
                     "setup_mc_n", "setup_mc_ready", "setup_mc_pending", "setup_mc_result_mean",
                     "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
-                    "setup_script_games_frac", "setup_script_lp_mean",
+                    "setup_script_games_frac", "setup_script_lp_mean", "setup_mc_adv_centre_us", "setup_mc_adv_centre_ussr",
                     # P29 bet 2's auxiliary targets
                     "aux_n", "aux_ready", "aux_pending", "aux_own_loss", "aux_own_acc", "aux_vp_loss",
                     "card_aux_n", "card_aux_ready", "card_aux_labelled", "card_aux_loss", "card_aux_r2", "card_aux_label_s",

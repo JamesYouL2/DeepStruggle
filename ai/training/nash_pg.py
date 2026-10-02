@@ -925,6 +925,19 @@ class BaseNashPGTrainer:
         g = torch.tensor([r[6] for r in recs], dtype=torch.float32, device=obs.device)
         adv = g - v
         if self.setup_script_frac > 0.0:
+            # Centred per side. The credit result - V averaged +0.03..+0.18 in every update of
+            # E7-10-44 and E7-11-44 (the learner beats its pool ~71% of the time and the critic
+            # cannot see the opponent). A uniform positive credit barely moves the policy's own
+            # placements (p ~ 1, gradient ~ 0) but pushes every scripted one up at full strength --
+            # E7-11-44 adopted a -12.5 pp USSR opening that way. Centred, a scripted opening rises
+            # only where its games beat the average of that side's placements in the batch.
+            side = torch.tensor([int(r[5]) for r in recs], device=obs.device)
+            for _code in (1, -1):
+                _sel = side == _code
+                if bool(_sel.any()):
+                    adv[_sel] = adv[_sel] - adv[_sel].mean()
+            out["setup_mc_adv_centre_us"] = float((g - v)[side == 1].mean()) if bool((side == 1).any()) else 0.0
+            out["setup_mc_adv_centre_ussr"] = float((g - v)[side == -1].mean()) if bool((side == -1).any()) else 0.0
             # The rollout log-prob is stale by the time a game ends -- several PPO updates later.
             # For the policy's own placements (p ~ 1) that hardly matters; for a scripted one at
             # p ~ 1e-8 a few nats of drift puts the ratio far outside the clip, which then passes

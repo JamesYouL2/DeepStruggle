@@ -106,26 +106,45 @@ def test_it_refuses_what_it_cannot_do() -> None:
         _trainer(setup_mc_credit=True, setup_script_frac=0.5, setup_script_openings=("us_e516_43",))
 
 
-def test_a_won_scripted_opening_gains_probability() -> None:
-    """The MC step raises a scripted placement's log-prob when its game beat the baseline."""
-    t = _trainer(setup_mc_credit=True, setup_mc_min_batch=1, setup_script_frac=1.0,
-                 setup_script_openings=("human",))
+def _half_scripted(opening: str = "human") -> NashPGTrainer:
+    """Envs 0-3 scripted, 4-7 the policy's own setup."""
+    t = _trainer(shallow=True, setup_mc_credit=True, setup_mc_min_batch=1, setup_script_frac=0.5,
+                 setup_script_openings=(opening,))
+    t._script_open[:] = [0, 0, 0, 0, -1, -1, -1, -1]
     t.collect_rollouts()
-    recs = [r for p in t._setup_pending for r in p if r[5] == -1]       # the USSR's placements
-    t._setup_mc_resolve([{"env_idx": i, "terminal_utility": -1.0} for i in range(8)])   # USSR won
-    t._setup_ready = [r[:4] + (torch.zeros(()),) + r[5:] for r in t._setup_ready]   # a zero baseline
-    obs = torch.stack([r[0] for r in recs])
-    masks = torch.stack([r[1] for r in recs])
+    return t
+
+
+def _ussr_scripted_lp(t: NashPGTrainer) -> "tuple[torch.Tensor, Any]":
+    recs = [r for i in range(4) for r in t._setup_pending[i] if r[5] == -1]
+    obs, masks = torch.stack([r[0] for r in recs]), torch.stack([r[1] for r in recs])
     acts = torch.stack([r[2] for r in recs]).long()
 
     def lp() -> torch.Tensor:
         with torch.no_grad():
             return torch.log_softmax(t.active_net(obs, masks)[0].float(), -1).gather(1, acts[:, None]).squeeze(1)
+    return lp(), lp
 
-    before = lp()
-    out = t._setup_mc_update()
-    assert out["setup_mc_n"] == 8 * 15
+
+def test_a_scripted_opening_that_outscores_the_own_one_gains_probability() -> None:
+    t = _half_scripted()
+    before, lp = _ussr_scripted_lp(t)
+    # the scripted games the USSR won, its own games it lost
+    t._setup_mc_resolve([{"env_idx": i, "terminal_utility": -1.0 if i < 4 else 1.0} for i in range(8)])
+    t._setup_mc_update()
     assert float((lp() - before).mean()) > 0.0
+
+
+def test_a_uniform_credit_moves_no_scripted_placement() -> None:
+    """Every game won by the same side: centred per side the credit is zero everywhere, so a biased
+    baseline can no longer push the scripted placements up (E7-11-44 adopted Romania 6 that way)."""
+    t = _half_scripted("stupid_romania_australia")
+    before, lp = _ussr_scripted_lp(t)
+    t._setup_mc_resolve([{"env_idx": i, "terminal_utility": -1.0} for i in range(8)])
+    t._setup_ready = [r[:4] + (torch.zeros(()),) + r[5:] for r in t._setup_ready]    # baseline 0
+    out = t._setup_mc_update()
+    assert out["setup_mc_adv_centre_ussr"] == 1.0
+    assert float((lp() - before).abs().max()) < 1e-3
 
 
 def test_a_stale_rollout_log_prob_does_not_skew_the_scripted_update() -> None:
