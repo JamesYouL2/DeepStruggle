@@ -38,7 +38,8 @@ the weaknesses below lower bounds.
     points a game, and `safety.py` did not see it -- fixed in this PR. OPEC and Alliance for Progress
     are declined about half the time when the event would reach 20 VP, which `safety.py` does see;
   * **immediate VP from events undervalued.** OPEC and Alliance for Progress at 5+ VP, Star Wars
-    when ahead, Special Relationship with NATO in effect, and above all One Small Step one box behind, which the model never events and which
+    when ahead, Special Relationship with NATO in effect, Soviets Shoot Down KAL-007 with South Korea
+    US-controlled, Glasnost with The Reformer in play, and above all One Small Step one box behind, which the model never events and which
     is worth +2.8 to +5.7 points a play for the US. Humans make 1.6-3.3 more VP a game from events;
   * **event timing against the hand and the rounds left.** Five Year Plan and Aldrich Ames; the net
     is never told how many rounds it has left;
@@ -73,6 +74,8 @@ This changes what the decisive probe reports from now on: forced wins it never s
 | **Star Wars not evented when ahead in space** | evented 0% (census), 26% overall | +1.6 ± 0.6; +2.0 ± 0.7 where it declines | `36945382157`, `36964635572` |
 | **Game-winning OPEC / Alliance for Progress declined** | declined 31 of 58 / 19 of 27 where `safety.py` labels the event a win | +12.8 / +6.7 pts per decline (the model still wins 87% / 93%) | `37034959708` |
 | **Special Relationship not evented with NATO in effect** | evented 0% of 320 positions | **+2.1 ± 0.5** where it scores its 2 VP (301 positions); every Ops mode is worse | 320 positions × 64 pairs, `37034959708` |
+| **Soviets Shoot Down KAL-007 not evented with South Korea US-controlled** | evented 0% of 305 positions at DEFCON 3+ | **+4.2 ± 0.6** (+7.3 ± 1.2 in close games): DEFCON 3 +4.7 ± 0.8, DEFCON 4 +4.2 ± 1.0, DEFCON 5 +1.3 ± 1.2; its Ops play is not even its best Ops mode (influence +0.9) | 305 positions × 64 pairs, `37045332746` |
+| **Glasnost not evented with The Reformer in play** | evented 1% of 320 positions | **+2.3 ± 0.5** (+5.9 ± 1.3 in close games): DEFCON 2 +1.5 ± 0.7, DEFCON 3 +4.4 ± 0.9 | 320 positions × 64 pairs, `37045332746` |
 | **One Small Step not evented one box behind** | evented 0% of 1,489 positions | US: +2.8 ± 0.4 at 1 vs 2, **+5.7 ± 0.5** at 3 vs 4; USSR: −0.2 ± 0.5 at 1 vs 2, +2.9 ± 0.5 at 3 vs 4 | 320-496 positions a side and spot × 64 pairs, `37037507768`, `37037511438` |
 | **Alliance for Progress not evented at 5+ VP** | evented 22% | +1.1 ± 0.3 | 512 positions × 128 pairs, `36945382157` |
 | **Five Year Plan timing (USSR)** | last round 55%; two or more other cards in hand 38% | -- | census `36953663726` |
@@ -138,7 +141,9 @@ bake-off measures +0.2 ± 2.1 (`36970757999`, `36970763934`). Kitchen Debates wh
 scores 2 VP: the model events it 5% of the time and the event ties its choice, +0.1 ± 0.3 over 400
 positions, whether or not the US still needs Military Ops (`37041009744`). OPEC and Alliance for
 Progress at exactly 5 VP are break-even too (+0.7 ± 0.5, −0.2 ± 0.6): the OPEC row above is mostly
-its larger hauls (`37034959708`).
+its larger hauls (`37034959708`). Captured Nazi Scientist into a VP box: the model already events
+it 75% (US) and 86% (USSR) of the time, and the event ties its choice (−0.2 ± 0.2, −0.2 ± 0.1;
+`37045332746`).
 
 ## Why training may plateau, and what to try
 
@@ -186,6 +191,8 @@ block.
 * **Position banks** (every legal mode played out from the model's own positions). Card event
   rules over the 36 cards humans event most against the model `37026844506`; One Small Step one box
   behind `37037507768` (1 vs 2) and `37037511438` (3 vs 4); Special Relationship with NATO, OPEC and
-  Alliance for Progress at 5+ VP `37034959708`; Kitchen Debates where it scores `37041009744`.
+  Alliance for Progress at 5+ VP `37034959708`; Kitchen Debates where it scores `37041009744`;
+  Captured Nazi Scientist into a VP box, KAL-007 with South Korea US-controlled and Glasnost with The
+  Reformer `37045332746`.
 * **Local measurements, the same paired method.** The Wargames cost (60 positions × 32 pairs) and
   the Aldrich Ames discard (40 positions × 32 pairs).
