@@ -24,8 +24,14 @@ on:
         description: "<revision>:<run>/<snapshot>.pt in hf_repo"
         required: true
       spots:
-        description: "Space-separated <bank run id>:<US|USSR>:<card id>"
-        required: true
+        description: "Space-separated <bank run id>:<US|USSR>:<card id>: event as the target at every position"
+        default: ""
+      labelled:
+        description: "Space-separated bank run ids: every play-mode record a contrastive target (event-or-not from its playouts)"
+        default: ""
+      value_anchor:
+        description: "Weight holding the value heads to the starting network (0 = off)"
+        default: "0"
       name:
         description: "Output name (<name>.pt, <name>.onnx)"
         required: true
@@ -52,7 +58,9 @@ permissions:
 env:
   GH_TOKEN: ${{ github.token }}
   CHECKPOINT: ${{ inputs.checkpoint }}
-  SPOTS: ${{ inputs.spots }}
+  SPOTS: ${{ inputs.spots || '' }}
+  LABELLED: ${{ inputs.labelled || '' }}
+  VALUE_ANCHOR: ${{ inputs.value_anchor || '0' }}
   NAME: ${{ inputs.name }}
   ANCHOR_GAMES: ${{ inputs.anchor_games || '400' }}
   REPEAT: ${{ inputs.repeat || '4' }}
@@ -75,12 +83,15 @@ jobs:
           rev="${CHECKPOINT%%:*}"; path="${CHECKPOINT#*:}"
           mkdir -p work/banks
           curl -sfL -o work/base.pt "https://huggingface.co/$HF_REPO/resolve/$rev/$path"
-          for id in $(for s in $SPOTS; do echo "${s%%:*}"; done | sort -u); do
+          for id in $( (for s in $SPOTS; do echo "${s%%:*}"; done; for id in $LABELLED; do echo "$id"; done) | sort -u); do
             gh run download "$id" -R "$GITHUB_REPOSITORY" -n "position-bank-$id" -D "work/banks/$id"
           done
           args=""
           for s in $SPOTS; do args="$args --spot work/banks/${s%%:*}/bank.json.gz:${s#*:}"; done
           echo "SPOT_ARGS=$args" >> "$GITHUB_ENV"
+          largs=""
+          for id in $LABELLED; do largs="$largs --labelled work/banks/$id/bank.json.gz"; done
+          echo "LABELLED_ARGS=$largs" >> "$GITHUB_ENV"
 
       - name: Anchor games (the checkpoint's own policy)
         run: |
@@ -92,19 +103,21 @@ jobs:
         run: |
           export PYTHONPATH=.:build/release
           mkdir -p out
-          .venv/bin/python tools/bank_distill_targets.py export $SPOT_ARGS --anchors work/anchors.jsonl.gz \
-            --repeat "$REPEAT" --out work/distill.jsonl.gz | tee out/dataset_meta.json
-          .venv/bin/python tools/bank_distill_targets.py check --checkpoint work/base.pt $SPOT_ARGS > out/check_before.md
+          .venv/bin/python tools/bank_distill_targets.py export $SPOT_ARGS $LABELLED_ARGS \
+            --anchors work/anchors.jsonl.gz --repeat "$REPEAT" --out work/distill.jsonl.gz | tee out/dataset_meta.json
+          touch out/check_before.md out/check_after.md
+          [ -z "$SPOT_ARGS" ] || .venv/bin/python tools/bank_distill_targets.py check --checkpoint work/base.pt $SPOT_ARGS > out/check_before.md
           .venv/bin/python tools/train.py --mode distill --warmup-checkpoint work/base.pt \
             --distill-dataset work/distill.jsonl.gz --distill-epochs "$EPOCHS" --distill-lr "$LR" \
-            --device cpu --output-dir "out/$NAME.pt" | tee out/distill.log
-          .venv/bin/python tools/bank_distill_targets.py check --checkpoint "out/$NAME.pt" $SPOT_ARGS > out/check_after.md
+            --distill-value-anchor "$VALUE_ANCHOR" --device cpu --output-dir "out/$NAME.pt" | tee out/distill.log
+          [ -z "$SPOT_ARGS" ] || .venv/bin/python tools/bank_distill_targets.py check --checkpoint "out/$NAME.pt" $SPOT_ARGS > out/check_after.md
           .venv/bin/python tools/export_onnx.py --checkpoint "out/$NAME.pt" --out "out/$NAME.onnx"
           {
             echo "commit: $GITHUB_SHA"
             echo "engine_fingerprint: $(.venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "checkpoint: $HF_REPO $CHECKPOINT"
             echo "spots: $SPOTS"
+            echo "labelled banks: $LABELLED  value anchor: $VALUE_ANCHOR"
             echo "anchor games: $ANCHOR_GAMES  repeat: $REPEAT  epochs: $EPOCHS  lr: $LR"
             echo "evaluate with: model=hf:gh:$GITHUB_RUN_ID/distill-$GITHUB_RUN_ID/$NAME.onnx"
           } > out/provenance.txt

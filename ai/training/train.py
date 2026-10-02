@@ -219,6 +219,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "records; a plain self-play set has no targets and would train "
                              "on nothing.")
     parser.add_argument("--distill-epochs", type=int, default=2)
+    parser.add_argument("--distill-value-anchor", type=float, default=0.0,
+                        help="--mode distill: weight of an MSE holding both value heads to the starting "
+                             "network's outputs, so a policy-only target does not move the critic (0 = off)")
     parser.add_argument("--distill-lr", type=float, default=1e-4,
                         help="Deliberately below BC's 1e-3: this bends a trained policy "
                              "rather than training one.")
@@ -919,6 +922,7 @@ def main():
             batch_size=args.batch_size if args.batch_size <= 2048 else 512,
             lr=args.distill_lr,
             device=dev,
+            value_anchor=args.distill_value_anchor,
         )
     elif args.mode == "eval":
         if not args.warmup_checkpoint:

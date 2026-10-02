@@ -29,11 +29,12 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import math
 import os
 import random
 import subprocess
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -62,6 +63,87 @@ def spot_records(spot: Spot) -> List[Dict[str, Any]]:
     return recs
 
 
+def _q(result: str) -> float:
+    """A candidate's mean result for the mover, from its pairs ('0' loss, '1' draw, '2' win)."""
+    return sum(int(ch) for ch in result) / (2.0 * len(result))
+
+
+def _scores(result: str) -> List[float]:
+    return [int(ch) / 2.0 for ch in result]
+
+
+def contrast_target(rec: Dict[str, Any]) -> Optional[Dict[str, List[Any]]]:
+    """The event-or-not decision from the playouts, the rest from the model.
+
+    P(event) = Phi(gap / se): the probability, given this record's paired playouts, that the event
+    beats the best non-event mode. `gap` is the mean of the per-pair differences (same dice and deal in
+    both branches), `se` its standard error, so a position whose playouts cannot tell the two apart
+    gets a target near 1/2 -- where the choice costs nothing -- rather than its noise. The non-event
+    mass is split over the non-event modes in proportion to the model's own probabilities (each
+    candidate's `prior`), so the target corrects whether to event and leaves the choice among Ops
+    modes -- the board play the review found strong -- where the model had it. Records without the
+    event among the candidates, or with no other mode, give None."""
+    res: Dict[int, List[float]] = {}
+    prior: Dict[int, float] = {}
+    for c, r in zip(rec["candidates"], rec["results"]):
+        a = int(c["prefix"][0])
+        sc = _scores(r)
+        # A two-step line (Wargames' event, then end the game) is the event too: keep its better line.
+        if a not in res or sum(sc) > sum(res[a]):
+            res[a] = sc
+        prior[a] = max(prior.get(a, 0.0), float(c.get("prior", 0.0)))
+    if EVENT not in res or len(res) < 2:
+        return None
+    others = [a for a in res if a != EVENT]
+    best = max(others, key=lambda a: sum(res[a]))
+    d = [e - o for e, o in zip(res[EVENT], res[best])]
+    n = len(d)
+    gap = sum(d) / n
+    var = sum((x - gap) ** 2 for x in d) / max(1, n - 1)
+    se = math.sqrt(var / n)
+    p_event = (0.5 * (1.0 + math.erf(gap / (se * math.sqrt(2.0)))) if se > 0
+               else (1.0 if gap > 0 else 0.0 if gap < 0 else 0.5))
+    tot = sum(prior[a] for a in others)
+    split = {a: (prior[a] / tot if tot > 0 else 1.0 / len(others)) for a in others}
+    return {"a": [EVENT] + others, "v": [p_event] + [(1.0 - p_event) * split[a] for a in others]}
+
+
+def _labelled_keys(paths: List[str]) -> Set[Tuple[str, int]]:
+    keys: Set[Tuple[str, int]] = set()
+    for path in paths:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            for r in json.load(f)["records"]:
+                if r["kind"] == "mode" and r["features"].get("card") is not None:
+                    keys.add((r["features"]["side"], int(r["features"]["card"])))
+    return keys
+
+
+def strip_labelled(game: Dict[str, Any], keys: Set[Tuple[str, int]]) -> int:
+    """Drop the own-policy target at play-mode decisions on a labelled (side, card): there the
+    playout label is the target, and the model's own choice would argue against it. Returns how many."""
+    import ts_engine as ts
+
+    st = ts.GameState()
+    ts.Engine.init_game(st, game["seed"])
+    dropped = 0
+    for a in game["actions"]:
+        ctx = st.ctx()
+        if (a.get("search_pi") and ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE
+                and int(ctx.pending_op_card)):
+            side = "US" if ctx.decision_player == ts.Player.US else "USSR"
+            if (side, int(ctx.pending_op_card)) in keys:
+                del a["search_pi"]
+                dropped += 1
+        mask = np.asarray(ts.get_flat_action_mask(st, False))
+        if not (0 <= a["flat_action"] < mask.shape[0] and mask[a["flat_action"]]):
+            break
+        ts.Engine.step(st, ts.decode_flat_action(st, a["flat_action"]))
+        while (not ts.Engine.is_terminal(st) and st.ctx().decision_player == ts.Player.NONE
+               and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
+            ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+    return dropped
+
+
 def _commit() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -73,6 +155,19 @@ def export(a: argparse.Namespace) -> int:
     rng = random.Random(a.seed)
     spot_lines: List[str] = []
     counts: Dict[str, int] = {}
+    # Contrastive labels: every position of the labelled banks, the event-or-not part from its playouts.
+    for path in a.labelled:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            recs = json.load(f)["records"]
+        for r in recs:
+            if r["kind"] != "mode":
+                continue
+            t = contrast_target(r)
+            if t is None:
+                continue
+            key = f"{r['features']['side']}:{r['features'].get('card')}"
+            counts[key] = counts.get(key, 0) + 1
+            spot_lines.extend([json.dumps({"save": r["save"], "search_pi": t})] * a.repeat)
     for spot in a.spot:
         recs = spot_records(spot)
         counts[f"{os.path.basename(os.path.dirname(spot[0])) or spot[0]}:{spot[1]}:{spot[2]}"] = len(recs)
@@ -83,6 +178,12 @@ def export(a: argparse.Namespace) -> int:
     for path in a.anchors:
         with gzip.open(path, "rt", encoding="utf-8") as f:
             anchor_lines.extend(line.rstrip("\n") for line in f if line.strip())
+    stripped = 0
+    if a.labelled:
+        keys = _labelled_keys(a.labelled)
+        games = [json.loads(line) for line in anchor_lines]
+        stripped = sum(strip_labelled(g, keys) for g in games)
+        anchor_lines = [json.dumps(g) for g in games]
     # Spread the spot lines evenly at random among the anchor games.
     rng.shuffle(spot_lines)
     slots: List[List[str]] = [[] for _ in range(len(anchor_lines) + 1)]
@@ -97,7 +198,9 @@ def export(a: argparse.Namespace) -> int:
                 out.write(anchor_lines[i] + "\n")
     meta = {"searcher": "bank_distill_targets (event at bank-confirmed spots + own-policy anchors)",
             "commit": _commit(), "spots": counts, "repeat": a.repeat,
-            "spot_targets": len(spot_lines), "anchor_games": len(anchor_lines), "merged_influence": False}
+            "spot_targets": len(spot_lines), "anchor_games": len(anchor_lines),
+            "labelled_banks": a.labelled, "label": "P(event) = Phi(paired gap / se)", "anchor_targets_dropped_at_labelled_cards": stripped,
+            "merged_influence": False}
     with open(a.out + ".meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=1)
     print(json.dumps(meta, indent=1))
@@ -135,10 +238,12 @@ def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     e = sub.add_parser("export", help="write the distillation dataset")
-    e.add_argument("--spot", type=parse_spot, action="append", required=True,
+    e.add_argument("--spot", type=parse_spot, action="append", default=[],
                    help="<bank.json.gz>:<US|USSR>:<card id>, repeatable")
+    e.add_argument("--labelled", action="append", default=[],
+                   help="a bank whose every play-mode record becomes a contrastive target (repeatable)")
     e.add_argument("--anchors", action="append", default=[], help="own-policy target games (jsonl.gz), repeatable")
-    e.add_argument("--repeat", type=int, default=4, help="copies of each spot position")
+    e.add_argument("--repeat", type=int, default=4, help="copies of each spot or labelled position")
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--out", required=True)
     c = sub.add_parser("check", help="event rate of a checkpoint at the spots")

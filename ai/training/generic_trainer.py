@@ -762,6 +762,7 @@ def run_search_distillation(
     lr: float = 1e-4,
     max_games: Optional[int] = None,
     device: Optional[Union[torch.device, str]] = None,
+    value_anchor: float = 0.0,
 ) -> Dict[str, float]:
     """P15-X4a step 3: pull the policy toward the searcher's visit distribution.
 
@@ -807,6 +808,16 @@ def run_search_distillation(
     if merged:
         print("    dataset played in the E4.1 merged-influence view: replaying in it", flush=True)
 
+    # `value_anchor` > 0 holds the value heads to the starting network's outputs (MSE on both), so a
+    # policy-only target cannot drag the critic through the shared trunk. 0 leaves the value heads
+    # unconstrained, as X4a ran.
+    frozen: Optional[nn.Module] = None
+    if value_anchor > 0.0:
+        frozen = _copy.deepcopy(model).eval()
+        for prm in frozen.parameters():
+            prm.requires_grad_(False)
+        print(f"    value anchor {value_anchor}: value heads held to the starting network", flush=True)
+
     stats = {"samples": 0.0, "final_loss": 0.0, "final_agreement": 0.0, "final_top1_kl": 0.0}
     for epoch in range(1, epochs + 1):
         t0 = time.time()
@@ -820,6 +831,11 @@ def run_search_distillation(
             # Soft cross-entropy. The target is zero outside the legal set, so masked logits
             # (-1e9) contribute nothing and cannot produce a NaN.
             loss = -(b_pi * logp).sum(dim=-1).mean()
+            if frozen is not None:
+                with torch.no_grad():
+                    _, f_win, f_vp = frozen(b_obs, b_mask)
+                loss = loss + value_anchor * (F.mse_loss(_v_win.float(), f_win.float())
+                                              + F.mse_loss(_v_vp.float(), f_vp.float()))
 
             optimizer.zero_grad()
             loss.backward()

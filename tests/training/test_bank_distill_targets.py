@@ -46,3 +46,25 @@ def test_save_records_mix_with_replayed_games(tmp_path: Path) -> None:
     out = list(WarmupDataset(str(path)).stream_policy_transitions())
     assert len(out) == 2
     np.testing.assert_array_equal(out[0][0], out[1][0])
+
+
+def _rec(results: dict, priors: dict) -> dict:
+    return {"candidates": [{"prefix": [a], "prior": priors[a]} for a in results],
+            "results": [results[a] for a in results]}
+
+
+def test_contrast_target_follows_the_paired_evidence() -> None:
+    from tools.bank_distill_targets import EVENT, contrast_target
+
+    # The event wins every pair the influence play loses: P(event) ~ 1.
+    t = contrast_target(_rec({112: "0" * 32, EVENT: "2" * 32, 113: "0" * 32}, {112: 0.9, EVENT: 0.0, 113: 0.1}))
+    assert t is not None and t["a"][0] == EVENT and t["v"][0] > 0.99
+    # Identical results pair by pair: no evidence either way, P(event) = 1/2, and the non-event
+    # half keeps the model's own split between its Ops modes.
+    tie = contrast_target(_rec({112: "0212" * 8, EVENT: "0212" * 8, 113: "0000" * 8},
+                               {112: 0.9, EVENT: 0.0, 113: 0.1}))
+    assert tie is not None and tie["v"][0] == 0.5
+    rest = dict(zip(tie["a"][1:], tie["v"][1:]))
+    assert abs(rest[112] - 0.45) < 1e-9 and abs(rest[113] - 0.05) < 1e-9
+    # No event candidate: no target.
+    assert contrast_target(_rec({112: "2" * 8, 113: "0" * 8}, {112: 0.5, 113: 0.5})) is None
