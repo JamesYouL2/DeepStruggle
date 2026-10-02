@@ -128,3 +128,27 @@ human openings 12–19 points worse than Poland 6.
   opening ~18 points above alternatives the playouts call level. Any setup credit through the critic
   (the λ-return) inherits that bias, which is why the game-result credit was needed here.
 * Reports: `data/reports/e7_10_44_rr{,_human}.{md,json}`.
+
+## E7-11-44, the control: the mechanism adopts a bad opening too (2026-10-02)
+
+The same branch and mechanism, with one deliberately bad scripted opening (USSR Romania 6; US
+West Germany 7, Australia +2), 820M → 900M. Sampled at temperature 1:
+
+| | USSR | US |
+|:---|:---|:---|
+| 830M | Romania 6 50%, Poland 6 18% | WG 4, France 3, Italy 2 (84%) |
+| 840M | **Romania 6, 99%** | WG 5, Italy 2, Australia 1–2 (mostly) |
+| 860M | Romania 6, 99% | WG 7, Australia 2 (25%) and mixes |
+| 900M | **Romania 6, 99.8%** | WG 4, France 3, Italy 2 (95%) -- rejected |
+
+And it is bad (setup oracle, 2,000 paired deals): on E7-02-44@1,200M Romania 6 costs the USSR
+**−12.5 ± 1.4** against its own Poland 6, and West Germany 7 / Australia 2 costs the US −12.3 ± 1.5;
+on E7-11-44@900M, now playing Romania 6, forcing Poland 6 gains **+10.9 ± 1.5**.
+
+**So E7-10-44's adoption of the human openings is not evidence that they are better.** The cause:
+the setup credit (result − critic) averaged **positive** in every update of both runs (+0.03 to
++0.18) -- the learner beats its pool ~71% of the time and the critic cannot see the opponent. A
+uniform positive credit hardly moves the policy's own placements (p ≈ 1, gradient ≈ 0) but pushes
+every scripted placement up at full strength, good or bad. The fix to test: centre the credit per
+side within each setup batch, so a scripted opening rises only where its games beat the average
+of that side's placements; then re-run this control (it should be rejected) before the human mix.
