@@ -236,6 +236,10 @@ def _by_vp(f: Dict[str, Any]) -> str:
     return f"scores {int(f.get('event_gain') or 0)} VP"
 
 
+def _by_mil_ops(f: Dict[str, Any]) -> str:
+    return f"Military Ops short {min(int(f['short']), 2)}{'+' if f['short'] >= 2 else ''}, {'last round' if f['rounds_left'] == 0 else 'rounds left'}"
+
+
 def _by_space(f: Dict[str, Any]) -> str:
     return f"space {f['space']} vs {f['space_opp']}"
 
@@ -246,6 +250,9 @@ FORCED_SETS: Dict[str, Tuple[Forced, ...]] = {
                   "NATO in effect and the UK US-controlled: 2 influence in Western Europe and 2 VP", _scores_at_least(2), _by_vp),
            Forced("USSR", "OPEC", "5 or more VP", _scores_at_least(5), _by_vp),
            Forced("US", "Alliance for Progress", "5 or more VP", _scores_at_least(5), _by_vp)),
+    # A 1-Op card whose event scores 2 VP, against the 1-Op coup the model usually plays for Military Ops.
+    "kd": (Forced("US", "Kitchen Debates", "the event scores (more battlegrounds than the USSR): 2 VP", _scores_at_least(2),
+                  _by_mil_ops),),
     # Two sets, since 3 vs 4 is about a tenth as common as 1 vs 2 and would never fill its share of a joint cap.
     "oss12": (Forced("US", "“One Small Step…”", "space 1 vs 2", _space_at(((1, 2),)), _by_space),
               Forced("USSR", "“One Small Step…”", "space 1 vs 2", _space_at(((1, 2),)), _by_space)),
