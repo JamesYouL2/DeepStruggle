@@ -152,3 +152,29 @@ uniform positive credit hardly moves the policy's own placements (p ≈ 1, gradi
 every scripted placement up at full strength, good or bad. The fix to test: centre the credit per
 side within each setup batch, so a scripted opening rises only where its games beat the average
 of that side's placements; then re-run this control (it should be rejected) before the human mix.
+
+## E7-12-44: centred credit -- the US rejects, the USSR still drifts; the design has no signal (2026-10-02)
+
+E7-11-44 re-run with the setup credit centred per side. The US rejected its bad opening throughout
+(West Germany 4, France 3, Italy 2 at 95–99%). The USSR still drifted: Poland 6 ~69% at 830–840M,
+**Romania 6 82% at 880M**, Romania 5 + one elsewhere at 900M.
+
+**Why: a scripted game scripted both sides.** The USSR's Romania 6 (−12.5 pp) always met the US's
+West Germany 7 / Australia 2 (−12.3 pp); the handicaps cancel, the USSR's result in scripted games
+matches its normal games, and the credit carries no information about the opening. With no signal,
+low-probability scripted placements random-walk -- each noisy update moves them at full strength
+(∇log π ≈ 1 at p ≈ 0, against ≈ 0 for the policy's own placements at p ≈ 1), and Adam normalises
+the step. The same holds for E7-10-44 (human met human).
+
+## Status (owner, 2026-10-02: stopped)
+
+* **Not concluded.** Neither E7-10-44's adoption of the human openings nor any opening preference
+  is evidence: E7-11-44 adopted a −12.5 pp USSR opening through the same mechanism, and with both
+  sides scripted the credit cannot tell a good opening from a bad one.
+* **What did hold:** with the human opening forced on both sides E7-10-44 plays those positions
+  better (53.9%), and strength with its own setup was level -- breadth from playing the positions,
+  not from choosing them.
+* **If resumed:** script one side per game (the other sets up itself), keep the per-side centring,
+  and pass the stupid control (both bad openings rejected) before any real opening is run.
+* **Standing findings:** the critic's opinion of an opening is familiarity (±18 pp toward whatever
+  it plays); every opening tried except the stupid ones is level in playouts.
