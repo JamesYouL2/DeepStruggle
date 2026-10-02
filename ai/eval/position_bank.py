@@ -31,7 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start, apply_prefix
+from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start
 from ai.eval.doctrine_census import _hand, cards
 from ai.eval.human_disagree import kind_of
 from ai.eval.playout_audit import play_safe, suicide
@@ -40,6 +40,7 @@ from ai.eval.rule_oracle import (EVENT, MODE_BASE, SCORING_REGION, ValueFn, _own
                                  event_cost, event_gain, greedy_option, score_value)
 from ai.eval.region_weight import REGIONS, STATUS, status as region_status
 from bindings.action_encoder import ActionEncoder
+from tools.lib.game_step import drain_chance
 
 #: Cards whose effect turns on hands, discards, card counts or action rounds -- either side's.
 HAND_TIMING_CARDS = ("Five Year Plan", "Aldrich Ames Remix", "SALT Negotiations", "Missile Envy",
@@ -245,7 +246,7 @@ def build(act: PolicyFn, probs_fn: ProbsFn, value_fn: ValueFn, positions: Sequen
             for k in range(pairs):
                 base = _pair_start(st, k, seed * 100_003 + lo * 7 + gi, "resample")
                 for _, prefix in cands:
-                    starts.append(apply_prefix(base, prefix))
+                    starts.append(apply_lenient(base, prefix))
                     movers.append(mover)
                     keys.append(_ar_key(st))
         res = play_safe(starts, movers, keys, act, seed + lo)
@@ -261,6 +262,20 @@ def build(act: PolicyFn, probs_fn: ProbsFn, value_fn: ValueFn, positions: Sequen
                 "results": ["".join(str(int(round(2 * x))) for x in sc[:, j]) for j in range(nb)],
             })
     return records
+
+
+def apply_lenient(state: ts.GameState, prefix: Sequence[int]) -> ts.GameState:
+    """A copy of `state` with `prefix` applied while each step is legal; the model plays on from the
+    first that is not. A later step can turn on hidden cards (the follow-up of an event that picks
+    from the opponent's hand), so in a redealt world it may not exist: that pair then measures the
+    line as far as it goes, rather than failing the run."""
+    st = state.clone()
+    for a in prefix:
+        if ts.Engine.is_terminal(st) or not np.asarray(ActionEncoder.get_legal_mask(st))[int(a)]:
+            break
+        ts.Engine.step_flat(st, int(a))
+        drain_chance(st, context="position_bank prefix")
+    return st
 
 
 def scores(record: Dict[str, Any], j: int) -> np.ndarray:

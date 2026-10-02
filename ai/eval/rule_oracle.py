@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start, apply_prefix
+from ai.eval.branch_oracle import PolicyFn, _decider, _pair_start
 from ai.eval.choice_oracle import _loses_now, resolve_safely
 from ai.eval.doctrine_census import _hand, cards
 from ai.eval.ops_block import country_table, controlled, influence
@@ -332,6 +332,16 @@ def collect(act: PolicyFn, probs_fn: Callable[[ts.GameState], np.ndarray], value
     return out, len(done)
 
 
+def _lenient(state: ts.GameState, prefix: Sequence[int]) -> ts.GameState:
+    """`prefix` applied while each step is legal in this (redealt) world; see position_bank.apply_lenient."""
+    st = state.clone()
+    for a in prefix:
+        if ts.Engine.is_terminal(st) or not np.asarray(ActionEncoder.get_legal_mask(st))[int(a)]:
+            break
+        _step(st, int(a))
+    return st
+
+
 def play(act: PolicyFn, spots: Sequence[Dict[str, Any]], pairs: int, seed: int, chunk: int = 1536
          ) -> List[Dict[str, Any]]:
     """Each spot's two branches, the model's move and the rule's, over `pairs` paired playouts."""
@@ -346,7 +356,7 @@ def play(act: PolicyFn, spots: Sequence[Dict[str, Any]], pairs: int, seed: int, 
             for k in range(pairs):
                 base = _pair_start(st, k, seed * 100_003 + lo + gi, "resample")
                 starts.append(base.clone())
-                starts.append(apply_prefix(base, sp["prefix"]))
+                starts.append(_lenient(base, sp["prefix"]))
                 movers += [sp["mover"], sp["mover"]]
                 keys += [_ar_key(st), _ar_key(st)]
         res = np.array(play_safe(starts, movers, keys, act, seed + lo)).reshape(len(group), pairs, 2)

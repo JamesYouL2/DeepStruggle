@@ -50,3 +50,16 @@ def test_build_and_query() -> None:
     assert hits[0][2] == float((B.scores(r0, 1) - B.scores(r0, 0)).mean())
     md, summary = Q.report(recs, (rule,) + Q.RULES, {"model": "x"})
     assert "Bank query" in md and summary["rules"]["second"]["n"] == len(recs)
+
+
+def test_a_line_stops_where_it_stops_being_legal() -> None:
+    st = ts.GameState()
+    ts.Engine.init_game(st, 4)
+    legal = [int(a) for a in np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))]
+    illegal = next(a for a in range(220) if a not in legal)
+    out = B.apply_lenient(st, [legal[0], illegal, illegal])
+    ref = st.clone()
+    ts.Engine.step_flat(ref, legal[0])
+    from tools.lib.game_step import drain_chance
+    drain_chance(ref, context="test")
+    assert out.to_save_json() == ref.to_save_json()     # the first step taken, the illegal rest not
