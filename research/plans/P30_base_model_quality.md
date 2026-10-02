@@ -58,6 +58,17 @@ matched wall-clock as well as matched steps.
 
 **Engineering:** about a day. A new input mode in `LadderNet`, the head wiring, and tests.
 
+#### C1b (owner, 2026-10-02) -- cheaper, sharper tokens: concatenate, don't project
+
+Queued behind C1's 400M readout. In C1 a card token is `W·row + b + identity`, with `W` a learned
+128 × 14 matrix. But of a card's 14 slots only the location one-hot (8) and the active-card flag
+are dynamic; ops, side, era, one-time and is-scoring are constant per card, so the identity
+already carries them, and `W` spends parameters re-encoding a handful of places. The owner's
+variant: **card token = [location one-hot ; active flag ; a slightly smaller learned identity]**,
+concatenated, no `W`. Countries likewise: their dynamic slots concatenated with a country
+identity. Also worth fixing in the same arm: C1 initialises the identities at 0.02 (‖id‖ 0.23
+against ‖W·row‖ 2.4–3.7 at init), the scale the P22 lookup found invisible.
+
 ### C2 — The card-event auxiliary target (`--aux-card-events`, built)
 
 **Change.** A per-card head on the trunk is trained on what each held card's event would do and
