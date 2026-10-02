@@ -26,11 +26,16 @@ agrees on 55% of 4,407 headlines and the humans' picks play out no better (−0.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
+import ts_engine as ts
 
+from ai.eval.branch_oracle import PolicyFn, _decider
 from ai.eval.position_bank import scores
+from ai.eval.rule_oracle import event_gain
+from bindings.action_encoder import ActionEncoder
 
 EVENT = 110
 MODE_NAMES = {110: "event", 111: "space", 112: "influence", 113: "coup", 114: "realign"}
@@ -199,33 +204,75 @@ def report(records: Sequence[Record], names: Dict[int, str], counts: Dict[str, D
     return "\n".join(out) + "\n", summary
 
 
-#: Forced conditions (the owner's): (side, card, the VP its event must score now, what that means).
-FORCED: Tuple[Tuple[str, str, float, str], ...] = (
-    ("US", "Special Relationship", 2, "NATO in effect and the UK US-controlled: 2 influence in Western Europe and 2 VP"),
-    ("USSR", "OPEC", 5, "5 or more VP"),
-    ("US", "Alliance for Progress", 5, "5 or more VP"),
-)
+@dataclass(frozen=True)
+class Forced:
+    """A forced condition: the (side, card) play-mode decisions kept only where `keep(state, act)`
+    holds, reported in groups by `group(features)`."""
+    side: str
+    card: str
+    what: str
+    keep: Callable[[ts.GameState, PolicyFn], bool]
+    group: Callable[[Dict[str, Any]], str]
 
 
-def forced_targets(by_name: Dict[str, int]) -> Dict[Tuple[str, int], float]:
-    return {(side, by_name[card]): vp for side, card, vp, _ in FORCED}
+def _scores_at_least(vp: float) -> Callable[[ts.GameState, PolicyFn], bool]:
+    def keep(st: ts.GameState, act: PolicyFn) -> bool:
+        legal = np.asarray(ActionEncoder.get_legal_mask(st)).astype(bool)
+        return bool(legal[EVENT]) and event_gain(st, _decider(st), act) >= vp
+    return keep
 
 
-def forced_report(records: Sequence[Record], names: Dict[int, str], meta: Optional[Dict[str, Any]] = None
-                  ) -> Tuple[str, Dict[str, Any]]:
-    """Each forced condition: every mode against the model's own, overall, in close games, and by the VP scored."""
+def _space_at(spots: Tuple[Tuple[int, int], ...]) -> Callable[[ts.GameState, PolicyFn], bool]:
+    """The mover's and the opponent's space boxes are one of `spots`. One box behind at 1 vs 2 or
+    3 vs 4, One Small Step jumps the mover two boxes, past the opponent into the next VP box."""
+    def keep(st: ts.GameState, act: PolicyFn) -> bool:
+        us = _decider(st) == ts.Player.US
+        me, opp = (int(st.us_space_track), int(st.ussr_space_track))[:: 1 if us else -1]
+        return (me, opp) in spots
+    return keep
+
+
+def _by_vp(f: Dict[str, Any]) -> str:
+    return f"scores {int(f.get('event_gain') or 0)} VP"
+
+
+def _by_space(f: Dict[str, Any]) -> str:
+    return f"space {f['space']} vs {f['space_opp']}"
+
+
+#: Named sets of forced conditions (the owner's).
+FORCED_SETS: Dict[str, Tuple[Forced, ...]] = {
+    "vp": (Forced("US", "Special Relationship",
+                  "NATO in effect and the UK US-controlled: 2 influence in Western Europe and 2 VP", _scores_at_least(2), _by_vp),
+           Forced("USSR", "OPEC", "5 or more VP", _scores_at_least(5), _by_vp),
+           Forced("US", "Alliance for Progress", "5 or more VP", _scores_at_least(5), _by_vp)),
+    # Two sets, since 3 vs 4 is about a tenth as common as 1 vs 2 and would never fill its share of a joint cap.
+    "oss12": (Forced("US", "“One Small Step…”", "space 1 vs 2", _space_at(((1, 2),)), _by_space),
+              Forced("USSR", "“One Small Step…”", "space 1 vs 2", _space_at(((1, 2),)), _by_space)),
+    "oss34": (Forced("US", "“One Small Step…”", "space 3 vs 4", _space_at(((3, 4),)), _by_space),
+              Forced("USSR", "“One Small Step…”", "space 3 vs 4", _space_at(((3, 4),)), _by_space)),
+}
+
+
+def forced_keep(which: str, by_name: Dict[str, int], act: PolicyFn
+                ) -> Dict[Tuple[str, int], Callable[[ts.GameState], bool]]:
+    return {(f.side, by_name[f.card]): (lambda st, k=f.keep: k(st, act)) for f in FORCED_SETS[which]}
+
+
+def forced_report(records: Sequence[Record], names: Dict[int, str], which: str = "vp",
+                  meta: Optional[Dict[str, Any]] = None) -> Tuple[str, Dict[str, Any]]:
+    """Each forced condition: every mode against the model's own, overall, in close games, and by group."""
     by_name = {v: k for k, v in names.items()}
-    out = [f"# Forced event conditions — {(meta or {}).get('model', '?')}", "",
-           "Positions from the model's greedy self-play where the condition holds naturally (the event would "
-           f"score the VP shown), every non-suicide mode played out ({records[0]['pairs'] if records else '?'} paired "
-           "playouts each). Each mode minus the model's own choice, in win-rate points, ± one standard error over "
-           "positions; \"close\" keeps positions the model's own move wins 25-75%.", ""]
+    out = [f"# Forced event conditions ({which}) — {(meta or {}).get('model', '?')}", "",
+           "Positions from the model's greedy self-play where the condition holds naturally, every non-suicide "
+           f"mode played out ({records[0]['pairs'] if records else '?'} paired playouts each). Each mode minus the "
+           "model's own choice, in win-rate points, ± one standard error over positions; \"close\" keeps "
+           "positions the model's own move wins 25-75%.", ""]
     summary: Dict[str, Any] = {"meta": meta or {}, "forced": {}}
-    for side, card, vp, what in FORCED:
-        cid = by_name.get(card)
-        recs = [r for r in records if r["features"]["side"] == side and r["features"].get("card") == cid
-                and (r["features"].get("event_gain") or -99) >= vp]
-        out += [f"## {side} {card}: {what}", ""]
+    for fc in FORCED_SETS[which]:
+        cid = by_name.get(fc.card)
+        recs = [r for r in records if r["features"]["side"] == fc.side and r["features"].get("card") == cid]
+        out += [f"## {fc.side} {fc.card}: {fc.what}", ""]
         if not recs:
             out += ["No positions.", ""]
             continue
@@ -235,11 +282,13 @@ def forced_report(records: Sequence[Record], names: Dict[int, str], meta: Option
         close = _mean_se([e for _, e, b in ev if 0.25 <= b <= 0.75])
         n_close = sum(0.25 <= b <= 0.75 for _, _, b in ev)
         out += [f"{len(recs)} positions; the model events {100 * model_event:.0f}% of them.", "",
-                "| | positions | event − model |", "|:---|---:|---:|",
-                f"| all | {len(ev)} | **{_fmt(*allm)}** |", f"| close | {n_close} | {_fmt(*close)} |"]
-        for v in sorted({int(r["features"]["event_gain"]) for r, _, _ in ev}):
-            xs = [e for r, e, _ in ev if int(r["features"]["event_gain"]) == v]
-            out.append(f"| scores {v} VP | {len(xs)} | {_fmt(*_mean_se(xs))} |")
+                "| | positions | model events | event − model |", "|:---|---:|---:|---:|",
+                f"| all | {len(ev)} | {100 * model_event:.0f}% | **{_fmt(*allm)}** |",
+                f"| close | {n_close} | | {_fmt(*close)} |"]
+        for g in sorted({fc.group(r["features"]) for r, _, _ in ev}):
+            sub = [(r, e) for r, e, _ in ev if fc.group(r["features"]) == g]
+            me = sum(int(r["candidates"][0]["prefix"][0]) == EVENT for r, _ in sub) / len(sub)
+            out.append(f"| {g} | {len(sub)} | {100 * me:.0f}% | {_fmt(*_mean_se([e for _, e in sub]))} |")
         out += ["", "| mode | positions | mode − model |", "|:---|---:|---:|"]
         for a, m in MODE_NAMES.items():
             d = []
@@ -252,5 +301,5 @@ def forced_report(records: Sequence[Record], names: Dict[int, str], meta: Option
             if d:
                 out.append(f"| {m} | {len(d)} | {_fmt(*_mean_se(d))} |")
         out.append("")
-        summary["forced"][f"{side} {card}"] = {"n": len(recs), "model_event": model_event, "all": allm, "close": close}
+        summary["forced"][f"{fc.side} {fc.card}"] = {"n": len(recs), "model_event": model_event, "all": allm, "close": close}
     return "\n".join(out) + "\n", summary

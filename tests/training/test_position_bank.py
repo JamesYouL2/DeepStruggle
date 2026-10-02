@@ -100,21 +100,25 @@ def test_a_condition_is_scored_out_of_sample() -> None:
     assert conds == [cond, cond] and abs(float(np.mean(held)) - 0.05) < 1e-9
 
 
-def test_forced_conditions_keep_only_where_the_event_scores() -> None:
+def test_forced_conditions_keep_only_where_they_hold() -> None:
     from ai.eval import card_rules as C
     from ai.eval.doctrine_census import cards
-    from ai.eval.rule_oracle import event_gain
 
     names = {k: str(v["name"]) for k, v in cards().items()}
-    gain = C.forced_targets({v: k for k, v in names.items()})
-    assert len(gain) == len(C.FORCED)
+    by_name = {v: k for k, v in names.items()}
     act = _random_policy(5)
-    # A condition no event meets keeps nothing; the counts still come back.
-    pos, counts = B.collect_targets(act, set(gain), per_card=5, games=4, seed=6, envs=4,
-                                    min_gain={k: 99.0 for k in gain})
-    assert pos == [] and counts
-    pos, _ = B.collect_targets(act, set(gain), per_card=5, games=20, seed=6, envs=4, min_gain={k: -99.0 for k in gain})
+    for which in C.FORCED_SETS:
+        keep = C.forced_keep(which, by_name, act)
+        assert len(keep) == len(C.FORCED_SETS[which])
+        # A test nothing passes keeps nothing; the counts still come back.
+        pos, counts = B.collect_targets(act, set(keep), per_card=5, games=4, seed=6, envs=4,
+                                        keep={k: (lambda st: False) for k in keep})
+        assert pos == [] and counts
+    keep = C.forced_keep("oss12", by_name, act)
+    pos, _ = B.collect_targets(act, set(keep), per_card=5, games=60, seed=6, envs=8, keep=keep)
     for st, _, _ in pos:
-        assert event_gain(st, st.ctx().decision_player, act) >= -99.0
-    md, _ = C.forced_report(B.build(act, _probs, _value, pos, pairs=2, seed=1), names, {"model": "x"})
-    assert "Forced event conditions" in md
+        us = st.ctx().decision_player == ts.Player.US
+        me, opp = (int(st.us_space_track), int(st.ussr_space_track))[:: 1 if us else -1]
+        assert (me, opp) == (1, 2)
+    md, _ = C.forced_report(B.build(act, _probs, _value, pos, pairs=2, seed=1), names, "oss12", {"model": "x"})
+    assert "Forced event conditions (oss12)" in md
