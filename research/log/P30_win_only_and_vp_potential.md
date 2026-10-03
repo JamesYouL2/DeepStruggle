@@ -57,8 +57,11 @@ head against it.
 | 1040 | win only E7-15-44 | −5.6 ± 1.6 | −0.7 ± 1.6 | 44.9% ± 1.8 | 1592 |
 | 1040 | VP potential E7-16-44 | −2.3 ± 1.6 | +0.4 ± 1.6 | 49.6% ± 1.8 | 1613 |
 | 1040 | *seed 43 E7-08-43* | *−2.9 ± 1.6* | *−2.0 ± 1.6* | *46.1% ± 1.8* | *1598* |
+| 1120 | win only E7-15-44 | −4.8 ± 1.6 | −1.9 ± 1.5 | 45.9% ± 1.8 | 1598 |
+| 1120 | VP potential E7-16-44 | −0.5 ± 1.5 | −0.4 ± 1.5 | 45.6% ± 1.8 | 1627 |
+| 1120 | *seed 43 E7-08-43* | *−5.1 ± 1.6* | *+0.3 ± 1.5* | *44.6% ± 1.8* | *1612* |
 
-E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M, 1565 at 480M and 1578 at 560M; E7-02-44 is 1583 at 640M, 1607 at 720M, 1623 at 800M, 1639 at 880M, 1636 at 960M and 1627 at 1,040M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
+E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M, 1565 at 480M and 1578 at 560M; E7-02-44 is 1583 at 640M, 1607 at 720M, 1623 at 800M, 1639 at 880M, 1636 at 960M, 1627 at 1,040M and 1646 at 1,120M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
 
@@ -99,3 +102,7 @@ At 960M the order of 880M holds: E7-02-44, then the VP potential (level with it 
 
 At 1,040M the VP potential is level with E7-02-44 head to head (49.6%) for the first time since
 640M; win only and seed 43 are together, a little below.
+
+At 1,120M all three lose to E7-02-44 head to head by the same margin (44.6–45.9%). Against the
+panel the VP potential is level with it in both seats; win only and seed 43 share a US-seat gap
+(−4.8, −5.1).
