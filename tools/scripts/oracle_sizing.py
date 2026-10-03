@@ -38,15 +38,17 @@ if _root not in sys.path:
 
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from ai.eval.critic_boundary import _auc  # noqa: E402
 
 _GLOBAL = 84 * 26 + 110 * 14
+_OBS = _GLOBAL + 100                                       # the v2.3 base layout
 _PHASE, _TURN = _GLOBAL + 9, _GLOBAL + 6
 PHASES = {0: "setup", 1: "headline", 2: "action round"}
 
 
 @torch.no_grad()
 def collect(model: nn.Module, dev: torch.device, games: int, envs: int, record_prob: float,
-            seed: int) -> Dict[str, np.ndarray]:
+            seed: int, raw_obs: bool = False) -> Dict[str, np.ndarray]:
     env = TsVectorizedEnv(num_envs=envs, base_seed=seed)
     obs, masks, _ = env.reset_all()
     rng = np.random.default_rng(seed)
@@ -71,9 +73,12 @@ def collect(model: nn.Module, dev: torch.device, games: int, envs: int, record_p
             opp = np.asarray(env.runner.get_opponent_hands(dp.tolist()), dtype=np.float32).reshape(envs, 110)
             vv = v.float().reshape(-1).cpu().numpy()
             for j, i in enumerate(pick):
-                pending[i].append({"h": h[j], "opp": opp[i].astype(np.uint8), "v": float(vv[i]),
+                rec: Dict[str, Any] = {"h": h[j], "opp": opp[i].astype(np.uint8), "v": float(vv[i]),
                                    "mover": int(dp[i]), "game": int(game_id[i]),
-                                   "phase": int(round(o_np[i, _PHASE] * 6)), "turn": int(round(o_np[i, _TURN] * 10))})
+                                   "phase": int(round(o_np[i, _PHASE] * 6)), "turn": int(round(o_np[i, _TURN] * 10))}
+                if raw_obs:
+                    rec["obs"] = o_np[i, :_OBS].astype(np.float16)
+                pending[i].append(rec)
         obs, masks, _r, _d, info = env.step(acts.cpu().numpy())
         for ep in info.get("completed_episodes", []):
             i = int(ep["env_idx"])
@@ -88,7 +93,8 @@ def collect(model: nn.Module, dev: torch.device, games: int, envs: int, record_p
     return {"h": np.stack([r["h"] for r in out]), "opp": np.stack([r["opp"] for r in out]),
             "v": np.array([r["v"] for r in out], np.float32), "y": np.array([r["y"] for r in out], np.float32),
             "game": np.array([r["game"] for r in out]), "phase": np.array([r["phase"] for r in out]),
-            "turn": np.array([r["turn"] for r in out])}
+            "turn": np.array([r["turn"] for r in out]),
+            **({"obs": np.stack([r["obs"] for r in out])} if raw_obs else {})}
 
 
 def fit(x: np.ndarray, y: np.ndarray, games: np.ndarray, dev: torch.device, linear: bool = False,
@@ -141,7 +147,9 @@ def scores(p: np.ndarray, y: np.ndarray) -> Dict[str, float]:
     base = float(np.clip(y.mean(), 1e-4, 1 - 1e-4))
     ll0 = float(-(y * np.log(base) + (1 - y) * np.log(1 - base)).mean())
     brier = float(((p - y) ** 2).mean())
-    return {"logloss": ll, "brier": brier, "r2": 1.0 - brier / float(((base - y) ** 2).mean()), "ll_skill": 1.0 - ll / ll0}
+    decided = y != 0.5                                       # AUC over wins and losses; draws left out
+    return {"logloss": ll, "brier": brier, "r2": 1.0 - brier / float(((base - y) ** 2).mean()), "ll_skill": 1.0 - ll / ll0,
+            "auc": _auc(p[decided], y[decided])}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -152,13 +160,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--record-prob", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--raw-obs", action="store_true",
+                    help="give both MLP heads the raw observation as well as the trunk features: the "
+                         "trunk drops state at its input projections (P30), so an oracle fitted on the "
+                         "trunk alone could understate what the hand adds")
     ap.add_argument("--output-md", default=None)
     ap.add_argument("--output-json", default=None)
     a = ap.parse_args(argv)
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
     agent = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev))
     model = agent.model.eval()
-    d = collect(model, dev, a.games, a.envs, a.record_prob, a.seed)
+    d = collect(model, dev, a.games, a.envs, a.record_prob, a.seed, a.raw_obs)
     games = np.unique(d["game"])
     rng = np.random.default_rng(a.seed)
     test_games = set(rng.choice(games, size=len(games) // 5, replace=False).tolist())
@@ -166,7 +178,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     tr = ~te
     # Both heads also get the checkpoint's own v_win, so neither starts below the critic it is
     # measured against; the only difference between them is the opponent's hand.
-    h = np.concatenate([d["h"].astype(np.float32), d["v"][:, None]], axis=1)
+    h = np.concatenate([d["h"].astype(np.float32), d["v"][:, None]]
+                       + ([d["obs"].astype(np.float32)] if a.raw_obs else []), axis=1)
     x_pub = h
     x_ora = np.concatenate([h, d["opp"].astype(np.float32)], axis=1)
     g_tr = d["game"][tr]
@@ -207,6 +220,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                      f"{r['oracle']['r2']:.3f} | **{r['oracle']['r2'] - r['public']['r2']:+.3f}** | "
                      f"{r['lin_public']['r2']:.3f} | {r['lin_oracle']['r2']:.3f} | "
                      f"**{r['lin_oracle']['r2'] - r['lin_public']['r2']:+.3f}** |")
+    lines += ["", "AUC (wins against losses, draws left out):", "",
+              "| slice | n | checkpoint's critic | MLP public | MLP + opp hand | Δ | linear on critic | linear + opp hand | Δ |",
+              "|:---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for r in rows:
+        lines.append(f"| {r['slice']} | {r['n']} | {r['own']['auc']:.4f} | {r['public']['auc']:.4f} | "
+                     f"{r['oracle']['auc']:.4f} | **{r['oracle']['auc'] - r['public']['auc']:+.4f}** | "
+                     f"{r['lin_public']['auc']:.4f} | {r['lin_oracle']['auc']:.4f} | "
+                     f"**{r['lin_oracle']['auc'] - r['lin_public']['auc']:+.4f}** |")
     print("\n".join(lines))
     if a.output_md:
         open(a.output_md, "w").write("\n".join(lines) + "\n")
