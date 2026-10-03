@@ -68,3 +68,15 @@ def test_contrast_target_follows_the_paired_evidence() -> None:
     assert abs(rest[112] - 0.45) < 1e-9 and abs(rest[113] - 0.05) < 1e-9
     # No event candidate: no target.
     assert contrast_target(_rec({112: "2" * 8, 113: "0" * 8}, {112: 0.5, 113: 0.5})) is None
+
+
+def test_gap_compares_the_event_with_the_models_own_move() -> None:
+    from tools.lib.gap_labels import EVENT, gap
+
+    # The model's own move (candidate 0) is influence; the event wins half the pairs it loses.
+    rec = _rec({112: "0000", EVENT: "2200", 113: "2222"}, {112: 0.9, EVENT: 0.0, 113: 0.1})
+    assert gap(rec) == 0.5   # against the model's move, not against the luckier coup line
+    # The model's own move is the event: compare with its likeliest other mode.
+    rec2 = _rec({EVENT: "2222", 112: "0000", 113: "2222"}, {EVENT: 0.6, 112: 0.3, 113: 0.1})
+    assert gap(rec2) == 1.0
+    assert gap(_rec({112: "22", 113: "00"}, {112: 0.5, 113: 0.5})) is None

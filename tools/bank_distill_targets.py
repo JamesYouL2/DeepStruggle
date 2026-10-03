@@ -155,19 +155,36 @@ def export(a: argparse.Namespace) -> int:
     rng = random.Random(a.seed)
     spot_lines: List[str] = []
     counts: Dict[str, int] = {}
-    # Contrastive labels: every position of the labelled banks, the event-or-not part from its playouts.
+    # Contrastive labels: every position of the labelled banks. --denoise labels each from a
+    # cross-fitted regression over all of them (tools/lib/gap_labels.py); otherwise from its own playouts.
+    all_recs: List[Dict[str, Any]] = []
     for path in a.labelled:
         with gzip.open(path, "rt", encoding="utf-8") as f:
-            recs = json.load(f)["records"]
-        for r in recs:
-            if r["kind"] != "mode":
+            all_recs += json.load(f)["records"]
+    denoised: List[Optional[float]] = []
+    if a.denoise and all_recs:
+        from tools.lib.gap_labels import label as gap_label, report as gap_report
+        from ai.eval.doctrine_census import cards
+
+        denoised, fit = gap_label(all_recs, seed=a.seed)
+        with open(a.out + ".labels.md", "w", encoding="utf-8") as f:
+            f.write(gap_report(fit, {k: str(v["name"]) for k, v in cards().items()}) + "\n")
+    for ri, r in enumerate(all_recs):
+        if r["kind"] != "mode":
+            continue
+        t = contrast_target(r)
+        if t is None:
+            continue
+        if denoised:
+            pe = denoised[ri]
+            if pe is None:
                 continue
-            t = contrast_target(r)
-            if t is None:
-                continue
-            key = f"{r['features']['side']}:{r['features'].get('card')}"
-            counts[key] = counts.get(key, 0) + 1
-            spot_lines.extend([json.dumps({"save": r["save"], "search_pi": t})] * a.repeat)
+            rest = sum(t["v"][1:])
+            t = {"a": t["a"], "v": [pe] + [(1.0 - pe) * v / rest if rest > 0 else (1.0 - pe) / (len(t["v"]) - 1)
+                                          for v in t["v"][1:]]}
+        key = f"{r['features']['side']}:{r['features'].get('card')}"
+        counts[key] = counts.get(key, 0) + 1
+        spot_lines.extend([json.dumps({"save": r["save"], "search_pi": t})] * a.repeat)
     for spot in a.spot:
         recs = spot_records(spot)
         counts[f"{os.path.basename(os.path.dirname(spot[0])) or spot[0]}:{spot[1]}:{spot[2]}"] = len(recs)
@@ -199,7 +216,8 @@ def export(a: argparse.Namespace) -> int:
     meta = {"searcher": "bank_distill_targets (event at bank-confirmed spots + own-policy anchors)",
             "commit": _commit(), "spots": counts, "repeat": a.repeat,
             "spot_targets": len(spot_lines), "anchor_games": len(anchor_lines),
-            "labelled_banks": a.labelled, "label": "P(event) = Phi(paired gap / se)", "anchor_targets_dropped_at_labelled_cards": stripped,
+            "labelled_banks": a.labelled, "label": ("cross-fitted regression (tools/lib/gap_labels.py)" if a.denoise
+                      else "P(event) = Phi(paired gap / se)"), "anchor_targets_dropped_at_labelled_cards": stripped,
             "merged_influence": False}
     with open(a.out + ".meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=1)
@@ -242,6 +260,9 @@ def main(argv: List[str]) -> int:
                    help="<bank.json.gz>:<US|USSR>:<card id>, repeatable")
     e.add_argument("--labelled", action="append", default=[],
                    help="a bank whose every play-mode record becomes a contrastive target (repeatable)")
+    e.add_argument("--denoise", action="store_true",
+                   help="label --labelled positions from a cross-fitted regression of the playout gap on the "
+                        "position's features (tools/lib/gap_labels.py) instead of each one's own playouts")
     e.add_argument("--anchors", action="append", default=[], help="own-policy target games (jsonl.gz), repeatable")
     e.add_argument("--repeat", type=int, default=4, help="copies of each spot or labelled position")
     e.add_argument("--seed", type=int, default=0)

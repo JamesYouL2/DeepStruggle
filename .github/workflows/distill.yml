@@ -29,6 +29,9 @@ on:
       labelled:
         description: "Space-separated bank run ids: every play-mode record a contrastive target (event-or-not from its playouts)"
         default: ""
+      denoise:
+        description: "`true`: label the labelled banks from a cross-fitted regression of the playout gap (tools/lib/gap_labels.py)"
+        default: "false"
       value_anchor:
         description: "Weight holding the value heads to the starting network (0 = off)"
         default: "0"
@@ -61,6 +64,7 @@ env:
   SPOTS: ${{ inputs.spots || '' }}
   LABELLED: ${{ inputs.labelled || '' }}
   VALUE_ANCHOR: ${{ inputs.value_anchor || '0' }}
+  DENOISE: ${{ inputs.denoise || 'false' }}
   NAME: ${{ inputs.name }}
   ANCHOR_GAMES: ${{ inputs.anchor_games || '400' }}
   REPEAT: ${{ inputs.repeat || '4' }}
@@ -104,7 +108,8 @@ jobs:
           export PYTHONPATH=.:build/release
           mkdir -p out
           .venv/bin/python tools/bank_distill_targets.py export $SPOT_ARGS $LABELLED_ARGS \
-            --anchors work/anchors.jsonl.gz --repeat "$REPEAT" --out work/distill.jsonl.gz | tee out/dataset_meta.json
+            $([ "$DENOISE" = "true" ] && echo "--denoise") --anchors work/anchors.jsonl.gz --repeat "$REPEAT" --out work/distill.jsonl.gz | tee out/dataset_meta.json
+          [ ! -f work/distill.jsonl.gz.labels.md ] || cp work/distill.jsonl.gz.labels.md out/labels.md
           touch out/check_before.md out/check_after.md
           [ -z "$SPOT_ARGS" ] || .venv/bin/python tools/bank_distill_targets.py check --checkpoint work/base.pt $SPOT_ARGS > out/check_before.md
           .venv/bin/python tools/train.py --mode distill --warmup-checkpoint work/base.pt \
@@ -117,11 +122,11 @@ jobs:
             echo "engine_fingerprint: $(.venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "checkpoint: $HF_REPO $CHECKPOINT"
             echo "spots: $SPOTS"
-            echo "labelled banks: $LABELLED  value anchor: $VALUE_ANCHOR"
+            echo "labelled banks: $LABELLED  denoise: $DENOISE  value anchor: $VALUE_ANCHOR"
             echo "anchor games: $ANCHOR_GAMES  repeat: $REPEAT  epochs: $EPOCHS  lr: $LR"
             echo "evaluate with: model=hf:gh:$GITHUB_RUN_ID/distill-$GITHUB_RUN_ID/$NAME.onnx"
           } > out/provenance.txt
-          { echo '```'; cat out/provenance.txt; echo '```'; echo '## Before'; cat out/check_before.md;
+          { echo '```'; cat out/provenance.txt; echo '```'; [ ! -f out/labels.md ] || { echo '## Denoised labels'; cat out/labels.md; }; echo '## Before'; cat out/check_before.md;
             echo; echo '## After'; cat out/check_after.md; echo; echo '```'; grep -E "epoch|wrote" out/distill.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
