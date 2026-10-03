@@ -26,6 +26,21 @@ from ai.models.coldwar_net_v2 import VP_LIMIT
 from bindings.ts_env import TsVectorizedEnv, model_obs_features
 from bindings.action_encoder import ActionEncoder
 from .rollout_buffer import RolloutBuffer, setup_phase_slot
+
+from bindings.action_encoder import ActionEncoder as _AE
+
+#: The play-mode block of the flat action space: EVENT, SPACE, OPS_INFLUENCE, OPS_COUP, OPS_REALIGN.
+PLAY_MODE_LO = _AE.PLAY_MODE_OFFSET
+PLAY_MODE_HI = _AE.PLAY_MODE_OFFSET + 5
+EVENT_SLOT = _AE.PLAY_MODE_OFFSET
+
+
+def play_mode_rows(masks: torch.Tensor) -> torch.Tensor:
+    """Rows whose decision is a play-mode choice for a chosen card: every legal action is a
+    play-mode slot, and event or space is among them (the deferred Ops-mode choice, which offers
+    only the three Ops slots, is not one)."""
+    legal = masks[:, PLAY_MODE_LO:PLAY_MODE_HI]
+    return legal[:, :2].any(dim=1) & (masks.sum(dim=1) == legal.sum(dim=1))
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -301,6 +316,7 @@ class BaseNashPGTrainer:
         setup_entropy_max_coef: float = 1.0,
         setup_mc_credit: bool = False,
         setup_script_frac: float = 0.0,
+        play_mode_temp: float = 1.0,
         setup_script_openings: Sequence[str] = (),
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
@@ -436,6 +452,13 @@ class BaseNashPGTrainer:
         # ratio starts at 1 and the clip bounds how fast a scripted placement can rise; the credit is
         # the game result (--setup-mc-credit, required), so a scripted opening gains probability only
         # where its games beat the critic's baseline. Drawn afresh for every game.
+        # --play-mode-temp (owner, 2026-10-02; the expert review's first candidate): the learner
+        # samples its play-mode decision -- event, space or Ops for a chosen card -- at this
+        # temperature, so events the policy gives p ~ 0.01 still get tried. Exploration only: the
+        # stored log-prob is the policy's own (tau = 1), as for the rollout temperatures.
+        if play_mode_temp <= 0.0:
+            raise ValueError("--play-mode-temp must be positive")
+        self.play_mode_temp = float(play_mode_temp)
         self.setup_script_frac = float(setup_script_frac)
         self.setup_script_openings: Tuple[str, ...] = tuple(setup_script_openings)
         self._script_open = np.full(self.num_envs, -1, dtype=np.int32)      # -1: its own setup
@@ -1179,6 +1202,8 @@ class BaseNashPGTrainer:
         seat_entropy_n = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
         setup_entropy_sum = torch.zeros((), device=self.device)
         setup_entropy_n = torch.zeros((), device=self.device)
+        pm_n = torch.zeros((), device=self.device)
+        pm_event = torch.zeros((), device=self.device)
         _setup_slot = setup_phase_slot()
         sp_games = 0.0
         sp_us_wins = 0.0
@@ -1231,10 +1256,18 @@ class BaseNashPGTrainer:
                 # Multi-temperature exploration: Sample actions from temperature-scaled
                 # behavior distribution beta(a|s) = softmax(logits / tau) with stratified per-env
                 # temperatures (tau in [0.10, 0.50]) to encourage diverse trajectory exploration.
+                # A play-mode decision: every legal action is a play-mode slot (event, space, Ops),
+                # and event or space is among them -- the event/Ops choice for a chosen card.
+                _pm = play_mode_rows(masks_t)
+                _pm_learner = _pm & learner_t
                 if self.temperature_schedule and self.num_envs > 1:
-                    scaled_logits = logits / self.env_temps
-                    scaled_probs = F.softmax(scaled_logits, dim=-1)
-                    actions_t = torch.multinomial(scaled_probs, 1).squeeze(1)
+                    row_temps = self.env_temps
+                else:
+                    row_temps = torch.ones((self.num_envs, 1), dtype=torch.float32, device=self.device)
+                if self.play_mode_temp != 1.0:
+                    row_temps = torch.where(_pm_learner.unsqueeze(1), row_temps * self.play_mode_temp, row_temps)
+                if (self.temperature_schedule and self.num_envs > 1) or self.play_mode_temp != 1.0:
+                    actions_t = torch.multinomial(F.softmax(logits / row_temps, dim=-1), 1).squeeze(1)
                 else:
                     actions_t = torch.multinomial(F.softmax(logits, dim=-1), 1).squeeze(1)
 
@@ -1270,6 +1303,8 @@ class BaseNashPGTrainer:
                     seat_entropy_sum[_code] += (_ent * _sel).sum()
                     seat_entropy_n[_code] += _sel.sum()
                 # The learner's setup placements (global phase slot exactly 0 in SETUP).
+                pm_n += _pm_learner.sum()
+                pm_event += (_pm_learner & (actions_t == EVENT_SLOT)).sum()
                 _setup_sel = learner_t & (obs_t[:, _setup_slot] < (0.5 / 6.0))
                 setup_entropy_sum += (_ent * _setup_sel).sum()
                 setup_entropy_n += _setup_sel.sum()
@@ -1474,6 +1509,9 @@ class BaseNashPGTrainer:
             self._update_entropy_ceiling(metrics)
             metrics["ent_coef_us"] = self.ent_coef_seat[1]
             metrics["ent_coef_ussr"] = self.ent_coef_seat[-1]
+        _pmn = float(pm_n.item())
+        if _pmn > 0:
+            metrics["play_mode_event_frac"] = float(pm_event.item()) / _pmn
         _sn = float(setup_entropy_n.item())
         if _sn > 0:
             metrics["entropy_setup"] = float(setup_entropy_sum.item()) / _sn

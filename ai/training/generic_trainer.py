@@ -1357,6 +1357,39 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
     }, path)
 
 
+#: Training-only heads that a resumed branch may add to a state written without them: each reads the
+#: trunk and is used only by its own loss, so forward() -- policy and value -- is unchanged by adding it.
+ADDABLE_HEADS: Tuple[str, ...] = ("card_aux_head.", "aux_own_head.", "aux_vp_head.")
+
+
+def _load_allowing_added_heads(module: nn.Module, state: Dict[str, Any]) -> List[str]:
+    """Load `state`; the only keys allowed to be missing are those of an ADDABLE_HEADS head the
+    module has and the state lacks. Anything else missing, or anything unexpected, refuses."""
+    missing, unexpected = module.load_state_dict(state, strict=False)
+    stale = [k for k in missing if not k.startswith(ADDABLE_HEADS)]
+    if stale or unexpected:
+        raise RuntimeError(f"resume state does not match {type(module).__name__}: missing {stale}, "
+                           f"unexpected {list(unexpected)}")
+    return list(missing)
+
+
+def _optimizer_state_with_added(model: nn.Module, added: Sequence[str], saved: Dict[str, Any]) -> Dict[str, Any]:
+    """The saved optimizer state extended to parameters added since: the added ones must be the
+    last parameters of the model (a head registered after everything else), so the saved state
+    indexes a prefix; they get no state, which Adam initialises on first use."""
+    names = [n for n, _ in model.named_parameters()]
+    added_params = [n for n in names if n in set(added)]
+    if names[len(names) - len(added_params):] != added_params:
+        raise RuntimeError(f"added parameters {added_params} are not the model's last parameters; "
+                           f"the saved optimizer state cannot be mapped onto them")
+    groups = saved["param_groups"]
+    if len(groups) != 1 or len(groups[0]["params"]) != len(names) - len(added_params):
+        raise RuntimeError("the saved optimizer state does not index the restored parameters")
+    out = {"state": dict(saved["state"]), "param_groups": [dict(groups[0])]}
+    out["param_groups"][0]["params"] = list(range(len(names)))
+    return out
+
+
 def load_resume_state(path: str, model: nn.Module, trainer: Any,
                       seed: Optional[int] = None) -> Dict[str, Any]:
     """Restore a run in place and return where it left off.
@@ -1371,9 +1404,20 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
     honouring the flag is less surprising than silently ignoring it.
     """
     blob = torch.load(path, map_location=trainer.device, weights_only=False)
-    model.load_state_dict(blob["model_state_dict"])
-    trainer.optimizer.load_state_dict(blob["optimizer_state_dict"])
-    trainer.reference_net.load_state_dict(blob["reference_state_dict"])
+    added = _load_allowing_added_heads(model, blob["model_state_dict"])
+    if added:
+        # A branch that adds a training-only head (e.g. --aux-card-events) to a state written
+        # without it: the trunk, policy and value are restored exactly and forward() is unchanged,
+        # so the branch starts as the saved network; the new head starts fresh, with fresh Adam
+        # moments, and the optimizer keeps every existing parameter's moments.
+        trainer.optimizer.load_state_dict(_optimizer_state_with_added(model, added, blob["optimizer_state_dict"]))
+        _load_allowing_added_heads(trainer.reference_net, blob["reference_state_dict"])
+        heads = sorted({k.split(".")[0] for k in added})
+        print(f"[resume] added to the saved network, starting fresh: {heads}; everything else restored",
+              flush=True)
+    else:
+        trainer.optimizer.load_state_dict(blob["optimizer_state_dict"])
+        trainer.reference_net.load_state_dict(blob["reference_state_dict"])
     trainer.total_env_steps = int(blob["total_env_steps"])
     if hasattr(trainer, "total_iterations"):
         trainer.total_iterations = int(blob.get("total_iterations", 0))
@@ -1526,6 +1570,7 @@ def train_pipeline(
     setup_mc_credit: bool = False,
     setup_script_frac: float = 0.0,
     setup_script_openings: Optional[Sequence[str]] = None,
+    play_mode_temp: float = 1.0,
     setup_mc_coef: float = 1.0,
     setup_mc_min_batch: int = 512,
     aux_own_coef: float = 0.0,
@@ -1810,6 +1855,7 @@ def train_pipeline(
         "forced_opening": forced_opening,
         "setup_mc_credit": bool(setup_mc_credit),
         "setup_script_frac": float(setup_script_frac),
+        "play_mode_temp": float(play_mode_temp),
         "setup_script_openings": (list(setup_script_openings) if setup_script_frac > 0.0 and setup_script_openings else None),
         "setup_mc_coef": float(setup_mc_coef),
         "setup_mc_min_batch": int(setup_mc_min_batch),
@@ -2063,6 +2109,7 @@ def train_pipeline(
         setup_mc_credit=setup_mc_credit,
         setup_script_frac=setup_script_frac,
         setup_script_openings=tuple(setup_script_openings or ()),
+        play_mode_temp=play_mode_temp,
         setup_mc_coef=setup_mc_coef,
         setup_mc_min_batch=setup_mc_min_batch,
         aux_own_coef=aux_own_coef,
@@ -2634,7 +2681,7 @@ def train_pipeline(
                     "ent_coef_us", "ent_coef_ussr", "entropy_setup", "setup_ent_coef",
                     "setup_mc_n", "setup_mc_ready", "setup_mc_pending", "setup_mc_result_mean",
                     "setup_mc_adv_mean", "setup_mc_adv_std", "setup_mc_clip_frac", "setup_mc_ratio_dev",
-                    "setup_script_games_frac", "setup_script_lp_mean", "setup_mc_adv_centre_us", "setup_mc_adv_centre_ussr",
+                    "setup_script_games_frac", "setup_script_lp_mean", "play_mode_event_frac", "setup_mc_adv_centre_us", "setup_mc_adv_centre_ussr",
                     # P29 bet 2's auxiliary targets
                     "aux_n", "aux_ready", "aux_pending", "aux_own_loss", "aux_own_acc", "aux_vp_loss",
                     "card_aux_n", "card_aux_ready", "card_aux_labelled", "card_aux_loss", "card_aux_r2", "card_aux_label_s",

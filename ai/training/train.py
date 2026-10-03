@@ -557,6 +557,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "(requires --setup-mc-credit). Lets the policy play, and be credited for, "
                              "openings it never samples itself (research/log/E7_shallow_setup_lock.md). "
                              "0 = off.")
+    parser.add_argument("--play-mode-temp", type=float, default=1.0,
+                        help="Sampling temperature for the learner's play-mode decisions only (event, "
+                             "space or Ops for a chosen card), so events the policy rarely plays still get "
+                             "tried; the stored log-prob stays the policy's own. 1.0 (default) = off. The "
+                             "expert review's first candidate (research/log/expert_review_E7.md).")
     parser.add_argument("--setup-script-openings", nargs="+", default=None,
                         help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
                              "uniformly per scripted game. Default: the four human variants "
@@ -912,6 +917,7 @@ def main():
             setup_mc_credit=args.setup_mc_credit,
             setup_script_frac=args.setup_script_frac,
             setup_script_openings=args.setup_script_openings,
+            play_mode_temp=args.play_mode_temp,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,
