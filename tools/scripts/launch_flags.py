@@ -54,6 +54,7 @@ _RENAMED = {
     "aux_own_coef": ("aux_ownership", lambda v: v),
     "aux_vp_coef": ("aux_vp_margin", lambda v: v),
     "aux_card_coef": ("aux_card_events", lambda v: v),
+    "playout_coef": ("playout_adv", lambda v: v),
 }
 #: keys of the `ladder_config` dict and the `--ladder-*` flag each one came from.
 _LADDER = {
@@ -122,6 +123,20 @@ _BEFORE_RECORDED = {
     "aux_card_buffer": lambda meta: 65536,
     "aux_card_steps": lambda meta: 4,
     "aux_card_batch": lambda meta: 512,
+    # Paired-branch playout advantages: none before they existed.
+    "playout_adv": lambda meta: 0.0,
+    "playout_sample_frac": lambda meta: 0.002,
+    "playout_pairs": lambda meta: 8,
+    "playout_candidates": lambda meta: 4,
+    "playout_horizon": lambda meta: "turn",
+    "playout_hidden": lambda meta: "true",
+    "playout_max_steps": lambda meta: 400,
+    "playout_decisions": lambda meta: ["SELECT_CARD", "SELECT_PLAY_MODE", "CHOOSE_BRANCH"],
+    "playout_buffer": lambda meta: 16384,
+    "playout_min_batch": lambda meta: 512,
+    "playout_steps": lambda meta: 2,
+    "playout_batch": lambda meta: 256,
+    "playout_min_scale": lambda meta: 0.05,
     # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
     # below as "unrecorded" for older runs and diffs as the default.
 }

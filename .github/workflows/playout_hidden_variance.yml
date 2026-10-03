@@ -1,0 +1,134 @@
+# Should --playout-adv redeal the hidden cards per pair? (tools/scripts/playout_hidden_variance.py)
+#
+#   gh workflow run playout_hidden_variance.yml --ref feat/playout-advantage -f runners=16 -f decisions=24
+#   gh run download <run-id> -n playout-hidden-variance-<run-id> -D data/reports/ci
+#
+# Each runner samples `decisions` decisions from the model's own self-play (its part number is its
+# seed) and plays every candidate from `hands` redealt hands x `dice` dice and from the true hand;
+# the pool job merges the parts into one report.
+name: playout-hidden-variance
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [feat/playout-advantage]
+    paths: [.github/workflows/playout_hidden_variance.yml]
+  workflow_dispatch:
+    inputs:
+      runners:
+        description: "Runners (each samples different decisions)"
+        default: "16"
+      decisions:
+        description: "Decisions per runner"
+        default: "24"
+      hands:
+        description: "Redealt hands per decision"
+        default: "8"
+      dice:
+        description: "Dice per hand"
+        default: "8"
+      hf_repo:
+        description: "Hugging Face repo the checkpoint is read from"
+        default: "mihaild/deepstruggle"
+      revision:
+        description: "Revision of hf_repo"
+        default: "83120a1a3e"
+      checkpoint:
+        description: "Snapshot path in hf_repo (its run directory's metadata.json is fetched beside it)"
+        default: "E7-04-44_20261001_090354/snapshot_1200029696steps.pt"
+
+permissions:
+  contents: read
+
+env:
+  RUNNERS: ${{ inputs.runners || '16' }}
+  DECISIONS: ${{ inputs.decisions || '24' }}
+  HANDS: ${{ inputs.hands || '8' }}
+  DICE: ${{ inputs.dice || '8' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+  REVISION: ${{ inputs.revision || '83120a1a3e' }}
+  CHECKPOINT: ${{ inputs.checkpoint || 'E7-04-44_20261001_090354/snapshot_1200029696steps.pt' }}
+  PYTHONPATH: .:build/release
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.parts.outputs.parts }}
+    steps:
+      - id: parts
+        run: python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+
+  measure:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: Fetch the checkpoint
+        run: |
+          python -m pip install -q huggingface_hub
+          hf download "$HF_REPO" "$CHECKPOINT" "$(dirname "$CHECKPOINT")/metadata.json" \
+            --revision "$REVISION" --local-dir data/checkpoints
+
+      - name: Measure part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && python tools/scripts/playout_hidden_variance.py \
+            --checkpoint "data/checkpoints/$CHECKPOINT" \
+            --decisions "$DECISIONS" --hands "$HANDS" --dice "$DICE" \
+            --seed "$((71000 + ${{ matrix.part }}))" \
+            --dump "parts/part-${{ matrix.part }}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playout-hidden-variance-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, measure]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: playout-hidden-variance-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.json 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          python tools/scripts/playout_hidden_variance.py --merge parts/part-*.json --output-md reports/report.md
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "checkpoint: $HF_REPO $REVISION:$CHECKPOINT"
+            echo "runners: $RUNNERS  decisions/runner: $DECISIONS  hands: $HANDS  dice: $DICE"
+          } > reports/provenance.txt
+          cp parts/part-*.json reports/
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playout-hidden-variance-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: error

@@ -314,6 +314,19 @@ class BaseNashPGTrainer:
         aux_card_buffer: int = 65536,
         aux_card_steps: int = 4,
         aux_card_batch: int = 512,
+        playout_coef: float = 0.0,
+        playout_sample_frac: float = 0.002,
+        playout_pairs: int = 8,
+        playout_candidates: int = 4,
+        playout_horizon: str = "turn",
+        playout_hidden: str = "true",
+        playout_max_steps: int = 400,
+        playout_decisions: Sequence[str] = ("SELECT_CARD", "SELECT_PLAY_MODE", "CHOOSE_BRANCH"),
+        playout_buffer: int = 16384,
+        playout_min_batch: int = 512,
+        playout_steps: int = 2,
+        playout_batch: int = 256,
+        playout_min_scale: float = 0.05,
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
@@ -586,6 +599,35 @@ class BaseNashPGTrainer:
         self._card_label_seconds = 0.0
         if self.aux_card_coef > 0.0 and not getattr(self.active_net, "card_aux", False):
             raise ValueError("--aux-card-events needs a network built with the card-event head")
+        #: --playout-adv: paired-branch playout advantages (ai.training.playout_advantage). A
+        #: sampled fraction of the learner's decisions of the chosen kinds is recorded with its
+        #: GameState; at the end of each rollout every candidate (the policy's K likeliest moves)
+        #: is played from P copies of the state that share their dice, by the current network on
+        #: both sides, to the end of the turn (then the critic) or of the game. The labelled
+        #: positions go into a FIFO buffer, and every iteration takes --playout-steps optimiser
+        #: steps of the all-actions policy gradient on minibatches drawn from it, as the card-event
+        #: target does with its buffer.
+        self.playout_coef = float(playout_coef)
+        self.playout_sample_frac = float(playout_sample_frac)
+        self.playout_candidates = int(playout_candidates)
+        self.playout_buffer = int(playout_buffer)
+        self.playout_min_batch = int(playout_min_batch)
+        self.playout_steps = int(playout_steps)
+        self.playout_batch = int(playout_batch)
+        self.playout_min_scale = float(playout_min_scale)
+        self._po_pending: List[Any] = []
+        self._po_ready: List[Any] = []
+        self._po_labelled = 0
+        self._po_stats: Dict[str, float] = {}
+        self._po_labeller: Optional[Any] = None
+        if self.playout_coef > 0.0:
+            from ai.training.playout_advantage import PlayoutLabeller, decision_codes
+            if self.playout_candidates < 2:
+                raise ValueError("--playout-candidates must be at least 2")
+            self.playout_decision_codes = frozenset(decision_codes(playout_decisions))
+            self._po_labeller = PlayoutLabeller(playout_pairs, playout_horizon, playout_max_steps,
+                                                self.merged_influence, model_obs_features(active_net),
+                                                hidden=playout_hidden)
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -833,6 +875,103 @@ class BaseNashPGTrainer:
         if len(self._card_ready) > self.aux_card_buffer:
             del self._card_ready[:len(self._card_ready) - self.aux_card_buffer]
         self._card_label_seconds += time.perf_counter() - t0
+
+    def _playout_record(self, obs_t: torch.Tensor, masks_t: torch.Tensor, logits: torch.Tensor,
+                        learner_np: np.ndarray, dp: np.ndarray) -> None:
+        """Playout advantages: file a sampled fraction of the learner's decisions of the chosen
+        kinds, with a copy of the true state and the policy's candidates."""
+        import ts_engine as ts
+        from ai.training.playout_advantage import PlayoutRecord, select_candidates
+        rows = np.flatnonzero(learner_np & (dp != 0)
+                              & (np.random.random(dp.shape[0]) < self.playout_sample_frac))
+        if rows.size == 0:
+            return
+        keep = []
+        for i in rows:
+            st = self.env.runner.get_state(int(i))
+            if st.current_phase == ts.Phase.SETUP or int(st.ctx().decision_type) not in self.playout_decision_codes:
+                continue
+            keep.append(int(i))
+        if not keep:
+            return
+        idx = torch.as_tensor(keep, device=obs_t.device)
+        lg = logits.index_select(0, idx).float().cpu().numpy()
+        mk = masks_t.index_select(0, idx)
+        mk_np = mk.cpu().numpy()
+        o16 = obs_t.index_select(0, idx).half()
+        for j, i in enumerate(keep):
+            if int((mk_np[j] != 0).sum()) < 2:
+                continue
+            cands, prior = select_candidates(lg[j], mk_np[j] != 0, self.playout_candidates)
+            self._po_pending.append(PlayoutRecord(self.env.runner.get_state(i).clone(), o16[j], mk[j],
+                                                  int(dp[i]), cands, prior))
+
+    def _playout_label(self) -> None:
+        """Playout advantages: play out this rollout's recorded decisions and buffer the labels."""
+        from ai.training.playout_advantage import PlayoutLabel, split_half_reliability
+        recs, self._po_pending = self._po_pending, []
+        if not recs or self._po_labeller is None:
+            self._po_stats = {"playout_recorded": 0.0}
+            return
+        self.active_net.eval()
+        mats, stats = self._po_labeller.label(self.active_net, recs, self.device,
+                                              int(np.random.randint(1, 1 << 62)))
+        spread, changed = [], 0
+        for rec, m in zip(recs, mats):
+            q = m.mean(axis=0)
+            self._po_ready.append(PlayoutLabel(rec.obs, rec.mask, rec.cands, q.astype(np.float32)))
+            spread.append(float(q.max() - q.min()))
+            changed += int(int(np.argmax(q)) != 0)       # candidate 0 is the policy's favourite
+        self._po_labelled += len(recs)
+        if len(self._po_ready) > self.playout_buffer:
+            del self._po_ready[:len(self._po_ready) - self.playout_buffer]
+        rel = split_half_reliability(mats)
+        stats.update({"playout_recorded": float(len(recs)),
+                      "playout_q_spread": float(np.mean(spread)),
+                      "playout_best_not_favourite": changed / len(recs)})
+        if rel is not None:
+            stats["playout_split_half_r"] = rel
+        self._po_stats = stats
+
+    def _playout_update(self) -> Dict[str, float]:
+        """Playout advantages: --playout-steps optimiser steps, each on a minibatch drawn from the
+        buffer, of the all-actions policy gradient over each position's candidates."""
+        from ai.training.playout_advantage import playout_pg_loss
+        out: Dict[str, float] = {"playout_ready": float(len(self._po_ready)),
+                                 "playout_labelled": float(self._po_labelled), **self._po_stats}
+        n = len(self._po_ready)
+        if n < max(1, self.playout_min_batch) or self.playout_steps <= 0:
+            return out
+        net = cast(Any, self.active_net)
+        net.train()
+        k = self.playout_candidates
+        acc: Dict[str, float] = {}
+        for _ in range(self.playout_steps):
+            pick = np.random.randint(0, n, size=min(self.playout_batch, n))
+            recs = [self._po_ready[int(i)] for i in pick]
+            dev = recs[0].obs.device
+            b = len(recs)
+            cands = np.zeros((b, k), dtype=np.int64)
+            valid = np.zeros((b, k), dtype=bool)
+            q = np.zeros((b, k), dtype=np.float32)
+            for r, rec in enumerate(recs):
+                m = len(rec.cands)
+                cands[r, :m], valid[r, :m], q[r, :m] = rec.cands, True, rec.q
+            obs = torch.stack([r.obs for r in recs]).float()
+            masks = torch.stack([r.mask for r in recs])
+            logits, _v, _vp = net(obs, masks)
+            loss, st = playout_pg_loss(logits, torch.from_numpy(cands).to(dev), torch.from_numpy(valid).to(dev),
+                                       torch.from_numpy(q).to(dev), self.playout_min_scale)
+            self.optimizer.zero_grad(set_to_none=True)
+            (self.playout_coef * loss).backward()
+            nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+            self.optimizer.step()
+            st["playout_loss"] = float(loss.detach())
+            for key, v in st.items():
+                acc[key] = acc.get(key, 0.0) + v / self.playout_steps
+        net.eval()
+        out.update(acc)
+        return out
 
     def _card_aux_update(self) -> Dict[str, float]:
         """Card-event target: --aux-card-steps optimiser steps, each on a minibatch drawn from the
@@ -1143,6 +1282,8 @@ class BaseNashPGTrainer:
                 self._aux_record(obs_t, np.asarray(_dp))
             if self.aux_card_coef > 0.0:
                 self._card_aux_record(obs_t, np.asarray(_dp))
+            if self.playout_coef > 0.0:
+                self._playout_record(obs_t, masks_t, logits, np.asarray(learner_np, dtype=bool), np.asarray(_dp))
             # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
             # step. A change by the next decision means a chance node came between them.
             _rngs_np: Optional[np.ndarray] = None
@@ -1303,6 +1444,9 @@ class BaseNashPGTrainer:
             _alpha = min(1.0, sp_games / self.wolf_ema_games)
             self.wolf_sp_ussr = ((1.0 - _alpha) * self.wolf_sp_ussr
                                  + _alpha * (1.0 - sp_us_wins / sp_games))
+
+        if self.playout_coef > 0.0:
+            self._playout_label()
 
         steps_collected = self.buffer_size * self.num_envs
         self.total_env_steps += steps_collected
@@ -1527,6 +1671,8 @@ class BaseNashPGTrainer:
             combined.update(self._aux_update())
         if self.aux_card_coef > 0.0:
             combined.update(self._card_aux_update())
+        if self.playout_coef > 0.0:
+            combined.update(self._playout_update())
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.

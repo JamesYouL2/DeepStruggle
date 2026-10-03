@@ -620,6 +620,43 @@ def build_parser() -> argparse.ArgumentParser:
                              "drawn from the buffer.")
     parser.add_argument("--aux-card-batch", type=int, default=512,
                         help="Positions per --aux-card-events minibatch.")
+    # Paired-branch playout advantages (ai/training/playout_advantage.py).
+    parser.add_argument("--playout-adv", type=float, default=0.0,
+                        help="Weight of the paired-playout policy gradient: at a sampled fraction of the "
+                             "learner's decisions, the policy's likeliest moves are each played out from "
+                             "paired copies of the true state (shared dice) by the current network, and "
+                             "the all-actions policy gradient over them is applied from a FIFO buffer. "
+                             "0, the default, records nothing.")
+    parser.add_argument("--playout-sample-frac", type=float, default=0.002,
+                        help="Fraction of the learner's decisions considered for --playout-adv (only the "
+                             "--playout-decisions kinds, outside setup, with two or more legal moves).")
+    parser.add_argument("--playout-pairs", type=int, default=8,
+                        help="Paired playouts per candidate; pair j of every candidate shares its dice.")
+    parser.add_argument("--playout-candidates", type=int, default=4,
+                        help="Candidates per decision: the policy's likeliest legal moves.")
+    parser.add_argument("--playout-horizon", choices=["turn", "game"], default="turn",
+                        help="turn: play to the end of the turn, then the critic values it for the "
+                             "decider; game: play to the end of the game.")
+    parser.add_argument("--playout-hidden", choices=["true", "redeal"], default="true",
+                        help="true: the cards the decider cannot see stay as dealt in every pair; redeal: "
+                             "they are redealt per pair, the same redeal for every candidate.")
+    parser.add_argument("--playout-max-steps", type=int, default=400,
+                        help="Network steps per labelling round at most; games still open are valued by "
+                             "the critic (counted in playout_capped).")
+    parser.add_argument("--playout-decisions", nargs="+", default=["SELECT_CARD", "SELECT_PLAY_MODE", "CHOOSE_BRANCH"],
+                        choices=["SELECT_CARD", "SELECT_PLAY_MODE", "SELECT_OP_MODE", "CHOOSE_BRANCH",
+                                 "CHOOSE_TIMING_BRANCH", "POINT_NODE"],
+                        help="Decision kinds --playout-adv samples.")
+    parser.add_argument("--playout-buffer", type=int, default=16384,
+                        help="FIFO buffer of labelled decisions the --playout-adv steps draw from.")
+    parser.add_argument("--playout-min-batch", type=int, default=512,
+                        help="Labelled decisions in the buffer before --playout-adv steps begin.")
+    parser.add_argument("--playout-steps", type=int, default=2,
+                        help="--playout-adv optimiser steps per iteration, each on one minibatch.")
+    parser.add_argument("--playout-batch", type=int, default=256,
+                        help="Decisions per --playout-adv minibatch.")
+    parser.add_argument("--playout-min-scale", type=float, default=0.05,
+                        help="Floor on the advantage standard deviation the --playout-adv loss divides by.")
     parser.add_argument("--ema-weights", type=float, default=0.0,
                         help="Keep an exponential moving average of the weights with this time "
                              "constant in env steps (0, the default, keeps none). Snapshots, pool "
@@ -888,6 +925,19 @@ def main():
             aux_card_buffer=args.aux_card_buffer,
             aux_card_steps=args.aux_card_steps,
             aux_card_batch=args.aux_card_batch,
+            playout_coef=args.playout_adv,
+            playout_sample_frac=args.playout_sample_frac,
+            playout_pairs=args.playout_pairs,
+            playout_candidates=args.playout_candidates,
+            playout_horizon=args.playout_horizon,
+            playout_hidden=args.playout_hidden,
+            playout_max_steps=args.playout_max_steps,
+            playout_decisions=args.playout_decisions,
+            playout_buffer=args.playout_buffer,
+            playout_min_batch=args.playout_min_batch,
+            playout_steps=args.playout_steps,
+            playout_batch=args.playout_batch,
+            playout_min_scale=args.playout_min_scale,
             lr_schedule=args.lr_schedule,
             lr_schedule_start=args.lr_schedule_start,
             lr_schedule_every=args.lr_schedule_every,
