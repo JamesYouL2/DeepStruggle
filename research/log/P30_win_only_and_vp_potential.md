@@ -21,7 +21,14 @@ head against it.
 | 80 | win only E7-15-44 | −3.6 ± 1.9 | −0.6 ± 1.8 | 52.1% ± 1.8 | 1454 |
 | 80 | VP potential E7-16-44 | −9.0 ± 1.8 | −6.4 ± 1.8 | 40.9% ± 1.8 | 1405 |
 | 80 | *seed 43 E7-08-43* | *−11.8 ± 1.8* | *−2.5 ± 1.8* | *37.2% ± 1.8* | *1421* |
+| 160 | win only E7-15-44 | −6.8 ± 1.9 | −0.9 ± 1.9 | 43.1% ± 1.8 | 1455 |
+| 160 | VP potential E7-16-44 | −1.4 ± 1.9 | −3.3 ± 1.9 | 47.1% ± 1.8 | 1487 |
+| 160 | *seed 43 E7-08-43* | *+0.7 ± 2.0* | *+5.0 ± 1.9* | *53.1% ± 1.8* | *1519* |
 
-E7-01-44@80M is 1476 in the same field (`data/reports/e7_15_16_80M.{md,json}`).
+E7-01-44 is 1476 at 80M and 1502 at 160M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
+
+At 160M win only is behind in the US seat (−6.8, 3.6 SE) and head to head (43.1%), and the VP
+potential has closed most of its 80M gap. Both are still within the seed's range (E7-08-43 moved
+from 37.2% to 53.1% between 80M and 160M).
