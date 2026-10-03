@@ -64,3 +64,16 @@ def test_discard_cards_log_the_rest_of_the_hand() -> None:
     rows = [r for r in d["plays"] if r["card"] in (D.FIVE_YEAR_PLAN, D.ALDRICH_AMES)]
     assert rows and all(0 <= r["other_scoring"] <= r["hand_other"] for r in rows)
     assert {c: D.cards()[c]["name"].endswith("Scoring") for c in D.SCORING_CARDS} == dict.fromkeys(D.SCORING_CARDS, True)
+
+
+def test_discard_timing_complies_with_one_or_zero_other_cards() -> None:
+    def play(hand_other: int, ar: int) -> dict:
+        return {"card": D.FIVE_YEAR_PLAN, "side": "USSR", "mode": "event", "owner": "opp", "turn": 5, "ar": ar,
+                "vp": 0, "ihc": False, "legal": ["event", "space", "influence"], "fires": True,
+                "hand_other": hand_other, "other_scoring": 0}
+    plays = [play(0, 7), play(1, 7), play(1, 6), play(2, 6), play(4, 2)]
+    heads = [{"card": D.FIVE_YEAR_PLAN, "side": "USSR", "turn": 5, "hand": [D.FIVE_YEAR_PLAN]}]
+    _md, s = D.report({"plays": plays, "headlines": heads, "coups": [], "boards": [], "games": 1}, {})
+    r = s["rules"]["USSR plays Five Year Plan with one or zero other cards in hand"]
+    assert r["n"] == 6 and r["complied"] == 3            # 0, 1 and 1 other card; a headline never complies
+    assert r["last_round"] == 2 and r["hand_other"] == [1, 2, 2]

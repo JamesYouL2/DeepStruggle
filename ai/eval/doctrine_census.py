@@ -219,9 +219,9 @@ def is_last_round(turn: int, ar: int) -> bool:
 
 
 def timing_rules() -> List[Tuple[str, int, str]]:
-    """(name, card, side): cards that side holds for its last action round."""
-    return [("USSR plays Five Year Plan in its last action round", FIVE_YEAR_PLAN, "USSR"),
-            ("US plays Aldrich Ames Remix in its last action round", ALDRICH_AMES, "US")]
+    """(name, card, side): discard events that side holds until at most one other card is left."""
+    return [("USSR plays Five Year Plan with one or zero other cards in hand", FIVE_YEAR_PLAN, "USSR"),
+            ("US plays Aldrich Ames Remix with one or zero other cards in hand", ALDRICH_AMES, "US")]
 
 
 def rules() -> List[Rule]:
@@ -296,22 +296,24 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
         out.append(f"| {name} | {len(sel)} | {_pct(k, len(sel))} |")
         summary["rules"][name] = {"n": len(sel), "complied": k}
 
-    # Timing (the owner, 2026-10-01): an opponent card whose event makes you discard is held for
-    # your last action round, when the discard finds nothing -- or only a bad scoring card.
-    out += ["", "## Timing: discard events held for the last action round", "",
-            "Every play of the card by that side, in any mode, headlines included (a headline is never "
-            "the last round). Last round = round 6 in turns 1–3, round 7 after (an eighth counts too).", "",
+    # Timing (the owner, 2026-10-01; restated 2026-10-03): an opponent card whose event makes you
+    # discard is held until at most one other card is left in hand, so the discard finds nothing --
+    # or only that card, a bad scoring card ideally. Complied = one or zero other cards; a headline
+    # never complies (the whole hand is still held).
+    out += ["", "## Timing: discard events held until one or zero other cards are left", "",
+            "Every play of the card by that side, in any mode, headlines included (a headline never "
+            "complies: the whole hand is still held). Complied = one or zero other cards in hand. The "
+            "last-round column is for reference: round 6 in turns 1–3, round 7 after (an eighth counts too).", "",
             "The ideal play (the owner): with exactly **one** other card in hand, so the discard can only "
             "take that card -- a bad scoring card, ideally. Other cards = the hand less the card played "
             "and the China Card.", "",
-            "| rule | plays | in the last round | headlined | 0 other cards | **1 other card** | 2+ | "
+            "| rule | plays | **0 or 1 other card** | in the last round | headlined | 0 other cards | 1 other card | 2+ | "
             "1 other, and it is a scoring card | rounds played in |",
-            "|:---|---:|---:|---:|---:|---:|---:|---:|:---|"]
+            "|:---|---:|---:|---:|---:|---:|---:|---:|---:|:---|"]
     for name, cid, side in timing_rules():
         sel = [r for r in plays if r["card"] == cid and r["side"] == side]
         nh = sum(1 for h in heads if h["card"] == cid and h["side"] == side)
-        k = sum(1 for r in sel if is_last_round(r["turn"], r["ar"]))
-        n = len(sel) + nh
+        last = sum(1 for r in sel if is_last_round(r["turn"], r["ar"]))
         ars = Counter(r["ar"] for r in sel)
         spread = ", ".join(f"AR{a} {ars[a]}" for a in sorted(ars))
         withh = [r for r in sel if "hand_other" in r]
@@ -319,9 +321,12 @@ def report(data: Dict[str, Any], meta: Dict[str, Any]) -> Tuple[str, Dict[str, A
         one = [r for r in withh if r["hand_other"] == 1]
         sc = sum(1 for r in one if r["other_scoring"])
         m = len(withh)
-        out.append(f"| {name} | {n} | {_pct(k, n)} | {_pct(nh, n)} | {_pct(h[0], m)} | {_pct(h[1], m)} | "
-                   f"{_pct(h[2], m)} | {sc} of {len(one)} | {spread} |")
-        summary["rules"][name] = {"n": n, "complied": k, "hand_other": [h[0], h[1], h[2]], "one_scoring": sc}
+        n = m + nh                      # plays whose hand was recorded, and headlines
+        k = h[0] + h[1]
+        out.append(f"| {name} | {n} | {_pct(k, n)} | {_pct(last, len(sel))} | {_pct(nh, n)} | {_pct(h[0], m)} | "
+                   f"{_pct(h[1], m)} | {_pct(h[2], m)} | {sc} of {len(one)} | {spread} |")
+        summary["rules"][name] = {"n": n, "complied": k, "last_round": last, "hand_other": [h[0], h[1], h[2]],
+                                  "one_scoring": sc}
 
     # Per card: own and neutral cards, the mode mix.
     per: Dict[Tuple[int, str], Counter] = defaultdict(Counter)
