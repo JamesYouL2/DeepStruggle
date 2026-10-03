@@ -109,3 +109,19 @@ Three changes, each committed separately on `hand-knowledge-tracking`:
 
 What remains in the C++ path is the network forward and its transfers (about a third) and the
 per-leaf observation extraction, now spread across cores.
+
+### Correction: training throughput without the profiler
+
+The training figures above were taken under py-spy (`--native`), which slowed the unsearched run by
+about a third and the searched runs much less, so they understate the baseline. Re-timed without
+the profiler, same flags, the same early stretch of a cold run (0.6–2.6M steps); the "before" is
+commit 6da56a5 built in a scratch worktree:
+
+| training | steps/s |
+|:---|---:|
+| no search | **81–90k** (E7-01-44 logged 75–87k over 5–20M) |
+| with search, before (Python tree, searched at every step) | **~9.2k** |
+| with search, after (deferred to rollout end, C++ tree) | **37–41k** |
+
+So the speed-up is **4.3×**, and search now costs about 2.2× the unsearched throughput, not the
+"8×" (before) or "1.6×" (after) a profiled baseline suggested.
