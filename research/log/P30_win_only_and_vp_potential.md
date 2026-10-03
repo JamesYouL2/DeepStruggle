@@ -36,8 +36,11 @@ head against it.
 | 480 | win only E7-15-44 | −4.7 ± 1.9 | +1.5 ± 1.8 | 49.9% ± 1.8 | 1561 |
 | 480 | VP potential E7-16-44 | −4.3 ± 1.8 | +2.2 ± 1.7 | 55.0% ± 1.8 | 1567 |
 | 480 | *seed 43 E7-08-43* | *−3.9 ± 1.8* | *+2.8 ± 1.8* | *48.9% ± 1.8* | *1565* |
+| 560 | win only E7-15-44 | −4.9 ± 1.8 | −2.2 ± 1.7 | 47.4% ± 1.8 | 1564 |
+| 560 | VP potential E7-16-44 | +1.2 ± 1.8 | +3.1 ± 1.7 | 51.4% ± 1.8 | 1584 |
+| 560 | *seed 43 E7-08-43* | *−3.8 ± 1.8* | *+3.3 ± 1.7* | *50.2% ± 1.8* | *1570* |
 
-E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M and 1565 at 480M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
+E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M, 1565 at 480M and 1578 at 560M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
 
@@ -57,3 +60,6 @@ head to head).
 
 At 480M the four runs are within 6 Elo of each other (1561–1567), with the same per-seat pattern
 for all three against E7-01-44 (US about −4, USSR about +2).
+
+At 560M (E7-01-44's last snapshot; the control is E7-02-44 from here) the VP potential is top of
+the field (1584) and win only bottom (1564), 20 Elo apart, inside the seed range.
