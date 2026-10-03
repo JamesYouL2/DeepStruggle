@@ -893,20 +893,35 @@ class BatchedSearch:
     @property
     def num_trees(self) -> int: ...
 
-    def reset(self, roots: Sequence[GameState], simulations: int, rng_state: Sequence[int]) -> None:
+    @property
+    def num_groups(self) -> int: ...
+
+    @property
+    def roots_phase(self) -> bool: ...
+
+    def reset(self, roots: Sequence[GameState], simulations: int, rng_state: Sequence[int], num_groups: int = 1) -> None:
         """
-        Start one search per root, each with its own budget of `simulations`. `rng_state` is random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly as the Python tree draws them.
+        Start one search per root, each with its own budget of `simulations`, the trees split into `num_groups` contiguous groups evaluated separately. `rng_state` is random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly as the Python tree draws them.
         """
+
+    def set_buffers(self, obs: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu')], masks: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu')]) -> None:
+        """
+        Write leaves into these caller-owned arrays (e.g. page-locked) instead of this object's own. The caller keeps them alive.
+        """
+
+    def group_offset(self, group: int) -> int: ...
+
+    def group_has_budget(self, group: int) -> bool: ...
 
     def mt_state(self) -> list[int]:
         """The random.Random state after this search's draws, for setstate()."""
 
-    def select_leaves(self) -> int:
+    def select_leaves(self, group: int) -> int:
         """
-        Write the leaves awaiting evaluation into rows [0, k) of observations() and masks() and return k; the first call returns the roots. 0 means every search is complete.
+        Write group `group`'s leaves awaiting evaluation into rows [group_offset, +k) of observations() and masks() and return k: its roots on the first call, then one simulation round per call. Take the groups' rounds in turn, 0, 1, ...
         """
 
-    def expand_and_backup(self, probs: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)], values: Annotated[NDArray[numpy.float32], dict(shape=(None,), order='C', device='cpu', writable=False)]) -> None:
+    def expand_and_backup(self, group: int, probs: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)], values: Annotated[NDArray[numpy.float32], dict(shape=(None,), order='C', device='cpu', writable=False)]) -> None:
         """
         The network's answer for rows [0, k): softmax over masked logits, and v_win from each leaf mover's side. Fills the leaves in and backs their values up.
         """

@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import math
 import random
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -48,6 +49,21 @@ _US = int(ts.Player.US)
 #: Smallest featuriser the batched path builds. Batches are sized up to the next power of two from
 #: here, so `refresh_all` -- which rebuilds every slot, filled or not -- does at most 2x the work.
 _MIN_FEATURISE_BUCKET = 64
+#: Trees per evaluation group: a batch of at least twice this many is split in two, and each half's
+#: leaves go to the network on their own, so the C++ tree can work on one half while the GPU
+#: evaluates the other. Both trees group the same way, because it changes the numbers, not only
+#: the speed: the network's output for a row depends on the batch it is evaluated in (measured on
+#: the GPU, no row of a split batch matched the whole batch bit for bit).
+_MIN_GROUP = 64
+
+
+def search_groups(n: int) -> List[Tuple[int, int]]:
+    """[begin, end) of each evaluation group of `n` trees: two halves from 2 x _MIN_GROUP on, else one."""
+    if n <= 0:
+        return []
+    g = 2 if n >= 2 * _MIN_GROUP else 1
+    per = -(-n // g)
+    return [(b, min(n, b + per)) for b in range(0, n, per)]
 
 
 def _legal_here(state: ts.GameState, action: int) -> bool:
@@ -136,6 +152,23 @@ class _BNode:
     expanded: bool = False
 
 
+class _SearchBuffers:
+    """The leaf and result buffers of one C++ searcher: page-locked on CUDA, so the copies to and
+    from the GPU are asynchronous. Rows are the searcher's leaf rows."""
+
+    def __init__(self, capacity: int, obs_width: int, device: torch.device) -> None:
+        self.cuda = device.type == "cuda"
+        pin = self.cuda
+        self.obs = torch.zeros((capacity, obs_width), dtype=torch.float32, pin_memory=pin)
+        self.masks = torch.zeros((capacity, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.uint8,
+                                 pin_memory=pin)
+        self.probs = torch.zeros((capacity, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.float32,
+                                 pin_memory=pin)
+        self.values = torch.zeros(capacity, dtype=torch.float32, pin_memory=pin)
+        self.probs_np = self.probs.numpy()
+        self.values_np = self.values.numpy()
+
+
 class BatchedMCTS:
     """Run one MCTS per input position, stepping them together to batch the network calls."""
 
@@ -152,8 +185,10 @@ class BatchedMCTS:
         #: capacity use the per-node path rather than being silently truncated.
         self._featurisers: Dict[int, ts.VectorizedBatchRunner] = {}
         self._featurise_capacity = featurise_capacity
-        #: C++ searchers, one per power-of-two batch size, built on first use (backend "cpp").
+        #: C++ searchers, one per power-of-two batch size, built on first use (backend "cpp"),
+        #: each with the buffers it writes leaves into and reads results from.
         self._cpp: Dict[int, ts.BatchedSearch] = {}
+        self._cpp_bufs: Dict[int, _SearchBuffers] = {}
         if self.cfg.backend not in ("python", "cpp"):
             raise ValueError(f"unknown search backend {self.cfg.backend!r}")
         #: Roots of the current call, so _evaluate_batch can tell a caller-owned state from one
@@ -351,9 +386,11 @@ class BatchedMCTS:
             roots.append(self._make_node(s))
             inherited.append(False)
 
-        # One batch for every root, then one batch per simulation round.
+        # One batch per group for the roots, then one per group per simulation round.
+        groups = search_groups(len(roots))
         self._root_nodes = [r for r in roots if r is not None]
-        self._evaluate_batch([r for r in roots if r is not None and not r.expanded])
+        for b, e in groups:
+            self._evaluate_batch([r for r in roots[b:e] if r is not None and not r.expanded])
         self._root_nodes = []
 
         for r, was_inherited in zip(roots, inherited):
@@ -374,17 +411,19 @@ class BatchedMCTS:
                      for r in roots]
 
         while any(remaining):
-            pending: List[Tuple[List[Tuple[_BNode, int]], _BNode]] = []
-            for i, r in enumerate(roots):
-                if r is None or r.terminal or not r.actions or remaining[i] <= 0:
-                    continue
-                remaining[i] -= 1
-                pending.append(self._descend(r))
-            # Every tree contributed at most one leaf, so a single batch completes the round.
-            self._evaluate_batch([leaf for _, leaf in pending
-                                  if not leaf.terminal and not leaf.expanded])
-            for path, leaf in pending:
-                self._backup(path, leaf.value_us)
+            for b, e in groups:
+                pending: List[Tuple[List[Tuple[_BNode, int]], _BNode]] = []
+                for i in range(b, e):
+                    r = roots[i]
+                    if r is None or r.terminal or not r.actions or remaining[i] <= 0:
+                        continue
+                    remaining[i] -= 1
+                    pending.append(self._descend(r))
+                # Every tree contributed at most one leaf, so one batch completes the group's round.
+                self._evaluate_batch([leaf for _, leaf in pending
+                                      if not leaf.terminal and not leaf.expanded])
+                for path, leaf in pending:
+                    self._backup(path, leaf.value_us)
 
         if reuse:
             for i, r in enumerate(roots):
@@ -405,8 +444,8 @@ class BatchedMCTS:
             out.append(s)
         return out
 
-    def _cpp_for(self, n: int) -> ts.BatchedSearch:
-        """The smallest cached C++ searcher holding `n` trees (a power of two)."""
+    def _cpp_for(self, n: int) -> Tuple[ts.BatchedSearch, "_SearchBuffers"]:
+        """The smallest cached C++ searcher holding `n` trees (a power of two), with its buffers."""
         cap = _MIN_FEATURISE_BUCKET
         while cap < n:
             cap *= 2
@@ -415,8 +454,45 @@ class BatchedMCTS:
             from bindings.ts_env import model_obs_features
             cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
                                   int(model_obs_features(self.model)), False)
+            bufs = _SearchBuffers(cap, int(cs.obs_width), torch.device(self.device))
+            cs.set_buffers(bufs.obs.numpy(), bufs.masks.numpy())
             self._cpp[cap] = cs
-        return cs
+            self._cpp_bufs[cap] = bufs
+        return cs, self._cpp_bufs[cap]
+
+    def _launch(self, cs: ts.BatchedSearch, bufs: "_SearchBuffers", g: int) -> Optional[Tuple[int, int, object]]:
+        """Group g's next leaves from the C++ tree, sent to the network without waiting for it.
+
+        On CUDA the copies in and out are asynchronous (page-locked buffers) and an event marks
+        the results ready, so the caller can run the tree for another group meanwhile.
+        """
+        k = cs.select_leaves(g)
+        if k == 0:
+            return None
+        off = cs.group_offset(g)
+        with torch.no_grad():
+            obs = bufs.obs[off:off + k].to(self.device, non_blocking=True)
+            masks = bufs.masks[off:off + k].to(self.device, non_blocking=True)
+            logits, v_win, _ = self.model.forward(obs, masks)
+            probs = torch.softmax(logits.float(), dim=-1)
+            bufs.probs[off:off + k].copy_(probs, non_blocking=True)
+            bufs.values[off:off + k].copy_(v_win.float().reshape(-1), non_blocking=True)
+        event = None
+        if bufs.cuda:
+            event = torch.cuda.Event()
+            event.record()
+        return k, off, event
+
+    @staticmethod
+    def _finish(cs: ts.BatchedSearch, bufs: "_SearchBuffers", g: int,
+                job: Optional[Tuple[int, int, object]]) -> None:
+        """Wait for group g's results and hand them to the C++ tree."""
+        if job is None:
+            return
+        k, off, event = job
+        if event is not None:
+            cast(torch.cuda.Event, event).synchronize()
+        cs.expand_and_backup(g, bufs.probs_np[off:off + k], bufs.values_np[off:off + k])
 
     def _search_cpp(self, states: Sequence[ts.GameState]) -> List[Optional[_BNode]]:
         """`_search` on the C++ tree. The roots are prepared here exactly as the Python path
@@ -426,34 +502,35 @@ class BatchedMCTS:
         roots = self._root_states(states)
         if not roots:
             return []
-        cs = self._cpp_for(len(roots))
+        cs, bufs = self._cpp_for(len(roots))
+        groups = search_groups(len(roots))
         # The children's chance seeds come from this object's generator, drawn in C++ exactly as
         # the Python tree would draw them, and the generator is handed back advanced.
         rng_version, rng_words, rng_gauss = self._rng.getstate()
-        cs.reset(roots, int(cfg.simulations), list(rng_words))
-        roots_pending = any(not ts.Engine.is_terminal(r) for r in roots)
-        k = cs.select_leaves()
-        while k:
-            obs = torch.from_numpy(cs.observations()[:k]).to(self.device)
-            masks = torch.from_numpy(cs.masks()[:k]).to(self.device)
-            with torch.no_grad():
-                logits, v_win, _ = self.model.forward(obs, masks)
-                probs = torch.softmax(logits.float(), dim=-1).cpu().numpy()
-                values = v_win.float().reshape(-1).cpu().numpy()
-            cs.expand_and_backup(np.ascontiguousarray(probs), np.ascontiguousarray(values))
-            if roots_pending:
-                roots_pending = False
-                # Root noise, after the roots' own evaluation, from this object's stream -- as
-                # the Python path draws it.
-                if cfg.dirichlet_frac > 0.0:
-                    f = cfg.dirichlet_frac
-                    for i in range(len(roots)):
-                        pri = cs.root(i)[4]
-                        if len(pri) > 1:
-                            noise = self._np_rng.dirichlet([cfg.dirichlet_alpha] * len(pri))
-                            cs.set_root_priors(i, [(1.0 - f) * p + f * float(z)
-                                                   for p, z in zip(pri, noise)])
-            k = cs.select_leaves()
+        cs.reset(roots, int(cfg.simulations), list(rng_words), len(groups))
+        # The roots, every group's sent before any is waited for.
+        jobs = [self._launch(cs, bufs, g) for g in range(len(groups))]
+        for g, job in enumerate(jobs):
+            self._finish(cs, bufs, g, job)
+        # Root noise, after the roots' own evaluation, from this object's stream -- as the Python
+        # path draws it.
+        if cfg.dirichlet_frac > 0.0:
+            f = cfg.dirichlet_frac
+            for i in range(len(roots)):
+                pri = cs.root(i)[4]
+                if len(pri) > 1:
+                    noise = self._np_rng.dirichlet([cfg.dirichlet_alpha] * len(pri))
+                    cs.set_root_priors(i, [(1.0 - f) * p + f * float(z) for p, z in zip(pri, noise)])
+        # The rounds, pipelined: while the network evaluates one group's leaves, the tree selects
+        # the next group's. Rounds are still taken group 0, 1, 0, 1, ... -- the Python tree's
+        # order -- so the chance seeds come out the same.
+        queue = deque((g, self._launch(cs, bufs, g)) for g in range(len(groups))
+                      if cs.group_has_budget(g))
+        while queue:
+            g, job = queue.popleft()
+            self._finish(cs, bufs, g, job)
+            if cs.group_has_budget(g):
+                queue.append((g, self._launch(cs, bufs, g)))
         self._rng.setstate((rng_version, tuple(cs.mt_state()), rng_gauss))
         out: List[Optional[_BNode]] = []
         for i, st in enumerate(roots):

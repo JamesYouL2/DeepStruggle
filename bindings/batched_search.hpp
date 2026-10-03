@@ -138,7 +138,8 @@ public:
         : capacity_(capacity), c_puct_(c_puct), auto_advance_(auto_advance),
           features_(obs_features), merged_(merged_influence),
           obs_width_(ts::OBS_SIZE_V23 + ts::obs_features::extra_width(obs_features)),
-          obs_(capacity * obs_width_, 0.0f), masks_(capacity * ts::FLAT_ACTION_SPACE_SIZE, 0) {
+          own_obs_(capacity * obs_width_, 0.0f), own_masks_(capacity * ts::FLAT_ACTION_SPACE_SIZE, 0),
+          obs_(own_obs_.data()), masks_(own_masks_.data()) {
         if (obs_features & ~ts::obs_features::ALL)
             throw std::invalid_argument("BatchedSearch: unknown observation feature bits");
     }
@@ -146,18 +147,33 @@ public:
     size_t capacity() const { return capacity_; }
     size_t obs_width() const { return obs_width_; }
     size_t num_trees() const { return trees_.size(); }
-    float* obs_data() { return obs_.data(); }
-    uint8_t* mask_data() { return masks_.data(); }
+    size_t num_groups() const { return groups_.size(); }
+    float* obs_data() { return obs_; }
+    uint8_t* mask_data() { return masks_; }
 
-    // Start one search per root. The roots are searched exactly as given (the caller settles and
-    // determinizes them). `simulations` is each tree's own budget; `rng_state` is the caller's
-    // random.Random state (getstate()[1]), which the children's chance seeds are drawn from.
+    // Write leaves into caller-owned buffers instead of this object's own -- page-locked memory, so
+    // the copy to the GPU runs asynchronously. The caller keeps them alive while this object uses
+    // them; capacity x obs_width floats and capacity x FLAT_ACTION_SPACE_SIZE bytes.
+    void set_buffers(float* obs, uint8_t* masks) {
+        obs_ = obs;
+        masks_ = masks;
+    }
+
+    // Start one search per root, the trees split into `num_groups` contiguous groups of (nearly)
+    // equal size. Each group's leaves are handed out and evaluated on their own, so one group's
+    // tree work can run while the network evaluates another's. The grouping is part of what the
+    // search computes, not only how fast: the network's output for a row depends on the batch it
+    // is evaluated in, so the Python tree groups the same way (ai/search/batched_mcts.py).
+    // `simulations` is each tree's own budget; `rng_state` is the caller's random.Random state
+    // (getstate()[1]), which the children's chance seeds are drawn from.
     void reset(const std::vector<ts::GameState>& roots, int64_t simulations,
-               const std::vector<uint64_t>& rng_state) {
+               const std::vector<uint64_t>& rng_state, size_t num_groups) {
         rng_.set_state(rng_state);
         if (roots.size() > capacity_)
             throw std::invalid_argument("BatchedSearch: " + std::to_string(roots.size()) +
                                         " roots exceed capacity " + std::to_string(capacity_));
+        if (num_groups == 0 || (num_groups > roots.size() && !roots.empty()))
+            throw std::invalid_argument("BatchedSearch: need 1 <= num_groups <= number of roots");
         trees_.resize(roots.size());
         for (size_t i = 0; i < roots.size(); ++i) {
             Tree& t = trees_[i];
@@ -172,80 +188,105 @@ public:
             t.leaf = -1;
             t.row = -1;
         }
+        groups_.clear();
+        const size_t n = roots.size();
+        const size_t per = n == 0 ? 0 : (n + num_groups - 1) / num_groups;
+        for (size_t b = 0; b < n || groups_.empty(); b += per) {
+            groups_.push_back({b, std::min(n, b + per)});
+            if (per == 0) break;
+        }
+        roots_pending_.assign(groups_.size(), true);
         simulations_ = simulations;
         roots_phase_ = true;
     }
 
-    // Write the observations and masks of the leaves awaiting evaluation into rows [0, k) and
-    // return k. The first call after reset() returns the roots; after that, one new leaf per tree
-    // still holding budget. Leaves that are terminal are backed up here without an evaluation, and
-    // rounds are repeated until at least one leaf needs the network or every budget is spent.
-    // 0 means the search is complete.
-    size_t select_leaves() {
+    // First row of group g's leaves in the buffers: its leaves fill [group_offset(g), +k).
+    size_t group_offset(size_t g) const { return group(g).first; }
+
+    // Group g's leaves awaiting evaluation, written into rows [group_offset(g), +k); returns k.
+    // While the roots are being evaluated (the first call per group after reset) it returns the
+    // group's roots. After that each call is one simulation round for the group: every tree still
+    // holding budget walks to a leaf, terminal leaves are backed up at once, and the rest are the
+    // rows returned -- possibly none. Rounds must be taken group 0, 1, ... in turn (as the Python
+    // tree takes them), so that the chance seeds are drawn in its order.
+    size_t select_leaves(size_t g) {
+        const auto [b, e] = group(g);
         size_t k = 0;
         if (roots_phase_) {
-            for (Tree& t : trees_) {
+            if (!roots_pending_[g])
+                throw std::logic_error("select_leaves: this group's roots were already evaluated");
+            for (size_t i = b; i < e; ++i) {
+                Tree& t = trees_[i];
                 if (!t.nodes[0].terminal && !t.nodes[0].expanded) {
                     t.leaf = 0;
                     t.path.clear();
-                    t.row = static_cast<int32_t>(k++);
+                    t.row = static_cast<int32_t>(b + k++);
                 }
             }
             if (k > 0) {
-                featurise_rows();
-                return k;
+                featurise_rows(b, e);
+            } else {
+                roots_done(g);
             }
-            begin_simulations();
+            return k;
         }
-        while (true) {
-            bool any_budget = false;
-            for (const Tree& t : trees_) any_budget = any_budget || t.remaining > 0;
-            if (!any_budget) return 0;
-            for_each_tree([this](Tree& t) {
+        for_each_tree(b, e, [this](Tree& t) {
+            t.leaf = -1;
+            t.new_edge = -1;
+            if (t.remaining <= 0) return;
+            t.remaining -= 1;
+            walk(t);
+        });
+        for (size_t i = b; i < e; ++i)
+            if (trees_[i].new_edge >= 0) trees_[i].seed = rng_.getrandbits64();
+        for_each_tree(b, e, [this](Tree& t) {
+            if (t.new_edge >= 0) create_child(t);
+            if (t.leaf < 0) return;
+            const Node& leaf = t.nodes[static_cast<size_t>(t.leaf)];
+            if (leaf.terminal) {
+                backup(t, leaf.value_us);
                 t.leaf = -1;
-                t.new_edge = -1;
-                if (t.remaining <= 0) return;
-                t.remaining -= 1;
-                walk(t);
-            });
-            for (Tree& t : trees_)
-                if (t.new_edge >= 0) t.seed = rng_.getrandbits64();
-            for_each_tree([this](Tree& t) {
-                if (t.new_edge >= 0) create_child(t);
-                if (t.leaf < 0) return;
-                const Node& leaf = t.nodes[static_cast<size_t>(t.leaf)];
-                if (leaf.terminal) {
-                    backup(t, leaf.value_us);
-                    t.leaf = -1;
-                }
-            });
-            for (Tree& t : trees_)
-                if (t.leaf >= 0) t.row = static_cast<int32_t>(k++);
-            if (k > 0) {
-                featurise_rows();
-                return k;
             }
-        }
+        });
+        for (size_t i = b; i < e; ++i)
+            if (trees_[i].leaf >= 0) trees_[i].row = static_cast<int32_t>(b + k++);
+        if (k > 0) featurise_rows(b, e);
+        return k;
     }
 
-    // Fill in the pending leaves from the network: `probs` is (k, FLAT_ACTION_SPACE_SIZE), the
-    // softmax over the masked logits, and `values` is (k,), v_win from each leaf's mover's side.
-    void expand_and_backup(const float* probs, const float* values, size_t k) {
-        for (const Tree& t : trees_) {
-            if (t.leaf >= 0 && (t.row < 0 || static_cast<size_t>(t.row) >= k))
+    // Fill in group g's pending leaves from the network: `probs` is (k, FLAT_ACTION_SPACE_SIZE),
+    // the softmax over the masked logits, and `values` is (k,), v_win from each leaf's mover's
+    // side -- row j being the leaf in buffer row group_offset(g) + j.
+    void expand_and_backup(size_t g, const float* probs, const float* values, size_t k) {
+        const auto [b, e] = group(g);
+        for (size_t i = b; i < e; ++i) {
+            const Tree& t = trees_[i];
+            if (t.leaf >= 0 && (t.row < static_cast<int32_t>(b) || static_cast<size_t>(t.row) >= b + k))
                 throw std::invalid_argument("expand_and_backup: fewer rows than pending leaves");
         }
-        for_each_tree([&](Tree& t) {
+        const bool roots = roots_phase_;
+        for_each_tree(b, e, [&](Tree& t) {
             if (t.leaf < 0) return;
-            const size_t r = static_cast<size_t>(t.row);
+            const size_t r = static_cast<size_t>(t.row) - b;
             expand(t, static_cast<size_t>(t.leaf), probs + r * ts::FLAT_ACTION_SPACE_SIZE,
-                   &masks_[r * ts::FLAT_ACTION_SPACE_SIZE], values[r]);
-            if (!roots_phase_) backup(t, t.nodes[static_cast<size_t>(t.leaf)].value_us);
+                   masks_ + static_cast<size_t>(t.row) * ts::FLAT_ACTION_SPACE_SIZE, values[r]);
+            if (!roots) backup(t, t.nodes[static_cast<size_t>(t.leaf)].value_us);
             t.leaf = -1;
             t.row = -1;
         });
-        if (roots_phase_) begin_simulations();
+        if (roots) roots_done(g);
     }
+
+    // Is any tree of group g still holding budget? (False while the roots are being evaluated.)
+    bool group_has_budget(size_t g) const {
+        if (roots_phase_) return false;
+        const auto [b, e] = group(g);
+        for (size_t i = b; i < e; ++i)
+            if (trees_[i].remaining > 0) return true;
+        return false;
+    }
+
+    bool roots_phase() const { return roots_phase_; }
 
     // Replace a root's priors (root noise is drawn by the caller, from its own stream).
     void set_root_priors(size_t i, const std::vector<double>& priors) {
@@ -267,6 +308,19 @@ public:
     size_t tree_size(size_t i) { return tree(i).nodes.size(); }
 
 private:
+    const std::pair<size_t, size_t>& group(size_t g) const {
+        if (g >= groups_.size()) throw std::out_of_range("BatchedSearch: no group " + std::to_string(g));
+        return groups_[g];
+    }
+
+    // Group g's roots are evaluated; the simulations start once every group's are.
+    void roots_done(size_t g) {
+        roots_pending_[g] = false;
+        for (bool p : roots_pending_)
+            if (p) return;
+        begin_simulations();
+    }
+
     Tree& tree(size_t i) {
         if (i >= trees_.size()) throw std::out_of_range("BatchedSearch: no tree " + std::to_string(i));
         return trees_[i];
@@ -410,12 +464,12 @@ private:
     // `body(tree)` for every tree across the OpenMP team. An exception cannot cross the team, so
     // the first one is kept and rethrown here once every thread is done.
     template <class F>
-    void for_each_tree(F&& body) {
+    void for_each_tree(size_t b, size_t e, F&& body) {
         std::exception_ptr err;
         std::mutex mu;
-        gomp_parallel_for(static_cast<int64_t>(trees_.size()), [&](int64_t i) {
+        gomp_parallel_for(static_cast<int64_t>(e - b), [&](int64_t i) {
             try {
-                body(trees_[static_cast<size_t>(i)]);
+                body(trees_[b + static_cast<size_t>(i)]);
             } catch (...) {
                 std::lock_guard<std::mutex> lock(mu);
                 if (!err) err = std::current_exception();
@@ -424,16 +478,16 @@ private:
         if (err) std::rethrow_exception(err);
     }
 
-    void featurise_rows() {
-        for_each_tree([this](Tree& t) {
+    void featurise_rows(size_t b, size_t e) {
+        for_each_tree(b, e, [this](Tree& t) {
             if (t.leaf < 0) return;
             const Node& nd = t.nodes[static_cast<size_t>(t.leaf)];
             const size_t r = static_cast<size_t>(t.row);
-            float* row = &obs_[r * obs_width_];
+            float* row = obs_ + r * obs_width_;
             const size_t w = ts::extract_observation_features(
                 nd.state, acting_player(nd.state), features_, row);
             if (w < obs_width_) std::memset(row + w, 0, (obs_width_ - w) * sizeof(float));
-            ts::Engine::get_flat_action_mask(nd.state, &masks_[r * ts::FLAT_ACTION_SPACE_SIZE],
+            ts::Engine::get_flat_action_mask(nd.state, masks_ + r * ts::FLAT_ACTION_SPACE_SIZE,
                                              merged_);
         });
     }
@@ -444,12 +498,16 @@ private:
     uint32_t features_;
     bool merged_;
     size_t obs_width_;
-    std::vector<float> obs_;
-    std::vector<uint8_t> masks_;
+    std::vector<float> own_obs_;
+    std::vector<uint8_t> own_masks_;
+    float* obs_;              // own_obs_, or the caller's page-locked buffer (set_buffers)
+    uint8_t* masks_;
     std::vector<Tree> trees_;
     PyRandom rng_;
     int64_t simulations_ = 0;
     bool roots_phase_ = false;
+    std::vector<std::pair<size_t, size_t>> groups_;  // [begin, end) of each group's trees
+    std::vector<bool> roots_pending_;
 };
 
 }  // namespace ts_search

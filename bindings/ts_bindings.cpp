@@ -1012,27 +1012,45 @@ NB_MODULE(ts_engine, m) {
         .def_prop_ro("capacity", &BatchedSearch::capacity)
         .def_prop_ro("obs_width", &BatchedSearch::obs_width)
         .def_prop_ro("num_trees", &BatchedSearch::num_trees)
+        .def_prop_ro("num_groups", &BatchedSearch::num_groups)
+        .def_prop_ro("roots_phase", &BatchedSearch::roots_phase)
         .def("reset", &BatchedSearch::reset, nb::arg("roots"), nb::arg("simulations"),
-             nb::arg("rng_state"),
-             "Start one search per root, each with its own budget of `simulations`. `rng_state` is "
+             nb::arg("rng_state"), nb::arg("num_groups") = 1,
+             "Start one search per root, each with its own budget of `simulations`, the trees split "
+             "into `num_groups` contiguous groups evaluated separately. `rng_state` is "
              "random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly "
              "as the Python tree draws them.")
+        .def("set_buffers",
+             [](BatchedSearch& self,
+                nb::ndarray<float, nb::ndim<2>, nb::c_contig, nb::device::cpu> obs,
+                nb::ndarray<uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu> masks) {
+                 if (obs.shape(0) != self.capacity() || obs.shape(1) != self.obs_width())
+                     throw std::invalid_argument("set_buffers: obs must be (capacity, obs_width)");
+                 if (masks.shape(0) != self.capacity() || masks.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
+                     throw std::invalid_argument("set_buffers: masks must be (capacity, action space)");
+                 self.set_buffers(obs.data(), masks.data());
+             }, nb::arg("obs"), nb::arg("masks"),
+             "Write leaves into these caller-owned arrays (e.g. page-locked) instead of this "
+             "object's own. The caller keeps them alive.")
+        .def("group_offset", &BatchedSearch::group_offset, nb::arg("group"))
+        .def("group_has_budget", &BatchedSearch::group_has_budget, nb::arg("group"))
         .def("mt_state", &BatchedSearch::mt_state,
              "The random.Random state after this search's draws, for setstate().")
-        .def("select_leaves", &BatchedSearch::select_leaves,
-             "Write the leaves awaiting evaluation into rows [0, k) of observations() and masks() "
-             "and return k; the first call returns the roots. 0 means every search is complete.")
+        .def("select_leaves", &BatchedSearch::select_leaves, nb::arg("group"),
+             "Write group `group`'s leaves awaiting evaluation into rows [group_offset, +k) of "
+             "observations() and masks() and return k: its roots on the first call, then one "
+             "simulation round per call. Take the groups' rounds in turn, 0, 1, ...")
         .def("expand_and_backup",
-             [](BatchedSearch& self,
+             [](BatchedSearch& self, size_t group,
                 nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> probs,
                 nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> values) {
                  if (probs.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
                      throw std::invalid_argument("expand_and_backup: probs must be (k, action space)");
                  if (values.shape(0) != probs.shape(0))
                      throw std::invalid_argument("expand_and_backup: one value per row of probs");
-                 self.expand_and_backup(probs.data(), values.data(), probs.shape(0));
+                 self.expand_and_backup(group, probs.data(), values.data(), probs.shape(0));
              },
-             nb::arg("probs"), nb::arg("values"),
+             nb::arg("group"), nb::arg("probs"), nb::arg("values"),
              "The network's answer for rows [0, k): softmax over masked logits, and v_win from each "
              "leaf mover's side. Fills the leaves in and backs their values up.")
         .def("observations",

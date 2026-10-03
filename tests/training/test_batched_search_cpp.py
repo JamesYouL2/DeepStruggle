@@ -140,3 +140,50 @@ def test_more_trees_than_any_one_bucket_holds(net: Any) -> None:
 def test_an_unknown_backend_is_refused(net: Any) -> None:
     with pytest.raises(ValueError):
         BatchedMCTS(net, device=torch.device("cpu"), config=BatchedMCTSConfig(backend="rust"))
+
+
+def test_the_grouping_rule() -> None:
+    from ai.search.batched_mcts import search_groups
+    assert search_groups(0) == []
+    assert search_groups(1) == [(0, 1)]
+    assert search_groups(127) == [(0, 127)]
+    assert search_groups(128) == [(0, 64), (64, 128)]
+    assert search_groups(201) == [(0, 101), (101, 201)]
+
+
+def _net_on(device: str) -> Any:
+    from ai.models.ladder_net import create_ladder_net
+    torch.manual_seed(3)
+    return create_ladder_net(
+        torch.device(device), input_mode="grouped", aggregation="flatten", entity_dim=16,
+        entity_proj_dim=64, card_self_attention=False, cross_attention=False, per_entity_heads=16,
+        head_context=True, head_static=True, head_entities="country", head_center=True,
+        identity_dim=0, drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+        card_lookup=False, card_lookup_heads=0, card_lookup_dim=0, card_lookup_identity_dim=0,
+        categorical_value=False).eval()
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_two_groups_still_reproduce_the_python_tree(device: str) -> None:
+    """From 128 trees on, the leaves go to the network one half at a time and the C++ tree
+    pipelines the halves (on CUDA through page-locked buffers and asynchronous copies). The Python
+    tree evaluates the same halves, so the two must still agree exactly -- seeds included."""
+    net = _net_on(device)
+    roots = (_positions(24) * 6)[:140]
+    cfg = dict(simulations=12, temperature=0.0, determinize=True)
+    ref = BatchedMCTS(net, device=torch.device(device), config=BatchedMCTSConfig(**cfg, backend="python"),
+                      featurise_capacity=256)
+    cpp = BatchedMCTS(net, device=torch.device(device), config=BatchedMCTSConfig(**cfg, backend="cpp"))
+    for call in range(2):
+        if call == 0:
+            ref.reseed(21)
+            cpp.reseed(21)
+        a = ref._search(roots)
+        b = cpp._search(roots)
+        assert cpp._cpp[256].num_groups == 2
+        for ra, rb in zip(a, b):
+            assert ra is not None and rb is not None and ra.terminal == rb.terminal
+            if not ra.terminal:
+                assert ra.actions == rb.actions and ra.n == rb.n
+                np.testing.assert_allclose(ra.w, rb.w, rtol=0, atol=1e-9)
+        assert ref._rng.getstate() == cpp._rng.getstate()
