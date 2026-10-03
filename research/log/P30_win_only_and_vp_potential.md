@@ -33,8 +33,11 @@ head against it.
 | 400 | win only E7-15-44 | −5.5 ± 1.9 | +1.6 ± 1.8 | 46.4% ± 1.8 | 1542 |
 | 400 | VP potential E7-16-44 | −3.4 ± 1.8 | −3.7 ± 1.8 | 46.2% ± 1.8 | 1535 |
 | 400 | *seed 43 E7-08-43* | *−1.6 ± 1.9* | *+1.1 ± 1.8* | *47.5% ± 1.8* | *1556* |
+| 480 | win only E7-15-44 | −4.7 ± 1.9 | +1.5 ± 1.8 | 49.9% ± 1.8 | 1561 |
+| 480 | VP potential E7-16-44 | −4.3 ± 1.8 | +2.2 ± 1.7 | 55.0% ± 1.8 | 1567 |
+| 480 | *seed 43 E7-08-43* | *−3.9 ± 1.8* | *+2.8 ± 1.8* | *48.9% ± 1.8* | *1565* |
 
-E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M and 1567 at 400M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
+E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M and 1565 at 480M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
 
@@ -51,3 +54,6 @@ of the same size in one seat (US −6.0), so this is still inside the run-to-run
 
 At 400M all three runs sit 10–30 Elo under E7-01-44, the arms no further than seed 43 (46.2–47.5%
 head to head).
+
+At 480M the four runs are within 6 Elo of each other (1561–1567), with the same per-seat pattern
+for all three against E7-01-44 (US about −4, USSR about +2).
