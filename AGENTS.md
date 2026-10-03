@@ -103,6 +103,8 @@ graph TD
 │   ├── CMakeLists.txt          # nanobind module build configuration
 │   ├── AGENTS.md               # Specific instructions for maintaining Python bindings
 │   ├── ts_bindings.cpp         # nanobind module exporting ts_engine & VectorizedBatchRunner
+│   ├── batched_search.hpp      # C++ MCTS tree for ai/search/batched_mcts.py (BatchedSearch)
+│   ├── gomp_parallel.hpp       # gomp_parallel_for: the one OpenMP pool, shared with torch
 │   ├── state_json.{hpp,cpp}    # display state + save as JSON, shared with the WebAssembly build
 │   ├── selftest.hpp            # whole-game digest compiled into both builds (parity check)
 │   ├── wasm/ts_engine_wasm.cpp # the engine's C API for the browser (Emscripten, build_web.sh)

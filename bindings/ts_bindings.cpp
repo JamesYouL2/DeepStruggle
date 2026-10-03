@@ -26,49 +26,10 @@
 #include "ts/engine.hpp"
 #include "state_json.hpp"
 #include "selftest.hpp"
+#include "batched_search.hpp"
 #include <nanobind/stl/pair.h>
 
-// The batch runner's parallel loops go through libgomp's own entry point, not `#pragma omp`.
-//
-// Every process that steps the engine also runs torch, and torch ships libgomp. The dynamic
-// loader shares a library by soname, so an extension that needs `libgomp.so.1` gets the very
-// copy torch loaded: one OpenMP runtime, one thread pool. `#pragma omp` ties that to the
-// compiler -- GCC emits GOMP_* calls, clang emits __kmpc_* calls into LLVM's libomp, and clang
-// with `-fopenmp=libgomp` silently emits *serial* code -- so under clang the engine brought a
-// second pool of spinning workers next to torch's and lost 5-7% on a rollout loop even though
-// its own code was ~20% faster. Calling GOMP_parallel directly keeps the single pool under any
-// compiler. It is the ABI every GCC-compiled OpenMP binary calls, so it cannot change under us.
-// tests/bindings/test_build_toolchain.py fails if a second pool ever comes back.
-extern "C" {
-void GOMP_parallel(void (*fn)(void*), void* data, unsigned num_threads, unsigned flags);
-int omp_get_thread_num(void);
-int omp_get_num_threads(void);
-}
-
-namespace {
-
-// `for (i = 0; i < n; ++i) body(i)` across the OpenMP team, split into contiguous equal chunks
-// -- what `schedule(static)` does. Each iteration must be independent (they are: one env each).
-template <class F>
-void gomp_parallel_for(int64_t n, F&& body) {
-    struct Job {
-        int64_t n;
-        F* body;
-    };
-    Job job{n, &body};
-    GOMP_parallel(
-        [](void* p) {
-            const Job* j = static_cast<const Job*>(p);
-            const int64_t team = omp_get_num_threads();
-            const int64_t chunk = (j->n + team - 1) / team;
-            const int64_t lo = static_cast<int64_t>(omp_get_thread_num()) * chunk;
-            const int64_t hi = std::min(j->n, lo + chunk);
-            for (int64_t i = lo; i < hi; ++i) (*j->body)(i);
-        },
-        &job, /*num_threads=*/0 /* OMP_NUM_THREADS / the team torch sized */, /*flags=*/0);
-}
-
-}  // namespace
+#include "gomp_parallel.hpp"  // gomp_parallel_for: the one OpenMP pool, shared with torch
 
 namespace nb = nanobind;
 
@@ -1038,6 +999,65 @@ NB_MODULE(ts_engine, m) {
             return res;
         }
     };
+
+    // The tree half of ai/search/batched_mcts.py (bindings/batched_search.hpp). Python runs the
+    // network on each round's leaves; everything between two forward passes happens here.
+    using ts_search::BatchedSearch;
+    nb::class_<BatchedSearch>(m, "BatchedSearch")
+        .def(nb::init<size_t, double, bool, uint32_t, bool>(), nb::arg("capacity"),
+             nb::arg("c_puct") = 1.5, nb::arg("auto_advance") = true, nb::arg("obs_features") = 0u,
+             nb::arg("merged_influence") = false,
+             "Up to `capacity` independent searches, stepped together. obs_features and "
+             "merged_influence are the evaluating model's view.")
+        .def_prop_ro("capacity", &BatchedSearch::capacity)
+        .def_prop_ro("obs_width", &BatchedSearch::obs_width)
+        .def_prop_ro("num_trees", &BatchedSearch::num_trees)
+        .def("reset", &BatchedSearch::reset, nb::arg("roots"), nb::arg("simulations"), nb::arg("seed"),
+             "Start one search per root, each with its own budget of `simulations`.")
+        .def("select_leaves", &BatchedSearch::select_leaves,
+             "Write the leaves awaiting evaluation into rows [0, k) of observations() and masks() "
+             "and return k; the first call returns the roots. 0 means every search is complete.")
+        .def("expand_and_backup",
+             [](BatchedSearch& self,
+                nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> probs,
+                nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> values) {
+                 if (probs.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
+                     throw std::invalid_argument("expand_and_backup: probs must be (k, action space)");
+                 if (values.shape(0) != probs.shape(0))
+                     throw std::invalid_argument("expand_and_backup: one value per row of probs");
+                 self.expand_and_backup(probs.data(), values.data(), probs.shape(0));
+             },
+             nb::arg("probs"), nb::arg("values"),
+             "The network's answer for rows [0, k): softmax over masked logits, and v_win from each "
+             "leaf mover's side. Fills the leaves in and backs their values up.")
+        .def("observations",
+             [](BatchedSearch& self) {
+                 size_t shape[2] = { self.capacity(), self.obs_width() };
+                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.obs_data(), 2, shape);
+             }, nb::rv_policy::reference_internal)
+        .def("masks",
+             [](BatchedSearch& self) {
+                 size_t shape[2] = { self.capacity(), ts::FLAT_ACTION_SPACE_SIZE };
+                 return nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(self.mask_data(), 2, shape);
+             }, nb::rv_policy::reference_internal)
+        .def("set_root_priors", &BatchedSearch::set_root_priors, nb::arg("index"), nb::arg("priors"))
+        .def("root",
+             [](BatchedSearch& self, size_t i) {
+                 const ts_search::Node& r = self.root(i);
+                 std::vector<int> actions;
+                 std::vector<double> priors, n, w;
+                 for (size_t e = 0; e < r.edge_count; ++e) {
+                     const ts_search::Edge& ed = self.root_edge(i, e);
+                     actions.push_back(static_cast<int>(ed.action));
+                     priors.push_back(ed.prior);
+                     n.push_back(ed.n);
+                     w.push_back(ed.w);
+                 }
+                 return nb::make_tuple(r.terminal, static_cast<int>(r.mover), r.value_us,
+                                       actions, priors, n, w);
+             }, nb::arg("index"),
+             "(terminal, mover, value_us, actions, priors, visits, value sums) of a root.")
+        .def("tree_size", &BatchedSearch::tree_size, nb::arg("index"));
 
     nb::class_<VectorizedBatchRunner>(m, "VectorizedBatchRunner")
         .def(nb::init<size_t, uint64_t>(), nb::arg("num_envs"), nb::arg("base_seed") = 12345)

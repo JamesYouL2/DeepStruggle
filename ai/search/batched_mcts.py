@@ -105,6 +105,12 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: Fraction of the decisions passing `node_filter` that are actually searched, chosen per
     #: decision from the searcher's own RNG. P3's first guess is 1 in 8.
     subsample: float = 1.0
+    #: Where the trees live. "cpp" is `ts_engine.BatchedSearch` (bindings/batched_search.hpp):
+    #: selection, expansion, settling and featurisation in C++, the network here, two crossings of
+    #: the binding per simulation round. "python" is the tree in this file, kept as the reference
+    #: the C++ one is tested against (identical visit counts given the same chance seeds), and
+    #: still the only one that carries a tree between calls (`reuse_subtree`).
+    backend: str = "python"
 
 
 @dataclass
@@ -144,6 +150,10 @@ class BatchedMCTS:
         #: capacity use the per-node path rather than being silently truncated.
         self._featurisers: Dict[int, ts.VectorizedBatchRunner] = {}
         self._featurise_capacity = featurise_capacity
+        #: C++ searchers, one per power-of-two batch size, built on first use (backend "cpp").
+        self._cpp: Dict[int, ts.BatchedSearch] = {}
+        if self.cfg.backend not in ("python", "cpp"):
+            raise ValueError(f"unknown search backend {self.cfg.backend!r}")
         #: Roots of the current call, so _evaluate_batch can tell a caller-owned state from one
         #: the searcher created itself.
         self._root_nodes: List[_BNode] = []
@@ -185,7 +195,8 @@ class BatchedMCTS:
                 nd.value_us = 0.0
                 nd.expanded = True
                 continue
-            pri = pri_all[start:start + k]
+            # In double precision, as the C++ tree does, so the two agree to the last bit.
+            pri = pri_all[start:start + k].astype(np.float64)
             total = float(pri.sum())
             nd.priors = (pri / total).tolist() if total > 1e-12 else [1.0 / k] * k
             nd.actions = cols_l[start:start + k]
@@ -316,6 +327,8 @@ class BatchedMCTS:
         counts, so a caller choosing a move can see the values and priors behind them."""
         cfg = self.cfg
         reuse = cfg.reuse_subtree and not cfg.determinize and keys is not None
+        if cfg.backend == "cpp" and not reuse:
+            return self._search_cpp(states)
         # A concrete list, so the type checker can see the indexing below is guarded. `reuse`
         # already encodes `keys is not None`, but that narrowing does not survive the variable.
         key_list: List[object] = list(keys) if keys is not None else []
@@ -376,6 +389,74 @@ class BatchedMCTS:
                 if r is not None:
                     self._trees[key_list[i]] = r
         return roots
+
+    def _root_states(self, states: Sequence[ts.GameState]) -> List[ts.GameState]:
+        """Each position as it is searched: settled if `advance_root`, resampled if determinized."""
+        out: List[ts.GameState] = []
+        for st in states:
+            s = st.clone()
+            if self.cfg.advance_root:
+                settle(s, self.cfg.auto_advance)
+            if self.cfg.determinize and not ts.Engine.is_terminal(s):
+                s = determinize(s, acting_player(s), self._rng)
+                s.rng_state = self._rng.getrandbits(64) % _UINT64
+            out.append(s)
+        return out
+
+    def _cpp_for(self, n: int) -> ts.BatchedSearch:
+        """The smallest cached C++ searcher holding `n` trees (a power of two)."""
+        cap = _MIN_FEATURISE_BUCKET
+        while cap < n:
+            cap *= 2
+        cs = self._cpp.get(cap)
+        if cs is None:
+            from bindings.ts_env import model_obs_features
+            cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
+                                  int(model_obs_features(self.model)), False)
+            self._cpp[cap] = cs
+        return cs
+
+    def _search_cpp(self, states: Sequence[ts.GameState]) -> List[Optional[_BNode]]:
+        """`_search` on the C++ tree. The roots are prepared here exactly as the Python path
+        prepares them, and come back as `_BNode`s carrying the root statistics, so every caller
+        (`run`, `best_actions`, the agent) reads them unchanged."""
+        cfg = self.cfg
+        roots = self._root_states(states)
+        if not roots:
+            return []
+        cs = self._cpp_for(len(roots))
+        cs.reset(roots, int(cfg.simulations), self._rng.getrandbits(64) % _UINT64)
+        roots_pending = any(not ts.Engine.is_terminal(r) for r in roots)
+        k = cs.select_leaves()
+        while k:
+            obs = torch.from_numpy(cs.observations()[:k]).to(self.device)
+            masks = torch.from_numpy(cs.masks()[:k]).to(self.device)
+            with torch.no_grad():
+                logits, v_win, _ = self.model.forward(obs, masks)
+                probs = torch.softmax(logits.float(), dim=-1).cpu().numpy()
+                values = v_win.float().reshape(-1).cpu().numpy()
+            cs.expand_and_backup(np.ascontiguousarray(probs), np.ascontiguousarray(values))
+            if roots_pending:
+                roots_pending = False
+                # Root noise, after the roots' own evaluation, from this object's stream -- as
+                # the Python path draws it.
+                if cfg.dirichlet_frac > 0.0:
+                    f = cfg.dirichlet_frac
+                    for i in range(len(roots)):
+                        pri = cs.root(i)[4]
+                        if len(pri) > 1:
+                            noise = self._np_rng.dirichlet([cfg.dirichlet_alpha] * len(pri))
+                            cs.set_root_priors(i, [(1.0 - f) * p + f * float(z)
+                                                   for p, z in zip(pri, noise)])
+            k = cs.select_leaves()
+        out: List[Optional[_BNode]] = []
+        for i, st in enumerate(roots):
+            terminal, mover, value_us, actions, priors, n, w = cs.root(i)
+            nd = _BNode(state=st, mover=int(mover), terminal=bool(terminal), value_us=float(value_us),
+                        actions=list(actions), priors=list(priors), n=list(n), w=list(w),
+                        expanded=True, total=float(sum(n)))
+            out.append(nd)
+        return out
 
     def advance(self, key: object, action: int, chance_intervened: bool) -> None:
         """Carry this stream's tree down to the child under `action`, or drop it.

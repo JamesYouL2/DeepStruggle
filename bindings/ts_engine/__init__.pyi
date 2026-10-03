@@ -878,6 +878,47 @@ class ActionMask:
     @staticmethod
     def encode_micro_action(arg0: GameState, arg1: MicroAction, /) -> int: ...
 
+class BatchedSearch:
+    def __init__(self, capacity: int, c_puct: float = 1.5, auto_advance: bool = True, obs_features: int = 0, merged_influence: bool = False) -> None:
+        """
+        Up to `capacity` independent searches, stepped together. obs_features and merged_influence are the evaluating model's view.
+        """
+
+    @property
+    def capacity(self) -> int: ...
+
+    @property
+    def obs_width(self) -> int: ...
+
+    @property
+    def num_trees(self) -> int: ...
+
+    def reset(self, roots: Sequence[GameState], simulations: int, seed: int) -> None:
+        """Start one search per root, each with its own budget of `simulations`."""
+
+    def select_leaves(self) -> int:
+        """
+        Write the leaves awaiting evaluation into rows [0, k) of observations() and masks() and return k; the first call returns the roots. 0 means every search is complete.
+        """
+
+    def expand_and_backup(self, probs: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)], values: Annotated[NDArray[numpy.float32], dict(shape=(None,), order='C', device='cpu', writable=False)]) -> None:
+        """
+        The network's answer for rows [0, k): softmax over masked logits, and v_win from each leaf mover's side. Fills the leaves in and backs their values up.
+        """
+
+    def observations(self) -> Annotated[NDArray[numpy.float32], dict(shape=(None, None))]: ...
+
+    def masks(self) -> Annotated[NDArray[numpy.uint8], dict(shape=(None, None))]: ...
+
+    def set_root_priors(self, index: int, priors: Sequence[float]) -> None: ...
+
+    def root(self, index: int) -> tuple:
+        """
+        (terminal, mover, value_us, actions, priors, visits, value sums) of a root.
+        """
+
+    def tree_size(self, index: int) -> int: ...
+
 class VectorizedBatchRunner:
     def __init__(self, num_envs: int, base_seed: int = 12345) -> None: ...
 

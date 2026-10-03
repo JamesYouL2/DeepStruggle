@@ -63,7 +63,7 @@ def test_the_batch_runner_adds_no_thread_pool_beside_torchs() -> None:
     assert after == before, (
         f"stepping the engine grew the process from {before} to {after} threads: the batch "
         f"runner brought its own OpenMP runtime instead of sharing torch's libgomp "
-        f"(see gomp_parallel_for in bindings/ts_bindings.cpp)")
+        f"(see gomp_parallel_for in bindings/gomp_parallel.hpp)")
 
 
 def test_the_batch_runner_really_runs_in_parallel() -> None:
