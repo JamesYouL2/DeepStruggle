@@ -45,8 +45,11 @@ head against it.
 | 720 | win only E7-15-44 | −4.6 ± 1.7 | −3.8 ± 1.7 | 49.2% ± 1.8 | 1581 |
 | 720 | VP potential E7-16-44 | −0.2 ± 1.7 | +0.4 ± 1.6 | 47.2% ± 1.8 | 1595 |
 | 720 | *seed 43 E7-08-43* | *−6.4 ± 1.7* | *+1.7 ± 1.6* | *45.1% ± 1.8* | *1576* |
+| 800 | win only E7-15-44 | −0.9 ± 1.6 | −4.0 ± 1.6 | 45.9% ± 1.8 | 1595 |
+| 800 | VP potential E7-16-44 | −3.4 ± 1.7 | −3.7 ± 1.6 | 50.1% ± 1.8 | 1595 |
+| 800 | *seed 43 E7-08-43* | *−8.1 ± 1.7* | *−2.9 ± 1.6* | *42.2% ± 1.8* | *1579* |
 
-E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M, 1565 at 480M and 1578 at 560M; E7-02-44 is 1583 at 640M and 1607 at 720M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
+E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M, 1565 at 480M and 1578 at 560M; E7-02-44 is 1583 at 640M, 1607 at 720M and 1623 at 800M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
 
@@ -75,3 +78,6 @@ within noise.
 
 At 720M E7-02-44 tops the field (1607); the VP potential is level with it per seat, win only
 slightly below against the panel (−4.6 / −3.8) but level head to head, and seed 43 lowest.
+
+At 800M E7-02-44 leads all three (1623 against 1595, 1595, 1579), as at 720M: the seed-44
+control is pulling ahead of every other run, the no-change seed 43 included.
