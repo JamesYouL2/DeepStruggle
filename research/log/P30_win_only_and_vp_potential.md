@@ -106,3 +106,31 @@ At 1,040M the VP potential is level with E7-02-44 head to head (49.6%) for the f
 At 1,120M all three lose to E7-02-44 head to head by the same margin (44.6–45.9%). Against the
 panel the VP potential is level with it in both seats; win only and seed 43 share a US-seat gap
 (−4.8, −5.1).
+
+## At saturation (1,200M): the owner's rule against E7-02-44
+
+One round robin, 1,000 games per side per pairing, temperature 0 (`data/reports/e7_15_16_rr.{md,json}`).
+
+| comparison | US | USSR | head to head |
+|:---|---:|---:|---:|
+| **win only E7-15-44**, 1,140–1,200M snapshots | −4.6 ± 0.5 | −3.4 ± 0.5 | 45.4% ± 0.3 |
+| **win only E7-15-44**, 1,120–1,200M SWA | −3.7 ± 0.9 | −4.1 ± 0.9 | 44.9% ± 1.1 |
+| **VP potential E7-16-44**, 1,140–1,200M snapshots | −1.6 ± 0.5 | −0.9 ± 0.5 | 47.4% ± 0.3 |
+| **VP potential E7-16-44**, 1,120–1,200M SWA | +0.0 ± 0.9 | −1.0 ± 0.9 | 47.2% ± 1.1 |
+| *seed 43 E7-08-43 (same recipe as the control)*, SWA | *−5.6 ± 0.9* | *−2.9 ± 0.9* | *43.4% ± 1.1* |
+
+SWAs: E7-02-44 1595, E7-16-44 1587, E7-15-44 1560, E7-08-43 1550; the late snapshots of each run
+cluster below its SWA in the same order.
+
+## Reading
+
+* **Neither arm passes the owner's rule.** Neither is better than E7-02-44 in any seat.
+* **Win only lands where a change of seed lands.** It is below E7-02-44 in both seats and 45% head
+  to head, but seed 43 of the unchanged recipe is just as far below (43.4%, SWA 1550 against win
+  only's 1560). So this run cannot tell the blunder-aware reward's contribution from seed-to-seed
+  spread: dropping it costs at most about what the seed does, possibly nothing. Settling it needs a
+  win-only run on seed 43, read against E7-08-43.
+* **The VP potential is level with the control on the SWA** (US +0.0, USSR −1.0, within 1 SE) and
+  slightly below on snapshots and head to head (47%). No gain; above seed 43 throughout.
+* **The control is a strong seed.** From 720M on, E7-02-44 led every other run, the no-change
+  seed 43 included, so a one-seed comparison against it reads every arm as slightly worse.
