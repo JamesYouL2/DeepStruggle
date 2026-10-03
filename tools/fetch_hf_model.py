@@ -86,8 +86,10 @@ def download(repo: str, revision: str, path: str, out_dir: str) -> str:
 
 def onnx_name(path: str) -> str:
     """`<run>@<steps>M.onnx` for a run directory's checkpoint, so reports name the model."""
-    run = os.path.basename(os.path.dirname(path)).split("_")[0] or "model"
     stem = os.path.splitext(os.path.basename(path))[0]
+    if "@" in stem:   # already named <run>@<tag> (a release asset)
+        return f"{stem}.onnx"
+    run = os.path.basename(os.path.dirname(path)).split("_")[0] or "model"
     m = re.fullmatch(r"snapshot_(\d+)steps", stem)
     tag = f"{round(int(m.group(1)) / 1e6)}M" if m else stem.replace("snapshot_", "")
     return f"{run}@{tag}.onnx"
@@ -117,6 +119,27 @@ def fetch_artifact(spec: str, out_dir: str) -> str:
     return out
 
 
+def fetch_release(spec: str, out_dir: str) -> str:
+    """`rel:<tag>/<asset>`: download a release asset of `$GITHUB_REPOSITORY` (gh's default
+    repository when unset); a `.pt` is exported to `<asset stem>.onnx`, so name it `<run>@<steps>M.pt`."""
+    tag, name = spec[len("rel:"):].split("/", 1)
+    dest = os.path.join(out_dir, "_rel", tag)
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    subprocess.run(["gh", "release", "download", tag, "-p", name, "-D", dest, "--clobber"]
+                   + (["-R", repo] if repo else []), check=True, stdout=sys.stderr)
+    src = os.path.join(dest, name)
+    if not name.endswith(".pt"):
+        out = os.path.join(out_dir, name)
+        os.replace(src, out)
+        return out
+    out = os.path.join(out_dir, onnx_name(name))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([".", "build/release", os.environ.get("PYTHONPATH", "")]))
+    python = os.environ.get("TS_PYTHON", ".venv/bin/python")
+    subprocess.run([python, "tools/export_onnx.py", "--checkpoint", src, "--out", out],
+                   check=True, env=env, stdout=sys.stderr)
+    return out
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--repo", default=DEFAULT_REPO)
@@ -143,6 +166,8 @@ def main(argv: List[str]) -> int:
         return 0
     if path.startswith("gh:"):
         print(fetch_artifact(path, args.out_dir))
+    elif path.startswith("rel:"):
+        print(fetch_release(path, args.out_dir))
     elif path.endswith(".pt"):
         print(fetch_checkpoint_as_onnx(args.repo, path, args.out_dir))
     else:

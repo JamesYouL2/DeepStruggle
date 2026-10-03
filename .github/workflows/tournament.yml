@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx> as in tools/fetch_hf_model.py"
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx>, hf:rel:<tag>/<run>@<steps>M.pt as in tools/fetch_hf_model.py"
         default: "doctrine newest"
       games_per_side:
         description: "Games per side per matchup"
@@ -99,7 +99,7 @@ jobs:
                           ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
                           check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
                   m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
-              m = re.sub(r"hf:((?:gh:\d+/[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
+              m = re.sub(r"hf:((?:gh:\d+/[\w.\-]+/|rel:[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
               out.append(m)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"specs={' '.join(out)}\n")
