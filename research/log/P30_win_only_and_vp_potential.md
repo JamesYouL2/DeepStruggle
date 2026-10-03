@@ -24,11 +24,17 @@ head against it.
 | 160 | win only E7-15-44 | −6.8 ± 1.9 | −0.9 ± 1.9 | 43.1% ± 1.8 | 1455 |
 | 160 | VP potential E7-16-44 | −1.4 ± 1.9 | −3.3 ± 1.9 | 47.1% ± 1.8 | 1487 |
 | 160 | *seed 43 E7-08-43* | *+0.7 ± 2.0* | *+5.0 ± 1.9* | *53.1% ± 1.8* | *1519* |
+| 240 | win only E7-15-44 | −3.7 ± 2.0 | +3.8 ± 1.9 | 51.6% ± 1.8 | 1500 |
+| 240 | VP potential E7-16-44 | +0.2 ± 2.0 | +3.3 ± 1.9 | 52.9% ± 1.8 | 1526 |
+| 240 | *seed 43 E7-08-43* | *−0.7 ± 2.0* | *+3.3 ± 1.9* | *56.9% ± 1.8* | *1518* |
 
-E7-01-44 is 1476 at 80M and 1502 at 160M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
+E7-01-44 is 1476 at 80M, 1502 at 160M and 1498 at 240M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
 
 At 160M win only is behind in the US seat (−6.8, 3.6 SE) and head to head (43.1%), and the VP
 potential has closed most of its 80M gap. Both are still within the seed's range (E7-08-43 moved
 from 37.2% to 53.1% between 80M and 160M).
+
+At 240M all three are level with the control: every head-to-head within 51.6–56.9%, every seat
+difference within 2 SE. The VP potential is at the top of the field (1526).
