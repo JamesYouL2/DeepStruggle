@@ -27,8 +27,11 @@ head against it.
 | 240 | win only E7-15-44 | −3.7 ± 2.0 | +3.8 ± 1.9 | 51.6% ± 1.8 | 1500 |
 | 240 | VP potential E7-16-44 | +0.2 ± 2.0 | +3.3 ± 1.9 | 52.9% ± 1.8 | 1526 |
 | 240 | *seed 43 E7-08-43* | *−0.7 ± 2.0* | *+3.3 ± 1.9* | *56.9% ± 1.8* | *1518* |
+| 320 | win only E7-15-44 | −1.5 ± 1.9 | −0.4 ± 1.8 | 51.4% ± 1.8 | 1550 |
+| 320 | VP potential E7-16-44 | −7.2 ± 1.9 | −7.0 ± 1.8 | 49.0% ± 1.8 | 1518 |
+| 320 | *seed 43 E7-08-43* | *−6.0 ± 2.0* | *−1.2 ± 1.8* | *43.5% ± 1.8* | *1525* |
 
-E7-01-44 is 1476 at 80M, 1502 at 160M and 1498 at 240M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
+E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M and 1553 at 320M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
 At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
 
@@ -38,3 +41,7 @@ from 37.2% to 53.1% between 80M and 160M).
 
 At 240M all three are level with the control: every head-to-head within 51.6–56.9%, every seat
 difference within 2 SE. The VP potential is at the top of the field (1526).
+
+At 320M win only is level with the control in every column. The VP potential is below it against
+the panel in both seats (−7, about 4 SE) but level head to head (49.0%); seed 43 shows a panel gap
+of the same size in one seat (US −6.0), so this is still inside the run-to-run range.
