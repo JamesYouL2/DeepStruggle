@@ -193,6 +193,52 @@ class ShapedZeroSumReward:
         return (curr_players * next_players).float()
 
 
+class VPPotentialShaping:
+    """Potential-based VP shaping on top of any reward calculator.
+
+    Phi(s) = scale * VP(s) from the US side, and Phi(terminal) = 0. Each step adds
+    Phi(s') - Phi(s) in the acting player's frame, so the terminal step adds -Phi(s), the VP
+    lead the game ended on. With gamma = 1 the shaping over a game sums to -Phi(s_0), a
+    constant (0 from a fresh deal), so it does not change which policy is optimal (Ng et al.
+    1999). It only moves credit earlier: VP gained now is paid now and given back at the end.
+    The critic learns V(s) - Phi(s) in the mover's frame instead of V(s).
+    """
+
+    def __init__(self, base: Any, scale: float) -> None:
+        self.base = base
+        self.scale = float(scale)
+
+    def __getattr__(self, name: str) -> Any:
+        # Reached only for names not found on the wrapper itself, e.g. `needs_all_states` or
+        # `on_env_reset`, which the env looks up on the calculator.
+        if name == "base":
+            raise AttributeError(name)
+        return getattr(self.base, name)
+
+    def compute_step_rewards(
+        self,
+        acting_players: np.ndarray,
+        dones: np.ndarray,
+        terminal_utilities: np.ndarray,
+        prev_victory_points: np.ndarray,
+        curr_victory_points: np.ndarray,
+        states: Optional[List[Optional[ts.GameState]]] = None,
+    ) -> np.ndarray:
+        rewards = self.base.compute_step_rewards(acting_players, dones, terminal_utilities,
+                                                 prev_victory_points, curr_victory_points, states)
+        prev = prev_victory_points.astype(np.float32)
+        curr = np.where(dones, 0.0, curr_victory_points.astype(np.float32))
+        shaping = self.scale * (curr - prev) * acting_players.astype(np.float32)
+        return (rewards + shaping).astype(np.float32)
+
+    def compute_zero_sum_sign(
+        self,
+        curr_players: torch.Tensor,
+        next_players: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.base.compute_zero_sum_sign(curr_players, next_players)
+
+
 class UsefulActionsReward(BlunderAwareRewardCalculator):
     """Reward calculator encouraging usually useful actions via strategic potential shaping.
 

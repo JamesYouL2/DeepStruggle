@@ -121,6 +121,13 @@ or Ops for a chosen card -- at temperature `T`, so events the policy rarely play
 candidate, `research/log/expert_review_E7.md`). Exploration only: the stored log-prob stays the policy's own. The
 metric `play_mode_event_frac` is the share of the learner's play-mode decisions that chose the event.
 
+`--vp-potential C` (owner, 2026-10-03; default 0 = off) adds potential-based VP shaping on top of `--reward-scheme`:
+`Phi = C x VP` from the US side, `Phi(terminal) = 0`, and each step pays the mover `Phi(s') - Phi(s)`. Over a game it
+sums to a constant, so the optimal policy is unchanged; VP gains are paid when they happen and the lead is taken back
+at the end. The critic then learns `V(s) - Phi(s)` in the mover's frame. `ai/rewards/reward_calculator.py`,
+`VPPotentialShaping`. A win-only reward is `--reward-scheme terminal --no-blunder-window`: the scheme alone still
+leaves the blunder window, which pins a blunderer's return to -1 within the turn.
+
 **Branching with an added head.** `--resume` accepts a state written without a training-only head the new run builds
 (`--aux-card-events`, `--aux-ownership`, `--aux-vp-margin`): the trunk, policy and value are restored exactly, so the
 branch starts as the saved network, and the head starts fresh with fresh Adam moments. Any other mismatch still refuses.

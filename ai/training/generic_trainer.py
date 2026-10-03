@@ -25,7 +25,7 @@ import torch.nn.functional as F
 import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create_like
-from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward
+from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
 from bindings.ts_env import OBS_LAYOUT_NAME, TsVectorizedEnv
 from ai.training.rollout_buffer import RolloutBuffer
 from ai.training.schedule import WeightEMA, scheduled_lr
@@ -1486,6 +1486,7 @@ def train_pipeline(
     bc_epochs: int = 5,
     train_steps: int = 80_000_000,
     decisiveness_turns: float = 0.0,
+    vp_potential: float = 0.0,
     max_snapshot_opponents: int = 4,
     snapshot_every_steps: int = 10_000_000,
     pool_every_steps: int = 5_000_000,
@@ -1765,6 +1766,7 @@ def train_pipeline(
         "resume_every_snapshot": bool(resume_every_snapshot),
         "resume_every_steps": int(resume_every_steps),
         "decisiveness_turns": decisiveness_turns,
+        "vp_potential": float(vp_potential),
         "train_steps": int(train_steps),
         "snapshot_every_steps": int(snapshot_every_steps),
         "pool_every_steps": int(pool_every_steps),
@@ -1965,6 +1967,12 @@ def train_pipeline(
         reward_calc = ShapedZeroSumReward()
     else:
         reward_calc = ZeroSumTerminalReward()
+    if vp_potential:
+        if is_curriculum:
+            raise ValueError("--vp-potential does not combine with the curriculum scheme")
+        reward_calc = VPPotentialShaping(reward_calc, vp_potential)
+        print(f"[reward] VP potential shaping on {reward_scheme}: Phi = {vp_potential} x VP, "
+              f"Phi(terminal) = 0", flush=True)
     # Mid-game start positions. Self-play from turn 1 reaches the late game rarely and
     # plays it badly, so a share of environments resume from saved turn-boundary positions
     # instead. The pool is rebuilt as the policy moves on; see ai/training/start_pool.py.

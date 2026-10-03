@@ -239,6 +239,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Budget & Snapshot parameters. Both are in env steps, deliberately: a wall-clock budget
     # cannot make two arms comparable, because steps/sec depends on the policy.
+    parser.add_argument("--vp-potential", type=float, default=0.0,
+                        help="Potential-based VP shaping on top of --reward-scheme (0 = off): "
+                             "Phi = this x VP from the US side, Phi(terminal) = 0, and each step "
+                             "adds Phi(s') - Phi(s) for the mover. Over a game it sums to a "
+                             "constant, so the optimal policy is unchanged; it only pays VP "
+                             "gains when they happen and takes them back at the end.")
     parser.add_argument("--decisiveness-turns", type=float, default=0.0,
                         help="Scale the terminal reward by (1 - turn/K), so a result on turn T is "
                              "worth 1 - T/K instead of 1 (0 = off). With gamma=1 and terminal-only "
@@ -815,6 +821,7 @@ def main():
             block_lambda=(args.block_lambda if args.block_lambda is not None
                           else ("setup" if args.setup_block_lambda else "off")),
             decisiveness_turns=args.decisiveness_turns,
+            vp_potential=args.vp_potential,
             max_snapshot_opponents=args.eval_max_snapshot_opponents,
             opponent_checkpoints=args.opponent_checkpoints,
             opponent_frac=args.opponent_frac,
