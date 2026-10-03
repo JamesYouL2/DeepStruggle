@@ -106,6 +106,12 @@ modifier. The base layout and existing checkpoints are untouched.
 Unchanged: it needs a critic that search can use, and +5 pp of honest search headroom. Re-measure
 the headroom on the base recipe at saturation before considering it.
 
+**Re-measured (2026-10-03):** honest search with 256 simulations wins 60.0% against the soup's
+greedy policy and 58.0% against E7-02-44@1200M's, so the +5 gate passes. Perfect-information search
+adds only +1.5 to +3 more, so the headroom is lookahead, not hidden information
+([`../log/P30_search_headroom_e7.md`](../log/P30_search_headroom_e7.md)). An oracle critic adds
++0.002 AUC ([`../log/P30_oracle_critic_auc.md`](../log/P30_oracle_critic_auc.md)).
+
 ## Sequencing (two arms at a time)
 
 | slot | arms |
