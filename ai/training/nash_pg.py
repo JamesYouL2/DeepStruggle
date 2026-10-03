@@ -53,6 +53,11 @@ COMPILE_UPDATE_MODES: Dict[str, str] = {"off": "", "default": "default",
 ENTROPY_PROBE_INTERVAL = 10
 
 
+#: Positions per call to the training searcher when a rollout's queued decisions are answered:
+#: the batch the network runs at, and the size of the searcher's largest featuriser.
+SEARCH_CHUNK = 1024
+
+
 def filter_search_visits(
     actions: Sequence[int],
     visits: "np.ndarray",
@@ -372,9 +377,13 @@ class BaseNashPGTrainer:
                 config=BatchedMCTSConfig(
                     simulations=search_sims, temperature=0.0, auto_advance=True,
                     advance_root=False, determinize=True,
-                    node_filter=search_node_filter, subsample=search_subsample))
+                    node_filter=search_node_filter, subsample=search_subsample),
+                featurise_capacity=SEARCH_CHUNK)
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
                   f"{search_node_filter}, subsample {search_subsample}", flush=True)
+        #: (buffer step, env, cloned state) of every decision to search this rollout; searched in
+        #: one batch by `_flush_search_targets` when the rollout ends.
+        self._search_queue: List[Tuple[int, int, Any]] = []
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
         self.vp_coef = vp_coef
@@ -1185,7 +1194,7 @@ class BaseNashPGTrainer:
                 _rngs_np = np.array([self.env.runner.get_state(i).rng_state
                                      for i in range(self.num_envs)], dtype=np.uint64).view(np.int64)
 
-            # P15-X4b. MUST happen before the step: `_search_targets` reads the runner's current
+            # P15-X4b. MUST happen before the step: `_queue_search_targets` reads the runner's current
             # state, and `buffer.add` below files the answer against `obs_t`, which is s_t. Taken
             # after the step the runner holds s_{t+1} (see the bootstrap note further down), so
             # every target would describe the position *after* the one it is stored with -- a
@@ -1193,7 +1202,7 @@ class BaseNashPGTrainer:
             # the mass lands wherever those indices happen to mean something here. It does not
             # fail loudly: it trains the policy toward noise with a real gradient behind it, which
             # collapsed two arms (entropy 1.03 -> 0.36, critic to chance) before it was found.
-            search_pi_t, has_search_t = self._search_targets()
+            self._queue_search_targets(self.buffer.step)
 
             next_obs_np, next_masks_np, rewards_np, self._dones_np, self._info = self.env.step(actions_np)
 
@@ -1241,8 +1250,6 @@ class BaseNashPGTrainer:
                 held_scoring_ussr=torch.from_numpy(self._info["held_scoring_ussr"]).to(self.device) if "held_scoring_ussr" in self._info else None,
                 defcon_blunder=torch.from_numpy(self._info["defcon_blunder"]).to(self.device) if "defcon_blunder" in self._info else None,
                 next_values_own=next_own_t,
-                search_pi=search_pi_t,
-                has_search=has_search_t,
                 rngs=_rngs_np,
             )
 
@@ -1303,6 +1310,8 @@ class BaseNashPGTrainer:
 
             self._obs_np = next_obs_np
             self._masks_np = next_masks_np
+
+        self._flush_search_targets()
 
         # Evaluate last state for GAE bootstrapping
         last_obs_t = torch.from_numpy(self._obs_np).float().to(self.device)
@@ -1462,73 +1471,84 @@ class BaseNashPGTrainer:
             forced += 1
         self.setup_forced_actions = getattr(self, "setup_forced_actions", 0) + forced
 
-    def _search_targets(self):
-        """The searcher's visit distribution at the decisions this configuration searches.
+    def _queue_search_targets(self, step: int) -> None:
+        """Note the decisions this configuration searches at buffer row `step`, for
+        `_flush_search_targets` to answer when the rollout ends.
 
-        P15-X4b. Returns (targets, flag) over all environments, or (None, None) when search is
-        off. The searcher only *answers* -- the actions actually played were already sampled from
-        the raw policy above, so the state distribution is the baseline's and this arm varies one
-        thing. Acting on the search policy would be a different experiment.
+        P15-X4b. **Reads the runner's current state, so it must be called while that state is
+        still the one the target will be stored against** -- before `env.step`, not after. Taken
+        after the step the runner holds s_{t+1}, so every target would describe the position after
+        the one it is filed with; that collapsed two arms (entropy 1.03 -> 0.36, critic to chance)
+        before it was found.
 
-        A target is dropped when the searcher returns nothing, and normalised over the visits it
-        did return **that are legal in the real state**.
-
-        That last clause used to read "legality is not re-checked here: BatchedMCTS already
-        filters its answer against the caller's own mask". That is true of the *agent* path and
-        not of `run()`, which is what this calls. The search is DETERMINIZED, and
-        `batched_mcts.py` says so where it handles the same problem for an acting agent: "a
-        determinized search can legitimately return an action that is illegal in the real state,
-        because in this game the legal SET itself can depend on hidden information" -- so there
-        the search proposes and the true mask disposes. Here nothing disposed, and visits on
-        actions that are legal only under the sampled determinization were written straight into
-        the target.
-
-        The symptom was visible all along in `search_ce`, which exceeded 1e5 in about a third of
-        iterations on every search arm. The mask fill is -1e9, so target mass e on a masked action
-        costs e * 1e9; one stray visit out of 64 simulations is 0.016 of a row, and diluted across
-        the searched rows in a batch that lands at ~1e5 of mean CE. Training was not visibly
-        harmed -- the CE gradient is (pi - p_target), so the contribution is ~1e-4 -- but the
-        target was wrong, and the same misalignment on a determinization-legal action that is
-        also *really* legal would have been silent.
-
-        Applies from the next launch: a running process has already imported this module, so
-        E3-35-28 and anything else in flight keep the old behaviour.
-
-        **Reads the runner's current state, so it must be called while that state is still the
-        one the target will be stored against** -- before `env.step`, not after.
+        Deferring the search is exact. Search only *answers* -- the actions played were already
+        sampled from the raw policy, so the state distribution is the baseline's -- and the weights
+        do not change during a rollout, so a position searched at the end gets the answer it would
+        have got at its step. What changes is the batch: searching each step's ~25 positions on its
+        own ran the network at batch ~25 and featurised every leaf from Python, 8x off the
+        unsearched throughput (research/log/search_performance_profile.md). The searcher's random
+        draws come in a different order, so a run is not bit-identical to the per-step version.
         """
         if self._searcher is None:
-            return None, None
-        import numpy as _np
+            return
         import ts_engine as ts
+
+        for i in range(self.num_envs):
+            st = self.env.runner.get_state(i)
+            if not ts.Engine.is_terminal(st) and self._searcher.should_search(st):
+                self._search_queue.append((step, i, st.clone()))
+
+    def _flush_search_targets(self) -> None:
+        """Search every queued decision in one batch and write the visit distributions into the
+        buffer rows they were queued against.
+
+        A target is dropped when the searcher returns nothing, and normalised over the visits it
+        did return **that are legal in the real state**. The search is DETERMINIZED, and in this
+        game the legal SET itself can depend on hidden information (`batched_mcts.py`), so visits
+        on actions legal only under the sampled world are removed here, as the acting agent's
+        path does. Before that filter existed `search_ce` exceeded 1e5 in a third of iterations:
+        the mask fill is -1e9, so a stray visit's mass cost 1e9 per unit.
+        """
+        if self._searcher is None:
+            return
+        import numpy as _np
 
         from bindings.action_encoder import ActionEncoder
 
-        n = self.num_envs
-        pi = torch.zeros((n, self.buffer.action_dim), dtype=torch.float32, device=self.device)
-        flag = torch.zeros(n, dtype=torch.float32, device=self.device)
+        queue, self._search_queue = self._search_queue, []
+        # Every row is rewritten each rollout: a row left alone would keep last rollout's target.
+        self.buffer.search_pi.zero_()
+        self.buffer.has_search.zero_()
+        if not queue:
+            return
+        was_training = self.active_net.training
+        self.active_net.eval()
         try:
-            states = [self.env.runner.get_state(i) for i in range(n)]
-            idx = [i for i, st in enumerate(states)
-                   if not ts.Engine.is_terminal(st) and self._searcher.should_search(st)]
-            if not idx:
-                return pi, flag
-            res = self._searcher.run([states[i].clone() for i in idx])
+            res: List[Tuple[List[int], Any]] = []
+            for s0 in range(0, len(queue), SEARCH_CHUNK):
+                res.extend(self._searcher.run([st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]))
         except Exception as exc:                      # a broken teacher must not kill the run
-            print(f"[X4b] search targets unavailable this step: {exc}", flush=True)
-            return pi, flag
+            print(f"[X4b] search targets unavailable this rollout: {exc}", flush=True)
+            return
+        finally:
+            self.active_net.train(was_training)
 
+        width = int(self.buffer.search_pi.shape[-1])
+        t_idx: List[int] = []
+        e_idx: List[int] = []
+        a_idx: List[int] = []
+        vals: List[float] = []
+        flag_t: List[int] = []
+        flag_e: List[int] = []
         dropped_visits = 0.0
         dropped_rows = 0
-        for i, (acts, visits) in zip(idx, res):
+        for (t, i, st), (acts, visits) in zip(queue, res):
             if not acts:
                 continue
             v = _np.asarray(visits, dtype=_np.float32)
-            # The real state's mask is the only authority on what may be played -- the same rule
-            # batched_mcts.py applies for an acting agent. Drop visits the determinization made
-            # look legal, then normalise over what survives, so the target stays a distribution.
-            legal_mask = _np.asarray(ActionEncoder.get_legal_mask(states[i]))
-            probs, dropped = filter_search_visits(acts, v, legal_mask, int(pi.shape[1]))
+            # The real state's mask is the only authority on what may be played.
+            legal_mask = _np.asarray(ActionEncoder.get_legal_mask(st))
+            probs, dropped = filter_search_visits(acts, v, legal_mask, width)
             if dropped > 0.0:
                 dropped_visits += dropped
                 dropped_rows += 1
@@ -1536,14 +1556,22 @@ class BaseNashPGTrainer:
                 # Every visit was illegal here: no usable target rather than a guessed one.
                 continue
             for a, p in probs:
-                pi[i, a] = p
-            flag[i] = 1.0
-        self.search_dropped_visit_frac = (
-            dropped_visits / max(1, len(idx)))
-        self.search_dropped_row_frac = dropped_rows / max(1, len(idx))
-        self.search_targets_produced = getattr(self, "search_targets_produced", 0) + int(
-            flag.sum().item())
-        return pi, flag
+                t_idx.append(t)
+                e_idx.append(i)
+                a_idx.append(int(a))
+                vals.append(float(p))
+            flag_t.append(t)
+            flag_e.append(i)
+        if vals:
+            dev = self.buffer.search_pi.device
+            self.buffer.search_pi[torch.tensor(t_idx, device=dev), torch.tensor(e_idx, device=dev),
+                                  torch.tensor(a_idx, device=dev)] = torch.tensor(
+                                      vals, dtype=self.buffer.search_pi.dtype, device=dev)
+            self.buffer.has_search[torch.tensor(flag_t, device=dev),
+                                   torch.tensor(flag_e, device=dev)] = 1.0
+        self.search_dropped_visit_frac = dropped_visits / max(1, len(queue))
+        self.search_dropped_row_frac = dropped_rows / max(1, len(queue))
+        self.search_targets_produced = getattr(self, "search_targets_produced", 0) + len(flag_t)
 
     def train_iteration(self) -> Dict[str, Any]:
         """Runs one full training iteration (rollout collection + inner SGD epochs + reference check)."""

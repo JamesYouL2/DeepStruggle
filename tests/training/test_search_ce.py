@@ -276,7 +276,7 @@ def test_search_targets_are_filtered_by_the_real_mask() -> None:
     batched_mcts.py says so where it handles this for an ACTING agent: "a determinized search can
     legitimately return an action that is illegal in the real state, because in this game the
     legal SET itself can depend on hidden information", and there the search proposes and the true
-    mask disposes. `_search_targets` calls `run()` directly, which is not that path, and used to
+    mask disposes. `_flush_search_targets` calls `run()` directly, which is not that path, and used to
     write the visit counts straight into the target with only a bounds check -- so visits that
     were legal only under the sampled determinization became target mass on masked actions.
 
@@ -312,9 +312,9 @@ def test_search_targets_are_filtered_by_the_real_mask() -> None:
     all_illegal = np.where(np.array([False, False, False]), visits, 0.0)
     assert float(all_illegal.sum()) == 0.0
 
-    src = inspect.getsource(nash_pg.NashPGTrainer._search_targets)
+    src = inspect.getsource(nash_pg.NashPGTrainer._flush_search_targets)
     assert "get_legal_mask" in src, (
-        "_search_targets must consult the real state's mask; without it a determinized search's "
+        "_flush_search_targets must consult the real state's mask; without it a determinized search's "
         "answer becomes target mass on actions that cannot be played")
     assert "search_dropped_visit_frac" in src, (
         "how much the mask rejected must be logged, or a filter that stops working is invisible")
@@ -406,3 +406,37 @@ def test_search_target_entropy_is_the_targets_own_entropy_and_is_logged() -> Non
     assert '"search_target_entropy"' in block, (
         "search_target_entropy is computed but never registered, so it will not reach "
         "training_metrics.jsonl -- the same allow-list gap that dropped search_ce")
+
+
+def test_deferred_targets_land_on_the_rows_they_describe() -> None:
+    """The searcher answers a whole rollout at its end, so every target must still be filed against
+    the buffer row of the position it describes: its mass has to lie on that row's own legal
+    mask, every flagged row must sum to one, and rows from an earlier rollout must not survive."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    net = create_ladder_net(dev, input_mode="grouped", aggregation="flatten", entity_dim=16,
+                            entity_proj_dim=64, card_self_attention=False, cross_attention=False,
+                            per_entity_heads=16, head_context=True, head_static=True,
+                            head_entities="country", head_center=True, identity_dim=0,
+                            drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+                            card_lookup=False, card_lookup_heads=0, card_lookup_dim=0,
+                            card_lookup_identity_dim=0, categorical_value=False)
+    env = TsVectorizedEnv(num_envs=6, base_seed=321)
+    t = NashPGTrainer(active_net=net, env=env, num_envs=6, buffer_size=12, lr=3e-4, eta=0.1,
+                      ref_update_freq=500, cuda_graphs=False, device=dev, search_ce_coef=0.5,
+                      search_sims=4, search_subsample=1.0, search_node_filter="all")
+    for _ in range(2):                                    # the second rollout overwrites the first
+        t.collect_rollouts()
+        b = t.buffer
+        flagged = b.has_search > 0.5
+        assert int(flagged.sum()) > 0, "nothing was searched"
+        rows = b.search_pi[flagged]
+        legal = b.masks[flagged].bool()
+        assert torch.allclose(rows.sum(-1), torch.ones(rows.shape[0]), atol=1e-5)
+        assert float(rows[~legal].abs().sum()) == 0.0, "target mass outside its own row's legal mask"
+        assert float(b.search_pi[~flagged].abs().sum()) == 0.0, "an unflagged row carries a target"
+    assert not t._search_queue
