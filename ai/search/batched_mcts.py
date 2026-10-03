@@ -44,6 +44,10 @@ from ai.search.pimcts import PIMCTSConfig, acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
 
 _UINT64 = 1 << 64
+_US = int(ts.Player.US)
+#: Smallest featuriser the batched path builds. Batches are sized up to the next power of two from
+#: here, so `refresh_all` -- which rebuilds every slot, filled or not -- does at most 2x the work.
+_MIN_FEATURISE_BUCKET = 64
 
 
 def _legal_here(state: ts.GameState, action: int) -> bool:
@@ -116,6 +120,9 @@ class _BNode:
     n: List[float] = field(default_factory=list)
     w: List[float] = field(default_factory=list)
     children: Dict[int, "_BNode"] = field(default_factory=dict)
+    #: sum(n), kept by `_backup` so that `_select` does not re-add every child's count on every
+    #: visit (7.6% of an eval search, profiled). Exact: the counts are small integers in floats.
+    total: float = 0.0
     #: An expanded node has had its priors filled in from a network evaluation. A node created
     #: during descent starts unexpanded and is completed by the batch it belongs to.
     expanded: bool = False
@@ -129,11 +136,13 @@ class BatchedMCTS:
         self.model = model
         self.device = device or next(model.parameters()).device
         self.cfg = config or BatchedMCTSConfig()
-        #: Optional C++ featuriser. `extract_observation` per leaf is 22.7% of a search; the
-        #: runner does the whole batch at once for ~10x less. Sized once; batches beyond its
+        #: Optional C++ featurisers. `extract_observation` per leaf is 22.7% of a search; a runner
+        #: does the whole batch at once for ~10x less. One runner per power-of-two size up to
+        #: `featurise_capacity`, built on first use: `refresh_all` rebuilds EVERY slot, so a single
+        #: 4,096-slot runner spent most of its time on empty slots when a batch held ~200 leaves
+        #: (8.25 ms per call against 2.09 ms at 256; 20% of an eval search). Batches beyond the
         #: capacity use the per-node path rather than being silently truncated.
-        self._featuriser = (ts.VectorizedBatchRunner(featurise_capacity, int(self.cfg.seed))
-                            if featurise_capacity > 0 else None)
+        self._featurisers: Dict[int, ts.VectorizedBatchRunner] = {}
         self._featurise_capacity = featurise_capacity
         #: Roots of the current call, so _evaluate_batch can tell a caller-owned state from one
         #: the searcher created itself.
@@ -160,25 +169,33 @@ class BatchedMCTS:
         with torch.no_grad():
             logits, v_win, _ = self.model.forward(obs_t, mask_t)
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
-            values = v_win.squeeze(-1).cpu().numpy()
+            values = v_win.squeeze(-1).cpu().numpy().tolist()
 
+        # The legal entries of every row at once: one nonzero over the batch instead of four
+        # numpy calls per node. Row-major order keeps each row's actions ascending, as before.
+        rows, cols = np.nonzero(masks)
+        counts = np.bincount(rows, minlength=len(nodes)).tolist()
+        pri_all = probs[rows, cols]
+        cols_l = cols.tolist()
+        start = 0
         for i, nd in enumerate(nodes):
-            legal = np.flatnonzero(masks[i])
-            if len(legal) == 0:
+            k = counts[i]
+            if k == 0:
                 nd.terminal = True
                 nd.value_us = 0.0
                 nd.expanded = True
                 continue
-            pri = probs[i][legal]
+            pri = pri_all[start:start + k]
             total = float(pri.sum())
-            k = len(legal)
             nd.priors = (pri / total).tolist() if total > 1e-12 else [1.0 / k] * k
-            nd.actions = [int(a) for a in legal]
+            nd.actions = cols_l[start:start + k]
+            start += k
             nd.n = [0.0] * k
             nd.w = [0.0] * k
+            nd.total = 0.0
             # v_win is from the mover's perspective; store it from the US perspective.
             v = float(values[i])
-            nd.value_us = v if nd.mover == int(ts.Player.US) else -v
+            nd.value_us = v if nd.mover == _US else -v
             nd.expanded = True
 
     def _featurise(self, nodes: Sequence[_BNode],
@@ -191,19 +208,32 @@ class BatchedMCTS:
         are the searcher's own settled hypotheticals and are unaffected.
         """
         n = len(nodes)
-        if allow_fast and self._featuriser is not None and n <= self._featurise_capacity:
+        if allow_fast and 0 < n <= self._featurise_capacity:
+            runner = self._featuriser_for(n)
             for i, nd in enumerate(nodes):
-                self._featuriser.set_state(i, nd.state)
+                runner.set_state(i, nd.state)
             # REQUIRED: set_state leaves the cached observation buffer stale, and the stale
             # features match no perspective -- a silent corruption of every leaf evaluation.
-            self._featuriser.refresh_all()
-            obs = np.asarray(self._featuriser.get_observations(), dtype=np.float32)[:n]
-            masks = np.asarray(self._featuriser.get_action_masks())[:n]
+            runner.refresh_all()
+            obs = np.asarray(runner.get_observations(), dtype=np.float32)[:n]
+            masks = np.asarray(runner.get_action_masks())[:n]
             return obs, masks
         obs = np.stack([np.asarray(ts.extract_observation(nd.state, acting_player(nd.state)),
                                    dtype=np.float32) for nd in nodes])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(nd.state)) for nd in nodes])
         return obs, masks
+
+    def _featuriser_for(self, n: int) -> ts.VectorizedBatchRunner:
+        """The smallest cached runner holding `n` states (a power of two, capped at capacity)."""
+        cap = _MIN_FEATURISE_BUCKET
+        while cap < n:
+            cap *= 2
+        cap = min(cap, self._featurise_capacity)
+        runner = self._featurisers.get(cap)
+        if runner is None:
+            runner = ts.VectorizedBatchRunner(cap, int(self.cfg.seed))
+            self._featurisers[cap] = runner
+        return runner
 
     @staticmethod
     def _make_node(state: ts.GameState) -> _BNode:
@@ -221,21 +251,18 @@ class BatchedMCTS:
         calls cost 4.17us against 0.89us here, and both pick the same index -- verified over 3,000
         random draws per branching level, near-ties included.
         """
-        n, w, priors = node.n, node.w, node.priors
-        total = 0.0
-        for x in n:
-            total += x
+        total = node.total
         sqrt_total = math.sqrt(total if total > 1.0 else 1.0)
         c = self.cfg.c_puct
         value_us = node.value_us
-        us_moves = node.mover == int(ts.Player.US)
+        us_moves = node.mover == _US
         best_i, best_v = 0, -1e30
-        for i in range(len(n)):
-            ni = n[i]
-            q = (w[i] / ni) if ni > 0 else value_us
+        # Same arithmetic in the same order as the reference loop, so the choice is bit-identical.
+        for i, (ni, wi, pi) in enumerate(zip(node.n, node.w, node.priors)):
+            q = (wi / ni) if ni > 0 else value_us
             if not us_moves:
                 q = -q
-            v = q + c * priors[i] * sqrt_total / (1.0 + ni)
+            v = q + c * pi * sqrt_total / (1.0 + ni)
             if v > best_v:
                 best_v, best_i = v, i
         return best_i
@@ -266,6 +293,7 @@ class BatchedMCTS:
         for parent, idx in path:
             parent.n[idx] += 1.0
             parent.w[idx] += value_us
+            parent.total += 1.0
 
     def run(self, states: Sequence[ts.GameState],
             keys: Optional[Sequence[object]] = None) -> List[Tuple[List[int], np.ndarray]]:
