@@ -1,0 +1,82 @@
+# Search performance profile (2026-10-03): what takes the time in search evals and search training
+
+The owner asked for this before optimising search ("benchmark what takes time in running evals and
+training with search"), after search was found to add about +10 points on the best model
+([`P30_search_headroom_e7.md`](P30_search_headroom_e7.md)).
+
+**Method.** Sampling profiles with py-spy (`--native`, so time in the C++ engine and in torch is
+attributed to the Python line that called it), on the real workloads. Engine 1d11c2f2. Profiles and
+logs are in the job's scratch directory and are not kept.
+
+* **Eval:** the soup against `search:<soup>:256:determinize`, 200 games per side, `--pack-pairs 1`
+  (the configuration of the search-headroom measurement): about 3 minutes, 21,478 samples on the
+  decision path.
+* **Training:** `tools/train.py` on the shallow recipe, cold start, with
+  `--search-ce-coef 0.1` (defaults: 32 simulations, `card_playmode`, 1 in 8) against the same command
+  without search. About 5 minutes each, written to scratch under throwaway names
+  (E7-98-44, E7-99-44) and discarded.
+
+## Eval: CPU-bound Python tree work
+
+GPU utilisation averaged **6%**. One search of 200 positions at 256 simulations takes 6.0 s
+(30 ms per position, about 23 ms per simulation round of 200 leaves).
+
+| where | share of the decision path |
+|:---|---:|
+| `_select` (PUCT over the children, in Python) | **37.0%** |
+| `_featurise` -- of which `refresh_all` 20.4% | **20.8%** |
+| `_evaluate_batch` outside the forward (per-node priors, transfers) | 11.3% |
+| `_descend` (clone, step, settle a new child) | 8.6% |
+| `_backup` | 8.0% |
+| network forward (`_encode`, heads) | about 7% |
+| everything else | about 7% |
+
+* **Selection is a Python loop over about 19 children** (visit-weighted branching 18.6; leaves at
+  mean depth 6.3, max 45). It re-sums every child's visit count on every visit (lines 226–227, 7.6%
+  on their own).
+* **`refresh_all` rebuilds all 4,096 slots of the featuriser for a batch of about 200.**
+  `BatchedMCTSAgent` sizes the featuriser at 4,096. Measured with 200 states set: 8.25 ms per call at
+  capacity 4,096, 6.10 ms at 1,024, and 2.09 ms at 256. That is about 6 ms of a 23 ms round spent on
+  empty slots.
+
+## Training: about 8× slower, small batches and per-leaf Python
+
+Throughput, same harness, early in a cold run: **57–62k steps/s without search, 7.1–8.1k with
+it**. The searcher answers about 25 positions per environment step (512 environments × ~42% card or
+play-mode decisions × 1/8), at 32 simulations, so every environment step makes 32 network calls of
+about 25 leaves each.
+
+| where | share of the training loop |
+|:---|---:|
+| `_featurise` on the **per-node path** (`extract_observation` + `get_legal_mask` per leaf) | **19.7%** |
+| network forward at tiny batches (`_encode`, `_policy_logits`, value, entity heads) | about 32% |
+| `_evaluate_batch` outside the forward | 16.0% |
+| `_select` + `_descend` + `_make_node` + `_backup` | 11.2% |
+| the PPO update and rollout proper (`train_step`, `collect_rollouts`, env step) | about 10% |
+| everything else | about 11% |
+
+* **The training searcher has no C++ featuriser.** `NashPGTrainer` builds `BatchedMCTS` with the
+  default `featurise_capacity=0`, so every leaf is featurised one at a time from Python, which the
+  searcher's own docstring prices at about 10× the batched path.
+* **The forward runs at batch ~25**, where it is launch latency, not compute (the searcher's
+  docstring: 0.825 ms at batch 1 against 2.19 ms at batch 512).
+* **The search does not need to happen at the step.** It only produces targets; the actions were
+  already sampled from the raw policy and the weights do not change during a rollout. So the
+  positions could be cloned during the rollout and searched once at its end: about 3,200 positions
+  per rollout (25 × 128 steps) in one batched search instead of 128 searches of 25.
+
+## Reading: what an optimisation can buy
+
+* **Python-only fixes (no engine or bindings change):**
+  * size the featuriser to the batch (eval), and give the training searcher one;
+  * keep each node's visit total incrementally;
+  * extract priors for the whole batch at once;
+  * in training, defer the search to the end of the rollout.
+
+  Expected about 1.5–2× on the eval search, and about 2× on the search part of training (the
+  per-leaf Python floor of ~30–40 µs remains).
+* **Moving the tree into C++** (selection, expansion, clone/step/settle and featurisation into one
+  buffer; Python only runs the network on each leaf batch) removes the dominant cost in both
+  profiles. Rough expectation: 5–10× on the eval search, and training with search at about 5× its
+  current throughput (from ~7.5k towards ~35–40k steps/s at 32 simulations, 1 in 8). It is a new C++
+  component next to the engine, so it needs the owner's approval.
