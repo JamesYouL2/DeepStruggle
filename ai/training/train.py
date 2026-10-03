@@ -645,6 +645,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--playout-hidden", choices=["true", "redeal"], default="true",
                         help="true: the cards the decider cannot see stay as dealt in every pair; redeal: "
                              "they are redealt per pair, the same redeal for every candidate.")
+    parser.add_argument("--playout-mode", choices=["joint", "separate"], default="joint",
+                        help="joint: the playout policy gradient is added to every PPO minibatch's loss; "
+                             "separate: --playout-steps optimiser steps of its own after the PPO update "
+                             "(E7-74-45; too weak to move the policy).")
     parser.add_argument("--playout-max-steps", type=int, default=400,
                         help="Network steps per labelling round at most; games still open are valued by "
                              "the critic (counted in playout_capped).")
@@ -937,6 +941,7 @@ def main():
             playout_candidates=args.playout_candidates,
             playout_horizon=args.playout_horizon,
             playout_hidden=args.playout_hidden,
+            playout_mode=args.playout_mode,
             playout_max_steps=args.playout_max_steps,
             playout_decisions=args.playout_decisions,
             playout_buffer=args.playout_buffer,

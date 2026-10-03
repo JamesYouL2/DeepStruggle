@@ -19,6 +19,7 @@ from ai.training.playout_advantage import (DEFAULT_DECISIONS, PlayoutLabel, Play
 from bindings.ts_env import TsVectorizedEnv
 
 _update = cast(Any, NashPGTrainer._playout_update)
+_minibatch = cast(Any, NashPGTrainer._playout_minibatch_loss)
 
 M2D: Dict[str, Any] = dict(
     input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=256,
@@ -187,9 +188,12 @@ def test_the_update_moves_the_policy_toward_the_playout_best() -> None:
         ready.append(PlayoutLabel(obs[i], mask[i], np.arange(110, 114, dtype=np.int64), q))
 
     def fake() -> SimpleNamespace:
-        return SimpleNamespace(active_net=net, optimizer=opt, max_grad_norm=10.0, playout_coef=1.0,
-                               playout_min_batch=n, playout_steps=2, playout_batch=32, playout_candidates=4,
-                               playout_min_scale=0.05, _po_ready=ready, _po_labelled=n, _po_stats={})
+        ns = SimpleNamespace(active_net=net, optimizer=opt, max_grad_norm=10.0, playout_coef=1.0,
+                             playout_mode="separate", playout_min_batch=n, playout_steps=2, playout_batch=32,
+                             playout_candidates=4, playout_min_scale=0.05, _po_ready=ready, _po_labelled=n,
+                             _po_stats={})
+        ns._playout_minibatch_loss = lambda: _minibatch(ns)
+        return ns
 
     first = _update(fake())
     for _ in range(60):
@@ -198,3 +202,13 @@ def test_the_update_moves_the_policy_toward_the_playout_best() -> None:
     small = fake()
     small._po_ready = ready[:10]
     assert "playout_loss" not in _update(small)
+
+
+def test_joint_mode_reports_the_terms_the_ppo_minibatches_added_and_resets() -> None:
+    ns = SimpleNamespace(playout_mode="joint", _po_ready=[], _po_labelled=7, _po_stats={"playout_recorded": 3.0},
+                         _po_joint_acc={"playout_p_best": 1.2, "playout_loss": -0.4}, _po_joint_n=4)
+    out = _update(ns)
+    assert out["playout_p_best"] == pytest.approx(0.3) and out["playout_loss"] == pytest.approx(-0.1)
+    assert out["playout_recorded"] == 3.0 and out["playout_labelled"] == 7.0
+    assert ns._po_joint_acc == {} and ns._po_joint_n == 0
+    assert "playout_p_best" not in _update(ns)          # nothing added since: nothing reported

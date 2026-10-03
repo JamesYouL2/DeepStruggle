@@ -180,8 +180,11 @@ shares its dice, and the current network plays both sides greedily to the end of
 values it (`--playout-horizon turn`), or to the end of the game (`game`). `--playout-hidden true` (default) keeps the
 cards the decider cannot see as dealt in every pair; `redeal` redeals them per pair, the same redeal for every
 candidate (`tools/scripts/playout_hidden_variance.py` measures which is the less noisy label). Labelled positions go into a FIFO
-buffer (`--playout-buffer`, 16,384). Once `--playout-min-batch` are in it, every iteration takes `--playout-steps`
-(2) optimiser steps of the all-actions policy gradient over the candidates on `--playout-batch` (256) positions.
+buffer (`--playout-buffer`, 16,384). Once `--playout-min-batch` are in it, the all-actions policy gradient over
+the candidates of `--playout-batch` (256) positions drawn from it is added to every PPO minibatch's loss
+(`--playout-mode joint`, the default). `--playout-mode separate` instead takes `--playout-steps` (2) optimiser steps
+of its own after the PPO update: against PPO's 64 steps an iteration that moved nothing in E7-74-45, whose
+`playout_p_best` stayed at ~0.48 for 80M steps.
 The advantage is the candidate's mean value minus the policy-weighted mean, divided by the batch's standard
 deviation (at least `--playout-min-scale`).
 Metrics: `playout_split_half_r` (agreement of the advantages measured on even and odd pairs; near 0 means the

@@ -130,6 +130,8 @@ _BEFORE_RECORDED = {
     "playout_candidates": lambda meta: 4,
     "playout_horizon": lambda meta: "turn",
     "playout_hidden": lambda meta: "true",
+    # Runs before --playout-mode had their playout steps separate from the PPO update.
+    "playout_mode": lambda meta: "separate",
     "playout_max_steps": lambda meta: 400,
     "playout_decisions": lambda meta: ["SELECT_CARD", "SELECT_PLAY_MODE", "CHOOSE_BRANCH"],
     "playout_buffer": lambda meta: 16384,

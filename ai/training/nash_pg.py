@@ -336,6 +336,7 @@ class BaseNashPGTrainer:
         playout_candidates: int = 4,
         playout_horizon: str = "turn",
         playout_hidden: str = "true",
+        playout_mode: str = "joint",
         playout_max_steps: int = 400,
         playout_decisions: Sequence[str] = ("SELECT_CARD", "SELECT_PLAY_MODE", "CHOOSE_BRANCH"),
         playout_buffer: int = 16384,
@@ -631,6 +632,11 @@ class BaseNashPGTrainer:
         #: steps of the all-actions policy gradient on minibatches drawn from it, as the card-event
         #: target does with its buffer.
         self.playout_coef = float(playout_coef)
+        if playout_mode not in ("joint", "separate"):
+            raise ValueError(f"--playout-mode must be joint or separate, got {playout_mode!r}")
+        self.playout_mode = str(playout_mode)
+        self._po_joint_acc: Dict[str, float] = {}
+        self._po_joint_n = 0
         self.playout_sample_frac = float(playout_sample_frac)
         self.playout_candidates = int(playout_candidates)
         self.playout_buffer = int(playout_buffer)
@@ -956,40 +962,57 @@ class BaseNashPGTrainer:
             stats["playout_split_half_r"] = rel
         self._po_stats = stats
 
-    def _playout_update(self) -> Dict[str, float]:
-        """Playout advantages: --playout-steps optimiser steps, each on a minibatch drawn from the
-        buffer, of the all-actions policy gradient over each position's candidates."""
+    def _playout_minibatch_loss(self) -> Optional[Tuple[torch.Tensor, Dict[str, float]]]:
+        """Playout advantages: the all-actions policy gradient over the candidates of
+        --playout-batch positions drawn from the buffer, on the active network as it stands; None
+        until the buffer holds --playout-min-batch positions."""
         from ai.training.playout_advantage import playout_pg_loss
+        n = len(self._po_ready)
+        if n < max(1, self.playout_min_batch):
+            return None
+        k = self.playout_candidates
+        pick = np.random.randint(0, n, size=min(self.playout_batch, n))
+        recs = [self._po_ready[int(i)] for i in pick]
+        dev = recs[0].obs.device
+        b = len(recs)
+        cands = np.zeros((b, k), dtype=np.int64)
+        valid = np.zeros((b, k), dtype=bool)
+        q = np.zeros((b, k), dtype=np.float32)
+        for r, rec in enumerate(recs):
+            m = len(rec.cands)
+            cands[r, :m], valid[r, :m], q[r, :m] = rec.cands, True, rec.q
+        obs = torch.stack([r.obs for r in recs]).float()
+        masks = torch.stack([r.mask for r in recs])
+        logits, _v, _vp = cast(Any, self.active_net)(obs, masks)
+        loss, st = playout_pg_loss(logits, torch.from_numpy(cands).to(dev), torch.from_numpy(valid).to(dev),
+                                   torch.from_numpy(q).to(dev), self.playout_min_scale)
+        st["playout_loss"] = float(loss.detach())
+        return loss, st
+
+    def _playout_update(self) -> Dict[str, float]:
+        """Playout advantages, after the PPO update. `separate`: --playout-steps optimiser steps of
+        their own, each on one minibatch. `joint`: the term was added to every PPO minibatch's loss
+        (train_step), and this only reports its statistics."""
         out: Dict[str, float] = {"playout_ready": float(len(self._po_ready)),
                                  "playout_labelled": float(self._po_labelled), **self._po_stats}
-        n = len(self._po_ready)
-        if n < max(1, self.playout_min_batch) or self.playout_steps <= 0:
+        if self.playout_mode == "joint":
+            if self._po_joint_n:
+                out.update({key: v / self._po_joint_n for key, v in self._po_joint_acc.items()})
+            self._po_joint_acc, self._po_joint_n = {}, 0
+            return out
+        if self.playout_steps <= 0 or len(self._po_ready) < max(1, self.playout_min_batch):
             return out
         net = cast(Any, self.active_net)
         net.train()
-        k = self.playout_candidates
         acc: Dict[str, float] = {}
         for _ in range(self.playout_steps):
-            pick = np.random.randint(0, n, size=min(self.playout_batch, n))
-            recs = [self._po_ready[int(i)] for i in pick]
-            dev = recs[0].obs.device
-            b = len(recs)
-            cands = np.zeros((b, k), dtype=np.int64)
-            valid = np.zeros((b, k), dtype=bool)
-            q = np.zeros((b, k), dtype=np.float32)
-            for r, rec in enumerate(recs):
-                m = len(rec.cands)
-                cands[r, :m], valid[r, :m], q[r, :m] = rec.cands, True, rec.q
-            obs = torch.stack([r.obs for r in recs]).float()
-            masks = torch.stack([r.mask for r in recs])
-            logits, _v, _vp = net(obs, masks)
-            loss, st = playout_pg_loss(logits, torch.from_numpy(cands).to(dev), torch.from_numpy(valid).to(dev),
-                                       torch.from_numpy(q).to(dev), self.playout_min_scale)
+            res = self._playout_minibatch_loss()
+            assert res is not None
+            loss, st = res
             self.optimizer.zero_grad(set_to_none=True)
             (self.playout_coef * loss).backward()
             nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
             self.optimizer.step()
-            st["playout_loss"] = float(loss.detach())
             for key, v in st.items():
                 acc[key] = acc.get(key, 0.0) + v / self.playout_steps
         net.eval()
@@ -2078,6 +2101,16 @@ class NashPGTrainer(BaseNashPGTrainer):
                     z_loss = self.z_loss_coef * (lse * lse).mean()
                     policy_loss = policy_loss + z_loss
                     z_loss_t += z_loss.detach()
+                if self.playout_coef > 0.0 and self.playout_mode == "joint":
+                    # --playout-mode joint: the playout policy gradient is part of every PPO
+                    # minibatch's loss, so it moves the policy with PPO's own steps rather than in
+                    # two optimiser steps of its own against PPO's 64 (E7-74-45: no movement).
+                    _po = self._playout_minibatch_loss()
+                    if _po is not None:
+                        policy_loss = policy_loss + self.playout_coef * _po[0]
+                        for _key, _v in _po[1].items():
+                            self._po_joint_acc[_key] = self._po_joint_acc.get(_key, 0.0) + _v
+                        self._po_joint_n += 1
                 with torch.no_grad():
                     lse_sum_t += lse.mean().double()
                     lse_absmax_t = torch.maximum(lse_absmax_t, lse.abs().max().double())
