@@ -37,6 +37,7 @@ class Holding:
     card: int
     side: int
     outcome: str = "kept"          # "headline", "event", "ops/space", or "kept" (left the hand otherwise)
+    legal: bool = False            # the owner could have played the event at some point while holding it
 
 
 def _holdings_now(st: ts.GameState) -> Dict[int, int]:
@@ -48,6 +49,26 @@ def _holdings_now(st: ts.GameState) -> Dict[int, int]:
         elif ts.in_hand_of(loc, ts.Player.USSR):
             out[c] = USSR
     return out
+
+
+def _mark_event_legal(st: ts.GameState, mover: int, now: Dict[int, int], latest: Dict[int, Holding]) -> None:
+    """At the owner's action-round card choice: for each card in their hand not yet known to be
+    eventable this holding, select it on a copy and see whether EVENT is legal at the play-mode
+    decision that follows. A scoring card always is."""
+    mask = np.asarray(ts.get_flat_action_mask(st))
+    for idx in np.flatnonzero(mask[:ActionEncoder.PLAY_MODE_OFFSET]):
+        card = int(ts.decode_flat_action(st, int(idx)).primary_id)
+        h = latest.get(card)
+        if h is None or h.legal or now.get(card) != mover:
+            continue
+        if card in SCORING:
+            h.legal = True
+            continue
+        c = st.clone()
+        if not ts.Engine.try_step_flat(c, int(idx), False, False):
+            continue
+        if c.ctx().decision_type == ts.DecisionType.SELECT_PLAY_MODE and bool(np.asarray(ts.get_flat_action_mask(c))[EVENT]):
+            h.legal = True
 
 
 def play(model: Any, games: int, seed: int, batch: int, temperature: float) -> List[Holding]:
@@ -91,15 +112,19 @@ def play(model: Any, games: int, seed: int, batch: int, temperature: float) -> L
                     continue                                           # inside an event's resolution
                 mover = int(ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player)
                 a = int(actions[i])
+                if (ctx.decision_type == ts.DecisionType.SELECT_CARD and st.current_phase == ts.Phase.ACTION_ROUND):
+                    _mark_event_legal(st, mover, now, latest[i])
                 if ctx.decision_type == ts.DecisionType.SELECT_CARD and a < ActionEncoder.PLAY_MODE_OFFSET:
                     # The flat index is not the card id: decode it (flat 102 is card 103).
                     card = int(ts.decode_flat_action(st, a).primary_id)
                     if now.get(card) == mover:
                         if st.current_phase == ts.Phase.HEADLINE:
                             latest[i][card].outcome = "headline"
+                            latest[i][card].legal = True
                         elif st.current_phase == ts.Phase.ACTION_ROUND:
                             if card in SCORING:
                                 latest[i][card].outcome = "event"
+                                latest[i][card].legal = True
                             else:
                                 selected[i] = (card, mover)
                 elif ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and st.current_phase == ts.Phase.ACTION_ROUND:
@@ -119,7 +144,8 @@ def table(holdings: Sequence[Holding], games: int) -> str:
     cards = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
     by: Dict[Tuple[int, int], collections.Counter] = collections.defaultdict(collections.Counter)
     for h in holdings:
-        by[(h.card, h.side)][h.outcome] += 1
+        if h.legal:
+            by[(h.card, h.side)][h.outcome] += 1
 
     def stats(keys: Sequence[Tuple[int, int]]) -> Tuple[int, int, int]:
         c = collections.Counter()
@@ -148,8 +174,10 @@ def table(holdings: Sequence[Holding], games: int) -> str:
     rows.sort(key=lambda r: (-r[0], -r[1]))
     out = [f"How often a card in its owner's hand is used for its event -- headlined, or played in an action "
            f"round as the event -- {games:,} greedy self-play games. One count per holding (the card entering "
-           f"the hand until it leaves). US/USSR cards: the owner's holdings only. Neutral cards: whoever holds "
-           f"it, with the split by side.", "",
+           f"the hand until it leaves), counting only holdings in which the event was legal for the owner at "
+           f"some point (checked at each of the owner's action-round card choices; a headline or a scoring card "
+           f"counts as legal). US/USSR cards: the owner's holdings only. Neutral cards: whoever holds it, with "
+           f"the split by side.", "",
            "| card | side | evented (holdings) | headlined | event in a round | held by US | held by USSR |",
            "|:---|:---|---:|---:|---:|---:|---:|"]
     for frac, n, name, side, hd, ev, uc, sc in rows:
@@ -175,7 +203,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for f in a.merge:
             d = json.load(open(f))
             games += int(d["games"])
-            recs += [Holding(int(c), int(s), str(o)) for c, s, o in d["holdings"]]
+            recs += [Holding(int(r[0]), int(r[1]), str(r[2]), bool(r[3]) if len(r) > 3 else True) for r in d["holdings"]]
         md = table(recs, games)
         print(md)
         if a.output_md:
@@ -185,7 +213,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model
     hs = play(model, a.games, a.seed, a.batch, a.temperature)
     if a.dump:
-        json.dump({"games": a.games, "holdings": [[h.card, h.side, h.outcome] for h in hs]}, open(a.dump, "w"))
+        json.dump({"games": a.games, "holdings": [[h.card, h.side, h.outcome, h.legal] for h in hs]}, open(a.dump, "w"))
     md = table(hs, a.games)
     print(md)
     if a.output_md:
