@@ -2,11 +2,11 @@
 
 Owner: for the shallow_E7-02+03+04+05_1200M soup, how often each card in its owner's hand is headlined or played as the event in a round (neutral cards: overall / by US / by USSR), sorted; the opponent's events and chained plays (Grain Sales, Star Wars) excluded; only holdings where playing the event would be legal.
 
-`tools/scripts/event_play_census.py` (8 × 512 greedy self-play games). A holding counts when the owner could have played the event at one of their decisions: a headline choice where the card may be headlined (headlining fires it -- Defectors is only ever playable this way), or an action-round card choice where selecting it offers the event (checked on a copy). An earlier version counted headline legality only when the card was headlined, which put Defectors at 100%; corrected (81%). The engine offers EVENT for some cards whose event would do nothing (One Small Step when not behind in space, Wargames above DEFCON 2), so those still count; NATO's prerequisite is enforced (4,240 holdings -> 1,923).
+`tools/scripts/event_play_census.py` (8 × 512 greedy self-play games). A holding counts when the owner could have played the event at one of their decisions: a headline choice where the card may be headlined and its event can trigger (`CardHandlers::can_trigger_event`, the engine's test; Defectors is only ever playable this way), or an action-round card choice where selecting it offers the event (checked on a copy). An earlier version counted headline legality only when the card was headlined, which put Defectors at 100%; corrected (81%). The engine offers EVENT for some cards whose event would do nothing (One Small Step when not behind in space, Wargames above DEFCON 2), so those still count; NATO's prerequisite is enforced (4,240 holdings -> 2,021); the engine treats the events of One Small Step and Wargames as triggerable whatever the space track or DEFCON, so they count throughout.
 
 **Unplayed scoring cards** (8.3% of 5,912 scoring holdings in a 512-game trace): 2.4% discarded by the US with Ask Not What Your Country Can Do For You; 2.7% in hand when the game ended (mostly 20 VP); 0.05% lost to holding a scoring card; ~0.8% taken or discarded by opponent events (Grain Sales, Aldrich Ames, Five Year Plan, Terrorism); ~2.1% discarded at the start of a turn just after the headline choices -- not yet explained.
 
-How often a card in its owner's hand is used for its event -- headlined, or played in an action round as the event -- 4,096 greedy self-play games. One count per holding (the card entering the hand until it leaves), counting only holdings in which the owner could have played the event at one of their decisions: a headline choice where the card may be headlined, or an action-round card choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral cards: whoever holds it, with the split by side.
+How often a card in its owner's hand is used for its event -- headlined, or played in an action round as the event -- 4,096 greedy self-play games. One count per holding (the card entering the hand until it leaves), counting only holdings in which the owner could have played the event at one of their decisions: a headline choice where the card may be headlined and its event can trigger, or an action-round card choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral cards: whoever holds it, with the split by side.
 
 | card | side | evented (holdings) | headlined | event in a round | held by US | held by USSR |
 |:---|:---|---:|---:|---:|---:|---:|
@@ -48,10 +48,11 @@ How often a card in its owner's hand is used for its event -- headlined, or play
 | Camp David Accords | us | **67%** (2,183) | 10% | 57% |  |  |
 | Iran-Iraq War | neutral | **66%** (2,103) | 17% | 49% | 82% (1,053) | 49% (1,050) |
 | Puppet Governments | us | **65%** (2,109) | 19% | 46% |  |  |
+| Solidarity | us | **65%** (527) | 6% | 59% |  |  |
 | South African Unrest | ussr | **63%** (2,546) | 26% | 37% |  |  |
 | Korean War | ussr | **61%** (3,055) | 34% | 28% |  |  |
 | Nasser | ussr | **61%** (2,673) | 39% | 21% |  |  |
-| Socialist Governments | ussr | **59%** (3,982) | 36% | 23% |  |  |
+| Socialist Governments | ussr | **60%** (3,897) | 37% | 24% |  |  |
 | Missile Envy | neutral | **57%** (5,287) | 57% | 0% | 72% (2,743) | 42% (2,544) |
 | Vietnam Revolts | ussr | **56%** (2,745) | 54% | 2% |  |  |
 | Soviets Shoot Down KAL-007 | us | **51%** (1,037) | 51% | 0% |  |  |
@@ -59,12 +60,12 @@ How often a card in its owner's hand is used for its event -- headlined, or play
 | Fidel | ussr | **48%** (3,083) | 11% | 37% |  |  |
 | De Gaulle Leads France | ussr | **43%** (3,135) | 36% | 7% |  |  |
 | Suez Crisis | ussr | **38%** (3,136) | 26% | 12% |  |  |
-| Solidarity | us | **33%** (1,033) | 3% | 30% |  |  |
 | Cultural Revolution | ussr | **31%** (2,217) | 15% | 17% |  |  |
 | CIA Created | us | **30%** (2,612) | 30% | 0% |  |  |
-| OPEC | ussr | **26%** (2,544) | 16% | 10% |  |  |
+| OPEC | ussr | **27%** (2,477) | 16% | 11% |  |  |
 | Blockade | ussr | **25%** (3,039) | 1% | 24% |  |  |
 | Truman Doctrine | us | **24%** (2,515) | 13% | 12% |  |  |
+| Star Wars | us | **24%** (604) | 24% | 0% |  |  |
 | Portuguese Empire Crumbles | ussr | **24%** (2,329) | 12% | 12% |  |  |
 | Bear Trap | us | **23%** (2,081) | 23% | 0% |  |  |
 | “Lone Gunman” | ussr | **21%** (2,425) | 21% | 0% |  |  |
@@ -72,20 +73,19 @@ How often a card in its owner's hand is used for its event -- headlined, or play
 | Duck and Cover | us | **20%** (4,627) | 20% | 0% |  |  |
 | Alliance for Progress | us | **19%** (2,343) | 11% | 8% |  |  |
 | SALT Negotiations | neutral | **16%** (5,050) | 16% | 0% | 25% (2,596) | 8% (2,454) |
-| Willy Brandt | ussr | **16%** (2,313) | 8% | 8% |  |  |
-| Muslim Revolution | ussr | **15%** (2,539) | 14% | 1% |  |  |
+| Willy Brandt | ussr | **16%** (2,269) | 8% | 8% |  |  |
+| Muslim Revolution | ussr | **15%** (2,477) | 14% | 1% |  |  |
 | NORAD | us | **14%** (3,048) | 14% | 0% |  |  |
-| Star Wars | us | **14%** (1,065) | 14% | 0% |  |  |
 | Marshall Plan | us | **13%** (3,029) | 13% | 0% |  |  |
 | “We Will Bury You” | ussr | **12%** (2,520) | 12% | 0% |  |  |
 | Che | ussr | **10%** (2,536) | 9% | 1% |  |  |
 | Glasnost | ussr | **10%** (1,058) | 10% | 0% |  |  |
 | Terrorism | neutral | **9%** (2,096) | 8% | 1% | 5% (1,042) | 14% (1,054) |
 | John Paul II Elected Pope | us | **7%** (2,278) | 4% | 2% |  |  |
+| The Cambridge Five | ussr | **6%** (3,520) | 6% | 0% |  |  |
 | Kitchen Debates | us | **6%** (2,523) | 4% | 2% |  |  |
+| Arab-Israeli War | ussr | **6%** (3,506) | 4% | 2% |  |  |
 | US/Japan Mutual Defense Pact | us | **6%** (3,157) | 6% | 0% |  |  |
-| The Cambridge Five | ussr | **5%** (4,214) | 5% | 0% |  |  |
-| Arab-Israeli War | ussr | **5%** (4,117) | 4% | 1% |  |  |
 | Olympic Games | neutral | **5%** (8,939) | 5% | 0% | 8% (4,804) | 0% (4,135) |
 | East European Unrest | us | **4%** (4,638) | 4% | 0% |  |  |
 | Iranian Hostage Crisis | ussr | **4%** (1,056) | 4% | 0% |  |  |
@@ -95,7 +95,7 @@ How often a card in its owner's hand is used for its event -- headlined, or play
 | Our Man in Tehran | us | **3%** (2,352) | 3% | 0% |  |  |
 | Cuban Missile Crisis | neutral | **2%** (5,272) | 2% | 0% | 1% (2,705) | 4% (2,567) |
 | Special Relationship | us | **2%** (4,797) | 2% | 0% |  |  |
-| Flower Power | ussr | **2%** (2,200) | 2% | 0% |  |  |
+| Flower Power | ussr | **2%** (2,166) | 2% | 0% |  |  |
 | Yuri and Samantha | ussr | **2%** (1,027) | 2% | 0% |  |  |
 | AWACS Sale to Saudis | us | **1%** (1,047) | 1% | 0% |  |  |
 | Five Year Plan | us | **1%** (4,543) | 1% | 0% |  |  |
@@ -116,6 +116,6 @@ How often a card in its owner's hand is used for its event -- headlined, or play
 | Summit | neutral | **0%** (5,314) | 0% | 0% | 0% (2,703) | 0% (2,611) |
 | Formosan Resolution | us | **0%** (2,984) | 0% | 0% |  |  |
 | Comecon | ussr | **0%** (3,185) | 0% | 0% |  |  |
-| NATO | us | **0%** (4,191) | 0% | 0% |  |  |
 | Nuclear Subs | us | **0%** (2,262) | 0% | 0% |  |  |
+| NATO | us | **0%** (2,021) | 0% | 0% |  |  |
 | North Sea Oil | us | **0%** (1,039) | 0% | 0% |  |  |

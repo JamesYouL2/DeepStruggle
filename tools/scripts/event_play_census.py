@@ -72,13 +72,18 @@ def _mark_event_legal(st: ts.GameState, mover: int, now: Dict[int, int], latest:
 
 
 def _mark_headline_legal(st: ts.GameState, mover: int, now: Dict[int, int], latest: Dict[int, Holding]) -> None:
-    """At the owner's headline choice every card they may headline is an event they could play:
-    headlining it fires it. (Defectors, for one, is only ever playable this way.)"""
+    """At the owner's headline choice a card they may headline is an event they could play when its
+    event can trigger now -- the engine's own test, `CardHandlers::can_trigger_event`, the one the
+    action-round mask uses. Any card may be headlined, but NATO before its prerequisite only
+    fizzles. (Defectors, for one, is only ever playable as a headline.)"""
     mask = np.asarray(ts.get_flat_action_mask(st))
+    who = ts.Player.US if mover == US else ts.Player.USSR
     for idx in np.flatnonzero(mask[:ActionEncoder.PLAY_MODE_OFFSET]):
         card = int(ts.decode_flat_action(st, int(idx)).primary_id)
         h = latest.get(card)
-        if h is not None and now.get(card) == mover:
+        if h is None or h.legal or now.get(card) != mover:
+            continue
+        if card in SCORING or ts.CardHandlers.can_trigger_event(st, card, who):
             h.legal = True
 
 
@@ -188,8 +193,8 @@ def table(holdings: Sequence[Holding], games: int) -> str:
     out = [f"How often a card in its owner's hand is used for its event -- headlined, or played in an action "
            f"round as the event -- {games:,} greedy self-play games. One count per holding (the card entering "
            f"the hand until it leaves), counting only holdings in which the owner could have played the event at "
-           f"one of their decisions: a headline choice where the card may be headlined, or an action-round card "
-           f"choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral "
+           f"one of their decisions: a headline choice where the card may be headlined and its event can trigger, "
+           f"or an action-round card choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral "
            f"cards: whoever holds it, with the split by side.", "",
            "| card | side | evented (holdings) | headlined | event in a round | held by US | held by USSR |",
            "|:---|:---|---:|---:|---:|---:|---:|"]
