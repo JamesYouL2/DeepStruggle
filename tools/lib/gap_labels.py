@@ -18,8 +18,11 @@ never saw it:
 * **cross-fitting** -- K folds, repeated over R random splits: a position's prediction always comes
   from a model fitted on other positions, so it cannot fit its own noise.
 * **the model** -- gradient-boosted trees, depth 3, leaves of 10 or more positions, early stopping.
-  Leaf size was chosen by out-of-fold R² on the E7-04-44 banks (40: +0.111, 20: +0.113, 10: +0.113),
-  and only 10 separates KAL-007 without South Korea (26 positions, measured -6.1) from the 323 with it.
+  The leaf size is a judgment call, not a cross-validation result: over 10 paired splits on the
+  E7-04-44 banks the out-of-fold R² is 40: +0.1010, 20: +0.1029, 10: +0.1004, 5: +0.0988 (each
+  ± ~0.0015), so the pooled fit cannot tell 10 from 40 and slightly prefers 20. 10 was kept because
+  it is the only size that separates KAL-007 without South Korea (26 positions, measured -6.1 ± 2.5,
+  predicted positive 28% at 10 against 68-80% at 20-40) from the 323 positions with it.
 * **the label** -- P(event) is the share of the position's R out-of-fold predictions above zero:
   the event where the evidence from *similar positions* says it beats the model's own move, Ops
   where it says it loses, and in between where the fits disagree.
