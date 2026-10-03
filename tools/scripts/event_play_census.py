@@ -71,6 +71,17 @@ def _mark_event_legal(st: ts.GameState, mover: int, now: Dict[int, int], latest:
             h.legal = True
 
 
+def _mark_headline_legal(st: ts.GameState, mover: int, now: Dict[int, int], latest: Dict[int, Holding]) -> None:
+    """At the owner's headline choice every card they may headline is an event they could play:
+    headlining it fires it. (Defectors, for one, is only ever playable this way.)"""
+    mask = np.asarray(ts.get_flat_action_mask(st))
+    for idx in np.flatnonzero(mask[:ActionEncoder.PLAY_MODE_OFFSET]):
+        card = int(ts.decode_flat_action(st, int(idx)).primary_id)
+        h = latest.get(card)
+        if h is not None and now.get(card) == mover:
+            h.legal = True
+
+
 def play(model: Any, games: int, seed: int, batch: int, temperature: float) -> List[Holding]:
     from bindings.ts_env import TsVectorizedEnv, model_obs_features
     device = next(model.parameters()).device
@@ -112,8 +123,10 @@ def play(model: Any, games: int, seed: int, batch: int, temperature: float) -> L
                     continue                                           # inside an event's resolution
                 mover = int(ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player)
                 a = int(actions[i])
-                if (ctx.decision_type == ts.DecisionType.SELECT_CARD and st.current_phase == ts.Phase.ACTION_ROUND):
+                if ctx.decision_type == ts.DecisionType.SELECT_CARD and st.current_phase == ts.Phase.ACTION_ROUND:
                     _mark_event_legal(st, mover, now, latest[i])
+                elif ctx.decision_type == ts.DecisionType.SELECT_CARD and st.current_phase == ts.Phase.HEADLINE:
+                    _mark_headline_legal(st, mover, now, latest[i])
                 if ctx.decision_type == ts.DecisionType.SELECT_CARD and a < ActionEncoder.PLAY_MODE_OFFSET:
                     # The flat index is not the card id: decode it (flat 102 is card 103).
                     card = int(ts.decode_flat_action(st, a).primary_id)
@@ -174,10 +187,10 @@ def table(holdings: Sequence[Holding], games: int) -> str:
     rows.sort(key=lambda r: (-r[0], -r[1]))
     out = [f"How often a card in its owner's hand is used for its event -- headlined, or played in an action "
            f"round as the event -- {games:,} greedy self-play games. One count per holding (the card entering "
-           f"the hand until it leaves), counting only holdings in which the event was legal for the owner at "
-           f"some point (checked at each of the owner's action-round card choices; a headline or a scoring card "
-           f"counts as legal). US/USSR cards: the owner's holdings only. Neutral cards: whoever holds it, with "
-           f"the split by side.", "",
+           f"the hand until it leaves), counting only holdings in which the owner could have played the event at "
+           f"one of their decisions: a headline choice where the card may be headlined, or an action-round card "
+           f"choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral "
+           f"cards: whoever holds it, with the split by side.", "",
            "| card | side | evented (holdings) | headlined | event in a round | held by US | held by USSR |",
            "|:---|:---|---:|---:|---:|---:|---:|"]
     for frac, n, name, side, hd, ev, uc, sc in rows:
