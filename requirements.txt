@@ -40,6 +40,12 @@ tensorboard>=2.21.0
 # Playwright drives the browser end-to-end tests in tests/web. It also needs a browser:
 #     python -m playwright install chromium
 playwright>=1.62.0
+# py-spy is the sampling profiler behind research/log/search_performance_profile.md: it sees
+# into the C++ engine and torch (--native) without slowing the run. Nothing imports it. Where
+# ptrace is restricted to parents (kernel.yama.ptrace_scope=1, the container default) it must
+# launch the process it profiles -- `py-spy record -- python tools/train.py ...` -- rather than
+# attach to a running PID.
+py-spy>=0.4.2
 # beautifulsoup4 is used only by tools/scrape_card_strategies.py, which regenerates the local
 # card strategy notes. Nothing in the engine, the training stack or the server imports it.
 beautifulsoup4>=4.12.0
