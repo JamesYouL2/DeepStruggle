@@ -2691,6 +2691,7 @@ def train_pipeline(
                     # paired-branch playout advantages (--playout-adv)
                     "playout_ready", "playout_labelled", "playout_recorded", "playout_games", "playout_steps",
                     "playout_capped", "playout_label_s", "playout_q_spread", "playout_best_not_favourite",
+                    "playout_fresh_p_best", "playout_fresh_gap",
                     "playout_split_half_r", "playout_loss", "playout_adv_scale", "playout_agree", "playout_p_best",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it

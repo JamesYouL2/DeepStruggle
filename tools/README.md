@@ -191,7 +191,10 @@ Metrics: `playout_split_half_r` (agreement of the advantages measured on even an
 labels are noise), `playout_best_not_favourite` (share of positions where a candidate other than the policy's
 favourite played out best), `playout_p_best` / `playout_agree` (the policy's mass on, and its top-1 agreement
 with, the playout-best candidate in the update minibatch), `playout_q_spread`, `playout_capped`, and
-`playout_label_s` (seconds labelling per iteration -- the throughput cost). `playout_loss` reads ~0 by
+`playout_label_s` (seconds labelling per iteration -- the throughput cost). `playout_fresh_p_best` and `playout_fresh_gap` read
+the policy as it was at each newly labelled decision, before any update saw it: its mass on the playout-best
+candidate, and the value its choice gives up against that candidate. They are the generalisation test, since
+`playout_p_best` is measured on buffered positions the update has already trained on. `playout_loss` reads ~0 by
 construction, because the advantage is centred on the policy's own mean; the gradient is not zero.
 Why: `research/log/expert_review_E7.md`, candidate 4.
 

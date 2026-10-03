@@ -945,19 +945,28 @@ class BaseNashPGTrainer:
         self.active_net.eval()
         mats, stats = self._po_labeller.label(self.active_net, recs, self.device,
                                               int(np.random.randint(1, 1 << 62)))
-        spread, changed = [], 0
+        spread, changed, fresh_p, fresh_gap = [], 0, [], []
         for rec, m in zip(recs, mats):
             q = m.mean(axis=0)
             self._po_ready.append(PlayoutLabel(rec.obs, rec.mask, rec.cands, q.astype(np.float32)))
             spread.append(float(q.max() - q.min()))
             changed += int(int(np.argmax(q)) != 0)       # candidate 0 is the policy's favourite
+            # The policy as it was at the decision, before any update saw this position: its mass
+            # on the playout-best candidate, and the value its choice gives up against that
+            # candidate (both over the candidates, renormalised). The generalisation test -- the
+            # update's own playout_p_best is measured on positions it has already trained on.
+            w = rec.prior.astype(np.float64) / max(float(rec.prior.sum()), 1e-12)
+            fresh_p.append(float(w[int(np.argmax(q))]))
+            fresh_gap.append(float(q.max() - (w * q).sum()))
         self._po_labelled += len(recs)
         if len(self._po_ready) > self.playout_buffer:
             del self._po_ready[:len(self._po_ready) - self.playout_buffer]
         rel = split_half_reliability(mats)
         stats.update({"playout_recorded": float(len(recs)),
                       "playout_q_spread": float(np.mean(spread)),
-                      "playout_best_not_favourite": changed / len(recs)})
+                      "playout_best_not_favourite": changed / len(recs),
+                      "playout_fresh_p_best": float(np.mean(fresh_p)),
+                      "playout_fresh_gap": float(np.mean(fresh_gap))})
         if rel is not None:
             stats["playout_split_half_r"] = rel
         self._po_stats = stats

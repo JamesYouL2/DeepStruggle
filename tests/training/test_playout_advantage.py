@@ -212,3 +212,22 @@ def test_joint_mode_reports_the_terms_the_ppo_minibatches_added_and_resets() -> 
     assert out["playout_recorded"] == 3.0 and out["playout_labelled"] == 7.0
     assert ns._po_joint_acc == {} and ns._po_joint_n == 0
     assert "playout_p_best" not in _update(ns)          # nothing added since: nothing reported
+
+
+def test_fresh_metrics_read_the_policy_at_the_decision_against_the_playout_best() -> None:
+    mats = [np.array([[0.0, 0.4, 0.1], [0.0, 0.4, 0.1]]),     # best is candidate 1
+            np.array([[0.3, 0.0], [0.3, 0.0]])]               # best is candidate 0, the favourite
+    labeller = SimpleNamespace(label=lambda *a, **k: (mats, {}))
+    recs = [PlayoutRecord(None, torch.zeros(1).half(), torch.zeros(1, dtype=torch.bool), 1,
+                          np.array([5, 6, 7]), np.array([0.5, 0.25, 0.25], dtype=np.float32)),
+            PlayoutRecord(None, torch.zeros(1).half(), torch.zeros(1, dtype=torch.bool), -1,
+                          np.array([5, 6]), np.array([0.6, 0.2], dtype=np.float32))]
+    ns = SimpleNamespace(_po_pending=recs, _po_labeller=labeller, active_net=torch.nn.Linear(1, 1), device="cpu",
+                         _po_ready=[], _po_labelled=0, playout_buffer=10, _po_stats={})
+    cast(Any, NashPGTrainer._playout_label)(ns)
+    st = ns._po_stats
+    # p on the best: 0.25 (renormalised over 1.0) and 0.75 (0.6 / 0.8)
+    assert st["playout_fresh_p_best"] == pytest.approx((0.25 + 0.75) / 2)
+    # gap: 0.4 - (0.5*0 + 0.25*0.4 + 0.25*0.1) = 0.275; 0.3 - 0.75*0.3 = 0.075
+    assert st["playout_fresh_gap"] == pytest.approx((0.275 + 0.075) / 2)
+    assert st["playout_best_not_favourite"] == 0.5 and len(ns._po_ready) == 2
