@@ -226,14 +226,29 @@ def test_batched_featurisation_matches_the_per_node_path(model):
     plain = BatchedMCTS(model, config=BatchedMCTSConfig(simulations=1))
     fast = BatchedMCTS(model, config=BatchedMCTSConfig(simulations=1),
                        featurise_capacity=len(states))
-    assert fast._featuriser is not None, "featuriser was not constructed"
-
     obs_a, mask_a = plain._featurise(nodes)
     obs_b, mask_b = fast._featurise(nodes)
+    assert fast._featurisers, "the batched path was not taken"
 
     np.testing.assert_allclose(obs_a, obs_b, atol=1e-6, err_msg=(
         "batched featurisation differs from extract_observation; the network would be asked "
         "about features it was never trained on"))
+    np.testing.assert_array_equal(mask_a, mask_b)
+
+
+def test_a_reused_featuriser_returns_only_the_new_batch(model):
+    """Featurisers are cached per power-of-two size and reused, so a smaller batch lands in a
+    runner whose later slots still hold the previous batch. Only the new rows may come back."""
+    states = _states(8)
+    nodes = [BatchedMCTS._make_node(s) for s in states]
+    plain = BatchedMCTS(model, config=BatchedMCTSConfig(simulations=1))
+    fast = BatchedMCTS(model, config=BatchedMCTSConfig(simulations=1), featurise_capacity=64)
+    fast._featurise(nodes)                                   # fills 8 slots
+    few = nodes[5:]                                          # then 3 different positions
+    obs_a, mask_a = plain._featurise(few)
+    obs_b, mask_b = fast._featurise(few)
+    assert len(fast._featurisers) == 1 and obs_b.shape[0] == 3
+    np.testing.assert_allclose(obs_a, obs_b, atol=1e-6)
     np.testing.assert_array_equal(mask_a, mask_b)
 
 
