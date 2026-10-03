@@ -12,16 +12,18 @@
 //     k = select_leaves()            # first call: the roots; then one new leaf per tree
 //     while k: probs, values = net(obs[:k], masks[:k]); expand_and_backup(probs, values); k = select_leaves()
 //
-// The semantics are the Python searcher's, decision for decision -- the same PUCT expression in
-// the same order, the same settle depths, values kept from the US side, a node with an empty mask
-// treated as a draw -- so the Python searcher stays the reference that tests compare against.
-// The one deliberate difference is randomness: each tree draws its chance seeds from its own
-// SplitMix64 stream, seeded from `seed` and the tree's index, so a search is reproducible from its
-// seed whatever the thread count, but does not replay the Python searcher's random.Random draws.
+// The search is the Python searcher's, bit for bit -- the same PUCT expression in the same order,
+// the same settle depths, values kept from the US side, a node with an empty mask treated as a
+// draw, and the same random numbers: each new child's chance seed is `random.Random.getrandbits(64)`
+// from the caller's own generator, whose MT19937 state is handed in by reset() and handed back by
+// mt_state(), in the order the Python tree draws them (round by round, trees in index order). A
+// game searched with either tree is therefore the same game.
 //
-// Trees are independent, so descents, featurisation and backups run across the OpenMP team
-// (gomp_parallel_for, the pool shared with torch). Leaf rows are then numbered in tree order, so
-// the batch handed to the network is the same whatever the thread count.
+// Trees are independent, so their descents, featurisation and backups run across the OpenMP team
+// (gomp_parallel_for, the pool shared with torch). Only the seeds are handed out serially: a round
+// first walks every tree to where it needs a new child, then numbers those trees' seeds in tree
+// order, then builds the children. Leaf rows are numbered in tree order too, so neither the seeds
+// nor the batch handed to the network depend on the thread count.
 
 #pragma once
 
@@ -39,7 +41,6 @@
 #include "ts/game_state.hpp"
 #include "ts/micro_action.hpp"
 #include "ts/observation.hpp"
-#include "ts/prng.hpp"
 #include "gomp_parallel.hpp"
 
 namespace ts_search {
@@ -63,11 +64,63 @@ struct Node {
     uint32_t edge_count = 0;
 };
 
+// CPython's random.Random: MT19937 with the state layout of getstate()/setstate() -- 624 words and
+// the index of the next one -- and getrandbits(64) as two 32-bit outputs, least significant first.
+struct PyRandom {
+    static constexpr int N = 624;
+    static constexpr int M = 397;
+    uint32_t mt[N] = {};
+    int index = N;
+
+    uint32_t next32() {
+        static constexpr uint32_t mag01[2] = {0x0U, 0x9908b0dfU};
+        if (index >= N) {
+            int kk = 0;
+            uint32_t y;
+            for (; kk < N - M; ++kk) {
+                y = (mt[kk] & 0x80000000U) | (mt[kk + 1] & 0x7fffffffU);
+                mt[kk] = mt[kk + M] ^ (y >> 1) ^ mag01[y & 0x1U];
+            }
+            for (; kk < N - 1; ++kk) {
+                y = (mt[kk] & 0x80000000U) | (mt[kk + 1] & 0x7fffffffU);
+                mt[kk] = mt[kk + (M - N)] ^ (y >> 1) ^ mag01[y & 0x1U];
+            }
+            y = (mt[N - 1] & 0x80000000U) | (mt[0] & 0x7fffffffU);
+            mt[N - 1] = mt[M - 1] ^ (y >> 1) ^ mag01[y & 0x1U];
+            index = 0;
+        }
+        uint32_t y = mt[index++];
+        y ^= (y >> 11);
+        y ^= (y << 7) & 0x9d2c5680U;
+        y ^= (y << 15) & 0xefc60000U;
+        y ^= (y >> 18);
+        return y;
+    }
+    uint64_t getrandbits64() {
+        const uint64_t lo = next32();
+        const uint64_t hi = next32();
+        return (hi << 32) | lo;
+    }
+    void set_state(const std::vector<uint64_t>& st) {
+        if (st.size() != static_cast<size_t>(N) + 1 || st[N] > static_cast<uint64_t>(N))
+            throw std::invalid_argument("BatchedSearch: expected random.Random's 624 words and index");
+        for (int i = 0; i < N; ++i) mt[i] = static_cast<uint32_t>(st[static_cast<size_t>(i)]);
+        index = static_cast<int>(st[N]);
+    }
+    std::vector<uint64_t> state() const {
+        std::vector<uint64_t> st(static_cast<size_t>(N) + 1);
+        for (int i = 0; i < N; ++i) st[static_cast<size_t>(i)] = mt[i];
+        st[N] = static_cast<uint64_t>(index);
+        return st;
+    }
+};
+
 struct Tree {
     std::vector<Node> nodes;   // nodes[0] is the root
     std::vector<Edge> edges;
     std::vector<std::pair<int32_t, int32_t>> path;  // (node, edge) of the pending descent
-    uint64_t rng = 0;
+    int32_t new_edge = -1;     // this round's descent stopped at an untaken edge
+    uint64_t seed = 0;         // the chance seed of the child it will create
     int64_t remaining = 0;
     int32_t leaf = -1;         // node awaiting evaluation, -1 if none
     int32_t row = -1;          // its row in the leaf buffers
@@ -97,8 +150,11 @@ public:
     uint8_t* mask_data() { return masks_.data(); }
 
     // Start one search per root. The roots are searched exactly as given (the caller settles and
-    // determinizes them). `simulations` is each tree's own budget.
-    void reset(const std::vector<ts::GameState>& roots, int64_t simulations, uint64_t seed) {
+    // determinizes them). `simulations` is each tree's own budget; `rng_state` is the caller's
+    // random.Random state (getstate()[1]), which the children's chance seeds are drawn from.
+    void reset(const std::vector<ts::GameState>& roots, int64_t simulations,
+               const std::vector<uint64_t>& rng_state) {
+        rng_.set_state(rng_state);
         if (roots.size() > capacity_)
             throw std::invalid_argument("BatchedSearch: " + std::to_string(roots.size()) +
                                         " roots exceed capacity " + std::to_string(capacity_));
@@ -111,8 +167,6 @@ public:
             // Each round adds at most one node, so this never reallocates during the search --
             // and the vectors keep their capacity from one reset to the next.
             t.nodes.reserve(static_cast<size_t>(simulations) + 1);
-            uint64_t s = seed + 0x9E3779B97F4A7C15ULL * (static_cast<uint64_t>(i) + 1);
-            t.rng = ts::Prng::next_u64(s);
             t.nodes.push_back(make_node(roots[i]));
             t.remaining = 0;
             t.leaf = -1;
@@ -149,9 +203,16 @@ public:
             if (!any_budget) return 0;
             for_each_tree([this](Tree& t) {
                 t.leaf = -1;
+                t.new_edge = -1;
                 if (t.remaining <= 0) return;
                 t.remaining -= 1;
-                descend(t);
+                walk(t);
+            });
+            for (Tree& t : trees_)
+                if (t.new_edge >= 0) t.seed = rng_.getrandbits64();
+            for_each_tree([this](Tree& t) {
+                if (t.new_edge >= 0) create_child(t);
+                if (t.leaf < 0) return;
                 const Node& leaf = t.nodes[static_cast<size_t>(t.leaf)];
                 if (leaf.terminal) {
                     backup(t, leaf.value_us);
@@ -194,6 +255,9 @@ public:
             throw std::invalid_argument("set_root_priors: one prior per root action");
         for (uint32_t e = 0; e < root.edge_count; ++e) t.edges[root.edge_begin + e].prior = priors[e];
     }
+
+    // The caller's random.Random state after the draws this search made (for setstate()).
+    std::vector<uint64_t> mt_state() const { return rng_.state(); }
 
     const Node& root(size_t i) { return tree(i).nodes[0]; }
     const Edge& root_edge(size_t i, size_t e) {
@@ -264,7 +328,9 @@ private:
         return best_i;
     }
 
-    void descend(Tree& t) {
+    // Walk down by PUCT. Stops at a terminal or unexpanded node (the leaf), or at an edge never
+    // taken, whose child `create_child` builds once the round's seeds are handed out.
+    void walk(Tree& t) const {
         t.path.clear();
         size_t node = 0;
         while (true) {
@@ -277,24 +343,28 @@ private:
             const uint32_t edge = nd.edge_begin + static_cast<uint32_t>(idx);
             t.path.emplace_back(static_cast<int32_t>(node), static_cast<int32_t>(edge));
             const int32_t child = t.edges[edge].child;
-            if (child >= 0) {
-                node = static_cast<size_t>(child);
-                continue;
+            if (child < 0) {
+                t.new_edge = static_cast<int32_t>(edge);
+                return;
             }
-            ts::GameState next = nd.state;
-            next.rng_state = ts::Prng::next_u64(t.rng);
-            const uint16_t action = t.edges[edge].action;
-            if (!ts::Engine::step_flat(next, action, false, merged_)) {
-                throw std::runtime_error("BatchedSearch: the engine refused flat action " +
-                                         std::to_string(action) + " taken from its own mask");
-            }
-            settle(next);
-            t.nodes.push_back(make_node(next));
-            const int32_t created = static_cast<int32_t>(t.nodes.size() - 1);
-            t.edges[edge].child = created;
-            t.leaf = created;
-            return;
+            node = static_cast<size_t>(child);
         }
+    }
+
+    void create_child(Tree& t) {
+        const size_t parent = static_cast<size_t>(t.path.back().first);
+        Edge& e = t.edges[static_cast<size_t>(t.new_edge)];
+        ts::GameState next = t.nodes[parent].state;
+        next.rng_state = t.seed;
+        if (!ts::Engine::step_flat(next, e.action, false, merged_)) {
+            throw std::runtime_error("BatchedSearch: the engine refused flat action " +
+                                     std::to_string(e.action) + " taken from its own mask");
+        }
+        settle(next);
+        t.nodes.push_back(make_node(next));
+        e.child = static_cast<int32_t>(t.nodes.size() - 1);
+        t.leaf = e.child;
+        t.new_edge = -1;
     }
 
     static void backup(Tree& t, double value_us) {
@@ -377,6 +447,7 @@ private:
     std::vector<float> obs_;
     std::vector<uint8_t> masks_;
     std::vector<Tree> trees_;
+    PyRandom rng_;
     int64_t simulations_ = 0;
     bool roots_phase_ = false;
 };

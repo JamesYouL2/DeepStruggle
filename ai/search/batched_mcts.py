@@ -107,10 +107,12 @@ class BatchedMCTSConfig(PIMCTSConfig):
     subsample: float = 1.0
     #: Where the trees live. "cpp" is `ts_engine.BatchedSearch` (bindings/batched_search.hpp):
     #: selection, expansion, settling and featurisation in C++, the network here, two crossings of
-    #: the binding per simulation round. "python" is the tree in this file, kept as the reference
-    #: the C++ one is tested against (identical visit counts given the same chance seeds), and
-    #: still the only one that carries a tree between calls (`reuse_subtree`).
-    backend: str = "python"
+    #: the binding per simulation round. It draws its chance seeds from this object's own
+    #: random.Random, in the Python tree's order, so the two are bit-identical: same visit counts,
+    #: same generator state afterwards, same games. "python" is the tree in this file, kept as the
+    #: reference the C++ one is tested against, and still the only one that carries a tree
+    #: between calls (`reuse_subtree`, which falls back to it).
+    backend: str = "cpp"
 
 
 @dataclass
@@ -425,7 +427,10 @@ class BatchedMCTS:
         if not roots:
             return []
         cs = self._cpp_for(len(roots))
-        cs.reset(roots, int(cfg.simulations), self._rng.getrandbits(64) % _UINT64)
+        # The children's chance seeds come from this object's generator, drawn in C++ exactly as
+        # the Python tree would draw them, and the generator is handed back advanced.
+        rng_version, rng_words, rng_gauss = self._rng.getstate()
+        cs.reset(roots, int(cfg.simulations), list(rng_words))
         roots_pending = any(not ts.Engine.is_terminal(r) for r in roots)
         k = cs.select_leaves()
         while k:
@@ -449,6 +454,7 @@ class BatchedMCTS:
                             cs.set_root_priors(i, [(1.0 - f) * p + f * float(z)
                                                    for p, z in zip(pri, noise)])
             k = cs.select_leaves()
+        self._rng.setstate((rng_version, tuple(cs.mt_state()), rng_gauss))
         out: List[Optional[_BNode]] = []
         for i, st in enumerate(roots):
             terminal, mover, value_us, actions, priors, n, w = cs.root(i)

@@ -1012,8 +1012,13 @@ NB_MODULE(ts_engine, m) {
         .def_prop_ro("capacity", &BatchedSearch::capacity)
         .def_prop_ro("obs_width", &BatchedSearch::obs_width)
         .def_prop_ro("num_trees", &BatchedSearch::num_trees)
-        .def("reset", &BatchedSearch::reset, nb::arg("roots"), nb::arg("simulations"), nb::arg("seed"),
-             "Start one search per root, each with its own budget of `simulations`.")
+        .def("reset", &BatchedSearch::reset, nb::arg("roots"), nb::arg("simulations"),
+             nb::arg("rng_state"),
+             "Start one search per root, each with its own budget of `simulations`. `rng_state` is "
+             "random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly "
+             "as the Python tree draws them.")
+        .def("mt_state", &BatchedSearch::mt_state,
+             "The random.Random state after this search's draws, for setstate().")
         .def("select_leaves", &BatchedSearch::select_leaves,
              "Write the leaves awaiting evaluation into rows [0, k) of observations() and masks() "
              "and return k; the first call returns the roots. 0 means every search is complete.")

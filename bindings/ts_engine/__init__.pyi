@@ -893,8 +893,13 @@ class BatchedSearch:
     @property
     def num_trees(self) -> int: ...
 
-    def reset(self, roots: Sequence[GameState], simulations: int, seed: int) -> None:
-        """Start one search per root, each with its own budget of `simulations`."""
+    def reset(self, roots: Sequence[GameState], simulations: int, rng_state: Sequence[int]) -> None:
+        """
+        Start one search per root, each with its own budget of `simulations`. `rng_state` is random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly as the Python tree draws them.
+        """
+
+    def mt_state(self) -> list[int]:
+        """The random.Random state after this search's draws, for setstate()."""
 
     def select_leaves(self) -> int:
         """

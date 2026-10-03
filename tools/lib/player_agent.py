@@ -484,7 +484,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "name", f"{agent.name}+{name}")
         return agent
     if s.lower().startswith("search:"):
-        # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample]]]]
+        # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample[:backend]]]]]
         #
         # `node_filter` is "all" (every decision -- what the ~+27pp measurement used) or
         # "card" (SELECT_CARD / SELECT_PLAY_MODE only, P3's proposal). `subsample` is the
@@ -501,6 +501,8 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         if len(parts) > 4 and parts[4]:
             node_filter = "card_playmode" if parts[4].lower().startswith("card") else parts[4]
         subsample = float(parts[5]) if len(parts) > 5 and parts[5] else 1.0
+        # "cpp" (the default, ts_engine.BatchedSearch) or "python" (the reference tree).
+        backend = parts[6].lower() if len(parts) > 6 and parts[6] else "cpp"
         from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 
         base = NeuralAgent.from_checkpoint(path, device=device)
@@ -515,9 +517,11 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0,
                                 auto_advance=True, advance_root=False,
                                 determinize=determinize,
-                                node_filter=node_filter, subsample=subsample)
+                                node_filter=node_filter, subsample=subsample,
+                                backend=backend)
         tag = "" if node_filter == "all" else "-card"
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
+        tag += "" if backend == "cpp" else f"-{backend}"
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
     if s.lower().startswith("legacy:"):
