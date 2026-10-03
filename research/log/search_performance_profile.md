@@ -80,3 +80,32 @@ about 25 leaves each.
   profiles. Rough expectation: 5–10× on the eval search, and training with search at about 5× its
   current throughput (from ~7.5k towards ~35–40k steps/s at 32 simulations, 1 in 8). It is a new C++
   component next to the engine, so it needs the owner's approval.
+
+## After the optimisation (2026-10-03, same day)
+
+Three changes, each committed separately on `hand-knowledge-tracking`:
+
+1. **Python fixes** -- featurisers sized to the batch in power-of-two buckets, incremental visit
+   totals, priors extracted for the whole batch. Identical visit counts; 200 positions × 256
+   simulations 6.5 s → 5.5 s.
+2. **Training: search deferred to the end of the rollout.** Positions are cloned at their step and
+   searched in one batch of ~3,200 (chunks of 1,024) with the batched featuriser. The weights do
+   not change during a rollout and search never acts, so a target is what it would have been at
+   its step; `test_deferred_targets_land_on_the_rows_they_describe` checks every target against its
+   own row's legal mask. Training with search: 7.5k → 16k steps/s.
+3. **The tree in C++** (`ts_engine.BatchedSearch`, `bindings/batched_search.hpp`, the default
+   backend). PUCT, expansion, settling and featurisation in C++ across the OpenMP pool; the
+   network stays in Python, with two binding crossings per simulation round. It draws chance seeds
+   from the caller's `random.Random` (a C++ copy of CPython's MT19937, state handed in and back) in
+   the Python tree's order, so it is bit-identical to the Python tree: tests require identical visit
+   counts and generator states, and a 400-game search tournament replays the same games.
+
+| measurement | before | after |
+|:---|---:|---:|
+| 200 positions × 256 simulations (soup, honest) | 6.5 s | **0.27 s** (24×) |
+| 3,200 positions × 32 simulations (one training rollout's targets) | -- | 0.61 s |
+| eval: soup vs honest search, 400 games | 1,848 s | **189 s** (9.8×) |
+| training with search (32 sims, 1 in 8 card decisions) | 7.1–8.1k steps/s | **~36k steps/s** (4.8×; without search 57–62k) |
+
+What remains in the C++ path is the network forward and its transfers (about a third) and the
+per-leaf observation extraction, now spread across cores.

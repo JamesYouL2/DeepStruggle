@@ -42,3 +42,33 @@ Per seat ± 3.5.
 * **So the case for C5 (search-driven training) rests on lookahead.** A distillation target from
   honest search is worth about +60 Elo per decision searched, and handling the hidden information
   better (beliefs, oracle critics) would add little on top.
+
+## Correction (2026-10-03, same day): the 400-game samples were too small
+
+After search was moved to C++ (about 10× faster; [`search_performance_profile.md`](search_performance_profile.md)),
+each measurement was repeated at **1,000 games per side** (2,000 games, ± 1.1). The C++ tree
+reproduces the Python tree exactly -- the 400-game honest-soup match replays to the same 157-237-6
+-- so these are the same searcher with a larger sample
+(`data/reports/soup_search256_{determinize,perfect}_1000.md`,
+`data/reports/e7_02_1200M_search256_{determinize,perfect}_1000.md`):
+
+| model | search | 400 games (above) | **2,000 games** |
+|:---|:---|---:|---:|
+| soup | honest | 60.0% | **52.5%** (US 51.8, USSR 53.3) |
+| soup | perfect information | 61.5% | **61.2%** |
+| E7-02-44@1200M | honest | 58.0% | **58.3%** |
+| E7-02-44@1200M | perfect information | 61.1% | **64.7%** |
+
+The honest-soup figure above was about three standard errors high. **The readings above are
+withdrawn and replaced by these:**
+
+* **Honest search adds +8 on a single snapshot and only +2.5 on the soup.** C5's +5 gate passes on
+  the base recipe's raw model and fails on the soup: averaging the branches captures most of what a
+  256-simulation search finds.
+* **Perfect information adds a lot on top: +8.7 (soup) and +6.4 (single model).** Inside search,
+  seeing the opponent's hand is worth as much as the search itself. That does not contradict the
+  oracle-critic sizing ([`P30_oracle_critic_auc.md`](P30_oracle_critic_auc.md), +0.002 AUC): the hand
+  barely changes the prediction of who wins, but it changes which move is best now, and search
+  exploits exactly that.
+* **So better hidden-information handling inside search (beliefs, or sampling worlds the policy
+  considers likely rather than uniformly) is worth pursuing**, contrary to the reading above.
