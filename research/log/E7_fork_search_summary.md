@@ -2,7 +2,7 @@
 
 Everything the fork ([JamesYouL2/DeepStruggle](https://github.com/JamesYouL2/DeepStruggle)) ran on
 search, and on teaching the network card play, with what did and did not work. The code stays on
-the fork's branches (cited by branch and commit); what is worth having on main is the two
+the fork's branches (cited by branch and commit); what is worth having on main is the three
 recommendations at the end.
 
 ## Measured
@@ -65,3 +65,20 @@ has an exact C++ port (`engine/src/card_effects.cpp`, `feat/card-effects-obs` `8
 0.27 ms, about 20× faster. Used **only as C2's label source** -- no observation block, no change to
 the game -- it lets C2 label 10-20× more decisions at the same cost. Run as C2's seed-43 replicate
 with the denser labels. It is an engine addition, so it needs the owner's approval.
+
+**3. Search an influence placement as one decision: all its points at once.** Ops influence
+placement is the segment where search gains most (+1.9 of +4.0,
+[`E7_search_segments.md`](E7_search_segments.md)), and the search spends its budget there worst.
+Each point is a separate tree level, so a 4-Ops placement is 4 levels deep before the opponent
+moves, and `BatchedMCTS` has no transposition table: placing Poland then Hungary and Hungary then
+Poland are different paths to the same board, each searched separately. At 64 simulations most of
+the budget goes on the order of the points rather than on which placement to make.
+
+Instead, at the first point of a placement: sample k complete placements from the network's own
+point-by-point policy (keeping its argmax placement, deduplicated as multisets of countries), apply
+each whole, and split the simulations among them by sequential halving, as the Gumbel root does
+for single moves. The chosen placement is then played point by point, so the network, its action
+space and the training data are unchanged. This is not the merged-influence view (P29 bet 3,
+[`P29_bet3_merged_view.md`](P29_bet3_merged_view.md)), which changed what the network is trained
+on; here only the search is changed. First measure: the `ops_influence` segment tournament above,
+placement-level search against point-level search at the same 64 simulations.
