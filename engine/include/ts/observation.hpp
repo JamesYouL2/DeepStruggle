@@ -16,6 +16,10 @@ public:
     // just two intermediate buffers and a restride, so it is written out directly.
     static void extract(const GameState& state, Player perspective,
                         ObservationBufferV23* out_buf) noexcept;
+
+    // Card slot ACTIVE_CARD of `card` (ACTIVE_NOW / ACTIVE_SUSPENDED / ACTIVE_NEXT, or 0): the
+    // same from either side, so it needs no perspective. extract() writes exactly this.
+    static float active_card(const GameState& state, uint8_t card) noexcept;
 };
 
 void extract_observation(const GameState& state, Player perspective,

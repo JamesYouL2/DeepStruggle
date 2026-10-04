@@ -1458,7 +1458,7 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
 
 
 #: Observation feature names (`--obs-features`) and their ts.OBS_FEATURE_* bits.
-OBS_FEATURE_BITS: Dict[str, int] = {"ops_budget": 1 << 1}
+OBS_FEATURE_BITS: Dict[str, int] = {"ops_budget": 1 << 1, "card_effects": 1 << 2}
 
 
 def _obs_feature_names(bits: int) -> List[str]:
@@ -1972,7 +1972,17 @@ def train_pipeline(
     if warmup_checkpoint and os.path.exists(warmup_checkpoint):
         print(f"Loading Warm-up Checkpoint from: {warmup_checkpoint}", flush=True)
         from tools.lib.player_agent import load_checkpoint_into
-        load_checkpoint_into(model, torch.load(warmup_checkpoint, map_location=dev, weights_only=True))
+        _warm = torch.load(warmup_checkpoint, map_location=dev, weights_only=True)
+        from ai.models.ladder_net import LadderNet, widen_for_card_effects
+        if isinstance(model, LadderNet):
+            # A parent without the card-effects block: its card inputs widen with zero columns and
+            # the card-effects head starts at zero, so the network starts as the parent.
+            _wide = widen_for_card_effects(model, _warm)
+            if _wide is not _warm:
+                print("[warm start] parent has no CARD_EFFECTS block: card inputs widened with "
+                      "zero columns, card-effects head added at zero", flush=True)
+            _warm = _wide
+        load_checkpoint_into(model, _warm)
         model.to(dev)
     elif warmup_dataset and os.path.exists(warmup_dataset):
         warmup_save_path = os.path.join(out_dir, f"coldwar_net_{arch}_warmup.pt")

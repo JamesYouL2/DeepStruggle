@@ -35,6 +35,7 @@ set(TS_SOURCES
     src/action_mask.cpp
     src/state_machine.cpp
     src/observation.cpp
+    src/card_effects.cpp
     src/serialization.cpp
     src/invariant.cpp
     src/engine.cpp

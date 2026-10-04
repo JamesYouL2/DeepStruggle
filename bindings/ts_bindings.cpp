@@ -4,6 +4,7 @@
 #include <string>
 #include <nanobind/ndarray.h>
 #include "ts/observation.hpp"
+#include "ts/card_effects.hpp"
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/string_view.h>
@@ -714,6 +715,23 @@ NB_MODULE(ts_engine, m) {
        "The base observation followed by the blocks `features` appends. features=0 is exactly "
        "extract_observation(state, perspective).");
     m.attr("OBS_FEATURE_OPS_BUDGET") = static_cast<uint32_t>(ts::obs_features::OPS_BUDGET);
+    m.attr("OBS_FEATURE_CARD_EFFECTS") = static_cast<uint32_t>(ts::obs_features::CARD_EFFECTS);
+    // The CARD_EFFECTS block's labeller, exposed so tests hold it to the Python reference
+    // (ai/training/card_event_targets.py) on the same state and dice seeds.
+    m.def("card_effects_label", [](const ts::GameState& state, ts::Player mover,
+                                   const std::vector<uint64_t>& seeds) {
+        float* data = new float[ts::card_effects::WIDTH];
+        ts::card_effects::label(state, mover, seeds.data(), seeds.size(), data);
+        size_t shape[2] = { ts::card_effects::N_CARDS, ts::card_effects::PER_CARD };
+        nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+        return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, 2, shape, owner);
+    }, nb::arg("state"), nb::arg("mover"), nb::arg("seeds"),
+       "Unscaled card-effect labels, (110, 18): can fire, Ops reach (5), event outcome (12), for the "
+       "cards in `mover`'s hand of `state` as given (no redeal), outcomes averaged over `seeds`.");
+    m.def("card_effects_redeal", &ts::card_effects::redeal, nb::arg("state"), nb::arg("me"),
+          "`state` with the cards `me` cannot see redealt, deterministically -- what the block labels.");
+    m.def("card_effects_is_card_decision", &ts::card_effects::is_card_decision,
+          nb::arg("state"), nb::arg("perspective"));
     m.attr("OBS_FEATURES_ALL") = static_cast<uint32_t>(ts::obs_features::ALL);
 
     m.attr("OBS_FLAG_STAGED_CARDS") = static_cast<uint32_t>(ts::obs_flags::STAGED_CARDS);

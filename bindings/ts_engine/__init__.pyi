@@ -855,7 +855,21 @@ def extract_observation_features(state: GameState, perspective: Player, features
 
 OBS_FEATURE_OPS_BUDGET: int = 2
 
-OBS_FEATURES_ALL: int = 2
+OBS_FEATURE_CARD_EFFECTS: int = 4
+
+def card_effects_label(state: GameState, mover: Player, seeds: Sequence[int]) -> Annotated[NDArray[numpy.float32], dict(shape=(None, None))]:
+    """
+    Unscaled card-effect labels, (110, 18): can fire, Ops reach (5), event outcome (12), for the cards in `mover`'s hand of `state` as given (no redeal), outcomes averaged over `seeds`.
+    """
+
+def card_effects_redeal(state: GameState, me: Player) -> GameState:
+    """
+    `state` with the cards `me` cannot see redealt, deterministically -- what the block labels.
+    """
+
+def card_effects_is_card_decision(state: GameState, perspective: Player) -> bool: ...
+
+OBS_FEATURES_ALL: int = 6
 
 OBS_FLAG_STAGED_CARDS: int = 1
 

@@ -39,7 +39,14 @@ from bindings.action_encoder import ActionEncoder
 #: Width of each optional observation block, by ts.OBS_FEATURE_* bit (engine/include/ts/game_state.hpp,
 #: obs_features). Restated so the model does not import the engine; tests/bindings check it
 #: against ts.obs_size_for.
-OBS_FEATURE_WIDTHS: Dict[int, int] = {1 << 1: 3}   # OPS_BUDGET
+OBS_FEATURE_WIDTHS: Dict[int, int] = {1 << 1: 3,        # OPS_BUDGET
+                                       1 << 2: 110 * 18}  # CARD_EFFECTS
+#: The CARD_EFFECTS block (engine/include/ts/card_effects.hpp): per card, 18 floats -- the event can
+#: fire, 5 of Ops reach, 12 of what the event does on this board -- filled for the mover's held
+#: cards at a card decision and zero everywhere else. It is a per-card block, so it is read beside
+#: the card rows rather than as globals; it is the highest bit, so it is the observation's tail.
+CARD_EFFECTS_BIT = 1 << 2
+CARD_EFFECTS_PER_CARD = 18
 
 
 def _obs_extra(features: int) -> int:
@@ -53,6 +60,11 @@ AUX_OWN_COUNTRIES = 84
 #: outputs per card of the card-event head: 5 Ops-reach + 12 event-outcome targets
 #: (ai.training.card_event_targets.AUX_DIM; restated here so the model does not import the engine).
 CARD_AUX_DIM = 17
+#: The play-mode slots the card-effects head corrects: ActionEncoder.PLAY_MODE_OFFSET onward --
+#: EVENT, SPACE, OPS_INFLUENCE, OPS_COUP, OPS_REALIGN.
+CE_PLAY_MODES = 5
+#: Slot of a card row set for the card being played (engine card_slots::ACTIVE_CARD).
+CARD_ACTIVE_SLOT = 13
 #: Attention heads in the C1 token path. Pinned, like the lookup's head width, because the head
 #: count cannot be recovered from the weights.
 TOKEN_HEADS = 4
@@ -101,6 +113,7 @@ class LadderNet(ColdWarNetV2):
                  obs_features: int = 0,
                  token_layers: int = 0,
                  token_dim: int = 0,
+                 card_effects_head: int = 0,
                  **kwargs: Any) -> None:
         if input_mode not in INPUT_MODES:
             raise ValueError(f"input_mode must be one of {INPUT_MODES}; got {input_mode!r}")
@@ -167,8 +180,19 @@ class LadderNet(ColdWarNetV2):
                          # The view spec (owner, 2026-10-01): optional observation blocks are
                          # appended right after the 100 globals, so they widen the global slice
                          # that `global_proj` reads and nothing else moves.
-                         global_features=ColdWarNetV2.GLOBAL_SIZE + _obs_extra(obs_features),
+                         # CARD_EFFECTS is the exception: a per-card block, read with the card
+                         # rows (below), so it is not part of the global slice.
+                         global_features=(ColdWarNetV2.GLOBAL_SIZE
+                                          + _obs_extra(int(obs_features) & ~CARD_EFFECTS_BIT)),
                          **kwargs)
+        # The CARD_EFFECTS block is the observation's last 1,980 floats.
+        self.card_effects = bool(int(obs_features) & CARD_EFFECTS_BIT)
+        self.ce_width = 110 * CARD_EFFECTS_PER_CARD if self.card_effects else 0
+        self.CE_OFFSET = self.TOTAL_OBS_SIZE
+        self.TOTAL_OBS_SIZE += self.ce_width
+        if card_effects_head and not self.card_effects:
+            raise ValueError("card_effects_head reads the CARD_EFFECTS block; build the network "
+                             "with that observation feature (--obs-features card_effects).")
 
         self.input_mode = str(input_mode)
         self.aggregation = str(aggregation)
@@ -227,12 +251,15 @@ class LadderNet(ColdWarNetV2):
             self.register_buffer("board_keep_idx", b_keep, persistent=False)
             self.register_buffer("card_keep_idx", c_keep, persistent=False)
             self.lad_board = _mlp(int(b_keep.numel()), p)
-            self.lad_card = _mlp(int(c_keep.numel()), p)
+            # The card-effects block joins the card projection's input, after the card rows.
+            self.lad_card = _mlp(int(c_keep.numel()) + self.ce_width, p)
             fused_width = 2 * p + 128
 
         else:  # entity
             self.lad_board_enc = nn.Sequential(nn.Linear(board_in, d), nn.GELU())
-            self.lad_card_enc = nn.Sequential(nn.Linear(card_in, d), nn.GELU())
+            self.lad_card_enc = nn.Sequential(
+                nn.Linear(card_in + (CARD_EFFECTS_PER_CARD if self.card_effects else 0), d),
+                nn.GELU())
             if self.card_self_attention:
                 self.lad_self_attn = nn.MultiheadAttention(
                     embed_dim=d, num_heads=num_attn_heads, batch_first=True)
@@ -307,7 +334,8 @@ class LadderNet(ColdWarNetV2):
         if self.token_layers:
             t = self.token_dim
             self.tok_country_in = nn.Linear(self.board_features, t)
-            self.tok_card_in = nn.Linear(self.card_features, t)
+            self.tok_card_in = nn.Linear(
+                self.card_features + (CARD_EFFECTS_PER_CARD if self.card_effects else 0), t)
             self.tok_global_in = nn.Linear(self.GLOBAL_SIZE, t)
             self.tok_country_id = nn.Parameter(torch.randn(84, t) * 0.02)
             self.tok_card_id = nn.Parameter(torch.randn(110, t) * 0.02)
@@ -397,6 +425,29 @@ class LadderNet(ColdWarNetV2):
             self.card_aux_head = nn.Sequential(
                 nn.Linear(hidden_dim, 512), nn.GELU(), nn.Linear(512, 110 * CARD_AUX_DIM))
 
+        # The card-effects head (--ladder-card-effects-head K). The trunk reads the CARD_EFFECTS
+        # block among 3,000 other floats and a card's logit comes out of a dense head over a
+        # 480-wide trunk; this is the direct path. One MLP shared across cards reads a card's own
+        # 18 effect floats, its 14 raw slots and a projection of the trunk, and adds to that
+        # card's SELECT_CARD logit and -- for the card being played, the one with ACTIVE_CARD set
+        # -- to the five play-mode logits (event, space, influence, coup, realign). It acts only
+        # where a card's row is filled, which is exactly the mover's held cards at a card
+        # decision; everywhere else the network is the one without it. The output layer starts at
+        # zero, so a warm-started network plays as its parent at step 0.
+        self.card_effects_head = int(card_effects_head)
+        self.ce_trunk: nn.Linear | None = None
+        self.ce_head: nn.Sequential | None = None
+        if self.card_effects_head:
+            k = self.card_effects_head
+            self.ce_trunk = nn.Linear(hidden_dim, k)
+            self.ce_head = nn.Sequential(
+                nn.Linear(CARD_EFFECTS_PER_CARD + self.card_features + k, k), nn.GELU(),
+                nn.Linear(k, 1 + CE_PLAY_MODES))
+            out = self.ce_head[-1]
+            assert isinstance(out, nn.Linear)
+            nn.init.zeros_(out.weight)
+            nn.init.zeros_(out.bias)
+
     def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
         """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
         ops-arithmetic and event-outcome targets of `ai.training.card_event_targets`."""
@@ -456,10 +507,36 @@ class LadderNet(ColdWarNetV2):
         with torch.autocast(device_type=board_raw.device.type, dtype=torch.bfloat16,
                             enabled=board_raw.is_cuda):
             c = self.tok_country_in(board_raw.view(b, 84, self.board_features)) + self.tok_country_id
-            k = self.tok_card_in(card_raw.view(b, 110, self.card_features)) + self.tok_card_id
+            # (B, 110, features) rows, with the card-effects block when the network reads it, or
+            # the flat card slice.
+            rows = card_raw if card_raw.dim() == 3 else card_raw.view(b, 110, self.card_features)
+            k = self.tok_card_in(rows) + self.tok_card_id
             g = self.tok_global_in(glob).unsqueeze(1)
             out = self.tok_norm(self.tok_enc(torch.cat([g, c, k], dim=1)))
         return out.float()
+
+    def _card_effects_rows(self, obs: torch.Tensor) -> torch.Tensor:
+        """(B, 110, 18): the CARD_EFFECTS block, one row per card."""
+        return obs[:, self.CE_OFFSET:self.CE_OFFSET + self.ce_width].view(
+            obs.shape[0], 110, CARD_EFFECTS_PER_CARD)
+
+    def _card_effects_logits(self, obs: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+        """The card-effects head's correction to the flat logits, (B, FLAT_ACTION_SIZE)."""
+        assert self.ce_head is not None and self.ce_trunk is not None
+        b = obs.shape[0]
+        ce = self._card_effects_rows(obs)
+        rows = obs[:, self.CARD_OFFSET:self.CARD_OFFSET + self.CARD_SIZE].view(
+            b, 110, self.card_features)
+        ctx = self.ce_trunk(h).unsqueeze(1).expand(-1, 110, -1)
+        out = self.ce_head(torch.cat([ce, rows, ctx], dim=-1))          # (B, 110, 1 + 5)
+        filled = (ce.abs().sum(dim=-1, keepdim=True) > 0).to(out.dtype)
+        out = out * filled
+        card = out[..., 0]                                               # (B, 110)
+        active = rows[..., CARD_ACTIVE_SLOT].unsqueeze(-1)               # (B, 110, 1)
+        mode = (out[..., 1:] * active).sum(dim=1)                        # (B, 5)
+        _A = ActionEncoder
+        rest = _A.FLAT_ACTION_SIZE - _A.PLAY_MODE_OFFSET - CE_PLAY_MODES
+        return torch.cat([card, mode, card.new_zeros(b, rest)], dim=-1)
 
     # ------------------------------------------------------------------ config
 
@@ -507,6 +584,7 @@ class LadderNet(ColdWarNetV2):
             aux_heads=self.aux_heads,
             card_aux=self.card_aux,
             obs_features=self.obs_feature_bits,
+            card_effects_head=self.card_effects_head,
         )
 
 
@@ -526,9 +604,17 @@ class LadderNet(ColdWarNetV2):
         from the trunk into the correction -- so the concatenation is built rather than fixed.
         """
         base = self.policy_head(h)
+        if self.ce_head is not None:
+            # `_encode` appends the observation to the tokens for this head.
+            assert tokens is not None
+            obs, tokens = tokens[-1], (tokens[:-1] or None)
+            base = base + self._card_effects_logits(obs, h)
         if not self.per_entity_heads or tokens is None:
             return base
+        return self._per_entity_logits(base, h, tokens)
 
+    def _per_entity_logits(self, base: torch.Tensor, h: torch.Tensor,
+                           tokens: tuple[torch.Tensor, ...]) -> torch.Tensor:
         h_board, board_nodes, h_cards, card_nodes = tokens
         if not self.head_static:
             board_nodes = self._dynamic_slice(board_nodes, STATIC_BOARD_SLOTS)
@@ -577,14 +663,20 @@ class LadderNet(ColdWarNetV2):
             glob = obs[:, self.GLOBAL_OFFSET:self.GLOBAL_OFFSET + self.GLOBAL_SIZE]
             e_board = self.lad_board(torch.index_select(
                 board_raw, 1, cast(torch.Tensor, self.board_keep_idx)))
-            e_card = self.lad_card(torch.index_select(
-                card_raw, 1, cast(torch.Tensor, self.card_keep_idx)))
+            card_in = torch.index_select(card_raw, 1, cast(torch.Tensor, self.card_keep_idx))
+            if self.card_effects:
+                card_in = torch.cat(
+                    [card_in, obs[:, self.CE_OFFSET:self.CE_OFFSET + self.ce_width]], dim=-1)
+            e_card = self.lad_card(card_in)
             pre = torch.cat([e_board, e_card, self.global_proj(glob)], dim=-1)
             if self.card_lookup:
                 pre = torch.cat([pre, self._card_lookup(card_raw, pre, b)], dim=-1)
             tok_country = tok_cards = None
             if self.token_layers:
-                t_out = self._token_path(board_raw, card_raw, glob, b)
+                t_cards = (torch.cat([card_raw.view(b, 110, self.card_features),
+                                      self._card_effects_rows(obs)], dim=-1)
+                           if self.card_effects else card_raw.view(b, 110, self.card_features))
+                t_out = self._token_path(board_raw, t_cards, glob, b)
                 tok_country, tok_cards = t_out[:, 1:85], t_out[:, 85:]
                 pre = torch.cat([pre, t_out[:, 0]], dim=-1)
             h = self.fusion_in(pre)
@@ -619,7 +711,9 @@ class LadderNet(ColdWarNetV2):
                     dim=-1)
 
             h_board = self.lad_board_enc(board_nodes)          # (B, 84, d)
-            h_cards = self.lad_card_enc(card_nodes)            # (B, 110, d)
+            h_cards = self.lad_card_enc(
+                torch.cat([card_nodes, self._card_effects_rows(obs)], dim=-1)
+                if self.card_effects else card_nodes)          # (B, 110, d)
 
             if self.card_self_attention:
                 sa, _ = self.lad_self_attn(h_cards, h_cards, h_cards)
@@ -639,6 +733,10 @@ class LadderNet(ColdWarNetV2):
 
         for block in self.res_blocks:
             h = block(h)
+        if self.ce_head is not None:
+            # The card-effects head reads the observation, which the policy head is not handed;
+            # it travels as the tokens' last element and `_policy_logits` takes it off.
+            tokens = (*(tokens or ()), obs)
         return h, attn_weights, tokens
 
     def extract_features(self, obs: torch.Tensor, return_attn_weights: bool = False):
@@ -694,12 +792,15 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
 
     if input_mode == "flat":
         proj = sd["lad_in.0.weight"]
-        in_width = int(proj.shape[1])
+        # Less the appended blocks, which `flat` also reads, so the comparison below is with the base.
+        in_width = int(proj.shape[1]) - _obs_extra(int(sd["obs_features"]) if "obs_features" in sd else 0)
         entity_dim, aggregation = 0, "flatten"
     else:
         proj = sd["lad_board.0.weight"]
         if input_mode == "grouped":
             in_width = int(proj.shape[1]) + int(sd["lad_card.0.weight"].shape[1])
+            if "obs_features" in sd and int(sd["obs_features"]) & CARD_EFFECTS_BIT:
+                in_width -= 110 * CARD_EFFECTS_PER_CARD     # read beside the card rows
             entity_dim, aggregation = 0, "flatten"
         else:
             entity_dim = int(sd["lad_board_enc.0.weight"].shape[0])
@@ -796,7 +897,41 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         aux_heads=any(k.startswith("aux_own_head.") for k in sd),
         card_aux=any(k.startswith("card_aux_head.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
+        card_effects_head=(int(sd["ce_trunk.weight"].shape[0]) if "ce_trunk.weight" in sd else 0),
     )
+
+#: Weights whose input widens when a network adds the CARD_EFFECTS block: the block is appended
+#: after everything each one already read, so the parent's columns keep their place.
+_CE_WIDENED: Tuple[str, ...] = ("lad_in.0.weight", "lad_card.0.weight", "lad_card_enc.0.weight",
+                                "tok_card_in.weight")
+
+
+def widen_for_card_effects(model: "LadderNet", sd: Dict[str, Any]) -> Dict[str, Any]:
+    """A parent state dict without the CARD_EFFECTS block, made loadable into `model`, which has it.
+
+    The new input columns start at zero and the card-effects head comes from `model`'s own
+    initialisation, whose output layer is zero, so the result computes exactly what the parent did
+    on the base observation. Returns `sd` unchanged when the parent already reads the block. Every
+    other difference from `model` is left for the strict load to refuse.
+    """
+    if not model.card_effects or int(sd.get("obs_features", 0)) & CARD_EFFECTS_BIT:
+        return sd
+    own = model.state_dict()
+    out = dict(sd)
+    for k in _CE_WIDENED:
+        if k in sd and k in own and sd[k].shape != own[k].shape:
+            old, new = sd[k], own[k]
+            if old.shape[:-1] != new.shape[:-1] or new.shape[-1] - old.shape[-1] not in (
+                    model.ce_width, CARD_EFFECTS_PER_CARD):
+                raise ValueError(f"{k}: {tuple(old.shape)} cannot widen to {tuple(new.shape)}")
+            pad = old.new_zeros(*old.shape[:-1], new.shape[-1] - old.shape[-1])
+            out[k] = torch.cat([old, pad], dim=-1)
+    for k, v in own.items():
+        if k.startswith(("ce_trunk.", "ce_head.")) and k not in sd:
+            out[k] = v
+    out["obs_features"] = own["obs_features"]
+    return out
+
 
 def create_ladder_net(device: torch.device | str, **config: Any) -> LadderNet:
     """Build a rung. Every structural axis must be named; see `LadderNet`."""
