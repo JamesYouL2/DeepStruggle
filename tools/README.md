@@ -177,6 +177,34 @@ Metrics: `card_aux_loss`, `card_aux_r2` (explained share of the standardised var
 `card_aux_label_s` (seconds spent labelling per iteration -- the throughput cost). Why:
 `research/log/P30_card_board_targets.md`; probe the result with `tools/scripts/card_board_probe.py --frozen`.
 
+`--playout-adv W` (default 0 = off) adds a paired-branch playout policy gradient
+(`ai/training/playout_advantage.py`). A sampled fraction of the learner's decisions
+(`--playout-sample-frac`, default 0.002, of the `--playout-decisions` kinds: `SELECT_CARD SELECT_PLAY_MODE
+CHOOSE_BRANCH` -- the last holds the choices inside events, Wargames' "end the game" among them) is recorded
+with its true GameState. At the end of the rollout, each of the policy's `--playout-candidates` (4)
+likeliest legal moves is played from `--playout-pairs` (8) copies of that state. Copy j of every candidate
+shares its dice, and the current network plays both sides greedily to the end of the turn, where the critic
+values it (`--playout-horizon turn`), or to the end of the game (`game`). `--playout-hidden true` (default) keeps the
+cards the decider cannot see as dealt in every pair; `redeal` redeals them per pair, the same redeal for every
+candidate (`tools/scripts/playout_hidden_variance.py` measures which is the less noisy label). Labelled positions go into a FIFO
+buffer (`--playout-buffer`, 16,384). Once `--playout-min-batch` are in it, the all-actions policy gradient over
+the candidates of `--playout-batch` (256) positions drawn from it is added to every PPO minibatch's loss
+(`--playout-mode joint`, the default). `--playout-mode separate` instead takes `--playout-steps` (2) optimiser steps
+of its own after the PPO update: against PPO's 64 steps an iteration that moved nothing in E7-74-45, whose
+`playout_p_best` stayed at ~0.48 for 80M steps.
+The advantage is the candidate's mean value minus the policy-weighted mean, divided by the batch's standard
+deviation (at least `--playout-min-scale`).
+Metrics: `playout_split_half_r` (agreement of the advantages measured on even and odd pairs; near 0 means the
+labels are noise), `playout_best_not_favourite` (share of positions where a candidate other than the policy's
+favourite played out best), `playout_p_best` / `playout_agree` (the policy's mass on, and its top-1 agreement
+with, the playout-best candidate in the update minibatch), `playout_q_spread`, `playout_capped`, and
+`playout_label_s` (seconds labelling per iteration -- the throughput cost). `playout_fresh_p_best` and `playout_fresh_gap` read
+the policy as it was at each newly labelled decision, before any update saw it: its mass on the playout-best
+candidate, and the value its choice gives up against that candidate. They are the generalisation test, since
+`playout_p_best` is measured on buffered positions the update has already trained on. `playout_loss` reads ~0 by
+construction, because the advantage is centred on the policy's own mean; the gradient is not zero.
+Why: `research/log/expert_review_E7.md`, candidate 4.
+
 * `tools/scripts/aux_ownership_probe.py --checkpoint <snapshot>` rates the ownership head per country
   against the country's usual final controller and against its current controller, overall and
   on the games where the usual controller did not win it.
