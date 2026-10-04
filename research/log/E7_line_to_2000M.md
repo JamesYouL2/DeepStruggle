@@ -176,3 +176,20 @@ the soup and E7-02-44@1000M, 1,000 games per side (per side ± 1.5, both ± 1.1)
 * **The rule, set before the last two windows** ("saturated if, against both references, the mean
   of the last two windows is within +1.5 points of the mean of the first two"): 1,000M +0.05,
   soup +1.95. Not saturated by the rule, marginally; continued to 2,800M as E7-20-44.
+
+## 2,400 → 2,800M: E7-20-44, and the saturation call
+
+| SWA of | E7-02-44@1000M (US / USSR) | soup (US / USSR) |
+|:---|---:|---:|
+| 2400–2480M | 64.7 (67.6 / 61.8) | 50.5 (50.9 / 50.1) |
+| 2480–2560M | 65.3 (67.7 / 62.9) | 51.2 (52.6 / 49.8) |
+| 2560–2640M | 62.9 (65.5 / 60.3) | 49.5 (48.3 / 50.7) |
+| 2640–2720M | 62.9 (64.6 / 61.1) | 51.4 (53.4 / 49.3) |
+| 2720–2800M | 65.4 (66.1 / 64.7) | 53.0 (52.5 / 53.6) |
+
+* **By the same rule, saturated:** last two windows against the first two, E7-02-44@1000M −0.85,
+  soup +1.35 (threshold 1.5).
+* **Read as a whole, the line plateaus from about 1,900M against E7-02-44@1000M (62–65% for 13
+  windows) and creeps against the soup at about +1 point per 400M** (the five windows of 2,000–2,400M
+  average 50.2%, those of 2,400–2,800M 51.1%), reaching 53.0% in the last window.
+* The league starts from 2,800M (E7-21-44 + E7-22-44, [`../runs.md`](../runs.md)).
