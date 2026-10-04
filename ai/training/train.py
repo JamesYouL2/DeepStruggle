@@ -693,8 +693,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-subsample", type=float, default=0.125,
                         help="Fraction of eligible decisions searched (0.125 = 1 in 8).")
     parser.add_argument("--search-node-filter", type=str, default="card_playmode",
-                        choices=["card_playmode", "all"],
-                        help="Which decisions are eligible.")
+                        choices=["card_playmode", "all", "card_branch", "board",
+                                 "setup", "headline", "ar_card", "play_mode", "ops_influence",
+                                 "ops_coup_realign", "event", "early", "mid", "late"],
+                        help="Which decisions are eligible: card_playmode, all, card_branch, board, "
+                             "one segment of ai.search.batched_mcts.SEGMENTS, or a turn range of "
+                             "ERAS (early 1-3, mid 4-7, late 8-10).")
     parser.add_argument("--rollout-temps", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0],
                         metavar=("T1", "T2", "T3", "T4"),
                         help="The four per-environment rollout sampling temperatures. Default "

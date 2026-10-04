@@ -82,6 +82,34 @@ def settle(state: ts.GameState, auto_advance: bool) -> None:
     _settle(state, SettleMode.FORCED if auto_advance else SettleMode.CHANCE)
 
 
+#: A partition of every decision, for measuring where search gains (one tournament per segment,
+#: search there only, the network's own play elsewhere). Read off the decision context: an Ops
+#: decision has a card whose Ops are being spent (pending_op_card) and no event executing
+#: (resolving_card == 0); anything with an event executing is inside that event -- its choices,
+#: targets, discards and any Ops it grants.
+SEGMENTS: Tuple[str, ...] = ("setup", "headline", "ar_card", "play_mode", "ops_influence",
+                             "ops_coup_realign", "event", "other")
+#: Turn ranges, searched at every decision in them.
+ERAS: Dict[str, Tuple[int, int]] = {"early": (1, 3), "mid": (4, 7), "late": (8, 10)}
+
+
+def decision_segment(state: ts.GameState) -> str:
+    """The SEGMENTS entry this decision belongs to."""
+    c = state.ctx()
+    dt = c.decision_type
+    if state.current_phase == ts.Phase.SETUP:
+        return "setup"
+    if int(c.resolving_card) != 0:
+        return "event"
+    if dt == ts.DecisionType.SELECT_CARD:
+        return "headline" if state.current_phase == ts.Phase.HEADLINE else "ar_card"
+    if dt in (ts.DecisionType.SELECT_PLAY_MODE, ts.DecisionType.SELECT_OP_MODE):
+        return "play_mode"
+    if dt == ts.DecisionType.POINT_NODE and int(c.pending_op_card) != 0:
+        return "ops_influence" if c.op_mode == ts.OpMode.INFLUENCE else "ops_coup_realign"
+    return "other"
+
+
 @dataclass
 class BatchedMCTSConfig(PIMCTSConfig):
     #: Resample the hidden state before each search, so the tree never reads the opponent's hand.
@@ -117,6 +145,8 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: measurement used. "card_playmode" searches only SELECT_CARD and SELECT_PLAY_MODE, which
     #: P3 argues are "the decisions that matter"; measured over 8 self-play games they are 42.0%
     #: of all decisions, against 39.5% POINT_NODE placements.
+    #: "card_branch" adds CHOOSE_BRANCH (the choices inside events) to those two, and "board" is
+    #: everything else, so "card_branch" and "board" split "all".
     node_filter: str = "all"
     #: Fraction of the decisions passing `node_filter` that are actually searched, chosen per
     #: decision from the searcher's own RNG. P3's first guess is 1 in 8.
@@ -571,13 +601,31 @@ class BatchedMCTS:
         thing in an evaluation tournament and in a training rollout -- the two numbers are only
         comparable if the rule is one implementation.
         """
-        if self.cfg.node_filter == "card_playmode":
+        if self.cfg.node_filter != "all":
             dt = int(state.ctx().decision_type)
-            if dt not in (int(ts.DecisionType.SELECT_CARD),
-                          int(ts.DecisionType.SELECT_PLAY_MODE)):
-                return False
-        elif self.cfg.node_filter != "all":
-            raise ValueError(f"unknown node_filter {self.cfg.node_filter!r}")
+            card = (int(ts.DecisionType.SELECT_CARD), int(ts.DecisionType.SELECT_PLAY_MODE))
+            # "card_branch" adds the choices inside events (Wargames' "end the game" among them):
+            # every decision about which card and how to play it. "board" is its complement --
+            # Ops placement, coups, realignments, setup -- so the two split "all" between them.
+            card_branch = card + (int(ts.DecisionType.CHOOSE_BRANCH),)
+            if self.cfg.node_filter == "card_playmode":
+                if dt not in card:
+                    return False
+            elif self.cfg.node_filter == "card_branch":
+                if dt not in card_branch:
+                    return False
+            elif self.cfg.node_filter == "board":
+                if dt in card_branch:
+                    return False
+            elif self.cfg.node_filter in SEGMENTS:
+                if decision_segment(state) != self.cfg.node_filter:
+                    return False
+            elif self.cfg.node_filter in ERAS:
+                lo, hi = ERAS[self.cfg.node_filter]
+                if not lo <= int(state.turn) <= hi:
+                    return False
+            else:
+                raise ValueError(f"unknown node_filter {self.cfg.node_filter!r}")
         if self.cfg.subsample >= 1.0:
             return True
         return self._rng.random() < self.cfg.subsample
