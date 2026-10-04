@@ -143,6 +143,12 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: reference the C++ one is tested against, and still the only one that carries a tree
     #: between calls (`reuse_subtree`, which falls back to it).
     backend: str = "cpp"
+    #: Search an Ops influence placement as one decision (ai/search/placement_search.py): up to
+    #: this many complete placements, sampled from the policy, compared by sequential halving.
+    #: 0, the default, searches point by point as before.
+    placement_k: int = 0
+    #: Sampled placements drawn to find the candidates (plus the greedy one).
+    placement_samples: int = 32
 
 
 @dataclass
@@ -624,6 +630,10 @@ class BatchedMCTSAgent:
         # time, which `_featurise` notes costs ~10x more than letting the runner do the batch.
         self.mcts = BatchedMCTS(model, device=device, config=config,
                                 featurise_capacity=featurise_capacity)
+        self.placement = None
+        if self.mcts.cfg.placement_k > 0:
+            from ai.search.placement_search import PlacementSearch
+            self.placement = PlacementSearch(self.mcts)
 
     def reseed(self, seed: int) -> None:
         """Restart the search's own random streams at `seed` (`BatchedMCTS.reseed`)."""
@@ -650,16 +660,30 @@ class BatchedMCTSAgent:
         unaffordable.
         """
         states = list(states)
-        want = [self.mcts.should_search(st) for st in states]
         out: List[int] = [0] * len(states)
+        # A point already planned by a whole-placement search is played as planned.
+        planned = [self.placement.planned(st) if self.placement is not None else None
+                   for st in states]
+        want = [planned[i] is None and self.mcts.should_search(st) for i, st in enumerate(states)]
+        for i, a in enumerate(planned):
+            if a is not None:
+                out[i] = int(a)
 
         searched_idx = [i for i, w in enumerate(want) if w]
+        if self.placement is not None and searched_idx:
+            from ai.search.placement_search import is_influence_point
+            place_idx = [i for i in searched_idx if is_influence_point(states[i])]
+            if place_idx:
+                picks = self.placement.choose([states[i] for i in place_idx])
+                for i, a in zip(place_idx, picks):
+                    out[i] = int(a)
+                searched_idx = [i for i in searched_idx if i not in set(place_idx)]
         if searched_idx:
             picks = self.mcts.best_actions([states[i] for i in searched_idx])
             for i, a in zip(searched_idx, picks):
                 out[i] = int(a)
 
-        plain_idx = [i for i, w in enumerate(want) if not w]
+        plain_idx = [i for i, w in enumerate(want) if not w and planned[i] is None]
         if plain_idx:
             picks = self._policy_actions([states[i] for i in plain_idx])
             for i, a in zip(plain_idx, picks):
@@ -717,3 +741,5 @@ class BatchedMCTSAgent:
 
     def reset(self) -> None:
         self.mcts.reset()
+        if self.placement is not None:
+            self.placement.reset()

@@ -495,6 +495,12 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # Exposed here rather than left to callers so that search games go through the same
         # CLIs, and therefore the same replay writer, as every other match.
         parts = s.split(":")
+        # `placement=K` anywhere after the checkpoint searches an influence placement as one
+        # decision, comparing up to K complete placements (ai/search/placement_search.py).
+        placement_k = 0
+        for p in [p for p in parts[2:] if p.lower().startswith("placement=")]:
+            placement_k = int(p.split("=", 1)[1])
+            parts.remove(p)
         path = parts[1]
         sims = int(parts[2]) if len(parts) > 2 and parts[2] else 64
         determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
@@ -523,10 +529,11 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
                                 auto_advance=True, advance_root=False,
                                 determinize=determinize,
                                 node_filter=node_filter, subsample=subsample,
-                                backend=backend)
+                                backend=backend, placement_k=placement_k)
         tag = {"all": "", "card_playmode": "-card", "card_branch": "-cardbranch"}.get(node_filter, f"-{node_filter}")
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
         tag += "" if backend == "cpp" else f"-{backend}"
+        tag += f"-place{placement_k}" if placement_k else ""
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
     if s.lower().startswith("legacy:"):
