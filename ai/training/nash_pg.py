@@ -1541,11 +1541,13 @@ class BaseNashPGTrainer:
         flag_t: List[int] = []
         flag_e: List[int] = []
         dropped_visits = 0.0
+        total_visits = 0.0
         dropped_rows = 0
         for (t, i, st), (acts, visits) in zip(queue, res):
             if not acts:
                 continue
             v = _np.asarray(visits, dtype=_np.float32)
+            total_visits += float(v.sum())
             # The real state's mask is the only authority on what may be played.
             legal_mask = _np.asarray(ActionEncoder.get_legal_mask(st))
             probs, dropped = filter_search_visits(acts, v, legal_mask, width)
@@ -1569,7 +1571,9 @@ class BaseNashPGTrainer:
                                       vals, dtype=self.buffer.search_pi.dtype, device=dev)
             self.buffer.has_search[torch.tensor(flag_t, device=dev),
                                    torch.tensor(flag_e, device=dev)] = 1.0
-        self.search_dropped_visit_frac = dropped_visits / max(1, len(queue))
+        # The share of the searcher's visits the real mask rejected. (Before 2026-10-04 this was
+        # dropped visits per searched row -- up to the simulation count -- despite its name.)
+        self.search_dropped_visit_frac = dropped_visits / max(1.0, total_visits)
         self.search_dropped_row_frac = dropped_rows / max(1, len(queue))
         self.search_targets_produced = getattr(self, "search_targets_produced", 0) + len(flag_t)
 

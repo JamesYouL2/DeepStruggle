@@ -312,12 +312,6 @@ def test_search_targets_are_filtered_by_the_real_mask() -> None:
     all_illegal = np.where(np.array([False, False, False]), visits, 0.0)
     assert float(all_illegal.sum()) == 0.0
 
-    src = inspect.getsource(nash_pg.NashPGTrainer._flush_search_targets)
-    assert "get_legal_mask" in src, (
-        "_flush_search_targets must consult the real state's mask; without it a determinized search's "
-        "answer becomes target mass on actions that cannot be played")
-    assert "search_dropped_visit_frac" in src, (
-        "how much the mask rejected must be logged, or a filter that stops working is invisible")
 
 
 def test_filter_search_visits_drops_illegal_and_renormalises() -> None:
@@ -440,3 +434,51 @@ def test_deferred_targets_land_on_the_rows_they_describe() -> None:
         assert float(rows[~legal].abs().sum()) == 0.0, "target mass outside its own row's legal mask"
         assert float(b.search_pi[~flagged].abs().sum()) == 0.0, "an unflagged row carries a target"
     assert not t._search_queue
+
+
+class _IllegalTooTeacher:
+    """Answers every position with one illegal action (most visits) and one legal one -- what a
+    determinized search does when the sampled world makes an action look legal."""
+
+    def should_search(self, state) -> bool:
+        return True
+
+    def run(self, states):
+        import ts_engine as ts
+        out = []
+        for st in states:
+            mask = np.asarray(ts.get_flat_action_mask(st))
+            legal, illegal = np.flatnonzero(mask), np.flatnonzero(mask == 0)
+            out.append(([int(illegal[0]), int(legal[0])], [3.0, 1.0]))
+        return out
+
+
+def test_the_flush_drops_what_the_real_mask_forbids() -> None:
+    """Behaviourally, through collect_rollouts: the illegal visits carry no target mass, the legal
+    one carries all of it, and the rejection is measured (search_dropped_visit_frac = 3/4)."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    net = create_ladder_net(dev, input_mode="grouped", aggregation="flatten", entity_dim=16,
+                            entity_proj_dim=64, card_self_attention=False, cross_attention=False,
+                            per_entity_heads=16, head_context=True, head_static=True,
+                            head_entities="country", head_center=True, identity_dim=0,
+                            drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+                            card_lookup=False, card_lookup_heads=0, card_lookup_dim=0,
+                            card_lookup_identity_dim=0, categorical_value=False)
+    t = NashPGTrainer(active_net=net, env=TsVectorizedEnv(num_envs=4, base_seed=7), num_envs=4,
+                      buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_ce_coef=0.5, search_sims=4, search_subsample=1.0,
+                      search_node_filter="all")
+    t._searcher = _IllegalTooTeacher()  # type: ignore[assignment]
+    t.collect_rollouts()
+    b = t.buffer
+    flagged = b.has_search > 0.5
+    assert int(flagged.sum()) > 0
+    rows, legal = b.search_pi[flagged], b.masks[flagged].bool()
+    assert float(rows[~legal].abs().sum()) == 0.0, "target mass on an action the real mask forbids"
+    assert torch.allclose(rows.max(-1).values, torch.ones(rows.shape[0])), "the legal visit is the whole target"
+    assert abs(float(getattr(t, "search_dropped_visit_frac")) - 0.75) < 1e-6
