@@ -37,3 +37,15 @@ def test_the_driver_refuses_a_non_conforming_exploiter_name_before_launching(tmp
     with pytest.raises(SystemExit, match="not <engine>-<attempt>-<seed>"):
         main(base + ["--exploiter-name", "E5-22-43b"])
     assert not (tmp_path / "l").exists()
+
+
+def test_a_continued_league_keeps_counting_generations(tmp_path) -> None:
+    """--first-generation must be at least 1, and is checked before anything launches."""
+    import pytest
+    from tools.scripts.league import main
+    base = ["--main-name", "E5-21-43", "--main-steps", "1", "--seed", "43", "--exploiter-reset", "main-latest",
+            "--league-dir", str(tmp_path / "l"), "--log-dir", str(tmp_path / "g"), "--train-args", "",
+            "--main-description", "x", "--exploiter-description", "x", "--exploiter-name", "E5-22-43"]
+    with pytest.raises(SystemExit, match="first-generation"):
+        main(base + ["--first-generation", "0"])
+    assert not (tmp_path / "l").exists()

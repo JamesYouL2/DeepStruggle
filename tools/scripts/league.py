@@ -163,6 +163,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--exploiter-reset", required=True,
                     help="Resume state every exploiter generation starts from.")
     ap.add_argument("--exploiter-gen-steps", type=int, default=50_000_000)
+    ap.add_argument("--first-generation", type=int, default=1,
+                    help="Number of the first exploiter generation this driver launches. A league "
+                         "continued by a new driver over the same --league-dir passes the next "
+                         "number, so generation names (<exploiter-name>-<n>) and the events log "
+                         "keep counting instead of starting again at 1.")
     ap.add_argument("--league-dir", required=True)
     ap.add_argument("--log-dir", required=True)
     ap.add_argument("--train-args", required=True,
@@ -190,7 +195,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # launched, and the driver then died while the main agent trained on alone.
     sys.path.insert(0, ROOT)
     from ai.training.generic_trainer import RUN_NAME_RE
-    for n in (a.main_name, f"{a.exploiter_name}-1"):
+    if a.first_generation < 1:
+        raise SystemExit("--first-generation must be at least 1")
+    for n in (a.main_name, f"{a.exploiter_name}-{a.first_generation}"):
         if not RUN_NAME_RE.match(n):
             raise SystemExit(f"run name {n!r} is not <engine>-<attempt>-<seed>; tools/train.py would refuse it")
     os.makedirs(a.league_dir, exist_ok=True)
@@ -240,7 +247,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                          f"got {a.exploiter_reset}")
     reset_file = a.exploiter_reset
     reset_steps = 0
-    gen = 0
+    gen = a.first_generation - 1
     expl: Optional[subprocess.Popen] = None
     expl_dir = ""
     gen_target = ""
