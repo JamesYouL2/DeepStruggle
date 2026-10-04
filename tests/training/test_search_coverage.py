@@ -56,6 +56,31 @@ def test_the_card_filter_searches_only_card_and_play_mode_nodes() -> None:
             f"filter disagreed at decision_type {dt}")
 
 
+def test_card_branch_and_board_split_every_decision_between_them() -> None:
+    _r, states = _mixed_batch(n=128, advance=120)
+    cb = BatchedMCTS(_model(), device="cpu", config=BatchedMCTSConfig(simulations=2, node_filter="card_branch"))
+    bd = BatchedMCTS(_model(), device="cpu", config=BatchedMCTSConfig(simulations=2, node_filter="board"))
+    branch = int(ts.DecisionType.CHOOSE_BRANCH)
+    for st in states:
+        dt = int(st.ctx().decision_type)
+        assert cb.should_search(st) == (dt in CARD_NODES or dt == branch)
+        assert bd.should_search(st) != cb.should_search(st)
+    kinds = Counter(int(st.ctx().decision_type) for st in states)
+    assert any(k in CARD_NODES for k in kinds) and any(k not in CARD_NODES and k != branch for k in kinds)
+
+
+def test_the_search_spec_names_its_filter() -> None:
+    from tools.lib.player_agent import load_agent
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "m.pt")
+        torch.save(_model().state_dict(), path)
+        for f, want in (("card", "card_playmode"), ("card_branch", "card_branch"), ("board", "board")):
+            agent = load_agent(f"search:{path}:2:determinize:{f}", device="cpu")
+            assert isinstance(agent, BatchedMCTSAgent)
+            assert agent.mcts.cfg.node_filter == want, (f, agent.mcts.cfg.node_filter)
+
+
 def test_the_unfiltered_searcher_searches_everything() -> None:
     _r, states = _mixed_batch()
     mcts = BatchedMCTS(_model(), device="cpu", config=BatchedMCTSConfig(simulations=2))
@@ -129,3 +154,32 @@ def test_the_decision_mix_is_what_the_cost_model_assumed() -> None:
     assert 0.25 < card_share < 0.60, (
         f"card/play-mode share is {card_share:.1%}; the cost model in "
         f"research/log/search_cost_and_coverage.md assumed 42%")
+
+
+def test_the_segments_partition_the_game_and_the_eras_follow_the_turn() -> None:
+    """Every decision lands in exactly one named segment (almost never `other`), each segment
+    occurs, and a segment or era filter searches exactly its own decisions."""
+    from ai.search.batched_mcts import ERAS, SEGMENTS, decision_segment
+    runner = ts.VectorizedBatchRunner(32, 7)
+    rng = np.random.default_rng(7)
+    seen: Counter = Counter()
+    states = []
+    for _ in range(1200):
+        masks = np.array(runner.get_action_masks(), copy=False)
+        for i in range(32):
+            st = runner.get_state(i)
+            if int(st.ctx().decision_player) != 0:
+                seen[decision_segment(st)] += 1
+                if rng.random() < 0.02:
+                    states.append(st.clone())
+        acts = [int(rng.choice(np.flatnonzero(masks[i]))) if masks[i].any() else 211 for i in range(32)]
+        runner.step_flat_all(acts, True)
+    assert set(seen) <= set(SEGMENTS)
+    assert all(seen[s] > 0 for s in SEGMENTS if s != "other")
+    assert seen["other"] <= 0.005 * sum(seen.values())
+    for f in list(SEGMENTS) + list(ERAS):
+        s = BatchedMCTS(_model(), config=BatchedMCTSConfig(simulations=2, node_filter=f))
+        for st in states:
+            want = (decision_segment(st) == f if f in SEGMENTS
+                    else ERAS[f][0] <= int(st.turn) <= ERAS[f][1])
+            assert s.should_search(st) == want
