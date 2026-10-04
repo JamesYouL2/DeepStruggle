@@ -120,16 +120,18 @@ def fetch_artifact(spec: str, out_dir: str) -> str:
     return out
 
 
-def fetch_release(spec: str, out_dir: str) -> str:
+def fetch_release(spec: str, out_dir: str, keep_pt: bool = False) -> str:
     """`rel:<tag>/<asset>`: download a release asset of `$GITHUB_REPOSITORY` (gh's default
-    repository when unset); a `.pt` is exported to `<asset stem>.onnx`, so name it `<run>@<steps>M.pt`."""
-    tag, name = spec[len("rel:"):].split("/", 1)
+    repository when unset); a `.pt` is exported to `<asset stem>.onnx`, so name it `<run>@<steps>M.pt`.
+    `relpt:<tag>/<asset>.pt` (keep_pt) keeps the torch checkpoint: the export reads only the base
+    observation, so a model with observation features (`obs_features`) must play as itself."""
+    tag, name = spec.split(":", 1)[1].split("/", 1)
     dest = os.path.join(out_dir, "_rel", tag)
     repo = os.environ.get("GITHUB_REPOSITORY")
     subprocess.run(["gh", "release", "download", tag, "-p", name, "-D", dest, "--clobber"]
                    + (["-R", repo] if repo else []), check=True, stdout=sys.stderr)
     src = os.path.join(dest, name)
-    if not name.endswith(".pt"):
+    if keep_pt or not name.endswith(".pt"):
         out = os.path.join(out_dir, name)
         os.replace(src, out)
         return out
@@ -173,6 +175,8 @@ def main(argv: List[str]) -> int:
         print(fetch_artifact(path, args.out_dir))
     elif path.startswith("rel:"):
         print(fetch_release(path, args.out_dir))
+    elif path.startswith("relpt:"):
+        print(fetch_release(path, args.out_dir, keep_pt=True))
     elif path.endswith(".pt"):
         print(fetch_checkpoint_as_onnx(args.repo, path, args.out_dir))
     else:

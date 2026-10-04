@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:pt:<file.pt> = a torch checkpoint as it is (for search:), hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx>, hf:rel:<tag>/<run>@<steps>M.pt as in tools/fetch_hf_model.py"
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:pt:<file.pt> = a torch checkpoint as it is (for search:), hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx>, hf:rel:<tag>/<run>@<steps>M.pt (exported to ONNX) or hf:relpt:<tag>/<run>@<steps>M.pt (kept as torch, for models with obs features) as in tools/fetch_hf_model.py"
         default: "doctrine newest"
       games_per_side:
         description: "Games per side per matchup"
@@ -89,6 +89,8 @@ jobs:
                   files.append(f)
               if f.startswith("pt:"):        # the torch checkpoint as it is (search: entrants)
                   return "data/checkpoints/" + os.path.basename(f[len("pt:"):])
+              if f.startswith("relpt:"):     # a release .pt as it is (models with obs features)
+                  return "data/checkpoints/" + os.path.basename(f)
               if f.endswith(".pt"):
                   return "data/checkpoints/" + onnx_name(f.split(":", 1)[-1])
               return "data/checkpoints/" + os.path.basename(f)
@@ -101,7 +103,7 @@ jobs:
                           ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
                           check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
                   m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
-              m = re.sub(r"hf:((?:pt:|gh:\d+/[\w.\-]+/|rel:[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
+              m = re.sub(r"hf:((?:pt:|gh:\d+/[\w.\-]+/|rel:[\w.\-]+/|relpt:[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
               out.append(m)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"specs={' '.join(out)}\n")
