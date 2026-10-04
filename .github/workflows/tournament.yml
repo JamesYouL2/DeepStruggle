@@ -1,0 +1,204 @@
+# A tournament on CI, spread over many runners and pooled into one report. By default: Doctrine
+# against the newest model published on Hugging Face (the one the workbench loads by default).
+#
+#   plan  -- pins "newest" to one file, so every runner plays the same model even if a new one is
+#            uploaded mid-run, and lists the parts.
+#   play  -- N runners (a matrix); runner k plays every N-th shard of the tournament on all of its
+#            cores (tools/tournament.py --part k/N --workers 0) and uploads a part file.
+#   pool  -- tools/tournament.py --pool-parts: checks the parts cover every shard exactly once,
+#            merges them, and writes the report. A shard's games depend only on the shard, so the
+#            pooled tournament equals one machine playing all of it; results depend on
+#            shard_pairs, never on the number of runners.
+#
+# The report goes to the run summary; report, JSON, per-game log and provenance (commit, engine
+# fingerprint, entrants) are the `tournament-<run id>` artifact, and each runner's raw part is kept
+# as `tournament-part-<run id>-<k>`. If a runner fails, pool refuses rather than report part of
+# the games; re-run the failed jobs and it runs again.
+#
+#   gh workflow run tournament.yml -f models="doctrine newest" -f games_per_side=100 -f runners=16
+#   gh run download <run-id> -n tournament-<run-id> -D data/reports/ci
+#
+name: tournament
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:pt:<file.pt> = a torch checkpoint as it is (for search:), hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx>, hf:rel:<tag>/<run>@<steps>M.pt as in tools/fetch_hf_model.py"
+        default: "doctrine newest"
+      games_per_side:
+        description: "Games per side per matchup"
+        default: "100"
+      runners:
+        description: "Runners to spread the games over (a free public repo runs up to 20 jobs at once)"
+        default: "16"
+      shard_pairs:
+        description: "Game pairs per shard (results depend on this, not on the runner count)"
+        default: "1"
+      temperature:
+        description: "Sampling temperature for every network entrant; <= 0.05 plays the argmax. A search entrant always plays its argmax, so compare one at 0"
+        default: "0.1"
+      hf_repo:
+        description: "Hugging Face repo that `newest` is read from"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+  actions: read   # a gh:<run>/<artifact>/<file> entrant is another run's artifact
+
+# No concurrency group: two tournaments on one branch are independent experiments, and a shared
+# group keeps only one of them pending -- a second dispatch silently cancelled the first.
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  MODELS: ${{ inputs.models || 'doctrine newest' }}
+  GAMES_PER_SIDE: ${{ inputs.games_per_side || '100' }}
+  RUNNERS: ${{ inputs.runners || '16' }}
+  SHARD_PAIRS: ${{ inputs.shard_pairs || '1' }}
+  TEMPERATURE: ${{ inputs.temperature || '0.1' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      specs: ${{ steps.plan.outputs.specs }}
+      hf_files: ${{ steps.plan.outputs.hf_files }}
+      parts: ${{ steps.plan.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the entrants and list the parts
+        id: plan
+        # fetch_hf_model.py is standard library only, so the runner's own python3 will do.
+        # Anywhere in a spec -- a bare entrant or inside safe:/search:/temp:/ensemble: --
+        # `newest` becomes the newest .onnx in $HF_REPO and `hf:<file.onnx>` that file, each
+        # pinned here and fetched by every play runner.
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          repo, specs = os.environ["HF_REPO"], os.environ["MODELS"].split()
+          files = []
+          import sys; sys.path.insert(0, "tools")
+          from fetch_hf_model import onnx_name
+          def local(f):
+              # Where tools/fetch_hf_model.py puts it: a run-directory .pt is exported to
+              # <run>@<steps>M.onnx, an artifact (gh:<run>/<artifact>/<file>) keeps its file name.
+              if f not in files:
+                  files.append(f)
+              if f.startswith("pt:"):        # the torch checkpoint as it is (search: entrants)
+                  return "data/checkpoints/" + os.path.basename(f[len("pt:"):])
+              if f.endswith(".pt"):
+                  return "data/checkpoints/" + onnx_name(f.split(":", 1)[-1])
+              return "data/checkpoints/" + os.path.basename(f)
+          newest = None
+          out = []
+          for m in specs:
+              if re.search(r"(^|[:+])newest($|[:+])", m):
+                  if newest is None:
+                      newest = subprocess.run(
+                          ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
+                          check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
+                  m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
+              m = re.sub(r"hf:((?:pt:|gh:\d+/[\w.\-]+/|rel:[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
+              out.append(m)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"specs={' '.join(out)}\n")
+              f.write(f"hf_files={' '.join(files)}\n")
+              f.write(f"parts={json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1)))}\n")
+          print("entrants:", " ".join(out), " (from Hugging Face:", " ".join(files) + ")",
+                " runners:", os.environ["RUNNERS"])
+          PY
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330   # under the 6 h job limit, so the upload step still gets to run
+    strategy:
+      fail-fast: false     # one failed part must not cancel the others; re-run just that one
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Fetch the pinned models
+        run: |
+          for f in ${{ needs.plan.outputs.hf_files }}; do
+            python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "$f" --out-dir data/checkpoints
+          done
+
+      - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"   # cmake, should the freshness check rebuild
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+            --models ${{ needs.plan.outputs.specs }} \
+            --games-per-side "$GAMES_PER_SIDE" --device cpu \
+            --workers 0 --shard-pairs "$SHARD_PAIRS" --temperature "$TEMPERATURE" \
+            --part "${{ matrix.part }}/$RUNNERS" --output-part "parts/part-${{ matrix.part }}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tournament-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    # Also when a part failed: pooling then fails with the missing shards named, which says more
+    # than a skipped job.
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tournament-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+            --pool-parts parts/part-*.json \
+            --output-report reports/tournament.md --output-json reports/tournament.json \
+            --log-games reports/games.jsonl
+
+      - name: Provenance
+        if: always()
+        run: |
+          mkdir -p reports
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "ref: $GITHUB_REF"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "entrants: ${{ needs.plan.outputs.specs }}"
+            echo "hugging_face: $HF_REPO ${{ needs.plan.outputs.hf_files }}"
+            echo "games_per_side: $GAMES_PER_SIDE"
+            echo "shard_pairs: $SHARD_PAIRS"
+            echo "temperature: $TEMPERATURE"
+            echo "runners: $RUNNERS (parts received: $(ls parts/part-*.json 2>/dev/null | wc -l))"
+          } > reports/provenance.txt
+          cat reports/provenance.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '```'; cat reports/provenance.txt; echo '```'
+            if [ -f reports/tournament.md ]; then cat reports/tournament.md; else echo "No report: see the pool step."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tournament-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn

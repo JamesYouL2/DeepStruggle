@@ -101,6 +101,8 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: measurement used. "card_playmode" searches only SELECT_CARD and SELECT_PLAY_MODE, which
     #: P3 argues are "the decisions that matter"; measured over 8 self-play games they are 42.0%
     #: of all decisions, against 39.5% POINT_NODE placements.
+    #: "card_branch" adds CHOOSE_BRANCH (the choices inside events) to those two, and "board" is
+    #: everything else, so "card_branch" and "board" split "all".
     node_filter: str = "all"
     #: Fraction of the decisions passing `node_filter` that are actually searched, chosen per
     #: decision from the searcher's own RNG. P3's first guess is 1 in 8.
@@ -494,13 +496,24 @@ class BatchedMCTS:
         thing in an evaluation tournament and in a training rollout -- the two numbers are only
         comparable if the rule is one implementation.
         """
-        if self.cfg.node_filter == "card_playmode":
+        if self.cfg.node_filter != "all":
             dt = int(state.ctx().decision_type)
-            if dt not in (int(ts.DecisionType.SELECT_CARD),
-                          int(ts.DecisionType.SELECT_PLAY_MODE)):
-                return False
-        elif self.cfg.node_filter != "all":
-            raise ValueError(f"unknown node_filter {self.cfg.node_filter!r}")
+            card = (int(ts.DecisionType.SELECT_CARD), int(ts.DecisionType.SELECT_PLAY_MODE))
+            # "card_branch" adds the choices inside events (Wargames' "end the game" among them):
+            # every decision about which card and how to play it. "board" is its complement --
+            # Ops placement, coups, realignments, setup -- so the two split "all" between them.
+            card_branch = card + (int(ts.DecisionType.CHOOSE_BRANCH),)
+            if self.cfg.node_filter == "card_playmode":
+                if dt not in card:
+                    return False
+            elif self.cfg.node_filter == "card_branch":
+                if dt not in card_branch:
+                    return False
+            elif self.cfg.node_filter == "board":
+                if dt in card_branch:
+                    return False
+            else:
+                raise ValueError(f"unknown node_filter {self.cfg.node_filter!r}")
         if self.cfg.subsample >= 1.0:
             return True
         return self._rng.random() < self.cfg.subsample

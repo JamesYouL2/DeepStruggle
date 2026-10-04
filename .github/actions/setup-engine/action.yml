@@ -1,0 +1,55 @@
+# Everything between checkout and a working engine: clang, the uv venv (CPU torch), the engine and
+# nanobind extension built in build/release, and the freshness stamp. Shared by ci.yml and
+# tournament.yml so the two cannot drift into building different engines.
+name: setup-engine
+description: Install clang and the Python environment, build the engine, and stamp it fresh
+
+inputs:
+  clang-version:
+    description: clang major version (CMake refuses any other compiler)
+    default: "21"
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        cache-dependency-glob: requirements.txt
+
+    - name: Install clang and ninja
+      shell: bash
+      env:
+        CLANG_VERSION: ${{ inputs.clang-version }}
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+        echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${CLANG_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+        sudo apt-get update
+        sudo apt-get install -y "clang-${CLANG_VERSION}" ninja-build libomp-dev
+        sudo update-alternatives --install /usr/bin/clang   clang   "/usr/bin/clang-${CLANG_VERSION}"   100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ "/usr/bin/clang++-${CLANG_VERSION}" 100
+
+    - name: Install Python dependencies
+      shell: bash
+      run: |
+        # A uv-managed Python: it ships the headers the extension compiles against.
+        uv venv --managed-python --python 3.13 .venv
+        # CPU torch first: the runners have no GPU, and the CUDA wheels are gigabytes. The
+        # requirements pass then finds torch already satisfied.
+        uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
+        uv pip install --python .venv/bin/python -r requirements.txt cmake
+
+    - name: Build the engine and the nanobind extension
+      shell: bash
+      run: |
+        .venv/bin/cmake -G Ninja -B build/release -S . -DPython_EXECUTABLE="$PWD/.venv/bin/python3"
+        .venv/bin/cmake --build build/release -j "$(nproc)"
+
+    - name: Engine is fresh (stamps the build)
+      # A fresh checkout has no stamp, so the first run stamps the build and exits 1 by design
+      # (it is telling a chained command not to run). The second run must exit 0.
+      shell: bash
+      run: |
+        export PATH="$PWD/.venv/bin:$PATH"
+        tools/scripts/check_engine_fresh.sh || true
+        tools/scripts/check_engine_fresh.sh

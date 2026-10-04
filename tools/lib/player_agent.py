@@ -486,8 +486,9 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
     if s.lower().startswith("search:"):
         # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample[:backend]]]]]
         #
-        # `node_filter` is "all" (every decision -- what the ~+27pp measurement used) or
-        # "card" (SELECT_CARD / SELECT_PLAY_MODE only, P3's proposal). `subsample` is the
+        # `node_filter` is "all" (every decision -- what the ~+27pp measurement used),
+        # "card" (SELECT_CARD / SELECT_PLAY_MODE only, P3's proposal), "card_branch" (those and
+        # CHOOSE_BRANCH, the choices inside events) or "board" (every other decision). `subsample` is the
         # fraction of those actually searched, e.g. 0.125 for P3's "1 in 8". Where search is
         # skipped the agent plays its own greedy policy, so a coverage sweep varies one thing.
         #
@@ -499,7 +500,11 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
         node_filter = "all"
         if len(parts) > 4 and parts[4]:
-            node_filter = "card_playmode" if parts[4].lower().startswith("card") else parts[4]
+            f = parts[4].lower()
+            # "card" is the original card/play-mode filter; "card_branch" adds the choices inside
+            # events; "board" is everything but those.
+            node_filter = ("card_branch" if f.startswith("card_branch")
+                           else "card_playmode" if f.startswith("card") else f)
         subsample = float(parts[5]) if len(parts) > 5 and parts[5] else 1.0
         # "cpp" (the default, ts_engine.BatchedSearch) or "python" (the reference tree).
         backend = parts[6].lower() if len(parts) > 6 and parts[6] else "cpp"
@@ -519,7 +524,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
                                 determinize=determinize,
                                 node_filter=node_filter, subsample=subsample,
                                 backend=backend)
-        tag = "" if node_filter == "all" else "-card"
+        tag = {"all": "", "card_playmode": "-card", "card_branch": "-cardbranch"}.get(node_filter, f"-{node_filter}")
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
         tag += "" if backend == "cpp" else f"-{backend}"
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
