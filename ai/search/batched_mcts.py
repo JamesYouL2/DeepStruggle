@@ -66,6 +66,34 @@ def settle(state: ts.GameState, auto_advance: bool) -> None:
     _settle(state, SettleMode.FORCED if auto_advance else SettleMode.CHANCE)
 
 
+#: A partition of every decision, for measuring where search gains (one tournament per segment,
+#: search there only, the network's own play elsewhere). Read off the decision context: an Ops
+#: decision has a card whose Ops are being spent (pending_op_card) and no event executing
+#: (resolving_card == 0); anything with an event executing is inside that event -- its choices,
+#: targets, discards and any Ops it grants.
+SEGMENTS: Tuple[str, ...] = ("setup", "headline", "ar_card", "play_mode", "ops_influence",
+                             "ops_coup_realign", "event", "other")
+#: Turn ranges, searched at every decision in them.
+ERAS: Dict[str, Tuple[int, int]] = {"early": (1, 3), "mid": (4, 7), "late": (8, 10)}
+
+
+def decision_segment(state: ts.GameState) -> str:
+    """The SEGMENTS entry this decision belongs to."""
+    c = state.ctx()
+    dt = c.decision_type
+    if state.current_phase == ts.Phase.SETUP:
+        return "setup"
+    if int(c.resolving_card) != 0:
+        return "event"
+    if dt == ts.DecisionType.SELECT_CARD:
+        return "headline" if state.current_phase == ts.Phase.HEADLINE else "ar_card"
+    if dt in (ts.DecisionType.SELECT_PLAY_MODE, ts.DecisionType.SELECT_OP_MODE):
+        return "play_mode"
+    if dt == ts.DecisionType.POINT_NODE and int(c.pending_op_card) != 0:
+        return "ops_influence" if c.op_mode == ts.OpMode.INFLUENCE else "ops_coup_realign"
+    return "other"
+
+
 @dataclass
 class BatchedMCTSConfig(PIMCTSConfig):
     #: Resample the hidden state before each search, so the tree never reads the opponent's hand.
@@ -511,6 +539,13 @@ class BatchedMCTS:
                     return False
             elif self.cfg.node_filter == "board":
                 if dt in card_branch:
+                    return False
+            elif self.cfg.node_filter in SEGMENTS:
+                if decision_segment(state) != self.cfg.node_filter:
+                    return False
+            elif self.cfg.node_filter in ERAS:
+                lo, hi = ERAS[self.cfg.node_filter]
+                if not lo <= int(state.turn) <= hi:
                     return False
             else:
                 raise ValueError(f"unknown node_filter {self.cfg.node_filter!r}")
