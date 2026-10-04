@@ -19,10 +19,20 @@ def inspect_checkpoint(path: str) -> Dict[str, Any]:
             arch = "retired (V4: card transformer + belief head)"
         elif any("node_pointer_proj" in k or "cross_b2c" in k for k in sd.keys()):
             arch = "retired (V3: dual pointer co-attention)"
-        elif any("cross_attn" in k or "cross_card_proj" in k for k in sd.keys()):
-            arch = "ColdWarNetV2 (Cross-Attention)"
-        elif any("fusion_in" in k for k in sd.keys()):
-            arch = "ColdWarNet (V1)"
+        else:
+            # A ladder rung is checked FIRST. `lad_cross_attn.*` contains the substring
+            # `cross_attn`, so a cross-attention rung matches the V2 test below and would be
+            # misreported as a ColdWarNetV2. Mirrors NeuralAgent._load_checkpoint's order.
+            from ai.models.ladder_net import ladder_config_from_state_dict
+            ladder_cfg = ladder_config_from_state_dict(sd)
+            if ladder_cfg is not None:
+                arch = f"LadderNet ({ladder_cfg['input_mode']}, hidden {ladder_cfg['hidden_dim']})"
+            elif any(k.startswith("mlp_in.") for k in sd.keys()) or any(
+                "cross_attn" in k or "cross_card_proj" in k for k in sd.keys()
+            ):
+                arch = "ColdWarNetV2 (Cross-Attention)"
+            elif any("fusion_in" in k for k in sd.keys()):
+                arch = "ColdWarNet (V1)"
     except Exception:
         pass
 

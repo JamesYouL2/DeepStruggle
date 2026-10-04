@@ -94,3 +94,28 @@ def test_a_run_recording_no_rollout_temps_used_the_legacy_bands() -> None:
     assert lf.recorded(old)["rollout_temps"] == [0.15, 0.50, 0.10, 0.35]
     assert "rollout_temps" in lf.non_default(old)
     assert "rollout_temps" not in lf.non_default(new)
+
+
+def test_a_ladder_runs_flags_are_a_command_train_py_accepts() -> None:
+    """The printed flags must parse, and rebuild the same architecture. They did not: the head flags
+    share a dest with their --no- forms, whose default (True) was read instead of argparse's (the
+    first action's, None), so the required --ladder-head-context/--ladder-head-static were left
+    out; and attention switched off printed --no-ladder-cross-attention, which does not exist."""
+    import shlex
+
+    from ai.training.train import build_parser
+    lf = _lf()
+    cfg = {"input_mode": "grouped", "aggregation": "flatten", "entity_dim": 16,
+           "entity_proj_dim": 256, "hidden_dim": 480, "num_res_blocks": 0,
+           "card_self_attention": False, "cross_attention": False, "card_lookup": False,
+           "per_entity_heads": 64, "head_context": True, "head_static": True,
+           "head_entities": "country", "head_center": True}
+    run = _run({"arch": "ladder", "ladder_config": cfg})
+    args = build_parser().parse_args(shlex.split(" ".join(lf.as_flags(lf.non_default(run)))))
+    assert (args.ladder_head_context, args.ladder_head_static) == (True, True)
+    assert not args.ladder_cross_attention and not args.ladder_card_self_attention
+    assert args.ladder_hidden_dim == 480 and args.ladder_head_center is True
+    # ... and a head switched off prints its --no- form rather than vanishing.
+    off = _run({"arch": "ladder", "ladder_config": {**cfg, "head_static": False}})
+    args = build_parser().parse_args(shlex.split(" ".join(lf.as_flags(lf.non_default(off)))))
+    assert args.ladder_head_static is False

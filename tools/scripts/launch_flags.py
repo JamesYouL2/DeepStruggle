@@ -34,11 +34,31 @@ _NOT_FLAGS = {
 }
 
 
-def _defaults() -> dict:
+def _parser():
     from ai.training.train import build_parser
 
-    parser = build_parser()
-    return {a.dest: a.default for a in parser._actions if a.dest != "help"}
+    return build_parser()
+
+
+def _defaults() -> dict:
+    # Where two flags share a dest (--ladder-head-context / --no-ladder-head-context), argparse
+    # keeps the FIRST action's default; taking the last read the required head flags as defaulting
+    # on, so a ladder run's flags were printed without them and train.py refused the command.
+    out: dict = {}
+    for a in _parser()._actions:
+        if a.dest != "help" and a.default is not argparse.SUPPRESS:
+            out.setdefault(a.dest, a.default)
+    return out
+
+
+def _off_by_omission() -> set:
+    """Dests of store_true flags that default to None and have no --no- form: recorded False is
+    what leaving them out gives, and there is no flag to print for it."""
+    acts = _parser()._actions
+    negatable = {a.dest for a in acts if any(o.startswith("--no-") for o in a.option_strings)}
+    return {a.dest for a in acts
+            if isinstance(a, argparse._StoreTrueAction) and a.default is None
+            and a.dest not in negatable}
 
 
 def _metadata(run_dir: str) -> dict:
@@ -166,8 +186,9 @@ def unrecorded(run_dir: str) -> list:
 
 def non_default(run_dir: str) -> dict:
     """{dest: value} for every recorded setting that differs from the CLI default."""
-    dflt = _defaults()
-    return {k: v for k, v in recorded(run_dir).items() if k in dflt and v != dflt[k]}
+    dflt, off = _defaults(), _off_by_omission()
+    return {k: v for k, v in recorded(run_dir).items()
+            if k in dflt and v != dflt[k] and not (k in off and v is False)}
 
 
 def as_flags(settings: dict) -> list:
