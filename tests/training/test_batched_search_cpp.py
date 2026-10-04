@@ -163,7 +163,10 @@ def _net_on(device: str) -> Any:
         categorical_value=False).eval()
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("device", [
+    "cpu",
+    pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")),
+])
 def test_two_groups_still_reproduce_the_python_tree(device: str) -> None:
     """From 128 trees on, the leaves go to the network one half at a time and the C++ tree
     pipelines the halves (on CUDA through page-locked buffers and asynchronous copies). The Python
