@@ -125,3 +125,36 @@ commit 6da56a5 built in a scratch worktree:
 
 So the speed-up is **4.3×**, and search now costs about 2.2× the unsearched throughput, not the
 "8×" (before) or "1.6×" (after) a profiled baseline suggested.
+
+## Pinned buffers and pipelined halves (2026-10-04)
+
+Two more changes, both bit-identical between the C++ and Python trees:
+
+* **Page-locked leaf buffers.** C++ writes leaves straight into pinned torch tensors owned by the
+  Python driver, so the copies to and from the GPU are asynchronous.
+* **Evaluation groups.** From 1,024 trees on, the trees are split into two halves; each half's
+  leaves go to the network on their own, and the C++ tree selects one half while the GPU evaluates
+  the other. The network's output for a row depends on the batch it is evaluated in (measured on
+  the GPU: no row of a split batch matched the whole batch bit for bit), so the grouping is part of
+  the search's semantics and the Python tree evaluates the same halves (`search_groups`). Tests on
+  CPU and CUDA hold the two trees to identical visit counts and generator states with two groups,
+  and a 400-game match gave identical games from both (182-216-2, at an earlier threshold of 128).
+
+The threshold was first 128 trees; halves of ~100 only doubled the network calls (200 × 256: 0.79 s
+against 0.27 s as one batch), so it is 1,024. Below it the search is exactly what it was before
+the split: the 400-game honest-soup match replays to the original 157-237-6.
+
+All on an idle machine (E7-17-44 finished), unprofiled:
+
+| measurement | single batch, unpinned | **now** |
+|:---|---:|---:|
+| 200 positions × 256 simulations | 0.27 s | **0.20 s** |
+| 3,200 positions × 32 simulations | 0.61 s | **0.26 s** |
+| eval: soup vs honest search, 400 games | 189 s | **133 s** (14× the original Python search's 1,848 s) |
+| training, no search | 81–90k steps/s (loaded) | **95–97k** |
+| training with search (32 sims, 1 in 8 card decisions) | 37–41k | **45–47k** |
+
+Search's own share of a training rollout fell from about 0.92 s to about 0.73 s; the isolated
+search of one rollout's positions is now 0.26 s, so most of what remains is outside the C++ tree --
+the Python work per queued position (cloning, determinizing each root, the real-mask check when the
+targets are written).

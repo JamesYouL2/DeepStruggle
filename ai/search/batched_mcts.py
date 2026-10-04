@@ -56,7 +56,11 @@ _MIN_FEATURISE_BUCKET = 64
 #: evaluates the other. Both trees group the same way, because it changes the numbers, not only
 #: the speed: the network's output for a row depends on the batch it is evaluated in (measured on
 #: the GPU, no row of a split batch matched the whole batch bit for bit).
-_MIN_GROUP = 64
+#:
+#: 512, not less: below that a half's forward pass is mostly fixed cost, and splitting only doubles
+#: the calls -- measured, 200 positions x 256 simulations took 0.79 s in halves of 100 against 0.27 s
+#: as one batch, while 3,200 x 32 (chunks of 1,024, halves of 512) went from 0.61 s to 0.30 s.
+_MIN_GROUP = 512
 
 
 def search_groups(n: int) -> List[Tuple[int, int]]:

@@ -19,6 +19,7 @@ import pytest
 import torch
 
 import ts_engine as ts
+import ai.search.batched_mcts as bm
 from ai.search.batched_mcts import GRAPH_BUCKET, BatchedMCTS, BatchedMCTSConfig, _GraphedNetwork
 from ai.search.pimcts import acting_player
 from bindings.action_encoder import ActionEncoder
@@ -197,12 +198,12 @@ def test_an_unknown_backend_is_refused(net: Any) -> None:
 
 
 def test_the_grouping_rule() -> None:
-    from ai.search.batched_mcts import search_groups
+    from ai.search.batched_mcts import _MIN_GROUP, search_groups
     assert search_groups(0) == []
     assert search_groups(1) == [(0, 1)]
-    assert search_groups(127) == [(0, 127)]
-    assert search_groups(128) == [(0, 64), (64, 128)]
-    assert search_groups(201) == [(0, 101), (101, 201)]
+    assert search_groups(2 * _MIN_GROUP - 1) == [(0, 2 * _MIN_GROUP - 1)]
+    assert search_groups(2 * _MIN_GROUP) == [(0, _MIN_GROUP), (_MIN_GROUP, 2 * _MIN_GROUP)]
+    assert search_groups(2 * _MIN_GROUP + 1) == [(0, _MIN_GROUP + 1), (_MIN_GROUP + 1, 2 * _MIN_GROUP + 1)]
 
 
 def _net_on(device: str) -> Any:
@@ -221,10 +222,12 @@ def _net_on(device: str) -> Any:
     "cpu",
     pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")),
 ])
-def test_two_groups_still_reproduce_the_python_tree(device: str) -> None:
-    """From 128 trees on, the leaves go to the network one half at a time and the C++ tree
-    pipelines the halves (on CUDA through page-locked buffers and asynchronous copies). The Python
-    tree evaluates the same halves, so the two must still agree exactly -- seeds included."""
+def test_two_groups_still_reproduce_the_python_tree(device: str, monkeypatch: Any) -> None:
+    """From 2 x _MIN_GROUP trees on, the leaves go to the network one half at a time and the C++
+    tree pipelines the halves (on CUDA through page-locked buffers and asynchronous copies). The
+    Python tree evaluates the same halves, so the two must still agree exactly -- seeds included.
+    The threshold is lowered here so 140 trees split; both trees read the one rule."""
+    monkeypatch.setattr(bm, "_MIN_GROUP", 64)
     net = _net_on(device)
     roots = (_positions(24) * 6)[:140]
     cfg = dict(simulations=12, temperature=0.0, determinize=True)
