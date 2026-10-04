@@ -157,3 +157,22 @@ sides ± 1.1.
   E7-02-44@1000M from 59% to 61–63%; against the fixed E6 references they flatten earlier
   (panel ~86–88% from 1,200M, E6-03-44@550M ~79–80% from 1,520M).
 * The sides move together; no seat runs away.
+
+## Past 2,000M: E7-19-44 (2,000 → 2,400M)
+
+E7-17-44 continued from its 2,000M end state with its flags (E7-19-44). Each 80M-window SWA against
+the soup and E7-02-44@1000M, 1,000 games per side (per side ± 1.5, both ± 1.1):
+
+| SWA of | E7-02-44@1000M (US / USSR) | soup (US / USSR) |
+|:---|---:|---:|
+| 2000–2080M | 63.9 (64.9 / 62.8) | 49.8 (49.3 / 50.3) |
+| 2080–2160M | 63.3 (63.0 / 63.7) | 48.1 (47.4 / 48.8) |
+| 2160–2240M | 62.4 (63.8 / 61.0) | 51.2 (50.1 / 52.4) |
+| 2240–2320M | 63.4 (64.2 / 62.6) | 51.0 (50.9 / 51.2) |
+| 2320–2400M | 63.9 (65.4 / 62.4) | 50.8 (51.6 / 50.1) |
+
+* **Against E7-02-44@1000M the line is flat from about 1,900M** (61–64% for eight windows).
+* **Against the soup it reaches level and edges past it** (51.0, 50.8 in the last two windows).
+* **The rule, set before the last two windows** ("saturated if, against both references, the mean
+  of the last two windows is within +1.5 points of the mean of the first two"): 1,000M +0.05,
+  soup +1.95. Not saturated by the rule, marginally; continued to 2,800M as E7-20-44.
