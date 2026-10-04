@@ -3,6 +3,7 @@
 #include "ts/card_data.hpp"
 #include "ts/scoring.hpp"
 #include "ts/ops.hpp"
+#include "ts/card_effects.hpp"
 #include <cstring>
 #include <algorithm>
 
@@ -49,6 +50,35 @@ bool is_coup_nuclear_hazard(const GameState& state, Player p, uint8_t country_id
 }
 
 } // anonymous namespace
+
+float Observation::active_card(const GameState& state, uint8_t i) noexcept {
+    float active = 0.0f;
+    for (size_t d = 0; d <= state.ctx_stack_depth && d < state.ctx_stack.size(); ++d) {
+        const DecisionContext& frame = state.ctx_stack[d];
+        if (frame.resolving_card != i && frame.pending_op_card != i) continue;
+        active = (d == state.ctx_stack_depth) ? card_slots::ACTIVE_NOW
+                                              : card_slots::ACTIVE_SUSPENDED;
+        if (d == state.ctx_stack_depth) break;
+    }
+
+    // The card committed to resolve after this one. Both headlines are revealed together and
+    // then resolved in Ops order, so while the first is resolving the second is public and
+    // known to be next -- which the model could see the owner of (HEADLINE_SECOND_MINE) but
+    // not the identity of.
+    if (active == 0.0f && state.headline_stage == 1 && state.headline_second_card == i) {
+        active = card_slots::ACTIVE_NEXT;
+    }
+
+    // Committed to the headline is in play (extract() also gives such a card its owner's hand
+    // slot). Only raise it -- a card already resolving must not be demoted to "next".
+    if (state.card_locations[i] == CardLocation::HEADLINE_COMMITTED &&
+        (state.headline_us_card == i || state.headline_ussr_card == i) &&
+        active < card_slots::ACTIVE_NOW) {
+        active = (state.headline_stage == 1 && state.headline_second_card == i)
+            ? card_slots::ACTIVE_NEXT : card_slots::ACTIVE_NOW;
+    }
+    return active;
+}
 
 void Observation::extract(const GameState& state, Player perspective,
                           ObservationBufferV23* out_buf) noexcept {
@@ -229,23 +259,7 @@ void Observation::extract(const GameState& state, Player perspective,
         // card whose Event fires in turn -- and a model mid-chain could previously see only the
         // innermost card. Walking ctx_stack costs no extra floats, because the slot is already
         // one per card.
-        float active = 0.0f;
-        for (size_t d = 0; d <= state.ctx_stack_depth && d < state.ctx_stack.size(); ++d) {
-            const DecisionContext& frame = state.ctx_stack[d];
-            if (frame.resolving_card != i && frame.pending_op_card != i) continue;
-            active = (d == state.ctx_stack_depth) ? card_slots::ACTIVE_NOW
-                                                  : card_slots::ACTIVE_SUSPENDED;
-            if (d == state.ctx_stack_depth) break;
-        }
-
-        // The card committed to resolve after this one. Both headlines are revealed together and
-        // then resolved in Ops order, so while the first is resolving the second is public and
-        // known to be next -- which the model could see the owner of (HEADLINE_SECOND_MINE) but
-        // not the identity of.
-        if (active == 0.0f && state.headline_stage == 1 &&
-            state.headline_second_card == i) {
-            active = card_slots::ACTIVE_NEXT;
-        }
+        float active = Observation::active_card(state, i);
 
         // A card committed to the headline has no branch in the location chain above, so it
         // arrives here as DECK_OR_HIDDEN -- indistinguishable from a card still in the deck.
@@ -262,12 +276,6 @@ void Observation::extract(const GameState& state, Player perspective,
                 for (size_t sl = 0; sl < 8; ++sl) row[sl] = 0.0f;
                 row[(owner == my_player) ? card_slots::MY_HAND
                                          : card_slots::KNOWN_OPPONENT_HAND] = 1.0f;
-                // Committed to the headline is in play. Only raise it -- a card already
-                // resolving must not be demoted to "next".
-                if (active < card_slots::ACTIVE_NOW) {
-                    active = (state.headline_stage == 1 && state.headline_second_card == i)
-                        ? card_slots::ACTIVE_NEXT : card_slots::ACTIVE_NOW;
-                }
             }
         }
 
@@ -419,6 +427,10 @@ size_t extract_observation_features(const GameState& state, Player perspective, 
         out[at + 1] = ops_modifier(state, perspective);
         out[at + 2] = ops_modifier(state, get_opponent(perspective));
         at += obs_features::OPS_BUDGET_WIDTH;
+    }
+    if (features & obs_features::CARD_EFFECTS) {
+        card_effects::write_block(state, perspective, out + at);
+        at += obs_features::CARD_EFFECTS_WIDTH;
     }
     return at;
 }

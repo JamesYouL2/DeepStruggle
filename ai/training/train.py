@@ -62,6 +62,9 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
     failure this repository has already had five times with a defaulted observation layout.
     """
     if args.arch != "ladder":
+        if getattr(args, "ladder_card_effects_head", 0):
+            raise SystemExit("--ladder-card-effects-head only applies to --arch ladder; refused "
+                             "rather than silently ignored.")
         if getattr(args, "ladder_token_layers", 0):
             raise SystemExit("--ladder-token-layers only applies to --arch ladder; refused rather "
                              "than silently ignored.")
@@ -113,6 +116,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         # P30 C1. Recorded only when on, so the configs of earlier runs stay comparable.
         **({"token_layers": int(args.ladder_token_layers), "token_dim": int(args.ladder_token_dim)}
            if args.ladder_token_layers else {}),
+        **({"card_effects_head": int(args.ladder_card_effects_head)}
+           if args.ladder_card_effects_head else {}),
     )
 
 
@@ -205,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
                           "global token), beside the grouped projections; the global token joins\n"
                           "the fusion input and each per-entity head reads its own token.\n"
                           "0 (default) = off. --ladder-input-mode grouped only.")
+    lad.add_argument("--ladder-card-effects-head", type=int, default=0,
+                     help="Hidden width of the card-effects head: one MLP shared across cards that\n"
+                          "reads a card's CARD_EFFECTS row, its raw row and the trunk, and adds to\n"
+                          "that card's logit and (for the card being played) the play-mode logits.\n"
+                          "Needs --obs-features card_effects. Starts at zero. 0 (default) = off.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,
@@ -605,11 +615,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aux-min-batch", type=int, default=4096,
                         help="Labelled positions to gather before one aux training step.")
     # The view spec (owner, 2026-10-01): optional observation blocks appended to the base layout.
-    parser.add_argument("--obs-features", nargs="*", default=[], choices=["ops_budget"],
+    parser.add_argument("--obs-features", nargs="*", default=[], choices=["ops_budget", "card_effects"],
                         help="Optional observation blocks the network reads, appended after the base "
                              "v2.3 layout. ops_budget: the Ops the card at play will be granted (at "
                              "SELECT_PLAY_MODE) and each side's per-card Ops modifier (Containment / "
-                             "Brezhnev / Red Scare). Recorded in the run's metadata and in the weights; "
+                             "Brezhnev / Red Scare). card_effects: per held card at a card decision, "
+                             "whether its event can fire, its Ops reach and what the event does on "
+                             "this board (engine/include/ts/card_effects.hpp; 1,980 floats, read beside "
+                             "the card rows). Recorded in the run's metadata and in the weights; "
                              "every evaluator then builds this view for the model. Ladder only.")
     # P30 (research/log/P30_card_board_targets.md): what each held card's event and Ops would do.
     parser.add_argument("--aux-card-events", type=float, default=0.0,

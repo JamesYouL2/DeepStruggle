@@ -944,9 +944,14 @@ def check_checkpoint_layout(state_dict: dict) -> None:
     # A P21 ladder rung reads the observation through its own first layer, named `lad_*`, so
     # like the MLP case above the layout is the input width itself rather than something to
     # infer from a per-card block it does not have.
+    # Appended observation blocks (LadderNet's `obs_features` buffer) widen these first layers by
+    # known amounts: `flat` reads every block, the per-card CARD_EFFECTS block joins the card input.
+    from ai.models.ladder_net import CARD_EFFECTS_BIT, CARD_EFFECTS_PER_CARD, _obs_extra
+    feats = int(state_dict["obs_features"]) if "obs_features" in state_dict else 0
+    ce = bool(feats & CARD_EFFECTS_BIT)
     lad_in = state_dict.get("lad_in.0.weight")
     if lad_in is not None:                                   # input_mode="flat"
-        width = int(lad_in.shape[1])
+        width = int(lad_in.shape[1]) - _obs_extra(feats)
         narrowed = ColdWarNetV2.TOTAL_OBS_SIZE - int(static_input_mask().sum())
         if width not in (ColdWarNetV2.TOTAL_OBS_SIZE, narrowed):
             raise ValueError(
@@ -957,15 +962,17 @@ def check_checkpoint_layout(state_dict: dict) -> None:
     if lad_enc is not None:                                  # input_mode="entity"
         ident = state_dict.get("card_identity.weight")
         idim = int(ident.shape[1]) if ident is not None else 0
-        if int(lad_enc.shape[1]) - idim != ColdWarNetV2.CARD_FEATURES:
+        n_card = int(lad_enc.shape[1]) - idim - (CARD_EFFECTS_PER_CARD if ce else 0)
+        if n_card != ColdWarNetV2.CARD_FEATURES:
             raise ValueError(
-                f"this ladder checkpoint has {int(lad_enc.shape[1]) - idim} card features; "
+                f"this ladder checkpoint has {n_card} card features; "
                 f"layout v2.3 has {ColdWarNetV2.CARD_FEATURES}.")
         return
     lad_b = state_dict.get("lad_board.0.weight")
     lad_c = state_dict.get("lad_card.0.weight")
     if lad_b is not None and lad_c is not None:              # input_mode="grouped"
-        width = int(lad_b.shape[1]) + int(lad_c.shape[1])
+        width = (int(lad_b.shape[1]) + int(lad_c.shape[1])
+                 - (110 * CARD_EFFECTS_PER_CARD if ce else 0))
         full = ColdWarNetV2.BOARD_SIZE + ColdWarNetV2.CARD_SIZE
         narrowed = full - int(static_input_mask().sum())
         if width not in (full, narrowed):

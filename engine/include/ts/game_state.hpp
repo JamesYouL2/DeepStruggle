@@ -512,12 +512,20 @@ namespace obs_features {
     // Purge -1, summed). The base layout shows the raw effect bits but never the Ops a card is
     // worth at the moment its use is chosen.
     constexpr uint32_t OPS_BUDGET  = 1u << 1;
-    constexpr uint32_t ALL         = OPS_BUDGET;
+    // What each card in my hand does on this board, at my card decisions (choosing the card to
+    // headline or play, and how to play it); zero elsewhere. 18 floats per card, 110 cards, in
+    // card-id order: can the event fire, Ops reach (5), the event's outcome (12). Computed on a
+    // copy whose hidden cards are redealt, so no event reads the opponent's real hand. See
+    // engine/include/ts/card_effects.hpp.
+    constexpr uint32_t CARD_EFFECTS = 1u << 2;
+    constexpr uint32_t ALL         = OPS_BUDGET | CARD_EFFECTS;
 
     constexpr size_t OPS_BUDGET_WIDTH = 3;
+    constexpr size_t CARD_EFFECTS_WIDTH = 110 * 18;   // card_effects::WIDTH
 
     constexpr size_t extra_width(uint32_t features) noexcept {
-        return ((features & OPS_BUDGET) ? OPS_BUDGET_WIDTH : 0);
+        return ((features & OPS_BUDGET) ? OPS_BUDGET_WIDTH : 0)
+             + ((features & CARD_EFFECTS) ? CARD_EFFECTS_WIDTH : 0);
     }
 }
 
