@@ -13,10 +13,8 @@ alone is level with the control and also leaves the spots where they were, which
 E7-14-44 ([`P30_branch_arms_c2_play_mode_temp.md`](P30_branch_arms_c2_play_mode_temp.md)). Not
 worth pursuing in this form.
 
-Code on the fork, branch
-[`feat/playout-advantage`](https://github.com/JamesYouL2/DeepStruggle/tree/feat/playout-advantage):
-`ai/training/playout_advantage.py`, `--playout-*` in `tools/train.py`, off by default. Not proposed
-for main.
+Code: `ai/training/playout_advantage.py`, `--playout-*` in `tools/train.py`, off by default
+(`--playout-adv 0`). Launch flags in [`E7_fork_search_summary.md`](E7_fork_search_summary.md#runs).
 
 ## The method
 
@@ -107,6 +105,8 @@ Doctrine census, 4,000 greedy games each (CI `37151939991`, `37151938283`, `3715
 | Star Wars evented, all plays | 30% | 17% | 42% | 28% |
 | Special Relationship evented, all plays | 2.7% | 1.9% | 4.1% | 10.3% |
 | event share, all plays | 41.9% | 41.6% | 42.0% | 42.3% |
+
+The spot rules count action-round play-mode decisions only (the card already chosen), so a headline is never one of their plays. The Star Wars rule's 0% is therefore "never evented in an action round while ahead": the control evented Star Wars in 143 of its 479 US plays with the event legal (30%), every one of them a headline, consistent with the 24% of holdings in [`event_census_soup.md`](event_census_soup.md), which counts headlines.
 
 Some cards are evented more overall. The spot rules, where the review measured the event to be
 worth points, did not move. Exploration reshuffled the event mix: Suez Crisis +18 points, OPEC −10.

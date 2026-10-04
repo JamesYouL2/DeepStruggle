@@ -12,10 +12,10 @@ improve a saturated model when added as a fine-tune?
 census spots did not move. Visit-count targets at 64 simulations are not a usable training signal
 in this form.
 
-Code on the fork, branch
-[`exp/search-finetune`](https://github.com/JamesYouL2/DeepStruggle/tree/exp/search-finetune)
-(`099cce2`). The only change to the trainer is that `--search-node-filter` accepts the segment and
-turn-range filters of [`E7_search_segments.md`](E7_search_segments.md). Not proposed for main.
+Code: the trainer's existing P15-X4b path (`--search-ce-coef`, `--search-sims`,
+`--search-subsample`); the only addition is that `--search-node-filter` accepts the segment and
+turn-range filters of [`E7_search_segments.md`](E7_search_segments.md) (`late` here). Launch flags
+in [`E7_fork_search_summary.md`](E7_fork_search_summary.md#runs).
 
 ## Arms
 
@@ -64,7 +64,7 @@ Doctrine census, greedy self-play (CI `37224149541`, `37224155356`; control `371
 | USSR plays Five Year Plan with ≤1 other card in hand | 58% | 43% | 57% |
 | US plays Aldrich Ames Remix with ≤1 other card in hand | 88% | 79% | 44% |
 
-The spots the expert review priced did not move; two hand-management rules got worse.
+The spots the expert review priced did not move; two hand-management rules got worse. The census counts action-round play-mode decisions only (the card already chosen), so a headline is never one of its plays. The Star Wars rule's 0% is therefore "never evented in an action round while ahead": the control evented Star Wars in 143 of its 479 US plays with the event legal (30%), every one of them a headline, consistent with the 24% of holdings in [`event_census_soup.md`](event_census_soup.md), which counts headlines.
 
 ## Reading
 

@@ -10,9 +10,10 @@ card and play-mode scores, strength is level with the control after 80M steps, a
 spots do not move. The head is used (it changes card play), but its changes do not follow the
 event values it is given.
 
-Fork experiment, branch
-[`feat/card-effects-obs`](https://github.com/JamesYouL2/DeepStruggle/tree/feat/card-effects-obs)
-(`8f1e8c5`). It adds an observation block, so it is **not proposed for main**.
+Code: `--obs-features card_effects` (the block, `engine/src/card_effects.cpp`) and
+`--ladder-card-effects-head 64` (`ai/models/ladder_net.py`). An appended block: the base
+observation and every existing checkpoint are unchanged. Launch flags in
+[`E7_fork_search_summary.md`](E7_fork_search_summary.md#runs).
 
 ## The block
 
@@ -80,6 +81,8 @@ Doctrine census, greedy self-play (CI `37178029849` control, `37178021132`, `371
 | USSR events Che well over half the time | 4% | 1% | 2% |
 | Terrorism evented when behind or after Iranian Hostage Crisis | 6% | 2% | 4% |
 
+The census counts action-round play-mode decisions only (the card already chosen), so a headline is never one of its plays. The Star Wars rule's 0% is therefore "never evented in an action round while ahead": the control evented Star Wars in 143 of its 479 US plays with the event legal (30%), every one of them a headline, consistent with the 24% of holdings in [`event_census_soup.md`](event_census_soup.md), which counts headlines.
+
 **Is the head used?** On 5,808 card decisions from the control's own games: E7-90-45's card choice
 is at KL 0.21 from the control and its play-mode choice at 0.28, against 0.19 and 0.18 for the
 block-only arm (top choice the same 88.8% / 90.7% of the time). The head shifts legal cards' scores
@@ -98,7 +101,7 @@ only.
 
 ## Reproduction
 
-`--obs-features card_effects [--ladder-card-effects-head 64]` on the branch above; E7-75-45's flags
-otherwise, recorded in each run's `metadata.json` (in the release). Census and tournament run on
-branch `exp/card-effects-eval`, entrants `hf:relpt:<tag>/<run>@80M.pt`, which keeps a torch
-checkpoint (the ONNX export reads only the base observation).
+`--obs-features card_effects [--ladder-card-effects-head 64]` added to E7-75-45's flags, recorded
+in each run's `metadata.json` (in the release). The census tool and the CI tournament workflow are
+on the fork (branch `exp/card-effects-eval`); its entrants were `hf:relpt:<tag>/<run>@80M.pt`,
+which keeps a torch checkpoint (the ONNX export reads only the base observation).

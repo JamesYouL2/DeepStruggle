@@ -9,10 +9,8 @@ everything. Searching **Ops influence placement** alone gives the largest share 
 **turns 8-10** alone give +2.7 of the +4.0. Card and play-mode choices together give +1.4; setup,
 headlines, coups/realignments and choices inside events give almost nothing.
 
-Code on the fork, branch
-[`exp/card-search`](https://github.com/JamesYouL2/DeepStruggle/tree/exp/card-search) (`3219592`):
-`BatchedMCTSConfig.node_filter` takes the segments below, and a partition test checks that every
-decision falls in exactly one segment. Not proposed for main.
+Code: `BatchedMCTSConfig.node_filter` (and the `search:` spec's fifth field) takes the segments
+below; a partition test checks that every decision falls in exactly one segment.
 
 ## Setup
 

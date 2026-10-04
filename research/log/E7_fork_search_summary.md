@@ -1,9 +1,47 @@
 # Search and card-play experiments on the fork (2026-09-29 to 2026-10-04): summary
 
 Everything the fork ([JamesYouL2/DeepStruggle](https://github.com/JamesYouL2/DeepStruggle)) ran on
-search, and on teaching the network card play, with what did and did not work. The code stays on
-the fork's branches (cited by branch and commit); what is worth having on main is the three
-recommendations at the end.
+search, and on teaching the network card play, with what did and did not work, and three
+recommendations at the end. The code behind the E7 runs below is on main with these notes, every
+part off by default: the search node filters, `--playout-*`, the `CARD_EFFECTS` block and head,
+and whole-placement search. The older play-time search variants (Gumbel root, truncation, round
+search) and the evaluation tools (doctrine census, CI tournament workflow) stay on the fork's
+branches, cited by branch and commit.
+
+## Runs
+
+Every E7 fine-tune here warm-starts from **E7-04-44@1200M** (`snapshot_1200029696steps.pt`) and
+trains 80M more steps. **E7-75-45 is the control**: that warm start with nothing else changed,
+seed 45, constant lr 3e-5, opponent pool 0.3. Its flags, printed by `launch_flags.py` from its
+`metadata.json`:
+
+```
+tools/train.py --arch ladder --block-lambda off --drop-static --ladder-aggregation flatten \
+  --no-ladder-card-lookup --ladder-card-lookup-dim 0 --ladder-card-lookup-heads 0 \
+  --ladder-card-lookup-identity-dim 0 --ladder-entity-dim 16 --ladder-entity-proj-dim 256 \
+  --ladder-head-center --ladder-head-context --ladder-head-entities country --ladder-head-static \
+  --ladder-hidden-dim 480 --ladder-input-mode grouped --ladder-res-blocks 0 --per-entity-heads 64 \
+  --lr 3e-05 --opponent-frac 0.3 --opponent-self-pool --resume-every-steps 10000000 \
+  --seed 45 --seed-env 45 --seed-init 45 --seed-pool 45 --seed-sampling 45 \
+  --eval-opponents heuristic random --train-steps 80000000 \
+  --warmup-checkpoint <E7-04-44>/snapshot_1200029696steps.pt --run-name E7-75-45
+```
+
+Training is deterministic: E7-92-45, the same command on a later commit, reproduced E7-75-45's
+weights bit for bit. Each arm adds only its own flags:
+
+| run | added flags | note |
+|:---|:---|:---|
+| E7-76-45 | `--play-mode-temp 2.0` | [`E7_playout_pg_finetune.md`](E7_playout_pg_finetune.md) |
+| E7-85-45 | `--playout-adv 3.0 --playout-mode joint --playout-hidden redeal --playout-pairs 16 --playout-batch 64 --playout-sample-frac 0.008` | same |
+| E7-86-45 | E7-85-45's plus `--play-mode-temp 2.0` | same |
+| E7-90-45 | `--obs-features card_effects --ladder-card-effects-head 64` | [`E7_card_effects_block.md`](E7_card_effects_block.md) |
+| E7-91-45 | `--obs-features card_effects` | same |
+| E7-93-45 | `--search-ce-coef 0.5 --search-sims 64 --search-node-filter all --search-subsample 0.125` | [`E7_search_finetune.md`](E7_search_finetune.md) |
+| E7-94-45 | `--search-ce-coef 0.5 --search-sims 64 --search-node-filter late --search-subsample 0.5` | same |
+
+Each run's `metadata.json` is in its release; `launch_flags.py <E7-75-45> --diff <arm>` checks an
+arm against the control (`--search-subsample 0.125` is the default, so it does not print).
 
 ## Measured
 
@@ -21,6 +59,7 @@ recommendations at the end.
 | **Offline distillation** of bank-confirmed card spots (paired playouts, denoised) | E7-04-44@1200M+denoised-e20: 48.8% vs parent; Star Wars 48%, OPEC 64%, Alliance for Progress 58% | **the only method that moved the spots**, at a small strength cost | fork `exp/hungary-openings` |
 | **Paired-playout policy gradient inside RL**, 80M fine-tunes | 47.5% / 46.0% vs control; spots unmoved; entropy −20% | **fails** | [`E7_playout_pg_finetune.md`](E7_playout_pg_finetune.md) |
 | **Card-effects observation block** (+ head), 80M fine-tunes | 50.6% / 49.2% vs control; spots unmoved; head used but uncorrelated with event value | **no effect** | [`E7_card_effects_block.md`](E7_card_effects_block.md) |
+| **Whole-placement search**, soup, Ops influence only, 64 sims per point, 8,000 games per pairing | vs soup **+2.6** (point-by-point +1.9); vs point-by-point 50.65% (+0.65 ± 0.56) | **better, small**; head to head 1.2 SE | `ai/search/placement_search.py`, CI `37227904004` |
 | **Search-driven fine-tune**, visit-count CE at 64 sims, 80M | 43.3% (all decisions) / 45.3% (turns 8-10) vs control; spots unmoved | **fails** | [`E7_search_finetune.md`](E7_search_finetune.md) |
 
 ## What did not work, and the common thread
@@ -60,11 +99,11 @@ a positive signal (US +1.5 on snapshots and +3.2 on the SWA, USSR level,
 [`P30_branch_arms_c2_play_mode_temp.md`](P30_branch_arms_c2_play_mode_temp.md)), and its head is
 shown to reach the trunk ([`P30_c2_card_probe_and_branch_soups.md`](P30_c2_card_probe_and_branch_soups.md)).
 It labels only 0.05% of decisions because the Python labeller costs ~2-6 ms a position. The fork
-has an exact C++ port (`engine/src/card_effects.cpp`, `feat/card-effects-obs` `8f1e8c5`; equal to
+has an exact C++ port (`engine/src/card_effects.cpp`, in this change as `card_effects_label`; equal to
 `card_event_targets.label` on the same states and dice, `tests/bindings/test_card_effects.py`) at
 0.27 ms, about 20× faster. Used **only as C2's label source** -- no observation block, no change to
 the game -- it lets C2 label 10-20× more decisions at the same cost. Run as C2's seed-43 replicate
-with the denser labels. It is an engine addition, so it needs the owner's approval.
+with the denser labels; the remaining work is pointing `--aux-card-events`' labelling at it.
 
 **3. Search an influence placement as one decision: all its points at once.** Ops influence
 placement is the segment where search gains most (+1.9 of +4.0,
@@ -80,5 +119,11 @@ each whole, and split the simulations among them by sequential halving, as the G
 for single moves. The chosen placement is then played point by point, so the network, its action
 space and the training data are unchanged. This is not the merged-influence view (P29 bet 3,
 [`P29_bet3_merged_view.md`](P29_bet3_merged_view.md)), which changed what the network is trained
-on; here only the search is changed. First measure: the `ops_influence` segment tournament above,
-placement-level search against point-level search at the same 64 simulations.
+on; here only the search is changed.
+
+**Measured** (`search:<soup>:64:determinize:ops_influence:placement=8`, CI `37227904004`, 4,000
+games per side per pairing): against the soup **52.6%** where point-by-point search scores 51.9%
+(+2.6 against +1.9; the point-by-point pairing reproduces the segment tournament's +1.86), and
+50.65% ± 0.56 head to head against point-by-point -- better in both seats against the soup, 1.2
+standard errors head to head. A small, plausible gain at equal budget; with 8 candidates sharing
+64 simulations per point, each gets few, so the budget is the next thing to vary.
