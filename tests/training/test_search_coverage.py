@@ -183,3 +183,13 @@ def test_the_segments_partition_the_game_and_the_eras_follow_the_turn() -> None:
             want = (decision_segment(st) == f if f in SEGMENTS
                     else ERAS[f][0] <= int(st.turn) <= ERAS[f][1])
             assert s.should_search(st) == want
+
+
+def test_the_trainer_accepts_every_segment_and_era() -> None:
+    """--search-node-filter offers each named segment and turn range, so a training arm can search
+    exactly what a segment tournament measured."""
+    from ai.search.batched_mcts import ERAS, SEGMENTS
+    from ai.training.train import build_parser
+    action = next(a for a in build_parser()._actions if a.dest == "search_node_filter")
+    assert action.choices is not None
+    assert (set(SEGMENTS) - {"other"}) | set(ERAS) <= set(action.choices)
