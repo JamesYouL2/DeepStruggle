@@ -50,7 +50,8 @@ def test_the_improved_policy() -> None:
     assert raw[1] - raw[2] < 0.01 < stretched[1] - stretched[2]
 
 
-@pytest.mark.parametrize("form", ["visits@8", "visits@8,pt1.5", "cq@8", "cq@8,raw", "gumbel@8"])
+@pytest.mark.parametrize("form", ["visits@8", "visits@8,pt1.5", "cq@8", "cq@8,raw", "gumbel@8",
+                                  "gchoice@8", "gchoice@8,k3,fpu0.2"])
 def test_every_form_is_a_distribution_over_the_legal_moves(positions, form: str) -> None:
     T.TargetBuilder(_model(), seed=1, featurise_capacity=256, gumbel_k=4).build(positions[:6], [form])
     for p in positions[:6]:
@@ -82,3 +83,11 @@ def test_the_report_pools_rows(positions) -> None:
     md = T.report(T.rows(positions, forms, verdicts), forms, T.sims_of(forms))
     assert "| visits@8 | 8 |" in md and "| gumbel@8 | 8 |" in md
     assert np.isfinite(len(md))
+
+
+def test_a_one_candidate_gumbel_choice_is_the_priors_top_move(positions) -> None:
+    T.TargetBuilder(_model(), seed=3, featurise_capacity=256).build(positions[:6], ["gchoice@8,k1"])
+    for p in positions[:6]:
+        t = p.targets["gchoice@8,k1"]
+        assert max(t, key=lambda a: t[a]) == max(p.prior, key=lambda a: p.prior[a])
+        assert sorted(t.values())[-1] == 1.0

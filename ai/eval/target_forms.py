@@ -27,6 +27,9 @@ searcher's configuration otherwise):
   softmax(logits + sigma(completed Q)), so the target form alone changes, not the search;
   `cq@64,raw` -- the same without mctx's min-max rescaling of Q (which stretches any spread, however
   small, to [0, 1]): Q's own [-1, 1] range is mapped to [0, 1];
+* `gchoice@N[,kK][,fpuF][,ptT]` -- the move a noise-free Gumbel root plays (ai/search/gumbel_root.py:
+  the K most probable moves, sequential halving), as a one-hot target: the root's decision rather
+  than its improved policy;
 * `gumbel@N` -- a Gumbel root: k candidates by Gumbel-top-k over the logits, the N simulations
   split by sequential halving, each candidate's value from an ordinary batched search of the
   position it leads to, and the same improved-policy target. Unlike Gumbel MuZero, each halving
@@ -237,6 +240,8 @@ class TargetBuilder:
                     p.targets[form] = self._from_root(p, r, kind, rescale)
             elif kind == "gumbel":
                 self._gumbel(positions, int(rest), form)
+            elif kind == "gchoice":
+                self._gchoice(positions, rest, form)
             else:
                 raise ValueError(f"unknown form {form!r}")
 
@@ -251,6 +256,33 @@ class TargetBuilder:
             return {a: n[a] / tot for a in p.legal} if tot > 0 else dict(p.prior)
         return improved_policy(p.logits, p.prior, p.value_mover, n,
                                {a: v for a, v in q.items() if a in n}, rescale=rescale)
+
+    def _gchoice(self, positions: Sequence[Position], rest: str, form: str) -> None:
+        """The move a noise-free Gumbel root plays (ai/search/gumbel_root.py), as a one-hot target:
+        `gchoice@N[,kK][,fpuF][,ptT]` -- N simulations, K candidates (default 4), FPU, prior
+        temperature. Unlike `gumbel@N`, which trains toward the improved policy, this is the
+        root's decision, the thing that measured strongest at play time."""
+        sims_s, *opts = rest.split(",")
+        k, fpu, pt = 4, 0.0, 1.0
+        for o in opts:
+            if o.startswith("fpu"):
+                fpu = float(o[3:])
+            elif o.startswith("pt"):
+                pt = float(o[2:])
+            elif o.startswith("k"):
+                k = int(o[1:])
+            else:
+                raise ValueError(f"unknown option {o!r} in {form!r}")
+        cfg = BatchedMCTSConfig(simulations=int(sims_s), temperature=0.0, auto_advance=True,
+                                advance_root=False, determinize=True, node_filter="all",
+                                subsample=1.0, seed=self.rng.getrandbits(31), prior_temp=pt,
+                                fpu_reduction=fpu, gumbel_k=k, gumbel_scale=0.0)
+        mcts = BatchedMCTS(self.model, device=self.device, config=cfg, featurise_capacity=self.cap)
+        picks = mcts.best_actions([p.state for p in positions])
+        for p, a in zip(positions, picks):
+            a = int(a)
+            p.targets[form] = {x: (1.0 if x == a else 0.0) for x in p.legal} if a in p.prior \
+                else dict(p.prior)
 
     def _gumbel(self, positions: Sequence[Position], sims: int, form: str) -> None:
         """Gumbel root by sequential halving over the candidates' positions (module docstring)."""
