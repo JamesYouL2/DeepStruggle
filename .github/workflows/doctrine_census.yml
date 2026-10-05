@@ -27,6 +27,9 @@ on:
       envs:
         description: "Games played at once per runner (a searcher batches its trees across them)"
         default: "32"
+      search_at:
+        description: "With a search: model: all (every decision) or doctrine (only the decisions the card rules are about)"
+        default: "all"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
@@ -41,6 +44,7 @@ env:
   RUNNERS: ${{ inputs.runners || '8' }}
   MODEL: ${{ inputs.model || 'newest' }}
   ENVS: ${{ inputs.envs || '32' }}
+  SEARCH_AT: ${{ inputs.search_at || 'all' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
 jobs:
@@ -101,7 +105,7 @@ jobs:
           m=$(tail -1 fetched.txt)
           spec='${{ needs.plan.outputs.spec }}'
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/doctrine_census.py run \
-            --model "${spec:-$m}" --envs "$ENVS" \
+            --model "${spec:-$m}" --envs "$ENVS" ${spec:+--search-at "$SEARCH_AT"} \
             --games "$GAMES" --seed "${{ matrix.part }}" \
             --out "parts/part-${{ matrix.part }}.json.gz"
 

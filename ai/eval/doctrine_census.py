@@ -109,6 +109,26 @@ def _hand(st: ts.GameState, p: ts.Player) -> List[int]:
     return [c for c in range(1, N_CARDS + 1) if st.get_card_location(c) in locs]
 
 
+#: The cards of the rules nothing follows (event Grain Sales / Aldrich Ames / Che / Terrorism) and of
+#: the discard-timing rules (hold Five Year Plan / Aldrich Ames until late).
+DOCTRINE_EVENT_CARDS = (GRAIN_SALES, ALDRICH_AMES, CHE, TERRORISM, FIVE_YEAR_PLAN)
+TIMING_CARDS = (FIVE_YEAR_PLAN, ALDRICH_AMES)
+
+
+def doctrine_decision(st: ts.GameState, mask: np.ndarray) -> bool:
+    """A decision those rules are about: the play mode of one of DOCTRINE_EVENT_CARDS, or an
+    action-round card choice while the mover holds a TIMING_CARDS card (holding it is choosing
+    another card). `tools/doctrine_census.py --search-at doctrine` searches only these."""
+    p = st.ctx().decision_player
+    if p == ts.Player.NONE:
+        return False
+    if int(mask[MODE_BASE:MODE_BASE + 5].sum()) >= 2:
+        return int(st.ctx().pending_op_card) in DOCTRINE_EVENT_CARDS
+    if bool(mask[:N_CARDS].any()) and st.current_phase == ts.Phase.ACTION_ROUND:
+        return any(c in TIMING_CARDS for c in _hand(st, p))
+    return False
+
+
 def _ihc(st: ts.GameState) -> bool:
     try:
         return bool(st.has_flag(IHC_FLAG))
