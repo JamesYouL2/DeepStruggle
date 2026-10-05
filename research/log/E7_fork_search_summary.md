@@ -2,7 +2,7 @@
 
 Everything the fork ([JamesYouL2/DeepStruggle](https://github.com/JamesYouL2/DeepStruggle)) ran on
 search, and on teaching the network card play, with what did and did not work, and three
-recommendations at the end. The code behind the E7 runs below is on main with these notes, every
+recommendations at the end (the first since withdrawn, see below). The code behind the E7 runs below is on main with these notes, every
 part off by default: the search node filters, `--playout-*`, the `CARD_EFFECTS` block and head,
 and whole-placement search. The older play-time search variants (Gumbel root, truncation, round
 search) and the evaluation tools (doctrine census, CI tournament workflow) stay on the fork's
@@ -60,6 +60,7 @@ arm against the control (`--search-subsample 0.125` is the default, so it does n
 | **Paired-playout policy gradient inside RL**, 80M fine-tunes | 47.5% / 46.0% vs control; spots unmoved; entropy −20% | **fails** | [`E7_playout_pg_finetune.md`](E7_playout_pg_finetune.md) |
 | **Card-effects observation block** (+ head), 80M fine-tunes | 50.6% / 49.2% vs control; spots unmoved; head used but uncorrelated with event value | **no effect** | [`E7_card_effects_block.md`](E7_card_effects_block.md) |
 | **Whole-placement search**, soup, Ops influence only, 64 sims per point, 8,000 games per pairing | vs soup **+2.6** (point-by-point +1.9); vs point-by-point 50.65% (+0.65 ± 0.56) | **better, small**; head to head 1.2 SE | `ai/search/placement_search.py`, CI `37227904004` |
+| **Search target forms vs the prior**, 4,000 positions, paired playouts of each departure | visits@64 departures +0.001 ± 0.002 (1,024 pairs); Gumbel's improved policy departs on 15-48% with no gain | **no form carries a measurable gain; Gumbel as published adds noise** | [`E7_search_target_forms.md`](E7_search_target_forms.md) |
 | **Search-driven fine-tune**, visit-count CE at 64 sims, 80M | 43.3% (all decisions) / 45.3% (turns 8-10) vs control; spots unmoved | **fails** | [`E7_search_finetune.md`](E7_search_finetune.md) |
 
 ## What did not work, and the common thread
@@ -78,7 +79,16 @@ arm against the control (`--search-subsample 0.125` is the default, so it does n
 
 ## Recommendations
 
-**1. Gumbel's improved-policy target for C5, instead of visit counts.** Gumbel MuZero (Danihelka et
+**1. Gumbel's improved-policy target for C5, instead of visit counts.**
+
+> **Withdrawn (2026-10-05).** The order below was followed -- its first step, the probe, was run
+> before any training -- and the target failed it: at 32-64 simulations the completed-Q target
+> departs from the prior on 15-48% of positions with no gain (confirmed = refuted), because mctx's
+> min-max rescale stretches tiny Q gaps into large logit shifts; and the visit target's departures
+> are no better than the prior either. See [`E7_search_target_forms.md`](E7_search_target_forms.md).
+> The original recommendation is kept as written.
+
+Gumbel MuZero (Danihelka et
 al., ICLR 2022) trains the policy towards softmax(logits + σ(completed Q)): the prior moved by the
 searched value of each action, with unvisited actions filled in from the value estimate. It is built
 for 16-64 simulations, comes with a policy-improvement property, and moves the target
