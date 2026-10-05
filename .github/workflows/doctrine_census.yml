@@ -96,7 +96,9 @@ jobs:
 
       - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
         run: |
-          m=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints | tail -1)
+          # Fetched on its own line: inside $( ... | tail -1) a failed download exits 0.
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints > fetched.txt
+          m=$(tail -1 fetched.txt)
           spec='${{ needs.plan.outputs.spec }}'
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/doctrine_census.py run \
             --model "${spec:-$m}" --envs "$ENVS" \

@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -128,8 +129,17 @@ def fetch_release(spec: str, out_dir: str, keep_pt: bool = False) -> str:
     tag, name = spec.split(":", 1)[1].split("/", 1)
     dest = os.path.join(out_dir, "_rel", tag)
     repo = os.environ.get("GITHUB_REPOSITORY")
-    subprocess.run(["gh", "release", "download", tag, "-p", name, "-D", dest, "--clobber"]
-                   + (["-R", repo] if repo else []), check=True, stdout=sys.stderr)
+    # GitHub's asset server answers an occasional HTTP 500 (one runner of sixteen, 2026-10-05);
+    # a retry costs seconds, a failed runner a whole rerun.
+    for attempt in range(4):
+        try:
+            subprocess.run(["gh", "release", "download", tag, "-p", name, "-D", dest, "--clobber"]
+                           + (["-R", repo] if repo else []), check=True, stdout=sys.stderr)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 3:
+                raise
+            time.sleep(10 * (attempt + 1))
     src = os.path.join(dest, name)
     if keep_pt or not name.endswith(".pt"):
         out = os.path.join(out_dir, name)
