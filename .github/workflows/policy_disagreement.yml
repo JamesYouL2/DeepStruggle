@@ -1,0 +1,70 @@
+# How differently do these models play? (tools/policy_disagreement.py)
+#
+#   gh workflow run policy_disagreement.yml -f models="hf:relpt:<tag>/<a>.pt hf:pt:<b>.pt ..." -f positions=4000
+#
+# One runner: positions from the first model's own play, every model's move distribution at each,
+# pairwise top-move disagreement and total-variation distance, and disagreement with the plurality.
+name: policy-disagreement
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/target-forms]
+    paths: [.github/workflows/policy_disagreement.yml]
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Space-separated torch checkpoints: hf:pt:<file.pt>, hf:pt:<run>/<snapshot>.pt, hf:relpt:<tag>/<asset>.pt. The first one's self-play supplies the positions."
+        required: true
+      positions:
+        description: "Positions"
+        default: "4000"
+      seed:
+        default: "1"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  MODELS: ${{ inputs.models }}
+  POSITIONS: ${{ inputs.positions || '4000' }}
+  SEED: ${{ inputs.seed || '1' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Fetch the models and probe
+        run: |
+          paths=()
+          for spec in $MODELS; do
+            paths+=("$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${spec#hf:}" --out-dir "data/checkpoints/$(echo "$spec" | md5sum | cut -c1-8)" | tail -1)")
+          done
+          mkdir -p reports
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/policy_disagreement.py \
+            --models "${paths[@]}" --positions "$POSITIONS" --seed "$SEED" \
+            --output-md reports/report.md --dump reports/tops.json
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "models: $MODELS"
+            echo "positions: $POSITIONS  seed: $SEED"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: policy-disagreement-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
