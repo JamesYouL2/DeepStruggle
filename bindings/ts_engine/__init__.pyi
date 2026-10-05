@@ -899,9 +899,16 @@ class BatchedSearch:
     @property
     def roots_phase(self) -> bool: ...
 
+    @overload
     def reset(self, roots: Sequence[GameState], simulations: int, rng_state: Sequence[int], num_groups: int = 1) -> None:
         """
         Start one search per root, each with its own budget of `simulations`, the trees split into `num_groups` contiguous groups evaluated separately. `rng_state` is random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly as the Python tree draws them.
+        """
+
+    @overload
+    def reset(self, roots: Sequence[GameState], simulations: Sequence[int], rng_state: Sequence[int], num_groups: int = 1) -> None:
+        """
+        As above with one budget per root, so searches of different sizes share their rounds.
         """
 
     def set_buffers(self, obs: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu')], masks: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu')]) -> None:

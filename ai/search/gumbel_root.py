@@ -60,7 +60,8 @@ def sigma_completed(logits: Dict[int, float], value_mover: float, n: Dict[int, f
     """sigma(completed Q) per legal move: unvisited moves take the mixed value, Q is rescaled to
     [0, 1] over the legal moves, then scaled by (c_visit + max visits) * c_scale (mctx)."""
     acts = list(logits)
-    z = {a: math.exp(logits[a] - max(logits.values())) for a in acts}
+    top = max(logits.values())
+    z = {a: math.exp(logits[a] - top) for a in acts}
     zs = sum(z.values())
     prior = {a: z[a] / zs for a in acts}
     total = sum(n.get(a, 0.0) for a in acts)
@@ -95,8 +96,8 @@ class GumbelRoot:
     """`BatchedMCTS.best_actions` when `gumbel_k > 0`.
 
     `mcts` is the deciding searcher (its configuration, network and random streams); `sub` is a
-    plain PUCT searcher over the same network that searches the candidates' positions. It is this
-    root's own: its simulation count is set per phase.
+    plain PUCT searcher over the same network that searches the candidates' positions, each with
+    its own budget.
     """
 
     def __init__(self, mcts: "BatchedMCTS", sub: "BatchedMCTS") -> None:
@@ -152,24 +153,26 @@ class GumbelRoot:
                 if cfg.determinize and not ts.Engine.is_terminal(world):
                     world = determinize(world, ts.Player(movers[i]), mcts._rng)
                 world.rng_state = mcts._rng.getrandbits(64) % _UINT64
+                world_mask = np.asarray(ActionEncoder.get_legal_mask(world))
                 for a in alive[i]:
-                    s = world.clone()
-                    if not np.asarray(ActionEncoder.get_legal_mask(s))[a]:
+                    if not world_mask[a]:
                         continue                      # illegal in this world (Cambridge Five)
+                    s = world.clone()
                     ts.Engine.step_flat(s, a)
                     settle(s, SettleMode.FORCED if cfg.auto_advance else SettleMode.CHANCE)
                     jobs.append((i, a, s, per))
-            for per in sorted({j[3] for j in jobs}):
-                group = [j for j in jobs if j[3] == per]
-                for (i, a, _s, k), r in zip(group, self._search([j[2] for j in group], per)):
-                    if r is None:
-                        continue
-                    if r.terminal or not r.actions:
-                        v_us = float(r.value_us)
-                    else:
-                        v_us = (float(r.value_us) + float(sum(r.w))) / (1.0 + float(sum(r.n)))
-                    n[i][a] += k
-                    w[i][a] += (v_us if movers[i] == _US else -v_us) * k
+            # Every candidate of the phase in one search, each with its own share, so the phase
+            # takes as many network rounds as its largest share rather than the sum of them.
+            roots = self._search([j[2] for j in jobs], [j[3] for j in jobs]) if jobs else []
+            for (i, a, _s, k), r in zip(jobs, roots):
+                if r is None:
+                    continue
+                if r.terminal or not r.actions:
+                    v_us = float(r.value_us)
+                else:
+                    v_us = (float(r.value_us) + float(sum(r.w))) / (1.0 + float(sum(r.n)))
+                n[i][a] += k
+                w[i][a] += (v_us if movers[i] == _US else -v_us) * k
             for i in searched:
                 q = {a: w[i][a] / n[i][a] for a in n[i] if n[i][a] > 0}
                 sig = sigma_completed(logits[i], float(v[i]), n[i], q)
@@ -178,10 +181,11 @@ class GumbelRoot:
         # Survivors are ranked best first, whether the halving finished or the budget ran out.
         return [int(c[0]) if c else 0 for c in alive]
 
-    def _search(self, positions: Sequence[ts.GameState], evaluations: int) -> List[Optional["_BNode"]]:
-        """Search each position with `evaluations` network evaluations: its own, then
-        `evaluations - 1` simulations. The sub-searcher's streams are reseeded from the deciding
-        searcher's, so a game depends only on the deciding searcher's seed."""
-        self.sub.cfg.simulations = evaluations - 1
+    def _search(self, positions: Sequence[ts.GameState],
+                evaluations: Sequence[int]) -> List[Optional["_BNode"]]:
+        """Search each position with its `evaluations` network evaluations: its own, then
+        `evaluations - 1` simulations, all in one batched search. The sub-searcher's streams are
+        reseeded from the deciding searcher's, so a game depends only on the deciding searcher's
+        seed."""
         self.sub._rng.seed(self.mcts._rng.getrandbits(64))
-        return self.sub._search(positions)
+        return self.sub._search(positions, simulations=[e - 1 for e in evaluations])

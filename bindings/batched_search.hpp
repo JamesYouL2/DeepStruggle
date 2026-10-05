@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -121,6 +122,7 @@ struct Tree {
     std::vector<std::pair<int32_t, int32_t>> path;  // (node, edge) of the pending descent
     int32_t new_edge = -1;     // this round's descent stopped at an untaken edge
     uint64_t seed = 0;         // the chance seed of the child it will create
+    int64_t budget = 0;        // this search's simulations (reset)
     int64_t remaining = 0;
     int32_t leaf = -1;         // node awaiting evaluation, -1 if none
     int32_t row = -1;          // its row in the leaf buffers
@@ -140,6 +142,7 @@ public:
           obs_width_(ts::OBS_SIZE_V23 + ts::obs_features::extra_width(obs_features)),
           own_obs_(capacity * obs_width_, 0.0f), own_masks_(capacity * ts::FLAT_ACTION_SPACE_SIZE, 0),
           obs_(own_obs_.data()), masks_(own_masks_.data()) {
+        trees_.reserve(capacity);
         if (obs_features & ~ts::obs_features::ALL)
             throw std::invalid_argument("BatchedSearch: unknown observation feature bits");
     }
@@ -154,9 +157,12 @@ public:
     // Write leaves into caller-owned buffers instead of this object's own -- page-locked memory, so
     // the copy to the GPU runs asynchronously. The caller keeps them alive while this object uses
     // them; capacity x obs_width floats and capacity x FLAT_ACTION_SPACE_SIZE bytes.
+    // This object's own buffers are freed then: at capacity 8,192 they are half a gigabyte.
     void set_buffers(float* obs, uint8_t* masks) {
         obs_ = obs;
         masks_ = masks;
+        std::vector<float>().swap(own_obs_);
+        std::vector<uint8_t>().swap(own_masks_);
     }
 
     // Start one search per root, the trees split into `num_groups` contiguous groups of (nearly)
@@ -168,6 +174,19 @@ public:
     // (getstate()[1]), which the children's chance seeds are drawn from.
     void reset(const std::vector<ts::GameState>& roots, int64_t simulations,
                const std::vector<uint64_t>& rng_state, size_t num_groups) {
+        reset(roots, std::vector<int64_t>(roots.size(), simulations), rng_state, num_groups);
+    }
+
+    // The same with a budget per tree, so searches of different sizes share one set of rounds
+    // (the Gumbel root's candidates, ai/search/gumbel_root.py). A tree stops taking rounds when its
+    // own budget is spent; the rounds still visit trees in index order, so the seeds come out as
+    // the Python tree draws them with the same budgets.
+    void reset(const std::vector<ts::GameState>& roots, const std::vector<int64_t>& simulations,
+               const std::vector<uint64_t>& rng_state, size_t num_groups) {
+        if (simulations.size() != roots.size())
+            throw std::invalid_argument("BatchedSearch: one budget per root, got " +
+                                        std::to_string(simulations.size()) + " for " +
+                                        std::to_string(roots.size()) + " roots");
         rng_.set_state(rng_state);
         if (roots.size() > capacity_)
             throw std::invalid_argument("BatchedSearch: " + std::to_string(roots.size()) +
@@ -180,9 +199,18 @@ public:
             t.nodes.clear();
             t.edges.clear();
             t.path.clear();
-            // Each round adds at most one node, so this never reallocates during the search --
-            // and the vectors keep their capacity from one reset to the next.
-            t.nodes.reserve(static_cast<size_t>(simulations) + 1);
+            // Each round adds at most one node, so this never reallocates during the search, and
+            // the vectors keep their capacity from one reset to the next -- unless it is more than
+            // twice what this search can use. A node holds a whole GameState (4 KB), so a tree
+            // that once searched 256 simulations and now searches 10 would otherwise keep a
+            // megabyte it never touches again.
+            t.budget = std::max<int64_t>(0, simulations[i]);
+            const size_t need = static_cast<size_t>(t.budget) + 1;
+            if (t.nodes.capacity() > 2 * need) {
+                std::vector<Node>().swap(t.nodes);
+                std::vector<Edge>().swap(t.edges);
+            }
+            t.nodes.reserve(need);
             t.nodes.push_back(make_node(roots[i]));
             t.remaining = 0;
             t.leaf = -1;
@@ -196,7 +224,6 @@ public:
             if (per == 0) break;
         }
         roots_pending_.assign(groups_.size(), true);
-        simulations_ = simulations;
         roots_phase_ = true;
     }
 
@@ -344,7 +371,7 @@ private:
         for (Tree& t : trees_) {
             const Node& r = t.nodes[0];
             t.remaining = (!r.terminal && r.edge_count > 0)
-                ? std::max<int64_t>(0, simulations_ - static_cast<int64_t>(r.total)) : 0;
+                ? std::max<int64_t>(0, t.budget - static_cast<int64_t>(r.total)) : 0;
         }
     }
 
@@ -508,7 +535,6 @@ private:
     uint8_t* masks_;
     std::vector<Tree> trees_;
     PyRandom rng_;
-    int64_t simulations_ = 0;
     bool roots_phase_ = false;
     std::vector<std::pair<size_t, size_t>> groups_;  // [begin, end) of each group's trees
     std::vector<bool> roots_pending_;

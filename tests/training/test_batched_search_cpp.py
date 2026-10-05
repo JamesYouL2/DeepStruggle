@@ -95,7 +95,8 @@ def test_the_generator_is_cpythons(net: Any) -> None:
     before = m._rng.getstate()
     root = m._search(roots)[0]
     assert root is not None
-    created = m._cpp[64].tree_size(0) - 1                  # every node but the root is a new child
+    assert m._cpp is not None
+    created = m._cpp[0].tree_size(0) - 1                   # every node but the root is a new child
     shadow = random.Random()
     shadow.setstate(before)
     for _ in range(created):
@@ -125,16 +126,67 @@ def test_the_cpp_agent_plays_legal_actions(net: Any) -> None:
         assert ts.Engine.get_flat_action_mask(st)[a]
 
 
-def test_more_trees_than_any_one_bucket_holds(net: Any) -> None:
-    """Searchers are cached per power-of-two size; a call larger than every cached one builds a
-    bigger searcher rather than truncating."""
+def test_more_trees_than_the_searcher_holds(net: Any) -> None:
+    """One searcher serves every batch up to its capacity; a call larger than it replaces it with
+    a bigger one rather than truncating, and a smaller call after that reuses the bigger one."""
     roots = _positions(70)
     m = BatchedMCTS(net, device=torch.device("cpu"),
                     config=BatchedMCTSConfig(simulations=4, temperature=0.0, backend="cpp"))
     m._search(roots[:3])
+    assert m._cpp is not None and m._cpp[0].capacity == 64
     out = m._search(roots)
-    assert len(out) == 70 and sorted(m._cpp) == [64, 128]
-    assert all(r is not None and (r.terminal or sum(r.n) == 4) for r in out)
+    assert m._cpp is not None and m._cpp[0].capacity == 128
+    assert len(out) == 70 and all(r is not None and (r.terminal or sum(r.n) == 4) for r in out)
+    big = m._cpp[0]
+    m._search(roots[:3])
+    assert m._cpp[0] is big
+
+
+def test_a_larger_searcher_searches_a_batch_as_a_fresh_one_does(net: Any) -> None:
+    """Capacity only bounds how many trees a searcher holds: a small batch searched by one that
+    has already served a large batch, with larger budgets, comes out as from a fresh searcher."""
+    roots = _positions(24)
+    cfg = BatchedMCTSConfig(simulations=16, temperature=0.0, determinize=True, backend="cpp")
+    used = BatchedMCTS(net, device=torch.device("cpu"), config=cfg)
+    used._search(_positions(150), simulations=[40] * 150)
+    fresh = BatchedMCTS(net, device=torch.device("cpu"), config=cfg)
+    used.reseed(9)
+    fresh.reseed(9)
+    a, b = used._search(roots), fresh._search(roots)
+    assert [(r.actions, r.n) for r in a if r is not None] == [(r.actions, r.n) for r in b if r is not None]
+    assert used._rng.getstate() == fresh._rng.getstate()
+
+
+@pytest.mark.parametrize("determinize", [False, True])
+def test_per_tree_budgets_reproduce_the_python_tree(net: Any, determinize: bool) -> None:
+    """A budget per root (the Gumbel root's candidates): each tree stops at its own budget, and the
+    C++ tree still draws the same seeds as the Python tree, in two groups as in one."""
+    for n in (24, 140):
+        roots = (_positions(24) * 6)[:n]
+        budgets = [(3 * i) % 29 for i in range(n)]                     # 0 included
+        cfg = dict(simulations=999, temperature=0.0, determinize=determinize)
+        ref = BatchedMCTS(net, device=torch.device("cpu"),
+                          config=BatchedMCTSConfig(**cfg, backend="python"), featurise_capacity=256)
+        cpp = BatchedMCTS(net, device=torch.device("cpu"), config=BatchedMCTSConfig(**cfg, backend="cpp"))
+        ref.reseed(13)
+        cpp.reseed(13)
+        a = ref._search(roots, simulations=budgets)
+        b = cpp._search(roots, simulations=budgets)
+        for ra, rb, budget in zip(a, b, budgets):
+            assert ra is not None and rb is not None and ra.terminal == rb.terminal
+            if not ra.terminal and ra.actions:
+                assert ra.actions == rb.actions and ra.n == rb.n
+                assert sum(rb.n) == budget
+                np.testing.assert_allclose(ra.w, rb.w, rtol=0, atol=1e-9)
+        assert ref._rng.getstate() == cpp._rng.getstate()
+
+
+def test_a_budget_list_must_match_the_roots(net: Any) -> None:
+    roots = _positions(4)
+    m = BatchedMCTS(net, device=torch.device("cpu"),
+                    config=BatchedMCTSConfig(simulations=4, temperature=0.0, backend="cpp"))
+    with pytest.raises(ValueError):
+        m._search(roots, simulations=[4, 4])
 
 
 def test_an_unknown_backend_is_refused(net: Any) -> None:
@@ -183,7 +235,7 @@ def test_two_groups_still_reproduce_the_python_tree(device: str) -> None:
             cpp.reseed(21)
         a = ref._search(roots)
         b = cpp._search(roots)
-        assert cpp._cpp[256].num_groups == 2
+        assert cpp._cpp is not None and cpp._cpp[0].num_groups == 2
         for ra, rb in zip(a, b):
             assert ra is not None and rb is not None and ra.terminal == rb.terminal
             if not ra.terminal:

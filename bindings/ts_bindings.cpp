@@ -1015,12 +1015,22 @@ NB_MODULE(ts_engine, m) {
         .def_prop_ro("num_trees", &BatchedSearch::num_trees)
         .def_prop_ro("num_groups", &BatchedSearch::num_groups)
         .def_prop_ro("roots_phase", &BatchedSearch::roots_phase)
-        .def("reset", &BatchedSearch::reset, nb::arg("roots"), nb::arg("simulations"),
-             nb::arg("rng_state"), nb::arg("num_groups") = 1,
+        .def("reset",
+             nb::overload_cast<const std::vector<ts::GameState>&, int64_t,
+                               const std::vector<uint64_t>&, size_t>(&BatchedSearch::reset),
+             nb::arg("roots"), nb::arg("simulations"), nb::arg("rng_state"),
+             nb::arg("num_groups") = 1,
              "Start one search per root, each with its own budget of `simulations`, the trees split "
              "into `num_groups` contiguous groups evaluated separately. `rng_state` is "
              "random.Random.getstate()[1]: the children's chance seeds are drawn from it exactly "
              "as the Python tree draws them.")
+        .def("reset",
+             nb::overload_cast<const std::vector<ts::GameState>&, const std::vector<int64_t>&,
+                               const std::vector<uint64_t>&, size_t>(&BatchedSearch::reset),
+             nb::arg("roots"), nb::arg("simulations"), nb::arg("rng_state"),
+             nb::arg("num_groups") = 1,
+             "As above with one budget per root, so searches of different sizes share their "
+             "rounds.")
         .def("set_buffers",
              [](BatchedSearch& self,
                 nb::ndarray<float, nb::ndim<2>, nb::c_contig, nb::device::cpu> obs,

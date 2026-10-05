@@ -197,10 +197,11 @@ class BatchedMCTS:
         #: capacity use the per-node path rather than being silently truncated.
         self._featurisers: Dict[int, ts.VectorizedBatchRunner] = {}
         self._featurise_capacity = featurise_capacity
-        #: C++ searchers, one per power-of-two batch size, built on first use (backend "cpp"),
-        #: each with the buffers it writes leaves into and reads results from.
-        self._cpp: Dict[int, ts.BatchedSearch] = {}
-        self._cpp_bufs: Dict[int, _SearchBuffers] = {}
+        #: The C++ searcher (backend "cpp") with the buffers it writes leaves into and reads
+        #: results from: one, sized to the largest batch so far and used for every smaller one.
+        #: A searcher per batch size kept every size it had ever met -- each with its trees and
+        #: page-locked buffers -- for the life of the process.
+        self._cpp: Optional[Tuple[ts.BatchedSearch, _SearchBuffers]] = None
         if self.cfg.backend not in ("python", "cpp"):
             raise ValueError(f"unknown search backend {self.cfg.backend!r}")
         #: Roots of the current call, so _evaluate_batch can tell a caller-owned state from one
@@ -384,13 +385,21 @@ class BatchedMCTS:
         return out
 
     def _search(self, states: Sequence[ts.GameState],
-                keys: Optional[Sequence[object]] = None) -> List[Optional[_BNode]]:
+                keys: Optional[Sequence[object]] = None,
+                simulations: Optional[Sequence[int]] = None) -> List[Optional[_BNode]]:
         """The search behind `run`, returning each position's root node rather than its visit
-        counts, so a caller choosing a move can see the values and priors behind them."""
+        counts, so a caller choosing a move can see the values and priors behind them.
+
+        `simulations` gives each position its own budget (default `cfg.simulations` for all), so
+        searches of different sizes share one set of rounds -- the Gumbel root's candidates."""
         cfg = self.cfg
+        budgets = ([int(b) for b in simulations] if simulations is not None
+                   else [int(cfg.simulations)] * len(states))
+        if len(budgets) != len(states):
+            raise ValueError(f"{len(budgets)} budgets for {len(states)} positions")
         reuse = cfg.reuse_subtree and not cfg.determinize and keys is not None
         if cfg.backend == "cpp" and not reuse:
-            return self._search_cpp(states)
+            return self._search_cpp(states, budgets)
         # A concrete list, so the type checker can see the indexing below is guarded. `reuse`
         # already encodes `keys is not None`, but that narrowing does not survive the variable.
         key_list: List[object] = list(keys) if keys is not None else []
@@ -431,9 +440,9 @@ class BatchedMCTS:
         # Each root runs until IT holds `simulations` visits. A single shared count would be
         # decided by the least-inherited tree in the batch -- one fresh tree would force the full
         # budget on every other root, which is how the first version of this saved nothing.
-        remaining = [max(0, cfg.simulations - int(sum(r.n)))
+        remaining = [max(0, budget - int(sum(r.n)))
                      if (r is not None and not r.terminal and r.actions) else 0
-                     for r in roots]
+                     for r, budget in zip(roots, budgets)]
 
         while any(remaining):
             for b, e in groups:
@@ -470,20 +479,22 @@ class BatchedMCTS:
         return out
 
     def _cpp_for(self, n: int) -> Tuple[ts.BatchedSearch, "_SearchBuffers"]:
-        """The smallest cached C++ searcher holding `n` trees (a power of two), with its buffers."""
+        """The C++ searcher, rebuilt at the next power of two when `n` trees exceed its capacity.
+        A searcher's capacity only bounds how many trees it holds: a batch searched by a larger one
+        is searched identically."""
+        if self._cpp is not None and self._cpp[0].capacity >= n:
+            return self._cpp
         cap = _MIN_FEATURISE_BUCKET
         while cap < n:
             cap *= 2
-        cs = self._cpp.get(cap)
-        if cs is None:
-            cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
-                                  int(model_obs_features(self.model)), False,
-                                  float(self.cfg.fpu_reduction))
-            bufs = _SearchBuffers(cap, int(cs.obs_width), torch.device(self.device))
-            cs.set_buffers(bufs.obs.numpy(), bufs.masks.numpy())
-            self._cpp[cap] = cs
-            self._cpp_bufs[cap] = bufs
-        return cs, self._cpp_bufs[cap]
+        self._cpp = None                      # release the old one before allocating the new
+        cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
+                              int(model_obs_features(self.model)), False,
+                              float(self.cfg.fpu_reduction))
+        bufs = _SearchBuffers(cap, int(cs.obs_width), torch.device(self.device))
+        cs.set_buffers(bufs.obs.numpy(), bufs.masks.numpy())
+        self._cpp = (cs, bufs)
+        return self._cpp
 
     def _launch(self, cs: ts.BatchedSearch, bufs: "_SearchBuffers", g: int) -> Optional[Tuple[int, int, object]]:
         """Group g's next leaves from the C++ tree, sent to the network without waiting for it.
@@ -519,7 +530,8 @@ class BatchedMCTS:
             cast(torch.cuda.Event, event).synchronize()
         cs.expand_and_backup(g, bufs.probs_np[off:off + k], bufs.values_np[off:off + k])
 
-    def _search_cpp(self, states: Sequence[ts.GameState]) -> List[Optional[_BNode]]:
+    def _search_cpp(self, states: Sequence[ts.GameState],
+                    budgets: Sequence[int]) -> List[Optional[_BNode]]:
         """`_search` on the C++ tree. The roots are prepared here exactly as the Python path
         prepares them, and come back as `_BNode`s carrying the root statistics, so every caller
         (`run`, `best_actions`, the agent) reads them unchanged."""
@@ -532,7 +544,10 @@ class BatchedMCTS:
         # The children's chance seeds come from this object's generator, drawn in C++ exactly as
         # the Python tree would draw them, and the generator is handed back advanced.
         rng_version, rng_words, rng_gauss = self._rng.getstate()
-        cs.reset(roots, int(cfg.simulations), list(rng_words), len(groups))
+        if all(b == budgets[0] for b in budgets):
+            cs.reset(roots, int(budgets[0]), list(rng_words), len(groups))
+        else:
+            cs.reset(roots, [int(b) for b in budgets], list(rng_words), len(groups))
         # The roots, every group's sent before any is waited for.
         jobs = [self._launch(cs, bufs, g) for g in range(len(groups))]
         for g, job in enumerate(jobs):
