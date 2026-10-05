@@ -117,11 +117,13 @@ def _ihc(st: ts.GameState) -> bool:
 
 
 def collect(act: PolicyFn, n_games: int, seed: int, envs: int = 32, max_steps: int = 2_000_000,
-            obs_features: int = 0, act_states: Optional[StatePolicyFn] = None) -> Dict[str, Any]:
+            obs_features: int = 0, act_states: Optional[StatePolicyFn] = None,
+            keep_state: Optional[Callable[[Dict[str, Any]], bool]] = None) -> Dict[str, Any]:
     """Greedy self-play of `n_games` games. Returns the logged plays, headlines, coups and boards.
     `obs_features` is the policy's observation feature set (`model_obs_features`), set on both sides.
     `act_states`, when given, decides instead of `act` from the states of the games still running
-    (a searcher); finished games play nothing."""
+    (a searcher); finished games play nothing. `keep_state(play)` true attaches the position the
+    play was chosen at to its record as `_state` (not JSON: for paired playouts in memory)."""
     info = cards()
     stab, bg, names = country_table()
     runner = ts.VectorizedBatchRunner(envs, seed)
@@ -187,6 +189,8 @@ def collect(act: PolicyFn, n_games: int, seed: int, envs: int = 32, max_steps: i
                               "legal": [MODES[k] for k in np.flatnonzero(modes_legal)],
                               "vp": vp_mine, "defcon": int(st.defcon), "ihc": _ihc(st),
                               **card_context(st, cid)})
+                if keep_state is not None and keep_state(plays[-1]):
+                    plays[-1]["_state"] = st.clone()
             elif node and st.ctx().op_mode == ts.OpMode.COUP and NODE_OFFSET <= a < NODE_OFFSET + 84:
                 ctry = a - NODE_OFFSET
                 first = (turn == 1 and side == "USSR" and side not in first_coup[i]

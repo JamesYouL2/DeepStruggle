@@ -1,0 +1,126 @@
+# What breaking a doctrine rule costs the model, by paired playouts (tools/doctrine_playouts.py,
+# ai/eval/doctrine_playouts.py).
+#
+#   gh workflow run doctrine_playouts.yml -f model=hf:relpt:<tag>/<file>.pt -f games=250 -f runners=16
+#
+# Each runner plays the census's greedy self-play from its own seed (its part number), keeps the
+# plays where an "event this card" rule applied and the model chose another mode, plays the event
+# and the model's choice to the end from paired copies, and uploads its rows; the pool job merges
+# the parts into one report.
+name: doctrine-playouts
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/gchoice-finetune]
+    paths: [.github/workflows/doctrine_playouts.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "hf:pt:<file.pt>, hf:pt:<run>/<snapshot>.pt or hf:relpt:<tag>/<asset>.pt (a torch checkpoint)"
+        required: true
+      games:
+        description: "Greedy self-play games per runner"
+        default: "250"
+      pairs:
+        description: "Paired playouts per position"
+        default: "64"
+      max_per_rule:
+        description: "Positions measured per rule per runner (0 = all)"
+        default: "0"
+      runners:
+        description: "Runners"
+        default: "16"
+      hf_repo:
+        description: "Hugging Face repo for hf:pt: files"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  MODEL: ${{ inputs.model }}
+  GAMES: ${{ inputs.games || '250' }}
+  PAIRS: ${{ inputs.pairs || '64' }}
+  MAX_PER_RULE: ${{ inputs.max_per_rule || '0' }}
+  RUNNERS: ${{ inputs.runners || '16' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      parts: ${{ steps.parts.outputs.parts }}
+    steps:
+      - id: parts
+        run: python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Probe part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          # Fetched on its own line: inside $( ... | tail -1) a failed download exits 0.
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${MODEL#hf:}" --out-dir data/checkpoints > fetched.txt
+          m=$(tail -1 fetched.txt)
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/doctrine_playouts.py \
+            --model "$m" --games "$GAMES" --pairs "$PAIRS" --max-per-rule "$MAX_PER_RULE" \
+            --seed "${{ matrix.part }}" --dump "parts/part-${{ matrix.part }}.jsonl"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doctrine-playouts-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: doctrine-playouts-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.jsonl 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/doctrine_playouts.py --merge parts/part-*.jsonl --output-md reports/report.md
+          cp parts/part-*.jsonl reports/
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $MODEL"
+            echo "games/runner: $GAMES  pairs: $PAIRS  max/rule/runner: $MAX_PER_RULE  runners: $RUNNERS"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: doctrine-playouts-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
