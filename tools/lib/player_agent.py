@@ -524,6 +524,23 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         tag += "" if backend == "cpp" else f"-{backend}"
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
+    if s.lower().startswith("gumbel:"):
+        # gumbel:<checkpoint>[:sims[:k]] -- honest search at every decision with the move chosen
+        # by a noise-free Gumbel root (ai/search/gumbel_root.py): the k most probable moves,
+        # sequential halving over `sims` simulations, first-play urgency 0.2. The configuration of
+        # research/log/E7_gumbel_headroom.md; k=8 at 256 was the strongest measured.
+        parts = s.split(":")
+        path = parts[1]
+        sims = int(parts[2]) if len(parts) > 2 and parts[2] else 256
+        k = int(parts[3]) if len(parts) > 3 and parts[3] else 8
+        from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
+
+        base = NeuralAgent.from_checkpoint(path, device=device)
+        # advance_root=False for the reason given under search: above.
+        cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
+                                advance_root=False, determinize=True, node_filter="all",
+                                gumbel_k=k, gumbel_scale=0.0, fpu_reduction=0.2)
+        return BatchedMCTSAgent(base.model, name=f"gumbel{sims}-k{k}", device=device, config=cfg)
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
         #
