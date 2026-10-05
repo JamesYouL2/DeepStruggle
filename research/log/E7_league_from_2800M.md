@@ -63,3 +63,45 @@ held one member for the last ~90M steps.
   in both seats. It is also the only window trained with a league member in the pool, for ~90M
   steps; too short and too confounded with the ongoing creep to attribute to the league yet.
 * Continued (owner: "continue it"), unchanged, as E7-21-44 / E7-22-44 from generation 9.
+
+## Second leg: 3,200 → 3,600M (continued unchanged, 2026-10-04/05)
+
+E7-21-44 resumed from its 3,200M end state with identical flags (`launch_flags --diff`: only
+`--train-steps`), the league directory kept, so the published generation-6 exploiter was in the
+pool from the start ("league group now 1 of 13"). Exploiter generations continued from 9
+(`league.py --first-generation 9`).
+
+**Exploiter: nothing published.** Eight generations, every judgement below the bar:
+
+| gen | from main @ | judgements against its frozen target |
+|---:|---:|:---|
+| 9 | 3,210M | 46.1, 49.1, 46.1, 45.5, 46.1 |
+| 10 | 3,250M | 51.4, 49.0, 47.5, 52.4, 42.9 |
+| 11 | 3,300M | 46.8, 50.4, 44.6, 46.5, 42.9 |
+| 12 | 3,370M | 47.1, 44.1, 47.6, 46.8, 46.0 |
+| 13 | 3,420M | 47.6, 46.4, 47.4, 49.9, 48.5 |
+| 14 | 3,460M | 49.7, 41.4, 48.5, 47.0, 45.6 |
+| 15 | 3,530M | 51.1, 47.1, 43.1, 46.9, 47.2 |
+| 16 | 3,580M | 46.6 (stopped when the main finished) |
+
+Mostly 43–50%: the exploiter recipe now loses to its own frozen target. The league held one member
+for the whole leg.
+
+**Main SWAs** (1,000 games per side; ± 1.5 per side, ± 1.1 both):
+
+| SWA of | E7-02-44@1000M (US / USSR) | soup (US / USSR) |
+|:---|---:|---:|
+| 3200–3280M | 69.0 (73.0 / 65.0) | 53.6 (53.7 / 53.4) |
+| 3280–3360M | 67.8 (71.6 / 64.1) | 53.5 (54.7 / 52.3) |
+| 3360–3440M | 68.2 (72.8 / 63.6) | 54.2 (56.8 / 51.6) |
+| 3440–3520M | 70.3 (72.4 / 68.3) | 53.6 (55.3 / 51.9) |
+| 3520–3600M | 67.2 (70.0 / 64.4) | 54.8 (56.9 / 52.7) |
+
+* **A new, higher plateau.** Since ~3,000M the main holds about 67–70% against E7-02-44@1000M and
+  53.5–55% against the soup, against 62–65% and ~50.5% on the plateau of 1,900–2,800M. The
+  3,120–3,200M window (71.4 / 56.5) was a high draw at the start of this level.
+* **The gain is mostly in the US seat** (70–73% against the 1,000M model, against 63–68% as USSR).
+* **Attribution is still open.** The rise began around 2,960M, before the first exploiter was
+  published (3,110M), and the league never held more than that one member. Plain continuation or
+  the single league member cannot be told apart from this run; a plain continuation of E7-20-44
+  from 2,800M over the same steps would be the control.
