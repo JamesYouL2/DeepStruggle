@@ -1,19 +1,29 @@
 """Player Agent Abstractions for Twilight Struggle Bots and Neural Models."""
 
-from typing import Protocol, Optional, Dict, Any, List, Sequence, Union, cast, runtime_checkable
+from typing import (Protocol, Optional, Dict, Any, List, Sequence, Tuple, Union, cast,
+                    runtime_checkable)
 import os
 import numpy as np
+import onnxruntime as ort
 import torch
 import torch.nn as nn
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
+from ai.eval.safety import find_instant_win, safe_actions
 from ai.training.behavioral_cloning import HeuristicPolicy, OldHeuristicPolicy
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from ai.models.coldwar_net_v2 import (ColdWarNetV2, check_checkpoint_layout,
-                                     create_coldwar_net_v2)
+                                     create_coldwar_net_mlp, create_coldwar_net_v2,
+                                     static_input_mask)
+from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
+from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
+from ai.search.heuristic_mcts import HeuristicMCTSConfig, make_heuristic_mcts_agent
 from bindings.ts_env import check_obs_width, model_obs_features
+from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
+from tools.lib.openings import OPENINGS
+from tools.lib.p17_adapter import LegacyPolicyAdapter
 
 ColdWarModel = Union[ColdWarNet, ColdWarNetV2]
 
@@ -200,7 +210,6 @@ class HeuristicV2Agent:
         player: ts.Player,
         temperature: float = 0.1,
     ) -> int:
-        from ai.eval.safety import find_instant_win, safe_actions
 
         win = find_instant_win(state, player)
         if win is not None:
@@ -249,7 +258,6 @@ class NeuralAgent:
     ) -> "NeuralAgent":
         """Loads a NeuralAgent from checkpoint, with its architecture detected from the weights
         and its action view (P23) from the run directory."""
-        from tools.lib.action_view import checkpoint_merged_influence
 
         agent = cls._load_checkpoint(checkpoint_path, name=name, device=device)
         agent.merged_influence = checkpoint_merged_influence(checkpoint_path)
@@ -281,7 +289,6 @@ class NeuralAgent:
         # as a ColdWarNetV2 -- loading most tensors, silently dropping the rest, and rating a
         # different network than the one that trained. Like everything else here the
         # configuration is recovered from the weights, not from a recorded config.
-        from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
         ladder_cfg = ladder_config_from_state_dict(state_dict)
         if ladder_cfg is not None:
             check_checkpoint_layout(state_dict)
@@ -309,8 +316,6 @@ class NeuralAgent:
             ident = state_dict.get("card_identity.weight")
             identity_dim = int(ident.shape[1]) if ident is not None else 0
             if is_mlp:
-                from ai.models.coldwar_net_v2 import (create_coldwar_net_mlp,
-                                                      static_input_mask)
                 w = state_dict.get("mlp_in.0.weight")
                 narrowed = int(w.shape[1]) if w is not None else 0
                 drop_static = narrowed and narrowed < int(static_input_mask().numel())
@@ -386,7 +391,6 @@ class OnnxAgent:
     FORMAT = "ts-onnx-v1"
 
     def __init__(self, path: str, name: Optional[str] = None, seed: int = 0):
-        import onnxruntime as ort
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"ONNX model not found: {path}")
@@ -453,6 +457,73 @@ class OnnxAgent:
         return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
 
 
+def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
+    """(checkpoint, search configuration, label) of a `search:` or `gumbel:` agent spec. One parser
+    for every CLI that plays a searcher (`load_agent`, tools/play_match.py), so a spec means the
+    same thing in a tournament and in a single match.
+
+    search:<checkpoint>[:sims[:determinize[:node_filter[:subsample[:backend[:fpu]]]]]]
+
+      `node_filter` is "all" (every decision -- what the ~+27pp measurement used) or "card"
+      (SELECT_CARD / SELECT_PLAY_MODE only, P3's proposal). `subsample` is the fraction of those
+      actually searched, e.g. 0.125 for P3's "1 in 8". Where search is skipped the agent plays its
+      own greedy policy, so a coverage sweep varies one thing. `backend` is "cpp" (the default,
+      ts_engine.BatchedSearch) or "python" (the reference tree). `fpu` is the first-play urgency
+      reduction, 0 by default.
+
+    gumbel:<checkpoint>[:sims[:k[:fpu]]]
+
+      Honest search at every decision with the move chosen by a noise-free Gumbel root
+      (ai/search/gumbel_root.py): the k most probable moves, sequential halving over `sims`
+      network evaluations. Defaults 256 evaluations, k = 8, first-play urgency 0.2
+      (research/log/E7_gumbel_headroom.md).
+
+    Every searcher here has advance_root=False because the CLIs hand over a state they have NOT
+    settled -- tools/tournament.py only auto-advances under --auto-advance, and play_match.py steps
+    decision by decision. With the default True the searcher settles its own root, so at a node
+    whose mask holds a single legal action `auto_advance_step` consumes it, the root moves to the
+    successor, and the search returns an action that is legal there and illegal in the caller's
+    state. Observed as "engine refused flat action 104 at a POINT_NODE whose mask has 1 legal
+    action: 211". Settling an already-settled state is a no-op, so False is also correct when the
+    caller does settle.
+    """
+    parts = spec.strip().split(":")
+    kind = parts[0].lower()
+    path = parts[1]
+
+    def field(i: int) -> Optional[str]:
+        return parts[i] if len(parts) > i and parts[i] else None
+
+    if kind == "gumbel":
+        sims = int(field(2) or 256)
+        k = int(field(3) or 8)
+        fpu = float(field(4) or 0.2)
+        cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
+                                advance_root=False, determinize=True, node_filter="all",
+                                gumbel_k=k, gumbel_scale=0.0, fpu_reduction=fpu)
+        label = f"gumbel{sims}-k{k}" + ("" if fpu == 0.2 else f"-fpu{fpu:g}")
+        return path, cfg, label
+    if kind != "search":
+        raise ValueError(f"not a search spec: {spec!r}")
+    sims = int(field(2) or 64)
+    determinize = (field(3) or "").lower().startswith("determin")
+    node_filter = field(4) or "all"
+    if node_filter.lower().startswith("card"):
+        node_filter = "card_playmode"
+    subsample = float(field(5) or 1.0)
+    backend = (field(6) or "cpp").lower()
+    fpu = float(field(7) or 0.0)
+    cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
+                            advance_root=False, determinize=determinize,
+                            node_filter=node_filter, subsample=subsample, backend=backend,
+                            fpu_reduction=fpu)
+    tag = "" if node_filter == "all" else "-card"
+    tag += "" if subsample >= 1.0 else f"-{subsample:g}"
+    tag += "" if backend == "cpp" else f"-{backend}"
+    tag += "" if fpu == 0.0 else f"-fpu{fpu:g}"
+    return path, cfg, f"search{sims}{'-det' if determinize else ''}{tag}"
+
+
 def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAgent:
     """Factory function loading agents from string specifier (random, heuristic, or checkpoint path)."""
     s = spec.strip()
@@ -476,71 +547,16 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # --forced-opening, whose setup was never learned. Read by the batch runner with
         # getattr(agent, "forced_opening", None), like temperature above.
         _, name, rest = s.split(":", 2)
-        from tools.lib.openings import OPENINGS
         if name not in OPENINGS:
             raise ValueError(f"unknown opening {name!r}; known: {sorted(OPENINGS)}")
         agent = load_agent(rest, device=device)
         setattr(agent, "forced_opening", name)
         setattr(agent, "name", f"{agent.name}+{name}")
         return agent
-    if s.lower().startswith("search:"):
-        # search:<checkpoint>[:sims[:determinize[:node_filter[:subsample[:backend]]]]]
-        #
-        # `node_filter` is "all" (every decision -- what the ~+27pp measurement used) or
-        # "card" (SELECT_CARD / SELECT_PLAY_MODE only, P3's proposal). `subsample` is the
-        # fraction of those actually searched, e.g. 0.125 for P3's "1 in 8". Where search is
-        # skipped the agent plays its own greedy policy, so a coverage sweep varies one thing.
-        #
-        # Exposed here rather than left to callers so that search games go through the same
-        # CLIs, and therefore the same replay writer, as every other match.
-        parts = s.split(":")
-        path = parts[1]
-        sims = int(parts[2]) if len(parts) > 2 and parts[2] else 64
-        determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
-        node_filter = "all"
-        if len(parts) > 4 and parts[4]:
-            node_filter = "card_playmode" if parts[4].lower().startswith("card") else parts[4]
-        subsample = float(parts[5]) if len(parts) > 5 and parts[5] else 1.0
-        # "cpp" (the default, ts_engine.BatchedSearch) or "python" (the reference tree).
-        backend = parts[6].lower() if len(parts) > 6 and parts[6] else "cpp"
-        from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
-
+    if s.lower().startswith(("search:", "gumbel:")):
+        path, cfg, label = search_spec_config(s)
         base = NeuralAgent.from_checkpoint(path, device=device)
-        # advance_root=False because the CLIs hand over a state they have NOT settled --
-        # tools/tournament.py only auto-advances under --auto-advance, and play_match.py steps
-        # decision by decision. With the default True the searcher settles its own root, so at a
-        # node whose mask holds a single legal action `auto_advance_step` consumes it, the root
-        # moves to the successor, and the search returns an action that is legal there and
-        # illegal in the caller's state. Observed as "engine refused flat action 104 at a
-        # POINT_NODE whose mask has 1 legal action: 211". Settling an already-settled state is a
-        # no-op, so False is also correct when the caller does settle.
-        cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0,
-                                auto_advance=True, advance_root=False,
-                                determinize=determinize,
-                                node_filter=node_filter, subsample=subsample,
-                                backend=backend)
-        tag = "" if node_filter == "all" else "-card"
-        tag += "" if subsample >= 1.0 else f"-{subsample:g}"
-        tag += "" if backend == "cpp" else f"-{backend}"
-        label = f"search{sims}{'-det' if determinize else ''}{tag}"
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
-    if s.lower().startswith("gumbel:"):
-        # gumbel:<checkpoint>[:sims[:k]] -- honest search at every decision with the move chosen
-        # by a noise-free Gumbel root (ai/search/gumbel_root.py): the k most probable moves,
-        # sequential halving over `sims` simulations, first-play urgency 0.2. The configuration of
-        # research/log/E7_gumbel_headroom.md; k=8 at 256 was the strongest measured.
-        parts = s.split(":")
-        path = parts[1]
-        sims = int(parts[2]) if len(parts) > 2 and parts[2] else 256
-        k = int(parts[3]) if len(parts) > 3 and parts[3] else 8
-        from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
-
-        base = NeuralAgent.from_checkpoint(path, device=device)
-        # advance_root=False for the reason given under search: above.
-        cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
-                                advance_root=False, determinize=True, node_filter="all",
-                                gumbel_k=k, gumbel_scale=0.0, fpu_reduction=0.2)
-        return BatchedMCTSAgent(base.model, name=f"gumbel{sims}-k{k}", device=device, config=cfg)
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
         #
@@ -554,7 +570,6 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # Exists so the old-vs-new check runs through this CLI like every other match, instead
         # of an ad-hoc script.
         path = s.split(":", 1)[1]
-        from tools.lib.p17_adapter import LegacyPolicyAdapter
 
         base = NeuralAgent.from_checkpoint(path, device=device)
         adapter = LegacyPolicyAdapter(base.model, device=str(device))
@@ -576,7 +591,6 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
     # a benchmark, disqualifying for deployment, and a win rate against it is not a claim about
     # play under the real information set.
     if s.lower() == "heuristic_mcts" or s.lower().startswith("heuristic_mcts:"):
-        from ai.search.heuristic_mcts import HeuristicMCTSConfig, make_heuristic_mcts_agent
 
         parts = s.split(":")
         sims = int(parts[1]) if len(parts) > 1 and parts[1] else 64
