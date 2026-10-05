@@ -86,8 +86,10 @@ class GumbelRoot:
         return sub
 
     def _network(self, states: Sequence[ts.GameState]):
-        obs = np.stack([np.asarray(ts.extract_observation(s, acting_player(s)), dtype=np.float32)
-                        for s in states])
+        from bindings.ts_env import model_obs_features
+        feats = model_obs_features(self.mcts.model)
+        obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), feats),
+                                   dtype=np.float32) for s in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         dev = self.mcts.device
         with torch.no_grad():

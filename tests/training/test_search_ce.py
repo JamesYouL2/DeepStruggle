@@ -408,10 +408,8 @@ def test_search_target_entropy_is_the_targets_own_entropy_and_is_logged() -> Non
         "training_metrics.jsonl -- the same allow-list gap that dropped search_ce")
 
 
-def test_deferred_targets_land_on_the_rows_they_describe() -> None:
-    """The searcher answers a whole rollout at its end, so every target must still be filed against
-    the buffer row of the position it describes: its mass has to lie on that row's own legal
-    mask, every flagged row must sum to one, and rows from an earlier rollout must not survive."""
+def _searching_trainer(**search):
+    """A tiny NashPG trainer that searches every decision of its rollouts, on the CPU."""
     from ai.models.ladder_net import create_ladder_net
     from ai.training import NashPGTrainer
     from bindings.ts_env import TsVectorizedEnv
@@ -426,9 +424,17 @@ def test_deferred_targets_land_on_the_rows_they_describe() -> None:
                             card_lookup=False, card_lookup_heads=0, card_lookup_dim=0,
                             card_lookup_identity_dim=0, categorical_value=False)
     env = TsVectorizedEnv(num_envs=6, base_seed=321)
-    t = NashPGTrainer(active_net=net, env=env, num_envs=6, buffer_size=12, lr=3e-4, eta=0.1,
-                      ref_update_freq=500, cuda_graphs=False, device=dev, search_ce_coef=0.5,
-                      search_sims=4, search_subsample=1.0, search_node_filter="all")
+    return NashPGTrainer(active_net=net, env=env, num_envs=6, buffer_size=12, lr=3e-4, eta=0.1,
+                         ref_update_freq=500, cuda_graphs=False, device=dev, search_ce_coef=0.5,
+                         search_sims=search.pop("search_sims", 4), search_subsample=1.0,
+                         search_node_filter="all", **search)
+
+
+def test_deferred_targets_land_on_the_rows_they_describe() -> None:
+    """The searcher answers a whole rollout at its end, so every target must still be filed against
+    the buffer row of the position it describes: its mass has to lie on that row's own legal
+    mask, every flagged row must sum to one, and rows from an earlier rollout must not survive."""
+    t = _searching_trainer()
     for _ in range(2):                                    # the second rollout overwrites the first
         t.collect_rollouts()
         b = t.buffer
@@ -440,3 +446,35 @@ def test_deferred_targets_land_on_the_rows_they_describe() -> None:
         assert float(rows[~legal].abs().sum()) == 0.0, "target mass outside its own row's legal mask"
         assert float(b.search_pi[~flagged].abs().sum()) == 0.0, "an unflagged row carries a target"
     assert not t._search_queue
+
+
+def test_a_gumbel_choice_target_is_one_legal_move() -> None:
+    """--search-target gchoice: every flagged row is one-hot on a move legal in its own row, and
+    with one candidate the move is the network's own top move -- so the row is the root's choice,
+    filed against the position it was chosen at."""
+    t = _searching_trainer(search_target="gchoice", search_gumbel_k=1)
+    t.collect_rollouts()
+    b = t.buffer
+    flagged = b.has_search > 0.5
+    assert int(flagged.sum()) > 0, "nothing was searched"
+    rows = b.search_pi[flagged]
+    legal = b.masks[flagged].bool()
+    assert torch.equal(rows.max(-1).values, torch.ones(rows.shape[0])), "a target is not one-hot"
+    assert torch.equal(rows.sum(-1), torch.ones(rows.shape[0]))
+    assert float(rows[~legal].abs().sum()) == 0.0, "target mass outside its own row's legal mask"
+    with torch.no_grad():
+        logits, _v, _ = t.active_net(b.obs[flagged].float(), legal)
+    chosen = rows.argmax(-1)
+    gap = logits.max(-1).values - logits.gather(1, chosen[:, None]).squeeze(1)
+    assert float(gap.max()) < 1e-4, "with k=1 the Gumbel root must play the network's top move"
+
+
+def test_a_gumbel_choice_target_searches_with_k_candidates() -> None:
+    t = _searching_trainer(search_target="gchoice", search_gumbel_k=4, search_sims=8)
+    assert t._searcher is not None
+    assert t._searcher.cfg.gumbel_k == 4 and t._searcher.cfg.gumbel_scale == 0.0
+    t.collect_rollouts()
+    rows = t.buffer.search_pi[t.buffer.has_search > 0.5]
+    assert rows.shape[0] > 0 and torch.equal(rows.max(-1).values, torch.ones(rows.shape[0]))
+    with pytest.raises(ValueError):
+        _searching_trainer(search_target="improved")

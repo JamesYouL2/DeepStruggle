@@ -712,6 +712,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Which decisions are eligible: card_playmode, all, card_branch, board, "
                              "one segment of ai.search.batched_mcts.SEGMENTS, or a turn range of "
                              "ERAS (early 1-3, mid 4-7, late 8-10).")
+    parser.add_argument("--search-target", type=str, default="visits",
+                        choices=["visits", "gchoice"],
+                        help="What the search CE pulls toward: 'visits', the PUCT root's visit "
+                             "distribution (P15-X4b), or 'gchoice', a one-hot on the move a "
+                             "noise-free Gumbel root plays (ai/search/gumbel_root.py), the target "
+                             "the target-forms probe found better than the prior.")
+    parser.add_argument("--search-gumbel-k", type=int, default=4,
+                        help="Candidates of the Gumbel root under --search-target gchoice: the k "
+                             "most probable moves, narrowed by sequential halving.")
     parser.add_argument("--rollout-temps", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0],
                         metavar=("T1", "T2", "T3", "T4"),
                         help="The four per-environment rollout sampling temperatures. Default "
@@ -852,6 +861,8 @@ def main():
             search_sims=args.search_sims,
             search_subsample=args.search_subsample,
             search_node_filter=args.search_node_filter,
+            search_target=args.search_target,
+            search_gumbel_k=args.search_gumbel_k,
             opponent_pfsp=args.opponent_pfsp,
             opponent_pfsp_weighting=args.opponent_pfsp_weighting,
             opponent_pfsp_uniform_mix=args.opponent_pfsp_uniform_mix,
