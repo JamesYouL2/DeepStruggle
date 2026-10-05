@@ -1,0 +1,123 @@
+# Search root values against the critic, scored by playout results (tools/value_targets_probe.py,
+# ai/eval/value_targets.py).
+#
+#   gh workflow run value_targets.yml -f model=hf:relpt:<tag>/<file>.pt -f positions=250 -f runners=16
+#
+# Each runner draws its own positions from the model's self-play (seed = its part number), builds
+# every target form, plays out each departure from the prior in paired copies, and uploads its rows;
+# the pool job merges the parts into one report.
+name: value-targets
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/search-play]
+    paths: [.github/workflows/value_targets.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "hf:pt:<file.pt>, hf:pt:<run>/<snapshot>.pt or hf:relpt:<tag>/<asset>.pt (a torch checkpoint)"
+        required: true
+      positions:
+        description: "Positions per runner"
+        default: "250"
+      pairs:
+        description: "Playouts per position"
+        default: "64"
+      runners:
+        description: "Runners"
+        default: "16"
+      forms:
+        description: "Target forms (space-separated; empty = the probe's defaults)"
+        default: ""
+      hf_repo:
+        description: "Hugging Face repo for hf:pt: files"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  MODEL: ${{ inputs.model }}
+  POSITIONS: ${{ inputs.positions || '250' }}
+  PAIRS: ${{ inputs.pairs || '64' }}
+  RUNNERS: ${{ inputs.runners || '16' }}
+  FORMS: ${{ inputs.forms || '' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      parts: ${{ steps.parts.outputs.parts }}
+    steps:
+      - id: parts
+        run: python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Probe part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          m=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${MODEL#hf:}" --out-dir data/checkpoints | tail -1)
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/value_targets_probe.py \
+            --model "$m" --positions "$POSITIONS" --playouts "$PAIRS" --seed "${{ matrix.part }}" \
+            ${FORMS:+--forms $FORMS} --dump "parts/part-${{ matrix.part }}.jsonl"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: value-targets-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: value-targets-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.jsonl 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/value_targets_probe.py --merge parts/part-*.jsonl --output-md reports/report.md
+          cp parts/part-*.jsonl reports/
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $MODEL"
+            echo "positions/runner: $POSITIONS  pairs: $PAIRS  runners: $RUNNERS"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: value-targets-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
