@@ -28,6 +28,8 @@ from ai.eval.ops_block import NODE_OFFSET, country_table
 from bindings.action_encoder import ActionEncoder
 
 PolicyFn = Callable[[np.ndarray, np.ndarray], np.ndarray]
+#: A player that decides from the game states themselves (a searcher: `BatchSelector`).
+StatePolicyFn = Callable[[List[ts.GameState]], List[int]]
 
 MODE_BASE = int(ActionEncoder.PLAY_MODE_OFFSET)
 MODES = ("event", "space", "influence", "coup", "realign")
@@ -115,9 +117,11 @@ def _ihc(st: ts.GameState) -> bool:
 
 
 def collect(act: PolicyFn, n_games: int, seed: int, envs: int = 32, max_steps: int = 2_000_000,
-            obs_features: int = 0) -> Dict[str, Any]:
+            obs_features: int = 0, act_states: Optional[StatePolicyFn] = None) -> Dict[str, Any]:
     """Greedy self-play of `n_games` games. Returns the logged plays, headlines, coups and boards.
-    `obs_features` is the policy's observation feature set (`model_obs_features`), set on both sides."""
+    `obs_features` is the policy's observation feature set (`model_obs_features`), set on both sides.
+    `act_states`, when given, decides instead of `act` from the states of the games still running
+    (a searcher); finished games play nothing."""
     info = cards()
     stab, bg, names = country_table()
     runner = ts.VectorizedBatchRunner(envs, seed)
@@ -138,7 +142,13 @@ def collect(act: PolicyFn, n_games: int, seed: int, envs: int = 32, max_steps: i
     for _ in range(max_steps):
         obs = np.asarray(runner.get_observations())
         masks = np.asarray(runner.get_action_masks())
-        acts = act(obs, masks)
+        if act_states is None:
+            acts = act(obs, masks)
+        else:
+            live = [i for i in range(envs) if game_id[i] >= 0 and masks[i].any()]
+            acts = np.zeros(envs, dtype=np.int64)
+            if live:
+                acts[live] = act_states([runner.get_state(i) for i in live])
         for i in range(envs):
             m = masks[i]
             modes_legal = m[MODE_BASE:MODE_BASE + 5].astype(bool)

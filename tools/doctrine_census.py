@@ -22,7 +22,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ai.eval.doctrine_census import PolicyFn, collect, report  # noqa: E402
+from ai.eval.doctrine_census import PolicyFn, StatePolicyFn, collect, report  # noqa: E402
 
 
 def greedy_policy(model_path: str) -> "tuple[PolicyFn, int]":
@@ -46,11 +46,23 @@ def greedy_policy(model_path: str) -> "tuple[PolicyFn, int]":
     return (lambda obs, masks: onnx.act_batch(obs, masks, 0.0, True)), 0
 
 
+def search_policy(spec: str) -> "tuple[StatePolicyFn, int]":
+    """A `search:` agent spec (tools/lib/player_agent.load_agent), deciding from the states: the
+    census of what the searcher plays, for comparison with its network's."""
+    from bindings.ts_env import model_obs_features
+    from tools.lib.player_agent import BatchSelector, load_agent
+    agent = load_agent(spec, device="cpu")
+    if not isinstance(agent, BatchSelector):
+        raise SystemExit(f"{spec!r} does not decide batches of states")
+    return agent.select_actions_batch, model_obs_features(getattr(agent, "mcts").model)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
-    r.add_argument("--model", required=True)
+    r.add_argument("--model", required=True,
+                   help="an .onnx or .pt file, or a search: agent spec (tools/lib/player_agent.py)")
     r.add_argument("--games", type=int, default=500)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--envs", type=int, default=32)
@@ -63,9 +75,16 @@ def main() -> None:
 
     if a.cmd == "run":
         t0 = time.time()
-        act, feats = greedy_policy(a.model)
-        data = collect(act, a.games, a.seed, envs=a.envs, obs_features=feats)
-        data["meta"] = {"model": os.path.basename(a.model), "seed": a.seed, "seconds": round(time.time() - t0, 1)}
+        if a.model.startswith("search:"):
+            act_states, feats = search_policy(a.model)
+            data = collect(lambda o, m: m.argmax(1), a.games, a.seed, envs=a.envs,
+                           obs_features=feats, act_states=act_states)
+            name = a.model.replace("data/checkpoints/", "")
+        else:
+            act, feats = greedy_policy(a.model)
+            data = collect(act, a.games, a.seed, envs=a.envs, obs_features=feats)
+            name = os.path.basename(a.model)
+        data["meta"] = {"model": name, "seed": a.seed, "seconds": round(time.time() - t0, 1)}
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         with gzip.open(a.out, "wt") as f:
             json.dump(data, f)

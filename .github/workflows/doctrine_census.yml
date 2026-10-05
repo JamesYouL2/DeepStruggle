@@ -22,8 +22,11 @@ on:
         description: "Runners (each plays different deals)"
         default: "8"
       model:
-        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner), or hf:gh:<run id>/<artifact>/<file.onnx>"
+        description: "`newest`, hf:<file.onnx>, or hf:<revision>:<run>/<snapshot>.pt (exported on the runner), or hf:gh:<run id>/<artifact>/<file.onnx>, or a search: spec holding one hf:pt:/hf:relpt: checkpoint (the searcher's census)"
         default: "newest"
+      envs:
+        description: "Games played at once per runner (a searcher batches its trees across them)"
+        default: "32"
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
@@ -37,6 +40,7 @@ env:
   GAMES: ${{ inputs.games || '500' }}
   RUNNERS: ${{ inputs.runners || '8' }}
   MODEL: ${{ inputs.model || 'newest' }}
+  ENVS: ${{ inputs.envs || '32' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
 jobs:
@@ -46,6 +50,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       file: ${{ steps.pin.outputs.file }}
+      spec: ${{ steps.pin.outputs.spec }}
       parts: ${{ steps.pin.outputs.parts }}
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +60,21 @@ jobs:
         run: |
           if [ "$MODEL" = "newest" ]; then
             f=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --resolve-only | tail -1)
+          elif [[ "$MODEL" == search:* ]]; then
+            # The checkpoint inside the spec is fetched as it is (a .pt) and the spec rewritten
+            # to point at it, as the tournament workflow does for its search: entrants.
+            read -r f spec < <(python3 - <<'PY'
+          import os, re
+          m = os.environ["MODEL"]
+          pat = r"hf:((?:pt:|relpt:[\w.\-]+/)[\w.\-/@+]+\.pt)"
+          files = re.findall(pat, m)
+          if len(files) != 1:
+              raise SystemExit(f"a search: census needs exactly one hf:pt:/hf:relpt: checkpoint, got {files}")
+          local = "data/checkpoints/" + os.path.basename(files[0].split(":", 1)[1] if files[0].startswith("pt:") else files[0])
+          print(files[0], re.sub(pat, local, m))
+          PY
+            )
+            echo "spec=$spec" >> "$GITHUB_OUTPUT"
           else
             f="${MODEL#hf:}"
           fi
@@ -64,7 +84,7 @@ jobs:
   play:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 300           # a search: census plays every decision searched
     strategy:
       fail-fast: false
       matrix:
@@ -77,8 +97,9 @@ jobs:
       - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
         run: |
           m=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${{ needs.plan.outputs.file }}" --out-dir data/checkpoints | tail -1)
+          spec='${{ needs.plan.outputs.spec }}'
           tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/doctrine_census.py run \
-            --model "$m" \
+            --model "${spec:-$m}" --envs "$ENVS" \
             --games "$GAMES" --seed "${{ matrix.part }}" \
             --out "parts/part-${{ matrix.part }}.json.gz"
 
