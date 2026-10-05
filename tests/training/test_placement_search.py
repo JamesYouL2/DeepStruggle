@@ -144,4 +144,4 @@ def test_the_spec_sets_and_names_it(tmp_path) -> None:
     agent = load_agent(f"search:{path}:16:determinize:ops_influence:placement=6", device="cpu")
     assert isinstance(agent, BatchedMCTSAgent)
     assert agent.mcts.cfg.placement_k == 6 and agent.mcts.cfg.node_filter == "ops_influence"
-    assert agent.name.endswith("-place6")
+    assert agent.name.endswith("-placement_k6")
