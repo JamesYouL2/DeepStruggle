@@ -15,9 +15,11 @@ is withdrawn.**
 
 ## Method
 
-Probe `ai/eval/target_forms.py` + `tools/target_forms_probe.py` on fork branch
-[`exp/target-forms`](https://github.com/JamesYouL2/DeepStruggle/tree/exp/target-forms) (`1bcc6a4`,
-pooling fix `d775a18`); workflow `.github/workflows/target_forms.yml` there.
+Probe `ai/eval/target_forms.py` + `tools/target_forms_probe.py` (in this change; the runs used
+fork branch `exp/target-forms` at `1bcc6a4` / `d775a18`, whose CI workflow sharded it over 16
+runners and stays on the fork). One part locally:
+`PYTHONPATH=.:build/release python tools/target_forms_probe.py --model <ckpt.pt> --positions 250
+--seed 1 --pairs 32 --dump part-1.jsonl`, then `--merge part-*.jsonl --output-md report.md`.
 
 * **Model.** `soup5@1200M+2800M.pt` (sha256 `0b62748fa869`): the shallow soup's four ingredients
   and E7-20-44@2,800M averaged uniformly; fork release
