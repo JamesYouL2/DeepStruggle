@@ -277,7 +277,7 @@ class BaseNashPGTrainer:
         search_subsample: float = 0.125,
         search_node_filter: str = "card_playmode",
         search_target: str = "visits",
-        search_gumbel_k: int = 4,
+        search_options: Sequence[str] = (),
         ent_coef: float = 0.01,        # Entropy exploration coefficient
         vf_coef: float = 0.5,          # Value loss coefficient
         vp_coef: float = 0.05,         # Auxiliary VP loss weight
@@ -373,27 +373,39 @@ class BaseNashPGTrainer:
         self.search_ce_coef = float(search_ce_coef)
         self._searcher = None
         # What the CE pulls toward: "visits", the PUCT root's visit distribution (P15-X4b), or
-        # "gchoice", a one-hot on the move a noise-free Gumbel root plays (ai/search/gumbel_root.py:
-        # the `search_gumbel_k` most probable moves, sequential halving over `search_sims`). The
+        # "gchoice", a one-hot on the move a Gumbel root plays (ai/search/gumbel_root.py: by
+        # default the 4 most probable moves, sequential halving over `search_sims`). The
         # target-forms probe found visit targets no better than the prior and the Gumbel choice
         # better on 30 departures to 16 (research/log/E7_search_target_forms.md).
+        # `search_options` are `field=value` settings of BatchedMCTSConfig, as in a `search:`
+        # tournament spec (gumbel_k, gumbel_scale, fpu_reduction, prior_temp, c_puct, ...), so the
+        # searcher that teaches can be the one a tournament measured.
         if search_target not in ("visits", "gchoice"):
             raise ValueError(f"search_target must be 'visits' or 'gchoice', not {search_target!r}")
+        from tools.lib.player_agent import _search_overrides
+        overrides = _search_overrides(list(search_options), what="--search-options")
+        if search_target == "gchoice":
+            overrides.setdefault("gumbel_k", 4)
+            overrides.setdefault("gumbel_scale", 0.0)
+            if int(overrides["gumbel_k"]) < 1:
+                raise ValueError("--search-target gchoice needs gumbel_k >= 1")
+        elif int(overrides.get("gumbel_k", 0)) > 0:
+            raise ValueError("gumbel_k is set but --search-target is 'visits': the Gumbel root "
+                             "only chooses a move, so a visit target would ignore it")
         self.search_target = search_target
         if self.search_ce_coef > 0.0:
             from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
-            gumbel_k = int(search_gumbel_k) if search_target == "gchoice" else 0
             self._searcher = BatchedMCTS(
                 active_net, device=self.device,
                 config=BatchedMCTSConfig(
                     simulations=search_sims, temperature=0.0, auto_advance=True,
                     advance_root=False, determinize=True,
-                    node_filter=search_node_filter, subsample=search_subsample,
-                    gumbel_k=gumbel_k, gumbel_scale=0.0),
+                    node_filter=search_node_filter, subsample=search_subsample, **overrides),
                 featurise_capacity=SEARCH_CHUNK)
+            opts = "".join(f", {k}={v}" for k, v in sorted(overrides.items()))
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
                   f"{search_node_filter}, subsample {search_subsample}, target {search_target}"
-                  + (f" (Gumbel k={gumbel_k})" if gumbel_k else ""), flush=True)
+                  f"{opts}", flush=True)
         #: (buffer step, env, cloned state) of every decision to search this rollout; searched in
         #: one batch by `_flush_search_targets` when the rollout ends.
         self._search_queue: List[Tuple[int, int, Any]] = []

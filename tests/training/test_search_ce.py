@@ -452,7 +452,7 @@ def test_a_gumbel_choice_target_is_one_legal_move() -> None:
     """--search-target gchoice: every flagged row is one-hot on a move legal in its own row, and
     with one candidate the move is the network's own top move -- so the row is the root's choice,
     filed against the position it was chosen at."""
-    t = _searching_trainer(search_target="gchoice", search_gumbel_k=1)
+    t = _searching_trainer(search_target="gchoice", search_options=("gumbel_k=1",))
     t.collect_rollouts()
     b = t.buffer
     flagged = b.has_search > 0.5
@@ -470,11 +470,19 @@ def test_a_gumbel_choice_target_is_one_legal_move() -> None:
 
 
 def test_a_gumbel_choice_target_searches_with_k_candidates() -> None:
-    t = _searching_trainer(search_target="gchoice", search_gumbel_k=4, search_sims=8)
+    t = _searching_trainer(search_target="gchoice", search_sims=8,
+                           search_options=("fpu_reduction=0.2",))
     assert t._searcher is not None
-    assert t._searcher.cfg.gumbel_k == 4 and t._searcher.cfg.gumbel_scale == 0.0
+    cfg = t._searcher.cfg
+    assert (cfg.gumbel_k, cfg.gumbel_scale, cfg.fpu_reduction) == (4, 0.0, 0.2), \
+        "gchoice defaults to a noise-free k=4 root, and an option reaches the searcher"
     t.collect_rollouts()
     rows = t.buffer.search_pi[t.buffer.has_search > 0.5]
     assert rows.shape[0] > 0 and torch.equal(rows.max(-1).values, torch.ones(rows.shape[0]))
-    with pytest.raises(ValueError):
-        _searching_trainer(search_target="improved")
+    for bad in ({"search_target": "improved"},
+                {"search_target": "gchoice", "search_options": ("gumbel_k=0",)},
+                {"search_target": "visits", "search_options": ("gumbel_k=4",)},
+                {"search_options": ("simulations=64",)},     # fixed by --search-sims
+                {"search_options": ("no_such_field=1",)}):
+        with pytest.raises(ValueError):
+            _searching_trainer(**bad)

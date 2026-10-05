@@ -718,9 +718,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "distribution (P15-X4b), or 'gchoice', a one-hot on the move a "
                              "noise-free Gumbel root plays (ai/search/gumbel_root.py), the target "
                              "the target-forms probe found better than the prior.")
-    parser.add_argument("--search-gumbel-k", type=int, default=4,
-                        help="Candidates of the Gumbel root under --search-target gchoice: the k "
-                             "most probable moves, narrowed by sequential halving.")
+    parser.add_argument("--search-options", type=str, nargs="+", default=[], metavar="FIELD=VALUE",
+                        help="Settings of the training searcher, as in a search: tournament spec: "
+                             "any BatchedMCTSConfig field but the ones the flags above fix, e.g. "
+                             "gumbel_k=4 gumbel_scale=0 fpu_reduction=0.2 prior_temp=1.5. Under "
+                             "--search-target gchoice, gumbel_k defaults to 4 and gumbel_scale to 0.")
     parser.add_argument("--rollout-temps", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0],
                         metavar=("T1", "T2", "T3", "T4"),
                         help="The four per-environment rollout sampling temperatures. Default "
@@ -862,7 +864,7 @@ def main():
             search_subsample=args.search_subsample,
             search_node_filter=args.search_node_filter,
             search_target=args.search_target,
-            search_gumbel_k=args.search_gumbel_k,
+            search_options=args.search_options,
             opponent_pfsp=args.opponent_pfsp,
             opponent_pfsp_weighting=args.opponent_pfsp_weighting,
             opponent_pfsp_uniform_mix=args.opponent_pfsp_uniform_mix,

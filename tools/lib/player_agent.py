@@ -453,8 +453,9 @@ class OnnxAgent:
         return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
 
 
-def _search_overrides(items: Sequence[str]) -> Dict[str, Any]:
-    """`field=value` items of a search: spec, typed by BatchedMCTSConfig's own fields."""
+def _search_overrides(items: Sequence[str], what: str = "search: spec option") -> Dict[str, Any]:
+    """`field=value` items of a search: spec (or of the trainer's --search-options), typed by
+    BatchedMCTSConfig's own fields."""
     import dataclasses
     from ai.search.batched_mcts import BatchedMCTSConfig
 
@@ -467,7 +468,7 @@ def _search_overrides(items: Sequence[str]) -> Dict[str, Any]:
         key, raw = item.split("=", 1)
         key = {"placement": "placement_k"}.get(key.strip().lower(), key.strip().lower())
         if key not in types or key in fixed:
-            raise ValueError(f"search: spec option {item!r}: not a settable BatchedMCTSConfig field"
+            raise ValueError(f"{what} {item!r}: not a settable BatchedMCTSConfig field"
                              f" (settable: {sorted(set(types) - fixed)})")
         t = types[key]
         try:
@@ -482,7 +483,7 @@ def _search_overrides(items: Sequence[str]) -> Dict[str, Any]:
             else:
                 out[key] = raw
         except ValueError:
-            raise ValueError(f"search: spec option {item!r}: {raw!r} is not a {t}") from None
+            raise ValueError(f"{what} {item!r}: {raw!r} is not a {t}") from None
     return out
 
 

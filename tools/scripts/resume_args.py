@@ -67,7 +67,6 @@ VALUE_FLAGS: Dict[str, str] = {
     "search_subsample": "--search-subsample",
     "search_node_filter": "--search-node-filter",
     "search_target": "--search-target",
-    "search_gumbel_k": "--search-gumbel-k",
     "identity_dim": "--identity-dim",
     "attn_readout": "--attn-readout",
     "per_entity_heads": "--per-entity-heads",
@@ -95,6 +94,7 @@ LIST_FLAGS: Dict[str, str] = {
     "rollout_temps": "--rollout-temps",
     "eval_opponents": "--eval-opponents",
     "opponent_checkpoints": "--opponent-checkpoints",
+    "search_options": "--search-options",
 }
 
 # Recorded for provenance, not settings to replay.
