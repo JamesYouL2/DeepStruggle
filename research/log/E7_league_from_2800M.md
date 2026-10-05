@@ -1,4 +1,4 @@
-# The P24 league from the saturated E7 line (2026-10-04): 2,800 → 3,200M
+# The P24 league from the saturated E7 line (2026-10-04/05): 2,800 → 3,600M, with its control
 
 The owner asked to start league training once the E7 line clearly saturated; by the rule set in
 advance it did at 2,800M ([`E7_line_to_2000M.md`](E7_line_to_2000M.md)).
@@ -104,4 +104,78 @@ for the whole leg.
 * **Attribution is still open.** The rise began around 2,960M, before the first exploiter was
   published (3,110M), and the league never held more than that one member. Plain continuation or
   the single league member cannot be told apart from this run; a plain continuation of E7-20-44
-  from 2,800M over the same steps would be the control.
+  from 2,800M over the same steps would be the control -- run below.
+
+## The control: E7-20-44 continued without a league, 2,800 → 3,600M (2026-10-05)
+
+Owner: "Lets try to get a control continuation." E7-20-44 resumed from the same 2,800M end state
+with its own flags, only `--train-steps` changed, same name (directory `E7-20-44_20261005_085738`).
+Its SWAs are in `data/checkpoints/_swa_line_ctl/`, reports `data/reports/swa_line_ctl/` and
+`data/reports/league_vs_control/`.
+
+**Identical until the first publish.** With an empty league pool, the league main and the plain
+continuation run the same computation. The control's SWAs for 2,800–2,880M, 2,880–2,960M and
+2,960–3,040M match the league's to the last digit (65.1 / 64.6 / 67.8 against E7-02-44@1000M), as do
+the training metrics at 3,000M. **The rise to the higher plateau at ~2,960M is therefore plain
+self-play.** The runs separate after the generation-6 publish at 3,110M.
+
+**Matched windows against the fixed references** (1,000 games per side; ± 1.1 per row, ± 1.5 for a
+difference of two rows):
+
+| SWA window | vs E7-02-44@1000M: league / control (diff) | vs soup: league / control (diff) |
+|:---|:---|:---|
+| 3040–3120M (league steps only after 3,110M) | 67.5 / 69.1 (−1.6) | 50.6 / 52.3 (−1.7) |
+| 3120–3200M | 71.4 / 67.9 (+3.5) | 56.5 / 54.6 (+1.9) |
+| 3200–3280M | 69.0 / 67.8 (+1.2) | 53.6 / 51.8 (+1.8) |
+| 3280–3360M | 67.8 / 67.7 (+0.1) | 53.5 / 54.2 (−0.7) |
+| 3360–3440M | 68.2 / 69.8 (−1.6) | 54.2 / 57.4 (−3.2) |
+| 3440–3520M | 70.3 / 69.2 (+1.1) | 53.6 / 56.3 (−2.7) |
+| 3520–3600M | 67.2 / 69.2 (−2.0) | 54.8 / 53.2 (+1.6) |
+| **mean, 3,120–3,600M** | **69.0 / 68.6 (+0.4)** | **54.4 / 54.6 (−0.2)** |
+
+Control rows per side: 3,120–3,200M 67.9 (68.6 / 67.2) / 54.6 (54.6 / 54.7); 3,200–3,280M 67.8
+(70.9 / 64.7) / 51.8 (50.4 / 53.2); 3,280–3,360M 67.7 (70.5 / 64.9) / 54.2 (54.7 / 53.8);
+3,360–3,440M 69.8 (72.4 / 67.3) / 57.4 (58.6 / 56.2); 3,440–3,520M 69.2 (71.1 / 67.4) / 56.3
+(57.7 / 54.9); 3,520–3,600M 69.2 (72.4 / 65.9) / 53.2 (53.0 / 53.4). The control shows the same US
+lean against the 1,000M model, so that asymmetry belongs to the line, not to the league.
+
+**Head to head, league SWA against control SWA at the same window** (1,000 games per side, greedy):
+
+| SWA window | league vs control (league as US / as USSR) |
+|:---|:---|
+| 3120–3200M | 51.7 (53.2 / 50.2) |
+| 3200–3280M | 51.6 (55.3 / 48.0) |
+| 3280–3360M | 51.0 (54.7 / 47.3) |
+| 3360–3440M | 48.1 (50.8 / 45.4) |
+| 3440–3520M | 50.6 (54.1 / 47.0) |
+| 3520–3600M | 49.9 (52.0 / 47.8) |
+| **mean** | **50.5 (53.4 / 47.6)** |
+
++0.5 is about 1 SE over 12,000 games, and the edge of the first three windows fades to even by
+3,600M. The seat split is the game's US advantage between these lines: the league wins 53.4% as US,
+the control 52.4% as US, so net of seat it is the same half point.
+
+**The owner's panel, 3,520–3,600M SWAs, per seat** (1,000 games per side; ± 0.6–1.2 per seat):
+
+| opponent | league (US / USSR) | control (US / USSR) | league − control (US / USSR) |
+|:---|:---|:---|:---|
+| E6-03-44@80M | 95.9 (95.8 / 96.0) | 96.0 (95.6 / 96.5) | +0.2 / −0.5 |
+| E6-03-44@240M | 92.8 (95.0 / 90.6) | 91.9 (92.7 / 91.1) | +2.3 / −0.5 |
+| E6-03-44@550M | 84.2 (87.8 / 80.7) | 84.5 (89.6 / 79.5) | −1.8 / +1.2 |
+
+No seat is better against all three panel members, and the per-seat differences change sign
+between panel members. By the owner's rule (better in one seat, not worse in the other) the league
+is not accepted over the control.
+
+### Reading
+
+* **The league added nothing measurable over plain self-play from 2,800M to 3,600M.** Against the
+  fixed references it is +0.4 / −0.2 on the mean of six matched windows, head to head 50.5%, and on
+  the panel it is level. The 71.4 / 56.5 window at 3,120–3,200M was the league's best draw, and the
+  head to head there (51.7%) is also its best, but neither held.
+* **Why it had no chance to matter:** the exploiter recipe published once in 16 generations, so the
+  league pool was empty for the first 310M steps and held that one snapshot for the remaining 490M. A main agent that the exploiter cannot beat gets almost no league signal.
+* **The plateau moved because of plain self-play.** Between ~2,960M and 3,600M the plain line holds
+  67–70% against E7-02-44@1000M and 52–57% against the soup, up from 62–65% / ~50.5% at
+  1,900–2,800M. So the 2,800M "saturated" call by the pre-set rule was premature; the line was still
+  improving slowly, in steps rather than smoothly.
