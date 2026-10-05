@@ -135,3 +135,37 @@ pool, TF32; two passes, alternating:
   are each worth ~+15%.
 * **max-autotune buys nothing over default** here (within noise), at a much longer first compile.
 * The rollout (0.27 s) is untouched by either and is now ~56% of the iteration.
+
+## The compile A/B on E7: E7-23-44 (2026-10-05)
+
+The owner asked why `--compile-update` is not always on (P26's E4-58 left it "not shown harmless")
+and to test it on E7. **E7-23-44** is E7-02-44's recipe from scratch, seed 44, plus
+`--compile-update default` (`launch_flags --diff`: only that flag), 1,200M at ~115k steps/s.
+Training looked healthy throughout: self-play US share 46–51% per 80M window, entropy and critic AUC
+within a few hundredths of E7-02-44's over 560–1,200M (E7-02-44's metrics file starts at 560M).
+
+One field (`data/reports/e7_23_rr.{md,json}`), 1,000 games per side per pair, temperature 0; the
+owner's rule against E7-02-44 (eager, same recipe and seed) on the E6-03-44 panel:
+
+| comparison | US (arm / control, Δ ± SE) | USSR (arm / control, Δ ± SE) | head to head |
+|:---|:---|:---|:---|
+| snapshots 1,160 / 1,180 / 1,200M | 82.3 / 82.8, −0.5 ± 0.6 | 80.4 / 83.0, **−2.6 ± 0.6** | **47.8% ± 0.4** |
+| SWA 1,120–1,200M | 85.9 / 86.3, −0.5 ± 0.9 | 83.8 / 86.3, **−2.5 ± 0.9** | **46.2% ± 1.1** |
+| reference: E7-03-44 SWA (E7-02-44 branched at 870M, new randomness only) | 87.5 / 86.3, +1.1 ± 0.9 | 85.9 / 86.3, −0.4 ± 0.9 | 50.3% ± 1.1 |
+
+Elo in the same field: SWAs E7-02-44 1613, E7-03-44 1609, **E7-23-44 1596**; snapshots E7-02-44
+1561–1575, **E7-23-44 1550–1562**.
+
+* **By the owner's rule compile is not accepted:** level as US, worse as USSR by ~2.5 points (4 SE
+  of game noise on the snapshots), and below 50% head to head on both comparisons.
+* **What the ± does not cover is the draw of the run.** Compile changes rounding from the first
+  update, so E7-23-44 is a different trajectory from step 0 -- in effect another seed. The only
+  same-recipe spread on record is E7-03-44, which shares E7-02-44's first 870M and differs by
+  +1.1 / −0.4 and 50.3%; a from-scratch replica would spread more, and none exists for E7.
+* **The sign now repeats.** E4-58 (3 seeds, E4 network) was −84 Elo against TF32 on the arm means;
+  E7-23-44 is ~−15 Elo head to head and −2.5 points in one seat. Each is inside what a seed could
+  do; together they lean the same way, with no known mechanism (E7 has no dropout; compile's
+  gradients match eager to ~1e-3 relative).
+* **Verdict: `--compile-update` stays opt-in.** For +15% throughput the evidence does not clear it.
+  An eager from-scratch replica (E7 recipe, another seed) would say whether −2.5 / 47.8% is within
+  the seed spread, i.e. whether compile is harmless after all.
