@@ -1022,11 +1022,12 @@ NB_MODULE(ts_engine, m) {
     // network on each round's leaves; everything between two forward passes happens here.
     using ts_search::BatchedSearch;
     nb::class_<BatchedSearch>(m, "BatchedSearch")
-        .def(nb::init<size_t, double, bool, uint32_t, bool>(), nb::arg("capacity"),
+        .def(nb::init<size_t, double, bool, uint32_t, bool, double>(), nb::arg("capacity"),
              nb::arg("c_puct") = 1.5, nb::arg("auto_advance") = true, nb::arg("obs_features") = 0u,
-             nb::arg("merged_influence") = false,
+             nb::arg("merged_influence") = false, nb::arg("fpu_reduction") = 0.0,
              "Up to `capacity` independent searches, stepped together. obs_features and "
-             "merged_influence are the evaluating model's view.")
+             "merged_influence are the evaluating model's view; fpu_reduction values an unvisited "
+             "move at its node's value less this much, from the mover's side (0: the node's value).")
         .def_prop_ro("capacity", &BatchedSearch::capacity)
         .def_prop_ro("obs_width", &BatchedSearch::obs_width)
         .def_prop_ro("num_trees", &BatchedSearch::num_trees)

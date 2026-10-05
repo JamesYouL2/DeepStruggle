@@ -893,9 +893,9 @@ class ActionMask:
     def encode_micro_action(arg0: GameState, arg1: MicroAction, /) -> int: ...
 
 class BatchedSearch:
-    def __init__(self, capacity: int, c_puct: float = 1.5, auto_advance: bool = True, obs_features: int = 0, merged_influence: bool = False) -> None:
+    def __init__(self, capacity: int, c_puct: float = 1.5, auto_advance: bool = True, obs_features: int = 0, merged_influence: bool = False, fpu_reduction: float = 0.0) -> None:
         """
-        Up to `capacity` independent searches, stepped together. obs_features and merged_influence are the evaluating model's view.
+        Up to `capacity` independent searches, stepped together. obs_features and merged_influence are the evaluating model's view; fpu_reduction values an unvisited move at its node's value less this much, from the mover's side (0: the node's value).
         """
 
     @property

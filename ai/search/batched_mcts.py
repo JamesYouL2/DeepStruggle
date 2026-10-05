@@ -31,7 +31,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -42,6 +42,9 @@ from bindings.settle import settle as _settle
 from ai.search.dmcts import determinize
 from ai.search.pimcts import PIMCTSConfig, acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
+
+if TYPE_CHECKING:
+    from ai.search.gumbel_root import GumbelRoot
 
 _UINT64 = 1 << 64
 _US = int(ts.Player.US)
@@ -160,6 +163,15 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: too coarse to separate moves.
     final_rule: str = "visits"
     value_min_visits: int = 2
+    #: First-play urgency: an unvisited move is valued at its node's value less this, from the
+    #: mover's side. Above 0 the budget stays on moves already found good (Leela-style); 0, the
+    #: default, is the original rule (the node's value).
+    fpu_reduction: float = 0.0
+    #: Choose the move by a Gumbel root (ai/search/gumbel_root.py): k candidates by Gumbel-top-k,
+    #: the budget split by sequential halving. 0, the default, is the most-visited PUCT move.
+    gumbel_k: int = 0
+    #: Scale of the Gumbel noise; 0 takes the k most probable moves, deterministically.
+    gumbel_scale: float = 1.0
 
 
 def _temper(priors: Sequence[float], t: float) -> List[float]:
@@ -219,6 +231,7 @@ class BatchedMCTS:
         #: Persistent roots, keyed by whatever the caller uses to identify a position stream
         #: (a game index, typically). Only populated when `reuse_subtree` is on.
         self._trees: Dict[object, _BNode] = {}
+        self._gumbel: Optional["GumbelRoot"] = None
 
     # -- evaluation -----------------------------------------------------------------------
 
@@ -321,6 +334,7 @@ class BatchedMCTS:
         total = node.total
         sqrt_total = math.sqrt(total if total > 1.0 else 1.0)
         c = self.cfg.c_puct
+        fpu = self.cfg.fpu_reduction
         value_us = node.value_us
         us_moves = node.mover == _US
         best_i, best_v = 0, -1e30
@@ -329,6 +343,8 @@ class BatchedMCTS:
             q = (wi / ni) if ni > 0 else value_us
             if not us_moves:
                 q = -q
+            if ni == 0:
+                q -= fpu
             v = q + c * pi * sqrt_total / (1.0 + ni)
             if v > best_v:
                 best_v, best_i = v, i
@@ -470,7 +486,8 @@ class BatchedMCTS:
         if cs is None:
             from bindings.ts_env import model_obs_features
             cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
-                                  int(model_obs_features(self.model)), False)
+                                  int(model_obs_features(self.model)), False,
+                                  float(self.cfg.fpu_reduction))
             self._cpp[cap] = cs
         return cs
 
@@ -585,7 +602,13 @@ class BatchedMCTS:
         return self._rng.random() < self.cfg.subsample
 
     def best_actions(self, states: Sequence[ts.GameState]) -> List[int]:
-        """Most-visited action per position; falls back to the first legal action."""
+        """Most-visited action per position; falls back to the first legal action. With
+        `gumbel_k` set, the Gumbel root's choice instead."""
+        if self.cfg.gumbel_k > 0:
+            if self._gumbel is None:
+                from ai.search.gumbel_root import GumbelRoot
+                self._gumbel = GumbelRoot(self)
+            return self._gumbel.choose(states)
         picks: List[int] = []
         for r, st in zip(self._search(states), states):
             if r is None or r.terminal or not r.actions:
