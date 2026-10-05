@@ -149,6 +149,24 @@ class BatchedMCTSConfig(PIMCTSConfig):
     placement_k: int = 0
     #: Sampled placements drawn to find the candidates (plus the greedy one).
     placement_samples: int = 32
+    #: Temperature on the network's priors at every node: softmax(logits / T). Above 1 flattens
+    #: them, so a small budget can leave a confident prior; 1, the default, is unchanged.
+    prior_temp: float = 1.0
+    #: The same at the root only (p^(1/T), renormalised), applied before any root noise.
+    root_prior_temp: float = 1.0
+    #: How the move is chosen from the root. "visits": most visited, ties by mean value then prior
+    #: (the default). "value": the best mean value for the mover among moves with at least
+    #: `value_min_visits` visits, ties by visits then prior -- at 16-32 simulations visit counts are
+    #: too coarse to separate moves.
+    final_rule: str = "visits"
+    value_min_visits: int = 2
+
+
+def _temper(priors: Sequence[float], t: float) -> List[float]:
+    """p^(1/t), renormalised."""
+    w = [float(p) ** (1.0 / t) if p > 0.0 else 0.0 for p in priors]
+    z = sum(w)
+    return [x / z for x in w] if z > 0.0 else list(priors)
 
 
 @dataclass
@@ -216,7 +234,7 @@ class BatchedMCTS:
         mask_t = torch.from_numpy(masks).to(self.device)
         with torch.no_grad():
             logits, v_win, _ = self.model.forward(obs_t, mask_t)
-            probs = torch.softmax(logits, dim=-1).cpu().numpy()
+            probs = torch.softmax(logits / self.cfg.prior_temp, dim=-1).cpu().numpy()
             values = v_win.squeeze(-1).cpu().numpy().tolist()
 
         # The legal entries of every row at once: one nonzero over the batch instead of four
@@ -395,6 +413,8 @@ class BatchedMCTS:
         for r, was_inherited in zip(roots, inherited):
             if r is None or r.terminal or not r.actions:
                 continue
+            if not was_inherited and cfg.root_prior_temp != 1.0:
+                r.priors = _temper(r.priors, cfg.root_prior_temp)
             # Root noise belongs to a fresh search. Re-applying it to an inherited tree would
             # perturb priors that its existing visit counts were already collected under.
             if not was_inherited and cfg.dirichlet_frac > 0.0 and len(r.actions) > 1:
@@ -474,11 +494,16 @@ class BatchedMCTS:
             masks = torch.from_numpy(cs.masks()[:k]).to(self.device)
             with torch.no_grad():
                 logits, v_win, _ = self.model.forward(obs, masks)
-                probs = torch.softmax(logits.float(), dim=-1).cpu().numpy()
+                probs = torch.softmax(logits.float() / cfg.prior_temp, dim=-1).cpu().numpy()
                 values = v_win.float().reshape(-1).cpu().numpy()
             cs.expand_and_backup(np.ascontiguousarray(probs), np.ascontiguousarray(values))
             if roots_pending:
                 roots_pending = False
+                if cfg.root_prior_temp != 1.0:
+                    for i in range(len(roots)):
+                        pri = cs.root(i)[4]
+                        if len(pri) > 1:
+                            cs.set_root_priors(i, _temper(pri, cfg.root_prior_temp))
                 # Root noise, after the roots' own evaluation, from this object's stream -- as
                 # the Python path draws it.
                 if cfg.dirichlet_frac > 0.0:
@@ -568,8 +593,26 @@ class BatchedMCTS:
                 legal = np.flatnonzero(mask)
                 picks.append(int(legal[0]) if len(legal) else 0)
             else:
-                picks.append(int(r.actions[self._most_visited(r)]))
+                picks.append(int(r.actions[self._choose(r)]))
         return picks
+
+    def _choose(self, root: _BNode) -> int:
+        """Index of the move to play, by `final_rule`."""
+        if self.cfg.final_rule == "visits":
+            return self._most_visited(root)
+        if self.cfg.final_rule != "value":
+            raise ValueError(f"unknown final_rule {self.cfg.final_rule!r}")
+        us_moves = root.mover == int(ts.Player.US)
+        floor = max(1, int(self.cfg.value_min_visits))
+        ok = [i for i in range(len(root.actions)) if root.n[i] >= floor]
+        if not ok:
+            return self._most_visited(root)
+
+        def key(i: int) -> Tuple[float, float, float]:
+            q = root.w[i] / root.n[i]
+            return (q if us_moves else -q, root.n[i], root.priors[i])
+
+        return max(ok, key=key)
 
     @staticmethod
     def _most_visited(root: _BNode) -> int:

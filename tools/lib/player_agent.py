@@ -453,6 +453,39 @@ class OnnxAgent:
         return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
 
 
+def _search_overrides(items: Sequence[str]) -> Dict[str, Any]:
+    """`field=value` items of a search: spec, typed by BatchedMCTSConfig's own fields."""
+    import dataclasses
+    from ai.search.batched_mcts import BatchedMCTSConfig
+
+    types = {f.name: f.type if isinstance(f.type, str) else getattr(f.type, "__name__", str(f.type))
+             for f in dataclasses.fields(BatchedMCTSConfig)}
+    fixed = {"simulations", "determinize", "node_filter", "subsample", "backend",
+             "temperature", "auto_advance", "advance_root"}
+    out: Dict[str, Any] = {}
+    for item in items:
+        key, raw = item.split("=", 1)
+        key = {"placement": "placement_k"}.get(key.strip().lower(), key.strip().lower())
+        if key not in types or key in fixed:
+            raise ValueError(f"search: spec option {item!r}: not a settable BatchedMCTSConfig field"
+                             f" (settable: {sorted(set(types) - fixed)})")
+        t = types[key]
+        try:
+            if t == "bool":
+                if raw.lower() not in ("1", "0", "true", "false"):
+                    raise ValueError(raw)
+                out[key] = raw.lower() in ("1", "true")
+            elif t == "int":
+                out[key] = int(raw)
+            elif t == "float":
+                out[key] = float(raw)
+            else:
+                out[key] = raw
+        except ValueError:
+            raise ValueError(f"search: spec option {item!r}: {raw!r} is not a {t}") from None
+    return out
+
+
 def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAgent:
     """Factory function loading agents from string specifier (random, heuristic, or checkpoint path)."""
     s = spec.strip()
@@ -495,12 +528,12 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # Exposed here rather than left to callers so that search games go through the same
         # CLIs, and therefore the same replay writer, as every other match.
         parts = s.split(":")
-        # `placement=K` anywhere after the checkpoint searches an influence placement as one
-        # decision, comparing up to K complete placements (ai/search/placement_search.py).
-        placement_k = 0
-        for p in [p for p in parts[2:] if p.lower().startswith("placement=")]:
-            placement_k = int(p.split("=", 1)[1])
-            parts.remove(p)
+        # `<field>=<value>` anywhere after the checkpoint sets that BatchedMCTSConfig field, e.g.
+        # c_puct=2.5, prior_temp=1.5, final_rule=value, placement_k=4 (`placement=K` is short for
+        # placement_k). An unknown field or an unreadable value is refused. The entrant's name
+        # records each override, since a tournament refuses two entrants of one name.
+        overrides = _search_overrides([p for p in parts[2:] if "=" in p])
+        parts = [p for p in parts if "=" not in p]
         path = parts[1]
         sims = int(parts[2]) if len(parts) > 2 and parts[2] else 64
         determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
@@ -529,11 +562,11 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
                                 auto_advance=True, advance_root=False,
                                 determinize=determinize,
                                 node_filter=node_filter, subsample=subsample,
-                                backend=backend, placement_k=placement_k)
+                                backend=backend, **overrides)
         tag = {"all": "", "card_playmode": "-card", "card_branch": "-cardbranch"}.get(node_filter, f"-{node_filter}")
         tag += "" if subsample >= 1.0 else f"-{subsample:g}"
         tag += "" if backend == "cpp" else f"-{backend}"
-        tag += f"-place{placement_k}" if placement_k else ""
+        tag += "".join(f"-{k}{v}" for k, v in overrides.items())
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
     if s.lower().startswith("legacy:"):
