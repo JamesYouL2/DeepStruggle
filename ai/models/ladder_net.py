@@ -30,6 +30,7 @@ from typing import Any, Dict, Tuple, cast
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
                                       ColdWarNetV2, static_input_mask)
@@ -463,14 +464,32 @@ class LadderNet(ColdWarNetV2):
 
     # ------------------------------------------------------------------ config
 
-    def _entity_out(self, head: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    def _entity_out(self, head: nn.Module, x: torch.Tensor,
+                    ctx: torch.Tensor | None = None) -> torch.Tensor:
         """A per-entity head over [batch, entities, features] -> [batch, entities]; under
-        head_center the hidden features are centred across entities before the last layer."""
-        if not self.head_center:
-            return head(x).squeeze(-1)
+        head_center the hidden features are centred across entities before the last layer.
+
+        `ctx` [batch, k], when given, is the trunk context that every entity of a sample shares,
+        read by the last k input columns of the head's first layer. Its term is computed once per
+        sample and broadcast over the entities instead of being concatenated onto each of them:
+        Linear(cat[x, ctx]) = x Wx^T + (ctx Wc^T + b) is the same function from the same weights,
+        without 84 (or 110) copies of one product. Concatenated, the 90-wide input also missed
+        the tensor cores (not 8-aligned) and the head cost more than the rest of the network; split,
+        E7's update fell from 0.36 to 0.29 s per iteration, and the two forms agree to 3e-13 in
+        float64 (research/log/E7_training_throughput_profile.md).
+        """
         assert isinstance(head, nn.Sequential)
-        f = head[:-1](x)
-        f = f - f.mean(dim=1, keepdim=True)
+        if ctx is None:
+            f = head[:-1](x)
+        else:
+            first = head[0]
+            assert isinstance(first, nn.Linear)
+            kx = x.shape[-1]
+            pre = (F.linear(x, first.weight[:, :kx])
+                   + F.linear(ctx, first.weight[:, kx:], first.bias).unsqueeze(1))
+            f = head[1:-1](pre)
+        if self.head_center:
+            f = f - f.mean(dim=1, keepdim=True)
         return head[-1](f).squeeze(-1)
 
     def ladder_config(self) -> Dict[str, Any]:
@@ -534,13 +553,13 @@ class LadderNet(ColdWarNetV2):
             board_nodes = self._dynamic_slice(board_nodes, STATIC_BOARD_SLOTS)
             card_nodes = self._dynamic_slice(card_nodes, STATIC_CARD_SLOTS)
 
-        parts_country = [h_board, board_nodes]
-        parts_card = [h_cards, card_nodes]
+        # The trunk context, when there is one, is the last input block of each head's first
+        # layer and the same for every entity of a sample; `_entity_out` adds its term once per
+        # sample rather than concatenating it onto every entity.
+        ctx: torch.Tensor | None = None
         if self.head_context:
             assert self.pe_trunk is not None
-            ctx = self.pe_trunk(h).unsqueeze(1)
-            parts_country.append(ctx.expand(-1, 84, -1))
-            parts_card.append(ctx.expand(-1, 110, -1))
+            ctx = self.pe_trunk(h)
 
         _A = ActionEncoder
         card_block = base[:, :_A.PLAY_MODE_OFFSET]
@@ -548,9 +567,9 @@ class LadderNet(ColdWarNetV2):
         country_block = base[:, _A.NODE_OFFSET:_A.BRANCH_OFFSET]
         gap_end = base[:, _A.BRANCH_OFFSET:] * 0.0
 
-        card_corr = (self._entity_out(self.pe_card, torch.cat(parts_card, dim=-1))
+        card_corr = (self._entity_out(self.pe_card, torch.cat([h_cards, card_nodes], dim=-1), ctx)
                      if self.pe_card is not None else card_block * 0.0)
-        country_corr = (self._entity_out(self.pe_country, torch.cat(parts_country, dim=-1))
+        country_corr = (self._entity_out(self.pe_country, torch.cat([h_board, board_nodes], dim=-1), ctx)
                         if self.pe_country is not None else country_block * 0.0)
         return base + torch.cat([card_corr, gap_mid, country_corr, gap_end], dim=-1)
 
