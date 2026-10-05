@@ -93,6 +93,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: ./.github/actions/setup-engine
+
       - uses: actions/download-artifact@v4
         with:
           pattern: target-forms-part-${{ github.run_id }}-*
@@ -104,7 +106,7 @@ jobs:
           mkdir -p reports
           n=$(ls parts/part-*.jsonl 2>/dev/null | wc -l)
           if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
-          python3 tools/target_forms_probe.py --merge parts/part-*.jsonl --output-md reports/report.md
+          PYTHONPATH=.:build/release .venv/bin/python tools/target_forms_probe.py --merge parts/part-*.jsonl --output-md reports/report.md
           cp parts/part-*.jsonl reports/
           {
             echo "commit: $GITHUB_SHA"
