@@ -107,3 +107,31 @@ After the update levers, **the rollout is the floor**: 0.265 s per iteration cap
 `--no-ladder-cross-attention` for E7-20-44, which `train.py` rejects, and omitted
 `--ladder-head-context` / `--ladder-head-static`, which `--arch ladder` requires. Its output for
 an E7 run does not launch as printed.
+
+## The shared-context head under `torch.compile` (2026-10-05)
+
+**The same function.** Against the head as built, E7-20-44@3,600M on 256 real mid-game positions:
+log-probs over legal actions and every parameter's gradient differ by 1.5e-4 and 1.7e-5 (relative)
+in fp32, and by **3e-13 and 4e-14 in float64** (`data/logs/perf/e7_pe_grad_equiv{,64}.py`). The
+fp32 difference is summation order only.
+
+**Timed on the trainer** (`e7_bench.py --compile`, the trainer's own `--compile-update`, which
+compiles the update's forwards; the rollout keeps its CUDA graphs). 512 envs, minibatch 4,096, no
+pool, TF32; two passes, alternating:
+
+| `--compile-update` | head | update s | steps/s |
+|:---|:---|---:|---:|
+| off | as built | 0.364 / 0.364 | 102.3k / 102.6k |
+| off | shared context | 0.290 / 0.290 | 118.4k / 117.7k |
+| default | as built | 0.282 / 0.281 | 118.7k / 117.5k |
+| default | shared context | **0.218 / 0.213** | **134.6k / 136.1k** |
+| max-autotune | as built | 0.276 / 0.276 | 119.7k / 119.3k |
+| max-autotune | shared context | 0.214 / 0.209 | 132.1k / 137.1k |
+
+* **The two gains compose.** Under compile the shared-context head still takes ~0.065 s off the
+  update, as it does eagerly (0.074 s): compile fuses the elementwise work but does not remove the
+  84-fold duplicated matmul columns.
+* **Together: update 0.364 → 0.213 s (−41%), +32% end to end.** Compile alone and the head alone
+  are each worth ~+15%.
+* **max-autotune buys nothing over default** here (within noise), at a much longer first compile.
+* The rollout (0.27 s) is untouched by either and is now ~56% of the iteration.
