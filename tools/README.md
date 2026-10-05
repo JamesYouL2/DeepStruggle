@@ -141,6 +141,14 @@ critic's baseline. A scripted opening gains probability only where its games bea
 learns the middlegames that follow openings it never samples (`research/log/E7_shallow_setup_lock.md`). With
 `--setup-mc-credit` the setup rows are also left out of the per-seat KL statistics, as they are out of the surrogate.
 
+`--ladder-card-effects-head K` (default 0 = off; needs `--obs-features card_effects`) adds the direct
+path from the `card_effects` block to the policy: one MLP of width K, shared across cards, reads a
+card's 18 effect floats, its 14 raw slots and a projection of the trunk, and adds to that card's
+SELECT_CARD logit and -- for the card being played (ACTIVE_CARD) -- to the five play-mode logits. It
+acts only where a card's row is filled, and its output layer starts at zero. A `--warmup-checkpoint`
+without the block is widened (`ladder_net.widen_for_card_effects`: zero input columns, the head at
+zero), so the network starts as its parent exactly. Recovered from the weights (`ce_*`).
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer
@@ -151,7 +159,9 @@ Recovered from the weights (`tok_*`) like every other axis.
 
 `--obs-features NAME...` (P30, default none) appends optional observation blocks to the base layout
 (`ops_budget`: the Ops the card at a play-mode decision grants after every modifier, and each side's
-per-card Ops modifier -- 3 floats). The set is recorded in the weights and in `metadata.json`, so
+per-card Ops modifier -- 3 floats; `card_effects`: per held card at a card decision, whether its
+event can fire, its Ops reach and what its event does on this board -- 110 × 18 floats, read beside
+the card rows, not as globals). The set is recorded in the weights and in `metadata.json`, so
 tournaments and the match harness build each agent's observation in its own set, and a model with
 features plays one without in the same batch. See `engine/AGENTS.md` §6a.
 

@@ -67,6 +67,7 @@ _LADDER = {
     "card_lookup_heads": "ladder_card_lookup_heads", "card_lookup_dim": "ladder_card_lookup_dim",
     "card_lookup_identity_dim": "ladder_card_lookup_identity_dim",
     "token_layers": "ladder_token_layers", "token_dim": "ladder_token_dim",
+    "card_effects_head": "ladder_card_effects_head",
 }
 
 
@@ -149,6 +150,8 @@ def recorded(run_dir: str) -> dict:
             # P30 C1 (2026-10-01): recorded only when on; off, the width is inert at its default
             out.setdefault("ladder_token_layers", 0)
             out.setdefault("ladder_token_dim", 128)
+            # recorded only when on; every config before it had no card-effects head
+            out.setdefault("ladder_card_effects_head", 0)
         elif k in dflt:
             out[k] = v
     # Before 2026-09-27 a run that took the default rollout bands recorded None, and the default

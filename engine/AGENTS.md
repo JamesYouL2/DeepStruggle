@@ -353,6 +353,22 @@ and is mirrored in `ai/models/ladder_net.OBS_FEATURE_WIDTHS` (a test compares th
 | bit | name | width | contents |
 |:---|:---|---:|:---|
 | 1<<1 | `OPS_BUDGET` | 3 | at SELECT_PLAY_MODE, `Operations::grant_ops_for_card(pending_op_card, decider)/5`, else 0; my per-card Ops modifier; the opponent's (Containment/Brezhnev +1, Red Scare/Purge −1, summed) |
+| 1<<2 | `CARD_EFFECTS` | 1,980 | 110 × 18, per card: can the event fire; Ops reach (effective Ops, countries and battlegrounds the Ops could control, best coup chance and best on a battleground); what the event does on this board (VP, DEFCON, six regional margins, battlegrounds and total influence of each side). Filled only at the decider's card decisions (`card_effects::is_card_decision`: SELECT_CARD outside an event, SELECT_PLAY_MODE) and only for the cards in their hand; zero elsewhere |
+
+**`CARD_EFFECTS`** (`include/ts/card_effects.hpp`, `src/card_effects.cpp`) is a port of the P30 C2
+labeller `ai/training/card_event_targets.py`, which stays the reference:
+`tests/bindings/test_card_effects.py` holds the two equal on the same state and dice seeds. The
+block is that labeller run on `card_effects::redeal(state, decider)`, which shuffles the opponent's
+unrevealed hand with the draw deck (counts kept, an unrevealed opponent headline forgotten), so it
+never depends on cards the decider cannot see. Event outcomes average `N_BLOCK_SEEDS` = 4 dice
+seeds, all derived from `rng_state`, so the block is a pure function of the state. An event that
+stops for choices is played out greedily (each chooser maximises a fixed board score) for at most
+60 steps. Columns 1..17 are divided by `card_effects::SCALE`, the standard deviations of
+`card_event_targets.AUX_SCALE`. Cost: ~230 µs per card decision on one core (event playouts ~75%;
+each greedy candidate pays `StateMachine::step`'s mask validation and a six-region summary), about
+a quarter of all decisions; the batch runner drops from ~620k to ~46k steps/s on 6 threads.
+`Observation::active_card(state, card)` is the ACTIVE_CARD slot without the rest of the
+observation; `extract` writes exactly it.
 
 ---
 
