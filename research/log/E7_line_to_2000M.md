@@ -193,3 +193,54 @@ the soup and E7-02-44@1000M, 1,000 games per side (per side ± 1.5, both ± 1.1)
   windows) and creeps against the soup at about +1 point per 400M** (the five windows of 2,000–2,400M
   average 50.2%, those of 2,400–2,800M 51.1%), reaching 53.0% in the last window.
 * The league starts from 2,800M (E7-21-44 + E7-22-44, [`../runs.md`](../runs.md)).
+
+## 2,800 → 4,800M: the plain line past the league point, to a plateau (2026-10-05)
+
+The 2,800M call above was premature. E7-20-44 continued as the league's control to 3,600M
+([`E7_league_from_2800M.md`](E7_league_from_2800M.md)) and then, at the owner's request, unchanged
+to 4,800M (`E7-20-44_20261005_174535`; from 3,600M the per-entity head adds the trunk context once
+per sample, the same function to float64 rounding, commit `0280264`). Same 80M-window SWAs, 1,000
+games per side (± 1.1 per window), `data/reports/swa_line_ctl/`:
+
+| SWA of | E7-02-44@1000M (US / USSR) | soup (US / USSR) |
+|:---|---:|---:|
+| 3600–3680M | 71.2 (76.6 / 65.9) | 55.0 (54.3 / 55.8) |
+| 3680–3760M | 69.0 (69.9 / 68.2) | 54.4 (55.9 / 52.9) |
+| 3760–3840M | 72.0 (74.8 / 69.3) | 54.9 (59.8 / 50.0) |
+| 3840–3920M | 72.4 (75.3 / 69.6) | 55.8 (56.9 / 54.6) |
+| 3920–4000M | 70.8 (76.1 / 65.5) | 56.1 (57.8 / 54.5) |
+| 4000–4080M | 73.8 (77.5 / 70.0) | 58.1 (60.0 / 56.2) |
+| 4080–4160M | 71.1 (70.5 / 71.7) | 58.8 (60.6 / 57.0) |
+| 4160–4240M | 71.0 (72.6 / 69.5) | 56.0 (56.5 / 55.5) |
+| 4240–4320M | 70.8 (73.3 / 68.3) | 57.6 (61.0 / 54.2) |
+| 4320–4400M | 70.3 (71.7 / 69.0) | 54.2 (56.2 / 52.1) |
+| 4400–4480M | 69.2 (71.3 / 67.0) | 55.1 (57.6 / 52.7) |
+| 4480–4560M | 71.2 (75.4 / 67.0) | 55.5 (56.6 / 54.5) |
+| 4560–4640M | 70.8 (71.8 / 69.9) | 55.2 (55.7 / 54.6) |
+| 4640–4720M | 73.2 (74.0 / 72.5) | 56.7 (56.7 / 56.8) |
+| 4720–4800M | 71.2 (74.4 / 68.0) | 55.6 (55.1 / 56.0) |
+
+**400M-block means** (± ~0.5 each) over the whole line:
+
+| block | vs E7-02-44@1000M | vs soup |
+|:---|---:|---:|
+| 2,000–2,400M | 63.4 | 50.2 |
+| 2,400–2,800M | 64.2 | 51.1 |
+| 2,800–3,200M | 66.9 | 52.3 |
+| 3,200–3,600M | 68.7 | 54.6 |
+| 3,600–4,000M | 71.1 | 55.2 |
+| 4,000–4,400M | 71.4 | 56.9 |
+| 4,400–4,800M | 71.1 | 55.6 |
+
+**Head to head, the last window's SWA (4,720–4,800M)** against earlier ones of this leg, 1,000 games
+per side (± 1.1): 51.8% vs 3,600–3,680M, 49.6% vs 3,920–4,000M, 49.2% vs 4,320–4,400M.
+
+* **The line has plateaued since about 3,700M.** Three consecutive 400M blocks are level against
+  E7-02-44@1000M (71.1, 71.4, 71.1) and against the soup (55.2, 56.9, 55.6, i.e. no trend), and head
+  to head the 4,800M SWA is level with the 4,000M and 4,400M ones and barely above 3,600M.
+* **Before that it rose ~2 points per 400M from 2,400M to 3,800M**, in steps: the 1,900–2,800M band
+  that triggered the premature call was one of them. A plateau of 1,200M (three blocks) is the
+  longest the line has held; it is the first evidence of saturation that a single step could not
+  explain, but the line has resumed after a flat stretch once before.
+* The best checkpoints of the pure line are now its 4,000–4,800M SWAs (~71% against E7-02-44@1000M,
+  ~56% against the 1,200M soup).
