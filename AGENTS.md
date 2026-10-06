@@ -394,11 +394,14 @@ The workbench serves three purposes, all in the page:
   side's P(victory) and expected VP, the side to move -- the only reading the value head is
   trained on -- highlighted and the other dimmed; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
   *Auto-play* (none / USSR / US) makes that side play by itself.
-* **Search as a diagnostic** -- *⌕ Search 64* answers "what would a search do here?" with a
-  64-simulation determinized search over the model's own prior and value, and *by search-64*
-  beside *Auto-play* makes that side play by search, so a person can play against it. Search is
-  kept as a teacher and a probe opponent here, not the product: the product is the no-search
-  network.
+* **Search as a diagnostic** -- *⌕ Gumbel 64* answers "what would a search do here, and how much
+  better is it?" with a determinized Gumbel root over the model's 8 most probable moves (64
+  simulations by sequential halving, first-play urgency 0.2 -- `gumbel_k=8` in the CLI's terms),
+  and *by gumbel-64* beside *Auto-play* makes that side play by search, so a person can play
+  against it. Search is kept as a teacher and a probe opponent here, not the product: the product
+  is the no-search network. `tools/gumbel_leaks.py` (CI: `gumbel_leaks.yml`) finds where the
+  network's move differs from a Gumbel root's, prices each difference by paired playouts and
+  links the largest leaks into the page at their positions.
 
 The address bar always carries `pos` (the position itself), `model` and `auto`, updated with
 `replaceState`, so copying it shares the exact board. The engine badge shows the page engine's

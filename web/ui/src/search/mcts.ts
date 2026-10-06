@@ -52,17 +52,43 @@ export interface SearchConfig {
   /** PUCT exploration constant (PIMCTSConfig.c_puct). */
   cPuct: number;
   seed: number;
+  /**
+   * First-play urgency (BatchedMCTSConfig.fpu_reduction): an unvisited move is valued at its
+   * node's value less this, from the mover's side. 0 (absent) is the original rule.
+   */
+  fpuReduction?: number;
+  /**
+   * Choose the move by a noise-free Gumbel root over this many candidates (gumbel_root.py,
+   * BatchedMCTSConfig.gumbel_k with gumbel_scale 0); 0 (absent) is the PUCT root above.
+   */
+  gumbelK?: number;
 }
 
 /** What `search:<model.onnx>:64:determinize` plays. */
 export const SEARCH_64: SearchConfig = { simulations: 64, determinize: true, cPuct: 1.5, seed: 12345 };
 
+/**
+ * What `search:<model>:64:determinize:all:gumbel_k=8:gumbel_scale=0:fpu_reduction=0.2` plays: a
+ * Gumbel root over the network's 8 most probable moves, 64 simulations by sequential halving.
+ * The workbench's search.
+ */
+export const GUMBEL_64: SearchConfig = {
+  simulations: 64, determinize: true, cPuct: 1.5, seed: 12345, fpuReduction: 0.2, gumbelK: 8,
+};
+
 export interface SearchRow {
   idx: number;
+  /** Root visits (PUCT), or the simulations spent on this candidate (Gumbel). */
   visits: number;
   /** Mean backed-up value, US perspective; NaN before a first visit. */
   qUs: number;
   prior: number;
+  /** Gumbel only: one of the root's k candidates. */
+  candidate?: boolean;
+  /** Gumbel only: the halving phase that eliminated it (0-based); null for the move played. */
+  droppedInPhase?: number | null;
+  /** Gumbel only: sigma(completed Q) at its last ranking. */
+  sigma?: number;
 }
 
 export interface SearchResult {
@@ -85,6 +111,12 @@ export interface SearchResult {
   worldMismatch: boolean;
   /** No search signal at all (terminal root, or a single legal action): the greedy policy played. */
   fellBack: boolean;
+  /** Which root chose: the PUCT tree's visits, or a Gumbel root's sequential halving. */
+  root?: "puct" | "gumbel";
+  /** Gumbel only: the network's value at the real position, from the mover's side. */
+  valueMover?: number;
+  /** Gumbel only: +1 if the US decides, -1 the USSR. */
+  mover?: number;
 }
 
 /** CardLocation (engine/include/ts/types.hpp) as the save JSON carries it: an int per card id. */
@@ -168,6 +200,7 @@ export class PageSearcher {
    * runs (the page refuses clicks for the duration).
    */
   async search(): Promise<SearchResult> {
+    if ((this.config.gumbelK ?? 0) > 0) return this.gumbelSearch();
     const t0 = Date.now();
     const engine = this.engine;
     const real = engine.snapshot();
@@ -214,11 +247,135 @@ export class PageSearcher {
       }
       return {
         action: picked, rows, simulations: this.config.simulations, worlds: this.config.determinize ? 1 : 0,
-        ms: Date.now() - t0, worldMismatch, fellBack: false,
+        ms: Date.now() - t0, worldMismatch, fellBack: false, root: "puct",
       };
     } finally {
       engine.restore(real);
     }
+  }
+
+  // ---- the Gumbel root (ai/search/gumbel_root.py) -----------------------------------------------
+
+  /**
+   * GumbelRoot.choose for one position, noise-free (gumbel_scale 0):
+   *
+   * 1. Candidates: the k legal moves with the largest logits, from the network on the REAL state.
+   * 2. Sequential halving over ceil(log2 k) phases. Each phase samples one world from the mover's
+   *    side; in it every surviving candidate is played and the position it leads to is searched
+   *    afresh by the PUCT tree above, undeterminized, with an equal share of the budget
+   *    (floor(simulations / (phases x survivors)), at least 1). Its value is the searched root's
+   *    (value + sum of backups) / (1 + visits), from the mover's side, pooled across phases
+   *    weighted by the share. The better half by logit + sigma(completed Q) survives; the last
+   *    phase keeps one, which is played.
+   *
+   * Candidates in one phase share the world's die rolls (the Python steps every candidate from
+   * the same rng_state); the searches below them reseed per edge as the PUCT tree always does.
+   * The page's deviation from the CLI searcher (children settle die rolls only) applies here too.
+   */
+  private async gumbelSearch(): Promise<SearchResult> {
+    const t0 = Date.now();
+    const engine = this.engine;
+    const real = engine.snapshot();
+    const empty: SearchResult = {
+      action: null, rows: [], simulations: 0, worlds: 0, ms: 0, worldMismatch: false, fellBack: true, root: "gumbel",
+    };
+    try {
+      engine.restore(real);
+      if (engine.isTerminal()) return empty;
+      const realMask = engine.mask(this.merged);
+      const legal: number[] = [];
+      for (let i = 0; i < realMask.length; i++) if (realMask[i]) legal.push(i);
+      if (legal.length === 0) return empty;
+      const mover = this.actingPlayer();
+      const out = await this.model.run(engine.observation(mover), realMask, 1);
+      const logits = new Map<number, number>();
+      for (const a of legal) logits.set(a, out.logits[a]);
+      const valueMover = out.vWin[0];
+      const prior = softmaxOver(legal, logits);
+
+      // Stable sort: equal logits keep the engine's order, as Python's sorted() does.
+      let alive = legal.slice().sort((a, b) => logits.get(b)! - logits.get(a)!)
+        .slice(0, Math.max(1, this.config.gumbelK ?? 1));
+      const candidates = new Set(alive);
+      const n = new Map<number, number>(legal.map(a => [a, 0]));
+      const w = new Map<number, number>(legal.map(a => [a, 0]));
+      const dropped = new Map<number, number>();
+      let lastSigma = new Map<number, number>();
+      const phases = alive.length > 1 ? Math.max(1, Math.ceil(Math.log2(alive.length))) : 0;
+      let spent = 0;
+
+      for (let ph = 0; ph < phases; ph++) {
+        const world = this.config.determinize ? this.sampleWorld(real) : this.reseeded(real);
+        const per = Math.max(1, Math.floor(this.config.simulations / (phases * alive.length)));
+        for (const a of alive) {
+          engine.restore(world);
+          if (!engine.mask(this.merged)[a]) continue;     // illegal in this world (Cambridge Five)
+          const refused = this.stepFlat(a);
+          if (refused) throw new Error(`search stepped an illegal action (${a}): ${refused}`);
+          this.drainChance();
+          const vUs = await this.subSearch(engine.snapshot(), per);
+          n.set(a, n.get(a)! + per);
+          w.set(a, w.get(a)! + (mover === PLAYER_US ? vUs : -vUs) * per);
+          spent += per;
+        }
+        const q = new Map<number, number>();
+        for (const a of legal) if (n.get(a)! > 0) q.set(a, w.get(a)! / n.get(a)!);
+        const sig = sigmaCompleted(legal, logits, valueMover, n, q);
+        const ranked = alive.slice().sort((a, b) => (logits.get(b)! + sig.get(b)!) - (logits.get(a)! + sig.get(a)!));
+        alive = ph === phases - 1 ? ranked.slice(0, 1) : ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 2)));
+        for (const a of ranked.slice(alive.length)) dropped.set(a, ph);
+        lastSigma = sig;
+      }
+
+      const picked = alive[0];
+      const rows: SearchRow[] = legal.map(a => {
+        const na = n.get(a)!;
+        const qMover = na > 0 ? w.get(a)! / na : NaN;
+        return {
+          idx: a, visits: na, qUs: mover === PLAYER_US ? qMover : -qMover, prior: prior.get(a)!,
+          candidate: candidates.has(a), droppedInPhase: candidates.has(a) ? (dropped.get(a) ?? null) : undefined,
+          sigma: lastSigma.get(a),
+        };
+      });
+      // The played move first, then by how far each candidate got, then its prior.
+      const reach = (r: SearchRow) => !r.candidate ? -2 : r.droppedInPhase === null ? phases : (r.droppedInPhase ?? -1);
+      rows.sort((x, y) => reach(y) - reach(x) || y.prior - x.prior);
+      return {
+        action: picked, rows, simulations: spent, worlds: phases, ms: Date.now() - t0,
+        worldMismatch: false, fellBack: phases === 0, root: "gumbel", valueMover, mover,
+      };
+    } finally {
+      engine.restore(real);
+    }
+  }
+
+  /**
+   * An ordinary PUCT search of `state` with `sims` simulations, undeterminized (the Gumbel root
+   * already sampled the world): its root's (value + sum of backups) / (1 + visits), US side.
+   */
+  private async subSearch(state: Uint8Array, sims: number): Promise<number> {
+    const root = this.makeNode(state);
+    if (root.terminal || root.actions.length === 0) return root.valueUs;
+    await this.expand(root);
+    for (let s = 0; s < sims; s++) {
+      const { path, leaf } = this.descend(root);
+      if (!leaf.terminal && !leaf.expanded) await this.expand(leaf);
+      this.backup(path, leaf.valueUs);
+    }
+    let nSum = 0;
+    let wSum = 0;
+    for (let i = 0; i < root.n.length; i++) {
+      nSum += root.n[i];
+      wSum += root.w[i];
+    }
+    return (root.valueUs + wSum) / (1 + nSum);
+  }
+
+  /** The real state with a fresh rng_state: the undeterminized root still rolls new dice. */
+  private reseeded(real: Uint8Array): Uint8Array {
+    this.engine.restore(real);
+    this.reseedRng();
+    return this.engine.snapshot();
   }
 
   // ---- the world ------------------------------------------------------------------------------
@@ -329,6 +486,7 @@ export class PageSearcher {
     for (const x of node.n) total += x;
     const sqrtTotal = Math.sqrt(total > 1 ? total : 1);
     const c = this.config.cPuct;
+    const fpu = this.config.fpuReduction ?? 0;
     const usMoves = node.mover === PLAYER_US;
     let bestI = 0;
     let bestV = -Infinity;
@@ -336,6 +494,7 @@ export class PageSearcher {
       const ni = node.n[i];
       let q = ni > 0 ? node.w[i] / ni : node.valueUs;
       if (!usMoves) q = -q;
+      if (ni === 0) q -= fpu;
       const v = q + c * node.priors[i] * sqrtTotal / (1 + ni);
       if (v > bestV) {
         bestV = v;
@@ -461,4 +620,69 @@ export class PageSearcher {
     for (const i of legal) if (out.logits[i] > out.logits[best]) best = i;
     return best;
   }
+}
+
+// ---- sigma(completed Q) (gumbel_root.py `sigma_completed`, mctx's completed-by-mix-value) ------
+
+/** mctx's constants: sigma = (c_visit + max visits) x c_scale x rescaled completed Q. */
+export const C_VISIT = 50;
+export const C_SCALE = 0.1;
+
+/** Softmax of the logits over `legal`. */
+export function softmaxOver(legal: number[], logits: Map<number, number>): Map<number, number> {
+  let mx = -Infinity;
+  for (const a of legal) mx = Math.max(mx, logits.get(a)!);
+  const z = new Map<number, number>();
+  let sum = 0;
+  for (const a of legal) {
+    const e = Math.exp(logits.get(a)! - mx);
+    z.set(a, e);
+    sum += e;
+  }
+  for (const a of legal) z.set(a, z.get(a)! / sum);
+  return z;
+}
+
+/**
+ * sigma(completed Q) per legal move: unvisited moves take the mixed value (the network's value
+ * blended with the prior-weighted mean Q of the visited moves, by total visits), completed Q is
+ * rescaled to [0, 1] over the legal moves, then scaled by (c_visit + max visits) x c_scale.
+ * Values are from the mover's side. The same arithmetic as the Python, line for line.
+ */
+export function sigmaCompleted(
+  legal: number[], logits: Map<number, number>, valueMover: number,
+  n: Map<number, number>, q: Map<number, number>,
+): Map<number, number> {
+  const prior = softmaxOver(legal, logits);
+  let total = 0;
+  for (const a of legal) total += n.get(a) ?? 0;
+  const visited = legal.filter(a => (n.get(a) ?? 0) > 0);
+  let vMix = valueMover;
+  if (visited.length > 0) {
+    let pz = 0;
+    for (const a of visited) pz += prior.get(a)!;
+    let meanQ = 0;
+    if (pz > 0) {
+      for (const a of visited) meanQ += prior.get(a)! * q.get(a)!;
+      meanQ /= pz;
+    } else {
+      for (const a of visited) meanQ += q.get(a)!;
+      meanQ /= visited.length;
+    }
+    vMix = (valueMover + total * meanQ) / (1 + total);
+  }
+  const cq = new Map<number, number>();
+  for (const a of legal) cq.set(a, (n.get(a) ?? 0) > 0 ? q.get(a)! : vMix);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const a of legal) {
+    lo = Math.min(lo, cq.get(a)!);
+    hi = Math.max(hi, cq.get(a)!);
+  }
+  const scale = hi - lo > 1e-8 ? hi - lo : 1;
+  let maxN = 0;
+  for (const a of legal) maxN = Math.max(maxN, n.get(a) ?? 0);
+  const out = new Map<number, number>();
+  for (const a of legal) out.set(a, (C_VISIT + maxN) * C_SCALE * (cq.get(a)! - lo) / scale);
+  return out;
 }

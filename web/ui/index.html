@@ -155,14 +155,14 @@
                 <option value="US">US</option>
               </select>
             </label>
-            <label class="analysis-search-by" title="What auto-play plays: the model's favourite, or a 64-simulation determinized search -- a diagnostic opponent to play against">
+            <label class="analysis-search-by" title="What auto-play plays: the model's favourite, or a Gumbel search (64 simulations over the 8 most probable moves) -- a diagnostic opponent to play against">
               by
               <select id="analysis-search-select" class="analysis-select">
                 <option value="model">model</option>
-                <option value="search64">search-64</option>
+                <option value="gumbel64">gumbel-64</option>
               </select>
             </label>
-            <button id="btn-search-move" class="btn btn-secondary btn-sm" title="Run a 64-simulation determinized search on the open decision (a diagnostic: search is a teacher, not the product)" disabled>⌕ Search 64</button>
+            <button id="btn-search-move" class="btn btn-secondary btn-sm" title="Run a Gumbel search on the open decision: 64 simulations over the model's 8 most probable moves, by sequential halving (a diagnostic: search is a teacher, not the product)" disabled>⌕ Gumbel 64</button>
           </div>
           <div id="analysis-body" class="trace-body"></div>
         </div>

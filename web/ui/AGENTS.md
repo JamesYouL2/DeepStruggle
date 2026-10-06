@@ -22,8 +22,8 @@ web/ui/
 │   │                           # names.ts (flat action names), position.ts (link tokens)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
 │   │                           # readout.ts (policy + critic for the position on screen)
-│   ├── search/                 # mcts.ts: determinized MCTS on the open decision, kept as a
-│   │                           # diagnostic and a teacher -- never the product
+│   ├── search/                 # mcts.ts: determinized search on the open decision (a Gumbel
+│   │                           # root over PUCT trees), a diagnostic and a teacher -- never the product
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
 │   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
@@ -146,22 +146,31 @@ web/ui/
      favourite is marked ★ (the replay's played move stays ◀).
    - *★ Play favourite* / key `F` / clicking a row in the panel plays a flat action in the model's
      own action view. **Auto-play** (none / USSR / US, `auto=` in the URL): whenever the chosen
-     side is to move, `maybeAutoPlay()` plays the model's favourite -- or, chosen beside it, a
-     64-simulation search -- after `AUTO_PLAY_DELAY_MS`,
+     side is to move, `maybeAutoPlay()` plays the model's favourite -- or, chosen beside it, the
+     Gumbel search (`GUMBEL_64`) -- after `AUTO_PLAY_DELAY_MS`,
      with the engine's own die, and drops the move if the position changed meanwhile. With
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
-   - **`search/mcts.ts` — a search, as a diagnostic.** *⌕ Search 64* and the *by model |
-     search-64* choice beside Auto-play run determinized MCTS on the open decision: the port of
-     `ai/search/batched_mcts.py` (PUCT and the visit tie-break) plus `ai/search/dmcts.py`'s
-     determinization, which reshuffles the unseen cards through the save JSON (no C++ change).
-     Search is a teacher and a probe opponent here, never the product. Two documented
-     deviations from the CLI searcher: children settle die rolls only, not
-     `Engine::auto_advance_step`, and one sampled world per search. The search borrows the
-     engine singleton and the page refuses moves until it hands it back (`searchRunning` in
-     `main.ts`); its verdict renders as visit counts over the root's moves, marked where it
-     disagrees with the net's favourite. `tests/web/test_page_search.py` pins the tie-break,
-     the determinization and the restore.
+   - **`search/mcts.ts` — a search, as a diagnostic.** *⌕ Gumbel 64* and the *by model |
+     gumbel-64* choice beside Auto-play run `GUMBEL_64`: what
+     `search:<model>:64:determinize:all:gumbel_k=8:gumbel_scale=0:fpu_reduction=0.2` plays. A
+     noise-free Gumbel root (the port of `ai/search/gumbel_root.py`) takes the model's 8 most
+     probable moves and halves them over three rounds (8 -> 4 -> 2 -> 1); each round samples one
+     world from the mover's side and searches every survivor's position afresh with the PUCT tree
+     (the port of `ai/search/batched_mcts.py`, first-play urgency 0.2), ranking by logit +
+     sigma(completed Q) as mctx does. The PUCT root alone (`SEARCH_64`) is still exported. The
+     determinization reshuffles the unseen cards through the save JSON (no C++ change). Search is
+     a teacher and a probe opponent here, never the product. Two documented deviations from the
+     CLI searcher: children settle die rolls only, not `Engine::auto_advance_step`, and one
+     sampled world per search (per halving round for Gumbel). The search borrows the engine
+     singleton and the page refuses moves until it hands it back (`searchRunning` in `main.ts`);
+     its verdict lists the candidates in the order they survived, each with its mean value for
+     the mover and its distance from the net's favourite in win probability -- the search's own
+     estimate of how big a leak the decision is. `tools/gumbel_leaks.py` prices leaks properly
+     (paired playouts) and its report links each one here (`?pos=`).
+     `tests/web/test_page_search.py` pins the PUCT tie-break, the determinization and the
+     restore; `tests/web/test_page_gumbel.py` pins sigma against the Python's numbers, the
+     candidates, the halving and its budget, and first-play urgency.
    - **The address bar is the share link.** `syncUrl()` writes `pos` (the engine's save JSON,
      zlib, base64url -- `game/position.ts`, interchangeable with Python's zlib), `model`
      (`local:` / `hf:` source, or `off`; a dropped file has no address) and `auto`, with

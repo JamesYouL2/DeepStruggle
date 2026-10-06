@@ -48,22 +48,38 @@ export interface LiveAnalysis {
 /** Which side auto-play moves for; "" is off. */
 export type AutoSide = "" | "US" | "USSR";
 
-/** How auto-play picks its move: the model's favourite, or a 64-simulation search. */
-export type AutoBy = "model" | "search64";
+/** How auto-play picks its move: the model's favourite, or the Gumbel search (GUMBEL_64). */
+export type AutoBy = "model" | "gumbel64";
 
 /**
- * What the panel shows after a search (search/mcts.ts): the root's moves by visit count. A
- * diagnostic -- search is a teacher and an opponent to probe, never the product.
+ * What the panel shows after a search (search/mcts.ts). A diagnostic -- search is a teacher and
+ * an opponent to probe, never the product. For a Gumbel root the rows are its candidates in the
+ * order they survived the halving, with the simulations each got and its mean value.
  */
 export interface SearchDisplay {
-  rows: Array<{ idx: number; name: string; visits: number; qUs: number; prior: number }>;
+  rows: Array<{
+    idx: number; name: string; visits: number; qUs: number; prior: number;
+    candidate?: boolean; droppedInPhase?: number | null; sigma?: number;
+  }>;
   action: number | null;
   ms: number;
+  /** Worlds sampled: 1 for PUCT, one per halving phase for Gumbel. */
   worlds: number;
+  /** Simulations actually spent. */
   simulations: number;
   worldMismatch: boolean;
+  /** Nothing was searched (a single legal move). */
+  fellBack: boolean;
   /** The model's own argmax here, to say where search and the net disagree. */
   favouriteIdx: number | null;
+  root: "puct" | "gumbel";
+  /** +1 the US decides, -1 the USSR (Gumbel). */
+  mover: number;
+  /** The network's value at this position from the mover's side (Gumbel). */
+  valueMover: number;
+  /** The configured budget and candidates (Gumbel). */
+  budget: number;
+  k: number;
 }
 
 /** A model the user picked: where from, and for a dropped file, its bytes. */
@@ -158,7 +174,7 @@ export class AnalysisPanel {
       this.onAutoSideChange(this.auto);
     });
     this.searchSelect.addEventListener("change", () => {
-      this.autoBy = this.searchSelect.value === "search64" ? "search64" : "model";
+      this.autoBy = this.searchSelect.value === "gumbel64" ? "gumbel64" : "model";
       this.onAutoSideChange(this.auto);
       this.renderBody();
     });
@@ -294,7 +310,7 @@ export class AnalysisPanel {
     return this.auto;
   }
 
-  /** What auto-play plays: the model's favourite, or a 64-simulation search. */
+  /** What auto-play plays: the model's favourite, or the Gumbel search. */
   public get autoByWhat(): AutoBy {
     return this.autoBy;
   }
@@ -457,7 +473,7 @@ export class AnalysisPanel {
     this.favButton.disabled = this.favourite() === null;
     this.searchButton.disabled = this.searchRunning || !a?.policy;
     this.searchButton.title = a?.policy
-      ? "Run a 64-simulation determinized search on the open decision (a diagnostic: search is a teacher, not the product)"
+      ? "Run a Gumbel search on the open decision: 64 simulations over the model's 8 most probable moves, by sequential halving (a diagnostic: search is a teacher, not the product)"
       : "No decision to search";
     const fav = a?.choices.find(c => c.idx === a.policy?.argmax_idx);
     this.favButton.title = fav ? `Play the model's most likely move: ${fav.name ?? "#" + fav.idx} (F)` : "No decision to make";
@@ -524,15 +540,19 @@ export class AnalysisPanel {
   }
 
   /**
-   * The search block: what 64 simulations do here, and how that differs from the raw net. Rows
-   * are clickable like a choice's, so the searched move can be played straight from the list.
+   * The search block: what the search does here, and how far that is from the raw net. Rows are
+   * clickable like a choice's, so a searched move can be played straight from the list. For the
+   * Gumbel root (the workbench's search) the rows are its candidates, in the order they survived
+   * the halving, with each one's mean value from the mover's side and its distance from the
+   * net's favourite in win probability -- how big a leak this decision is, by the search's own
+   * estimate.
    */
   private searchHtml(): string {
     const d = this.searchInfo;
     const out: string[] = [];
-    out.push(`<div class="trace-section-label">SEARCH-64 <span class="analysis-info-dim">determinized MCTS · diagnostic</span></div>`);
+    out.push(`<div class="trace-section-label">GUMBEL-64 <span class="analysis-info-dim">k = 8 · determinized · diagnostic</span></div>`);
     if (this.searchRunning) {
-      out.push(`<div class="trace-empty">searching… 64 simulations on a sampled world (about a second)</div>`);
+      out.push(`<div class="trace-empty">searching… 64 simulations over the 8 most probable moves, one sampled world per halving phase (a few seconds)</div>`);
       return out.join("");
     }
     if (this.searchError) {
@@ -540,13 +560,14 @@ export class AnalysisPanel {
       return out.join("");
     }
     if (!d) {
-      out.push(`<div class="trace-note trace-hint">Press Search 64 to see what the move would be with 64 simulations behind it — and where search disagrees with the network.</div>`);
+      out.push(`<div class="trace-note trace-hint">Press Gumbel 64 to see what the move would be with search behind it — and, where search disagrees with the network, by how much.</div>`);
       return out.join("");
     }
     if (d.action === null) {
       out.push(`<div class="trace-empty">Nothing to search here.</div>`);
       return out.join("");
     }
+    if (d.root === "gumbel") return out.join("") + this.gumbelHtml(d);
     const disagree = d.favouriteIdx !== null && d.action !== d.favouriteIdx;
     const favName = this.lastAnalysis?.choices.find(c => c.idx === d.favouriteIdx)?.name ?? `#${d.favouriteIdx}`;
     if (disagree) {
@@ -568,6 +589,47 @@ export class AnalysisPanel {
     });
     out.push(`<div class="analysis-choices">${rows.join("")}</div>`);
     out.push(`<div class="trace-note trace-hint">${d.simulations} simulations on ${d.worlds} sampled world${d.worlds === 1 ? "" : "s"} · ${d.ms} ms</div>`);
+    return out.join("");
+  }
+
+  /**
+   * A Gumbel root's verdict. Values are the mover's (q in [-1, 1]); a gap of Δq between two moves
+   * is Δq / 2 in win probability. The search's own estimate from a few dozen simulations is
+   * noisy -- the leak probe (tools/gumbel_leaks.py) prices departures by paired playouts instead.
+   */
+  private gumbelHtml(d: SearchDisplay): string {
+    const out: string[] = [];
+    const side = d.mover > 0 ? "US" : "USSR";
+    const qMover = (r: SearchDisplay["rows"][number]) => (d.mover > 0 ? r.qUs : -r.qUs);
+    const fav = d.rows.find(r => r.idx === d.favouriteIdx);
+    const pick = d.rows.find(r => r.idx === d.action);
+    const pp = (dq: number) => `${dq >= 0 ? "+" : "−"}${Math.abs(50 * dq).toFixed(1)} pp`;
+    if (fav && pick && d.action !== d.favouriteIdx) {
+      const gap = qMover(pick) - qMover(fav);
+      const est = Number.isFinite(gap) ? ` — search's estimate <b>${pp(gap)}</b> win probability for the ${side}` : "";
+      out.push(`<div class="analysis-search-note">⚑ disagrees with the model: search plays <b>${esc(pick.name)}</b>, the net favours ${esc(fav.name)} (p ${fmtP(fav.prior)})${est}</div>`);
+    } else if (d.fellBack) {
+      out.push(`<div class="analysis-search-note">one legal move: nothing to search</div>`);
+    } else {
+      out.push(`<div class="analysis-search-note">agrees with the model's favourite</div>`);
+    }
+    const favQ = fav ? qMover(fav) : NaN;
+    const rows = d.rows.filter(r => r.candidate).map(r => {
+      const isPick = r.idx === d.action;
+      const q = qMover(r);
+      const qs = Number.isFinite(q) ? `${q >= 0 ? "+" : "−"}${Math.abs(q).toFixed(2)}` : "—";
+      const vs = r.idx !== d.favouriteIdx && Number.isFinite(q) && Number.isFinite(favQ) ? ` · ${pp(q - favQ)}` : "";
+      const fate = r.droppedInPhase === null ? "played" : `out in round ${(r.droppedInPhase ?? 0) + 1}`;
+      const isFav = r.idx === d.favouriteIdx ? " (net's favourite)" : "";
+      return `
+        <div class="analysis-choice${isPick ? " favourite" : ""}" data-flat-idx="${r.idx}" title="Click to play this move. ${r.visits} simulations; mean value ${qs} for the ${side}; ${fate}${isFav}">
+          <span class="analysis-choice-name">${isPick ? "★ " : ""}${esc(r.name)}${r.idx === d.favouriteIdx ? " ◆" : ""}</span>
+          <span class="analysis-choice-p">q ${qs}${vs} · ${r.visits} sims · p ${fmtP(r.prior)} · ${fate}</span>
+        </div>`;
+    });
+    out.push(`<div class="analysis-choices">${rows.join("")}</div>`);
+    const v = Number.isFinite(d.valueMover) ? ` · net value ${d.valueMover >= 0 ? "+" : "−"}${Math.abs(d.valueMover).toFixed(2)} for the ${side}` : "";
+    out.push(`<div class="trace-note trace-hint">q is the ${side}'s mean value (−1 loss … +1 win); ◆ the net's favourite. ${d.simulations} simulations over ${d.worlds} halving round${d.worlds === 1 ? "" : "s"}, a sampled world each${v} · ${d.ms} ms</div>`);
     return out.join("");
   }
 

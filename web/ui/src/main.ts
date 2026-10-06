@@ -21,7 +21,7 @@ import { GameSession } from "./game/session";
 import { decodePosition, encodePosition } from "./game/position";
 import { Model, sourceFromParam, sourceToParam } from "./analysis/model";
 import { analyze } from "./analysis/readout";
-import { PageSearcher, SEARCH_64, SearchResult } from "./search/mcts";
+import { PageSearcher, GUMBEL_64, SearchResult } from "./search/mcts";
 import { actionName } from "./game/names";
 
 /** Pause before an auto-played move, long enough to see each one land. */
@@ -267,9 +267,10 @@ export class TSApp {
   }
 
   /**
-   * The 64-simulation diagnostic search on the open decision (search/mcts.ts). The engine is
-   * borrowed for its duration (searchRunning), and a result for a position the board has since
-   * left is dropped. Returns what it picked, for auto-play to act on.
+   * The diagnostic search on the open decision (search/mcts.ts): a Gumbel root, 64 simulations
+   * over the model's 8 most probable moves (GUMBEL_64). The engine is borrowed for its duration
+   * (searchRunning), and a result for a position the board has since left is dropped. Returns
+   * what it picked, for auto-play to act on.
    */
   private async runSearchNow(version: number): Promise<SearchResult | null> {
     if (this.searchRunning || !this.engine || !this.model || this.isReplayMode) return null;
@@ -277,15 +278,18 @@ export class TSApp {
     this.searchRunning = true;
     this.analysisPanel.setSearchRunning(true);
     try {
-      const searcher = new PageSearcher(this.engine, this.model, this.model.meta.mergedInfluence, SEARCH_64);
+      const searcher = new PageSearcher(this.engine, this.model, this.model.meta.mergedInfluence, GUMBEL_64);
       const res = await searcher.search();
       if (version !== this.version) return null;
       this.analysisPanel.setSearchResult({
         rows: res.rows.map(r => ({
           idx: r.idx, name: actionName(this.engine!, r.idx), visits: r.visits, qUs: r.qUs, prior: r.prior,
+          candidate: r.candidate, droppedInPhase: r.droppedInPhase, sigma: r.sigma,
         })),
         action: res.action, ms: res.ms, worlds: res.worlds, simulations: res.simulations,
-        worldMismatch: res.worldMismatch, favouriteIdx: this.analysisPanel.favourite(),
+        worldMismatch: res.worldMismatch, fellBack: res.fellBack, favouriteIdx: this.analysisPanel.favourite(),
+        root: res.root ?? "puct", mover: res.mover ?? 0, valueMover: res.valueMover ?? NaN,
+        budget: GUMBEL_64.simulations, k: GUMBEL_64.gumbelK ?? 0,
       });
       return res;
     } catch (e) {
@@ -720,7 +724,7 @@ export class TSApp {
   /**
    * Auto-play: when the side to move is the auto-play side, play its move after a short pause
    * (so a person can follow the moves). The move is the model's favourite, or -- set beside the
-   * selector -- a 64-simulation search, which makes the page a way to play AGAINST search (a
+   * selector -- the Gumbel search (GUMBEL_64), which makes the page a way to play AGAINST search (a
    * diagnostic opponent). Re-armed on every readout; a pending move is dropped if the position
    * changes before it fires.
    */
@@ -731,7 +735,7 @@ export class TSApp {
     }
     if (this.isReplayMode) return;
     const version = this.version;
-    if (this.analysisPanel.autoByWhat === "search64") {
+    if (this.analysisPanel.autoByWhat === "gumbel64") {
       const side = this.analysisPanel.autoSide;
       const decider = this.engine ? (this.engine.decisionPlayer() > 0 ? "US" : this.engine.decisionPlayer() < 0 ? "USSR" : "") : "";
       if (!side || decider !== side || !this.model) return;
