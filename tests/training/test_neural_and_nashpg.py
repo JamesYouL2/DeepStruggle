@@ -228,7 +228,9 @@ class TestVectorizedEnvironment:
             legal = [i for i, val in enumerate(m) if val == 1]
             actions.append(legal[0] if legal else 211)
 
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step(actions)
+        st = env.runner.get_state(0)
         assert bool(dones[0]) is True
         # info['victory_points'][0] must preserve the terminal VP (+20 for US win on USSR DEFCON suicide)
         # instead of 0 from the post-reset new game

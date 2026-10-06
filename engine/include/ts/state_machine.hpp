@@ -10,6 +10,12 @@ class StateMachine {
 public:
     static void init_new_game(GameState& state, uint64_t seed) noexcept;
     [[nodiscard]] static bool step(GameState& state, const MicroAction& action) noexcept;
+    // The same, with the legality check read from `legal` -- the flat mask of exactly this state,
+    // as ActionMask::generate_flat_mask_212 wrote it -- instead of a mask generated here. Nothing
+    // else differs. For callers that already hold that mask (CachedState, auto_advance_step), so
+    // the check costs a lookup instead of a second generation. nullptr generates it, as above.
+    [[nodiscard]] static bool step(GameState& state, const MicroAction& action,
+                                   const uint8_t* legal) noexcept;
 
     // Phase Transitions
     static void start_turn(GameState& state) noexcept;

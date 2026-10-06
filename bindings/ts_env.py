@@ -383,10 +383,11 @@ class TsVectorizedEnv:
         # needed to tell a mask/engine disagreement from a sampler that ignored the mask.
         #
         # This is the CACHED buffer, which is what a batched caller actually sampled from. It can
-        # be stale if someone mutated a state through `get_state` without refreshing, and then the
-        # diagnostic below would claim an action "WAS legal in the mask" on the strength of a mask
-        # that no longer describes the position -- which cost real time once. The failure path
-        # re-derives a fresh mask and reports both.
+        # be stale if someone replaced a state with `runner.set_state` without refreshing (writing
+        # through `get_state` once did it too; that returns a copy now), and then the diagnostic
+        # below would claim an action "WAS legal in the mask" on the strength of a mask that no
+        # longer describes the position -- which cost real time once. The failure path re-derives
+        # a fresh mask and reports both.
         prev_masks = np.array(self.runner.get_action_masks(), copy=True)
         acting_players = np.array(self.runner.get_decision_players(), dtype=np.int8)
         acting_turns = np.array(self.runner.get_turns(), dtype=np.int8)
@@ -423,8 +424,8 @@ class TsVectorizedEnv:
                 f"{step_results.count(0)} of the batch refused. "
                 f"The action was legal in the CACHED mask; freshly generated it is "
                 f"{'legal' if fresh_legal else 'NOT legal'}"
-                + (f", and the cache is stale on {stale} entries -- a caller mutated the state "
-                   f"without refreshing" if stale else "")
+                + (f", and the cache is stale on {stale} entries -- a caller replaced the state "
+                   f"(runner.set_state) without refreshing" if stale else "")
                 if was_legal else
                 f"engine refused flat action {act} in env {bad} of {self.num_envs} "
                 f"(decision {ts.DecisionType(int(st.ctx().decision_type))}); "

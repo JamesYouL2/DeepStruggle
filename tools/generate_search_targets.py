@@ -119,8 +119,9 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
                 obs_all = np.array(runner.get_observations(), copy=False)
                 masks_all = np.array(runner.get_action_masks(), copy=False)
 
-                # Which active positions this configuration searches. The state handle is cloned:
-                # a handle held across a step is invalidated, which is a recorded measurement bug.
+                # Which active positions this configuration searches. The states are cloned: a
+                # handle held across a step once followed the runner (get_state was a live view, a
+                # recorded measurement bug); it is a copy now, and the clone is kept as harmless.
                 to_search = [i for i in active
                              if searcher.should_search(runner.get_state(i))]
                 targets: Dict[int, Dict[str, List[float]]] = {}

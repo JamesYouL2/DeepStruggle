@@ -14,6 +14,7 @@
 #include "ts/constants.hpp"
 #include "ts/micro_action.hpp"
 #include "ts/game_state.hpp"
+#include "ts/cached_state.hpp"
 #include "ts/map_data.hpp"
 #include "ts/card_data.hpp"
 #include "ts/card_handlers.hpp"
@@ -229,6 +230,13 @@ NB_MODULE(ts_engine, m) {
         .value("REALIGN", ts::OpMode::REALIGN)
         .export_values();
 
+    // The legal-mask cache of the search tree and the batch runner (ts::CachedState): with checks
+    // on, every read of a cached mask regenerates it and aborts the process if the two differ.
+    // tests/conftest.py turns them on for the whole suite.
+    m.def("set_mask_cache_checks", &ts::set_mask_cache_checks, nb::arg("on"),
+          "Check every cached legal mask against a fresh one (aborting on a difference).");
+    m.def("mask_cache_checks", &ts::mask_cache_checks);
+
     // A hand is four locations now, so "is this card in X's hand" is a question rather than an
     // equality. Exposed so Python asks it the same way the engine does -- there is no compiler
     // here to catch a comparison that silently misses the other variant.
@@ -379,7 +387,11 @@ NB_MODULE(ts_engine, m) {
         .def_rw("rng_state", &ts::GameState::rng_state)
         .def("set_flag", &ts::GameState::set_flag)
         .def("clear_flag", &ts::GameState::clear_flag)
-        .def("ctx", [](ts::GameState& s) -> ts::DecisionContext& { return s.ctx(); }, nb::rv_policy::reference)
+        // reference_internal: the context lives inside the state, so the state must outlive it.
+        // With plain `reference`, `state.clone().ctx().decision_type` read freed memory -- the
+        // temporary state was gone before the field was read (found by ASan once
+        // VectorizedBatchRunner.get_state started returning a copy).
+        .def("ctx", [](ts::GameState& s) -> ts::DecisionContext& { return s.ctx(); }, nb::rv_policy::reference_internal)
         .def("has_flag", &ts::GameState::has_flag)
         .def("get_country", [](const ts::GameState& s, uint8_t idx) -> ts::CountryState {
             if (idx >= 84) throw std::out_of_range("Country ID must be 0..83");
@@ -541,7 +553,9 @@ NB_MODULE(ts_engine, m) {
            nb::arg("merged_influence") = false,
            "Advance one flat action, raising RuntimeError if the engine refuses it. "
            "merged_influence=True applies a composed E4.1 action as the two E4 steps it names.")
-        .def_static("auto_advance_step", &ts::Engine::auto_advance_step, nb::arg("state"), nb::arg("max_steps") = 128);
+        .def_static("auto_advance_step",
+                    nb::overload_cast<ts::GameState&, size_t>(&ts::Engine::auto_advance_step),
+                    nb::arg("state"), nb::arg("max_steps") = 128);
 
     // Map Metadata helpers
     nb::class_<ts::MapData>(m, "MapData")
@@ -748,7 +762,12 @@ NB_MODULE(ts_engine, m) {
 
     // Vectorized Batch Runner for fast parallel self-play rollouts
     struct VectorizedBatchRunner {
-        std::vector<ts::GameState> states;
+        // Each env's position with its own legal mask (ts::CachedState): the agent's action is
+        // validated against it, and the mask auto-advance generated where it stopped is the one
+        // handed out -- one generation per decision where there were three. Read through st(i);
+        // written only through the slot's own calls, each of which invalidates the mask.
+        std::vector<ts::CachedState> slots;
+        const ts::GameState& st(size_t i) const { return slots[i].state(); }
         std::vector<float> obs_buffer;
         std::vector<uint8_t> mask_buffer;
         // P23 / E4.1: which action view each side of each env decides in. Per side, not per env,
@@ -814,8 +833,8 @@ NB_MODULE(ts_engine, m) {
         }
 
         ts::Player decider(size_t idx) const {
-            return (states[idx].ctx().decision_player != ts::Player::NONE)
-                ? states[idx].ctx().decision_player : states[idx].phasing_player;
+            return (st(idx).ctx().decision_player != ts::Player::NONE)
+                ? st(idx).ctx().decision_player : st(idx).phasing_player;
         }
 
         void set_merged_influence(const std::vector<bool>& us, const std::vector<bool>& ussr) {
@@ -838,7 +857,7 @@ NB_MODULE(ts_engine, m) {
 
         VectorizedBatchRunner(size_t n, uint64_t base_seed)
             : num_envs(n) {
-            states.resize(n);
+            slots.resize(n);
             obs_buffer.resize(n * obs_width);
             mask_buffer.resize(n * ts::FLAT_ACTION_SPACE_SIZE);
             merged_us.assign(n, 0);
@@ -846,35 +865,40 @@ NB_MODULE(ts_engine, m) {
             feat_us.assign(n, 0u);
             feat_ussr.assign(n, 0u);
             for (size_t i = 0; i < n; ++i) {
-                ts::StateMachine::init_new_game(states[i], base_seed + i * 10007 + 1);
+                const uint64_t seed = base_seed + i * 10007 + 1;
+                slots[i].modify([&](ts::GameState& g) { ts::StateMachine::init_new_game(g, seed); });
             }
             refresh_all();
         }
 
         void reset_game(size_t idx, uint64_t seed) {
             if (idx >= num_envs) return;
-            ts::StateMachine::init_new_game(states[idx], seed);
+            slots[idx].modify([&](ts::GameState& g) { ts::StateMachine::init_new_game(g, seed); });
             refresh_single(idx);
         }
 
         void refresh_single(size_t idx) {
-            while (states[idx].current_phase != ts::Phase::GAME_OVER &&
-                   states[idx].victory_points < 20 && states[idx].victory_points > -20 &&
-                   states[idx].ctx().decision_player == ts::Player::NONE &&
-                   states[idx].ctx().decision_type == ts::DecisionType::ROLL_DIE) {
+            while (st(idx).current_phase != ts::Phase::GAME_OVER &&
+                   st(idx).victory_points < 20 && st(idx).victory_points > -20 &&
+                   st(idx).ctx().decision_player == ts::Player::NONE &&
+                   st(idx).ctx().decision_type == ts::DecisionType::ROLL_DIE) {
                 ts::MicroAction chance_ma{ts::DecisionType::ROLL_DIE, 0, 0, 0};
                 // Must match step_flat_all's copy of this drain: without the check a refused
                 // ROLL_DIE leaves the loop condition unchanged and this spins forever. Breaking
                 // leaves the chance node in place, where the empty mask reports it loudly.
-                if (!ts::StateMachine::step(states[idx], chance_ma)) break;
+                if (!slots[idx].step(chance_ma)) break;
             }
-            ts::Player p = (states[idx].ctx().decision_player != ts::Player::NONE)
-                ? states[idx].ctx().decision_player : states[idx].phasing_player;
+            ts::Player p = (st(idx).ctx().decision_player != ts::Player::NONE)
+                ? st(idx).ctx().decision_player : st(idx).phasing_player;
             float* row = &obs_buffer[idx * obs_width];
-            const size_t w = ts::extract_observation_features(states[idx], p, features_for(idx, p), row);
+            const size_t w = ts::extract_observation_features(st(idx), p, features_for(idx, p), row);
             if (w < obs_width) std::memset(row + w, 0, (obs_width - w) * sizeof(float));
-            ts::Engine::get_flat_action_mask(states[idx], &mask_buffer[idx * ts::FLAT_ACTION_SPACE_SIZE],
-                                             merged_for(idx, p));
+            uint8_t* mask_row = &mask_buffer[idx * ts::FLAT_ACTION_SPACE_SIZE];
+            if (merged_for(idx, p)) {
+                ts::Engine::get_flat_action_mask(st(idx), mask_row, true);   // another view: not cached
+            } else {
+                std::memcpy(mask_row, slots[idx].legal_mask(), ts::FLAT_ACTION_SPACE_SIZE);
+            }
         }
 
         void refresh_all() {
@@ -888,32 +912,27 @@ NB_MODULE(ts_engine, m) {
             const size_t act_count = actions.size();
             gomp_parallel_for(static_cast<int64_t>(num_envs), [&](int64_t i) {
                 if (static_cast<size_t>(i) >= act_count) return;
-                if (states[i].current_phase == ts::Phase::GAME_OVER ||
-                    states[i].victory_points >= 20 ||
-                    states[i].victory_points <= -20) {
+                if (st(i).current_phase == ts::Phase::GAME_OVER ||
+                    st(i).victory_points >= 20 ||
+                    st(i).victory_points <= -20) {
                     results[i] = 2; // Terminal
                     return;
                 }
-                bool ok;
-                if (merged_for(static_cast<size_t>(i), decider(static_cast<size_t>(i))) &&
-                    ts::ActionMask::is_merged_influence_action(states[i], actions[i])) {
-                    // A composed E4.1 action: both E4 steps, atomically. Chance nodes are drained
-                    // below exactly as for any other action.
-                    ok = ts::Engine::step_flat(states[i], actions[i], false, true);
-                } else {
-                    ts::MicroAction ma = ts::ActionMask::decode_flat_action_212(states[i], actions[i]);
-                    ok = ts::StateMachine::step(states[i], ma);
-                }
+                // A composed E4.1 action (the decider in the merged view) is both E4 steps,
+                // atomically; anything else is the E4 step, validated against the cached mask.
+                // Chance nodes are drained below exactly as for any other action.
+                const bool ok = slots[i].step_flat(
+                    actions[i], merged_for(static_cast<size_t>(i), decider(static_cast<size_t>(i))));
                 if (ok) {
                     if (auto_advance) {
-                        ts::Engine::auto_advance_step(states[i]);
+                        slots[i].auto_advance();
                     } else {
-                        while (states[i].current_phase != ts::Phase::GAME_OVER &&
-                               states[i].victory_points < 20 && states[i].victory_points > -20 &&
-                               states[i].ctx().decision_player == ts::Player::NONE &&
-                               states[i].ctx().decision_type == ts::DecisionType::ROLL_DIE) {
+                        while (st(i).current_phase != ts::Phase::GAME_OVER &&
+                               st(i).victory_points < 20 && st(i).victory_points > -20 &&
+                               st(i).ctx().decision_player == ts::Player::NONE &&
+                               st(i).ctx().decision_type == ts::DecisionType::ROLL_DIE) {
                             ts::MicroAction chance_ma{ts::DecisionType::ROLL_DIE, 0, 0, 0};
-                            if (!ts::StateMachine::step(states[i], chance_ma)) break;
+                            if (!slots[i].step(chance_ma)) break;
                         }
                     }
                 }
@@ -936,8 +955,8 @@ NB_MODULE(ts_engine, m) {
         std::vector<int8_t> get_decision_players() const {
             std::vector<int8_t> res(num_envs);
             for (size_t i = 0; i < num_envs; ++i) {
-                ts::Player p = (states[i].ctx().decision_player != ts::Player::NONE)
-                    ? states[i].ctx().decision_player : states[i].phasing_player;
+                ts::Player p = (st(i).ctx().decision_player != ts::Player::NONE)
+                    ? st(i).ctx().decision_player : st(i).phasing_player;
                 res[i] = static_cast<int8_t>(p);
             }
             return res;
@@ -946,9 +965,9 @@ NB_MODULE(ts_engine, m) {
         std::vector<bool> get_terminals() const {
             std::vector<bool> res(num_envs);
             for (size_t i = 0; i < num_envs; ++i) {
-                res[i] = (states[i].current_phase == ts::Phase::GAME_OVER ||
-                          states[i].victory_points >= 20 ||
-                          states[i].victory_points <= -20);
+                res[i] = (st(i).current_phase == ts::Phase::GAME_OVER ||
+                          st(i).victory_points >= 20 ||
+                          st(i).victory_points <= -20);
             }
             return res;
         }
@@ -956,10 +975,10 @@ NB_MODULE(ts_engine, m) {
         std::vector<float> get_terminal_utilities() const {
             std::vector<float> res(num_envs, 0.0f);
             for (size_t i = 0; i < num_envs; ++i) {
-                if (states[i].victory_points >= 20) res[i] = 1.0f;
-                else if (states[i].victory_points <= -20) res[i] = -1.0f;
-                else if (states[i].victory_points > 0) res[i] = 1.0f;
-                else if (states[i].victory_points < 0) res[i] = -1.0f;
+                if (st(i).victory_points >= 20) res[i] = 1.0f;
+                else if (st(i).victory_points <= -20) res[i] = -1.0f;
+                else if (st(i).victory_points > 0) res[i] = 1.0f;
+                else if (st(i).victory_points < 0) res[i] = -1.0f;
             }
             return res;
         }
@@ -967,7 +986,7 @@ NB_MODULE(ts_engine, m) {
         std::vector<int8_t> get_victory_points() const {
             std::vector<int8_t> res(num_envs);
             for (size_t i = 0; i < num_envs; ++i) {
-                res[i] = states[i].victory_points;
+                res[i] = st(i).victory_points;
             }
             return res;
         }
@@ -983,7 +1002,7 @@ NB_MODULE(ts_engine, m) {
                 ts::Player active_p = (i < acting_players.size()) ? static_cast<ts::Player>(acting_players[i]) : ts::Player::US;
                 const ts::Player opp_p = (active_p == ts::Player::US) ? ts::Player::USSR : ts::Player::US;
                 for (size_t c = 1; c <= 110; ++c) {
-                    if (ts::in_hand_of(states[i].card_locations[c], opp_p)) {
+                    if (ts::in_hand_of(st(i).card_locations[c], opp_p)) {
                         res[i * 110 + (c - 1)] = 1.0f;
                     }
                 }
@@ -994,7 +1013,7 @@ NB_MODULE(ts_engine, m) {
         std::vector<int8_t> get_turns() const {
             std::vector<int8_t> res(num_envs);
             for (size_t i = 0; i < num_envs; ++i) {
-                res[i] = static_cast<int8_t>(states[i].turn);
+                res[i] = static_cast<int8_t>(st(i).turn);
             }
             return res;
         }
@@ -1118,7 +1137,14 @@ NB_MODULE(ts_engine, m) {
         .def("get_victory_points", &VectorizedBatchRunner::get_victory_points)
         .def("get_opponent_hands", &VectorizedBatchRunner::get_opponent_hands)
         .def("get_turns", &VectorizedBatchRunner::get_turns)
-        .def("get_state", [](VectorizedBatchRunner& self, size_t idx) -> ts::GameState& { return self.states.at(idx); }, nb::rv_policy::reference_internal)
+        // A copy of one env's position. It used to be a reference into the runner, through which
+        // Python could change an env's state behind the runner's back (and saw it change when the
+        // runner stepped); the slot's legal mask is only trustworthy if every write goes through
+        // the slot. Write a position back with set_state.
+        .def("get_state", [](const VectorizedBatchRunner& self, size_t idx) -> ts::GameState {
+            if (idx >= self.num_envs) throw nb::index_error("env index out of range");
+            return self.st(idx);
+        }, nb::arg("idx"))
         // Write a whole GameState into one slot, so an environment can be started from a
         // saved mid-game position instead of a fresh deal. GameState is trivially
         // copyable, so this is a plain struct assignment. get_state hands back a mutable
@@ -1126,14 +1152,15 @@ NB_MODULE(ts_engine, m) {
         // so copying field by field from Python cannot restore a position captured during
         // nested card resolution, and would corrupt it silently.
         .def("set_state", [](VectorizedBatchRunner& self, size_t idx, const ts::GameState& s) {
-            self.states.at(idx) = s;
+            if (idx >= self.num_envs) throw nb::index_error("env index out of range");
+            self.slots[idx] = ts::CachedState(s);
         }, nb::arg("idx"), nb::arg("state"))
         .def("compute_useful_actions_potentials", [](VectorizedBatchRunner& self, const std::vector<int8_t>& acting_players) {
             size_t n = self.num_envs;
             std::vector<float> potentials(n);
             gomp_parallel_for(static_cast<int64_t>(n), [&](int64_t i) {
                 // Strategic potential Phi(s) strictly defined from US perspective
-                potentials[i] = ts::Scoring::compute_useful_actions_potential(self.states[i], ts::Player::US);
+                potentials[i] = ts::Scoring::compute_useful_actions_potential(self.st(static_cast<size_t>(i)), ts::Player::US);
             });
             return potentials;
         });

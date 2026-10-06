@@ -113,8 +113,8 @@ def measure(model: Any, num_games: int = 512, forced: bool = True,
                 torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device),
                 torch.from_numpy(np.asarray(masks)).to(device), temperature=temperature)
         a = acts.cpu().numpy().astype(np.int64)
-        # Cloned for the same reason as in held_scoring: get_state is a live view onto the
-        # runner slot, and auto-reset rewinds it before step() returns.
+        # Cloned for the reason recorded in held_scoring: get_state was a live view onto the
+        # runner slot, which auto-reset rewound before step() returned. It is a copy now.
         prev: List[Optional[ts.GameState]] = [
             env.runner.get_state(i).clone() if not finished[i] else None
             for i in range(num_games)]

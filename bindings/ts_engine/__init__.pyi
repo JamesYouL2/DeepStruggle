@@ -186,6 +186,13 @@ INFLUENCE: OpMode = OpMode.INFLUENCE
 
 REALIGN: OpMode = OpMode.REALIGN
 
+def set_mask_cache_checks(on: bool) -> None:
+    """
+    Check every cached legal mask against a fresh one (aborting on a difference).
+    """
+
+def mask_cache_checks() -> bool: ...
+
 def reveal_hand(state: GameState, player: Player) -> None:
     """
     Mark every card that player is holding right now as public to the opponent. Cards drawn afterwards are hidden again -- knowledge attaches to cards, not to players.
@@ -991,7 +998,7 @@ class VectorizedBatchRunner:
 
     def get_turns(self) -> list[int]: ...
 
-    def get_state(self, arg: int, /) -> GameState: ...
+    def get_state(self, idx: int) -> GameState: ...
 
     def set_state(self, idx: int, state: GameState) -> None: ...
 

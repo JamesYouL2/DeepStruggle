@@ -32,23 +32,29 @@ def test_hand_locations_cover_the_known_half() -> None:
     assert ts.hand_of(ts.Player.US) not in (ts.CardLocation.HAND_US_KNOWN,)
 
 
-def test_get_state_is_a_live_view_and_clone_detaches() -> None:
-    """The aliasing that made every held-scoring ending read back as turn 1."""
+def test_get_state_is_a_copy_and_set_state_writes_back() -> None:
+    """get_state was a live reference into the runner -- the aliasing that once made every
+    held-scoring ending read back as turn 1, and a way to change an env's state behind the runner's
+    legal-mask cache. It is a copy now: it does not follow the runner, writing to it does not reach
+    the runner, and set_state is how a position goes back in."""
     from bindings.ts_env import TsVectorizedEnv
 
     env = TsVectorizedEnv(num_envs=4, base_seed=11)
     _, masks, _ = env.reset_all()
-    live = env.runner.get_state(0)
-    snap = live.clone()
-    before = (int(live.turn), int(live.action_round))
+    snap = env.runner.get_state(0)
+    before = (int(snap.turn), int(snap.action_round))
 
     for _ in range(40):
         acts = np.array([int(np.flatnonzero(np.asarray(m))[0]) for m in masks], dtype=np.int64)
         _, masks, _, _, _ = env.step(acts)
 
-    after = (int(live.turn), int(live.action_round))
-    assert after != before, "get_state stopped aliasing -- the clone() calls can be revisited"
-    assert (int(snap.turn), int(snap.action_round)) == before, "clone() must detach"
+    now = env.runner.get_state(0)
+    assert (int(now.turn), int(now.action_round)) != before
+    assert (int(snap.turn), int(snap.action_round)) == before, "get_state must not follow the runner"
+    now.defcon = 1 if now.defcon != 1 else 2
+    assert env.runner.get_state(0).defcon != now.defcon, "writing a copy must not reach the runner"
+    env.runner.set_state(0, now)
+    assert env.runner.get_state(0).defcon == now.defcon
 
 
 def test_opening_scripts_have_the_right_point_counts() -> None:

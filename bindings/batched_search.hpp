@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "ts/action_mask.hpp"
+#include "ts/cached_state.hpp"
 #include "ts/engine.hpp"
 #include "ts/game_state.hpp"
 #include "ts/micro_action.hpp"
@@ -55,7 +56,10 @@ struct Edge {
 };
 
 struct Node {
-    ts::GameState state;
+    // The position with its own legal mask (ts::CachedState): a child is validated against its
+    // parent's, and the mask auto-advance generated where it stopped is the one handed to the
+    // network -- one generation per node where there were three.
+    ts::CachedState state;
     int8_t mover = 0;          // ts::Player of the side to move, 0 at a terminal
     bool terminal = false;
     bool expanded = false;     // priors filled in by a network evaluation
@@ -355,7 +359,14 @@ private:
 
     static Node make_node(const ts::GameState& s) {
         Node nd;
-        nd.state = s;
+        nd.state = ts::CachedState(s);
+        set_node_kind(nd);
+        return nd;
+    }
+
+    // Terminal (with its utility) or the side to move, from the node's state.
+    static void set_node_kind(Node& nd) {
+        const ts::GameState& s = nd.state.state();
         if (ts::Engine::is_terminal(s)) {
             nd.terminal = true;
             nd.expanded = true;
@@ -363,7 +374,6 @@ private:
         } else {
             nd.mover = static_cast<int8_t>(acting_player(s));
         }
-        return nd;
     }
 
     void begin_simulations() {
@@ -377,14 +387,14 @@ private:
 
     // ai/search/batched_mcts.py `settle`: FORCED is the engine's own auto-advance, CHANCE drains
     // die rolls only.
-    void settle(ts::GameState& s) const {
+    void settle(ts::CachedState& s) const {
         if (auto_advance_) {
-            ts::Engine::auto_advance_step(s);
+            s.auto_advance();
             return;
         }
-        while (!ts::Engine::is_terminal(s) && s.ctx().decision_player == ts::Player::NONE &&
-               s.ctx().decision_type == ts::DecisionType::ROLL_DIE) {
-            if (!ts::Engine::step(s, ts::MicroAction{ts::DecisionType::ROLL_DIE, 0, 0, 0})) break;
+        while (!ts::Engine::is_terminal(s.state()) && s.state().ctx().decision_player == ts::Player::NONE &&
+               s.state().ctx().decision_type == ts::DecisionType::ROLL_DIE) {
+            if (!s.step(ts::MicroAction{ts::DecisionType::ROLL_DIE, 0, 0, 0})) break;
         }
     }
 
@@ -438,14 +448,28 @@ private:
     void create_child(Tree& t) {
         const size_t parent = static_cast<size_t>(t.path.back().first);
         Edge& e = t.edges[static_cast<size_t>(t.new_edge)];
-        ts::GameState next = t.nodes[parent].state;
-        next.rng_state = t.seed;
-        if (!ts::Engine::step_flat(next, e.action, false, merged_)) {
+        // Built in its own slot, from a copy of the parent -- one copy of the state where there were
+        // three. reset() reserved a node for every simulation, so the vector does not move and
+        // `parent` and `e` stay valid. The copy carries the parent's legal mask, and the action
+        // is validated against it: only the chance seed differs, and the mask does not read it.
+        if (t.nodes.size() == t.nodes.capacity())
+            throw std::logic_error("BatchedSearch: a tree outgrew the nodes reserved for it");
+        t.nodes.push_back(t.nodes[parent]);
+        Node& child = t.nodes.back();
+        child.state.set_rng(t.seed);
+        if (!child.state.step_flat(e.action, merged_)) {
             throw std::runtime_error("BatchedSearch: the engine refused flat action " +
                                      std::to_string(e.action) + " taken from its own mask");
         }
-        settle(next);
-        t.nodes.push_back(make_node(next));
+        settle(child.state);
+        child.mover = 0;
+        child.terminal = false;
+        child.expanded = false;
+        child.value_us = 0.0;
+        child.total = 0.0;
+        child.edge_begin = 0;
+        child.edge_count = 0;
+        set_node_kind(child);
         e.child = static_cast<int32_t>(t.nodes.size() - 1);
         t.leaf = e.child;
         t.new_edge = -1;
@@ -511,14 +535,18 @@ private:
     void featurise_rows(size_t b, size_t e) {
         for_each_tree(b, e, [this](Tree& t) {
             if (t.leaf < 0) return;
-            const Node& nd = t.nodes[static_cast<size_t>(t.leaf)];
+            Node& nd = t.nodes[static_cast<size_t>(t.leaf)];
+            const ts::GameState& s = nd.state.state();
             const size_t r = static_cast<size_t>(t.row);
             float* row = obs_ + r * obs_width_;
-            const size_t w = ts::extract_observation_features(
-                nd.state, acting_player(nd.state), features_, row);
+            const size_t w = ts::extract_observation_features(s, acting_player(s), features_, row);
             if (w < obs_width_) std::memset(row + w, 0, (obs_width_ - w) * sizeof(float));
-            ts::Engine::get_flat_action_mask(nd.state, masks_ + r * ts::FLAT_ACTION_SPACE_SIZE,
-                                             merged_);
+            uint8_t* mask_row = masks_ + r * ts::FLAT_ACTION_SPACE_SIZE;
+            if (merged_) {
+                ts::Engine::get_flat_action_mask(s, mask_row, true);   // another view: not cached
+            } else {
+                std::memcpy(mask_row, nd.state.legal_mask(), ts::FLAT_ACTION_SPACE_SIZE);
+            }
         });
     }
 

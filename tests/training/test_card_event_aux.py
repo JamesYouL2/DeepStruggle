@@ -50,7 +50,7 @@ def _positions(n: int) -> List[tuple]:
         dp = np.asarray(env.runner.get_decision_players())
         if t % 25 == 0:
             for i in np.flatnonzero(dp != 0):
-                # get_state is a view of the live environment; keep a copy, or later steps change it
+                # get_state was a view of the live environment (it is a copy now); the clone is kept
                 st = env.runner.get_state(int(i)).clone()
                 if int(st.turn) >= 2:
                     out.append((st, ts.Player(int(dp[i])), np.asarray(obs)[i].astype(np.float32)))

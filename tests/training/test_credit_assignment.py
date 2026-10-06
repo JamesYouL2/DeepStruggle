@@ -75,7 +75,9 @@ class TestDefconSuicideCredit:
 
         # Coup Panama (70). Written as the offset plus the country, not as the sum:
         # the sum was 189 before the repack and is a different country now.
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step([ActionEncoder.NODE_OFFSET + 70])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == 20  # US Win
@@ -106,7 +108,9 @@ class TestDefconSuicideCredit:
 
         # Coup Panama (70). Written as the offset plus the country, not as the sum:
         # the sum was 189 before the repack and is a different country now.
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step([ActionEncoder.NODE_OFFSET + 70])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == -20  # USSR Win
@@ -222,7 +226,9 @@ class TestVictoryPoints20MilOpsAndEvents:
         st.set_card_location(2, ts.hand_of(ts.Player.US))
         ma = ts.MicroAction(ts.DecisionType.SELECT_CARD, 2, 0, 0)
         flat_act = ts.encode_micro_action(st, ma)
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step([flat_act])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == 20  # US Win
@@ -242,17 +248,21 @@ class TestVictoryPoints20MilOpsAndEvents:
         st.set_card_location(100, ts.hand_of(ts.Player.US))
         ma = ts.MicroAction(ts.DecisionType.SELECT_CARD, 100, 0, 0)
         flat_act = ts.encode_micro_action(st, ma)
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         env.step([flat_act])
+        st = env.runner.get_state(0)
 
         # Play mode 0 (Event)
         ma_evt = ts.MicroAction(ts.DecisionType.SELECT_PLAY_MODE, 0, 0, 0)
         flat_evt = ts.encode_micro_action(st, ma_evt)
         env.step([flat_evt])
+        st = env.runner.get_state(0)
 
         # Choose Branch 0 (End game and give 6 VP)
         ma_br = ts.MicroAction(ts.DecisionType.CHOOSE_BRANCH, 0, 0, 0)
         flat_br = ts.encode_micro_action(st, ma_br)
         _, _, rewards, dones, info = env.step([flat_br])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == 12  # 18 - 6 = 12
@@ -282,7 +292,9 @@ class TestVictoryPoints20MilOpsAndEvents:
         st.set_card_location(2, ts.hand_of(ts.Player.USSR))
         ma = ts.MicroAction(ts.DecisionType.SELECT_CARD, 2, 0, 0)
         flat_act = ts.encode_micro_action(st, ma)
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step([flat_act])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == -20  # USSR Win
@@ -336,7 +348,9 @@ class TestCubanMissileCrisisCoupSuicide:
                                           int(ts.Resolution.OPS_COUP), 0, 0))
 
         # Coup Iran (25).
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step([ActionEncoder.NODE_OFFSET + 25])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == 20  # US Win
@@ -367,7 +381,9 @@ class TestCubanMissileCrisisCoupSuicide:
 
         # Coup Panama (70). Written as the offset plus the country, not as the sum:
         # the sum was 189 before the repack and is a different country now.
+        env.runner.set_state(0, st)   # get_state is a copy: write the position back
         _, _, rewards, dones, info = env.step([ActionEncoder.NODE_OFFSET + 70])
+        st = env.runner.get_state(0)
 
         assert dones[0] is True or dones[0] == 1
         assert st.victory_points == -20  # USSR Win

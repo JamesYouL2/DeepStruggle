@@ -754,6 +754,10 @@ static bool begin_op_mode(GameState& state, Player p, OpMode op_mode) noexcept {
 }
 
 bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
+    return step(state, action, nullptr);
+}
+
+bool StateMachine::step(GameState& state, const MicroAction& action, const uint8_t* legal) noexcept {
     // Reset ephemeral die roll record for the current step
     state.last_roll = DieRollRecord{};
     state.last_die_roll = 0;
@@ -809,11 +813,18 @@ bool StateMachine::step(GameState& state, const MicroAction& action) noexcept {
     //
     // NOT sufficient on its own, which is why the two guards above stay: several MicroActions map
     // to one flat index, so a forced die's value and other sub-index fields are invisible here.
+    //
+    // A caller may hand the mask in (`legal`): the mask of this very state, generated before the
+    // three die-roll fields above were cleared. The mask reads neither them nor the RNG, which
+    // engine test CachedState.MaskIgnoresRngAndLastRolls pins, so it is the mask generated here.
     {
         uint8_t legal_flat[FLAT_ACTION_SPACE_SIZE];
-        ActionMask::generate_flat_mask_212(state, legal_flat);
+        if (legal == nullptr) {
+            ActionMask::generate_flat_mask_212(state, legal_flat);
+            legal = legal_flat;
+        }
         const int16_t flat = ActionMask::encode_micro_action_212(state, action);
-        if (flat < 0 || flat >= static_cast<int16_t>(FLAT_ACTION_SPACE_SIZE) || !legal_flat[flat]) {
+        if (flat < 0 || flat >= static_cast<int16_t>(FLAT_ACTION_SPACE_SIZE) || !legal[flat]) {
             return false;
         }
     }

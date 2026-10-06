@@ -79,10 +79,10 @@ def measure(model: Any, num_games: int = 512, temperature: float = 1.0,
                     if st.get_card_location(c) in ANY_HAND:
                         held_exposure[c] += 1
 
-        # .clone() is load-bearing: runner.get_state returns a live view onto the batch
-        # runner's slot, so an un-cloned handle follows the env through the step and
-        # through auto-reset. Without it every held-scoring ending read back as turn 1
-        # with a freshly dealt hand -- the reset game, not the one that just ended.
+        # runner.get_state used to return a live view onto the runner's slot, so an un-cloned
+        # handle followed the env through the step and through auto-reset, and every
+        # held-scoring ending read back as turn 1 with a freshly dealt hand -- the reset game,
+        # not the one that just ended. It returns a copy now; the .clone() is kept as harmless.
         prev = [env.runner.get_state(i).clone() if not finished[i] else None
                 for i in range(num_games)]
         obs, masks, _, dones, info = env.step(a)

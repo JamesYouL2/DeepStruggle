@@ -157,6 +157,18 @@ def _verify_engine_is_not_stale() -> None:
         raise pytest.UsageError("stale ts_engine\n\n" + reason)
 
 
+def _check_every_cached_mask() -> None:
+    """Every legal mask the search tree and the batch runner read from their cache is compared with
+    a freshly generated one, and the process aborts if they differ (ts::CachedState). The cache is
+    correct by construction -- only the slot's own calls can change its state, and each one
+    invalidates -- and this is what checks the construction, on everything the suite plays."""
+    try:
+        import ts_engine
+    except Exception:
+        return
+    ts_engine.set_mask_cache_checks(True)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
@@ -164,6 +176,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "Deselected by default -- run with -m corpus_full before merging.",
     )
     _verify_engine_is_not_stale()
+    _check_every_cached_mask()
 
 
 @pytest.fixture(scope="session")

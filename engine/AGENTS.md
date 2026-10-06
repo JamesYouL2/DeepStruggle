@@ -50,7 +50,8 @@ engine/
 │   ├── state_machine.hpp       // Turn and Action Round lifecycle, Headline resolution
 │   ├── observation.hpp         // Neural observation extractor (ObservationBufferV23, the one layout)
 │   ├── serialization.hpp       // Binary snapshot and JSON serialization
-│   └── engine.hpp              // Top-level ts::Engine public interface
+│   ├── engine.hpp              // Top-level ts::Engine public interface
+│   └── cached_state.hpp        // CachedState: a state that keeps its own legal mask (§6b)
 ├── src/                        // Engine implementations
 │   ├── map_data.cpp            // Static country array and adjacency lookup tables
 │   ├── card_data.cpp           // Static card metadata array
@@ -67,7 +68,8 @@ engine/
 │   ├── observation.cpp         // Feature extractor implementation
 │   ├── serialization.cpp       // Serializer binary & JSON implementations
 │   ├── invariant.cpp           // Out-of-line invariant reporting
-│   └── engine.cpp              // ts::Engine API implementation
+│   ├── engine.cpp              // ts::Engine API implementation
+│   └── cached_state.cpp        // CachedState implementation (§6b)
 └── tests/                      // Engine test suites
     ├── test_framework.hpp      // Lightweight assertion & test registry framework
     ├── game_test_wrapper.hpp   // High-level full game execution wrapper & policy harness
@@ -89,6 +91,7 @@ engine/
     ├── test_auto_advance.cpp   // Engine::auto_advance_step: forced/degenerate decisions taken without asking
     ├── test_fuzz_influence_placement.cpp // Randomized influence placement against the mask
     ├── test_rules_audit.cpp    // One regression per rule fixed by the 2026-09-28 audit (§12)
+    ├── test_cached_state.cpp   // CachedState against the plain engine, byte for byte (§6b)
     ├── test_fuzz.cpp           // ts_fuzz: invariant fuzzer (--games <N>, --steps <N>, --seed <S>)
     ├── test_fuzz_events.cpp    // ts_fuzz_events: same, biased toward firing events (--event-bias)
     └── test_benchmark.cpp      // ts_benchmark: throughput benchmark
@@ -377,6 +380,38 @@ the E7 network's games: 7.7 µs per observation before, 4.6 µs after; the outpu
 a bit on 318,198 observations from 600 whole random games and those positions, both sides
 (compared against the previous function, verbatim). Any change here must stay bit-identical:
 `tests/engine_logic/test_observation_golden.py` pins it.
+
+---
+
+## 6b. A state that keeps its legal mask: `CachedState` (2026-10-06)
+
+`StateMachine::step` validates every action against the flat mask of the state it is given, and
+until now it always generated that mask itself; auto-advance generated it again to look for a
+forced move, and a caller wanting the next decision's mask generated it a third time -- 3.15
+generations per search node, ~20% of a node's CPU. `include/ts/cached_state.hpp` keeps the mask
+with the state instead, for the C++ containers that own their states (the search tree, the batch
+runner):
+
+* **The state is private.** `state()` is a const reference; the only mutable access is
+  `modify(f)`, which invalidates the mask before and after `f`; `step`, `step_flat` and
+  `auto_advance` go through it. A write that skipped invalidation does not compile. The rules
+  code keeps taking a plain `GameState&` and only ever runs inside one of those calls.
+* **One write keeps the mask:** `set_rng`. The mask reads neither the RNG nor the three die-roll
+  fields `step` clears before validating (`CachedState.MaskIgnoresRngAndLastRolls`, over 15,000
+  positions), which is what lets a search child be validated against its parent's mask.
+* `StateMachine::step(state, action, legal)` validates against a mask the caller holds for exactly
+  this state; the two-argument `step` passes none and generates it, as before.
+  `Engine::auto_advance_step(state, max, final_mask, &valid)` validates each forced step against
+  the mask it just generated and hands back the mask of the decision it stops at.
+* **Checked as well as argued.** `set_mask_cache_checks(true)` regenerates the mask on every cached
+  read and aborts on any difference; the engine's own CachedState tests turn it on, and
+  `tests/conftest.py` turns it on for the whole Python suite. `CachedState.PlaysExactlyAsThePlainEngine`
+  plays 100 random games, refused actions included, with a plain state and a cached one side by
+  side and requires them identical byte for byte.
+
+Python's `GameState` is the plain struct: it has no cache, so nothing Python writes can leave one
+stale. Measured: masks per search node 3.15 → 1.19, single-threaded leaf selection 2.52 → 2.20 s on
+2,439 positions × 128 simulations, the same trees.
 
 ---
 

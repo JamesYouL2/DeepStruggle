@@ -75,6 +75,12 @@ bool Engine::step_flat(GameState& state, uint16_t action_idx, bool auto_advance,
 }
 
 size_t Engine::auto_advance_step(GameState& state, size_t max_steps) noexcept {
+    return auto_advance_step(state, max_steps, nullptr, nullptr);
+}
+
+size_t Engine::auto_advance_step(GameState& state, size_t max_steps, uint8_t* final_mask,
+                                 bool* final_mask_valid) noexcept {
+    if (final_mask_valid) *final_mask_valid = false;
     size_t advanced = 0;
     while (advanced < max_steps && !is_terminal(state)) {
         // 1. Chance / Die rolls (unattended rolls, e.g. space race, war, coup)
@@ -180,7 +186,8 @@ size_t Engine::auto_advance_step(GameState& state, size_t max_steps) noexcept {
         }
 
         // 3. Generic single-choice auto-advance
-        uint8_t mask_212[FLAT_ACTION_SPACE_SIZE];
+        uint8_t local_mask[FLAT_ACTION_SPACE_SIZE];
+        uint8_t* mask_212 = final_mask ? final_mask : local_mask;
         ActionMask::generate_flat_mask_212(state, mask_212);
         uint16_t valid_choices = 0;
         int16_t sole_action = -1;
@@ -196,12 +203,14 @@ size_t Engine::auto_advance_step(GameState& state, size_t max_steps) noexcept {
 
         if (valid_choices == 1 && sole_action >= 0) {
             MicroAction ma = ActionMask::decode_flat_action_212(state, static_cast<uint16_t>(sole_action));
-            if (!StateMachine::step(state, ma)) break;
+            // Validated against the mask just generated for this same state.
+            if (!StateMachine::step(state, ma, mask_212)) break;
             advanced++;
             continue;
         }
 
-        // Decision requires non-trivial player choice
+        // Decision requires non-trivial player choice. mask_212 is this decision's mask.
+        if (final_mask_valid) *final_mask_valid = true;
         break;
     }
     return advanced;

@@ -101,6 +101,15 @@ is the one `step_flat` reads.
   * `reset_game` rebuilds the env it resets;
   * `set_state` rebuilds nothing, so whoever calls it must refresh.
 
+  **Each env's state lives in a `ts::CachedState`** (`engine/include/ts/cached_state.hpp`,
+  2026-10-06), which keeps the position's own legal mask: the agent's action is validated against
+  it, and the mask auto-advance generated where it stopped is the one handed out -- one mask
+  generation per decision where there were three (single-threaded `step_flat_all`, 2.93 → 2.44 µs
+  per env-step, the same games). Only the slot's own calls can change a state, so
+  **`get_state(i)` returns a copy**, not the live reference it used to be: writing to it does not
+  reach the runner, and it does not follow the runner when it steps. Put a position back with
+  `set_state(i, state)` (and refresh). `BatchedSearch`'s nodes hold `CachedState` the same way.
+
   `TsVectorizedEnv` refreshes only after `_apply_start_position` actually injects a start position
   through `set_state`. That applies in `step`'s auto-reset, in `reset_env` and in `reset_all`.
   Building an observation costs ~7.9 µs per env against ~0.8 µs for a game step. Refreshing all envs

@@ -38,6 +38,7 @@ set(TS_SOURCES
     src/serialization.cpp
     src/invariant.cpp
     src/engine.cpp
+    src/cached_state.cpp
 )
 
 add_library(ts_engine_core STATIC ${TS_SOURCES})
@@ -67,6 +68,7 @@ set(TEST_SOURCES
     tests/test_auto_advance.cpp
     tests/test_fuzz_influence_placement.cpp
     tests/test_rules_audit.cpp
+    tests/test_cached_state.cpp
 )
 
 add_executable(ts_tests ${TEST_SOURCES})

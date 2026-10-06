@@ -41,6 +41,13 @@ public:
     // and deterministic event targets) until a choice requiring player discretion is reached.
     static size_t auto_advance_step(GameState& state, size_t max_steps = 128) noexcept;
 
+    // The same, and where it stops at a decision with a choice, the flat mask of that decision is
+    // left in `final_mask` (FLAT_ACTION_SPACE_SIZE bytes) and `*final_mask_valid` set; it is
+    // false wherever it stopped for any other reason (terminal, max_steps, a refused step).
+    // Auto-advance generates that mask anyway to count the choices; this hands it on.
+    static size_t auto_advance_step(GameState& state, size_t max_steps, uint8_t* final_mask,
+                                    bool* final_mask_valid) noexcept;
+
     // Fast terminal state evaluation
     static bool is_terminal(const GameState& state) noexcept;
     static float get_terminal_utility(const GameState& state) noexcept; // +1.0 (US), -1.0 (USSR), 0.0 (Draw)
