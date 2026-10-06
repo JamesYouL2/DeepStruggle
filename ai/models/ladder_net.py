@@ -36,6 +36,11 @@ from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
                                       ColdWarNetV2, static_input_mask)
 from bindings.action_encoder import ActionEncoder
 
+#: The branch block of the flat action space (event branches, CONFIRM_DONE, DEFCON values, regions).
+BRANCH_BLOCK = ActionEncoder.FLAT_ACTION_SIZE - ActionEncoder.BRANCH_OFFSET
+#: Card-feature slot 13: 1.0 for the card the decision is about (engine/include/ts/game_state.hpp).
+ACTIVE_CARD_SLOT = 13
+
 #: Countries the ownership head predicts: all 84 (P29 bet 2).
 #: Width of each optional observation block, by ts.OBS_FEATURE_* bit (engine/include/ts/game_state.hpp,
 #: obs_features). Restated so the model does not import the engine; tests/bindings check it
@@ -100,6 +105,7 @@ class LadderNet(ColdWarNetV2):
                  aux_heads: bool = False,
                  card_aux: bool = False,
                  opp_legal_aux: bool = False,
+                 branch_head: bool = False,
                  obs_features: int = 0,
                  token_layers: int = 0,
                  token_dim: int = 0,
@@ -408,6 +414,24 @@ class LadderNet(ColdWarNetV2):
         if self.opp_legal_aux:
             self.opp_legal_head = nn.Sequential(
                 nn.Linear(hidden_dim, 256), nn.GELU(), nn.Linear(256, 84 * 2))
+        # --ladder-branch-head (owner, 2026-10-06): the branch block's logits (event branches,
+        # CONFIRM_DONE, DEFCON values, regions -- flat 200..219) get a correction read from the trunk
+        # AND which card is resolving (the observation's ACTIVE_NOW card flag). The branch slots are
+        # shared by every card with a branch, so slot 0 is "end the game" for Wargames and something
+        # else elsewhere; a head without the card learns a card-independent average. Measured: the
+        # trunk predicts whether ending at Wargames' branch wins at 0.98 AUC while the plain policy's
+        # P(end) is ~0.2 at any lead (research/log/P31_branch_arms_B1_B2.md). The last layer starts at
+        # zero, so a network with the head starts as the one without it.
+        self.branch_head = bool(branch_head)
+        if self.branch_head:
+            if input_mode == "flat":
+                raise ValueError("branch_head reads the card nodes; the flat input mode has none")
+            self.branch_head_net = nn.Sequential(
+                nn.Linear(hidden_dim + 110, 128), nn.GELU(), nn.Linear(128, BRANCH_BLOCK))
+            out = self.branch_head_net[-1]
+            assert isinstance(out, nn.Linear)
+            nn.init.zeros_(out.weight)
+            nn.init.zeros_(out.bias)
 
     def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
         """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
@@ -545,6 +569,7 @@ class LadderNet(ColdWarNetV2):
             aux_heads=self.aux_heads,
             card_aux=self.card_aux,
             opp_legal_aux=self.opp_legal_aux,
+            branch_head=self.branch_head,
             obs_features=self.obs_feature_bits,
         )
 
@@ -558,6 +583,20 @@ class LadderNet(ColdWarNetV2):
 
     def _policy_logits(self, h: torch.Tensor,
                        tokens: tuple[torch.Tensor, ...] | None) -> torch.Tensor:
+        """The per-entity logits (`_entity_policy_logits`), plus the branch head's correction on the
+        branch block when the network has one."""
+        logits = self._entity_policy_logits(h, tokens)
+        if not self.branch_head:
+            return logits
+        assert tokens is not None
+        card_nodes = tokens[3]
+        active = (card_nodes[..., ACTIVE_CARD_SLOT] > 0.95).to(h.dtype)          # (B, 110)
+        corr = self.branch_head_net(torch.cat([h, active], dim=-1)).to(logits.dtype)
+        lo = ActionEncoder.BRANCH_OFFSET
+        return torch.cat([logits[:, :lo], logits[:, lo:] + corr], dim=-1)
+
+    def _entity_policy_logits(self, h: torch.Tensor,
+                              tokens: tuple[torch.Tensor, ...] | None) -> torch.Tensor:
         """The dense logits plus a per-entity correction, honouring the M2-family axes.
 
         The inherited version assumes both heads exist and that a trunk context is always fed.
@@ -835,6 +874,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         aux_heads=any(k.startswith("aux_own_head.") for k in sd),
         card_aux=any(k.startswith("card_aux_head.") for k in sd),
         opp_legal_aux=any(k.startswith("opp_legal_head.") for k in sd),
+        branch_head=any(k.startswith("branch_head_net.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
     )
 

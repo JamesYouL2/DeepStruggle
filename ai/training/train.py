@@ -113,6 +113,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         # P30 C1. Recorded only when on, so the configs of earlier runs stay comparable.
         **({"token_layers": int(args.ladder_token_layers), "token_dim": int(args.ladder_token_dim)}
            if args.ladder_token_layers else {}),
+        # Owner 2026-10-06. Recorded only when on, as the token path.
+        **({"branch_head": True} if getattr(args, "ladder_branch_head", False) else {}),
     )
 
 
@@ -205,6 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
                           "global token), beside the grouped projections; the global token joins\n"
                           "the fusion input and each per-entity head reads its own token.\n"
                           "0 (default) = off. --ladder-input-mode grouped only.")
+    lad.add_argument("--ladder-branch-head", action="store_true", default=False,
+                     help="A head on the branch block (event branches, DEFCON values, regions) reading "
+                          "the trunk plus a one-hot of the resolving card, zero-initialised; a --resume "
+                          "from a state without it adds it. Off by default.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,
@@ -615,7 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode-cf-from", type=int, default=0,
                         help="P31 1c: no decision is priced before this many total env steps.")
     parser.add_argument("--force-applicable-events", nargs="+", default=None,
-                        choices=["wargames", "arms_race", "one_small_step"],
+                        choices=["wargames", "arms_race", "one_small_step", "wargames_branch"],
                         help="Owner 2026-10-06: at the learner's play-mode decision for the listed card "
                              "with its event legal and applicable (Wargames: DEFCON 2 and 7+ VP ahead; "
                              "Arms Race: ahead in military Ops; One Small Step: behind in space), play the "
@@ -624,6 +630,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="The probability an applicable play is forced to the event.")
     parser.add_argument("--force-events-from", type=int, default=0,
                         help="No event is forced before this many total env steps.")
+    parser.add_argument("--force-event-credit", choices=["own", "environment"], default="own",
+                        help="own: the forced event is trained as the policy's own play; environment: "
+                             "learner = 0 on it (no policy gradient), as --seed-scenarios. "
+                             "wargames_branch (Wargames at DEFCON 2, any lead) is meant for environment: "
+                             "it supplies visits to Wargames' branch, which the policy then decides.")
+    parser.add_argument("--floor-rows", choices=["play_mode_and_events", "event_choices"],
+                        default="play_mode_and_events",
+                        help="Which decisions --play-mode-floor covers: play mode plus the non-country "
+                             "choices inside events (default), or only the latter (event branches, "
+                             "DEFCON values, regions).")
     parser.add_argument("--setup-script-openings", nargs="+", default=None,
                         help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
                              "uniformly per scripted game. Default: the four human variants "
@@ -962,6 +978,8 @@ def main():
             force_applicable_events=args.force_applicable_events,
             force_event_frac=args.force_event_frac,
             force_events_from=args.force_events_from,
+            force_event_credit=args.force_event_credit,
+            floor_rows_kind=args.floor_rows,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,

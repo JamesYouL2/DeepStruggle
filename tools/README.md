@@ -199,6 +199,21 @@ each step bounded by PPO's clip. An importance-weighted version would leave the 
 without the forcing (the gradient on a rare action's logit is `pi(a) * advantage`). `--force-events-from S` starts it
 at `S` steps. Metrics: `force_applicable_<card>` (the learner's applicable plays so far), `force_forced_<card>`.
 
+`--ladder-branch-head` (owner, 2026-10-06; default off) adds a head on the branch block (flat 200..219: event
+branches, CONFIRM_DONE, DEFCON values, regions) reading the trunk output plus a one-hot of the card the decision is
+about (the observation's ACTIVE_NOW card flag, card slot 13), and adds its output to those logits. The branch slots
+are shared by every card with a branch, so a head without the card learns a card-independent average: at Wargames'
+branch the trunk predicts whether ending wins at 0.98 AUC while the plain policy's P(end) is ~0.2 at any lead
+(`research/log/P31_branch_arms_B1_B2.md`). Zero-initialised, so a network with it starts as the one without; a
+`--resume` from a state without it adds it (`branch_head_net.*`). The one-hot spans all 110 cards; only those with a
+branch ever reach those rows.
+
+`--force-event-credit {own,environment}` chooses how `--force-applicable-events` credits a forced play: `own` (the
+default, as above) or `environment` (`learner = 0`, no policy gradient, as `--seed-scenarios`). The condition
+`wargames_branch` is Wargames at DEFCON 2 **at any lead**: with `environment` credit it supplies visits to Wargames'
+branch, where the policy then decides end-or-pass on its own, with both outcomes on offer. `--floor-rows
+event_choices` limits `--play-mode-floor` to the non-country choices inside events.
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer

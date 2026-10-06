@@ -1360,7 +1360,9 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
 #: Training-only heads that a resumed branch may add to a state written without them: each reads the
 #: trunk and is used only by its own loss, so forward() -- policy and value -- is unchanged by adding it.
 ADDABLE_HEADS: Tuple[str, ...] = ("card_aux_head.", "aux_own_head.", "aux_vp_head.",
-                                 "opp_legal_head.")
+                                 "opp_legal_head.",
+                                 # zero-initialised, so the policy starts exactly as the saved one
+                                 "branch_head_net.")
 
 
 def _load_allowing_added_heads(module: nn.Module, state: Dict[str, Any]) -> List[str]:
@@ -1591,6 +1593,8 @@ def train_pipeline(
     force_applicable_events: Optional[Sequence[str]] = None,
     force_event_frac: float = 0.1,
     force_events_from: int = 0,
+    force_event_credit: str = "own",
+    floor_rows_kind: str = "play_mode_and_events",
     setup_mc_coef: float = 1.0,
     setup_mc_min_batch: int = 512,
     aux_own_coef: float = 0.0,
@@ -1884,6 +1888,8 @@ def train_pipeline(
         "force_applicable_events": list(force_applicable_events) if force_applicable_events else None,
         "force_event_frac": float(force_event_frac),
         "force_events_from": int(force_events_from),
+        "force_event_credit": str(force_event_credit),
+        "floor_rows": str(floor_rows_kind),
         "setup_script_openings": (list(setup_script_openings) if setup_script_frac > 0.0 and setup_script_openings else None),
         "setup_mc_coef": float(setup_mc_coef),
         "setup_mc_min_batch": int(setup_mc_min_batch),
@@ -2149,6 +2155,8 @@ def train_pipeline(
         force_applicable_events=tuple(force_applicable_events or ()),
         force_event_frac=force_event_frac,
         force_events_from=force_events_from,
+        force_event_credit=force_event_credit,
+        floor_rows_kind=floor_rows_kind,
         setup_mc_coef=setup_mc_coef,
         setup_mc_min_batch=setup_mc_min_batch,
         aux_own_coef=aux_own_coef,
@@ -2720,6 +2728,7 @@ def train_pipeline(
                     "mode_cf_plies", "mode_cf_seconds", "mode_cf_loss",
                     "force_applicable_wargames", "force_forced_wargames", "force_applicable_arms_race",
                     "force_forced_arms_race", "force_applicable_one_small_step", "force_forced_one_small_step",
+                    "force_applicable_wargames_branch", "force_forced_wargames_branch",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss",

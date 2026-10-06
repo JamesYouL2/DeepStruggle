@@ -55,9 +55,13 @@ def event_choice_rows(masks: torch.Tensor) -> torch.Tensor:
     return (m[:, BRANCH_LO:].sum(dim=1) == n) & (n >= 2)
 
 
-def floor_rows(masks: torch.Tensor) -> torch.Tensor:
+def floor_rows(masks: torch.Tensor, which: str = "play_mode_and_events") -> torch.Tensor:
     """The decisions the floor applies to (P31 1a, owner 2026-10-06: play mode plus the
-    non-country choices inside events)."""
+    non-country choices inside events; `event_choices` for the latter only)."""
+    if which == "event_choices":
+        return event_choice_rows(masks)
+    if which != "play_mode_and_events":
+        raise ValueError(f"unknown floor rows {which!r}")
     return play_mode_rows(masks) | event_choice_rows(masks)
 
 
@@ -248,7 +252,10 @@ class ScenarioSeeder:
 #: Card ids and the condition under which their event is plainly worth playing, from the side that
 #: plays it (owner, 2026-10-06): Wargames at DEFCON 2 with a lead of 7+ VP (the event hands the
 #: opponent 6 VP and ends the game), Arms Race ahead in military Ops, One Small Step behind in space.
-APPLICABLE_EVENTS: Dict[str, int] = {"wargames": 100, "arms_race": 39, "one_small_step": 80}
+APPLICABLE_EVENTS: Dict[str, int] = {"wargames": 100, "arms_race": 39, "one_small_step": 80,
+                                     # Wargames at DEFCON 2 at ANY lead: its event then reaches the
+                                     # branch (end the game / pass), where both outcomes are on offer
+                                     "wargames_branch": 100}
 
 
 def event_applicable(name: str, state: object, side: int) -> bool:
@@ -257,6 +264,8 @@ def event_applicable(name: str, state: object, side: int) -> bool:
     us = side == int(ts.Player.US)
     if name == "wargames":
         return int(st.defcon) == 2 and side * int(st.victory_points) >= 7          # type: ignore[attr-defined]
+    if name == "wargames_branch":
+        return int(st.defcon) == 2                                                 # type: ignore[attr-defined]
     if name == "arms_race":
         mine, theirs = ((st.us_mil_ops, st.ussr_mil_ops) if us                      # type: ignore[attr-defined]
                         else (st.ussr_mil_ops, st.us_mil_ops))                       # type: ignore[attr-defined]
@@ -282,7 +291,10 @@ class ApplicableEventForcer:
             raise ValueError("applicable-event forcing needs at least one card")
         if not 0.0 < frac <= 1.0:
             raise ValueError("--force-event-frac must be in (0, 1]")
-        expect = {"wargames": "Wargames", "arms_race": "Arms Race", "one_small_step": "One Small Step"}
+        expect = {"wargames": "Wargames", "arms_race": "Arms Race", "one_small_step": "One Small Step",
+                  "wargames_branch": "Wargames"}
+        if len({APPLICABLE_EVENTS[n] for n in names}) != len(names):
+            raise ValueError(f"{list(names)} name one card twice; give each card one condition")
         for n in names:
             got = str(ts.CardData.get_card_info(APPLICABLE_EVENTS[n])["name"])
             if expect[n].lower() not in got.lower():

@@ -534,3 +534,121 @@ def test_a_forced_event_is_trained_as_the_policys_own() -> None:
     assert torch.allclose(buf.log_probs.reshape(-1).float(), lp, atol=1e-4)   # log pi of the forced event
     m = t.train_iteration()
     assert "force_forced_arms_race" in m
+
+
+# --------------------------------------------- the per-branch head (owner, 2026-10-06)
+
+def _branch_obs(n: int, cards: List[int], seed: int = 3) -> torch.Tensor:
+    g = torch.Generator().manual_seed(seed)
+    obs = torch.rand(n, int(ts.OBS_SIZE), generator=g)
+    co = 84 * 26
+    act = obs[:, co:co + 110 * 14].view(n, 110, 14)
+    act[:, :, 13] = 0.0
+    for i, c in enumerate(cards):
+        act[i, c - 1, 13] = 1.0                         # the card this decision is about
+    return obs
+
+
+def test_the_branch_head_starts_as_the_network_without_it_and_only_touches_the_branch_block() -> None:
+    torch.manual_seed(0)
+    plain = create_ladder_net(torch.device("cpu"), **SHALLOW).eval()
+    torch.manual_seed(0)
+    headed = create_ladder_net(torch.device("cpu"), **SHALLOW, branch_head=True).eval()
+    missing, unexpected = headed.load_state_dict(plain.state_dict(), strict=False)
+    assert not unexpected and all(k.startswith("branch_head_net.") for k in missing)
+    obs = _branch_obs(4, [100, 100, 46, 94])
+    mask = torch.ones(4, 220, dtype=torch.bool)
+    with torch.no_grad():
+        assert torch.equal(plain(obs, mask)[0], headed(obs, mask)[0])     # zero-initialised
+        last = headed.branch_head_net[-1]
+        assert isinstance(last, torch.nn.Linear)
+        torch.nn.init.normal_(last.weight, std=0.5)
+        a, b = plain(obs, mask)[0], headed(obs, mask)[0]
+    lo = A.BRANCH_OFFSET
+    assert torch.equal(a[:, :lo], b[:, :lo])                              # nothing else moves
+    assert not torch.allclose(a[:, lo:], b[:, lo:])
+    d = (b - a)[:, lo:]
+    assert torch.allclose(d[0], d[0]) and not torch.allclose(d[1], d[2])  # the card changes it
+    obs2 = obs.clone()
+    obs2[1] = obs[0]
+    with torch.no_grad():
+        b2 = headed(obs2, mask)[0]
+    assert torch.allclose(b2[0], b2[1])                                    # same board, same card
+
+
+def test_the_branch_head_is_recovered_from_the_weights_and_added_on_resume(tmp_path: Any) -> None:
+    from ai.models.ladder_net import ladder_config_from_state_dict
+    from ai.training.generic_trainer import load_resume_state, save_resume_state
+    headed = create_ladder_net(torch.device("cpu"), **SHALLOW, branch_head=True)
+    cfg = ladder_config_from_state_dict(headed.state_dict())
+    assert cfg is not None and cfg["branch_head"] is True
+    a = _trainer()
+    path = str(tmp_path / "resume.pt")
+    save_resume_state(path, a.active_net, a, iteration=1, total_env_steps=128, elapsed_seconds=1.0, seed=0)
+    torch.manual_seed(0)
+    model = create_ladder_net(torch.device("cpu"), **SHALLOW, branch_head=True)
+    b = NashPGTrainer(active_net=model, env=TsVectorizedEnv(num_envs=8, base_seed=123), num_envs=8,
+                      buffer_size=16, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=torch.device("cpu"))
+    load_resume_state(path, b.active_net, b, seed=0)
+    b.train_iteration()
+
+
+def test_the_floor_can_cover_event_choices_only() -> None:
+    m = torch.zeros(3, 220, dtype=torch.bool)
+    m[0, PLAY_MODE_LO:PLAY_MODE_LO + 5] = True
+    m[1, A.BRANCH_OFFSET:A.BRANCH_OFFSET + 2] = True
+    m[2, REGION_LO:REGION_LO + 6] = True
+    assert floor_rows(m, "event_choices").tolist() == [False, True, True]
+    assert floor_rows(m).tolist() == [True, True, True]
+
+
+def test_environment_credit_stores_forced_events_as_the_environments() -> None:
+    """--force-event-credit environment: the forced plays are learner 0 (no policy gradient), as
+    P31 1b; One Small Step is used because an untrained net reaches it often."""
+    t = _trainer(buffer=64, envs=32, force_applicable_events=["one_small_step"], force_event_frac=1.0,
+                 force_event_credit="environment")
+    assert t.event_forcer is not None
+    for _ in range(20):
+        t.collect_rollouts()
+        if t.event_forcer.forced["one_small_step"] > 0:
+            break
+    assert t.event_forcer.forced["one_small_step"] > 0
+    learner = t.buffer.learner.reshape(-1) > 0.5
+    acts = t.buffer.actions.reshape(-1)
+    # without a pool, learner = 0 marks exactly the forced plays: all of them the event at play mode
+    assert bool((~learner).any()) and torch.all(acts[~learner] == EVENT_SLOT)
+    t.train_step()
+
+
+def test_wargames_branch_forcing_reaches_the_branch_at_any_lead() -> None:
+    from ai.training.show_and_decide import ApplicableEventForcer
+    np.random.seed(5)
+    forcer = ApplicableEventForcer(["wargames_branch"], 1.0)
+    env = TsVectorizedEnv(num_envs=64, base_seed=5)
+    rng = np.random.default_rng(5)
+    _o, mk, _ = env.reset_all()
+    reached, leads = 0, set()
+    for _ in range(3000):
+        acts = torch.tensor([int(rng.choice(np.flatnonzero(r))) for r in mk])
+        forced = forcer.apply(acts, torch.from_numpy(np.asarray(mk)), np.ones(64, dtype=bool), env.runner, 0)
+        for e in np.flatnonzero(forced):
+            st = env.runner.get_state(int(e))
+            assert int(st.defcon) == 2 and int(st.ctx().pending_op_card) == 100
+            side = int(st.ctx().decision_player)
+            leads.add(side * int(st.victory_points) >= 7)
+            br = st.clone()
+            assert ts.Engine.try_step_flat(br, EVENT_SLOT, True)
+            assert br.ctx().decision_type == ts.DecisionType.CHOOSE_BRANCH and int(br.ctx().resolving_card) == 100
+            assert int(br.ctx().decision_player) == side                  # the same side decides the branch
+            reached += 1
+        _o, mk, _r, _d, _i = env.step(acts.numpy())
+        if reached >= 20 and len(leads) == 2:
+            break
+    assert reached > 0
+
+
+def test_conditions_on_one_card_are_refused() -> None:
+    from ai.training.show_and_decide import ApplicableEventForcer
+    with pytest.raises(ValueError, match="twice"):
+        ApplicableEventForcer(["wargames", "wargames_branch"], 0.1)

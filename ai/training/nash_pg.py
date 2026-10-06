@@ -335,6 +335,8 @@ class BaseNashPGTrainer:
         force_applicable_events: Sequence[str] = (),
         force_event_frac: float = 0.1,
         force_events_from: int = 0,
+        force_event_credit: str = "own",
+        floor_rows_kind: str = "play_mode_and_events",
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
         aux_own_coef: float = 0.0,
@@ -513,6 +515,9 @@ class BaseNashPGTrainer:
             raise ValueError("--floor-scope seeded needs --seed-scenarios: there are no seeded games")
         self.play_mode_floor = float(play_mode_floor)
         self.floor_scope = str(floor_scope)
+        if floor_rows_kind not in ("play_mode_and_events", "event_choices"):
+            raise ValueError("--floor-rows must be play_mode_and_events or event_choices")
+        self.floor_rows_kind = str(floor_rows_kind)
         self.floor_from = int(floor_from)
         self.floor_anneal_from = None if floor_anneal_from is None else int(floor_anneal_from)
         self.floor_anneal_steps = int(floor_anneal_steps)
@@ -544,12 +549,19 @@ class BaseNashPGTrainer:
         # Step with the event legal and applicable, play the event with probability
         # force_event_frac, trained as the policy's own (show_and_decide.ApplicableEventForcer).
         self.event_forcer: Optional[ApplicableEventForcer] = None
+        if force_event_credit not in ("own", "environment"):
+            raise ValueError("--force-event-credit must be own or environment")
+        #: "own": the forced event is the learner's play (learner 1, log pi); "environment": as P31 1b,
+        #: learner 0 -- no policy gradient on it, the decisions after it are the policy's own.
+        self.force_event_credit = str(force_event_credit)
         if force_applicable_events:
             self.event_forcer = ApplicableEventForcer(list(force_applicable_events), float(force_event_frac),
                                                       start_step=int(force_events_from))
             print(f"[force events] {list(force_applicable_events)}: event played in "
                   f"{float(force_event_frac):.0%} of the learner's applicable plays from "
-                  f"{int(force_events_from):,} steps, trained as the policy's own", flush=True)
+                  f"{int(force_events_from):,} steps, credited as "
+                  f"{'the policy' + chr(39) + 's own' if force_event_credit == 'own' else 'environment'}",
+                  flush=True)
 
         self.optimizer = torch.optim.AdamW(self.active_net.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -1344,7 +1356,7 @@ class BaseNashPGTrainer:
                 # draws from the RNG, so a run without the flag is bit-identical to before.
                 _eps = self._current_floor_eps()
                 if _eps > 0.0:
-                    _fr = floor_rows(masks_t) & learner_t
+                    _fr = floor_rows(masks_t, self.floor_rows_kind) & learner_t
                     if self.floor_scope == "seeded":
                         assert self.seeder is not None
                         _fr = _fr & torch.from_numpy(self.seeder.seeded).to(self.device)
@@ -1384,6 +1396,10 @@ class BaseNashPGTrainer:
                         log_probs_t = torch.where(
                             _ev_t, unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1),
                             log_probs_t)
+                        if self.force_event_credit == "environment":
+                            learner_np = np.asarray(learner_np, dtype=bool) & ~_ev
+                            learner_t = torch.from_numpy(learner_np).to(self.device)
+                            _pm_learner = _pm & learner_t
                         if self._behaviour_w is not None and _eps > 0.0:
                             _s = self.buffer.step * self.num_envs
                             _w = self._behaviour_w[_s:_s + self.num_envs]
