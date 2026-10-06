@@ -4,8 +4,9 @@ search's moves played out by the model (`ai/eval/paired_playouts.py`).
 
 Three steps:
 
-* `select` -- the positions to play, from `bank_clarity.py`'s output: the `--top` clearest by its
-  value margin (z), written with their positions and move indices as one input file;
+* `select` -- the positions to play, from `bank_clarity.py`'s output: every position whose value lead
+  is at least `--min-gap` win-probability points (or else the `--top` largest margins in SEs),
+  written with their positions and move indices as one input file;
 * `run` -- this part's share of an input file (`--part k/N`, for CI runners): every distinct move
   of every position, `--pairs` pairs each, the network playing both sides greedily;
 * `pool` -- the parts merged into one file.
@@ -45,10 +46,23 @@ def _write(path: str, rows: Sequence[Dict[str, Any]]) -> None:
             f.write(json.dumps(r) + "\n")
 
 
-def select(clarity: Sequence[str], banks: Sequence[str], top: int, out: str) -> int:
+def value_gap(c: Dict[str, Any]) -> Optional[float]:
+    """The value-best move's lead over the next distinct move, in win-probability points (values run
+    from -1 to +1, so half the difference). A lead matters only if it is large: in a game that is
+    won or lost whatever happens, every move is worth about the same."""
+    vals = sorted({(v[0], v[1]) for v in c["q"].values()}, key=lambda v: -v[0])
+    return (vals[0][0] - vals[1][0]) / 2 * 100 if len(vals) > 1 else None
+
+
+def select(clarity: Sequence[str], banks: Sequence[str], top: int, out: str, min_gap: float = 0.0) -> int:
     from tools.scripts.disagreement_bank import row_id
 
-    cl = sorted((c for c in _read(clarity) if c.get("z") is not None), key=lambda c: -c["z"])[:top]
+    if min_gap > 0:
+        cl = [c for c in _read(clarity) if (value_gap(c) or 0.0) >= min_gap]
+        cl.sort(key=lambda c: -(value_gap(c) or 0.0))
+        cl = cl[:top]
+    else:
+        cl = sorted((c for c in _read(clarity) if c.get("z") is not None), key=lambda c: -c["z"])[:top]
     want = {c["id"]: c for c in cl}
     pos: Dict[str, str] = {}
     for r in _read(banks):
@@ -57,7 +71,7 @@ def select(clarity: Sequence[str], banks: Sequence[str], top: int, out: str) -> 
             pos[rid] = r["pos"]
     rows = [{"id": c["id"], "pos": pos[c["id"]], "a": c["a"]} for c in cl if c["id"] in pos]
     _write(out, rows)
-    print(f"{len(rows)} positions selected (z from {cl[-1]['z'] if cl else '-'} up)", file=sys.stderr)
+    print(f"{len(rows)} positions selected", file=sys.stderr)
     return 0
 
 
@@ -100,6 +114,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     s.add_argument("--clarity", nargs="+", required=True)
     s.add_argument("--bank", nargs="+", required=True)
     s.add_argument("--top", type=int, default=1000)
+    s.add_argument("--min-gap", type=float, default=0.0,
+                   help="take every position whose value lead is at least this many win-probability points "
+                        "(largest first, up to --top) instead of the largest margins in SEs")
     s.add_argument("--out", required=True)
     r = sub.add_parser("run")
     r.add_argument("--input", required=True)
@@ -113,7 +130,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "select":
-        return select(a.clarity, a.bank, a.top, a.out)
+        return select(a.clarity, a.bank, a.top, a.out, a.min_gap)
     if a.cmd == "run":
         return run(a.input, a.onnx, a.pairs, a.part, a.seed, a.out)
     _write(a.out, list(_read(a.parts)))
