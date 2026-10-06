@@ -110,3 +110,66 @@ wrongly, though its event column is right).
   training many "Chernobyl event, then nothing gained" games the plain line never plays. Not yet
   verified directly. The fix that keeps P31's idea: force only the event play and leave the region
   to the policy (its own decision, with gradient), and keep the floor off region choices.
+
+## E7-29-44: applicable events forced, trained as the policy's own (owner, 2026-10-06)
+
+`--force-applicable-events wargames arms_race one_small_step --force-event-frac 0.1`: at the learner's
+play-mode decision for the card with its event legal and applicable (Wargames: DEFCON 2 and 7+ VP
+ahead; Arms Race: ahead in military Ops; One Small Step: behind in space), the event is played in 10%
+of cases and credited as the policy's own (`learner = 1`, `log pi(EVENT)`, no weight; owner's choice
+over an importance-weighted version, whose expected gradient would not change). From E7-20-44@4,390M
+to 4,800M. The learner meets those spots ~3,500 (Wargames), ~15,700 (Arms Race) and ~17,900 (One Small
+Step) times per 21M steps, so ~1,600–1,700 forced plays per 21M for each of the two latter.
+
+**Strength: worse in both seats** (`data/reports/p31_E7-29-44_rr.{md,json}`):
+
+| | US | USSR | head to head |
+|:---|:---|:---|:---|
+| E7-29-44@4800M vs the three siblings | **−2.6 ± 0.6** | **−1.4 ± 0.7** | **43.4% ± 0.6** |
+| E7-29-44 SWA vs the siblings' SWAs | **−2.2 ± 0.6** | −1.0 ± 0.6 | **46.2% ± 0.6** |
+
+**The cards, split by the rule's own applicability** (4,000 self-play games, T 0.1 / T 1; siblings ~1%
+or less on every cell):
+
+| | applicable | not applicable |
+|:---|:---|:---|
+| Wargames, USSR | **62.6% / 57.8%** of ~205 | **10.3% / 9.9%** of ~710 |
+| Wargames, US | 11.4% / 7.4% of ~190 | 0.2% / 0.0% of ~680 |
+| One Small Step, both | **0.0%** of ~950 a side | 0.0% |
+| Arms Race, both | **0.0%** of 500–975 | 0.0% |
+| Chernobyl (not forced) | **0.0%** of 796 / 888 | |
+
+Games ended by Wargames: 4.4% / 4.0% (siblings 0.2–0.6%). At 4,440M (50M in) the same split read
+Wargames applicable US 19.6% / USSR 9.3%, One Small Step 0%, Arms Race 0.4–0.6%.
+
+**Every event was suppressed.** The event share of all the learner's play-mode decisions over training:
+
+| | 4,390–4,490M | 4,500–4,600M | 4,600–4,700M | 4,700–4,800M |
+|:---|---:|---:|---:|---:|
+| **E7-29-44** | 0.307 | 0.259 | 0.212 | **0.147** |
+| E7-20-44 (plain) | 0.316 | 0.303 | 0.309 | 0.304 |
+| B1, E7-28-44 | 0.319 | 0.300 | 0.310 | 0.281 |
+| B2, E7-27-44 | 0.317 | 0.321 | 0.295 | 0.302 |
+
+### Reading
+
+* **The forced One Small Step and Arms Race events were judged worse than their Ops**, and credited as
+  the policy's own, each carried a full-size gradient on the EVENT logit -- `(1 - pi) * A` with
+  `pi ~ 0.002`, against `pi * A` for a sample the policy drew itself. ~3,300 such plays per 21M steps,
+  mostly with negative advantage, pushed EVENT down. **The play-mode head is shared by every card**
+  (EVENT / SPACE / OPS slots, `ai/eval/play_modes.py`'s premise), so the push spread to cards never
+  forced: the event share of all play-mode decisions halved (31% -> 15%), Chernobyl went to 0. That
+  is the main cost in strength.
+* **Wargames was learned, but not the condition.** Forced Wargames at 7+ VP is an instant win, so its
+  credit is large and positive; the USSR took it up to ~60% where applicable but also ~10% where it is
+  not (a smaller lead, which hands over the game, or DEFCON above 2, which wastes the card). The US
+  moved much less (7–11%). The only signal against the non-applicable plays is the policy's own rare
+  ones.
+* **The same spillover may explain Chernobyl's fall in B1 and B2**, beside the random region: anything
+  that pushes EVENT down at some cards drags it at others through the shared head.
+* **What this says about the lever.** Crediting a forced action as the policy's own is a much stronger
+  push than anything the policy samples, in both directions, and through a shared head it does not
+  stay on the card it was aimed at. For a next attempt: Wargames only (the one card whose forced
+  outcome is unambiguous), a much smaller fraction, and negative examples at its non-applicable spots
+  -- or a card-specific play-mode representation so a push at one card stays there, which is an
+  architecture question (P30).
