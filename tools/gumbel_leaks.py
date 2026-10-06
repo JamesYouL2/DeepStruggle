@@ -5,7 +5,7 @@
 One part (a CI runner, or locally):
 
     tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python \\
-        tools/gumbel_leaks.py --model <ckpt.pt> --positions 300 --seed 1 --pairs 32 --dump part-1.jsonl
+        tools/gumbel_leaks.py --model <ckpt.pt | export.onnx> --positions 300 --seed 1 --pairs 32 --dump part-1.jsonl
 
 Pool the parts into a report, with each leak linked into the workbench at its position:
 
@@ -28,7 +28,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     from ai.eval import gumbel_leaks as L
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", help="torch checkpoint (load_agent spec)")
+    ap.add_argument("--model", help="a checkpoint (.pt) or a published export (.onnx, run in ONNX Runtime)")
     ap.add_argument("--positions", type=int, default=300, help="positions sampled by this part")
     ap.add_argument("--seed", type=int, default=1, help="seeds the games, the root and the playouts")
     ap.add_argument("--pairs", type=int, default=32, help="paired playouts per departure")
@@ -58,12 +58,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not a.model:
         ap.error("--model is required unless --merge")
     import torch
-    from tools.lib.player_agent import load_agent
+    from tools.lib.player_agent import load_network
 
     torch.set_num_threads(max(1, os.cpu_count() or 1))
     torch.manual_seed(a.seed)
-    model = getattr(load_agent(a.model, device="cpu"), "model")
-    model.eval()
+    model = load_network(a.model, device="cpu")
     spec = L.RootSpec(sims=a.sims, k=a.k, fpu=a.fpu)
     rows, meta = L.run_part(model, a.positions, a.seed, a.pairs, spec, temperature=a.temperature)
     meta["model"] = os.path.basename(a.model)

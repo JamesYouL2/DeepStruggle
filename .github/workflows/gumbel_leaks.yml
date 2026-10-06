@@ -4,10 +4,9 @@
 #   gh workflow run gumbel_leaks.yml --ref feat/gumbel-leaks -f positions=300 -f runners=20
 #   gh run download <run-id> -n gumbel-leaks-<run-id> -D data/reports/ci
 #
-# `model` = newest (default) takes the newest .onnx on Hugging Face -- the one the workbench loads
-# -- and plays its torch twin, the `<same name>.pt` beside it; the run fails at plan if there is
-# none rather than measure another network. Or name a checkpoint: hf:pt:<file>.pt or
-# hf:relpt:<tag>/<file>.pt. Each runner samples its own positions (seed = part number); the pool
+# `model` = newest (default) plays the newest .onnx on Hugging Face -- the network the workbench
+# loads -- in ONNX Runtime (tools/lib/player_agent.OnnxModule). Or name one: hf:<file>.onnx,
+# hf:pt:<file>.pt or hf:relpt:<tag>/<file>.pt. Each runner samples its own positions (seed = part number); the pool
 # job merges the parts into one report whose largest leaks link into the workbench at their
 # positions (`workbench` + `pos=`), where the page's Gumbel search can be run on them.
 name: gumbel-leaks
@@ -21,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       model:
-        description: "newest (the newest .onnx's torch twin on Hugging Face), hf:pt:<file>.pt or hf:relpt:<tag>/<file>.pt"
+        description: "newest (the newest .onnx on Hugging Face), hf:<file>.onnx, hf:pt:<file>.pt or hf:relpt:<tag>/<file>.pt"
         default: "newest"
       positions:
         description: "Positions per runner"
@@ -83,26 +82,21 @@ jobs:
           python3 - <<'PY'
           import json, os, sys
           sys.path.insert(0, "tools")
-          from fetch_hf_model import list_entries, order_newest_first, torch_twin
+          from fetch_hf_model import list_models
           repo, model = os.environ["HF_REPO"], os.environ["MODEL"].strip()
-          workbench_model = ""
           if model == "newest":
-              entries = list_entries(repo, "main")
-              onnx = order_newest_first(entries)
+              onnx = list_models(repo, "main")
               if not onnx:
                   sys.exit(f"{repo} has no .onnx files")
-              newest = onnx[0][0]
-              pt = torch_twin(newest, entries)
-              if pt is None:
-                  have = sorted(str(e.get("path")) for e in entries if str(e.get("path", "")).endswith(".pt"))
-                  sys.exit(f"the newest export {newest} has no torch twin ({os.path.splitext(newest)[0]}.pt) "
-                           f"in {repo}; search needs the torch network. Name one with model=hf:pt:<file>.pt. "
-                           f".pt files there: {have or 'none'}")
-              model = f"hf:pt:{pt}"
-              workbench_model = f"hf:{repo}@main:{newest}"
-              print(f"newest export: {newest}; torch twin: {pt}")
-          elif not model.startswith(("hf:pt:", "hf:relpt:")):
-              sys.exit(f"model must be newest, hf:pt:<file>.pt or hf:relpt:<tag>/<file>.pt, not {model!r}")
+              model = f"hf:{onnx[0][0]}"
+              print(f"newest export: {onnx[0][0]}")
+          if model.startswith("hf:") and model.endswith(".onnx") and ":" not in model[3:]:
+              workbench_model = f"hf:{repo}@main:{model[3:]}"   # the leak links open this network
+          elif model.startswith(("hf:pt:", "hf:relpt:")):
+              workbench_model = ""
+          else:
+              sys.exit(f"model must be newest, hf:<file>.onnx, hf:pt:<file>.pt or "
+                       f"hf:relpt:<tag>/<file>.pt, not {model!r}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"model={model}\n")
               f.write(f"workbench_model={workbench_model}\n")

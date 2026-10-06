@@ -422,6 +422,10 @@ class OnnxAgent:
     def reseed(self, seed: int) -> None:
         self.rng = np.random.default_rng(seed)
 
+    def as_module(self) -> "OnnxModule":
+        """This network as a torch module, for code written against one (the searcher)."""
+        return OnnxModule(self)
+
     def logits(self, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
         out = self.session.run(["logits"], {"obs": np.ascontiguousarray(obs, dtype=np.float32),
                                             "mask": np.ascontiguousarray(masks, dtype=np.uint8)})
@@ -451,6 +455,54 @@ class OnnxAgent:
         mask = np.asarray(ActionEncoder.get_legal_mask(state, self.merged_influence),
                           dtype=np.uint8)[None, :]
         return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
+
+
+class OnnxModule(nn.Module):
+    """An `OnnxAgent`'s network as a torch module: `forward(obs, mask)` returns (logits, v_win,
+    v_vp) as `ColdWarNetV2.forward` does, computed by ONNX Runtime on CPU.
+
+    Lets code written against a torch model -- the batched searcher above all -- run a published
+    export, for which no .pt exists. Inference only: there is nothing to train, and the single
+    registered parameter exists so that `next(module.parameters())`-style device lookups work.
+    An export reads the base observation (feature set 0: `model_obs_features` finds no
+    `obs_feature_bits`). Ported from exp/hungary-openings (27ae701) without its safety layer and
+    ensemble."""
+
+    def __init__(self, agent: "OnnxAgent"):
+        super().__init__()
+        self.agent = agent
+        self.register_parameter("_device_anchor", nn.Parameter(torch.zeros(1), requires_grad=False))
+
+    def forward(self, obs: torch.Tensor, mask: Optional[torch.Tensor] = None
+                ) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
+        o = obs.detach().cpu().numpy().astype(np.float32, copy=False)
+        m = (np.ones((o.shape[0], ActionEncoder.FLAT_ACTION_SIZE), dtype=np.uint8) if mask is None
+             else mask.detach().cpu().numpy().astype(np.uint8, copy=False))
+        logits, v_win, v_vp = self.agent.session.run(
+            None, {"obs": np.ascontiguousarray(o), "mask": np.ascontiguousarray(m)})
+        return (torch.from_numpy(np.asarray(logits)), torch.from_numpy(np.asarray(v_win)),
+                torch.from_numpy(np.asarray(v_vp)))
+
+    @property
+    def TOTAL_OBS_SIZE(self) -> int:
+        """The width the export reads, under the name `check_obs_width` looks for."""
+        return int(self.agent.obs_size)
+
+
+def load_network(path: str, device: Union[torch.device, str] = "cpu") -> nn.Module:
+    """The network of a checkpoint (.pt) or of an export (.onnx, through `OnnxModule`), as a torch
+    module in eval mode: what the searcher and the probes call `forward(obs, mask)` on.
+
+    The Python searcher and the probes build every mask in the standard action view, so an export
+    that decides in the merged-influence view (P23) is refused rather than handed masks it would
+    misread (invariant 2)."""
+    if path.lower().endswith(".onnx"):
+        agent = OnnxAgent(path)
+        if agent.merged_influence:
+            raise ValueError(f"{path} decides in the merged-influence view; the searcher builds "
+                             f"standard-view masks only")
+        return agent.as_module().eval()
+    return NeuralAgent.from_checkpoint(path, device=device).model.eval()
 
 
 def _search_overrides(items: Sequence[str], what: str = "search: spec option") -> Dict[str, Any]:
@@ -550,7 +602,9 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         backend = parts[6].lower() if len(parts) > 6 and parts[6] else "cpp"
         from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 
-        base = NeuralAgent.from_checkpoint(path, device=device)
+        # An export (the published models) runs in ONNX Runtime through OnnxModule; the search
+        # code only ever calls forward(obs, mask).
+        search_model = load_network(path, device=device)
         # advance_root=False because the CLIs hand over a state they have NOT settled --
         # tools/tournament.py only auto-advances under --auto-advance, and play_match.py steps
         # decision by decision. With the default True the searcher settles its own root, so at a
@@ -569,7 +623,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         tag += "" if backend == "cpp" else f"-{backend}"
         tag += "".join(f"-{k}{v}" for k, v in overrides.items())
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
-        return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
+        return BatchedMCTSAgent(search_model, name=label, device=device, config=cfg)
     if s.lower().startswith("macro:"):
         # macro:<checkpoint>[:field=value...] -- search over complete player decisions
         # (ai/search/macro_search.py) with the checkpoint frozen: its beam proposes the macros,

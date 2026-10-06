@@ -703,15 +703,19 @@ Models with appended observation features are played in their own view.
 ```bash
 # one part (CI runs 20 of these and pools them: .github/workflows/gumbel_leaks.yml)
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/gumbel_leaks.py \
-  --model <ckpt.pt> --positions 300 --pairs 32 --seed 1 --dump part-1.jsonl
+  --model <ckpt.pt | export.onnx> --positions 300 --pairs 32 --seed 1 --dump part-1.jsonl
 # pool parts; links open the local workbench (python -m web.server.main) with the model's export
 PYTHONPATH=.:build/release .venv/bin/python tools/gumbel_leaks.py --merge part-*.jsonl \
   --output-md report.md --workbench-model hf:mihaild/deepstruggle@main:<model>.onnx
 ```
 
-On CI, `model=newest` takes the newest `.onnx` on Hugging Face (the workbench's default) and plays
-its torch twin (`<same name>.pt` beside it); the run stops at the plan job if there is none rather
-than measure another network. The playouts value a move as this network continues from it, and a
+`--model` takes a checkpoint (`.pt`) or a published export (`.onnx`): an export runs in ONNX
+Runtime through `tools/lib/player_agent.OnnxModule`, which gives the searcher and the playouts the
+`forward(obs, mask)` they call (on C2_soup+A, the same positions give identical root choices and
+playout verdicts either way). On CI, `model=newest` plays the newest `.onnx` on Hugging Face, the
+network the workbench loads, and the report's links open it. An export in the merged-influence
+view is refused: the searcher builds standard-view masks only. The same wrapper lets a `search:`
+tournament entrant name an `.onnx`. The playouts value a move as this network continues from it, and a
 departure the playouts refute (below -2 SE) is the root being wrong, not the network.
 
 ---
