@@ -41,6 +41,33 @@ The comparisons that carry the conclusions, pooled over the three networks (6,00
 
 Per network, reports in `data/reports/e7_gumbel_headroom_{swa4720,swa4800,snap4800}.{md,json}`.
 
+## What a decision costs
+
+Measured on 5,717 positions of the SWA network's own games searched in one call (the shape of a
+tournament step), CUDA, after the speed-ups of 2026-10-06 (one C++ search per halving phase, a
+budget per tree, the observation computing control once, thin LTO):
+
+| searcher | wall per call | network calls | C++ tree | issuing forwards (Python) | Gumbel root (Python) |
+|:---|---:|---:|---:|---:|---:|
+| Gumbel k=8 @256 | 4.5 s | 469 | 58% | ~19% | 19% |
+| Gumbel k=4 @64 | 1.5 s | 97 | 35% | ~12% | 40% |
+| Gumbel k=4 @16 | 1.05 s | 25 | 26% | ~5% | 59% |
+| PUCT @128 | 1.6 s | 258 | 70% | ~29% | — |
+
+The GPU is busy a quarter of the time or less. At 256 the C++ tree dominates (leaf selection: a
+child's step, settle and observation); at 16 the root's own Python bookkeeping does --
+determinizing, building candidate positions, ranking -- which is why k = 4 at 16 costs two thirds of
+PUCT at 128 rather than an eighth. A tournament of these seven players took about 2.5 hours per
+network on this machine (an i9-12900KF and an RTX 4090).
+
+Running the network through CUDA graphs (`BatchedMCTSConfig.cuda_graphs`, opt-in; batches padded to
+multiples of 64 rows) saves the CPU time to issue each forward -- 0.74 ms eager, 0.06 ms replayed --
+but buys little end to end, since that time mostly overlapped other work already: on the same
+5,717 positions PUCT @128 1.20 → 1.09 s, Gumbel k=8 @256 3.03 → 2.87 s, k=4 @64 1.10 → 1.07 s,
+k=4 @16 0.69 → 0.69 s, with not one move different and PUCT's visit counts identical at every root.
+The padding does change the value head's last bit on some rows (the batch size changes), so it is
+not bit-identical in general, which is why it is off.
+
 ## Method
 
 * **Networks.** `data/checkpoints/_swa_line_ctl/E7line_swa_4640-4720M.pt` (sha256 `405b6de2…`),
@@ -49,7 +76,7 @@ Per network, reports in `data/reports/e7_gumbel_headroom_{swa4720,swa4800,snap48
 * **The Gumbel root** (`ai/search/gumbel_root.py`, `BatchedMCTSConfig.gumbel_k`). At every decision
   it takes the k most probable moves (Gumbel scale 0), splits the budget over ceil(log2 k) halving
   phases, searches every surviving candidate's position with the ordinary batched search -- an
-  equal share each -- and keeps the better half by
+  equal share each, all candidates of a phase in one search -- and keeps the better half by
   logit + sigma(completed Q), with sigma and the completed Q as in mctx (c_visit 50,
   c_scale 0.1). Honest: each phase samples one world from the decider's side and searches the
   candidates' positions in it. Unlike Gumbel MuZero each phase searches a candidate afresh rather
@@ -63,14 +90,11 @@ Per network, reports in `data/reports/e7_gumbel_headroom_{swa4720,swa4800,snap48
 * **Entrants**, as agent specs: the checkpoint itself, `search:<ckpt>:128:determinize:all::cpp:0`,
   `search:<ckpt>:128:determinize:all::cpp:0.2`, `gumbel:<ckpt>:16:4`, `gumbel:<ckpt>:64:4`,
   `gumbel:<ckpt>:64:4:0` and `gumbel:<ckpt>:256:8` (Gumbel's FPU defaults to 0.2).
-* **The code the games were played with.** The root, its budget and the agent specs are this
-  branch's. The search under them was the follow-up branch's (`gumbel-headroom-optimizations`),
-  whose C++ tree takes a budget per tree, so a halving phase's candidates go into one search
-  rather than one search per distinct share. That changes which leaves share a network batch and
-  the order of the chance draws: the same algorithm and, statistically, the same player -- not the
-  same games as this branch's code. The first three tournaments ran on engine fingerprint
-  `ea4aea7a…`; the last two on that branch's tip, whose later engine changes (the observation's
-  speed-up, LTO, the legal-mask cache) change no game.
+* Played on this branch's search: the first three tournaments on commit 7adbf03 (engine
+  fingerprint `ea4aea7a…`), the last two on its tip. The engine changes between (the observation's
+  speed-up, LTO, the legal-mask cache) change no game -- the observation is bit-identical, the
+  batch runner replays the same games, and `tests/web/test_wasm_engine.py` holds the native engine
+  to the unchanged wasm one.
 
 ## Replicate
 
@@ -90,7 +114,8 @@ The three budgets again on the newest single checkpoint, E7-20-44-4390M.46 at 4,
 `84f05bb4…`), and the soup of E7-20-44 and its two seed branches at 4,800M
 (`soup_E7-20-44+4390M.45+4390M.46_4800M.pt`, `ef6f6384…`): the network and Gumbel k=4 @16, k=4 @64
 and k=8 @256, 12,000 greedy games each, 1,000 per side per pair (reports
-`data/reports/e7_gumbel_budget_{4390M46_4800,soup4800}.{md,json}`). Head-to-head Elo, draws as half, ±1 standard error, with the three networks above:
+`data/reports/e7_gumbel_budget_{4390M46_4800,soup4800}.{md,json}`, 31 minutes each on the sped-up
+engine). Head-to-head Elo, draws as half, ±1 standard error, with the three networks above:
 
 | network | k=8 @256 vs k=4 @64 | k=4 @64 vs k=4 @16 | k=8 @256 vs network | k=4 @64 vs network | k=4 @16 vs network |
 |:---|---:|---:|---:|---:|---:|
@@ -102,7 +127,7 @@ and k=8 @256, 12,000 greedy games each, 1,000 per side per pair (reports
 | **pooled, 5 networks** | **+12 ± 3** | **+22 ± 3** | **+66 ± 4** | **+61 ± 4** | **+35 ± 3** |
 
 Every network puts k=8 @256 above k=4 @64, by 8 to 15 Elo: the larger budget is a small, real
-gain, at four times the network evaluations. Search is worth
+gain, at about three times the cost (3.15 s against 1.10 s on 5,717 positions). Search is worth
 less over the soup at 64 (+45, against +55 to +78 elsewhere) and about the same at 256; one
 network, inside two standard errors of the others' spread. Each column is relative to that
 network itself -- these say nothing about how the networks compare with each other.
