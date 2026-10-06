@@ -1,65 +1,117 @@
-# Search headroom with a Gumbel root (2026-10-05): k = 8 candidates at 256 simulations is the strongest, +79 Elo over the network
+# Search headroom with a Gumbel root (2026-10-06): +60 Elo over the network at 64 evaluations, +10 more at 256; k = 4 at 16 matches PUCT at 128; first-play urgency does nothing
 
-**Question.** How much play strength does honest (determinized) search add on top of the best
-network, and which root makes the most of a budget?
+**Question.** How much play strength does honest (determinized) search add on top of the
+strongest networks, and which root makes the most of a budget?
 
 **Answer.** A noise-free Gumbel root (Danihelka et al., ICLR 2022: the k most probable moves,
-narrowed by sequential halving) with first-play urgency 0.2 scores 58-61% against the plain network, and
-beats PUCT search of the same network given 8x its simulations. Gains flatten after 64 simulations:
-with k = 4 the budget stops helping at 64, and k = 8 is needed to use 128-256; 16 candidates are no
-better than 8.
+narrowed by sequential halving) is worth about **+60 Elo** over the plain network at 64 network
+evaluations a decision, and about +10 more at 256. It beats PUCT search of the same network by
+about 20 Elo at half PUCT's evaluations (k = 4 at 64 against PUCT at 128), and at an eighth of them
+(k = 4 at 16) it plays PUCT at 128 dead even. First-play urgency, 0.2 or 0, makes no difference
+to either root. Three networks -- the two latest SWAs of the E7 line and E7-20-44's raw 4,800M
+snapshot -- agree on all of it within their noise.
 
-| player (honest search, every decision) | Elo | vs the network | vs k=4 @64 |
-|:---|---:|---:|---:|
-| **Gumbel k=8 @256** | **1520.5** | **60.1%** | 51.8% |
-| Gumbel k=16 @256 | 1518.5 | 61.2% | 50.8% |
-| Gumbel k=8 @128 | 1511.7 | 59.8% | 50.8% |
-| Gumbel k=4 @128 | 1504.2 | 58.0% | 50.0% |
-| Gumbel k=4 @64 | 1503.7 | 58.1% | — |
-| the network, greedy | 1441.4 | — | 41.9% |
+| player (honest search at every decision) | evaluations | Elo vs network, SWA 4,640-4,720M | SWA 4,720-4,800M | snapshot @4,800M | pooled score vs network |
+|:---|---:|---:|---:|---:|---:|
+| **Gumbel k=8 @256** | 256 | **+61** | **+61** | **+66** | **58.8%** (+61) |
+| Gumbel k=4 @64 | 64 | +56 | +53 | +50 | 58.6% (+60) |
+| Gumbel k=4 @64, FPU 0 | 64 | +55 | +50 | +52 | 57.4% (+52) |
+| Gumbel k=4 @16 | 16 | +25 | +33 | +29 | 55.4% (+37) |
+| PUCT @128, FPU 0.2 | 128 | +30 | +29 | +28 | 53.4% (+24) |
+| PUCT @128 | 128 | +28 | +25 | +28 | 52.7% (+19) |
+| the network, greedy | 1 | 0 | 0 | 0 | — |
 
-60,000 games, 2,000 per side per pair, sampling temperature 0.1; a head-to-head is ±0.8. Win
-rates count wins only (draws about 1%).
+Each column is one tournament: 7 entrants, 42,000 games, 1,000 games per side per pair, every
+player greedy (temperature 0), Bradley-Terry Elo with the network at 0. The last column pools the
+three tournaments' head-to-heads against the network (6,000 games, draws as half; ±0.6 points is
+one standard error). The Bradley-Terry column and the head-to-head differ for the weaker searchers
+because the fit also uses their games against the stronger ones.
 
-Against PUCT search of the same network (a separate 24,000-game run, same settings): Gumbel k=4
-at **16** simulations beats PUCT at 128 (52.1%), and k=4 at 64 beats it 54.5%. PUCT at 128 scores
-52.4% against the plain network, the Gumbel root at 64 59.2%.
+The comparisons that carry the conclusions, pooled over the three networks (6,000 games each,
+±0.6):
+
+| | score | Elo |
+|:---|---:|---:|
+| Gumbel k=8 @256 vs Gumbel k=4 @64 | 51.5% | +10 |
+| Gumbel k=4 @64 vs PUCT @128 (FPU 0 / 0.2) | 53.5% / 53.1% | +24 / +21 |
+| Gumbel k=4 @16 vs PUCT @128 (FPU 0 / 0.2) | 50.0% / 49.9% | 0 / 0 |
+| Gumbel k=4 @64 vs Gumbel k=4 @16 | 53.5% | +24 |
+| Gumbel k=4 @64, FPU 0.2 vs FPU 0 | 49.6% | −2 |
+| PUCT @128, FPU 0.2 vs FPU 0 | 49.7% | −2 |
+
+Per network, reports in `data/reports/e7_gumbel_headroom_{swa4720,swa4800,snap4800}.{md,json}`.
 
 ## Method
 
-* **Network.** `C2_soup+A.pt`, the fork's strongest: the shallow soup
-  ([`E7_shallow_soup.md`](E7_shallow_soup.md)) averaged 50/50 with E7-20-44's weights averaged over
-  2,720-2,800M. sha256 `5cbb77ef98682b01a550213c0f80646a8c7b55ae4a44a3e49d3ab125744da69b`, fork
-  release [`e7-20-44-soups`](https://github.com/JamesYouL2/DeepStruggle/releases/tag/e7-20-44-soups).
-* **Search.** Honest: each phase samples one world from the decider's side. At every decision the
-  root takes the k most probable moves (Gumbel scale 0), splits the budget over ceil(log2 k)
-  halving phases, searches each surviving candidate's position with the ordinary batched search
-  (equal shares), and keeps the better half by logit + sigma(completed Q), with sigma and the
-  completed Q as in mctx (c_visit 50, c_scale 0.1). Unlike Gumbel MuZero each phase searches a
-  candidate afresh rather than growing one tree. First-play urgency 0.2 values an unvisited move at
-  its node's value less 0.2 in those searches. Code: `ai/search/gumbel_root.py`;
-  `BatchedMCTSConfig.gumbel_k`, `gumbel_scale`, `fpu_reduction` (both trees).
-* **Cost.** Gumbel k=4 @32 ran about 8% slower than PUCT @32. The 256-simulation entrants are
-  roughly 4x k=4 @64.
+* **Networks.** `data/checkpoints/_swa_line_ctl/E7line_swa_4640-4720M.pt` (sha256 `405b6de2…`),
+  `E7line_swa_4720-4800M.pt` (`094a2207…`), and E7-20-44's raw
+  `snapshot_4800053248steps.pt` (`7ca02cc3…`), the line at its 4,800M end.
+* **The Gumbel root** (`ai/search/gumbel_root.py`, `BatchedMCTSConfig.gumbel_k`). At every decision
+  it takes the k most probable moves (Gumbel scale 0), splits the budget over ceil(log2 k) halving
+  phases, searches every surviving candidate's position with the ordinary batched search -- an
+  equal share each -- and keeps the better half by
+  logit + sigma(completed Q), with sigma and the completed Q as in mctx (c_visit 50,
+  c_scale 0.1). Honest: each phase samples one world from the decider's side and searches the
+  candidates' positions in it. Unlike Gumbel MuZero each phase searches a candidate afresh rather
+  than growing one tree.
+* **The budget is network evaluations**, as PUCT's is: a candidate's share of `per` is one search
+  of its position with `per − 1` simulations, at most `simulations` candidates are taken, and a
+  phase that cannot give every survivor one evaluation is not run. A Gumbel root at n never
+  evaluates more positions than PUCT at n (`tests/training/test_gumbel_root.py`).
+* **First-play urgency** (`BatchedMCTSConfig.fpu_reduction`, both trees): an unvisited move is
+  valued at its node's value less r, from the mover's side.
+* **Entrants**, as agent specs: the checkpoint itself, `search:<ckpt>:128:determinize:all::cpp:0`,
+  `search:<ckpt>:128:determinize:all::cpp:0.2`, `gumbel:<ckpt>:16:4`, `gumbel:<ckpt>:64:4`,
+  `gumbel:<ckpt>:64:4:0` and `gumbel:<ckpt>:256:8` (Gumbel's FPU defaults to 0.2).
+* **The code the games were played with.** The root, its budget and the agent specs are this
+  branch's. The search under them was the follow-up branch's (`gumbel-headroom-optimizations`),
+  whose C++ tree takes a budget per tree, so a halving phase's candidates go into one search
+  rather than one search per distinct share. That changes which leaves share a network batch and
+  the order of the chance draws: the same algorithm and, statistically, the same player -- not the
+  same games as this branch's code. The first three tournaments ran on engine fingerprint
+  `ea4aea7a…`; the last two on that branch's tip, whose later engine changes (the observation's
+  speed-up, LTO, the legal-mask cache) change no game.
 
 ## Replicate
 
-The `gumbel:<checkpoint>[:sims[:k]]` agent spec plays this configuration (defaults 256, 8):
-
 ```bash
-gh release download e7-20-44-soups -R JamesYouL2/DeepStruggle -p 'C2_soup+A.pt' -D data/checkpoints
-C=data/checkpoints/C2_soup+A.pt
+C=data/checkpoints/_swa_line_ctl/E7line_swa_4720-4800M.pt
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
-  --models $C gumbel:$C:64:4 gumbel:$C:128:4 gumbel:$C:128:8 gumbel:$C:256:8 gumbel:$C:256:16 \
-  --games-per-side 2000 --temperature 0.1 --output-report gumbel_headroom.md
+  --models $C search:$C:128:determinize:all::cpp:0 search:$C:128:determinize:all::cpp:0.2 \
+    gumbel:$C:16:4 gumbel:$C:64:4 gumbel:$C:64:4:0 gumbel:$C:256:8 \
+  --games-per-side 1000 --temperature 0 \
+  --anchor-model _swa_line_ctl@E7line_swa_4720-4800M --anchor-elo 0 \
+  --output-report gumbel_headroom.md --output-json gumbel_headroom.json
 ```
 
-The fork measured it on CI (runs `37327142506` and `37318435430`, 20 runners) with the equivalent
-`search:<ckpt>:<sims>:determinize:all` entrants and the three settings as overrides.
+## The fork's first measurement (2026-10-05)
+
+The question and the root came from the DeepStruggle fork, which measured it first on its own CI
+(runs `37327142506` and `37318435430`) on `C2_soup+A.pt`, the shallow soup
+([`E7_shallow_soup.md`](E7_shallow_soup.md)) averaged with E7-20-44's 2,720-2,800M weights (sha256
+`5cbb77ef…`, fork release `e7-20-44-soups`), with its own code -- `search:` entrants and the three
+settings as overrides -- not the `gumbel:` spec above. It reported Gumbel k=8 @256 at +79 Elo over
+the network, k=4 at 16 *beating* PUCT at 128 (52.1%), k=4 gaining nothing past 64 and k=16 no
+better than k=8 at 256.
+
+Remeasured here on three later networks, with the root as merged:
+
+* **The headline is smaller:** +61 against +79. That run sampled the network at temperature 0.1 and
+  played the searchers greedy -- a small handicap for the network (greedy and 0.1 were measured the
+  same player on an E3 network,
+  [`P15_temperature_selfplay.md`](../archive/E3_ladder/log/P15_temperature_selfplay.md)) -- and
+  it was a different network.
+* **k = 4 at 16 ties PUCT at 128** (50.0%) rather than beating it.
+* **256 is worth a little over 64:** +10 Elo for k=8 @256 over k=4 @64, about 2.5 standard errors
+  -- the fork's "k = 4 stops gaining at 64" holds for k = 4, but the larger root does gain.
+* **FPU 0.2 was part of every fork Gumbel entrant**, and the PUCT comparison's FPU was not recorded;
+  here it is separated, and worth nothing either way.
+* The fork's budget did not count each candidate search's own root evaluation (k=4 @16 cost 22
+  evaluations a decision, PUCT @16 17); here it does.
 
 ## What this does not say
 
-* One network. The plain network's own tournament strength is the reference; nothing here was
-  checked against older ladders.
 * Search as a training target is a separate question: on the fork, fine-tunes toward the visit
   counts or toward this root's choice both lost to their unsearched control.
+* k = 16, and k = 8 at 128, were not remeasured.
+* Every player was greedy. Whether the gains hold against a sampling opponent was not measured.
