@@ -1,0 +1,112 @@
+# Paired playouts for disagreement-bank positions (tools/scripts/bank_playouts.py run), split over
+# runners and pooled. The positions come from a release asset of this repository, made locally:
+#
+#   bank_playouts.py select ... --out playout_input.jsonl.gz
+#   gh release create bank-input-<date> playout_input.jsonl.gz --prerelease --title "bank playout input"
+#   gh workflow run bank_playouts.yml --ref exp/human-census -f release=bank-input-<date> -f pairs=64 -f runners=20
+#   gh run download <run-id> -n bank-playouts-<run-id> -D data/reports/disagreement_bank/playouts
+name: bank-playouts
+
+on:
+  # Registers the branch-only workflow; a push run skips every job.
+  push:
+    branches: [exp/human-census]
+    paths: [.github/workflows/bank_playouts.yml]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release whose asset playout_input.jsonl.gz holds the positions"
+        required: true
+      model:
+        description: ".onnx in the Hugging Face repo that plays the playouts"
+        default: "E7line_swa_4720-4800M.onnx"
+      pairs:
+        description: "Pairs per position"
+        default: "64"
+      runners:
+        description: "Runners"
+        default: "20"
+      hf_repo:
+        description: "Hugging Face repo"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  RELEASE: ${{ inputs.release }}
+  MODEL: ${{ inputs.model || 'E7line_swa_4720-4800M.onnx' }}
+  PAIRS: ${{ inputs.pairs || '64' }}
+  RUNNERS: ${{ inputs.runners || '20' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Fetch the positions and the model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern playout_input.jsonl.gz --dir input
+          mkdir -p data/checkpoints/hf
+          curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+      - name: Playouts (part ${{ matrix.part }})
+        run: |
+          mkdir -p out
+          python tools/scripts/bank_playouts.py run --input input/playout_input.jsonl.gz \
+            --onnx "data/checkpoints/hf/$(basename "$MODEL")" --pairs "$PAIRS" \
+            --part "${{ matrix.part }}/$RUNNERS" --seed "${{ matrix.part }}" --out "out/playouts-${{ matrix.part }}.jsonl.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bank-playouts-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  pool:
+    needs: [plan, run]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          build-engine: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bank-playouts-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool
+        run: |
+          mkdir -p report
+          python tools/scripts/bank_playouts.py pool --parts parts/playouts-*.jsonl.gz --out report/playouts.jsonl.gz
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "positions: release $RELEASE"
+            echo "model: $HF_REPO $MODEL  pairs: $PAIRS  runners: $RUNNERS"
+          } > report/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bank-playouts-${{ github.run_id }}
+          path: report/
+          retention-days: 90
