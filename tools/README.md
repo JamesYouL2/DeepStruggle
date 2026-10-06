@@ -141,6 +141,27 @@ critic's baseline. A scripted opening gains probability only where its games bea
 learns the middlegames that follow openings it never samples (`research/log/E7_shallow_setup_lock.md`). With
 `--setup-mc-credit` the setup rows are also left out of the per-seat KL statistics, as they are out of the surrogate.
 
+`--play-mode-floor EPS` (P31 1a, owner 2026-10-06; default 0 = off) puts a uniform floor in the learner's
+**behaviour** policy at play-mode decisions and at the non-country choices inside events (rows whose whole legal set is
+in the branch block: event branches, DEFCON values, regions): `mu = (1 - EPS) pi + EPS uniform(legal)`. Unlike
+`--play-mode-temp`, the stored log-prob is the mixture's, `log mu`, so PPO's ratio `pi_theta / mu` corrects for the
+exploration and the target policy is unchanged. Learner rows only. `--floor-scope seeded` limits it to
+`--seed-scenarios` games; `--floor-from S` keeps it at 0 before `S` steps, and `--floor-anneal-from A
+--floor-anneal-steps N` take it linearly to 0 over `N` steps from `A`. Off, nothing draws from the RNG, so a run is
+bit-identical to one without the flag. Metrics: `floor_eps`, `floor_row_frac` (share of the learner's decisions
+covered), `floor_draw_frac` (share of those that took the uniform draw). `ai/training/show_and_decide.py`.
+
+`--seed-scenarios {subs,chernobyl}... --seed-frac F` (P31 1b, owner 2026-10-06; default off) forces, in a fraction
+`F` of games drawn at each game start, the listed precursor event for the US as **environment**: the first time the
+US holds the card at an action round's own card play with the event able to trigger, the card is played for its
+event (Chernobyl's region drawn uniformly). Whether a card choice is the round's card play is asked of the engine --
+a clone is stepped with the selection and must land on a US play-mode decision offering the event -- because an
+action-round card choice with no resolving card is not always a play (Quagmire's discard). The forced rows are
+stored with `learner = 0`, like a frozen opponent's: they keep the GAE recursion and train the critic, but get no
+policy gradient and stay out of the learner's statistics (E7-11-44: a scripted action trained as the policy's own is
+adopted whatever it is worth). Everything after the forced play is the policy's own. `--seed-scenarios-from S`: no
+game is seeded before `S` steps. Metrics: `seed_games_frac`, `seed_forced_<name>` (forced plays so far).
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer

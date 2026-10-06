@@ -29,18 +29,10 @@ from .rollout_buffer import RolloutBuffer, setup_phase_slot
 
 from bindings.action_encoder import ActionEncoder as _AE
 
-#: The play-mode block of the flat action space: EVENT, SPACE, OPS_INFLUENCE, OPS_COUP, OPS_REALIGN.
-PLAY_MODE_LO = _AE.PLAY_MODE_OFFSET
-PLAY_MODE_HI = _AE.PLAY_MODE_OFFSET + 5
-EVENT_SLOT = _AE.PLAY_MODE_OFFSET
-
-
-def play_mode_rows(masks: torch.Tensor) -> torch.Tensor:
-    """Rows whose decision is a play-mode choice for a chosen card: every legal action is a
-    play-mode slot, and event or space is among them (the deferred Ops-mode choice, which offers
-    only the three Ops slots, is not one)."""
-    legal = masks[:, PLAY_MODE_LO:PLAY_MODE_HI]
-    return legal[:, :2].any(dim=1) & (masks.sum(dim=1) == legal.sum(dim=1))
+#: The play-mode block of the flat action space (EVENT, SPACE, OPS_INFLUENCE, OPS_COUP, OPS_REALIGN)
+#: and the rows that choose among it, defined once in show_and_decide (P31 1a builds on them).
+from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E402,F401
+                              ScenarioSeeder, apply_floor, floor_eps, floor_rows, play_mode_rows)
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -323,6 +315,14 @@ class BaseNashPGTrainer:
         setup_script_frac: float = 0.0,
         play_mode_temp: float = 1.0,
         setup_script_openings: Sequence[str] = (),
+        play_mode_floor: float = 0.0,
+        floor_scope: str = "all",
+        floor_from: int = 0,
+        floor_anneal_from: Optional[int] = None,
+        floor_anneal_steps: int = 0,
+        seed_scenarios: Sequence[str] = (),
+        seed_frac: float = 0.0,
+        seed_scenarios_from: int = 0,
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
         aux_own_coef: float = 0.0,
@@ -486,6 +486,44 @@ class BaseNashPGTrainer:
             print(f"[setup script] {self.setup_script_frac:.0%} of games set up by one of "
                   f"{list(self.setup_script_openings)} (both sides), trained on with the policy's own "
                   f"log-prob and the game result as credit", flush=True)
+
+        # P31 1a (owner 2026-10-06): a uniform floor in the learner's BEHAVIOUR policy at play-mode
+        # decisions and the non-country choices inside events, mu = (1 - eps) pi + eps uniform. The
+        # stored log-prob is log mu, so PPO's ratio pi_theta / mu corrects for it. Learner rows only:
+        # a frozen opponent's actions are the environment. eps follows floor_eps(): 0 before
+        # floor_from, then constant, then linear to 0 over floor_anneal_steps from floor_anneal_from.
+        if play_mode_floor < 0.0 or play_mode_floor >= 1.0:
+            raise ValueError("--play-mode-floor must be in [0, 1)")
+        if floor_scope not in ("all", "seeded"):
+            raise ValueError("--floor-scope must be 'all' or 'seeded'")
+        if floor_scope == "seeded" and play_mode_floor > 0.0 and not seed_scenarios:
+            raise ValueError("--floor-scope seeded needs --seed-scenarios: there are no seeded games")
+        self.play_mode_floor = float(play_mode_floor)
+        self.floor_scope = str(floor_scope)
+        self.floor_from = int(floor_from)
+        self.floor_anneal_from = None if floor_anneal_from is None else int(floor_anneal_from)
+        self.floor_anneal_steps = int(floor_anneal_steps)
+        self._floor_stats = torch.zeros(3, dtype=torch.float64, device=self.device)  # rows, uniform draws, learner rows
+        if self.play_mode_floor > 0.0:
+            print(f"[floor] eps {self.play_mode_floor:g} at play-mode and in-event choices "
+                  f"({self.floor_scope} games), from {self.floor_from:,} steps"
+                  + (f", annealed to 0 over {self.floor_anneal_steps:,} from {self.floor_anneal_from:,}"
+                     if self.floor_anneal_from is not None else "")
+                  + "; stored log-prob is the mixture's", flush=True)
+        # P31 1b (owner 2026-10-06): in a drawn fraction of games, the listed precursor events are
+        # played for the US as ENVIRONMENT -- stored with learner = 0, so no policy gradient.
+        self.seeder: Optional[ScenarioSeeder] = None
+        self._seed_started = False
+        if seed_scenarios:
+            if seed_frac <= 0.0:
+                raise ValueError("--seed-scenarios needs --seed-frac > 0")
+            self.seeder = ScenarioSeeder(list(seed_scenarios), float(seed_frac), self.num_envs,
+                                         start_step=int(seed_scenarios_from))
+            print(f"[seed scenarios] {list(seed_scenarios)} forced as environment in "
+                  f"{seed_frac:.0%} of games from {int(seed_scenarios_from):,} steps (no policy "
+                  f"gradient on the forced plays)", flush=True)
+        elif seed_frac > 0.0:
+            raise ValueError("--seed-frac needs --seed-scenarios")
 
         self.optimizer = torch.optim.AdamW(self.active_net.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -1068,6 +1106,11 @@ class BaseNashPGTrainer:
             self._selfplay_mask = np.ones(self.num_envs, dtype=bool)
         self._apply_views()
         self.buffer.reset()
+        if self.seeder is not None and not self._seed_started:
+            # The first rollout's games are drawn here rather than in __init__, because a resumed
+            # run only knows its step count (and so whether seeding has started) after loading.
+            self.seeder.draw(np.arange(self.num_envs), self.total_env_steps)
+            self._seed_started = True
         seat_entropy_sum = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
         seat_entropy_n = {1: torch.zeros((), device=self.device), -1: torch.zeros((), device=self.device)}
         setup_entropy_sum = torch.zeros((), device=self.device)
@@ -1160,7 +1203,35 @@ class BaseNashPGTrainer:
                     self._apply_setup_script(actions_t, masks_t, _dp)
 
                 unscaled_log_probs = F.log_softmax(logits, dim=-1)
-                log_probs_t = unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1)
+                # P31 1a: the floor, on the learner's own floor rows. Off (eps 0), nothing here
+                # draws from the RNG, so a run without the flag is bit-identical to before.
+                _eps = self._current_floor_eps()
+                if _eps > 0.0:
+                    _fr = floor_rows(masks_t) & learner_t
+                    if self.floor_scope == "seeded":
+                        assert self.seeder is not None
+                        _fr = _fr & torch.from_numpy(self.seeder.seeded).to(self.device)
+                    actions_t, log_probs_t, _took = apply_floor(actions_t, unscaled_log_probs,
+                                                                masks_t, _fr, _eps)
+                    self._floor_stats += torch.stack(
+                        [_fr.sum(), _took.sum(), learner_t.sum()]).to(torch.float64)
+                else:
+                    log_probs_t = unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1)
+                # P31 1b: the forced precursor plays, after every other override. They are the
+                # environment's: learner = 0 from here on (no policy gradient, not in the learner's
+                # statistics), and the stored log-prob is the policy's own for the forced action.
+                if self.seeder is not None:
+                    _forced = self.seeder.apply(actions_t, np.asarray(self._masks_np), _dp,
+                                                self.env.runner, bool(self.env._auto_advance))
+                    if _forced.any():
+                        learner_np = np.asarray(learner_np, dtype=bool) & ~_forced
+                        learner_t = torch.from_numpy(learner_np).to(self.device)
+                        _pm_learner = _pm & learner_t
+                        _forced_t = torch.from_numpy(_forced).to(self.device)
+                        log_probs_t = torch.where(
+                            _forced_t,
+                            unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1),
+                            log_probs_t)
 
                 # Per-seat policy entropy of the LEARNER's own decisions. Every collapse shows
                 # entropy rising, and the pooled figure cannot say on which seat. Masked logits
@@ -1211,6 +1282,8 @@ class BaseNashPGTrainer:
                 self._ep_decisions[self._dones_np > 0.5] = 0
             if self.setup_script_frac > 0.0:
                 self._script_draw(np.flatnonzero(self._dones_np > 0.5))
+            if self.seeder is not None:
+                self.seeder.draw(np.flatnonzero(self._dones_np > 0.5), self.total_env_steps)
 
             # V(s_{t+1}, p_t): the resulting state seen by the player who just moved, rather than
             # by whoever moves next. The default bootstrap negates the next step's value, which
@@ -1404,6 +1477,11 @@ class BaseNashPGTrainer:
     def train_step(self) -> Dict[str, float]:
         raise NotImplementedError("Subclasses must implement train_step")
 
+    def _current_floor_eps(self) -> float:
+        """P31 1a: the floor's eps at the current step count."""
+        return floor_eps(self.play_mode_floor, int(self.total_env_steps), self.floor_from,
+                         self.floor_anneal_from, self.floor_anneal_steps)
+
     def _script_draw(self, envs: np.ndarray) -> None:
         """--setup-script-frac: decide afresh, for each of `envs` (at a game start), whether its
         setup is scripted and by which opening."""
@@ -1593,6 +1671,19 @@ class BaseNashPGTrainer:
         if self.setup_script_frac > 0.0:
             _tot = max(1, int(self._script_games.sum()))
             combined["setup_script_games_frac"] = float(self._script_games[0]) / _tot
+        if self.play_mode_floor > 0.0:
+            # Per iteration: eps, the share of the learner's decisions the floor covered, and the
+            # share of those that took the uniform draw (~eps when it is on).
+            _fs = self._floor_stats.tolist()
+            self._floor_stats.zero_()
+            combined["floor_eps"] = self._current_floor_eps()
+            combined["floor_row_frac"] = _fs[0] / max(_fs[2], 1.0)
+            combined["floor_draw_frac"] = _fs[1] / max(_fs[0], 1.0)
+        if self.seeder is not None:
+            _g = self.seeder.games
+            combined["seed_games_frac"] = float(_g[0]) / max(float(_g.sum()), 1.0)
+            for _name, _n in self.seeder.forced.items():
+                combined[f"seed_forced_{_name}"] = float(_n)
         if self.aux_targets:
             combined.update(self._aux_update())
         if self.aux_card_coef > 0.0:

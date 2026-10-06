@@ -568,6 +568,31 @@ def build_parser() -> argparse.ArgumentParser:
                              "space or Ops for a chosen card), so events the policy rarely plays still get "
                              "tried; the stored log-prob stays the policy's own. 1.0 (default) = off. The "
                              "expert review's first candidate (research/log/expert_review_E7.md).")
+    # P31 (research/plans/P31_show_and_decide.md): show the learner rare situations, let training
+    # decide what they are worth. Every flag is off by default.
+    parser.add_argument("--play-mode-floor", type=float, default=0.0,
+                        help="P31 1a: the learner's behaviour policy at play-mode decisions and the "
+                             "non-country choices inside events is (1-eps)*pi + eps*uniform(legal); "
+                             "the stored log-prob is the mixture's, so PPO's ratio corrects it. 0 is off.")
+    parser.add_argument("--floor-scope", choices=["all", "seeded"], default="all",
+                        help="P31 1a: apply the floor in every game, or only in --seed-scenarios games.")
+    parser.add_argument("--floor-from", type=int, default=0,
+                        help="P31 1a: the floor is 0 before this many total env steps.")
+    parser.add_argument("--floor-anneal-from", type=int, default=None,
+                        help="P31 1a: from this many steps the floor falls linearly to 0 over "
+                             "--floor-anneal-steps. Unset: no anneal.")
+    parser.add_argument("--floor-anneal-steps", type=int, default=0,
+                        help="P31 1a: the length of the anneal.")
+    parser.add_argument("--seed-scenarios", nargs="+", default=None,
+                        choices=["subs", "chernobyl"],
+                        help="P31 1b: in --seed-frac of games, the listed card is played for its event "
+                             "for the US as ENVIRONMENT the first time the US holds it at an action "
+                             "round's card play (Chernobyl's region drawn uniformly); the forced plays "
+                             "get no policy gradient.")
+    parser.add_argument("--seed-frac", type=float, default=0.0,
+                        help="P31 1b: the fraction of games seeded, drawn afresh at every game start.")
+    parser.add_argument("--seed-scenarios-from", type=int, default=0,
+                        help="P31 1b: no game is seeded before this many total env steps.")
     parser.add_argument("--setup-script-openings", nargs="+", default=None,
                         help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
                              "uniformly per scripted game. Default: the four human variants "
@@ -888,6 +913,14 @@ def main():
             setup_script_frac=args.setup_script_frac,
             setup_script_openings=args.setup_script_openings,
             play_mode_temp=args.play_mode_temp,
+            play_mode_floor=args.play_mode_floor,
+            floor_scope=args.floor_scope,
+            floor_from=args.floor_from,
+            floor_anneal_from=args.floor_anneal_from,
+            floor_anneal_steps=args.floor_anneal_steps,
+            seed_scenarios=args.seed_scenarios,
+            seed_frac=args.seed_frac,
+            seed_scenarios_from=args.seed_scenarios_from,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,
