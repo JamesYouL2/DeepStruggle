@@ -148,20 +148,32 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         <input type="search" id="q" placeholder="e.g. Che, NORAD, space">
       </div>
       <div class="group">
+        <label class="label" for="minlead">Minimum lead</label>
+        <select id="minlead">
+          <option value="0">Any size</option>
+          <option value="5">5 win-points</option>
+          <option value="10" selected>10 win-points</option>
+          <option value="15">15 win-points</option>
+          <option value="20">20 win-points</option>
+        </select>
+        <p class="hint">A lead counts only if its conservative bound (lead − 2 SE) reaches this. In a game that is won or lost anyway, every move is worth about the same.</p>
+      </div>
+      <div class="group">
         <label class="label" for="evidence">Evidence</label>
         <select id="evidence">
           <option value="any">Any</option>
-          <option value="strongest">All three agree: playouts (2+ SE), values and the stronger search</option>
+          <option value="strongest">Values and playouts both lead by the minimum, same move, stronger search agrees</option>
+          <option value="values">Values lead by the minimum</option>
+          <option value="playouts">Playouts lead by the minimum</option>
           <option value="agrees">Stronger search agrees with the values</option>
           <option value="played">Played out</option>
-          <option value="consistent">Played out, and the playouts agree with the values</option>
         </select>
       </div>
       <div class="group">
         <label class="label" for="sort">Order</label>
         <select id="sort">
-          <option value="clarity">Clearest first (value margin)</option>
-          <option value="playout">Biggest playout margin</option>
+          <option value="playout">Biggest sure lead in playouts</option>
+          <option value="value">Biggest sure lead in values</option>
           <option value="priority">Network least expects the human's move</option>
           <option value="search">Network least expects the search's move</option>
           <option value="time">Game, then turn</option>
@@ -173,7 +185,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         <p class="hint">Positions open here with <code>?pos=</code>. The workbench must run this engine's save format.</p>
       </div>
       <p class="hint">Keys: <kbd>j</kbd>/<kbd>k</kbd> next/previous, <kbd>o</kbd> open, <kbd>1</kbd> human, <kbd>2</kbd> network, <kbd>3</kbd> search, <kbd>4</kbd> unclear, <kbd>c</kbd> clear, <kbd>l</kbd> leaning, <kbd>b</kbd> bank.</p>
-      <p class="hint"><b>Value</b>: each move searched (64 simulations) after redealing the hidden cards 8 times, as the mover's expected result from −1 to +1, ± its standard error. <b>Margin</b>: the best move's lead over the next, in standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
+      <p class="hint"><b>Value</b>: each move searched (64 simulations) after redealing the hidden cards 8 times, as the mover's expected result from −1 to +1, ± its standard error. <b>Lead</b>: the best move's advantage over the next, in win-probability points; <b>sure</b> subtracts two standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
     </aside>
 
     <main class="queue" id="queue">
@@ -245,6 +257,27 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   $("q").addEventListener("input", () => { shown = PAGE; current = 0; render(); });
   $("sort").addEventListener("change", () => { shown = PAGE; current = 0; render(); });
   $("evidence").addEventListener("change", () => { shown = PAGE; current = 0; render(); });
+  $("minlead").addEventListener("change", () => { shown = PAGE; current = 0; render(); });
+
+  // Leads in win-probability points. Values run from -1 to +1, so a point of value is 50 points.
+  function valueLead(r) {
+    if (!r.q) return null;
+    const vals = [...new Map(Object.values(r.q).map(v => [v[0] + ":" + v[1], v])).values()]
+      .sort((a, b) => b[0] - a[0]);
+    if (vals.length < 2) return null;
+    const se = Math.hypot(vals[0][1] || 0, vals[1][1] || 0);
+    const gap = (vals[0][0] - vals[1][0]) * 50;
+    return { gap, sure: gap - 2 * se * 50 };
+  }
+  function playLead(r) {
+    if (!r.pl_diff) return null;
+    let best = null;
+    for (const [m, se] of Object.values(r.pl_diff)) {
+      const gap = Math.abs(m) * 100, sure = gap - 2 * se * 100;
+      if (!best || sure > best.sure) best = { gap, sure };
+    }
+    return best;
+  }
   $("more").addEventListener("click", () => { shown += PAGE; render(); });
 
   const era = t => t <= 3 ? "early" : t <= 7 ? "mid" : "late";
@@ -262,19 +295,20 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     let out = rows.filter(r => sel.pattern.has(r.pattern) && sel.kind.has(r.kind) && sel.side.has(r.side)
       && sel.era.has(era(r.turn)) && sel.state.has(stateOf(r))
       && (!q || [r.card, r.human, r.network, r.search].some(s => s && s.toLowerCase().includes(q))));
-    const plMargin = r => {
-      if (!r.pl_diff) return -1;
-      return Math.max(...Object.values(r.pl_diff).map(([m, se]) => se > 0 ? Math.abs(m) / se : 0));
-    };
+    const min = Number($("minlead").value);
     const ev = $("evidence").value;
     const overlap = r => r.pl_best && r.best && r.pl_best.some(w => r.best.includes(w));
-    if (ev === "strongest") out = out.filter(r => overlap(r) && r.strong_agrees === true && plMargin(r) >= 2);
+    const vOk = r => { const l = valueLead(r); return !!l && l.sure >= min; };
+    const pOk = r => { const l = playLead(r); return !!l && l.sure >= min; };
+    if (ev === "strongest") out = out.filter(r => vOk(r) && pOk(r) && overlap(r) && r.strong_agrees === true);
+    else if (ev === "values") out = out.filter(vOk);
+    else if (ev === "playouts") out = out.filter(pOk);
     else if (ev === "agrees") out = out.filter(r => r.strong_agrees === true);
     else if (ev === "played") out = out.filter(r => r.pl_score);
-    else if (ev === "consistent") out = out.filter(r => r.pl_best && r.best && r.pl_best.some(w => r.best.includes(w)));
     const order = $("sort").value;
-    if (order === "clarity") out.sort((a, b) => (b.z ?? -1) - (a.z ?? -1));
-    else if (order === "playout") out.sort((a, b) => plMargin(b) - plMargin(a));
+    const key = (f, r) => { const l = f(r); return l ? l.sure : -1e9; };
+    if (order === "playout") out.sort((a, b) => key(playLead, b) - key(playLead, a));
+    else if (order === "value") out.sort((a, b) => key(valueLead, b) - key(valueLead, a));
     else if (order === "priority") out.sort((a, b) => a.p_human - b.p_human);
     else if (order === "search") out.sort((a, b) => a.p_search - b.p_search);
     else out.sort((a, b) => a.game - b.game || a.turn - b.turn || a.ar - b.ar);
@@ -372,9 +406,18 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
       st.textContent = "Stronger search (k 8 @256): " + r.strong + (who.length ? " = " + who.join(" & ") : " (another move)");
       meta.append(st);
     }
-    if (r.z != null) {
+    const vl = valueLead(r);
+    if (vl) {
       const z = document.createElement("span"); z.className = "z";
-      z.textContent = "margin " + r.z.toFixed(1) + " SE"; z.title = "The value-best move's lead over the next, in standard errors";
+      z.textContent = "value lead " + Math.round(vl.gap) + " pts (sure " + Math.round(vl.sure) + ")";
+      z.title = "The value-best move's lead over the next in win-probability points; 'sure' is the lead minus 2 standard errors";
+      meta.append(z);
+    }
+    const pl = playLead(r);
+    if (pl) {
+      const z = document.createElement("span"); z.className = "z";
+      z.textContent = "playout lead " + Math.round(pl.gap) + " pts (sure " + Math.round(pl.sure) + ")";
+      z.title = "The largest paired playout difference between the moves, in win-rate points; 'sure' is minus 2 standard errors";
       meta.append(z);
     }
 
