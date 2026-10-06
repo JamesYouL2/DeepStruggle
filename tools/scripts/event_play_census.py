@@ -208,10 +208,16 @@ def load_policy(path: str) -> Tuple[LogitsFn, int]:
     return fn, int(model_obs_features(model))
 
 
-def selfplay(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: int,
-             temperature: float, factory: Callable[[], Any]) -> List[Any]:
+#: positions -> one action each, for a policy that needs the state itself (a searcher)
+StatesFn = Callable[[List[ts.GameState]], List[int]]
+
+
+def selfplay(logits_fn: Optional[LogitsFn], obs_features: int, games: int, seed: int, batch: int,
+             temperature: float, factory: Callable[[], Any], states_fn: Optional[StatesFn] = None) -> List[Any]:
     """Self-play of one policy against itself; every decision of game i goes to the i-th object
-    `factory` makes (anything with `observe(state, action)`), and those are returned."""
+    `factory` makes (anything with `observe(state, action)`), and those are returned. The policy
+    is `logits_fn` over observations, or `states_fn` over the positions themselves (a search agent,
+    which decides every game's position in one batch)."""
     from bindings.ts_env import TsVectorizedEnv
     rng = np.random.default_rng(seed)
     out: List[Any] = []
@@ -225,15 +231,24 @@ def selfplay(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batc
         for _ in range(20_000):
             if all(done):
                 break
-            logits = logits_fn(np.asarray(obs), np.asarray(masks))
-            if temperature > 0:
-                z = logits / temperature
-                z = np.exp(z - z.max(axis=1, keepdims=True))
+            if states_fn is not None:
+                live = [i for i in range(n) if not done[i]
+                        and not ts.Engine.is_terminal(env.runner.get_state(i))]
+                # A finished game's slot still takes an action; its first legal one will do.
+                actions = np.asarray(masks).argmax(axis=1)
+                if live:
+                    for i, act in zip(live, states_fn([env.runner.get_state(i) for i in live])):
+                        actions[i] = act
+            elif logits_fn is None:
+                raise ValueError("selfplay needs logits_fn or states_fn")
+            elif temperature > 0:
+                logits = logits_fn(np.asarray(obs), np.asarray(masks))
+                z = np.exp((logits - logits.max(axis=1, keepdims=True)) / temperature)
                 cdf = np.cumsum(z, axis=1)
                 actions = np.minimum((cdf <= rng.random(len(cdf))[:, None] * cdf[:, -1:]).sum(axis=1),
                                      logits.shape[1] - 1)
             else:
-                actions = logits.argmax(axis=1)
+                actions = logits_fn(np.asarray(obs), np.asarray(masks)).argmax(axis=1)
             for i in range(n):
                 if done[i]:
                     continue
@@ -246,6 +261,22 @@ def selfplay(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batc
                     done[i] = True
         out += trackers
     return out
+
+
+class _Both:
+    """A holdings tracker and, optionally, a placement tracker fed the same decisions."""
+
+    def __init__(self, placement: bool) -> None:
+        self.holding = HoldingTracker()
+        self.placement: Any = None
+        if placement:
+            from tools.scripts.placement_census import PlacementTracker
+            self.placement = PlacementTracker()
+
+    def observe(self, st: ts.GameState, a: int) -> None:
+        self.holding.observe(st, a)
+        if self.placement is not None:
+            self.placement.observe(st, a)
 
 
 def play(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: int,
@@ -388,6 +419,11 @@ def table(holdings: Sequence[Holding], games: int, source: str = "self-play") ->
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", default=None, help="a .pt checkpoint or an .onnx export")
+    ap.add_argument("--agent", default=None,
+                    help="instead of --checkpoint, any tools.lib.player_agent.load_agent spec that decides "
+                         "positions in a batch, e.g. gumbel:<ckpt.pt>:32:4 (search)")
+    ap.add_argument("--placement-dump", default=None,
+                    help="also count Ops influence placement in the same games (placement_census.py's dump)")
     ap.add_argument("--human-corpus", action="store_true",
                     help="count the humans' holdings in the ts-replayer corpus instead of self-play")
     ap.add_argument("--workers", type=int, default=os.cpu_count() or 1, help="processes for --human-corpus")
@@ -424,10 +460,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if a.output_md:
             open(a.output_md, "w").write(md + "\n")
         return 0
-    if not a.checkpoint:
-        ap.error("--checkpoint is required unless --merge or --human-corpus is given")
-    fn, features = load_policy(a.checkpoint)
-    hs = play(fn, features, a.games, a.seed, a.batch, a.temperature)
+    if not a.checkpoint and not a.agent:
+        ap.error("--checkpoint or --agent is required unless --merge or --human-corpus is given")
+    if a.agent:
+        from tools.lib.player_agent import load_agent
+        agent: Any = load_agent(a.agent, device="cuda" if torch.cuda.is_available() else "cpu")
+        if not hasattr(agent, "select_actions_batch"):
+            ap.error(f"--agent {a.agent!r} cannot decide positions in a batch")
+        if hasattr(agent, "reseed"):
+            agent.reseed(a.seed)
+        trackers = selfplay(None, 0, a.games, a.seed, a.batch, 0.0, lambda: _Both(bool(a.placement_dump)),
+                            states_fn=agent.select_actions_batch)
+    else:
+        fn, features = load_policy(a.checkpoint)
+        trackers = selfplay(fn, features, a.games, a.seed, a.batch, a.temperature,
+                            lambda: _Both(bool(a.placement_dump)))
+    hs = [h for t in trackers for h in t.holding.holdings]
+    if a.placement_dump:
+        json.dump({"games": a.games, "records": [r for t in trackers for r in t.placement.records]},
+                  open(a.placement_dump, "w"))
     if a.dump:
         json.dump({"games": a.games, "holdings": [dump_holding(h) for h in hs]}, open(a.dump, "w"))
     md = table(hs, a.games)
