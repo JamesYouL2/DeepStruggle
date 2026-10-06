@@ -22,6 +22,8 @@
   --warn-soft: #f4e8c8;
   --odd: #6b3f8f;
   --odd-soft: #ece1f4;
+  --bad: #9b2f1f;
+  --bad-soft: #f6ddd6;
   --f-display: "Barlow Condensed", "Arial Narrow", sans-serif;
   --f-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
   --f-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -34,6 +36,7 @@
     --us: #8fb3ea; --us-soft: #1f2d42; --ussr: #ec8a8d; --ussr-soft: #3f2224;
     --good: #8fcf98; --good-soft: #1f3523; --warn: #e3bf62; --warn-soft: #3a311b;
     --odd: #c9a2ea; --odd-soft: #33263f;
+    --bad: #f0a08f; --bad-soft: #42241e;
     color-scheme: dark;
   }
 }
@@ -43,6 +46,7 @@
   --us: #8fb3ea; --us-soft: #1f2d42; --ussr: #ec8a8d; --ussr-soft: #3f2224;
   --good: #8fcf98; --good-soft: #1f3523; --warn: #e3bf62; --warn-soft: #3a311b;
   --odd: #c9a2ea; --odd-soft: #33263f;
+  --bad: #f0a08f; --bad-soft: #42241e;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -82,7 +86,7 @@ input[type="search"], input[type="url"], select, textarea { width: 100%; font: 1
 .pat.search-alone { background: var(--us-soft); color: var(--us); }
 .pat.all-differ { background: var(--odd-soft); color: var(--odd); }
 .kind { font: 600 12px var(--f-data); color: var(--ink); }
-.moves { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.moves { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 560px) { .moves { grid-template-columns: minmax(0, 1fr); } }
 .move { border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; display: grid; gap: 4px; min-width: 0; }
 .move.alone { border-color: var(--accent); background: var(--accent-soft); }
@@ -101,6 +105,14 @@ input[type="search"], input[type="url"], select, textarea { width: 100%; font: 1
 .saved { font: 12px var(--f-data); color: var(--muted); }
 .empty { padding: 24px; text-align: center; color: var(--muted); background: var(--panel); border: 1px dashed var(--line); border-radius: 6px; }
 .more { justify-self: center; }
+.move.good { border-color: var(--good); background: var(--good-soft); }
+.move.bad { border-color: var(--bad); background: var(--bad-soft); }
+.marks { display: flex; gap: 6px; margin-top: 2px; }
+.marks .btn { padding: 3px 9px; font-size: 12px; }
+.marks .btn.good[aria-pressed="true"] { background: var(--good); border-color: var(--good); color: var(--panel); }
+.marks .btn.bad[aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: var(--panel); }
+.pairs { font: 12px var(--f-data); color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums; }
+.pairs b { color: var(--ink); font-weight: 600; }
 .ev { font: 12px var(--f-data); color: var(--muted); font-variant-numeric: tabular-nums; }
 .ev b { color: var(--ink); font-weight: 600; }
 .ev.top b { color: var(--good); }
@@ -184,7 +196,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         <input type="url" id="wb">
         <p class="hint">Positions open here with <code>?pos=</code>. The workbench must run this engine's save format.</p>
       </div>
-      <p class="hint">Keys: <kbd>j</kbd>/<kbd>k</kbd> next/previous, <kbd>o</kbd> open, <kbd>1</kbd> human, <kbd>2</kbd> network, <kbd>3</kbd> search, <kbd>4</kbd> unclear, <kbd>c</kbd> clear, <kbd>l</kbd> leaning, <kbd>b</kbd> bank.</p>
+      <p class="hint">Keys: <kbd>j</kbd>/<kbd>k</kbd> next/previous, <kbd>o</kbd> open, <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> mark that move good → bad → unmarked, <kbd>4</kbd> unclear, <kbd>c</kbd> clear, <kbd>l</kbd> leaning, <kbd>b</kbd> bank.</p>
       <p class="hint"><b>Value</b>: each move searched (64 simulations) after redealing the hidden cards 8 times, as the mover's expected result from −1 to +1, ± its standard error. <b>Lead</b>: the best move's advantage over the next, in win-probability points; <b>sure</b> subtracts two standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
     </aside>
 
@@ -208,7 +220,36 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   const SIDES = [["US", "US"], ["USSR", "USSR"]];
   const ERAS = [["early", "Early 1–3"], ["mid", "Mid 4–7"], ["late", "Late 8–10"]];
   const STATES = [["todo", "Not reviewed"], ["done", "Reviewed"], ["bank", "In the bank"]];
-  const VERDICTS = [["human", "Human right"], ["network", "Network right"], ["search", "Search right"], ["unclear", "Unclear"]];
+  const WHO = [["human", "Human"], ["network", "Network"], ["search", "Search"]];
+  const p_of = (r, w) => r["p_" + w];
+
+  // The distinct moves of a row, in the order human, network, search, each with everyone who chose it.
+  function groups(r) {
+    const out = [];
+    for (const [w, label] of WHO) {
+      const g = out.find(x => x.name === r[w]);
+      if (g) { g.who.push(w); g.labels.push(label); }
+      else out.push({ name: r[w], who: [w], labels: [label] });
+    }
+    return out;
+  }
+
+  // A verdict's marks: {move name: "good" | "bad"}. A verdict saved before marks existed named one
+  // player; it is read as that player's move marked good.
+  function marksOf(r, v) {
+    if (!v) return {};
+    if (v.marks) return v.marks;
+    if (v.verdict && r[v.verdict]) return { [r[v.verdict]]: "good" };
+    return {};
+  }
+  const reviewed = (r, v) => !!v && (v.unclear || v.verdict === "unclear" || Object.keys(marksOf(r, v)).length > 0);
+
+  function setMark(r, name, mark) {
+    const v = verdicts.get(r.id) || {};
+    const m = { ...marksOf(r, v) };
+    if (m[name] === mark) delete m[name]; else m[name] = mark;
+    save(r, { marks: m, unclear: false, verdict: "" });
+  }
   const PAGE = 50;
 
   let rows = [];
@@ -287,7 +328,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   function stateOf(r) {
     const v = verdicts.get(r.id);
     if (v && v.bank) return "bank";
-    return v && v.verdict ? "done" : "todo";
+    return reviewed(r, v) ? "done" : "todo";
   }
 
   function filtered() {
@@ -316,7 +357,11 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   }
 
   function tally() {
-    const done = [...verdicts.values()].filter(v => v.verdict).length;
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const done = [...verdicts.entries()].filter(([id, v]) => {
+      const r = byId.get(id);
+      return r ? reviewed(r, v) : !!(v.unclear || v.verdict || (v.marks && Object.keys(v.marks).length));
+    }).length;
     const bank = [...verdicts.values()].filter(v => v.bank).length;
     const t = $("tally");
     t.replaceChildren();
@@ -327,11 +372,14 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     }
   }
 
-  function moveCell(r, who, label, name, p) {
+  function moveCell(r, g, idx, marks, i) {
+    const who = g.who[0];
     const d = document.createElement("div");
-    d.className = "move" + (alone(r) === who ? " alone" : "");
-    const w = document.createElement("span"); w.className = "who"; w.textContent = label;
-    const m = document.createElement("span"); m.className = "what"; m.textContent = name;
+    const mark = marks[g.name];
+    d.className = "move" + (mark ? " " + mark : (g.who.length === 1 && alone(r) === who ? " alone" : ""));
+    const w = document.createElement("span"); w.className = "who"; w.textContent = (idx + 1) + " · " + g.labels.join(" & ");
+    const m = document.createElement("span"); m.className = "what"; m.textContent = g.name;
+    const p = p_of(r, who);
     const pr = document.createElement("div"); pr.className = "p";
     const tr = document.createElement("div"); tr.className = "track";
     const f = document.createElement("div"); f.className = "fill"; f.style.width = Math.max(1, Math.round(p * 100)) + "%";
@@ -354,7 +402,34 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
       e.append("playouts win ", b, " of " + r.pl_pairs);
       d.append(e);
     }
+    const mk = document.createElement("div"); mk.className = "marks";
+    for (const [val, label] of [["good", "Good"], ["bad", "Bad"]]) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn " + val; b.textContent = label;
+      b.setAttribute("aria-pressed", String(mark === val));
+      b.addEventListener("click", () => { current = i; setMark(r, g.name, val); render(); });
+      mk.append(b);
+    }
+    d.append(mk);
     return d;
+  }
+
+  // Every paired playout difference between two distinct moves, named by move, in win-rate points.
+  function pairsEl(r, gs) {
+    if (!r.pl_diff) return null;
+    const moveOf = w => gs.find(g => g.who.includes(w));
+    const el = document.createElement("div"); el.className = "pairs";
+    const lab = document.createElement("span"); lab.textContent = "Playouts, paired:"; el.append(lab);
+    for (const [k, [m, se]] of Object.entries(r.pl_diff)) {
+      const [x, y] = k.split("-");
+      const gx = moveOf(x), gy = moveOf(y);
+      if (!gx || !gy || gx === gy) continue;
+      const sp = document.createElement("span");
+      const b = document.createElement("b"); b.textContent = (m >= 0 ? "+" : "−") + Math.abs(Math.round(m * 100));
+      sp.append(gx.name + " vs " + gy.name + " ", b, " ± " + Math.round(2 * se * 100) + " pts");
+      sp.title = "Win-rate difference over " + r.pl_pairs + " paired playouts; ± is two standard errors";
+      el.append(sp);
+    }
+    return el;
   }
 
   const pending = new Map();
@@ -372,7 +447,10 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   async function write(r, next) {
     try {
       await db.doc("verdicts/" + r.id).set({
-        verdict: next.verdict || "", confidence: next.confidence || "", bank: !!next.bank, note: next.note || "",
+        verdict: next.verdict || "", marks: next.marks || {}, unclear: !!next.unclear,
+        good: Object.keys(next.marks || {}).filter(k => next.marks[k] === "good"),
+        bad: Object.keys(next.marks || {}).filter(k => next.marks[k] === "bad"),
+        confidence: next.confidence || "", bank: !!next.bank, note: next.note || "",
         updatedAt: next.updatedAt, z: r.z ?? null, strong: r.strong ?? null, pl_best: r.pl_best ?? null,
         game: r.game, kind: r.kind, side: r.side, turn: r.turn, ar: r.ar, card: r.card, pattern: r.pattern,
         human: r.human, network: r.network, search: r.search, pos: r.pos,
@@ -421,22 +499,28 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
       meta.append(z);
     }
 
+    const gs = groups(r);
+    const marks = marksOf(r, v);
     const moves = document.createElement("div"); moves.className = "moves";
-    moves.append(moveCell(r, "human", "Human", r.human, r.p_human),
-                 moveCell(r, "network", "Network", r.network, r.p_network),
-                 moveCell(r, "search", "Search", r.search, r.p_search));
+    moves.style.setProperty("--n", String(gs.length));
+    gs.forEach((g, k) => moves.append(moveCell(r, g, k, marks, i)));
+    const pairs = pairsEl(r, gs);
 
     const actions = document.createElement("div"); actions.className = "actions";
     const open = document.createElement("a"); open.className = "btn open"; open.target = "_blank"; open.rel = "noopener";
     open.href = ($("wb").value.trim() || "https://jamesyoul2.github.io/DeepStruggle/") + "?pos=" + r.pos;
     open.textContent = "Open in workbench";
     actions.append(open);
-    for (const [val, label] of VERDICTS) {
-      const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = label;
-      b.setAttribute("aria-pressed", String(v.verdict === val));
-      b.addEventListener("click", () => { current = i; save(r, { verdict: v.verdict === val ? "" : val }); render(); });
-      actions.append(b);
-    }
+    const unclear = document.createElement("button"); unclear.type = "button"; unclear.className = "btn";
+    unclear.textContent = "Unclear";
+    unclear.title = "Reviewed, and no move is clearly good or bad";
+    unclear.setAttribute("aria-pressed", String(!!v.unclear || v.verdict === "unclear"));
+    unclear.addEventListener("click", () => {
+      current = i;
+      const on = !!v.unclear || v.verdict === "unclear";
+      save(r, on ? { unclear: false, verdict: "" } : { unclear: true, marks: {}, verdict: "" }); render();
+    });
+    actions.append(unclear);
     const conf = document.createElement("span"); conf.className = "conf";
     for (const [val, label] of [["clear", "Clear"], ["leaning", "Leaning"]]) {
       const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = label;
@@ -459,7 +543,9 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     note.append(ta);
     actions.append(note);
 
-    el.append(meta, moves, actions);
+    el.append(meta, moves);
+    if (pairs) el.append(pairs);
+    el.append(actions);
     el.addEventListener("click", e => {
       if (e.target.closest("button, a, textarea")) return;
       current = i; markCurrent();
@@ -500,10 +586,18 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
       document.querySelector('.row[data-i="' + current + '"]')?.scrollIntoView({ block: "nearest" });
     } else if (r && e.key === "o") {
       document.querySelector('.row[data-i="' + current + '"] a.open')?.click();
-    } else if (r && "1234".includes(e.key) && e.key.length === 1) {
-      const val = VERDICTS[Number(e.key) - 1][0];
+    } else if (r && "123".includes(e.key) && e.key.length === 1) {
+      const g = groups(r)[Number(e.key) - 1];
+      if (g) {
+        const cur = marksOf(r, verdicts.get(r.id))[g.name];
+        if (cur === "bad") setMark(r, g.name, "bad");        // bad -> unmarked
+        else setMark(r, g.name, cur === "good" ? "bad" : "good");
+        render();
+      }
+    } else if (r && e.key === "4") {
       const v = verdicts.get(r.id) || {};
-      save(r, { verdict: v.verdict === val ? "" : val }); render();
+      const on = !!v.unclear || v.verdict === "unclear";
+      save(r, on ? { unclear: false, verdict: "" } : { unclear: true, marks: {}, verdict: "" }); render();
     } else if (r && (e.key === "c" || e.key === "l")) {
       const val = e.key === "c" ? "clear" : "leaning";
       const v = verdicts.get(r.id) || {};
@@ -552,7 +646,8 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     db.collection("verdicts").onSnapshot(snap => {
       for (const doc of snap.docs) {
         const x = doc.data() || {};
-        verdicts.set(doc.id, { verdict: x.verdict || "", confidence: x.confidence || "", bank: !!x.bank,
+        verdicts.set(doc.id, { verdict: x.verdict || "", marks: x.marks || undefined, unclear: !!x.unclear,
+                               confidence: x.confidence || "", bank: !!x.bank,
                                note: x.note || "", updatedAt: x.updatedAt });
       }
       render();
