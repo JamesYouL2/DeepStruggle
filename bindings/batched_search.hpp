@@ -134,8 +134,8 @@ inline ts::Player acting_player(const ts::GameState& s) {
 class BatchedSearch {
 public:
     BatchedSearch(size_t capacity, double c_puct, bool auto_advance, uint32_t obs_features,
-                  bool merged_influence)
-        : capacity_(capacity), c_puct_(c_puct), auto_advance_(auto_advance),
+                  bool merged_influence, double fpu_reduction = 0.0)
+        : capacity_(capacity), c_puct_(c_puct), fpu_(fpu_reduction), auto_advance_(auto_advance),
           features_(obs_features), merged_(merged_influence),
           obs_width_(ts::OBS_SIZE_V23 + ts::obs_features::extra_width(obs_features)),
           own_obs_(capacity * obs_width_, 0.0f), own_masks_(capacity * ts::FLAT_ACTION_SPACE_SIZE, 0),
@@ -373,6 +373,9 @@ private:
             const Edge& e = t.edges[nd.edge_begin + i];
             double q = e.n > 0 ? e.w / e.n : nd.value_us;
             if (!us_moves) q = -q;
+            // First-play urgency: an unvisited move is valued at the node's own value, less fpu_
+            // (from the mover's side). 0 is the original rule.
+            if (e.n == 0) q -= fpu_;
             const double v = q + c_puct_ * e.prior * sqrt_total / (1.0 + e.n);
             if (v > best_v) {
                 best_v = v;
@@ -494,6 +497,7 @@ private:
 
     size_t capacity_;
     double c_puct_;
+    double fpu_;
     bool auto_advance_;
     uint32_t features_;
     bool merged_;
