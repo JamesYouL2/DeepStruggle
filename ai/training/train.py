@@ -614,6 +614,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P31 1c: games played per option; the option's value is their mean result.")
     parser.add_argument("--mode-cf-from", type=int, default=0,
                         help="P31 1c: no decision is priced before this many total env steps.")
+    parser.add_argument("--force-applicable-events", nargs="+", default=None,
+                        choices=["wargames", "arms_race", "one_small_step"],
+                        help="Owner 2026-10-06: at the learner's play-mode decision for the listed card "
+                             "with its event legal and applicable (Wargames: DEFCON 2 and 7+ VP ahead; "
+                             "Arms Race: ahead in military Ops; One Small Step: behind in space), play the "
+                             "event with probability --force-event-frac, trained as the policy's own play.")
+    parser.add_argument("--force-event-frac", type=float, default=0.1,
+                        help="The probability an applicable play is forced to the event.")
+    parser.add_argument("--force-events-from", type=int, default=0,
+                        help="No event is forced before this many total env steps.")
     parser.add_argument("--setup-script-openings", nargs="+", default=None,
                         help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
                              "uniformly per scripted game. Default: the four human variants "
@@ -949,6 +959,9 @@ def main():
             mode_cf_subsample=args.mode_cf_subsample,
             mode_cf_playouts=args.mode_cf_playouts,
             mode_cf_from=args.mode_cf_from,
+            force_applicable_events=args.force_applicable_events,
+            force_event_frac=args.force_event_frac,
+            force_events_from=args.force_events_from,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,

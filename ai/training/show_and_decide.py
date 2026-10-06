@@ -241,3 +241,78 @@ class ScenarioSeeder:
                     forced[r] = True
                     break
         return forced
+
+
+# ------------------------------------------------------------ applicable-event forcing (owner)
+
+#: Card ids and the condition under which their event is plainly worth playing, from the side that
+#: plays it (owner, 2026-10-06): Wargames at DEFCON 2 with a lead of 7+ VP (the event hands the
+#: opponent 6 VP and ends the game), Arms Race ahead in military Ops, One Small Step behind in space.
+APPLICABLE_EVENTS: Dict[str, int] = {"wargames": 100, "arms_race": 39, "one_small_step": 80}
+
+
+def event_applicable(name: str, state: object, side: int) -> bool:
+    """Whether `name`'s event is applicable for `side` (+1 US, -1 USSR) in `state`."""
+    st = state
+    us = side == int(ts.Player.US)
+    if name == "wargames":
+        return int(st.defcon) == 2 and side * int(st.victory_points) >= 7          # type: ignore[attr-defined]
+    if name == "arms_race":
+        mine, theirs = ((st.us_mil_ops, st.ussr_mil_ops) if us                      # type: ignore[attr-defined]
+                        else (st.ussr_mil_ops, st.us_mil_ops))                       # type: ignore[attr-defined]
+        return int(mine) > int(theirs)
+    if name == "one_small_step":
+        mine, theirs = ((st.us_space_track, st.ussr_space_track) if us              # type: ignore[attr-defined]
+                        else (st.ussr_space_track, st.us_space_track))               # type: ignore[attr-defined]
+        return int(mine) < int(theirs)
+    raise ValueError(f"unknown applicable event {name!r}; known: {sorted(APPLICABLE_EVENTS)}")
+
+
+class ApplicableEventForcer:
+    """At a learner's play-mode decision for a listed card whose event is legal and applicable, play
+    the event with probability `frac` (owner, 2026-10-06). The forced play is trained as the policy's
+    own -- learner = 1, its stored log-prob log pi(EVENT) -- so the event rises where its advantage is
+    positive and falls where it is not; PPO's clip bounds each step."""
+
+    def __init__(self, names: Sequence[str], frac: float, start_step: int = 0, seed: int = 97531) -> None:
+        unknown = [n for n in names if n not in APPLICABLE_EVENTS]
+        if unknown:
+            raise ValueError(f"unknown applicable event(s) {unknown}; known: {sorted(APPLICABLE_EVENTS)}")
+        if not names:
+            raise ValueError("applicable-event forcing needs at least one card")
+        if not 0.0 < frac <= 1.0:
+            raise ValueError("--force-event-frac must be in (0, 1]")
+        expect = {"wargames": "Wargames", "arms_race": "Arms Race", "one_small_step": "One Small Step"}
+        for n in names:
+            got = str(ts.CardData.get_card_info(APPLICABLE_EVENTS[n])["name"])
+            if expect[n].lower() not in got.lower():
+                raise RuntimeError(f"{n!r} names card {APPLICABLE_EVENTS[n]} = {got!r}: the card table has moved")
+        self.by_card: Dict[int, str] = {APPLICABLE_EVENTS[n]: n for n in names}
+        self.frac = float(frac)
+        self.start_step = int(start_step)
+        self.rng = np.random.default_rng(seed)
+        self.applicable: Dict[str, int] = {n: 0 for n in names}   # learner plays, event legal and applicable
+        self.forced: Dict[str, int] = {n: 0 for n in names}
+
+    def apply(self, actions: torch.Tensor, masks: torch.Tensor, learner: np.ndarray, runner: object,
+              steps: int) -> np.ndarray:
+        """Overwrite the forced rows' actions with EVENT in place; return the bool mask of them."""
+        forced = np.zeros(actions.shape[0], dtype=bool)
+        if steps < self.start_step:
+            return forced
+        rows = (play_mode_rows(masks) & masks.bool()[:, EVENT_SLOT]).cpu().numpy() & np.asarray(learner, dtype=bool)
+        for r in np.flatnonzero(rows):
+            r = int(r)
+            st = runner.get_state(r)                                        # type: ignore[attr-defined]
+            ctx = st.ctx()
+            name = self.by_card.get(int(ctx.pending_op_card))
+            if name is None or ctx.decision_type != ts.DecisionType.SELECT_PLAY_MODE:
+                continue
+            if not event_applicable(name, st, int(ctx.decision_player)):
+                continue
+            self.applicable[name] += 1
+            if self.rng.random() < self.frac:
+                actions[r] = EVENT_SLOT
+                self.forced[name] += 1
+                forced[r] = True
+        return forced

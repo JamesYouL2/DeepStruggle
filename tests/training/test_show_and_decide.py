@@ -459,3 +459,78 @@ def test_the_update_applies_the_behaviour_weight() -> None:
     t._behaviour_w.zero_()                 # every sample's surrogate weighted to nothing
     out = t.train_step()
     assert out["policy_loss"] == pytest.approx(0.0, abs=1e-12)
+
+
+# ------------------------------------------- applicable-event forcing (owner, 2026-10-06)
+
+def test_the_applicability_conditions() -> None:
+    from ai.training.show_and_decide import event_applicable
+    env = TsVectorizedEnv(num_envs=1, base_seed=1)
+    env.reset_all()
+    st = env.runner.get_state(0).clone()
+    us, ussr = int(ts.Player.US), int(ts.Player.USSR)
+    st.defcon, st.victory_points = 2, 7
+    assert event_applicable("wargames", st, us) and not event_applicable("wargames", st, ussr)
+    st.victory_points = 6
+    assert not event_applicable("wargames", st, us)
+    st.victory_points, st.defcon = -9, 2
+    assert event_applicable("wargames", st, ussr)
+    st.defcon = 3
+    assert not event_applicable("wargames", st, ussr)
+    st.us_mil_ops, st.ussr_mil_ops = 3, 2
+    assert event_applicable("arms_race", st, us) and not event_applicable("arms_race", st, ussr)
+    st.ussr_mil_ops = 3
+    assert not event_applicable("arms_race", st, us) and not event_applicable("arms_race", st, ussr)
+    st.us_space_track, st.ussr_space_track = 2, 4
+    assert event_applicable("one_small_step", st, us) and not event_applicable("one_small_step", st, ussr)
+    st.ussr_space_track = 2
+    assert not event_applicable("one_small_step", st, us)
+
+
+def test_the_forcer_plays_the_event_only_where_it_is_applicable() -> None:
+    from ai.training.show_and_decide import APPLICABLE_EVENTS, ApplicableEventForcer, event_applicable
+    np.random.seed(2)
+    forcer = ApplicableEventForcer(["wargames", "arms_race", "one_small_step"], 1.0)
+    env = TsVectorizedEnv(num_envs=64, base_seed=2)
+    rng = np.random.default_rng(2)
+    _o, mk, _ = env.reset_all()
+    by_card = {v: k for k, v in APPLICABLE_EVENTS.items()}
+    seen = 0
+    for _ in range(1500):
+        acts = torch.tensor([int(rng.choice(np.flatnonzero(r))) for r in mk])
+        states = {e: env.runner.get_state(e).clone() for e in range(64)}
+        forced = forcer.apply(acts, torch.from_numpy(np.asarray(mk)), np.ones(64, dtype=bool),
+                              env.runner, 0)
+        for e in np.flatnonzero(forced):
+            st = states[int(e)]
+            ctx = st.ctx()
+            assert ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE
+            name = by_card[int(ctx.pending_op_card)]
+            assert event_applicable(name, st, int(ctx.decision_player))
+            assert int(acts[e]) == EVENT_SLOT
+            seen += 1
+        _o, mk, _r, _d, _i = env.step(acts.numpy())            # the engine accepts every forced event
+    assert seen > 0 and forcer.forced["arms_race"] > 0 and forcer.forced["one_small_step"] > 0
+    assert sum(forcer.forced.values()) == sum(forcer.applicable.values()) == seen   # frac 1: all forced
+
+
+def test_a_forced_event_is_trained_as_the_policys_own() -> None:
+    # 32 envs: these are mid-war cards, and 16 short-rollout envs of an untrained net rarely reach one
+    t = _trainer(buffer=64, envs=32, force_applicable_events=["arms_race", "one_small_step", "wargames"],
+                 force_event_frac=1.0)
+    assert t.event_forcer is not None
+    for _ in range(20):
+        t.collect_rollouts()
+        if sum(t.event_forcer.forced.values()) > 0:
+            break
+    assert sum(t.event_forcer.forced.values()) > 0
+    buf = t.buffer
+    assert torch.all(buf.learner > 0.5)                       # still the learner's own rows
+    obs = buf.obs.reshape(-1, buf.obs.shape[-1]).float()
+    masks = buf.masks.reshape(-1, buf.masks.shape[-1])
+    acts = buf.actions.reshape(-1).long()
+    with torch.no_grad():
+        lp = torch.log_softmax(t.active_net(obs, masks)[0].float(), -1).gather(1, acts[:, None]).squeeze(1)
+    assert torch.allclose(buf.log_probs.reshape(-1).float(), lp, atol=1e-4)   # log pi of the forced event
+    m = t.train_iteration()
+    assert "force_forced_arms_race" in m

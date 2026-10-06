@@ -32,7 +32,8 @@ from bindings.action_encoder import ActionEncoder as _AE
 #: The play-mode block of the flat action space (EVENT, SPACE, OPS_INFLUENCE, OPS_COUP, OPS_REALIGN)
 #: and the rows that choose among it, defined once in show_and_decide (P31 1a builds on them).
 from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E402,F401
-                              ScenarioSeeder, apply_floor, floor_eps, floor_rows, play_mode_rows)
+                              ApplicableEventForcer, ScenarioSeeder, apply_floor, floor_eps,
+                              floor_rows, play_mode_rows)
 from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
@@ -331,6 +332,9 @@ class BaseNashPGTrainer:
         mode_cf_subsample: int = 16,
         mode_cf_playouts: int = 1,
         mode_cf_from: int = 0,
+        force_applicable_events: Sequence[str] = (),
+        force_event_frac: float = 0.1,
+        force_events_from: int = 0,
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
         aux_own_coef: float = 0.0,
@@ -536,6 +540,16 @@ class BaseNashPGTrainer:
                   f"gradient on the forced plays)", flush=True)
         elif seed_frac > 0.0:
             raise ValueError("--seed-frac needs --seed-scenarios")
+        # Owner 2026-10-06: at the learner's play-mode decision for Wargames / Arms Race / One Small
+        # Step with the event legal and applicable, play the event with probability
+        # force_event_frac, trained as the policy's own (show_and_decide.ApplicableEventForcer).
+        self.event_forcer: Optional[ApplicableEventForcer] = None
+        if force_applicable_events:
+            self.event_forcer = ApplicableEventForcer(list(force_applicable_events), float(force_event_frac),
+                                                      start_step=int(force_events_from))
+            print(f"[force events] {list(force_applicable_events)}: event played in "
+                  f"{float(force_event_frac):.0%} of the learner's applicable plays from "
+                  f"{int(force_events_from):,} steps, trained as the policy's own", flush=True)
 
         self.optimizer = torch.optim.AdamW(self.active_net.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -1360,6 +1374,20 @@ class BaseNashPGTrainer:
                             _forced_t,
                             unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1),
                             log_probs_t)
+                if self.event_forcer is not None:
+                    # Applicable events forced as the policy's OWN play: learner stays 1, the stored
+                    # log-prob is log pi of the event, and a floor weight on the row goes back to 1.
+                    _ev = self.event_forcer.apply(actions_t, masks_t, np.asarray(learner_np, dtype=bool),
+                                                  self.env.runner, int(self.total_env_steps))
+                    if _ev.any():
+                        _ev_t = torch.from_numpy(_ev).to(self.device)
+                        log_probs_t = torch.where(
+                            _ev_t, unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1),
+                            log_probs_t)
+                        if self._behaviour_w is not None and _eps > 0.0:
+                            _s = self.buffer.step * self.num_envs
+                            _w = self._behaviour_w[_s:_s + self.num_envs]
+                            _w[_ev_t] = 1.0
 
                 # Per-seat policy entropy of the LEARNER's own decisions. Every collapse shows
                 # entropy rising, and the pooled figure cannot say on which seat. Masked logits
@@ -1859,6 +1887,10 @@ class BaseNashPGTrainer:
             combined["floor_draw_frac"] = _fs[1] / max(_fs[0], 1.0)
         if self.mode_cf is not None:
             combined.update(self._cf_stats)
+        if self.event_forcer is not None:
+            for _name in self.event_forcer.forced:
+                combined[f"force_applicable_{_name}"] = float(self.event_forcer.applicable[_name])
+                combined[f"force_forced_{_name}"] = float(self.event_forcer.forced[_name])
         if self.seeder is not None:
             _g = self.seeder.games
             combined["seed_games_frac"] = float(_g[0]) / max(float(_g.sum()), 1.0)

@@ -189,6 +189,16 @@ until its longest game ends; at k = 16 on E7 that is ~7 s per iteration (~8k ste
 `mode_cf_n`, `mode_cf_options`, `mode_cf_spread` (best minus worst option value), `mode_cf_taken_beaten_frac`,
 `mode_cf_seconds`, `mode_cf_loss`. `ai/training/mode_cf.py`.
 
+`--force-applicable-events {wargames,arms_race,one_small_step}... --force-event-frac F` (owner, 2026-10-06;
+default off) plays the event, with probability `F` (0.1), at the learner's play-mode decision for a listed card
+whose event is legal and **applicable** for the side playing it: Wargames at DEFCON 2 with a lead of 7+ VP, Arms Race
+ahead in military Ops, One Small Step behind in the space race (`show_and_decide.event_applicable`, read off the
+state). The forced play is trained as the **policy's own** (owner's choice): `learner = 1`, stored log-prob
+`log pi(EVENT)`, no importance weight, so the event rises where its advantage is positive and falls where it is not,
+each step bounded by PPO's clip. An importance-weighted version would leave the expected gradient where it was
+without the forcing (the gradient on a rare action's logit is `pi(a) * advantage`). `--force-events-from S` starts it
+at `S` steps. Metrics: `force_applicable_<card>` (the learner's applicable plays so far), `force_forced_<card>`.
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer
