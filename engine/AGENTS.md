@@ -172,6 +172,15 @@ repository expects the result in `build/release`. **The engine is built with cla
 same sources, identical games -- see CLAUDE.md). Install it with `apt-get install clang`, or
 without root with `tools/scripts/install_clang_userspace.sh`. The root `CMakeLists.txt` is part
 of the engine fingerprint, so a change of compiler or flags there marks every build stale.
+
+Native builds use `-O3 -march=native` (which also tunes for the CPU; `-mtune=native` adds nothing)
+and **thin link-time optimisation** (`TS_LTO`, on; `TS_LTO_MODE` thin or full, measured the same),
+so calls across source files -- the observation into the rules, everything into
+`MapData::get_country` -- can be inlined: ~9% off a single-threaded search's tree time. The
+static libraries then hold LLVM bitcode, archived with `llvm-ar` if CMake finds it and otherwise
+with GNU `ar` through LLVM's gold plugin (`clang++ -print-file-name=LLVMgold.so`). `-DTS_LTO=OFF`
+turns it off. The browser build has no LTO and no `-march`; `tests/web/test_wasm_engine.py`
+holding the two to identical games is what shows LTO changed nothing but speed.
 ```bash
 cmake -B build/release -S . -DCMAKE_BUILD_TYPE=Release -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3
 cmake --build build/release -j
