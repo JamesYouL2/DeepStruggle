@@ -31,7 +31,7 @@ from __future__ import annotations
 import math
 import random
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
@@ -41,8 +41,10 @@ import ts_engine as ts
 from bindings.settle import SettleMode
 from bindings.settle import settle as _settle
 from ai.search.dmcts import determinize
+from ai.search.gumbel_root import GumbelRoot
 from ai.search.pimcts import PIMCTSConfig, acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import model_obs_features
 
 _UINT64 = 1 << 64
 _US = int(ts.Player.US)
@@ -129,6 +131,16 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: reference the C++ one is tested against, and still the only one that carries a tree
     #: between calls (`reuse_subtree`, which falls back to it).
     backend: str = "cpp"
+    #: First-play urgency: an unvisited move is valued at its node's value less this, from the
+    #: mover's side. 0, the default, is the original rule (the node's value). Both trees.
+    fpu_reduction: float = 0.0
+    #: Choose the move by a Gumbel root (ai/search/gumbel_root.py): k candidates by Gumbel-top-k,
+    #: the budget split by sequential halving. `simulations` is then a budget of network
+    #: evaluations, which PUCT at the same `simulations` never undercuts. 0, the default, is the
+    #: most-visited PUCT move.
+    gumbel_k: int = 0
+    #: Scale of the Gumbel noise; 0 takes the k most probable moves, deterministically.
+    gumbel_scale: float = 1.0
 
 
 @dataclass
@@ -197,6 +209,16 @@ class BatchedMCTS:
         self._rng = random.Random(self.cfg.seed)
         self._np_rng = np.random.RandomState(self.cfg.seed)
         self.model.eval()
+        #: The Gumbel root (`gumbel_k`), with the plain PUCT searcher it searches candidates with:
+        #: the same network and settings, one world per phase chosen by the root, so no
+        #: determinization, filtering, subsampling, tree reuse or root noise of its own.
+        self._gumbel: Optional[GumbelRoot] = None
+        if self.cfg.gumbel_k > 0:
+            sub_cfg = replace(self.cfg, determinize=False, node_filter="all", subsample=1.0,
+                              gumbel_k=0, reuse_subtree=False, dirichlet_frac=0.0)
+            sub = BatchedMCTS(model, device=self.device, config=sub_cfg,
+                              featurise_capacity=featurise_capacity)
+            self._gumbel = GumbelRoot(self, sub)
         #: Persistent roots, keyed by whatever the caller uses to identify a position stream
         #: (a game index, typically). Only populated when `reuse_subtree` is on.
         self._trees: Dict[object, _BNode] = {}
@@ -302,6 +324,7 @@ class BatchedMCTS:
         total = node.total
         sqrt_total = math.sqrt(total if total > 1.0 else 1.0)
         c = self.cfg.c_puct
+        fpu = self.cfg.fpu_reduction
         value_us = node.value_us
         us_moves = node.mover == _US
         best_i, best_v = 0, -1e30
@@ -310,6 +333,8 @@ class BatchedMCTS:
             q = (wi / ni) if ni > 0 else value_us
             if not us_moves:
                 q = -q
+            if ni == 0:
+                q -= fpu
             v = q + c * pi * sqrt_total / (1.0 + ni)
             if v > best_v:
                 best_v, best_i = v, i
@@ -451,9 +476,9 @@ class BatchedMCTS:
             cap *= 2
         cs = self._cpp.get(cap)
         if cs is None:
-            from bindings.ts_env import model_obs_features
             cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
-                                  int(model_obs_features(self.model)), False)
+                                  int(model_obs_features(self.model)), False,
+                                  float(self.cfg.fpu_reduction))
             bufs = _SearchBuffers(cap, int(cs.obs_width), torch.device(self.device))
             cs.set_buffers(bufs.obs.numpy(), bufs.masks.numpy())
             self._cpp[cap] = cs
@@ -583,7 +608,10 @@ class BatchedMCTS:
         return self._rng.random() < self.cfg.subsample
 
     def best_actions(self, states: Sequence[ts.GameState]) -> List[int]:
-        """Most-visited action per position; falls back to the first legal action."""
+        """Most-visited action per position; falls back to the first legal action. With
+        `gumbel_k` set, the Gumbel root's choice instead (ai/search/gumbel_root.py)."""
+        if self._gumbel is not None:
+            return self._gumbel.choose(states)
         picks: List[int] = []
         for r, st in zip(self._search(states), states):
             if r is None or r.terminal or not r.actions:

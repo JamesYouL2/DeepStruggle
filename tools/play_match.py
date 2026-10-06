@@ -37,6 +37,11 @@ except ImportError:
     NeuralBot = None
 
 from web.server.replay import ReplayLogger, ReplayManager, replays_dir
+from ai.search.batched_mcts import BatchedMCTS
+from bindings.action_encoder import ActionEncoder
+from bot.heuristic_mcts_bot import HeuristicMCTSBot
+from tools.lib.player_agent import NeuralAgent, search_spec_config
+from tools.lib.self_play import generate_self_play_replay
 from web.server.replay_types import (
     ReplayActionDict,
     GameStateDict,
@@ -57,6 +62,45 @@ from tools.lib.scoring_formatter import format_regional_scoring_breakdown
 from tools.lib.checkpoint_utils import discover_checkpoints
 from tools.lib.game_loop import GameLoop, SettlePolicy, StepRecord
 from tools.lib.openings import OPENINGS, acting_side, scripted_setup_index
+
+
+class _SearchBot(BaseBot):
+    """Bot-shaped adapter for a searcher, which needs the engine state, not the JSON view.
+
+    A searcher clones and steps the real GameState, so BaseBot's dict interface cannot serve it.
+    `wants_game_state` tells the match loop to pass the state instead, and `select_action` raises
+    rather than silently playing an unsearched move.
+    """
+
+    wants_game_state = True
+
+    def __init__(self, role: str, name: str, searcher: BatchedMCTS) -> None:
+        super().__init__(role, name=name)
+        self.searcher = searcher
+
+    def select_action(self, state, legal_actions):
+        raise NotImplementedError(
+            "search bots need the engine GameState; the match loop must route through "
+            "select_from_state (see wants_game_state)")
+
+    def select_from_state(self, state: ts.GameState) -> Dict[str, Any]:
+        flat = int(self.searcher.best_actions([state])[0])
+        legal = np.asarray(ActionEncoder.get_legal_mask(state))
+        if not legal[flat]:
+            raise RuntimeError(
+                f"search returned flat action {flat}, illegal at decision_type="
+                f"{int(state.ctx().decision_type)}; the engine would reject it and the "
+                f"loop would re-offer the same node forever")
+        ma = ts.decode_flat_action(state, flat)
+        return {
+            "decision_type": int(ma.decision_type),
+            "primary_id": int(ma.primary_id),
+            "secondary_id": int(ma.secondary_id),
+            "flags": int(ma.flags),
+        }
+
+    def reset(self) -> None:
+        self.searcher.reset()
 
 
 def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: str = "cpu") -> Tuple[BaseBot, str]:
@@ -98,67 +142,19 @@ def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: 
     if clean_spec == "heuristic_mcts" or clean_spec.startswith("heuristic_mcts:"):
         parts = clean_spec.split(":")
         sims = int(parts[1]) if len(parts) > 1 and parts[1] else 64
-        from bot.heuristic_mcts_bot import HeuristicMCTSBot
         return HeuristicMCTSBot(role, simulations=sims), f"HeuristicMCTS{sims}"
 
-    # search:<checkpoint>[:sims[:determinize]] -- MCTS over a checkpoint, played through the
-    # standard match loop so the replay goes through the same writer as every other game.
-    if clean_spec.startswith("search:"):
-        parts = clean_spec.split(":")
-        path = parts[1]
-        sims = int(parts[2]) if len(parts) > 2 and parts[2] else 64
-        determinize = len(parts) > 3 and parts[3].lower().startswith("determin")
-        from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
-        from bindings.action_encoder import ActionEncoder
-        from tools.lib.player_agent import NeuralAgent
-
+    # search:<checkpoint>[:...] and gumbel:<checkpoint>[:...] -- a searcher over a checkpoint,
+    # played through the standard match loop so the replay goes through the same writer as every
+    # other game. The fields are tools/lib/player_agent.search_spec_config's, so a spec plays the
+    # same searcher here as in a tournament. advance_root is False there: this loop does NOT
+    # settle the state before asking a bot, and with it True the searcher answered about a later
+    # decision and returned actions the engine rejected -- 1,355 times in one game.
+    if clean_spec.startswith(("search:", "gumbel:")):
+        path, cfg, name = search_spec_config(clean_spec)
         base = NeuralAgent.from_checkpoint(path, device=device)
-        # advance_root=False: this match loop does NOT settle the state before asking a bot, so
-        # the tree must root exactly where the loop is. With it True the searcher answered about a
-        # later decision and returned actions the engine rejected -- 1,355 times in one game.
-        cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
-                                advance_root=False, determinize=determinize)
         searcher = BatchedMCTS(base.model, device=device, config=cfg, featurise_capacity=1)
-
-        class _SearchBot(BaseBot):
-            """Bot-shaped adapter that needs the engine state, not the JSON view.
-
-            A searcher clones and steps the real GameState, so BaseBot's dict interface cannot
-            serve it. `wants_game_state` tells the match loop to pass the state instead, and
-            `select_action` raises rather than silently playing an unsearched move.
-            """
-
-            wants_game_state = True
-
-            def __init__(self, role):
-                super().__init__(role, name=f"search{sims}{'-det' if determinize else ''}")
-
-            def select_action(self, state, legal_actions):
-                raise NotImplementedError(
-                    "search bots need the engine GameState; the match loop must route through "
-                    "select_from_state (see wants_game_state)")
-
-            def select_from_state(self, state) -> Dict[str, Any]:
-                flat = int(searcher.best_actions([state])[0])
-                legal = np.asarray(ActionEncoder.get_legal_mask(state))
-                if not legal[flat]:
-                    raise RuntimeError(
-                        f"search returned flat action {flat}, illegal at decision_type="
-                        f"{int(state.ctx().decision_type)}; the engine would reject it and the "
-                        f"loop would re-offer the same node forever")
-                ma = ts.decode_flat_action(state, flat)
-                return {
-                    "decision_type": int(ma.decision_type),
-                    "primary_id": int(ma.primary_id),
-                    "secondary_id": int(ma.secondary_id),
-                    "flags": int(ma.flags),
-                }
-
-            def reset(self):
-                searcher.reset()
-
-        label = f"Search({sims}{'/det' if determinize else ''}, {os.path.basename(path)})"
-        return _SearchBot(role), label
+        return _SearchBot(role, name, searcher), f"{name} ({os.path.basename(path)})"
 
     # Neural bot resolution
     model_path: Optional[str] = None
@@ -540,7 +536,6 @@ def main():
     # (a network against a rule-based bot) drives NeuralBot instead, and hands it the engine's own
     # observation rather than a reconstruction -- see the loop.
     if args.agent is not None and os.path.exists(args.agent):
-        from tools.lib.self_play import generate_self_play_replay
         generate_self_play_replay(
             model=args.agent,
             seed=match_seed,

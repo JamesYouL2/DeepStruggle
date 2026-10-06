@@ -39,14 +39,17 @@ import atexit
 import importlib.util
 import os
 import sys
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
 
 import ts_engine as ts
-from tools.lib.player_agent import ColdWarModel
 from bindings.action_encoder import ActionEncoder
+
+if TYPE_CHECKING:
+    # A type only; importing it at run time would be a cycle (player_agent loads this module).
+    from tools.lib.player_agent import ColdWarModel
 
 # Old layout, the one the checkpoint's policy head was trained against.
 OLD_PLAY_MODE = 110          # EVENT 0, OPS 1, SPACE 2, PASS 3

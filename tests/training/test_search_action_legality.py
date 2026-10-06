@@ -24,8 +24,10 @@ import numpy as np
 import pytest
 import ts_engine as ts
 
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig, _legal_here
 from bindings.action_encoder import ActionEncoder
+from tools.lib.player_agent import search_spec_config
 
 
 def _agent(sims: int = 8) -> BatchedMCTSAgent:
@@ -33,10 +35,9 @@ def _agent(sims: int = 8) -> BatchedMCTSAgent:
 
     Not a checkpoint: `data/` is git-ignored, so no test may assume it holds anything. These
     tests are about which action comes back, which random weights exercise just as well. The
-    config is kept in step with tools/lib/player_agent.load_agent by
+    config is kept in step with tools/lib/player_agent.search_spec_config by
     `test_load_agent_does_not_settle_the_root`, which reads the real thing.
     """
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
     net = create_coldwar_net_v2(device="cpu", graph_layers=0).eval()
     cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
                             advance_root=False, determinize=True)
@@ -49,20 +50,18 @@ def _opening(seed: int = 4242) -> ts.GameState:
     return s
 
 
-def test_load_agent_does_not_settle_the_root() -> None:
+@pytest.mark.parametrize("spec", ["search:m.pt", "search:m.pt:64:determinize:card:0.5:python:0.2",
+                                  "gumbel:m.pt", "gumbel:m.pt:16:4:0"])
+def test_load_agent_does_not_settle_the_root(spec: str) -> None:
     """The CLIs hand over an unsettled state, so the searcher must not advance past it.
 
-    Read from the source rather than by building an agent, because building one needs a
-    checkpoint and `data/` is git-ignored.
+    Asked of the spec parser `load_agent` and play_match.py both build their searchers from, which
+    needs no checkpoint (`data/` is git-ignored).
     """
-    import inspect
-
-    from tools.lib import player_agent
-
-    src = inspect.getsource(player_agent.load_agent)
-    assert "advance_root=False" in src, (
-        "load_agent no longer pins advance_root=False: the searcher will settle its own root and "
-        "return actions for a decision the caller is not at")
+    _, cfg, _ = search_spec_config(spec)
+    assert not cfg.advance_root, (
+        "a search spec no longer pins advance_root=False: the searcher will settle its own root "
+        "and return actions for a decision the caller is not at")
 
 
 def test_legal_here_is_the_only_authority() -> None:
