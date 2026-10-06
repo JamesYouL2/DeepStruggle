@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
@@ -96,7 +96,12 @@ class GumbelRoot:
             lg, v, _ = self.mcts.model(torch.from_numpy(obs).to(dev), torch.from_numpy(masks).to(dev))
         return lg.float().cpu().numpy() / self.mcts.cfg.prior_temp, masks, v.float().reshape(-1).cpu().numpy()
 
-    def choose(self, states: Sequence[ts.GameState]) -> List[int]:
+    def choose(self, states: Sequence[ts.GameState],
+               stats: Optional[List[Dict[str, Any]]] = None) -> List[int]:
+        """The move per position. With `stats` (an empty list), also one dict per position of the
+        root's evidence, the same choice either way: the network's value from the mover's side and,
+        per candidate, its logit, simulations, mean value from the mover's side (absent if never
+        searched), last sigma(completed Q) and the halving phase it fell in (None = played)."""
         mcts, cfg = self.mcts, self.mcts.cfg
         states = list(states)
         lg, masks, v = self._network(states)
@@ -112,6 +117,9 @@ class GumbelRoot:
             alive.append(sorted(legal, key=lambda a: -(g[i][a] + logits[i][a]))[:max(1, cfg.gumbel_k)])
         n = [{a: 0.0 for a in lo} for lo in logits]
         w = [{a: 0.0 for a in lo} for lo in logits]
+        cands = [list(c) for c in alive]
+        dropped: List[Dict[int, int]] = [{} for _ in states]
+        last_sig: List[Dict[int, float]] = [{} for _ in states]
         phases = [max(1, math.ceil(math.log2(len(c)))) if len(c) > 1 else 0 for c in alive]
         for ph in range(max(phases, default=0)):
             jobs = []
@@ -149,4 +157,18 @@ class GumbelRoot:
                 sig = sigma_completed(logits[i], float(v[i]), n[i], q)
                 ranked = sorted(alive[i], key=lambda a: -(g[i][a] + logits[i][a] + sig[a]))
                 alive[i] = ranked[:1] if ph == phases[i] - 1 else ranked[:max(1, (len(ranked) + 1) // 2)]
+                last_sig[i] = sig
+                for a in ranked[len(alive[i]):]:
+                    dropped[i][a] = ph
+        if stats is not None:
+            for i in range(len(states)):
+                stats.append({
+                    "value_mover": float(v[i]),
+                    "candidates": [{
+                        "action": a, "logit": logits[i][a], "sims": n[i][a],
+                        **({"q": w[i][a] / n[i][a]} if n[i][a] > 0 else {}),
+                        **({"sigma": last_sig[i][a]} if a in last_sig[i] else {}),
+                        "dropped_in_phase": dropped[i].get(a),
+                    } for a in cands[i]],
+                })
         return [int(c[0]) if c else 0 for c in alive]

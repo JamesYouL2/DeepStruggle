@@ -59,7 +59,8 @@ def order_newest_first(entries: Sequence[Dict[str, object]]) -> List[Tuple[str, 
     return files
 
 
-def list_models(repo: str, revision: str) -> List[Tuple[str, str]]:
+def list_entries(repo: str, revision: str) -> List[Dict[str, object]]:
+    """Every entry of the repo's tree at `revision` (the Hugging Face tree API, all pages)."""
     if not _REPO_RE.match(repo):
         raise ValueError("a Hugging Face repo must look like owner/name")
     entries: List[Dict[str, object]] = []
@@ -70,7 +71,23 @@ def list_models(repo: str, revision: str) -> List[Tuple[str, str]]:
             entries.extend(json.load(res))
             m = _NEXT_RE.search(res.headers.get("Link") or "")
             url = m.group(1) if m else None
-    return order_newest_first(entries)
+    return entries
+
+
+def list_models(repo: str, revision: str) -> List[Tuple[str, str]]:
+    return order_newest_first(list_entries(repo, revision))
+
+
+def torch_twin(onnx_path: str, entries: Sequence[Dict[str, object]]) -> Optional[str]:
+    """The torch checkpoint published beside an export: `<stem>.pt` in the export's directory,
+    else anywhere in the repo under that exact file name; None if there is none."""
+    stem = os.path.splitext(onnx_path)[0]
+    files = [e.get("path") for e in entries if e.get("type") == "file"]
+    paths = [p for p in files if isinstance(p, str) and p.endswith(".pt")]
+    if f"{stem}.pt" in paths:
+        return f"{stem}.pt"
+    named = sorted(p for p in paths if os.path.basename(p) == f"{os.path.basename(stem)}.pt")
+    return named[0] if named else None
 
 
 def download(repo: str, revision: str, path: str, out_dir: str) -> str:

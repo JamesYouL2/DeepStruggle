@@ -687,6 +687,35 @@ holds that copy to the native one bit for bit.
 
 ---
 
+## 3d. `tools/gumbel_leaks.py` (Where the Raw Network Leaks)
+Compares the network's argmax with a noise-free Gumbel root's move (default 32 simulations, the
+4 most probable moves, first-play urgency 0.2 -- about +60 Elo over the plain network) at
+positions from the network's own games (temperature 0.1, one in eight decisions with a real
+choice). Where they differ, both moves are played to the end by the network from paired copies
+(same redeal, same dice) and the difference is the departure's advantage in win probability.
+Departure rate x mean advantage is the **leak per decision** (‰ of win probability); the report
+breaks it down by decision segment, turn, side, card, play-mode change and event, each group's
+share adding to 100%, and lists the largest single leaks with a workbench link to each position
+(`?pos=`), where *⌕ Gumbel 64* re-runs the search on it. Per decision, not per game: the network
+makes several hundred decisions with a choice a game, and single-decision gains do not add up.
+Models with appended observation features are played in their own view.
+
+```bash
+# one part (CI runs 20 of these and pools them: .github/workflows/gumbel_leaks.yml)
+tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/gumbel_leaks.py \
+  --model <ckpt.pt> --positions 300 --pairs 32 --seed 1 --dump part-1.jsonl
+# pool parts; links open the local workbench (python -m web.server.main) with the model's export
+PYTHONPATH=.:build/release .venv/bin/python tools/gumbel_leaks.py --merge part-*.jsonl \
+  --output-md report.md --workbench-model hf:mihaild/deepstruggle@main:<model>.onnx
+```
+
+On CI, `model=newest` takes the newest `.onnx` on Hugging Face (the workbench's default) and plays
+its torch twin (`<same name>.pt` beside it); the run stops at the plan job if there is none rather
+than measure another network. The playouts value a move as this network continues from it, and a
+departure the playouts refute (below -2 SE) is the root being wrong, not the network.
+
+---
+
 ## 4. `tools/generate_dataset.py` (Vectorized Demonstration Dataset Generator)
 Churns out thousands of games in parallel across hundreds of C++ environments, on a
 multi-temperature exploration schedule, writing a compressed `.jsonl.gz` dataset for supervised BC

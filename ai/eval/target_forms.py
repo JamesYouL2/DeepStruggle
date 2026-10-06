@@ -367,10 +367,14 @@ def paired_advantage(model, items: Sequence[Tuple[Position, int, int]], pairs: i
                                        f"depend on the hidden cards here")
                 ts.Engine.step_flat(s, a)
                 starts.append((it, b, s))
+    from bindings.ts_env import model_obs_features
+    feats = int(model_obs_features(model))       # the model's own view (appended feature blocks)
     results = np.zeros(len(starts))
     for lo in range(0, len(starts), batch):
         chunk = starts[lo:lo + batch]
         runner = ts.VectorizedBatchRunner(len(chunk), seed)
+        if feats:
+            runner.set_obs_features([feats] * len(chunk), [feats] * len(chunk))
         for i, (_it, _b, s) in enumerate(chunk):
             runner.set_state(i, s)
         runner.refresh_all()

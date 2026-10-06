@@ -1,0 +1,186 @@
+# Where the raw network leaks: its move against a Gumbel root's (32 simulations, k = 4, FPU 0.2 by
+# default), priced by paired playouts (tools/gumbel_leaks.py, ai/eval/gumbel_leaks.py).
+#
+#   gh workflow run gumbel_leaks.yml --ref feat/gumbel-leaks -f positions=300 -f runners=20
+#   gh run download <run-id> -n gumbel-leaks-<run-id> -D data/reports/ci
+#
+# `model` = newest (default) takes the newest .onnx on Hugging Face -- the one the workbench loads
+# -- and plays its torch twin, the `<same name>.pt` beside it; the run fails at plan if there is
+# none rather than measure another network. Or name a checkpoint: hf:pt:<file>.pt or
+# hf:relpt:<tag>/<file>.pt. Each runner samples its own positions (seed = part number); the pool
+# job merges the parts into one report whose largest leaks link into the workbench at their
+# positions (`workbench` + `pos=`), where the page's Gumbel search can be run on them.
+name: gumbel-leaks
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [feat/gumbel-leaks]
+    paths: [.github/workflows/gumbel_leaks.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "newest (the newest .onnx's torch twin on Hugging Face), hf:pt:<file>.pt or hf:relpt:<tag>/<file>.pt"
+        default: "newest"
+      positions:
+        description: "Positions per runner"
+        default: "300"
+      pairs:
+        description: "Paired playouts per departure"
+        default: "32"
+      runners:
+        description: "Runners"
+        default: "20"
+      sims:
+        description: "The root's simulations"
+        default: "32"
+      k:
+        description: "The root's candidates"
+        default: "4"
+      fpu:
+        description: "First-play urgency reduction"
+        default: "0.2"
+      workbench:
+        description: "Workbench address the report's leak links open"
+        default: "http://localhost:8000/"
+      hf_repo:
+        description: "Hugging Face repo"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  MODEL: ${{ inputs.model || 'newest' }}
+  POSITIONS: ${{ inputs.positions || '300' }}
+  PAIRS: ${{ inputs.pairs || '32' }}
+  RUNNERS: ${{ inputs.runners || '20' }}
+  SIMS: ${{ inputs.sims || '32' }}
+  K: ${{ inputs.k || '4' }}
+  FPU: ${{ inputs.fpu || '0.2' }}
+  WORKBENCH: ${{ inputs.workbench || 'http://localhost:8000/' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      model: ${{ steps.plan.outputs.model }}
+      workbench_model: ${{ steps.plan.outputs.workbench_model }}
+      parts: ${{ steps.plan.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin the model and list the parts
+        id: plan
+        # fetch_hf_model.py is standard library only, so the runner's own python3 will do. Pinned
+        # here so every runner plays the same file even if a new one is uploaded mid-run.
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, "tools")
+          from fetch_hf_model import list_entries, order_newest_first, torch_twin
+          repo, model = os.environ["HF_REPO"], os.environ["MODEL"].strip()
+          workbench_model = ""
+          if model == "newest":
+              entries = list_entries(repo, "main")
+              onnx = order_newest_first(entries)
+              if not onnx:
+                  sys.exit(f"{repo} has no .onnx files")
+              newest = onnx[0][0]
+              pt = torch_twin(newest, entries)
+              if pt is None:
+                  have = sorted(str(e.get("path")) for e in entries if str(e.get("path", "")).endswith(".pt"))
+                  sys.exit(f"the newest export {newest} has no torch twin ({os.path.splitext(newest)[0]}.pt) "
+                           f"in {repo}; search needs the torch network. Name one with model=hf:pt:<file>.pt. "
+                           f".pt files there: {have or 'none'}")
+              model = f"hf:pt:{pt}"
+              workbench_model = f"hf:{repo}@main:{newest}"
+              print(f"newest export: {newest}; torch twin: {pt}")
+          elif not model.startswith(("hf:pt:", "hf:relpt:")):
+              sys.exit(f"model must be newest, hf:pt:<file>.pt or hf:relpt:<tag>/<file>.pt, not {model!r}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"model={model}\n")
+              f.write(f"workbench_model={workbench_model}\n")
+              f.write(f"parts={json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1)))}\n")
+          print("model:", model, " runners:", os.environ["RUNNERS"])
+          PY
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330   # under the 6 h job limit, so the upload step still gets to run
+    strategy:
+      fail-fast: false     # one failed part must not cancel the others; re-run just that one
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    env:
+      PINNED: ${{ needs.plan.outputs.model }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Probe part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          set -o pipefail
+          m=$(python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${PINNED#hf:}" --out-dir data/checkpoints | tail -1)
+          test -f "$m" || { echo "checkpoint not fetched: $m"; exit 1; }
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh &&PYTHONPATH=.:build/release .venv/bin/python tools/gumbel_leaks.py \
+            --model "$m" --positions "$POSITIONS" --pairs "$PAIRS" --seed "${{ matrix.part }}" \
+            --sims "$SIMS" --k "$K" --fpu "$FPU" --dump "parts/part-${{ matrix.part }}.jsonl"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gumbel-leaks-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PINNED: ${{ needs.plan.outputs.model }}
+      WORKBENCH_MODEL: ${{ needs.plan.outputs.workbench_model }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gumbel-leaks-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.jsonl 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/gumbel_leaks.py --merge parts/part-*.jsonl \
+            --output-md reports/report.md --workbench "$WORKBENCH" --workbench-model "$WORKBENCH_MODEL"
+          cp parts/part-*.jsonl reports/
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $PINNED (requested: $MODEL)"
+            echo "workbench model: ${WORKBENCH_MODEL:-(none)}"
+            echo "root: gumbel sims=$SIMS k=$K fpu=$FPU"
+            echo "positions/runner: $POSITIONS  pairs: $PAIRS  runners: $RUNNERS"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gumbel-leaks-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
