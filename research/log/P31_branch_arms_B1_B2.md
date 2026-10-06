@@ -207,3 +207,49 @@ The policy's P(end) by the decider's VP lead (ending wins exactly at 7+):
   head that rarely sees Wargames' branch learns a lead-independent average. The owner's proposal -- a
   branch head reading the trunk context plus a one-hot of which branching card is resolving -- is aimed
   at exactly this; it still needs training signal at the branch, which the floor over branch rows gives.
+
+## E7-30-44: a per-branch head, with Wargames' branch visited (owner, 2026-10-06)
+
+`--ladder-branch-head`: a modifier on the branch block (flat 200..219), `branch_head_net(cat[h, one-hot of
+the ACTIVE_NOW card])` (Linear 480+110 -> 128, GELU, Linear 128 -> 20) added to the dense logits there,
+zero-initialised, added on resume. Plus `--force-applicable-events wargames_branch --force-event-credit
+environment`: Wargames' event at DEFCON 2, **any lead**, in 10% of the learner's plays, learner 0, so the
+end-or-pass branch that follows (~21k visits over the arm) is the policy's own decision with both
+outcomes on offer. No floor. From E7-20-44@4,390M to 4,800M; ~96k steps/s, as the plain line.
+
+**Wargames' branch, P(end) by the decider's lead** (ending wins at 7+; `wargames_probe.py`, 8,000 games):
+
+| | < 5 | 5 | 6 | 7 | 8+ | AUC | P(end): ending wins / loses |
+|:---|---:|---:|---:|---:|---:|---:|:---|
+| E7-20-44 (plain) | 0.19 | 0.21 | 0.17 | 0.19 | 0.29 | 0.63 | 0.28 / 0.19 |
+| E7-29-44 (forced as own) | 0.20 | 0.70 | 0.86 | 0.92 | 0.98 | 0.96 | 0.97 / 0.26 |
+| E7-30-44 @4,440M (50M in) | 0.05 | 0.09 | 0.12 | 0.07 | 0.13 | 0.75 | 0.13 / 0.05 |
+| **E7-30-44 @4,800M** | **0.06** | 0.24 | 0.41 | 0.35 | **0.85** | **0.95** | **0.78 / 0.09** |
+
+The trunk's own linear readout stays at 0.99 AUC.
+
+**Strength against the three siblings:** @4800M US −0.7 ± 0.6, USSR −0.6 ± 0.7, head to head 50.3%; SWAs
+−0.1 / +0.0, 51.0% (noise floor +0.9…+1.1 / −0.4, 52.2–52.4%).
+
+**Cards** (4,000 games; T 0.1 / T 1; siblings in brackets):
+
+* Wargames played for the event where applicable: US **11.1% / 8.8%** (~1–2%), USSR **4.5% / 4.3%**
+  (0–2.5%); where not applicable: US 0.6% / 1.8%, USSR 0.5% / 0.5% (~0.5–1%). Ended by Wargames 1.0% /
+  0.7% (0.2–0.6%).
+* One Small Step and Arms Race: unchanged, 0.2–1.5% (siblings' spread).
+* Chernobyl: 0.7% / 1.3% (1.3–2.7%) -- at the low edge of the siblings; the head also corrects the region
+  slots Chernobyl uses, which may be the cause.
+
+### Reading
+
+* **The branch is fixed without a cost.** The policy now ends the game when it wins (0.78) and rarely
+  when it loses (0.09), where the plain model ended ~0.2 regardless; strength is level with the
+  siblings in both seats, where E7-29-44 lost 45 Elo.
+* **The leak behind it has begun to close.** With a sound branch, the play-mode decision takes
+  Wargames' event where it applies 5–10x as often as the plain line, and not where it does not -- the
+  reverse-curriculum order P31 predicted: the last link learned first, then the precursor.
+* **The 7-VP line is still soft.** At leads 6 and 7 P(end) is 0.41 and 0.35 (~70 cases each): "a big
+  lead ends it", not the exact threshold, though the trunk carries it at 0.99 AUC. More branch visits or a
+  longer run are the obvious next step.
+* Learning ran in two phases: at 50M the policy had mostly learned "do not end" (three in four visits
+  are at losing leads), and only later to take the 7+ wins.
