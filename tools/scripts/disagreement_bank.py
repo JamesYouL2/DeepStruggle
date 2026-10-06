@@ -193,7 +193,12 @@ _SESSIONS: Dict[str, Any] = {}
 
 #: the review page's columns, in order (web page reads `fields`, then each row as a list)
 FIELDS = ("id", "game", "kind", "pattern", "side", "turn", "ar", "defcon", "vp", "card", "human", "network",
-          "search", "p_human", "p_network", "p_search", "v_win", "pos")
+          "search", "p_human", "p_network", "p_search", "v_win", "pos",
+          # bank_clarity.py: the stronger search's move and whose it is, each move's search value and
+          # SE for the mover, the value-best move(s), the margin in SEs, and whether the two agree
+          "strong", "strong_is", "q", "best", "z", "strong_agrees",
+          # bank_playouts.py: each move's playout score, the paired differences, the playout-best move(s)
+          "pl_pairs", "pl_score", "pl_diff", "pl_best")
 
 
 def row_id(r: Dict[str, Any]) -> str:
@@ -206,7 +211,8 @@ def row_id(r: Dict[str, Any]) -> str:
 PART_ROWS = 8000
 
 
-def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float) -> int:
+def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float,
+         clarity: Sequence[str] = (), playouts: Sequence[str] = ()) -> int:
     """Merge banks into the review page's data, deduplicated by position: one file per pattern
     (`bank-<pattern>.json`, so the page can load the large human-alone set only when asked) and a
     `manifest.json` of their sizes."""
@@ -222,7 +228,24 @@ def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float) -> int:
                 if r["pattern"] == "human-alone" and r["p_human"] >= human_alone_max_p:
                     continue
                 seen.setdefault(row_id(r), r)
-    manifest: Dict[str, Any] = {"fields": list(FIELDS), "files": {}}
+    def read(paths: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        out: Dict[str, Dict[str, Any]] = {}
+        for path in paths:
+            with gzip.open(path, "rt") as f:
+                for line in f:
+                    d = json.loads(line)
+                    out[d["id"]] = d
+        return out
+
+    cl, pl = read(clarity), read(playouts)
+    for rid, r in seen.items():
+        c, p = cl.get(rid, {}), pl.get(rid, {})
+        r.update({"strong": c.get("strong"), "strong_is": c.get("strong_is"), "q": c.get("q"),
+                  "best": c.get("best"), "z": c.get("z"), "strong_agrees": c.get("strong_agrees"),
+                  "pl_pairs": p.get("pairs"), "pl_score": p.get("score"), "pl_diff": p.get("diff"),
+                  "pl_best": p.get("best")})
+    manifest: Dict[str, Any] = {"fields": list(FIELDS), "files": {},
+                                "clarity": len(cl), "playouts": len(pl)}
     for pat in PATTERNS:
         rows = [[rid if f == "id" else r[f] for f in FIELDS] for rid, r in seen.items() if r["pattern"] == pat]
         # A published file holds at most 16 MB; a row is about 1.1 KB, so parts of PART_ROWS rows.
@@ -249,6 +272,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--search", default=None, help="a load_agent spec, e.g. gumbel:<ckpt.pt>:32:4")
     ap.add_argument("--pack", nargs="+", default=None, metavar="BANK",
                     help="instead of scanning: merge these banks into --out as the review page's data file")
+    ap.add_argument("--clarity", nargs="*", default=[], help="--pack: bank_clarity.py outputs to merge in")
+    ap.add_argument("--playouts", nargs="*", default=[], help="--pack: bank_playouts.py outputs to merge in")
     ap.add_argument("--human-alone-max-p", type=float, default=1.0,
                     help="--pack keeps a human-alone row only when the network gave the human's move less")
     ap.add_argument("--kinds", nargs="+", default=list(KINDS), choices=KINDS)
@@ -262,7 +287,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="skip the games --out already holds (their counts are kept in <out>.games.jsonl)")
     a = ap.parse_args(argv)
     if a.pack:
-        return pack(a.pack, a.out, a.human_alone_max_p)
+        return pack(a.pack, a.out, a.human_alone_max_p, a.clarity, a.playouts)
     if not a.net or not a.search:
         ap.error("--net and --search are required unless --pack is given")
     k, n = (int(x) for x in a.part.split("/"))
