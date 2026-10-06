@@ -206,18 +206,20 @@ def load_policy(path: str) -> Tuple[LogitsFn, int]:
     return fn, int(model_obs_features(model))
 
 
-def play(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: int,
-         temperature: float) -> List[Holding]:
+def selfplay(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: int,
+             temperature: float, factory: Callable[[], Any]) -> List[Any]:
+    """Self-play of one policy against itself; every decision of game i goes to the i-th object
+    `factory` makes (anything with `observe(state, action)`), and those are returned."""
     from bindings.ts_env import TsVectorizedEnv
     rng = np.random.default_rng(seed)
-    holdings: List[Holding] = []
+    out: List[Any] = []
     for b0 in range(0, games, batch):
         n = min(batch, games - b0)
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
         env.set_obs_features(obs_features, obs_features)
         obs, masks, _ = env.reset_all()
         done = [False] * n
-        trackers = [HoldingTracker() for _ in range(n)]
+        trackers = [factory() for _ in range(n)]
         for _ in range(20_000):
             if all(done):
                 break
@@ -240,48 +242,66 @@ def play(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: i
             for i, d in enumerate(dones):
                 if d:
                     done[i] = True
-        for t in trackers:
-            holdings += t.holdings
-    return holdings
+        out += trackers
+    return out
 
 
-def _human_game(path: str) -> Tuple[str, List[List[Any]], str]:
-    """One corpus game through the converter, its decisions fed to a tracker: (path, dumped
-    holdings, status). A game whose record stops early (a fragment, or a conversion that fails
-    part-way) loses the holdings still open at its last decision -- how they ended is unknown, and
-    counting them as kept would invent an outcome the log never shows."""
+def play(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: int,
+         temperature: float) -> List[Holding]:
+    return [h for t in selfplay(logits_fn, obs_features, games, seed, batch, temperature, HoldingTracker)
+            for h in t.holdings]
+
+
+def feed_corpus_game(path: str, tracker: Any) -> str:
+    """One corpus game through the converter, each human decision fed to `tracker.observe`:
+    "skipped" (not convertible), "complete", or "partial" (the record stops early, or the
+    conversion fails part-way, so the game's end is not seen)."""
     import gzip
     from tools.lib.ts_replayer_convert import convert_game
 
     with gzip.open(path, "rt") as f:
         game = json.load(f)
-    tracker = HoldingTracker(keep_positions=True, game=int(game.get("replay_id", 0)))
     conv = convert_game(game, on_decision=lambda st, mover, entry, chosen: tracker.observe(st, int(chosen)))
     if conv.skipped:
-        return path, [], "skipped"
-    hs = tracker.holdings
-    if conv.game_ended and conv.failure is None and conv.truncated_at is None:
-        status = "complete"
-    else:
-        status = "partial"
-        open_ = {id(tracker.latest[c]) for c in tracker.held if c in tracker.latest}
-        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_)]
-    return path, [dump_holding(h) for h in hs], status
+        return "skipped"
+    return "complete" if conv.game_ended and conv.failure is None and conv.truncated_at is None else "partial"
 
 
-def human_holdings(workers: int, limit: int = 0) -> Tuple[List[Holding], Dict[str, int]]:
-    """The holdings of every distinct game in the ts-replayer corpus, as the humans played them."""
+def corpus_map(work: Callable[[str], Any], workers: int, limit: int = 0) -> List[Any]:
+    """`work(path)` over every distinct game of the ts-replayer corpus, in a process pool; `work`
+    must be a module-level function so the pool can send it."""
     import multiprocessing
     from tools.lib.corpus_paths import distinct_corpus_files
 
     files, _ = distinct_corpus_files()
     paths = [str(p) for p in files][: limit or None]
+    with multiprocessing.get_context("fork").Pool(max(1, workers)) as pool:
+        return list(pool.imap_unordered(work, paths))
+
+
+def _human_game(path: str) -> Tuple[List[List[Any]], str]:
+    """One corpus game's holdings, dumped, and its status. A game whose record stops early loses
+    the holdings still open at its last decision -- how they ended is unknown, and counting them
+    as kept would invent an outcome the log never shows."""
+    import gzip
+    with gzip.open(path, "rt") as f:
+        replay_id = int(json.load(f).get("replay_id", 0))
+    tracker = HoldingTracker(keep_positions=True, game=replay_id)
+    status = feed_corpus_game(path, tracker)
+    hs = tracker.holdings
+    if status == "partial":
+        open_ = {id(tracker.latest[c]) for c in tracker.held if c in tracker.latest}
+        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_)]
+    return ([dump_holding(h) for h in hs] if status != "skipped" else []), status
+
+
+def human_holdings(workers: int, limit: int = 0) -> Tuple[List[Holding], Dict[str, int]]:
+    """The holdings of every distinct game in the ts-replayer corpus, as the humans played them."""
     status: Dict[str, int] = collections.Counter()
     out: List[Holding] = []
-    with multiprocessing.get_context("fork").Pool(max(1, workers)) as pool:
-        for _, recs, st in pool.imap_unordered(_human_game, paths):
-            status[st] += 1
-            out += [load_holding(r) for r in recs]
+    for recs, st in corpus_map(_human_game, workers, limit):
+        status[st] += 1
+        out += [load_holding(r) for r in recs]
     return out, dict(status)
 
 
