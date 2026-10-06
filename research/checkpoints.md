@@ -27,7 +27,53 @@ A win rate is only meaningful with its opponent, its game count and its side spl
 frozen anchor, the only cross-engine-comparable opponents are the rule-based bots, so every row
 below is against `HeuristicBot` at 50 games a side.
 
-## Best models (owner, 2026-10-01)
+## Best models (owner, 2026-10-06)
+
+Designations on E7 (owner, 2026-10-06: "write it down"). They supersede the 2026-10-01 designations
+below, which are kept as the record. Ratings are from one field on E7, 13 players, 1,000 games per
+side per pair, on that field's own Elo scale (the 2026-10-01 best soup sits at 1572 in it), so they
+do not compare with the 2026-10-01 numbers ([`log/E7_soup_4800M.md`](log/E7_soup_4800M.md),
+`data/reports/e7_soup4800_rr.{md,json}`).
+
+| designation | model | file | sha256 | Elo |
+|:---|:---|:---|:---|---:|
+| **best raw model** (a single training snapshot) | **E7-20-44@4,800M** | `/workspace/data/checkpoints/E7-20-44_20261005_174535/snapshot_4800053248steps.pt` | `7ca02cc3b432…a8cc164` | 1585 (its seed branches .45/.46@4800M, 1590/1592, are level: 52%) |
+| **best SWA model** (uniform average of the last 80M) | **E7-20-44, 4,720–4,800M SWA** | `/workspace/data/checkpoints/_swa_line_ctl/E7line_swa_4720-4800M.pt` | `094a22073974…c072ab` | **1619** (the branches' SWAs, 1622/1617, are level) |
+| **best model soup**, **best overall** | **soup of E7-20-44, E7-20-44-4390M.45 and E7-20-44-4390M.46, SWA-made** (the three runs' 4,720–4,800M SWAs) | `/workspace/data/checkpoints/_soups/soup_E7-20-44+4390M.45+4390M.46_swa4720-4800M.pt` | `e2447821624a…0db00487` | **1664** (its raw twin `soup_E7-20-44+4390M.45+4390M.46_4800M.pt`, `ef6f6384ea29…`, 1658, is level) |
+
+* **Against the previous designations:** the raw soup beats the 2026-10-01 best soup (E7-02/03/04/05
+  at 1,200M) **63.5%** head to head (+4.8 / +2.9 per seat on the E6-03-44 panel); E7-20-44@4,800M
+  beats E7-02-44@1,200M **64.3%** (66.6 as US, 62.1 as USSR; `data/reports/e7_20_4800_vs_e7_02_1200.json`).
+* **The soup passes the owner's rule against everything in the field:** +3.7 / +3.9 per seat and 61%
+  against E7-20-44@4800M, +2.0 / +2.5 and 57% (SWA-made) against E7-20-44's SWA.
+* **Recipe:** the same shallow E7 recipe as E7-02-44, one run of seed 44 trained to its plateau
+  (~3,700M; [`log/E7_line_to_2000M.md`](log/E7_line_to_2000M.md)) and continued to 4,800M, with no
+  league (a league from 2,800M added nothing measurable, [`log/E7_league_from_2800M.md`](log/E7_league_from_2800M.md)),
+  then branched at 4,390M under two new seeds for 410M and averaged.
+
+### E7-20-44's lineage, and how to reproduce it
+
+One run of seed 44 under five short names, each leg resumed from the previous leg's end state with
+unchanged flags (`tools/scripts/launch_flags.py <prev dir> --diff <next dir>` shows only
+`--train-steps`): E7-01-44 (0 → 560M), E7-02-44 (→ 1,200M), E7-17-44 (→ 2,000M), E7-19-44 (→ 2,400M),
+E7-20-44 (→ 2,800M, → 3,600M, → 4,800M). The continuations got new numbers before the owner's rule
+that an unchanged continuation keeps its name; they are kept as recorded. From 3,600M the per-entity
+head adds the trunk context once per sample (`0280264`, the same function to float64 rounding).
+
+```bash
+# legs: the E7-02-44 commands below, then for each further leg
+.venv/bin/python tools/train.py $SHALLOW $COMMON --seed 44 --train-steps <next budget> \
+  --resume <previous leg's dir>/resume_state.pt --run-name <name> --description "..."
+# the SWA
+tools/scripts/average_weights.py --snapshots <E7-20-44's 4720, 4730, ..., 4800M snapshots> --output E7line_swa_4720-4800M.pt
+# the branches: from E7-20-44's resume_4390060032steps.pt to 4,800M, seeds 45 and 46
+.venv/bin/python tools/train.py $SHALLOW $COMMON --seed 44 --seed-env 45 --seed-pool 45 --seed-sampling 45 \
+  --train-steps 4800000000 --resume <E7-20-44 dir>/resume_4390060032steps.pt --run-name E7-20-44-4390M.45 --description "..."
+#   (and the same with 46 as E7-20-44-4390M.46); each run's 4,720-4,800M SWA as above, then
+tools/scripts/average_weights.py --snapshots <the three 4,720-4,800M SWAs> --output soup_E7-20-44+4390M.45+4390M.46_swa4720-4800M.pt
+```
+
+## Best models (owner, 2026-10-01; superseded 2026-10-06)
 
 Designations on E7 (owner, 2026-10-01). They supersede the 2026-09-29 designations below, which
 are kept as the E6 record. Ratings are from one field on E7, anchored at HeuristicBot = 1500
