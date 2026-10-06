@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -219,6 +221,46 @@ def play(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: i
     return holdings
 
 
+def _human_game(path: str) -> Tuple[str, List[List[Any]], str]:
+    """One corpus game through the converter, its decisions fed to a tracker: (path, dumped
+    holdings, status). A game whose record stops early (a fragment, or a conversion that fails
+    part-way) loses the holdings still open at its last decision -- how they ended is unknown, and
+    counting them as kept would invent an outcome the log never shows."""
+    import gzip
+    from tools.lib.ts_replayer_convert import convert_game
+
+    with gzip.open(path, "rt") as f:
+        game = json.load(f)
+    tracker = HoldingTracker()
+    conv = convert_game(game, on_decision=lambda st, mover, entry, chosen: tracker.observe(st, int(chosen)))
+    if conv.skipped:
+        return path, [], "skipped"
+    hs = tracker.holdings
+    if conv.game_ended and conv.failure is None and conv.truncated_at is None:
+        status = "complete"
+    else:
+        status = "partial"
+        open_ = {id(tracker.latest[c]) for c in tracker.held if c in tracker.latest}
+        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_)]
+    return path, [dump_holding(h) for h in hs], status
+
+
+def human_holdings(workers: int, limit: int = 0) -> Tuple[List[Holding], Dict[str, int]]:
+    """The holdings of every distinct game in the ts-replayer corpus, as the humans played them."""
+    import multiprocessing
+    from tools.lib.corpus_paths import distinct_corpus_files
+
+    files, _ = distinct_corpus_files()
+    paths = [str(p) for p in files][: limit or None]
+    status: Dict[str, int] = collections.Counter()
+    out: List[Holding] = []
+    with multiprocessing.get_context("fork").Pool(max(1, workers)) as pool:
+        for _, recs, st in pool.imap_unordered(_human_game, paths):
+            status[st] += 1
+            out += [load_holding(r) for r in recs]
+    return out, dict(status)
+
+
 def dump_holding(h: Holding) -> List[Any]:
     return [h.card, h.side, h.outcome, h.legal, h.turn, h.ar]
 
@@ -229,7 +271,7 @@ def load_holding(r: Sequence[Any]) -> Holding:
                    int(r[4]) if len(r) > 4 else 0, int(r[5]) if len(r) > 5 else 0)
 
 
-def table(holdings: Sequence[Holding], games: int) -> str:
+def table(holdings: Sequence[Holding], games: int, source: str = "self-play") -> str:
     cards = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
     by: Dict[Tuple[int, int], collections.Counter] = collections.defaultdict(collections.Counter)
     for h in holdings:
@@ -272,8 +314,9 @@ def table(holdings: Sequence[Holding], games: int) -> str:
         space = "—" if legacy else pct(cc["space"], n)
         rows.append(((hd + ev) / n, n, c["name"], side, hd, ev, ops, space, pct(cc["kept"], n), us_cell, ussr_cell))
     rows.sort(key=lambda r: (-r[0], -r[1]))
+    what = "games of the human ts-replayer corpus" if source == "human" else "greedy self-play games"
     out = [f"How often a card in its owner's hand is used for its event -- headlined, or played in an action "
-           f"round as the event -- {games:,} greedy self-play games. One count per holding (the card entering "
+           f"round as the event -- {games:,} {what}. One count per holding (the card entering "
            f"the hand until it leaves), counting only holdings in which the owner could have played the event at "
            f"one of their decisions: a headline choice where the card may be headlined and its event can trigger, "
            f"or an action-round card choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral "
@@ -292,6 +335,10 @@ def table(holdings: Sequence[Holding], games: int) -> str:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", default=None, help="a .pt checkpoint or an .onnx export")
+    ap.add_argument("--human-corpus", action="store_true",
+                    help="count the humans' holdings in the ts-replayer corpus instead of self-play")
+    ap.add_argument("--workers", type=int, default=os.cpu_count() or 1, help="processes for --human-corpus")
+    ap.add_argument("--corpus-limit", type=int, default=0, help="at most this many corpus games (0 = all)")
     ap.add_argument("--games", type=int, default=4096)
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--seed", type=int, default=55_000)
@@ -312,8 +359,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if a.output_md:
             open(a.output_md, "w").write(md + "\n")
         return 0
+    if a.human_corpus:
+        hs, status = human_holdings(a.workers, a.corpus_limit)
+        games = status.get("complete", 0) + status.get("partial", 0)
+        print(f"corpus: {status}", file=sys.stderr)
+        if a.dump:
+            json.dump({"games": games, "source": "human", "status": status,
+                       "holdings": [dump_holding(h) for h in hs]}, open(a.dump, "w"))
+        md = table(hs, games, source="human")
+        print(md)
+        if a.output_md:
+            open(a.output_md, "w").write(md + "\n")
+        return 0
     if not a.checkpoint:
-        ap.error("--checkpoint is required unless --merge is given")
+        ap.error("--checkpoint is required unless --merge or --human-corpus is given")
     fn, features = load_policy(a.checkpoint)
     hs = play(fn, features, a.games, a.seed, a.batch, a.temperature)
     if a.dump:
