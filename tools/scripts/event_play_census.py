@@ -53,6 +53,25 @@ class Holding:
     legal: bool = False            # the owner could have played the event at some point while holding it
     turn: int = 0                  # when it was spent (0 while kept)
     ar: int = 0                    # action round; 0 for a headline
+    game: int = 0                  # the corpus replay id (human holdings only)
+    action: int = -1               # the flat action that spent it, at the position below
+    pos: str = ""                  # that decision's position as a workbench token (when kept)
+
+
+def position_token(st: ts.GameState) -> str:
+    """The workbench's `pos=` token for a position: the save JSON, zlib-deflated, base64url
+    without padding (web/ui/src/game/position.ts)."""
+    import base64
+    import zlib
+    raw = zlib.compress(st.to_save_json().encode("utf-8"))
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def state_from_token(token: str) -> ts.GameState:
+    import base64
+    import zlib
+    raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    return ts.state_from_save_json(zlib.decompress(raw).decode("utf-8"))
 
 
 def _holdings_now(st: ts.GameState) -> Dict[int, int]:
@@ -107,15 +126,20 @@ class HoldingTracker:
     decision in order, before its action is applied, from whichever source drives the game: a
     model's self-play or a human game replayed by the ts-replayer converter."""
 
-    def __init__(self) -> None:
+    def __init__(self, keep_positions: bool = False, game: int = 0) -> None:
+        self.keep_positions = keep_positions
+        self.game = game
         self.holdings: List[Holding] = []
         self.held: Dict[int, int] = {}                     # card -> side, as of the last decision
         self.latest: Dict[int, Holding] = {}               # card -> its latest holding
         self.selected: Optional[Tuple[int, int]] = None    # (card, side) chosen for an action round
 
-    def _spent(self, st: ts.GameState, card: int, outcome: str) -> None:
+    def _spent(self, st: ts.GameState, card: int, outcome: str, a: int) -> None:
         h = self.latest[card]
         h.outcome, h.turn, h.ar = outcome, int(st.turn), int(st.action_round)
+        h.game, h.action = self.game, a
+        if self.keep_positions:
+            h.pos = position_token(st)
 
     def observe(self, st: ts.GameState, a: int) -> None:
         now = _holdings_now(st)
@@ -138,11 +162,11 @@ class HoldingTracker:
             card = int(ts.decode_flat_action(st, a).primary_id)
             if now.get(card) == mover:
                 if st.current_phase == ts.Phase.HEADLINE:
-                    self._spent(st, card, "headline")
+                    self._spent(st, card, "headline", a)
                     self.latest[card].legal = True
                 elif st.current_phase == ts.Phase.ACTION_ROUND:
                     if card in SCORING:
-                        self._spent(st, card, "event")
+                        self._spent(st, card, "event", a)
                         self.latest[card].legal = True
                     else:
                         self.selected = (card, mover)
@@ -151,7 +175,7 @@ class HoldingTracker:
             if self.selected is not None and self.selected == (card, mover) and card in self.latest:
                 # On the opponent's card EVENT is the event-first branch of an Ops play.
                 own = _owner(card) in (None, mover)
-                self._spent(st, card, "event" if a == EVENT and own else "space" if a == SPACE else "ops")
+                self._spent(st, card, "event" if a == EVENT and own else "space" if a == SPACE else "ops", a)
             self.selected = None
 
 
@@ -231,7 +255,7 @@ def _human_game(path: str) -> Tuple[str, List[List[Any]], str]:
 
     with gzip.open(path, "rt") as f:
         game = json.load(f)
-    tracker = HoldingTracker()
+    tracker = HoldingTracker(keep_positions=True, game=int(game.get("replay_id", 0)))
     conv = convert_game(game, on_decision=lambda st, mover, entry, chosen: tracker.observe(st, int(chosen)))
     if conv.skipped:
         return path, [], "skipped"
@@ -262,13 +286,18 @@ def human_holdings(workers: int, limit: int = 0) -> Tuple[List[Holding], Dict[st
 
 
 def dump_holding(h: Holding) -> List[Any]:
-    return [h.card, h.side, h.outcome, h.legal, h.turn, h.ar]
+    out: List[Any] = [h.card, h.side, h.outcome, h.legal, h.turn, h.ar]
+    return out + [h.game, h.action, h.pos] if h.pos else out
 
 
 def load_holding(r: Sequence[Any]) -> Holding:
-    """A dumped holding; older dumps lack the legality flag (all legal) and the timing."""
-    return Holding(int(r[0]), int(r[1]), str(r[2]), bool(r[3]) if len(r) > 3 else True,
-                   int(r[4]) if len(r) > 4 else 0, int(r[5]) if len(r) > 5 else 0)
+    """A dumped holding; older dumps lack the legality flag (all legal) and the timing, and only
+    human dumps carry the position."""
+    h = Holding(int(r[0]), int(r[1]), str(r[2]), bool(r[3]) if len(r) > 3 else True,
+                int(r[4]) if len(r) > 4 else 0, int(r[5]) if len(r) > 5 else 0)
+    if len(r) > 8:
+        h.game, h.action, h.pos = int(r[6]), int(r[7]), str(r[8])
+    return h
 
 
 def table(holdings: Sequence[Holding], games: int, source: str = "self-play") -> str:
