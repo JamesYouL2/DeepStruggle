@@ -79,3 +79,34 @@ two-model matches against E7-20-44@4800M, 2,000 games a side; own-decision DEFCO
   the Subs / Chernobyl chains (B2's) need the banks or a direct count of those plays. B1 cannot reach
   the Subs chain at all: its payoff is a battleground coup at DEFCON 2, and the floor excludes country
   targets by design (owner, 2026-10-06), so a floored OPS_COUP lands where the policy already aims.
+
+## The target cards, counted directly (owner, 2026-10-06)
+
+Self-play, 4,000 games per checkpoint at 4,800M, at temperature 0.1 and 1; per card, the share of its
+plays at a play-mode node with the event legal that chose the event (Chernobyl: the US's plays only),
+and the share of games ending by Wargames (`card_event_probe.py` in the job scratch; `primary_id` at a
+play-mode node is the Resolution, 0 EVENT, 1 SPACE, 2–4 OPS -- `ai/eval/play_modes.py` labels these
+wrongly, though its event column is right).
+
+| | ended by Wargames, T 0.1 / 1 | Wargames event US / USSR (T 0.1) | Chernobyl event (US), T 0.1 / 1 | One Small Step US / USSR (T 0.1) | Arms Race US / USSR (T 0.1) |
+|:---|:---|:---|:---|:---|:---|
+| E7-20-44 | 0.30% / 0.20% | 1.1% / 0.5% | 2.0% / 2.7% | 0.5% / 0.4% | 0.9% / 1.2% |
+| E7-20-44-4390M.45 | 0.20% / 0.30% | 0.2% / 0.0% | 1.5% / 1.6% | 0.6% / 0.5% | 0.4% / 1.3% |
+| E7-20-44-4390M.46 | 0.42% / 0.60% | 0.8% / 1.1% | 1.3% / 1.8% | 0.2% / 0.9% | 0.6% / 2.0% |
+| **B1, E7-28-44** | 0.57% / 0.42% | 0.2% / 2.4% | **0.0% / 0.5%** | 0.1% / 0.4% | 0.2% / 1.5% |
+| **B2, E7-27-44** | 0.17% / 0.15% | 0.0% / 0.6% | **0.2% / 0.3%** | 0.2% / 0.3% | 0.2% / 1.1% |
+
+(Plays per cell: Wargames ~800–1,000, One Small Step and Arms Race ~2,200–2,600, Chernobyl ~760–950.)
+
+* **Wargames, One Small Step, Arms Race: no change.** Every rate sits at its 0–2% floor in both arms,
+  inside the siblings' spread; B1's Wargames endings (0.57 / 0.42%) are within the siblings'
+  0.20–0.60%.
+* **Chernobyl moved the wrong way in both arms**, at both temperatures: the siblings play it for the
+  event in ~2% of its plays (52 of 2,585 at T 1), B1 in 4 of 806 and B2 in 3 of 886, where ~16–18
+  were expected -- far outside chance.
+* **The likely cause is the random region, in both arms.** Chernobyl's value is the region it blocks.
+  B1's floor also covers the region choice inside the event, and B2's forced plays drew the region
+  uniformly (P31's design). A Chernobyl into a random region is mostly wasted, so both arms showed
+  training many "Chernobyl event, then nothing gained" games the plain line never plays. Not yet
+  verified directly. The fix that keeps P31's idea: force only the event play and leave the region
+  to the policy (its own decision, with gradient), and keep the floor off region choices.
