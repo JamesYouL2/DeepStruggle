@@ -203,6 +203,9 @@ def row_id(r: Dict[str, Any]) -> str:
     return hashlib.sha1((r["kind"] + ":" + r["pos"]).encode()).hexdigest()[:16]
 
 
+PART_ROWS = 8000
+
+
 def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float) -> int:
     """Merge banks into the review page's data, deduplicated by position: one file per pattern
     (`bank-<pattern>.json`, so the page can load the large human-alone set only when asked) and a
@@ -222,11 +225,16 @@ def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float) -> int:
     manifest: Dict[str, Any] = {"fields": list(FIELDS), "files": {}}
     for pat in PATTERNS:
         rows = [[rid if f == "id" else r[f] for f in FIELDS] for rid, r in seen.items() if r["pattern"] == pat]
-        name = f"bank-{pat}.json"
-        json.dump({"fields": list(FIELDS), "rows": rows}, open(os.path.join(out_dir, name), "w"),
-                  separators=(",", ":"))
-        manifest["files"][pat] = {"file": name, "rows": len(rows),
-                                  "bytes": os.path.getsize(os.path.join(out_dir, name))}
+        # A published file holds at most 16 MB; a row is about 1.1 KB, so parts of PART_ROWS rows.
+        names: List[str] = []
+        size = 0
+        for i in range(0, max(1, len(rows)), PART_ROWS):
+            name = f"bank-{pat}-{i // PART_ROWS + 1}.json"
+            json.dump({"fields": list(FIELDS), "rows": rows[i:i + PART_ROWS]},
+                      open(os.path.join(out_dir, name), "w"), separators=(",", ":"))
+            names.append(name)
+            size += os.path.getsize(os.path.join(out_dir, name))
+        manifest["files"][pat] = {"parts": names, "rows": len(rows), "bytes": size}
     json.dump(manifest, open(os.path.join(out_dir, "manifest.json"), "w"), indent=1)
     print(f"{len(seen)} of {total} rows packed into {out_dir}: "
           + ", ".join(f"{p} {v['rows']} ({v['bytes'] / 1e6:.1f} MB)" for p, v in manifest["files"].items()),

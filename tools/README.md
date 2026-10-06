@@ -820,6 +820,24 @@ early (about half the corpus) are dropped rather than counted as kept. The human
 `pos=` token per spent holding (~30 MB for the corpus); the links open on the published workbench,
 whose engine must read this engine's save format.
 
+**The disagreement bank** puts every human headline, card and play-mode decision in the corpus to
+the raw network and its search, and keeps the positions where the three moves are not all the
+same, for review in the workbench:
+
+```bash
+# a .pt for the searcher, rebuilt from the published ONNX and checked against it
+.venv/bin/python tools/onnx_to_checkpoint.py --onnx newest.onnx --template shallow_E7-02+03+04+05_1200M.pt --out newest.pt
+# the bank, in parts (resumable: a long run can stop on a rare nanobind instance collision)
+.venv/bin/python tools/scripts/disagreement_bank.py --net newest.onnx --search "gumbel:newest.pt:32:4" \
+    --part 1/3 --out part1.jsonl.gz --summary part1.json --resume
+# the review page's data files: one per pattern, split into parts under the 16 MB file limit
+.venv/bin/python tools/scripts/disagreement_bank.py --pack part1.jsonl.gz part2.jsonl.gz part3.jsonl.gz --out review/
+```
+
+`tools/scripts/disagreement_review.html` is the review page (published as an artifact with the
+`db` capability next to the packed files). Verdicts are stored per position id, a hash of the
+position and the decision kind, so a rebuilt bank keeps them.
+
 ---
 
 ## 8. Shared Helpers Library (`tools/lib/`)
