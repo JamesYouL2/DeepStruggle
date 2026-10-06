@@ -99,6 +99,7 @@ class LadderNet(ColdWarNetV2):
                  head_center: bool = False,
                  aux_heads: bool = False,
                  card_aux: bool = False,
+                 opp_legal_aux: bool = False,
                  obs_features: int = 0,
                  token_layers: int = 0,
                  token_dim: int = 0,
@@ -397,6 +398,16 @@ class LadderNet(ColdWarNetV2):
         if self.card_aux:
             self.card_aux_head = nn.Sequential(
                 nn.Linear(hidden_dim, 512), nn.GELU(), nn.Linear(512, 110 * CARD_AUX_DIM))
+        # P31 1d (--aux-opp-legality): per country, whether the OPPONENT may place influence there
+        # and may coup there at its next decision -- after this side's play, so it is not the
+        # current observation's can_opp_place / can_opp_coup (slots 20, 22), which a head would
+        # merely copy. It teaches the trunk what a play does to the opponent's options (Chernobyl's
+        # region, DEFCON's locks). Training loss only; forward() is untouched. Recovered from the
+        # weights (`opp_legal_head.*`).
+        self.opp_legal_aux = bool(opp_legal_aux)
+        if self.opp_legal_aux:
+            self.opp_legal_head = nn.Sequential(
+                nn.Linear(hidden_dim, 256), nn.GELU(), nn.Linear(256, 84 * 2))
 
     def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
         """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
@@ -405,6 +416,14 @@ class LadderNet(ColdWarNetV2):
             raise RuntimeError("this network was built without the card-event head (--aux-card-events)")
         h, _attn, _tokens = self._encode(obs)
         return self.card_aux_head(h).view(-1, 110, CARD_AUX_DIM)
+
+    def forward_opp_legal(self, obs: torch.Tensor) -> torch.Tensor:
+        """The opponent-legality logits, (B, 84, 2): per country, may the opponent place influence
+        there (0) and coup there (1) at its next decision."""
+        if not self.opp_legal_aux:
+            raise RuntimeError("this network was built without the opponent-legality head (--aux-opp-legality)")
+        h, _attn, _tokens = self._encode(obs)
+        return self.opp_legal_head(h).view(-1, 84, 2)
 
     def forward_aux(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """The auxiliary predictions: ownership logits (B, 84, 3) -- mine / opponent's / neither --
@@ -525,6 +544,7 @@ class LadderNet(ColdWarNetV2):
             head_center=self.head_center,
             aux_heads=self.aux_heads,
             card_aux=self.card_aux,
+            opp_legal_aux=self.opp_legal_aux,
             obs_features=self.obs_feature_bits,
         )
 
@@ -814,6 +834,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         categorical_value=any(k.startswith("value_dist_head") for k in sd),
         aux_heads=any(k.startswith("aux_own_head.") for k in sd),
         card_aux=any(k.startswith("card_aux_head.") for k in sd),
+        opp_legal_aux=any(k.startswith("opp_legal_head.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
     )
 

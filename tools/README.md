@@ -162,6 +162,18 @@ policy gradient and stay out of the learner's statistics (E7-11-44: a scripted a
 adopted whatever it is worth). Everything after the forced play is the policy's own. `--seed-scenarios-from S`: no
 game is seeded before `S` steps. Metrics: `seed_games_frac`, `seed_forced_<name>` (forced plays so far).
 
+`--aux-opp-legality W` (P31 1d, owner 2026-10-06; default 0 = off) builds a training-only head (`opp_legal_head.*`)
+predicting, per country, whether the **opponent** may place influence there and may coup there **at its next
+decision**, and trains it with BCE at weight `W`, one optimiser step per iteration. The label is read from the
+opponent's own observation when it next moves in that game (its `can_my_place` / `can_my_coup`, board slots 19 / 21),
+so it reflects what this side then played. The current observation already carries the opponent's legality
+(`can_opp_place` / `can_opp_coup`, slots 20 / 22, Chernobyl-aware), so a label taken at the stored state would teach
+only a copy. A fraction `--aux-opp-legality-frac` (0.1) of decisions is sampled; positions whose game ends before the
+opponent moves again get no label; an update needs `--aux-opp-legality-min-batch` (4096) answered positions. A
+`--resume` from a state without the head adds it fresh. Metrics: `opp_legal_loss`, `opp_legal_acc`,
+`opp_legal_copy_acc` (how often the position's own `can_opp` flags were already the answer) and
+`opp_legal_changed_frac` (how often they were not: the part the head must learn), `opp_legal_n`.
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer

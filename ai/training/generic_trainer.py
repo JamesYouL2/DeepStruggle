@@ -1359,7 +1359,8 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
 
 #: Training-only heads that a resumed branch may add to a state written without them: each reads the
 #: trunk and is used only by its own loss, so forward() -- policy and value -- is unchanged by adding it.
-ADDABLE_HEADS: Tuple[str, ...] = ("card_aux_head.", "aux_own_head.", "aux_vp_head.")
+ADDABLE_HEADS: Tuple[str, ...] = ("card_aux_head.", "aux_own_head.", "aux_vp_head.",
+                                 "opp_legal_head.")
 
 
 def _load_allowing_added_heads(module: nn.Module, state: Dict[str, Any]) -> List[str]:
@@ -1580,6 +1581,9 @@ def train_pipeline(
     seed_scenarios: Optional[Sequence[str]] = None,
     seed_frac: float = 0.0,
     seed_scenarios_from: int = 0,
+    aux_opp_legality: float = 0.0,
+    aux_opp_legality_frac: float = 0.1,
+    aux_opp_legality_min_batch: int = 4096,
     setup_mc_coef: float = 1.0,
     setup_mc_min_batch: int = 512,
     aux_own_coef: float = 0.0,
@@ -1757,6 +1761,7 @@ def train_pipeline(
         "ladder_config": ({**dict(ladder_config), **({"aux_heads": True} if (aux_own_coef > 0.0
                           or aux_vp_coef > 0.0) else {}),
                           **({"card_aux": True} if aux_card_coef > 0.0 else {}),
+                          **({"opp_legal_aux": True} if aux_opp_legality > 0.0 else {}),
                           **({"obs_features": int(obs_features)} if obs_features else {})} if ladder_config else None),
         # Each defaults to `seed`; recorded resolved so a run says which streams it actually used.
         "seed_init": (seed if seed_init is None else int(seed_init)),
@@ -1862,6 +1867,9 @@ def train_pipeline(
         "seed_scenarios": list(seed_scenarios) if seed_scenarios else None,
         "seed_frac": float(seed_frac),
         "seed_scenarios_from": int(seed_scenarios_from),
+        "aux_opp_legality": float(aux_opp_legality),
+        "aux_opp_legality_frac": float(aux_opp_legality_frac),
+        "aux_opp_legality_min_batch": int(aux_opp_legality_min_batch),
         "setup_script_openings": (list(setup_script_openings) if setup_script_frac > 0.0 and setup_script_openings else None),
         "setup_mc_coef": float(setup_mc_coef),
         "setup_mc_min_batch": int(setup_mc_min_batch),
@@ -1933,6 +1941,7 @@ def train_pipeline(
         _aux = aux_own_coef > 0.0 or aux_vp_coef > 0.0
         model = create_ladder_net(dev, categorical_value=categorical_value,
                                   **{**ladder_config, "aux_heads": _aux, "card_aux": aux_card_coef > 0.0,
+                                     "opp_legal_aux": aux_opp_legality > 0.0,
                                      "obs_features": int(obs_features)})
     elif arch == "mlp":
         from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
@@ -2116,6 +2125,9 @@ def train_pipeline(
         seed_scenarios=tuple(seed_scenarios or ()),
         seed_frac=seed_frac,
         seed_scenarios_from=seed_scenarios_from,
+        aux_opp_legality=aux_opp_legality,
+        aux_opp_legality_frac=aux_opp_legality_frac,
+        aux_opp_legality_min_batch=aux_opp_legality_min_batch,
         setup_mc_coef=setup_mc_coef,
         setup_mc_min_batch=setup_mc_min_batch,
         aux_own_coef=aux_own_coef,
@@ -2678,6 +2690,11 @@ def train_pipeline(
                     # P29 bet 2's auxiliary targets
                     "aux_n", "aux_ready", "aux_pending", "aux_own_loss", "aux_own_acc", "aux_vp_loss",
                     "card_aux_n", "card_aux_ready", "card_aux_labelled", "card_aux_loss", "card_aux_r2", "card_aux_label_s",
+                    # P31: the floor, the seeded games and the opponent-legality head
+                    "floor_eps", "floor_row_frac", "floor_draw_frac", "seed_games_frac",
+                    "seed_forced_subs", "seed_forced_chernobyl",
+                    "opp_legal_n", "opp_legal_ready", "opp_legal_pending", "opp_legal_loss",
+                    "opp_legal_acc", "opp_legal_copy_acc", "opp_legal_changed_frac",
                     "adv_norm_divisor", "adv_norm_floor_bound", "adv_std_ema",
                     # the policy logits' level, and the z-loss that bounds it
                     "logit_lse_mean", "logit_lse_absmax", "z_loss",

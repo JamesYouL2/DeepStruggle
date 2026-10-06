@@ -323,6 +323,9 @@ class BaseNashPGTrainer:
         seed_scenarios: Sequence[str] = (),
         seed_frac: float = 0.0,
         seed_scenarios_from: int = 0,
+        aux_opp_legality: float = 0.0,
+        aux_opp_legality_frac: float = 0.1,
+        aux_opp_legality_min_batch: int = 4096,
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
         aux_own_coef: float = 0.0,
@@ -656,6 +659,20 @@ class BaseNashPGTrainer:
         self._card_label_seconds = 0.0
         if self.aux_card_coef > 0.0 and not getattr(self.active_net, "card_aux", False):
             raise ValueError("--aux-card-events needs a network built with the card-event head")
+        # P31 1d: the opponent's legality at its next decision (see _opp_legal_record).
+        self.aux_opp_legality = float(aux_opp_legality)
+        self.aux_opp_legality_frac = float(aux_opp_legality_frac)
+        self.aux_opp_legality_min_batch = int(aux_opp_legality_min_batch)
+        if self.aux_opp_legality > 0.0 and not getattr(self.active_net, "opp_legal_aux", False):
+            raise ValueError("--aux-opp-legality needs a network built with the opponent-legality head")
+        if not 0.0 < self.aux_opp_legality_frac <= 1.0:
+            raise ValueError("--aux-opp-legality-frac must be in (0, 1]")
+        #: Per env, per side (0 = US, 1 = USSR): sampled positions waiting for the other side's next
+        #: decision, as (observation fp16, that position's own can_opp flags).
+        self._ol_pending: List[List[List[Tuple[torch.Tensor, torch.Tensor]]]] = [
+            [[], []] for _ in range(self.num_envs)]
+        self._ol_npend = np.zeros((self.num_envs, 2), dtype=np.int64)
+        self._ol_ready: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -903,6 +920,83 @@ class BaseNashPGTrainer:
         if len(self._card_ready) > self.aux_card_buffer:
             del self._card_ready[:len(self._card_ready) - self.aux_card_buffer]
         self._card_label_seconds += time.perf_counter() - t0
+
+    #: Board slots (26 per country, in the mover's frame): the mover's own legality and its
+    #: opponent's, as the engine computes them (engine/src/observation.cpp).
+    _CAN_MY_PLACE, _CAN_OPP_PLACE, _CAN_MY_COUP, _CAN_OPP_COUP = 19, 20, 21, 22
+    _OL_READY_CAP = 65536
+
+    def _opp_legal_record(self, obs_t: torch.Tensor, dp: np.ndarray) -> None:
+        """P31 1d. A sampled position's label is its opponent's legality at the opponent's NEXT
+        decision in that game -- read from the opponent's own observation then (its can_my_place /
+        can_my_coup), after whatever this side played. So each decision first answers the other
+        side's pending positions in its env, then (sampled) joins its own side's."""
+        board = obs_t[:, :84 * 26].reshape(-1, 84, 26)
+        own = torch.stack([board[:, :, self._CAN_MY_PLACE], board[:, :, self._CAN_MY_COUP]], -1) > 0.5
+        side = np.where(dp == 1, 0, 1)
+        movers = dp != 0
+        answer = np.flatnonzero(movers & (self._ol_npend[np.arange(dp.shape[0]), 1 - side] > 0))
+        for e in answer:
+            e = int(e)
+            other = 1 - int(side[e])
+            for o16, cp in self._ol_pending[e][other]:
+                self._ol_ready.append((o16, own[e], cp))
+            self._ol_pending[e][other] = []
+            self._ol_npend[e, other] = 0
+        rows = np.flatnonzero(movers & (np.random.random(dp.shape[0]) < self.aux_opp_legality_frac))
+        if rows.size:
+            idx = torch.from_numpy(rows).to(obs_t.device)
+            o16 = obs_t.index_select(0, idx).half()
+            cp = torch.stack([board[:, :, self._CAN_OPP_PLACE], board[:, :, self._CAN_OPP_COUP]],
+                             -1).index_select(0, idx) > 0.5
+            for j, e in enumerate(rows):
+                k = int(side[e])
+                self._ol_pending[int(e)][k].append((o16[j], cp[j]))
+                self._ol_npend[int(e), k] += 1
+        if len(self._ol_ready) > self._OL_READY_CAP:
+            del self._ol_ready[:len(self._ol_ready) - self._OL_READY_CAP]
+
+    def _opp_legal_game_over(self, envs: np.ndarray) -> None:
+        """P31 1d: a game ended; its pending positions were never answered and get no label."""
+        for e in np.asarray(envs, dtype=np.int64):
+            if self._ol_npend[int(e)].sum() > 0:
+                self._ol_pending[int(e)] = [[], []]
+                self._ol_npend[int(e)] = 0
+
+    def _opp_legal_update(self) -> Dict[str, float]:
+        """P31 1d: one optimiser step on the answered positions, BCE on the 84 x 2 flags.
+        `opp_legal_copy_acc` is how often the position's own can_opp flags were already the answer
+        and `opp_legal_changed_frac` how often they were not -- the part a head cannot copy."""
+        out: Dict[str, float] = {"opp_legal_ready": float(len(self._ol_ready)),
+                                 "opp_legal_pending": float(self._ol_npend.sum())}
+        n = len(self._ol_ready)
+        if n < max(1, self.aux_opp_legality_min_batch):
+            return out
+        recs, self._ol_ready = self._ol_ready, []
+        obs = torch.stack([r[0] for r in recs]).float()
+        y = torch.stack([r[1] for r in recs]).float()
+        cp = torch.stack([r[2] for r in recs]).float()
+        net = cast(Any, self.active_net)
+        net.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        bce_sum, correct = 0.0, 0.0
+        for k in range(0, n, self.batch_size):
+            sl = slice(k, k + self.batch_size)
+            logits = net.forward_opp_legal(obs[sl]).float()
+            bce = F.binary_cross_entropy_with_logits(logits, y[sl], reduction="sum") / 168.0
+            (self.aux_opp_legality * bce / n).backward()
+            with torch.no_grad():
+                bce_sum += float(bce)
+                correct += float(((logits > 0).float() == y[sl]).float().sum()) / 168.0
+        nn.utils.clip_grad_norm_(self.active_net.parameters(), max_norm=self.max_grad_norm)
+        self.optimizer.step()
+        net.eval()
+        with torch.no_grad():
+            changed = float((cp != y).float().mean())
+        out.update({"opp_legal_n": float(n), "opp_legal_loss": bce_sum / n,
+                    "opp_legal_acc": correct / n, "opp_legal_copy_acc": 1.0 - changed,
+                    "opp_legal_changed_frac": changed})
+        return out
 
     def _card_aux_update(self) -> Dict[str, float]:
         """Card-event target: --aux-card-steps optimiser steps, each on a minibatch drawn from the
@@ -1258,6 +1352,8 @@ class BaseNashPGTrainer:
                 self._aux_record(obs_t, np.asarray(_dp))
             if self.aux_card_coef > 0.0:
                 self._card_aux_record(obs_t, np.asarray(_dp))
+            if self.aux_opp_legality > 0.0:
+                self._opp_legal_record(obs_t, np.asarray(_dp))
             # A2 (--block-lambda same-side): each env's RNG state at this decision, read before the
             # step. A change by the next decision means a chance node came between them.
             _rngs_np: Optional[np.ndarray] = None
@@ -1284,6 +1380,8 @@ class BaseNashPGTrainer:
                 self._script_draw(np.flatnonzero(self._dones_np > 0.5))
             if self.seeder is not None:
                 self.seeder.draw(np.flatnonzero(self._dones_np > 0.5), self.total_env_steps)
+            if self.aux_opp_legality > 0.0:
+                self._opp_legal_game_over(np.flatnonzero(self._dones_np > 0.5))
 
             # V(s_{t+1}, p_t): the resulting state seen by the player who just moved, rather than
             # by whoever moves next. The default bootstrap negates the next step's value, which
@@ -1688,6 +1786,8 @@ class BaseNashPGTrainer:
             combined.update(self._aux_update())
         if self.aux_card_coef > 0.0:
             combined.update(self._card_aux_update())
+        if self.aux_opp_legality > 0.0:
+            combined.update(self._opp_legal_update())
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.

@@ -593,6 +593,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P31 1b: the fraction of games seeded, drawn afresh at every game start.")
     parser.add_argument("--seed-scenarios-from", type=int, default=0,
                         help="P31 1b: no game is seeded before this many total env steps.")
+    parser.add_argument("--aux-opp-legality", type=float, default=0.0,
+                        help="P31 1d: weight of an auxiliary head predicting, per country, whether the "
+                             "opponent may place influence and may coup there at its NEXT decision "
+                             "(read from its own observation then). Builds the head (opp_legal_head.*); "
+                             "a --resume from a state without it adds it fresh. 0 is off.")
+    parser.add_argument("--aux-opp-legality-frac", type=float, default=0.1,
+                        help="P31 1d: the fraction of decisions sampled as positions to label.")
+    parser.add_argument("--aux-opp-legality-min-batch", type=int, default=4096,
+                        help="P31 1d: labelled positions needed before an update step.")
     parser.add_argument("--setup-script-openings", nargs="+", default=None,
                         help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
                              "uniformly per scripted game. Default: the four human variants "
@@ -921,6 +930,9 @@ def main():
             seed_scenarios=args.seed_scenarios,
             seed_frac=args.seed_frac,
             seed_scenarios_from=args.seed_scenarios_from,
+            aux_opp_legality=args.aux_opp_legality,
+            aux_opp_legality_frac=args.aux_opp_legality_frac,
+            aux_opp_legality_min_batch=args.aux_opp_legality_min_batch,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,

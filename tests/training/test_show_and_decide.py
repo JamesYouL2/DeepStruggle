@@ -27,10 +27,10 @@ SHALLOW: dict[str, Any] = dict(
     card_lookup_dim=0, card_lookup_identity_dim=0, categorical_value=False)
 
 
-def _trainer(buffer: int = 16, envs: int = 8, **kw: Any) -> NashPGTrainer:
+def _trainer(buffer: int = 16, envs: int = 8, opp_legal: bool = False, **kw: Any) -> NashPGTrainer:
     torch.manual_seed(0)
     dev = torch.device("cpu")
-    model = create_ladder_net(dev, **SHALLOW)
+    model = create_ladder_net(dev, **SHALLOW, opp_legal_aux=opp_legal)
     env = TsVectorizedEnv(num_envs=envs, base_seed=123)
     return NashPGTrainer(active_net=model, env=env, num_envs=envs, buffer_size=buffer, lr=3e-4,
                          eta=0.1, ref_update_freq=500, cuda_graphs=False, device=dev, **kw)
@@ -208,3 +208,86 @@ def test_seeding_validation() -> None:
         _trainer(seed_frac=0.1)
     with pytest.raises(ValueError):
         _trainer(seed_scenarios=["subs"], seed_frac=0.0)
+
+
+# ---------------------------------------------------------------- 1d: the opponent-legality head
+
+def _board_obs(n: int, seed: int) -> torch.Tensor:
+    g = torch.Generator().manual_seed(seed)
+    obs = torch.zeros(n, int(ts.OBS_SIZE))
+    obs[:, :84 * 26] = (torch.rand(n, 84 * 26, generator=g) > 0.5).float()
+    return obs
+
+
+def _flags(obs: torch.Tensor, place: int, coup: int) -> torch.Tensor:
+    b = obs[:84 * 26].reshape(84, 26)
+    return torch.stack([b[:, place], b[:, coup]], -1) > 0.5
+
+
+def test_a_position_is_labelled_with_its_opponents_legality_at_the_opponents_next_decision() -> None:
+    t = _trainer(envs=2, opp_legal=True, aux_opp_legality=0.1, aux_opp_legality_frac=1.0)
+    us, ussr = int(ts.Player.US), int(ts.Player.USSR)
+    a = _board_obs(2, 1)                                  # step 1: env 0 US (A), env 1 USSR (B)
+    t._opp_legal_record(a, np.array([us, ussr], dtype=np.int8))
+    c = _board_obs(2, 2)                                  # step 2: env 0 US again (C), env 1 US (D)
+    t._opp_legal_record(c, np.array([us, us], dtype=np.int8))
+    e = _board_obs(2, 3)                                  # step 3: env 0 USSR (E), env 1 no decision
+    t._opp_legal_record(e, np.array([ussr, 0], dtype=np.int8))
+    ready = t._ol_ready
+    assert len(ready) == 3
+    # step 2 answers env 1's USSR position B with D's own flags (D is the US, B's opponent)
+    assert torch.equal(ready[0][0].float(), a[1]) and torch.equal(ready[0][1], _flags(c[1], 19, 21))
+    assert torch.equal(ready[0][2], _flags(a[1], 20, 22))     # B's own view of its opponent
+    # step 3 answers env 0's two US positions A and C with E's own flags
+    assert torch.equal(ready[1][0].float(), a[0]) and torch.equal(ready[1][1], _flags(e[0], 19, 21))
+    assert torch.equal(ready[2][0].float(), c[0]) and torch.equal(ready[2][1], _flags(e[0], 19, 21))
+    # still pending: env 0's USSR position E, env 1's US position D
+    assert t._ol_npend.tolist() == [[0, 1], [1, 0]]
+    t._opp_legal_game_over(np.array([1]))               # env 1's game ends: D is never answered
+    assert t._ol_npend.tolist() == [[0, 1], [0, 0]]
+
+
+def test_the_label_slots_are_the_movers_own_placement_legality() -> None:
+    """Slots 19 / 20 are the mover's and its opponent's can_place_influence, as the engine has it."""
+    env = TsVectorizedEnv(num_envs=8, base_seed=4)
+    rng = np.random.default_rng(4)
+    obs, mk, _ = env.reset_all()
+    checked = 0
+    for step in range(200):
+        dp = np.asarray(env.runner.get_decision_players(), dtype=np.int8)
+        if step > 40:
+            for e in range(8):
+                st = env.runner.get_state(e)
+                if dp[e] == 0 or st.current_phase == ts.Phase.SETUP:
+                    continue
+                me = ts.Player(int(dp[e]))
+                opp = ts.Player.USSR if me == ts.Player.US else ts.Player.US
+                b = np.asarray(obs[e][:84 * 26]).reshape(84, 26)
+                for i in range(84):
+                    assert bool(b[i, 19] > 0.5) == ts.Operations.can_place_influence(st, me, i)
+                    assert bool(b[i, 20] > 0.5) == ts.Operations.can_place_influence(st, opp, i)
+                checked += 1
+        obs, mk, _r, _d, _i = env.step(np.asarray([int(rng.choice(np.flatnonzero(r))) for r in mk]))
+    assert checked > 100
+
+
+def test_the_head_trains_and_reports(tmp_path: Any) -> None:
+    from ai.training.generic_trainer import load_resume_state, save_resume_state
+    a = _trainer(buffer=32)
+    path = str(tmp_path / "resume.pt")
+    save_resume_state(path, a.active_net, a, iteration=1, total_env_steps=128, elapsed_seconds=1.0, seed=0)
+    torch.manual_seed(0)
+    model = create_ladder_net(torch.device("cpu"), **SHALLOW, opp_legal_aux=True)
+    b = NashPGTrainer(active_net=model, env=TsVectorizedEnv(num_envs=8, base_seed=123), num_envs=8,
+                      buffer_size=32, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=torch.device("cpu"), aux_opp_legality=0.5, aux_opp_legality_frac=1.0,
+                      aux_opp_legality_min_batch=16)
+    load_resume_state(path, b.active_net, b, seed=0)      # a branch adds the head to a saved state
+    m = b.train_iteration()
+    assert m["opp_legal_n"] >= 16 and np.isfinite(m["opp_legal_loss"])
+    assert 0.0 <= m["opp_legal_changed_frac"] <= 1.0
+    head = b.active_net.opp_legal_head[0].weight.detach().clone()  # type: ignore[union-attr]
+    b.train_iteration()
+    assert not torch.equal(head, b.active_net.opp_legal_head[0].weight)  # type: ignore[union-attr]
+    with pytest.raises(ValueError, match="opponent-legality head"):
+        _trainer(aux_opp_legality=0.1)
