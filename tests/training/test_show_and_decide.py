@@ -1,5 +1,6 @@
-"""P31 1a (the behaviour floor) and 1b (scenario seeding): the floor samples the mixture it claims and
-stores the mixture's log-prob; off, it touches nothing; seeding forces the precursor plays the engine
+"""P31 (show, then let training decide). 1a, the behaviour floor: it samples the mixture it claims,
+stores log pi and corrects with the weight pi / mu outside PPO's clip, so a rare action it draws can
+be pushed down as well as up; off, it touches nothing. seeding forces the precursor plays the engine
 expects, once per card per game, and stores them as the environment's (learner = 0)."""
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ def test_the_floor_samples_the_mixture_and_returns_its_log_prob() -> None:
     pi_a = torch.multinomial(lp.exp(), 1, generator=g).squeeze(1)
     rows = torch.ones(n, dtype=torch.bool)
     rows[: n // 2] = False                                # half the rows off the floor
-    acts, out_lp, took = apply_floor(pi_a, lp, mask, rows, eps, generator=g)
+    acts, out_lp, weight, took = apply_floor(pi_a, lp, mask, rows, eps, generator=g)
 
     pi = lp[0, PLAY_MODE_LO:PLAY_MODE_LO + 5].exp()
     mu = (1 - eps) * pi + eps / 5
@@ -74,8 +75,11 @@ def test_the_floor_samples_the_mixture_and_returns_its_log_prob() -> None:
     assert torch.equal(acts[: n // 2], pi_a[: n // 2])
     assert torch.allclose(out_lp[: n // 2], lp.gather(1, pi_a[:, None]).squeeze(1)[: n // 2])
     assert not bool(took[: n // 2].any())
-    # on the floor: log mu of the action actually taken
-    assert torch.allclose(out_lp[n // 2:], mu.log()[on], atol=1e-5)
+    assert torch.all(weight[: n // 2] == 1.0)
+    # on the floor: log pi of the action actually taken, and the weight pi / mu for it
+    assert torch.allclose(out_lp[n // 2:], pi.log()[on], atol=1e-5)
+    assert torch.allclose(weight[n // 2:], (pi / mu)[on], atol=1e-5)
+    assert float(weight.max()) <= 1.0 / (1.0 - eps) + 1e-6
     assert abs(float(took[n // 2:].double().mean()) - eps) < 0.01
 
 
@@ -88,7 +92,7 @@ def test_the_floor_schedule() -> None:
     assert floor_eps(0.03, 400, 100, 200, 100) == 0.0
 
 
-def test_a_rollout_stores_the_mixture_log_prob_on_floor_rows_and_log_pi_elsewhere() -> None:
+def test_a_rollout_stores_log_pi_and_the_floors_behaviour_weight() -> None:
     eps = 0.5
     t = _trainer(buffer=64, play_mode_floor=eps)
     m = t.collect_rollouts()
@@ -102,8 +106,12 @@ def test_a_rollout_stores_the_mixture_log_prob_on_floor_rows_and_log_pi_elsewher
     fr = floor_rows(masks)
     assert int(fr.sum()) > 10, "too few floor rows to test anything"
     n_legal = masks.float().sum(1)
-    want = torch.where(fr, torch.log((1 - eps) * lp.exp() + eps / n_legal), lp)
-    assert torch.allclose(buf.log_probs.reshape(-1).float(), want, atol=1e-4)
+    # the stored log-prob is the policy's own everywhere; the floor shows in the weight pi / mu
+    assert torch.allclose(buf.log_probs.reshape(-1).float(), lp, atol=1e-4)
+    mu = (1 - eps) * lp.exp() + eps / n_legal
+    want_w = torch.where(fr, lp.exp() / mu, torch.ones_like(lp))
+    assert t._behaviour_w is not None
+    assert torch.allclose(t._behaviour_w, want_w, atol=1e-4)
     t.train_step()                                        # and it trains
     assert True
 
@@ -413,3 +421,41 @@ def test_the_counterfactual_term_moves_probability_toward_the_better_option() ->
     p = torch.softmax(logits.detach(), -1)
     want = -((p[0] * adv[0]).sum() + (p[1] * adv[1]).sum()) / 2
     assert torch.allclose(loss.detach(), want)
+
+
+def test_a_floor_drawn_rare_action_gets_gradient_whatever_the_sign_of_its_advantage() -> None:
+    """The bug this design replaced: with log mu stored, a rare action the floor drew sat at ratio
+    pi / mu ~ 0.25, below PPO's clip, so a negative advantage was clipped to a constant and only a
+    positive one moved it -- every floor draw could only raise a rare action. With the ratio on
+    pi / pi_old and the weight outside the clip, both signs reach it."""
+    eps, clip = 0.03, 0.2
+    logits = torch.tensor([4.0, 0.0, 0.0, 0.0, -2.0], requires_grad=True)   # action 4 is rare
+    a = 4
+    pi_old = torch.softmax(logits.detach(), -1)
+    mu_a = (1 - eps) * pi_old[a] + eps / 5
+
+    def grad(adv: float, ratio_against_mu: bool) -> float:
+        logits.grad = None
+        lp = torch.log_softmax(logits, -1)[a]
+        if ratio_against_mu:                       # the replaced design
+            r = torch.exp(lp - mu_a.log())
+            surr = -torch.min(r * adv, torch.clamp(r, 1 - clip, 1 + clip) * adv)
+        else:                                      # this one
+            r = torch.exp(lp - pi_old[a].log())
+            w = pi_old[a] / mu_a
+            surr = -torch.min(r * adv, torch.clamp(r, 1 - clip, 1 + clip) * adv) * w
+        surr.backward()
+        assert logits.grad is not None
+        return float(logits.grad[a])
+
+    assert grad(+1.0, True) < 0 and grad(-1.0, True) == 0.0     # one-sided: the bias
+    assert grad(+1.0, False) < 0 and grad(-1.0, False) > 0      # both signs reach the action
+
+
+def test_the_update_applies_the_behaviour_weight() -> None:
+    t = _trainer(buffer=32, play_mode_floor=0.2)
+    t.collect_rollouts()
+    assert t._behaviour_w is not None
+    t._behaviour_w.zero_()                 # every sample's surrogate weighted to nothing
+    out = t.train_step()
+    assert out["policy_loss"] == pytest.approx(0.0, abs=1e-12)

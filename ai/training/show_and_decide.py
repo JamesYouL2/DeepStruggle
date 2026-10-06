@@ -4,8 +4,9 @@ Both put rare situations in front of the learner without telling it what they ar
 
 * **The floor (1a)** mixes the learner's behaviour policy with a uniform distribution over the legal
   options at play-mode decisions and at the non-country choices inside events:
-  mu = (1 - eps) * pi + eps * uniform(legal). The stored log-prob is log mu, so PPO's ratio
-  pi_theta / mu corrects for the extra exploration; the target policy is untouched.
+  mu = (1 - eps) * pi + eps * uniform(legal). The stored log-prob stays log pi, so PPO's ratio and
+  clip are the usual pi_theta / pi_old, and each floor sample's surrogate is weighted by
+  pi_old / mu (detached, at most 1 / (1 - eps)) to correct for the extra exploration.
 * **Scenario seeding (1b)** forces, in a drawn fraction of games, the precursor of a skill chain as
   *environment*: when the US first holds a listed card at an action round's card play and its event
   can trigger, the card is played for its event (and, for a card that asks for a region, the region
@@ -62,27 +63,37 @@ def floor_rows(masks: torch.Tensor) -> torch.Tensor:
 
 def apply_floor(actions: torch.Tensor, log_probs_pi: torch.Tensor, masks: torch.Tensor,
                 rows: torch.Tensor, eps: float, generator: Optional[torch.Generator] = None
-                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample from mu = (1 - eps) * pi + eps * uniform(legal) on `rows`, given actions already
     sampled from pi.
 
     With probability eps a row's action is replaced by a uniform legal one; otherwise it stays the
-    pi sample. That is exactly a draw from the mixture. Returns (actions, log mu(action) on `rows`
-    and log pi elsewhere, the rows that took the uniform draw).
+    pi sample. That is exactly a draw from the mixture. Returns (actions, log pi(action), the
+    behaviour weight pi(action) / mu(action) -- 1 off the floor -- and the rows that took the
+    uniform draw).
+
+    The weight, not log mu, is what corrects for the floor. Storing log mu as PPO's old log-prob
+    made the ratio pi_theta / mu ~ 0.25 for a rare action the floor drew -- far below the clip --
+    so a positive advantage raised it and a negative one, clipped, left it alone: every floor draw
+    could only push a rare action up (E7-26-44's entropy rose 0.32 -> 0.45 in 95M steps). With the
+    ratio on pi_theta / pi_old and the weight applied to the surrogate outside the clip, both signs
+    reach the action. The weight is at most 1 / (1 - eps), since mu >= (1 - eps) pi.
 
     `log_probs_pi` is the full [N, A] canonical log-softmax, because which action a row ends up
     with is only known after the draw.
     """
     n = actions.shape[0]
+    rows = rows.bool()
     legal_f = masks.to(torch.float32)
     coin = torch.rand(n, device=actions.device, generator=generator) < eps
     uniform = torch.multinomial(legal_f, 1, generator=generator).squeeze(1)
-    took = rows.bool() & coin
+    took = rows & coin
     actions = torch.where(took, uniform, actions)
     lp_pi = log_probs_pi.gather(1, actions.unsqueeze(1)).squeeze(1)
     n_legal = legal_f.sum(dim=1).clamp(min=1.0)
-    mix = torch.log((1.0 - eps) * lp_pi.exp() + eps / n_legal)
-    return actions, torch.where(rows.bool(), mix, lp_pi), took
+    lp_mu = torch.log((1.0 - eps) * lp_pi.exp() + eps / n_legal)
+    weight = torch.where(rows, (lp_pi - lp_mu).exp(), torch.ones_like(lp_pi))
+    return actions, lp_pi, weight, took
 
 
 def floor_eps(base: float, steps: int, start: int, anneal_from: Optional[int],

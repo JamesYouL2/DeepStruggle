@@ -497,7 +497,8 @@ class BaseNashPGTrainer:
 
         # P31 1a (owner 2026-10-06): a uniform floor in the learner's BEHAVIOUR policy at play-mode
         # decisions and the non-country choices inside events, mu = (1 - eps) pi + eps uniform. The
-        # stored log-prob is log mu, so PPO's ratio pi_theta / mu corrects for it. Learner rows only:
+        # stored log-prob stays log pi; each sample's surrogate is weighted by pi_old / mu (see
+        # apply_floor for why the ratio must not be taken against mu). Learner rows only:
         # a frozen opponent's actions are the environment. eps follows floor_eps(): 0 before
         # floor_from, then constant, then linear to 0 over floor_anneal_steps from floor_anneal_from.
         if play_mode_floor < 0.0 or play_mode_floor >= 1.0:
@@ -512,12 +513,15 @@ class BaseNashPGTrainer:
         self.floor_anneal_from = None if floor_anneal_from is None else int(floor_anneal_from)
         self.floor_anneal_steps = int(floor_anneal_steps)
         self._floor_stats = torch.zeros(3, dtype=torch.float64, device=self.device)  # rows, uniform draws, learner rows
+        #: The floor's per-sample behaviour weight pi_old / mu over the buffer, flat [T * N]; 1 off
+        #: the floor. Applied to the surrogate outside the clip (see apply_floor).
+        self._behaviour_w: Optional[torch.Tensor] = None
         if self.play_mode_floor > 0.0:
             print(f"[floor] eps {self.play_mode_floor:g} at play-mode and in-event choices "
                   f"({self.floor_scope} games), from {self.floor_from:,} steps"
                   + (f", annealed to 0 over {self.floor_anneal_steps:,} from {self.floor_anneal_from:,}"
                      if self.floor_anneal_from is not None else "")
-                  + "; stored log-prob is the mixture's", flush=True)
+                  + "; corrected by the weight pi_old / mu on the surrogate", flush=True)
         # P31 1b (owner 2026-10-06): in a drawn fraction of games, the listed precursor events are
         # played for the US as ENVIRONMENT -- stored with learner = 0, so no policy gradient.
         self.seeder: Optional[ScenarioSeeder] = None
@@ -1223,6 +1227,8 @@ class BaseNashPGTrainer:
             self._selfplay_mask = np.ones(self.num_envs, dtype=bool)
         self._apply_views()
         self.buffer.reset()
+        if self._behaviour_w is not None:
+            self._behaviour_w.fill_(1.0)
         if self.seeder is not None and not self._seed_started:
             # The first rollout's games are drawn here rather than in __init__, because a resumed
             # run only knows its step count (and so whether seeding has started) after loading.
@@ -1328,8 +1334,13 @@ class BaseNashPGTrainer:
                     if self.floor_scope == "seeded":
                         assert self.seeder is not None
                         _fr = _fr & torch.from_numpy(self.seeder.seeded).to(self.device)
-                    actions_t, log_probs_t, _took = apply_floor(actions_t, unscaled_log_probs,
-                                                                masks_t, _fr, _eps)
+                    actions_t, log_probs_t, _bw, _took = apply_floor(actions_t, unscaled_log_probs,
+                                                                     masks_t, _fr, _eps)
+                    if self._behaviour_w is None:
+                        self._behaviour_w = torch.ones(self.buffer_size * self.num_envs,
+                                                       dtype=torch.float32, device=self.device)
+                    _s = self.buffer.step * self.num_envs
+                    self._behaviour_w[_s:_s + self.num_envs] = _bw
                     self._floor_stats += torch.stack(
                         [_fr.sum(), _took.sum(), learner_t.sum()]).to(torch.float64)
                 else:
@@ -2083,6 +2094,9 @@ class NashPGTrainer(BaseNashPGTrainer):
                 surr1 = ratio * b_adv
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * b_adv
                 surrogate = -torch.min(surr1, surr2)
+                if self._behaviour_w is not None:
+                    # P31 1a: the floor's importance weight pi_old / mu, outside the clip.
+                    surrogate = surrogate * self._behaviour_w.index_select(0, b_idx)
                 if self.wolf_seat_weight:
                     # WoLF: the winning seat's surrogate is scaled down and the losing seat's
                     # up (see wolf_seat_weights). Only the surrogate; see __init__.

@@ -28,6 +28,16 @@ constructs training situations; it changes no rule.
   read from the opponent's own observation (its slots 19 / 21) when it next moves in that game:
   it encodes what this side's play does to the opponent's options, and needs no binding.
 * **Order: 1a, 1b, 1d first; B1 ‖ B2 run while 1c is built**, as the plan's own order.
+* **Built (2026-10-06):** 1a, 1b, 1d, 1c (`ai/training/show_and_decide.py`, `ai/training/mode_cf.py`; flags in
+  `tools/README.md`). **1c costs ~7 s of playouts per iteration at k = 16** on E7 (~8k steps/s against ~100k): B4
+  runs at **k = 64** (owner). **Step 0's banks are not ported** (owner: not now), so arms are read by the panel and
+  head to head until they are.
+* **1a's correction, fixed after B1's first launch.** As first built the floor stored `log mu` as PPO's old log-prob.
+  A rare action the floor drew then sat at ratio `pi / mu ~ 0.25`, below the clip, so a negative advantage was
+  clipped to a constant and only a positive one moved it: the floor could only raise rare actions, and E7-26-44's
+  entropy rose 0.32 -> 0.45 in 95M steps. It was stopped and is void. The floor now keeps `log pi` (ratio and clip on
+  `pi_theta / pi_old`) and weights each floor sample's surrogate by `pi_old / mu` outside the clip; B1 is relaunched
+  as E7-28-44.
 
 ## The problem this addresses
 

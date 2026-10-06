@@ -144,8 +144,11 @@ learns the middlegames that follow openings it never samples (`research/log/E7_s
 `--play-mode-floor EPS` (P31 1a, owner 2026-10-06; default 0 = off) puts a uniform floor in the learner's
 **behaviour** policy at play-mode decisions and at the non-country choices inside events (rows whose whole legal set is
 in the branch block: event branches, DEFCON values, regions): `mu = (1 - EPS) pi + EPS uniform(legal)`. Unlike
-`--play-mode-temp`, the stored log-prob is the mixture's, `log mu`, so PPO's ratio `pi_theta / mu` corrects for the
-exploration and the target policy is unchanged. Learner rows only. `--floor-scope seeded` limits it to
+`--play-mode-temp`, the exploration is corrected: the stored log-prob stays `log pi`, so PPO's ratio and clip are the
+usual `pi_theta / pi_old`, and each floor sample's surrogate is weighted by `pi_old / mu` (detached, at most
+`1 / (1 - EPS)`). The ratio must not be taken against `mu`: a rare action the floor drew would sit at `pi / mu ~ 0.25`,
+below the clip, so a negative advantage would be clipped to a constant and the floor could only ever raise rare
+actions (E7-26-44, voided: entropy 0.32 -> 0.45 in 95M steps). Learner rows only. `--floor-scope seeded` limits it to
 `--seed-scenarios` games; `--floor-from S` keeps it at 0 before `S` steps, and `--floor-anneal-from A
 --floor-anneal-steps N` take it linearly to 0 over `N` steps from `A`. Off, nothing draws from the RNG, so a run is
 bit-identical to one without the flag. Metrics: `floor_eps`, `floor_row_frac` (share of the learner's decisions
