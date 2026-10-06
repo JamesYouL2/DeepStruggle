@@ -151,6 +151,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         <label class="label" for="evidence">Evidence</label>
         <select id="evidence">
           <option value="any">Any</option>
+          <option value="strongest">All three agree: playouts (2+ SE), values and the stronger search</option>
           <option value="agrees">Stronger search agrees with the values</option>
           <option value="played">Played out</option>
           <option value="consistent">Played out, and the playouts agree with the values</option>
@@ -261,15 +262,17 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     let out = rows.filter(r => sel.pattern.has(r.pattern) && sel.kind.has(r.kind) && sel.side.has(r.side)
       && sel.era.has(era(r.turn)) && sel.state.has(stateOf(r))
       && (!q || [r.card, r.human, r.network, r.search].some(s => s && s.toLowerCase().includes(q))));
-    const ev = $("evidence").value;
-    if (ev === "agrees") out = out.filter(r => r.strong_agrees === true);
-    else if (ev === "played") out = out.filter(r => r.pl_score);
-    else if (ev === "consistent") out = out.filter(r => r.pl_best && r.best && r.pl_best.some(w => r.best.includes(w)));
-    const order = $("sort").value;
     const plMargin = r => {
       if (!r.pl_diff) return -1;
       return Math.max(...Object.values(r.pl_diff).map(([m, se]) => se > 0 ? Math.abs(m) / se : 0));
     };
+    const ev = $("evidence").value;
+    const overlap = r => r.pl_best && r.best && r.pl_best.some(w => r.best.includes(w));
+    if (ev === "strongest") out = out.filter(r => overlap(r) && r.strong_agrees === true && plMargin(r) >= 2);
+    else if (ev === "agrees") out = out.filter(r => r.strong_agrees === true);
+    else if (ev === "played") out = out.filter(r => r.pl_score);
+    else if (ev === "consistent") out = out.filter(r => r.pl_best && r.best && r.pl_best.some(w => r.best.includes(w)));
+    const order = $("sort").value;
     if (order === "clarity") out.sort((a, b) => (b.z ?? -1) - (a.z ?? -1));
     else if (order === "playout") out.sort((a, b) => plMargin(b) - plMargin(a));
     else if (order === "priority") out.sort((a, b) => a.p_human - b.p_human);
