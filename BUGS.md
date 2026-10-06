@@ -103,47 +103,47 @@ honestly gated.
 
 ---
 
-## CONV-1 — the human-log converter holds cards in a hand that the player did not have
+## CONV-1 — the human-log converter held cards in a hand that the player did not have
 
-**Area:** human replay conversion (`tools/lib/ts_replayer_*`) · **Severity:** high · **Status:** open
+**Area:** human replay conversion (`tools/lib/ts_replayer_*`) · **Severity:** high · **Status:** FIXED
 
-A converted human position can show the deciding player holding cards they never had, and lacking
-cards they did. The board and the VP are right -- the converter checks those against the log at
-every entry -- but nothing checks a hand against the rules or against the log's hand list, so
-the error is silent.
+A converted position could show the deciding player holding cards they never had. The board and
+the VP were right -- the converter checks those against the log at every entry -- but nothing
+checked a hand, so the error was silent. Before the fix, 178 of the corpus's 274 games held a hand
+over the rules' limit in some action round of a trusted turn (2,590 of 111,194 decisions).
 
-**What it looks like.** The converter starts a turn with filler cards in a hand and adds the
-logged cards as the turn reaches them, without taking the fillers back out:
+**Causes, and what changed.**
 
-* replay 14, turn 6, US: at the headline the hand holds Blockade and Allende, which appear nowhere
-  in the log's US hand for the turn, and lacks Junta, which the US plays at AR2. Junta is added at
-  AR1 and neither filler leaves, so the US holds 9 cards (the China Card aside) after its headline,
-  one more than the rules allow;
-* replay 30, turn 4, US: Africa Scoring, Portuguese Empire Crumbles and Flower Power -- drawn at AR7
-  by Our Man in Tehran and discarded on the spot -- are in the US hand from AR1, three over;
-* replay 147, turn 9, USSR: 14 cards at AR1. That turn is also where the record stops, which the
-  converter does flag (`truncated_at`), but it still hands the turn's decisions to `on_decision`.
+* *Our Man in Tehran.* The cards it shows the US are named in the turn's hand list, because the US
+  saw them, but they come off the draw pile and are never held. The solver rightly left them out
+  of the deal; the converter then seated every listed card the deal lacked as a late arrival, from
+  the turn's first entry -- so they were in the US hand from AR1 (replay 30, turn 4: three cards).
+  `_peeked_this_turn` now keeps them out of hands.
+* *Reveals were not evidence.* A card revealed out of a hand (CIA Created, "Lone Gunman", Aldrich
+  Ames) was in it, but the solver never read reveals, so it dealt other cards and the revealed
+  ones came back as late arrivals: both at once (replay 147, turn 9: CIA Created reveals eight
+  USSR cards; 14 held at AR1). `GameFacts.revealed` now requires them in the deal unless they
+  arrived mid-turn. Where a reveal makes the model unsatisfiable (replays 212 and 321, whose logs
+  contradict the model elsewhere), `solve_hands` solves again without reveals: 256 of 274 games
+  are solved, as before.
+* *Every late arrival came at the turn's start.* Only Ask Not and SALT had an arrival entry;
+  anything else defaulted to the turn's first entry, i.e. AR1. `_arrival_entry` now places a card
+  received from the opponent (Missile Envy, Grain Sales) at the entry that hands it over, and any
+  other at the first entry that shows the side with it.
 
-**How much.** Over the 274 distinct corpus games, 178 have a hand over the legal limit in some
-action round of a trusted turn: 291 game-turn-sides, 2,590 of 111,194 human decisions, usually 1-3
-cards over. That counts only *over the limit*; a filler that stands in for a missing card at the
-right count is not seen by it. In the disagreement bank, 1,143 of 28,732 positions (4%) are over
-the limit or have a logged card still in the draw deck (`tools/scripts/bank_hand_check.py`).
-Turns with a drawing event (Our Man in Tehran, Ask Not, Grain Sales, Missile Envy, Star Wars) are
-about two thirds of the affected turns; the rest have none.
+**After.** 39 games / 186 decisions are over the limit, by one card in 180 of them, and every such
+turn but two has a mid-turn acquisition (SALT, Ask Not, Missile Envy, Grain Sales) that makes the
+extra card legal; the two are in replays 212 and 321. The converted board, VP and decisions are
+unchanged (`tests/replayer`, and `-m corpus_full`). Regression tests:
+`tests/replayer/test_replay_hand_contents.py` (two of its three fail on the old converter).
 
-**What it touches.** Every observation built from a converted position carries the player's own
-hand: the human BC dataset (`tools/build_human_dataset.py`), human-agreement probes, the census and
-disagreement-bank tools. A "network" or "search" move at an affected position can be a card the
-human never held.
+**Rebuild** everything made from converted human positions -- the human BC dataset
+(`tools/build_human_dataset.py`), human-agreement probes, the card census and the disagreement
+bank -- since the hands, and so the observations, changed.
 
-**Mitigation in place (not a fix).** `tools/scripts/event_play_census.feed_corpus_game` no longer
-passes on decisions from a game's untrusted turn (`untrusted_turn`: the turn of `truncated_at` or
-`failure`), with a regression test on replay 147; `bank_hand_check.py` excludes the flagged bank
-positions. A fix belongs in the converter's hand model -- the cards in each hand at each entry
-should be exactly the solved hand, with cards drawn mid-turn entering at the event that draws them
--- and the regression test should check every converted position's hands against the rules'
-limit and the log's hand list.
+`tools/scripts/event_play_census.feed_corpus_game` also stops passing on decisions from a game's
+untrusted turn (where the record stops or the conversion fails), which the converter already kept
+out of its own training data.
 
 ---
 

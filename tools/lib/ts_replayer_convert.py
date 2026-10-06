@@ -31,7 +31,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 import numpy as np
 import ts_engine as ts
 
-from tools.lib.ts_replayer_hands import solve_hands
+from tools.lib.ts_replayer_hands import _peeked_from_the_pile, solve_hands
 from tools.lib.ts_replayer_parse import (Entry, RE_PASSED_ROUND, Section, country_id,
                                         parse_entry)
 from bindings.action_encoder import ActionEncoder
@@ -3217,27 +3217,6 @@ def _sort_key_for_keeping(card: int, side: str = "US"):
     return (0 if card_side in (side, "NONE") else 1, -int(info["ops"]), card)
 
 
-def _acquisition_entry(raws: List[Dict], turn: int, side: str, default: int) -> int:
-    """The entry that hands this side new cards during the turn, by index.
-
-    "Ask Not What Your Country Can Do For You" and SALT Negotiations are the two that do it, and
-    what they bring in is in the hand from that entry on -- not before, which is what Missile
-    Envy and the traps would otherwise read.
-    """
-    for index, raw in enumerate(raws):
-        e = parse_entry(raw)
-        if e.turn != turn:
-            continue
-        fired = {card_id(nm) for nm in (e.events or [])}
-        if e.card and " & " not in e.card:
-            fired.add(card_id(e.card))
-        if (_ASK_NOT in fired or _SALT_NEGOTIATIONS in fired) and (
-                e.player == side or any(s == side for s, _nm in (e.discards or []))
-                or any(s == side for s, _nm in (e.revealed or []))):
-            return index
-    return default
-
-
 def _mid_turn_acquisitions(raws, turn: int, side: str, held: List[int]) -> Dict[int, int]:
     """Cards in a turn's list that were picked up during it rather than dealt at its start.
 
@@ -3318,6 +3297,62 @@ def _mid_turn_acquisitions(raws, turn: int, side: str, held: List[int]) -> Dict[
                 acquired[c] = idx
 
     return acquired
+
+
+def _peeked_this_turn(raws: List[Dict], turn: int) -> Set[int]:
+    """Every card Our Man in Tehran shows the US in a turn: seen, never held."""
+    out: Set[int] = set()
+    for raw in raws:
+        e = parse_entry(raw)
+        if e.turn == turn:
+            out |= _peeked_from_the_pile(e, card_id)
+    return out
+
+
+def _arrival_entry(raws: List[Dict], turn: int, side: str, card: int, first: int) -> int:
+    """The entry after which a card the solved hand left out of the deal is in `side`'s hand.
+
+    Received from the opponent (Missile Envy, Grain Sales): the entry that hands it over. Ask
+    Not's draws and SALT's reclaim are settled before this is asked (_mid_turn_acquisitions).
+    Anything else is in hand from the first entry that shows this side with it -- playing it,
+    discarding it, revealing it -- and not before: the log says nothing of it earlier, and
+    seating it at the turn's start held more cards than the rules deal (the turn's first entry
+    was the default, which is AR1 once the headline is done).
+    """
+    for index, raw in enumerate(raws):
+        if index < first:
+            continue
+        e = parse_entry(raw)
+        if e.turn != turn:
+            continue
+        text = e.text or ""
+        for marker in ("Event: Missile Envy", "Event: Grain Sales To Soviets"):
+            at = text.find(marker)
+            if at < 0:
+                continue
+            for raw_line in text[at:].split("\n")[1:]:
+                line = raw_line.strip()
+                if not line or line.startswith("Event: "):
+                    break
+                if " reveals " in line:
+                    giver = line.split(" ", 1)[0]
+                    name = line.split(" reveals ", 1)[1].replace(" from hand", "").strip(" .")
+                    if card_id(name) == card and giver in ("US", "USSR") and giver != side:
+                        return index
+                    break
+        named: List[Optional[int]] = []
+        if e.player == side:
+            if e.card and " & " not in e.card:
+                named.append(card_id(e.card))
+            if e.played_card:
+                named.append(card_id(e.played_card))
+        named.append(card_id((e.headlines or {}).get(side) or ""))
+        named += [card_id(nm) for sd, nm in (e.discards or []) if sd == side]
+        named += [card_id(nm.replace(" from hand", "").strip(" ."))
+                  for sd, nm in (e.revealed or []) if sd == side]
+        if card in named:
+            return index - 1
+    return first
 
 
 def _apply_hands(state, us_cards, ussr_cards) -> None:
@@ -3756,10 +3791,16 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
                 # list holds and the solved hand does not is a card that reached the hand part
                 # way through the turn, which the model says *that* about and the acquisition
                 # tracking below says *when*.
+                peeked = _peeked_this_turn(raws, int(e.turn))
                 for side in ("US", "USSR"):
                     was = set(turn_hands[side])
                     solved = list(solved_hands[int(e.turn)][side])
-                    late = [c for c in was if c not in solved]
+                    # Our Man in Tehran's cards are named in the turn's list because the US saw
+                    # them, but they come off the draw pile and go back to it or to the discards
+                    # without ever being held (_stage_our_man_in_tehran stages them from the
+                    # deck). Seating them as late arrivals put them in the US hand from AR1: at
+                    # turn 4 of replay 30 three cards the US only saw at AR7.
+                    late = [c for c in was if c not in solved and not (side == "US" and c in peeked)]
                     turn_hands[side] = solved + late
                     conv.cards_carried_over += len(set(solved) - was)
             else:
@@ -3787,9 +3828,16 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
             if solved_hands is not None and int(e.turn) in solved_hands:
                 for side in ("US", "USSR"):
                     solved = set(solved_hands[int(e.turn)][side])
-                    arrives = _acquisition_entry(raws, int(e.turn), side, index)
-                    pending[side] = {c: pending[side].get(c, arrives)
-                                     for c in turn_hands[side] if c not in solved}
+                    known = pending[side]
+                    pending[side] = {}
+                    for c in turn_hands[side]:
+                        if c in solved:
+                            continue
+                        at = known.get(c)
+                        if at is None:
+                            at = _arrival_entry(raws, int(e.turn), side, c, index)
+                        if at >= index:
+                            pending[side][c] = at
 
         # --- rebuild the position this entry was decided from ---
         if prev_raw is not None:
