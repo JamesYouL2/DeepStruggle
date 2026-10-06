@@ -32,7 +32,7 @@ import math
 import random
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -141,6 +141,68 @@ class BatchedMCTSConfig(PIMCTSConfig):
     gumbel_k: int = 0
     #: Scale of the Gumbel noise; 0 takes the k most probable moves, deterministically.
     gumbel_scale: float = 1.0
+    #: Run the network through CUDA graphs (the C++ tree on CUDA only): one graph per batch size,
+    #: padded up to a multiple of GRAPH_BUCKET rows. A graph replays the same kernels eager torch
+    #: launches, so at one batch size the outputs are bit-identical -- but the padding changes the
+    #: batch size, and the value head's output for a row depends on it (up to 1.5e-7 on about half
+    #: the rows, measured), so a search with graphs is not bit-identical to one without. Off by
+    #: default for that reason; what it buys is the CPU time to issue each forward (0.74 ms eager,
+    #: 0.06 ms replayed, at 1,900 rows), on the thread every round waits for.
+    cuda_graphs: bool = False
+
+
+#: CUDA graphs are captured at batch sizes that are multiples of this, and a batch is padded up.
+GRAPH_BUCKET = 64
+
+
+class _GraphedNetwork:
+    """The network (and the softmax of its policy) as CUDA graphs, one per padded batch size, all
+    in one memory pool. Rows are independent in this network, so the padding rows -- whatever was
+    last copied there -- do not touch the real ones; only the batch size does (see
+    BatchedMCTSConfig.cuda_graphs). A graph's outputs live in the shared pool: they are copied out
+    on the same stream before the next replay, which is what makes sharing it safe."""
+
+    def __init__(self, model, obs_width: int, device: torch.device) -> None:
+        self.model = model
+        self.obs_width = obs_width
+        self.device = device
+        self.pool: Optional[Any] = None       # torch's memory-pool handle (a private type)
+        #: Batch size -> (graph, obs input, mask input, probs output, values output).
+        self.graphs: Dict[int, Tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor,
+                                     torch.Tensor, torch.Tensor]] = {}
+
+    def _capture(self, n: int) -> Tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor,
+                                        torch.Tensor, torch.Tensor]:
+        obs = torch.zeros((n, self.obs_width), dtype=torch.float32, device=self.device)
+        masks = torch.zeros((n, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.uint8, device=self.device)
+        masks[:, 0] = 1                       # padding rows never have an empty mask
+        side = torch.cuda.Stream(device=self.device)
+        side.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(side), torch.no_grad():
+            for _ in range(2):                # warm-up outside the capture, as CUDA graphs require
+                self.model.forward(obs, masks)
+        torch.cuda.current_stream(self.device).wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self.pool), torch.no_grad():
+            logits, v_win, _ = self.model.forward(obs, masks)
+            probs = torch.softmax(logits.float(), dim=-1)
+            values = v_win.float().reshape(-1)
+        if self.pool is None:
+            self.pool = graph.pool()
+        entry = (graph, obs, masks, probs, values)
+        self.graphs[n] = entry
+        return entry
+
+    def run(self, obs_src: torch.Tensor, masks_src: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Probabilities and values for the k rows of `obs_src` / `masks_src` (page-locked host
+        tensors), as device tensors valid until the next replay on this stream."""
+        k = int(obs_src.shape[0])
+        n = -(-k // GRAPH_BUCKET) * GRAPH_BUCKET
+        graph, obs, masks, probs, values = self.graphs.get(n) or self._capture(n)
+        obs[:k].copy_(obs_src, non_blocking=True)
+        masks[:k].copy_(masks_src, non_blocking=True)
+        graph.replay()
+        return probs[:k], values[:k]
 
 
 @dataclass
@@ -202,6 +264,8 @@ class BatchedMCTS:
         #: A searcher per batch size kept every size it had ever met -- each with its trees and
         #: page-locked buffers -- for the life of the process.
         self._cpp: Optional[Tuple[ts.BatchedSearch, _SearchBuffers]] = None
+        #: The network as CUDA graphs (`cuda_graphs`), built on the first CUDA search.
+        self._graphed: Optional[_GraphedNetwork] = None
         if self.cfg.backend not in ("python", "cpp"):
             raise ValueError(f"unknown search backend {self.cfg.backend!r}")
         #: Roots of the current call, so _evaluate_batch can tell a caller-owned state from one
@@ -507,12 +571,18 @@ class BatchedMCTS:
             return None
         off = cs.group_offset(g)
         with torch.no_grad():
-            obs = bufs.obs[off:off + k].to(self.device, non_blocking=True)
-            masks = bufs.masks[off:off + k].to(self.device, non_blocking=True)
-            logits, v_win, _ = self.model.forward(obs, masks)
-            probs = torch.softmax(logits.float(), dim=-1)
+            if self.cfg.cuda_graphs and bufs.cuda:
+                if self._graphed is None:
+                    self._graphed = _GraphedNetwork(self.model, int(cs.obs_width), torch.device(self.device))
+                probs, values = self._graphed.run(bufs.obs[off:off + k], bufs.masks[off:off + k])
+            else:
+                obs = bufs.obs[off:off + k].to(self.device, non_blocking=True)
+                masks = bufs.masks[off:off + k].to(self.device, non_blocking=True)
+                logits, v_win, _ = self.model.forward(obs, masks)
+                probs = torch.softmax(logits.float(), dim=-1)
+                values = v_win.float().reshape(-1)
             bufs.probs[off:off + k].copy_(probs, non_blocking=True)
-            bufs.values[off:off + k].copy_(v_win.float().reshape(-1), non_blocking=True)
+            bufs.values[off:off + k].copy_(values, non_blocking=True)
         event = None
         if bufs.cuda:
             event = torch.cuda.Event()

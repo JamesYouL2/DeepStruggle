@@ -19,7 +19,9 @@ import pytest
 import torch
 
 import ts_engine as ts
-from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
+from ai.search.batched_mcts import GRAPH_BUCKET, BatchedMCTS, BatchedMCTSConfig, _GraphedNetwork
+from ai.search.pimcts import acting_player
+from bindings.action_encoder import ActionEncoder
 
 
 def _positions(n: int) -> List[ts.GameState]:
@@ -242,3 +244,44 @@ def test_two_groups_still_reproduce_the_python_tree(device: str) -> None:
                 assert ra.actions == rb.actions and ra.n == rb.n
                 np.testing.assert_allclose(ra.w, rb.w, rtol=0, atol=1e-9)
         assert ref._rng.getstate() == cpp._rng.getstate()
+
+
+_needs_gpu = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+
+
+def _leaf_batch(n: int) -> Any:
+    states = (_positions(24) * (n // 24 + 1))[:n]
+    obs = torch.from_numpy(np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), 0),
+                                                dtype=np.float32) for s in states])).pin_memory()
+    masks = torch.from_numpy(np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8)
+                                       for s in states])).pin_memory()
+    return obs, masks
+
+
+@_needs_gpu
+def test_a_cuda_graph_at_one_batch_size_is_the_eager_network_bit_for_bit() -> None:
+    """A graph replays the kernels eager torch launches: at a batch size that needs no padding, the
+    probabilities and values are the eager ones exactly. (Padding changes the batch size, which is
+    what makes BatchedMCTSConfig.cuda_graphs not bit-identical in general.)"""
+    net = _net_on("cuda")
+    obs, masks = _leaf_batch(2 * GRAPH_BUCKET)
+    graphed = _GraphedNetwork(net, obs.shape[1], torch.device("cuda"))
+    probs, values = (t.clone() for t in graphed.run(obs, masks))
+    with torch.no_grad():
+        logits, v, _ = net.forward(obs.cuda(), masks.cuda())
+    assert torch.equal(probs, torch.softmax(logits.float(), dim=-1))
+    assert torch.equal(values, v.float().reshape(-1))
+
+
+@_needs_gpu
+def test_padding_rows_do_not_reach_the_real_ones() -> None:
+    """Rows are independent: whatever an earlier batch left in a graph's padding rows, the real
+    rows come out the same."""
+    net = _net_on("cuda")
+    obs, masks = _leaf_batch(2 * GRAPH_BUCKET)
+    graphed = _GraphedNetwork(net, obs.shape[1], torch.device("cuda"))
+    k = 2 * GRAPH_BUCKET - 7
+    first = [t.clone() for t in graphed.run(obs[:k], masks[:k])]
+    graphed.run(obs[7:], masks[7:])
+    second = [t.clone() for t in graphed.run(obs[:k], masks[:k])]
+    assert all(torch.equal(a, b) for a, b in zip(first, second))
