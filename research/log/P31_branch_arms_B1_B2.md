@@ -173,3 +173,37 @@ Wargames applicable US 19.6% / USSR 9.3%, One Small Step 0%, Arms Race 0.4–0.6
   outcome is unambiguous), a much smaller fraction, and negative examples at its non-applicable spots
   -- or a card-specific play-mode representation so a push at one card stays there, which is an
   architecture question (P30).
+
+## Does the trunk know, at Wargames' branch, whether ending the game wins? (owner, 2026-10-06)
+
+At DEFCON 2 Wargames' event asks a `CHOOSE_BRANCH`: branch 0 gives the opponent 6 VP and ends the game,
+branch 1 passes (`engine/src/events/late_war.cpp`, `trigger_wargames`). Branch states: self-play at T 1,
+8,000 games; at every Wargames play-mode decision at DEFCON 2 a clone is stepped with EVENT to reach the
+branch. Label: the branch state's clone stepped with branch 0 -- 1 if the game then ends won by the side
+deciding. Probe: L2 logistic regression on the trunk output `h` (480 floats), 5-fold CV, held-out AUC
+(`wargames_probe.py` in the job scratch).
+
+| checkpoint | branch states | ending wins | trunk LR AUC (acc) | VP lead AUC | policy P(end) AUC |
+|:---|---:|---:|---:|---:|---:|
+| E7-20-44@4800M (plain) | 2,942 | 24.6% | **0.984** (94.1%) | 1.000 | **0.633** |
+| E7-29-44@4800M (forced) | 3,270 | 25.4% | 0.994 (96.5%) | 1.000 | 0.962 |
+
+The policy's P(end) by the decider's VP lead (ending wins exactly at 7+):
+
+| lead | < 5 | 5 | 6 | 7 | 8+ |
+|:---|---:|---:|---:|---:|---:|
+| E7-20-44 | 0.19 | 0.21 | 0.17 | 0.19 | 0.29 |
+| E7-29-44 | 0.20 | 0.70 | 0.86 | 0.92 | 0.98 |
+
+* **The trunk knows; the plain policy at the branch does not use it.** A linear readout of `h`
+  predicts the outcome at 0.98 AUC, while the plain policy ends the game ~20% of the time whatever
+  the lead. A plain model that reaches this branch throws the game about one time in five when
+  behind -- which would make playing Wargames' event look poor to the critic, and the play-mode
+  decision decline it even at a winning lead: a likely mechanism of the Wargames leak.
+* **Forcing taught "a big lead ends it", not the threshold:** E7-29-44 ends at a lead of 5 or 6 (both
+  losses) 70–86% of the time, having seen forced plays only at 7+.
+* **Representation is not the bottleneck; the branch head is.** Branch slots 200–207 are shared by every
+  card with a branch, so slot 0 means "end the game" for Wargames and something else elsewhere, and a
+  head that rarely sees Wargames' branch learns a lead-independent average. The owner's proposal -- a
+  branch head reading the trunk context plus a one-hot of which branching card is resolving -- is aimed
+  at exactly this; it still needs training signal at the branch, which the floor over branch rows gives.
