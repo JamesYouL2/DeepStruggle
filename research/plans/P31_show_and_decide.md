@@ -1,6 +1,6 @@
 # P31 — Show, then let training decide: the rare-spot card leaks
 
-**Status:** proposed (2026-10-06).
+**Status:** building (2026-10-06): decisions below; 1a, 1b, 1d first.
 **Root:** E7-20-44@2,800M (`E7-20-44_20261004_173440/resume_state.pt`), with its plain control
 leg (2,800 → 3,600M, same name, second directory) as the no-change branch. The root is chosen
 for its control, not its strength: the 3,600M end state is a little stronger but has no sibling.
@@ -9,6 +9,25 @@ for its control, not its strength: the 3,600M end state is a little stronger but
 changes; 1d adds a head (model only) and may need a small *read-only* binding (the non-phasing
 player's mask) — if it does, it is proposed before being written. The forced-event seeding (1b)
 constructs training situations; it changes no rule.
+
+## Decisions taken before the build (owner, 2026-10-06)
+
+* **Root: E7-20-44@4,390M** (`E7-20-44_20261005_174535/resume_4390060032steps.pt`), not 2,800M.
+  The line plateaued from ~3,700M ([`../log/E7_line_to_2000M.md`](../log/E7_line_to_2000M.md)), and
+  4,390M now has three no-change continuations to 4,800M -- E7-20-44 itself and its seed branches
+  E7-20-44-4390M.45 / .46 ([`../log/E7_soup_4800M.md`](../log/E7_soup_4800M.md)) -- so the noise
+  floor of every bank is measured across three siblings rather than one control leg. Arms read
+  against their matched 4,800M endpoints.
+* **1a scope: play-mode decisions and the non-country choices inside events** -- `SELECT_PLAY_MODE`
+  rows, and rows whose whole legal set lies in the branch block (event branches, DEFCON values,
+  regions). Country targets are excluded: an 84-way uniform floor there is mostly noise.
+* **1d target: the opponent's legality at its *next* decision**, not at the stored state. The
+  observation already carries `can_opp_place` (board slot 20) and `can_opp_coup` (slot 22) from
+  the same engine functions as the opponent's mask, Chernobyl-aware (`ops.cpp:106`), so a
+  stored-state label would only teach the head to copy two input slots. The next-decision label is
+  read from the opponent's own observation (its slots 19 / 21) when it next moves in that game:
+  it encodes what this side's play does to the opponent's options, and needs no binding.
+* **Order: 1a, 1b, 1d first; B1 ‖ B2 run while 1c is built**, as the plan's own order.
 
 ## The problem this addresses
 
