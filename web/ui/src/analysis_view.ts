@@ -622,7 +622,7 @@ export class AnalysisPanel {
       const fate = r.droppedInPhase === null ? "played" : `out in round ${(r.droppedInPhase ?? 0) + 1}`;
       const isFav = r.idx === d.favouriteIdx ? " (net's favourite)" : "";
       return `
-        <div class="analysis-choice${isPick ? " favourite" : ""}" data-flat-idx="${r.idx}" title="Click to play this move. ${r.visits} simulations; mean value ${qs} for the ${side}; ${fate}${isFav}">
+        <div class="analysis-choice gumbel-row${isPick ? " favourite" : ""}" data-flat-idx="${r.idx}" title="Click to play this move. ${r.visits} simulations; mean value ${qs} for the ${side}; ${fate}${isFav}">
           <span class="analysis-choice-name">${isPick ? "★ " : ""}${esc(r.name)}${r.idx === d.favouriteIdx ? " ◆" : ""}</span>
           <span class="analysis-choice-p">q ${qs}${vs} · ${r.visits} sims · p ${fmtP(r.prior)} · ${fate}</span>
         </div>`;

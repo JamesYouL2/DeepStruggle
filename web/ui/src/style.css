@@ -2056,6 +2056,11 @@ span.trace-choice-badge.played {
   font-family: var(--font-mono);
   font-weight: 700;
 }
+/* A Gumbel candidate carries more than fits beside its name: name on one line, its evidence
+   (value, distance from the net's favourite, simulations, round) under it. */
+.analysis-choice.gumbel-row { flex-direction: column; gap: 0; }
+.analysis-choice.gumbel-row .analysis-choice-name { white-space: normal; }
+.analysis-choice.gumbel-row .analysis-choice-p { font-weight: 400; color: var(--text-muted); }
 
 /* Panels shown only in one mode (the replay readout, the value ribbon, live analysis) toggle
    this class. Without a generic rule it did nothing: only the modal and the tooltip had one, so
