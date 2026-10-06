@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""Positions where a human, the raw network and its search disagree, for review in the workbench.
+
+Every human decision of the chosen kinds in the ts-replayer corpus, as the human faced it, is put
+to two deciders:
+
+* the **network** -- the policy's favourite move (greedy), with its probability of each of the
+  others' moves and its v_win for the mover;
+* the **searcher** -- a `load_agent` spec that decides positions in a batch, by default the Gumbel
+  root (`gumbel:<pt>:32:4`: honest, determinized search from the mover's side, so it does not see the
+  hidden cards the corpus's solved hands put in the state).
+
+A position is kept when the three moves are not all the same, labelled by the pattern of agreement:
+
+* `human-alone` -- network and search agree, the human differs;
+* `network-alone` -- human and search agree, the network differs (search corrects the network);
+* `search-alone` -- human and network agree, search differs;
+* `all-differ`.
+
+Kinds: `headline` (the headline card), `card` (the card that opens an action round), `mode` (event /
+Ops / space for the card just chosen). These are the decisions whose order is not an artifact --
+the Influence points of one play, where a different order is the same play, are left out.
+
+Each row carries the position as the workbench's `pos=` token. Output is JSONL.gz, one row per kept
+position, plus a summary of how often each kind agrees.
+
+    PYTHONPATH=.:build/release python tools/scripts/disagreement_bank.py \\
+        --net newest.onnx --search "gumbel:newest.pt:32:4" --part 1/1 --out bank.jsonl.gz
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import json
+import sys
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+import torch
+import ts_engine as ts
+
+from bindings.action_encoder import ActionEncoder
+from tools.scripts.event_play_census import feed_corpus_game, load_policy, position_token
+
+KINDS = ("headline", "card", "mode")
+PATTERNS = ("human-alone", "network-alone", "search-alone", "all-differ")
+_CARDS = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
+
+
+def kind_of(st: ts.GameState) -> Optional[str]:
+    ctx = st.ctx()
+    if int(ctx.resolving_card) != 0:
+        return None
+    if st.current_phase == ts.Phase.HEADLINE and ctx.decision_type == ts.DecisionType.SELECT_CARD:
+        return "headline"
+    if st.current_phase != ts.Phase.ACTION_ROUND:
+        return None
+    if (ctx.decision_type == ts.DecisionType.SELECT_CARD and ctx.decision_player == st.phasing_player
+            and int(ctx.pending_op_card) == 0):
+        return "card"
+    if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE:
+        return "mode"
+    return None
+
+
+def mover_of(st: ts.GameState) -> ts.Player:
+    ctx = st.ctx()
+    return ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player
+
+
+def pattern(h: int, n: int, s: int) -> Optional[str]:
+    if h == n == s:
+        return None
+    if n == s:
+        return "human-alone"
+    if h == s:
+        return "network-alone"
+    if h == n:
+        return "search-alone"
+    return "all-differ"
+
+
+class Collector:
+    """The human's decisions of the chosen kinds, with two or more legal moves."""
+
+    def __init__(self, kinds: Sequence[str]) -> None:
+        self.kinds = set(kinds)
+        self.seen: List[Tuple[ts.GameState, str, int]] = []
+
+    def observe(self, st: ts.GameState, a: int) -> None:
+        k = kind_of(st)
+        if k in self.kinds and int(np.asarray(ActionEncoder.get_legal_mask(st)).sum()) >= 2:
+            self.seen.append((st, k, a))
+
+
+def _softmax(logits: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    m = mask.astype(bool)
+    z = np.where(m, logits, -np.inf)
+    z = z - z[m].max()
+    p = np.exp(z)
+    return p / p.sum()
+
+
+def _name(st: ts.GameState, a: int) -> str:
+    """A move as a reader says it: the card, or EVENT / SPACE / OPS (influence, coup, realign)."""
+    off = int(ActionEncoder.PLAY_MODE_OFFSET)
+    if a < off:
+        cid = int(ts.decode_flat_action(st, a).primary_id)
+        return str(_CARDS.get(cid, {}).get("name", f"card {cid}"))
+    mode = a - off
+    return {0: "event", 1: "space", 2: "Ops: influence", 3: "Ops: coup", 4: "Ops: realign"}.get(
+        mode, ActionEncoder.get_action_name(st, a))
+
+
+def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[str],
+         chunk: int, on_game: Optional[Any] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, int]]]:
+    """Every game's kept rows and agreement counts. `on_game(replay_id, rows, counts)` is called as
+    each game finishes, so a long run can be written out -- and resumed -- game by game."""
+    from tools.lib.player_agent import load_agent
+
+    net_fn, features = load_policy(net_spec)
+    searcher: Any = load_agent(search_spec, device="cuda" if torch.cuda.is_available() else "cpu")
+    if hasattr(searcher, "reseed"):
+        searcher.reseed(0)
+    rows: List[Dict[str, Any]] = []
+    summary: Dict[str, Dict[str, int]] = {k: {"decisions": 0, **{p: 0 for p in PATTERNS}} for k in kinds}
+    for gi, path in enumerate(paths):
+        with gzip.open(path, "rt") as f:
+            replay_id = int(json.load(f).get("replay_id", 0))
+        col = Collector(kinds)
+        if feed_corpus_game(path, col) == "skipped" or not col.seen:
+            if on_game is not None:
+                on_game(replay_id, [], {})
+            continue
+        first = len(rows)
+        counts: Dict[str, Dict[str, int]] = {k: {"decisions": 0, **{p: 0 for p in PATTERNS}} for k in kinds}
+        states = [s for s, _, _ in col.seen]
+        obs = np.stack([np.asarray(ts.extract_observation_features(s, mover_of(s), features), dtype=np.float32)
+                        for s in states])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
+        logits = net_fn(obs, masks)
+        v_win = _v_win(net_spec, obs, masks)
+        picks: List[int] = []
+        for i in range(0, len(states), chunk):
+            picks += [int(a) for a in searcher.select_actions_batch(states[i:i + chunk])]
+        for i, ((st, kind, human), s_act) in enumerate(zip(col.seen, picks)):
+            p = _softmax(logits[i], masks[i])
+            n_act = int(np.argmax(np.where(masks[i].astype(bool), p, -1.0)))
+            summary[kind]["decisions"] += 1
+            counts[kind]["decisions"] += 1
+            pat = pattern(human, n_act, s_act)
+            if pat is None:
+                continue
+            summary[kind][pat] += 1
+            counts[kind][pat] += 1
+            ctx = st.ctx()
+            card = int(ctx.pending_op_card) if kind == "mode" else 0
+            rows.append({
+                "game": replay_id, "kind": kind, "pattern": pat,
+                "side": "US" if mover_of(st) == ts.Player.US else "USSR",
+                "turn": int(st.turn), "ar": int(st.action_round), "defcon": int(st.defcon),
+                "vp": int(st.victory_points), "card": str(_CARDS[card]["name"]) if card else "",
+                "human": _name(st, human), "network": _name(st, n_act), "search": _name(st, s_act),
+                "p_human": round(float(p[human]), 4), "p_network": round(float(p[n_act]), 4),
+                "p_search": round(float(p[s_act]), 4),
+                "v_win": None if v_win is None else round(float(v_win[i]), 4),
+                "pos": position_token(st),
+            })
+        if on_game is not None:
+            on_game(replay_id, rows[first:], counts)
+        print(f"[{gi + 1}/{len(paths)}] replay {replay_id}: {len(col.seen)} decisions, {len(rows)} kept so far",
+              file=sys.stderr, flush=True)
+    return rows, summary
+
+
+def _v_win(net_spec: str, obs: np.ndarray, masks: np.ndarray) -> Optional[np.ndarray]:
+    """The network's win probability for the mover, when the net is an ONNX export (which names it)."""
+    if not net_spec.endswith(".onnx"):
+        return None
+    import onnxruntime as ort
+    sess = _SESSIONS.get(net_spec)
+    if sess is None:
+        sess = _SESSIONS[net_spec] = ort.InferenceSession(net_spec, providers=["CPUExecutionProvider"])
+    out = sess.run(["v_win"], {"obs": obs, "mask": masks})[0]
+    v = np.asarray(out, dtype=np.float64).reshape(-1)
+    # v_win is a logit or a probability depending on the export; squash only what is outside [0, 1].
+    return v if (v.min() >= 0.0 and v.max() <= 1.0) else 1.0 / (1.0 + np.exp(-v))
+
+
+_SESSIONS: Dict[str, Any] = {}
+
+#: the review page's columns, in order (web page reads `fields`, then each row as a list)
+FIELDS = ("id", "game", "kind", "pattern", "side", "turn", "ar", "defcon", "vp", "card", "human", "network",
+          "search", "p_human", "p_network", "p_search", "v_win", "pos")
+
+
+def row_id(r: Dict[str, Any]) -> str:
+    """A stable id: the position and the kind of decision asked there, so a rebuilt bank keeps
+    the verdicts already given."""
+    import hashlib
+    return hashlib.sha1((r["kind"] + ":" + r["pos"]).encode()).hexdigest()[:16]
+
+
+def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float) -> int:
+    """Merge banks into the review page's data, deduplicated by position: one file per pattern
+    (`bank-<pattern>.json`, so the page can load the large human-alone set only when asked) and a
+    `manifest.json` of their sizes."""
+    import os
+    os.makedirs(out_dir, exist_ok=True)
+    seen: Dict[str, Dict[str, Any]] = {}
+    total = 0
+    for path in banks:
+        with gzip.open(path, "rt") as f:
+            for line in f:
+                r = json.loads(line)
+                total += 1
+                if r["pattern"] == "human-alone" and r["p_human"] >= human_alone_max_p:
+                    continue
+                seen.setdefault(row_id(r), r)
+    manifest: Dict[str, Any] = {"fields": list(FIELDS), "files": {}}
+    for pat in PATTERNS:
+        rows = [[rid if f == "id" else r[f] for f in FIELDS] for rid, r in seen.items() if r["pattern"] == pat]
+        name = f"bank-{pat}.json"
+        json.dump({"fields": list(FIELDS), "rows": rows}, open(os.path.join(out_dir, name), "w"),
+                  separators=(",", ":"))
+        manifest["files"][pat] = {"file": name, "rows": len(rows),
+                                  "bytes": os.path.getsize(os.path.join(out_dir, name))}
+    json.dump(manifest, open(os.path.join(out_dir, "manifest.json"), "w"), indent=1)
+    print(f"{len(seen)} of {total} rows packed into {out_dir}: "
+          + ", ".join(f"{p} {v['rows']} ({v['bytes'] / 1e6:.1f} MB)" for p, v in manifest["files"].items()),
+          file=sys.stderr)
+    return 0
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    from tools.lib.corpus_paths import distinct_corpus_files
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--net", default=None, help="the raw network: .onnx or .pt")
+    ap.add_argument("--search", default=None, help="a load_agent spec, e.g. gumbel:<ckpt.pt>:32:4")
+    ap.add_argument("--pack", nargs="+", default=None, metavar="BANK",
+                    help="instead of scanning: merge these banks into --out as the review page's data file")
+    ap.add_argument("--human-alone-max-p", type=float, default=1.0,
+                    help="--pack keeps a human-alone row only when the network gave the human's move less")
+    ap.add_argument("--kinds", nargs="+", default=list(KINDS), choices=KINDS)
+    ap.add_argument("--part", default="1/1", help="k/N: this part's share of the corpus's distinct games")
+    ap.add_argument("--games", type=int, default=0, help="at most this many games of the share (0 = all)")
+    ap.add_argument("--chunk", type=int, default=128, help="positions per search call")
+    ap.add_argument("--out", required=True, help="JSONL.gz of the kept positions, appended game by game "
+                                                 "(with --pack: a directory for the review page's data files)")
+    ap.add_argument("--summary", default=None, help="JSON of agreement counts per kind")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip the games --out already holds (their counts are kept in <out>.games.jsonl)")
+    a = ap.parse_args(argv)
+    if a.pack:
+        return pack(a.pack, a.out, a.human_alone_max_p)
+    if not a.net or not a.search:
+        ap.error("--net and --search are required unless --pack is given")
+    k, n = (int(x) for x in a.part.split("/"))
+    files, _ = distinct_corpus_files()
+    paths = [str(p) for i, p in enumerate(sorted(files)) if i % n == k - 1][: a.games or None]
+    import os
+    ledger = a.out + ".games.jsonl"
+    done: Dict[int, Dict[str, Dict[str, int]]] = {}
+    if a.resume and os.path.exists(ledger):
+        for line in open(ledger):
+            g = json.loads(line)
+            done[int(g["game"])] = g["counts"]
+    elif os.path.exists(a.out) or os.path.exists(ledger):
+        raise SystemExit(f"{a.out} exists: pass --resume to continue it, or remove it")
+
+    def replay_id(path: str) -> int:
+        with gzip.open(path, "rt") as f:
+            return int(json.load(f).get("replay_id", 0))
+
+    todo = [p for p in paths if replay_id(p) not in done]
+
+    def on_game(game: int, rows: List[Dict[str, Any]], counts: Dict[str, Dict[str, int]]) -> None:
+        # A game's rows, then its ledger line: a crash between the two re-runs the game, and the
+        # duplicate rows it leaves are dropped by --pack, which keys rows by position.
+        with gzip.open(a.out, "at") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        with open(ledger, "a") as f:
+            f.write(json.dumps({"game": game, "counts": counts}) + "\n")
+        done[game] = counts
+
+    t0 = time.time()
+    scan(todo, a.net, a.search, a.kinds, a.chunk, on_game=on_game)
+    summary: Dict[str, Dict[str, int]] = {}
+    for counts in done.values():
+        for kind, c in counts.items():
+            for key, v in c.items():
+                summary.setdefault(kind, {}).setdefault(key, 0)
+                summary[kind][key] += v
+    if a.summary:
+        json.dump({"games": len(paths), "part": a.part, "net": a.net, "search": a.search, "kinds": summary},
+                  open(a.summary, "w"), indent=1)
+    print(f"{len(todo)} games scanned in {time.time() - t0:.0f}s ({len(paths) - len(todo)} already done): {summary}",
+          file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
