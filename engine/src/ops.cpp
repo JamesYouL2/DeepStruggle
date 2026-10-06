@@ -131,6 +131,20 @@ bool Operations::can_place_influence(const GameState& state, Player p, uint8_t c
     return false;
 }
 
+std::array<uint64_t, 2> Operations::placeable_countries(const GameState& state, Player p) noexcept {
+    std::array<uint64_t, 2> mask{};
+    for (uint8_t i = 0; i < 84; ++i)
+        if (can_place_influence(state, p, i)) mask[i >> 6] |= 1ULL << (i & 63);
+    return mask;
+}
+
+std::array<uint64_t, 2> Operations::coupable_countries(const GameState& state, Player p) noexcept {
+    std::array<uint64_t, 2> mask{};
+    for (uint8_t i = 0; i < 84; ++i)
+        if (can_coup(state, p, i)) mask[i >> 6] |= 1ULL << (i & 63);
+    return mask;
+}
+
 uint8_t Operations::get_influence_cost(const GameState& state, Player p, uint8_t country_id) noexcept {
     if (country_id >= 84 || p == Player::NONE) return 1;
     Player opp = get_opponent(p);

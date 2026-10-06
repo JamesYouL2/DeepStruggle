@@ -34,6 +34,12 @@ public:
     // Evaluates a region and returns detailed score breakdown
     static RegionScoreSummary evaluate_region(const GameState& state, Region r, bool is_final_scoring = false) noexcept;
 
+    // The same as evaluate_region(state, r) -- a mid-game scoring -- with each country's control
+    // read from `control` (84 entries, get_country_control's values) instead of recomputed. For
+    // the observation, which needs control for every country anyway and scores all six regions.
+    static RegionScoreSummary evaluate_region_with_control(const GameState& state, Region r,
+                                                           const Player* control) noexcept;
+
     // Whether `p` Dominates or Controls `r` on the board as it stands, with no scoring-only card
     // effect applied (Summit's modifier).
     static bool dominates_or_controls(const GameState& state, Region r, Player p) noexcept;

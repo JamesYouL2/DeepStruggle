@@ -5,24 +5,72 @@
 #include "ts/ops.hpp"
 #include <cstring>
 #include <algorithm>
+#include <array>
+#include <utility>
 
 namespace ts {
 
 namespace {
 
-int16_t compute_net_realign_mod(const GameState& state, Player p, uint8_t country_id) noexcept {
+// The map facts the observation reads for every country, gathered once per process: the borders
+// between countries, and each country's static board features (stability, battleground,
+// superpower adjacency, region and sub-region) laid out as a board row from each side's point of
+// view, so an observation copies them instead of recomputing them for 84 countries.
+//
+// Profiled on 2,439 positions of the E7 network's own games, the board block was 78% of an
+// observation (4.5 of 5.7 us), and most of that was asking the same questions again: the
+// realignment modifier recomputed control for every neighbour of every country -- some 670
+// control computations for 84 countries -- and the regional scoring recomputed it six times
+// over. Control is now computed once and the rest reads it.
+struct BoardStatic {
+    // Each border once, as (a, b) with a < b. Neighbour lists are mutually symmetric and repeat
+    // no one (engine test MapTest.NeighbourListsAreSymmetricWithoutRepeats), so counting a border
+    // from both ends counts every country's neighbours exactly once.
+    std::array<std::pair<uint8_t, uint8_t>, 256> borders{};
+    size_t num_borders = 0;
+    // [0]: the US's point of view, [1]: the USSR's.
+    std::array<std::array<float, 84 * V23_BOARD_FEATURES>, 2> rows{};
+};
+
+BoardStatic build_board_static() noexcept {
+    BoardStatic b;
+    for (uint8_t i = 0; i < 84; ++i) {
+        const auto& c_info = MapData::get_country(i);
+        for (uint8_t n = 0; n < c_info.num_neighbors; ++n) {
+            const uint8_t j = c_info.neighbors[n];
+            if (j < 84 && j > i && b.num_borders < b.borders.size()) b.borders[b.num_borders++] = {i, j};
+        }
+        for (int side = 0; side < 2; ++side) {
+            const Player me = side == 0 ? Player::US : Player::USSR;
+            const Player opp = side == 0 ? Player::USSR : Player::US;
+            float* row = &b.rows[side][i * V23_BOARD_FEATURES];
+            row[3] = static_cast<float>(c_info.stability) / 5.0f;
+            row[4] = c_info.battleground ? 1.0f : 0.0f;
+            row[8] = (c_info.superpower_adjacent == me) ? 1.0f : 0.0f;
+            row[9] = (c_info.superpower_adjacent == opp) ? 1.0f : 0.0f;
+            const size_t r_idx = static_cast<size_t>(c_info.region);
+            if (r_idx < 6) row[10 + r_idx] = 1.0f;
+            row[16] = c_info.in_western_europe ? 1.0f : 0.0f;
+            row[17] = c_info.in_eastern_europe ? 1.0f : 0.0f;
+            row[18] = c_info.in_southeast_asia ? 1.0f : 0.0f;
+        }
+    }
+    return b;
+}
+
+const BoardStatic& board_static() noexcept {
+    static const BoardStatic b = build_board_static();
+    return b;
+}
+
+// Net realignment modifier for `p` in `country_id`: neighbours `p` controls minus neighbours the
+// opponent controls (counted by the caller from control computed once), then the influence
+// comparison, superpower adjacency and Iran-Contra -- the dice advantage of a realignment roll.
+int16_t compute_net_realign_mod(const GameState& state, Player p, uint8_t country_id,
+                                int16_t my_mod, int16_t opp_mod) noexcept {
     if (country_id >= 84 || p == Player::NONE) return 0;
     const auto& c_info = MapData::get_country(country_id);
     Player opp = (p == Player::US) ? Player::USSR : Player::US;
-
-    int16_t my_mod = 0;
-    int16_t opp_mod = 0;
-
-    for (uint8_t n = 0; n < c_info.num_neighbors; ++n) {
-        uint8_t n_id = c_info.neighbors[n];
-        if (Scoring::is_controlled_by(state, n_id, p)) my_mod++;
-        if (Scoring::is_controlled_by(state, n_id, opp)) opp_mod++;
-    }
 
     uint8_t my_inf = state.countries[country_id].get_influence(p);
     uint8_t opp_inf = state.countries[country_id].get_influence(opp);
@@ -38,23 +86,9 @@ int16_t compute_net_realign_mod(const GameState& state, Player p, uint8_t countr
     return my_mod - opp_mod;
 }
 
-bool is_coup_nuclear_hazard(const GameState& state, Player p, uint8_t country_id) noexcept {
-    if (state.defcon > 2 || country_id >= 84) return false;
-    const auto& c_info = MapData::get_country(country_id);
-    if (!c_info.battleground) return false;
-    
-    // In TS, couping a battleground reduces DEFCON by 1.
-    // If DEFCON is 2 and country is legal to coup, couping causes DEFCON 1 Nuclear Loss!
-    return Operations::can_coup(state, p, country_id);
-}
-
-} // anonymous namespace
-
-void Observation::extract(const GameState& state, Player perspective,
-                          ObservationBufferV23* out_buf) noexcept {
-    if (!out_buf) return;
-    std::memset(out_buf, 0, sizeof(ObservationBufferV23));
-
+// The observation written straight to its three blocks, wherever the caller keeps them.
+void extract_into(const GameState& state, Player perspective, float* board, float* cards,
+                  float* globals) noexcept {
     Player my_player = perspective;
     if (my_player == Player::NONE) {
         my_player = (state.ctx().decision_player != Player::NONE)
@@ -70,6 +104,33 @@ void Observation::extract(const GameState& state, Player perspective,
     // USSR coups in Europe", so the pair said almost nothing the coup pair does not -- 168 floats
     // for one late-war card. They are not computed here at all, which is also why this loop does
     // not call Operations::can_realign.
+    //
+    // Control is computed once per country and read by everything below that needs it: the
+    // control features, the realignment modifier's neighbour counts, and the regional scoring in
+    // the global block. The static features come from board_static()'s row for this side.
+    const BoardStatic& stat = board_static();
+    std::memcpy(board, stat.rows[my_player == Player::US ? 0 : 1].data(),
+                84 * V23_BOARD_FEATURES * sizeof(float));
+    Player control[84];
+    for (uint8_t i = 0; i < 84; ++i) control[i] = Scoring::get_country_control(state, i);
+    // Placement and coup legality for every country from both sides, in four calls rather than
+    // 336. Coup legality is asked regardless of phase because the nuclear-hazard feature asks it
+    // regardless of phase; the coup features are gated on the phase below, as they always were.
+    const std::array<uint64_t, 2> my_place = Operations::placeable_countries(state, my_player);
+    const std::array<uint64_t, 2> opp_place = Operations::placeable_countries(state, opp_player);
+    const std::array<uint64_t, 2> my_coup = Operations::coupable_countries(state, my_player);
+    const std::array<uint64_t, 2> opp_coup = Operations::coupable_countries(state, opp_player);
+    auto has = [](const std::array<uint64_t, 2>& m, uint8_t i) { return ((m[i >> 6] >> (i & 63)) & 1) != 0; };
+    int16_t my_neighbours[84] = {};
+    int16_t opp_neighbours[84] = {};
+    for (size_t e = 0; e < stat.num_borders; ++e) {
+        const auto [a, b] = stat.borders[e];
+        my_neighbours[a] += control[b] == my_player;
+        opp_neighbours[a] += control[b] == opp_player;
+        my_neighbours[b] += control[a] == my_player;
+        opp_neighbours[b] += control[a] == opp_player;
+    }
+
     for (uint8_t i = 0; i < 84; ++i) {
         const auto& c_info = MapData::get_country(i);
         const size_t offset = i * V23_BOARD_FEATURES;
@@ -77,34 +138,23 @@ void Observation::extract(const GameState& state, Player perspective,
         const float my_inf = static_cast<float>(my_player == Player::US ? state.countries[i].us_influence : state.countries[i].ussr_influence);
         const float opp_inf = static_cast<float>(my_player == Player::US ? state.countries[i].ussr_influence : state.countries[i].us_influence);
 
-        out_buf->board_features[offset + 0] = my_inf / 10.0f;
-        out_buf->board_features[offset + 1] = opp_inf / 10.0f;
+        board[offset + 0] = my_inf / 10.0f;
+        board[offset + 1] = opp_inf / 10.0f;
 
         // Net realignment modifier: the dice advantage, normalised by 5.
-        const int16_t net_realign = compute_net_realign_mod(state, my_player, i);
-        out_buf->board_features[offset + 2] = std::clamp(static_cast<float>(net_realign) / 5.0f, -1.0f, 1.0f);
+        const int16_t net_realign = compute_net_realign_mod(state, my_player, i, my_neighbours[i],
+                                                            opp_neighbours[i]);
+        board[offset + 2] = std::clamp(static_cast<float>(net_realign) / 5.0f, -1.0f, 1.0f);
 
-        out_buf->board_features[offset + 3] = static_cast<float>(c_info.stability) / 5.0f;
-        out_buf->board_features[offset + 4] = c_info.battleground ? 1.0f : 0.0f;
+        // 3, 4, 8..18: static (board_static).
 
-        const Player ctrl = Scoring::get_country_control(state, i);
-        out_buf->board_features[offset + 5] = (ctrl == my_player) ? 1.0f : 0.0f;
-        out_buf->board_features[offset + 6] = (ctrl == opp_player) ? 1.0f : 0.0f;
+        const Player ctrl = control[i];
+        board[offset + 5] = (ctrl == my_player) ? 1.0f : 0.0f;
+        board[offset + 6] = (ctrl == opp_player) ? 1.0f : 0.0f;
 
-        // 1.0 if couping here would take DEFCON to 1 and lose the game outright.
-        out_buf->board_features[offset + 7] = is_coup_nuclear_hazard(state, my_player, i) ? 1.0f : 0.0f;
-
-        out_buf->board_features[offset + 8] = (c_info.superpower_adjacent == my_player) ? 1.0f : 0.0f;
-        out_buf->board_features[offset + 9] = (c_info.superpower_adjacent == opp_player) ? 1.0f : 0.0f;
-
-        const size_t r_idx = static_cast<size_t>(c_info.region);
-        if (r_idx < 6) {
-            out_buf->board_features[offset + 10 + r_idx] = 1.0f;
-        }
-
-        out_buf->board_features[offset + 16] = c_info.in_western_europe ? 1.0f : 0.0f;
-        out_buf->board_features[offset + 17] = c_info.in_eastern_europe ? 1.0f : 0.0f;
-        out_buf->board_features[offset + 18] = c_info.in_southeast_asia ? 1.0f : 0.0f;
+        // 1.0 if couping here would take DEFCON to 1 and lose the game outright: a coup in a
+        // battleground lowers DEFCON by 1, so at DEFCON 2 a legal one there is a nuclear loss.
+        board[offset + 7] = (state.defcon <= 2 && c_info.battleground && has(my_coup, i)) ? 1.0f : 0.0f;
 
         bool can_my_place = false;
         bool can_opp_place = false;
@@ -117,31 +167,35 @@ void Observation::extract(const GameState& state, Player perspective,
             can_my_place = check_setup_place(my_player);
             can_opp_place = check_setup_place(opp_player);
         } else {
-            can_my_place = Operations::can_place_influence(state, my_player, i);
-            can_opp_place = Operations::can_place_influence(state, opp_player, i);
+            can_my_place = has(my_place, i);
+            can_opp_place = has(opp_place, i);
         }
-        out_buf->board_features[offset + 19] = can_my_place ? 1.0f : 0.0f;
-        out_buf->board_features[offset + 20] = can_opp_place ? 1.0f : 0.0f;
+        board[offset + 19] = can_my_place ? 1.0f : 0.0f;
+        board[offset + 20] = can_opp_place ? 1.0f : 0.0f;
 
-        const bool can_my_coup = (state.current_phase != Phase::SETUP) && Operations::can_coup(state, my_player, i);
-        const bool can_opp_coup = (state.current_phase != Phase::SETUP) && Operations::can_coup(state, opp_player, i);
-        out_buf->board_features[offset + 21] = can_my_coup ? 1.0f : 0.0f;
-        out_buf->board_features[offset + 22] = can_opp_coup ? 1.0f : 0.0f;
+        const bool can_my_coup = (state.current_phase != Phase::SETUP) && has(my_coup, i);
+        const bool can_opp_coup = (state.current_phase != Phase::SETUP) && has(opp_coup, i);
+        board[offset + 21] = can_my_coup ? 1.0f : 0.0f;
+        board[offset + 22] = can_opp_coup ? 1.0f : 0.0f;
 
-        out_buf->board_features[offset + 23] = static_cast<float>(state.ctx().node_count(i)) / 5.0f;
+        board[offset + 23] = static_cast<float>(state.ctx().node_count(i)) / 5.0f;
 
         // Influence deficit to my control: how many Ops it would take to reach control.
         const int my_def_stab = std::max(0, static_cast<int>(c_info.stability) - static_cast<int>(my_inf));
         const int my_def_margin = std::max(0, static_cast<int>(opp_inf) + static_cast<int>(c_info.stability) - static_cast<int>(my_inf));
         const int my_deficit = std::max(my_def_stab, my_def_margin);
-        out_buf->board_features[offset + 24] = std::min(static_cast<float>(my_deficit) / 5.0f, 2.0f);
+        board[offset + 24] = std::min(static_cast<float>(my_deficit) / 5.0f, 2.0f);
 
         // Influence deficit to opponent control.
         const int opp_def_stab = std::max(0, static_cast<int>(c_info.stability) - static_cast<int>(opp_inf));
         const int opp_def_margin = std::max(0, static_cast<int>(my_inf) + static_cast<int>(c_info.stability) - static_cast<int>(opp_inf));
         const int opp_deficit = std::max(opp_def_stab, opp_def_margin);
-        out_buf->board_features[offset + 25] = std::min(static_cast<float>(opp_deficit) / 5.0f, 2.0f);
+        board[offset + 25] = std::min(static_cast<float>(opp_deficit) / 5.0f, 2.0f);
     }
+
+    // The card and global blocks are written sparsely, so they start from zero.
+    std::memset(cards, 0, 110 * card_slots::V23_FEATURES * sizeof(float));
+    std::memset(globals, 0, 100 * sizeof(float));
 
     // 2. Card features (110 * 14) -- canonical (myself vs opponent).
     //
@@ -207,16 +261,16 @@ void Observation::extract(const GameState& state, Player perspective,
                  : card_slots::DECK_OR_HIDDEN;
         }
 
-        out_buf->card_features[offset + slot] = 1.0f;
+        cards[offset + slot] = 1.0f;
 
         const size_t base = card_slots::PROPERTY_BASE;
-        out_buf->card_features[offset + base + 0] = static_cast<float>(c_info.ops) / 4.0f;
+        cards[offset + base + 0] = static_cast<float>(c_info.ops) / 4.0f;
         const float rel_side = (c_info.side == my_player) ? 1.0f
                              : ((c_info.side == opp_player) ? -1.0f : 0.0f);
-        out_buf->card_features[offset + base + 1] = rel_side;
-        out_buf->card_features[offset + base + 2] = static_cast<float>(c_info.era) / 2.0f;
-        out_buf->card_features[offset + base + 3] = c_info.one_time ? 1.0f : 0.0f;
-        out_buf->card_features[offset + base + 4] = c_info.is_scoring ? 1.0f : 0.0f;
+        cards[offset + base + 1] = rel_side;
+        cards[offset + base + 2] = static_cast<float>(c_info.era) / 2.0f;
+        cards[offset + base + 3] = c_info.one_time ? 1.0f : 0.0f;
+        cards[offset + base + 4] = c_info.is_scoring ? 1.0f : 0.0f;
 
         // The card this decision belongs to. resolving_card is the card whose event is
         // executing; pending_op_card is the one whose Ops are being spent. They are usually the
@@ -258,7 +312,7 @@ void Observation::extract(const GameState& state, Player perspective,
                                : (state.headline_ussr_card == i) ? Player::USSR
                                : Player::NONE;
             if (owner != Player::NONE) {
-                float* row = &out_buf->card_features[offset];
+                float* row = &cards[offset];
                 for (size_t sl = 0; sl < 8; ++sl) row[sl] = 0.0f;
                 row[(owner == my_player) ? card_slots::MY_HAND
                                          : card_slots::KNOWN_OPPONENT_HAND] = 1.0f;
@@ -271,30 +325,30 @@ void Observation::extract(const GameState& state, Player perspective,
             }
         }
 
-        out_buf->card_features[offset + card_slots::ACTIVE_CARD] = active;
+        cards[offset + card_slots::ACTIVE_CARD] = active;
     }
 
     // 3. Global features (72 board-and-track, then the 28-float decision context).
     const float my_vp = (my_player == Player::US) ? static_cast<float>(state.victory_points) : -static_cast<float>(state.victory_points);
-    out_buf->global_features[0] = my_vp / 20.0f; // +1.0 = I am at +20 VP, -1.0 = I am at -20 VP
-    out_buf->global_features[1] = static_cast<float>(state.defcon) / 5.0f;
+    globals[0] = my_vp / 20.0f; // +1.0 = I am at +20 VP, -1.0 = I am at -20 VP
+    globals[1] = static_cast<float>(state.defcon) / 5.0f;
 
     const float my_mil_ops = static_cast<float>(my_player == Player::US ? state.us_mil_ops : state.ussr_mil_ops);
     const float opp_mil_ops = static_cast<float>(my_player == Player::US ? state.ussr_mil_ops : state.us_mil_ops);
-    out_buf->global_features[2] = my_mil_ops / 5.0f;
-    out_buf->global_features[3] = opp_mil_ops / 5.0f;
+    globals[2] = my_mil_ops / 5.0f;
+    globals[3] = opp_mil_ops / 5.0f;
 
     const float my_space = static_cast<float>(my_player == Player::US ? state.us_space_track : state.ussr_space_track);
     const float opp_space = static_cast<float>(my_player == Player::US ? state.ussr_space_track : state.us_space_track);
-    out_buf->global_features[4] = my_space / 8.0f;
-    out_buf->global_features[5] = opp_space / 8.0f;
+    globals[4] = my_space / 8.0f;
+    globals[5] = opp_space / 8.0f;
 
-    out_buf->global_features[6] = static_cast<float>(state.turn) / 10.0f;
-    out_buf->global_features[7] = static_cast<float>(state.action_round) / 8.0f;
-    out_buf->global_features[8] = (state.phasing_player == my_player) ? 1.0f : -1.0f;
-    out_buf->global_features[9] = static_cast<float>(state.current_phase) / 6.0f;
-    out_buf->global_features[10] = (state.china_card_holder == my_player) ? 1.0f : -1.0f;
-    out_buf->global_features[11] = state.china_card_playable ? 1.0f : 0.0f;
+    globals[6] = static_cast<float>(state.turn) / 10.0f;
+    globals[7] = static_cast<float>(state.action_round) / 8.0f;
+    globals[8] = (state.phasing_player == my_player) ? 1.0f : -1.0f;
+    globals[9] = static_cast<float>(state.current_phase) / 6.0f;
+    globals[10] = (state.china_card_holder == my_player) ? 1.0f : -1.0f;
+    globals[11] = state.china_card_playable ? 1.0f : 0.0f;
 
     // Bits 0..44 only. The span is global_features[12..56]: 57 and 58 are defcon_dropped_to_2
     // and ctx_stack_depth, assigned just below, so a loop to 47 would write bits 45 and 46
@@ -302,24 +356,24 @@ void Observation::extract(const GameState& state, Player perspective,
     // reaches the model through global_features[59]/[60] instead. Anything added at bit >= 45
     // needs its own feature; it will not appear here.
     for (size_t b = 0; b < 45; ++b) {
-        out_buf->global_features[12 + b] = ((state.persistent_effects & (1ULL << b)) != 0) ? 1.0f : 0.0f;
+        globals[12 + b] = ((state.persistent_effects & (1ULL << b)) != 0) ? 1.0f : 0.0f;
     }
 
-    out_buf->global_features[57] = state.defcon_dropped_to_2 ? 1.0f : 0.0f;
-    out_buf->global_features[58] = static_cast<float>(state.ctx_stack_depth) / 3.0f;
-    out_buf->global_features[59] = static_cast<float>(state.get_space_turns_used(my_player)) / 2.0f;
-    out_buf->global_features[60] = static_cast<float>(state.get_space_turns_used(opp_player)) / 2.0f;
+    globals[57] = state.defcon_dropped_to_2 ? 1.0f : 0.0f;
+    globals[58] = static_cast<float>(state.ctx_stack_depth) / 3.0f;
+    globals[59] = static_cast<float>(state.get_space_turns_used(my_player)) / 2.0f;
+    globals[60] = static_cast<float>(state.get_space_turns_used(opp_player)) / 2.0f;
 
     // Side identity.
-    out_buf->global_features[61] = (my_player == Player::US) ? 1.0f : 0.0f; // I_AM_US
+    globals[61] = (my_player == Player::US) ? 1.0f : 0.0f; // I_AM_US
 
     // Deck tracking.
-    out_buf->global_features[62] = static_cast<float>(draw_pile_cnt) / 100.0f;
-    out_buf->global_features[63] = static_cast<float>(discard_pile_cnt) / 100.0f;
+    globals[62] = static_cast<float>(draw_pile_cnt) / 100.0f;
+    globals[63] = static_cast<float>(discard_pile_cnt) / 100.0f;
 
     // Real-time regional scoring VP differentials for the 6 regions.
     for (size_t r = 0; r < 6; ++r) {
-        auto summary = Scoring::evaluate_region(state, static_cast<Region>(r));
+        auto summary = Scoring::evaluate_region_with_control(state, static_cast<Region>(r), control);
         int16_t net = summary.net_delta;
         // Europe Control ends the game, but its control_vp is 0 against domination_vp 7, so
         // net_delta ranks a won position *below* a dominated one -- about 6 against 12 once
@@ -330,49 +384,49 @@ void Observation::extract(const GameState& state, Player perspective,
             else if (summary.ussr_status == RegionalStatus::CONTROL)  net = -20;
         }
         const float my_region_vp = (my_player == Player::US) ? static_cast<float>(net) : -static_cast<float>(net);
-        out_buf->global_features[64 + r] = std::clamp(my_region_vp / 20.0f, -1.0f, 1.0f);
+        globals[64 + r] = std::clamp(my_region_vp / 20.0f, -1.0f, 1.0f);
     }
 
-    out_buf->global_features[70] = static_cast<float>(opp_hand_cnt) / 10.0f;
-    out_buf->global_features[71] = static_cast<float>(my_hand_cnt) / 10.0f;
+    globals[70] = static_cast<float>(opp_hand_cnt) / 10.0f;
+    globals[71] = static_cast<float>(my_hand_cnt) / 10.0f;
 
     // 4. Decision context. Every field here is a pure function of the state, so an observation
     // remains reproducible from a GameState alone -- which is what lets a run branch from a
     // snapshot, and what any decision-time search will need.
     const size_t dt = static_cast<size_t>(ctx.decision_type);
-    if (dt < 8) out_buf->global_features[ctx_slots::DECISION_TYPE + dt] = 1.0f;
+    if (dt < 8) globals[ctx_slots::DECISION_TYPE + dt] = 1.0f;
 
     // op_mode is only meaningful while an Op is being spent; SELECT_OP_MODE is where it is
     // chosen, and before that the field holds whatever the last Op left. Gate on there being a
     // pending Op so it reads as "no mode" rather than as a stale one.
     if (ctx.pending_op_card != 0 || ctx.decision_type == DecisionType::POINT_NODE) {
         const size_t om = static_cast<size_t>(ctx.op_mode);
-        if (om < 3) out_buf->global_features[ctx_slots::OP_MODE + om] = 1.0f;
+        if (om < 3) globals[ctx_slots::OP_MODE + om] = 1.0f;
     }
 
-    out_buf->global_features[ctx_slots::REMAINING_STEPS]    = static_cast<float>(ctx.remaining_steps) / 7.0f;
-    out_buf->global_features[ctx_slots::PENDING_OPS_VALUE]  = static_cast<float>(ctx.pending_ops_value) / 5.0f;
-    out_buf->global_features[ctx_slots::MAX_PER_COUNTRY]    = static_cast<float>(ctx.max_per_country) / 5.0f;
+    globals[ctx_slots::REMAINING_STEPS]    = static_cast<float>(ctx.remaining_steps) / 7.0f;
+    globals[ctx_slots::PENDING_OPS_VALUE]  = static_cast<float>(ctx.pending_ops_value) / 5.0f;
+    globals[ctx_slots::MAX_PER_COUNTRY]    = static_cast<float>(ctx.max_per_country) / 5.0f;
     // Compatibility, until the observation is next revised: an influence Ops play reads 1 here,
     // as it did when it could stop with points unspent, although CONFIRM_DONE is no longer
     // offered in it. Every checkpoint so far saw 1 there; the mask is what tells a model the stop
     // is gone. The engine's own flag is truthful -- it is only this slot that keeps the old value.
-    out_buf->global_features[ctx_slots::ALLOW_EARLY_STOP]   =
+    globals[ctx_slots::ALLOW_EARLY_STOP]   =
         (ctx.allow_early_stop || ctx.is_ops_influence_play()) ? 1.0f : 0.0f;
     // 255 means "no branch chosen", which is neither of these.
-    out_buf->global_features[ctx_slots::TIMING_OPS_FIRST]   = (ctx.timing_branch == 0) ? 1.0f : 0.0f;
-    out_buf->global_features[ctx_slots::TIMING_EVENT_FIRST] = (ctx.timing_branch == 1) ? 1.0f : 0.0f;
-    out_buf->global_features[ctx_slots::EVENT_GRANTED_OPS]  = ctx.event_granted_ops ? 1.0f : 0.0f;
-    out_buf->global_features[ctx_slots::SUPPRESS_OP_EVENT]  = ctx.suppress_op_card_event ? 1.0f : 0.0f;
+    globals[ctx_slots::TIMING_OPS_FIRST]   = (ctx.timing_branch == 0) ? 1.0f : 0.0f;
+    globals[ctx_slots::TIMING_EVENT_FIRST] = (ctx.timing_branch == 1) ? 1.0f : 0.0f;
+    globals[ctx_slots::EVENT_GRANTED_OPS]  = ctx.event_granted_ops ? 1.0f : 0.0f;
+    globals[ctx_slots::SUPPRESS_OP_EVENT]  = ctx.suppress_op_card_event ? 1.0f : 0.0f;
 
     // Headline stage and resolution order. Which card resolves first is a mechanic (Space box 4
     // lets a player see the opponent's headline before choosing), and none of this reached the
     // model before.
-    out_buf->global_features[ctx_slots::HEADLINE_STAGE] =
+    globals[ctx_slots::HEADLINE_STAGE] =
         static_cast<float>(state.headline_stage) / 3.0f;
-    out_buf->global_features[ctx_slots::HEADLINE_FIRST_MINE] =
+    globals[ctx_slots::HEADLINE_FIRST_MINE] =
         (state.headline_first_owner == my_player) ? 1.0f : 0.0f;
-    out_buf->global_features[ctx_slots::HEADLINE_SECOND_MINE] =
+    globals[ctx_slots::HEADLINE_SECOND_MINE] =
         (state.headline_second_owner == my_player) ? 1.0f : 0.0f;
 
     // Chernobyl's forbidden region, one-hot. All zero when it is not in play.
@@ -380,8 +434,17 @@ void Observation::extract(const GameState& state, Player perspective,
         const size_t ch = static_cast<size_t>(
             (state.persistent_effects & effect_bits::CHERNOBYL_REGION_MASK)
             >> effect_bits::CHERNOBYL_REGION_SHIFT);
-        if (ch < 6) out_buf->global_features[ctx_slots::CHERNOBYL_REGION + ch] = 1.0f;
+        if (ch < 6) globals[ctx_slots::CHERNOBYL_REGION + ch] = 1.0f;
     }
+}
+
+}  // namespace
+
+void Observation::extract(const GameState& state, Player perspective,
+                          ObservationBufferV23* out_buf) noexcept {
+    if (!out_buf) return;
+    extract_into(state, perspective, out_buf->board_features, out_buf->card_features,
+                 out_buf->global_features);
 }
 
 void extract_observation(const GameState& state, Player perspective,
@@ -405,9 +468,11 @@ float ops_modifier(const GameState& state, Player p) noexcept {
 
 size_t extract_observation_features(const GameState& state, Player perspective, uint32_t features,
                                     float* out) noexcept {
-    ObservationBufferV23 ob;
-    Observation::extract(state, perspective, &ob);
-    std::memcpy(out, reinterpret_cast<const float*>(&ob), OBS_SIZE_V23 * sizeof(float));
+    // Straight into `out`: building it in an ObservationBufferV23 and copying it across cost a
+    // tenth of the observation (0.8 of 7.7 us).
+    static_assert(OBS_SIZE_V23 == 84 * V23_BOARD_FEATURES + 110 * card_slots::V23_FEATURES + 100);
+    extract_into(state, perspective, out, out + 84 * V23_BOARD_FEATURES,
+                 out + 84 * V23_BOARD_FEATURES + 110 * card_slots::V23_FEATURES);
     size_t at = OBS_SIZE_V23;
     if (features & obs_features::OPS_BUDGET) {
         const auto& ctx = state.ctx();

@@ -345,14 +345,29 @@ per-card bit serving one card costs 84 or 110 floats), and a partial feature is 
 
 **An approved addition is an appended block, not an edit of the base.** `obs_features` (in
 `include/ts/game_state.hpp`) names each optional block by a bit and gives its width
-(`extra_width`); `extract_observation_features` (`src/observation.cpp`) writes the base through
-`Observation::extract`, unchanged, then each requested block in bit order. Bit 0 is retired with
+(`extra_width`); `extract_observation_features` (`src/observation.cpp`) writes the base -- the
+same code as `Observation::extract`, straight into the caller's buffer -- then each requested
+block in bit order. Bit 0 is retired with
 `STAGED_CARDS` and never reused. A new block takes the next bit, appends after the existing ones,
 and is mirrored in `ai/models/ladder_net.OBS_FEATURE_WIDTHS` (a test compares the two). Blocks:
 
 | bit | name | width | contents |
 |:---|:---|---:|:---|
 | 1<<1 | `OPS_BUDGET` | 3 | at SELECT_PLAY_MODE, `Operations::grant_ops_for_card(pending_op_card, decider)/5`, else 0; my per-card Ops modifier; the opponent's (Containment/Brezhnev +1, Red Scare/Purge −1, summed) |
+
+**How the extractor avoids repeating itself (2026-10-06).** A search builds an observation for
+every leaf, so its cost is most of a search's CPU. The extractor computes each country's control
+once and reads it everywhere: the control features, the realignment modifier's neighbour counts
+(from a list of the 112 borders, each added to both ends -- `MapTest.NeighbourListsAreSymmetricWithoutRepeats`
+pins what that relies on), and the regional scoring (`Scoring::evaluate_region_with_control`,
+which also walks a region's own countries by mask rather than all 84). Placement and coup
+legality come from `Operations::placeable_countries` / `coupable_countries`, the single-country
+rules called in a loop in `ops.cpp`. The static board features (stability, battleground,
+adjacency, region) are copied from a per-side table built once. Measured on 2,439 positions of
+the E7 network's games: 7.7 µs per observation before, 4.6 µs after; the output did not change by
+a bit on 318,198 observations from 600 whole random games and those positions, both sides
+(compared against the previous function, verbatim). Any change here must stay bit-identical:
+`tests/engine_logic/test_observation_golden.py` pins it.
 
 ---
 

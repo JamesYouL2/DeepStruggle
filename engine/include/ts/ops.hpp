@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include "types.hpp"
 #include "game_state.hpp"
@@ -61,6 +62,13 @@ public:
 
     // Coup Attempts
     static bool can_coup(const GameState& state, Player p, uint8_t country_id) noexcept;
+
+    // can_place_influence and can_coup for all 84 countries at once, as masks (country i is bit
+    // i % 64 of word i / 64): the same functions, called in a loop in their own translation unit,
+    // where the compiler can inline them and lift what does not depend on the country. For the
+    // observation, which asks both for every country from both sides.
+    static std::array<uint64_t, 2> placeable_countries(const GameState& state, Player p) noexcept;
+    static std::array<uint64_t, 2> coupable_countries(const GameState& state, Player p) noexcept;
     static CoupResult execute_coup(GameState& state, Player p, uint8_t country_id, uint8_t ops_value, uint8_t forced_roll = 0) noexcept;
 
     // Realignment Rolls

@@ -3,6 +3,7 @@
 #include "ts/map_data.hpp"
 #include "ts/constants.hpp"
 #include <algorithm>
+#include <bit>
 
 namespace ts {
 
@@ -36,8 +37,10 @@ struct ScoringAdjustments {
     bool formosan_resolution;  // Taiwan is a battleground while the event stands
 };
 
+// `control`, when given, is get_country_control for each of the 84 countries.
 RegionScoreSummary evaluate_region_impl(const GameState& state, Region r,
-                                        ScoringAdjustments adjust) noexcept;
+                                        ScoringAdjustments adjust,
+                                        const Player* control = nullptr) noexcept;
 
 } // namespace
 
@@ -45,6 +48,11 @@ RegionScoreSummary Scoring::evaluate_region(const GameState& state, Region r, bo
     // Shuttle Diplomacy "does not count for Final Scoring"; Formosan Resolution's Deluxe text
     // extends it to Final Scoring explicitly.
     return evaluate_region_impl(state, r, ScoringAdjustments{!is_final_scoring, true});
+}
+
+RegionScoreSummary Scoring::evaluate_region_with_control(const GameState& state, Region r,
+                                                         const Player* control) noexcept {
+    return evaluate_region_impl(state, r, ScoringAdjustments{true, true}, control);
 }
 
 bool Scoring::dominates_or_controls(const GameState& state, Region r, Player p) noexcept {
@@ -60,21 +68,28 @@ bool Scoring::dominates_or_controls(const GameState& state, Region r, Player p) 
 namespace {
 
 RegionScoreSummary evaluate_region_impl(const GameState& state, Region r,
-                                        ScoringAdjustments adjust) noexcept {
+                                        ScoringAdjustments adjust, const Player* control) noexcept {
     RegionScoreSummary summary{};
     if (r == Region::NONE_REGION) return summary;
+    auto control_of = [&](uint8_t cid) {
+        return control ? control[cid] : Scoring::get_country_control(state, cid);
+    };
 
     bool taiwan_is_bg = (adjust.formosan_resolution && r == Region::ASIA &&
                          state.has_flag(effect_bits::FORMOSAN_RESOLUTION_ACTIVE) &&
-                         Scoring::is_controlled_by(state, countries::TAIWAN, Player::US));
+                         control_of(countries::TAIWAN) == Player::US);
 
     uint8_t total_bg = MapData::get_region_battleground_count(r) + (taiwan_is_bg ? 1 : 0);
 
-    for (uint8_t cid = 0; cid < 84; ++cid) {
+    // The region's own countries, in ascending order, from its mask (built from each country's
+    // region, so these are exactly the countries whose region is r) -- not all 84 with a test.
+    const auto& region_mask = MapData::get_region_mask(r);
+    for (size_t word = 0; word < 2; ++word)
+    for (uint64_t bits = region_mask[word]; bits != 0; bits &= bits - 1) {
+        const uint8_t cid = static_cast<uint8_t>(word * 64 + std::countr_zero(bits));
         const auto& c_info = MapData::get_country(cid);
-        if (c_info.region != r) continue;
 
-        Player ctrl = Scoring::get_country_control(state, cid);
+        Player ctrl = control_of(cid);
         bool is_bg = c_info.battleground || (cid == countries::TAIWAN && taiwan_is_bg);
 
         if (ctrl == Player::US) {

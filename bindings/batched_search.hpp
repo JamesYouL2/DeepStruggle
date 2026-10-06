@@ -201,9 +201,9 @@ public:
             t.path.clear();
             // Each round adds at most one node, so this never reallocates during the search, and
             // the vectors keep their capacity from one reset to the next -- unless it is more than
-            // twice what this search can use. A node holds a whole GameState (4 KB), so a tree
+            // twice what this search can use. A node holds a whole GameState (1.5 KB), so a tree
             // that once searched 256 simulations and now searches 10 would otherwise keep a
-            // megabyte it never touches again.
+            // third of a megabyte it never touches again.
             t.budget = std::max<int64_t>(0, simulations[i]);
             const size_t need = static_cast<size_t>(t.budget) + 1;
             if (t.nodes.capacity() > 2 * need) {

@@ -20,6 +20,24 @@ TEST(MapTest, AdjacencySymmetry) {
     }
 }
 
+// The observation counts each country's controlled neighbours from a list of borders, each border
+// once, added to both ends (engine/src/observation.cpp). That equals walking every country's own
+// neighbour list only if the lists are mutually symmetric and repeat no one.
+TEST(MapTest, NeighbourListsAreSymmetricWithoutRepeats) {
+    for (uint8_t i = 0; i < 84; ++i) {
+        const auto& c = ts::MapData::get_country(i);
+        for (uint8_t n = 0; n < c.num_neighbors; ++n) {
+            const uint8_t j = c.neighbors[n];
+            ASSERT_TRUE(j < 84 && j != i);
+            for (uint8_t m = 0; m < n; ++m) ASSERT_TRUE(c.neighbors[m] != j);
+            const auto& d = ts::MapData::get_country(j);
+            int back = 0;
+            for (uint8_t m = 0; m < d.num_neighbors; ++m) back += d.neighbors[m] == i;
+            ASSERT_EQ(back, 1);
+        }
+    }
+}
+
 TEST(MapTest, SuperpowerAdjacency) {
     // US: Canada(0), Japan(45), Mexico(64), Cuba(71)
     ASSERT_TRUE(ts::MapData::is_adjacent_to_superpower(ts::countries::CANADA, ts::Player::US));
