@@ -1,0 +1,168 @@
+# The card and placement censuses of a model's self-play under search (tools/scripts/event_play_census.py
+# --agent, with --placement-dump), for comparison with the human corpus done locally
+# (event_census_compare.py, placement_census.py --compare; the corpus is not on GitHub).
+#
+#   gh workflow run census_search.yml --ref exp/human-census -f games=4096 -f runners=20
+#   gh run download <run-id> -n census-search-<run-id> -D data/reports/ci/census_search
+#
+# plan -- pins `newest` (the workbench's rule: the .onnx on Hugging Face whose last commit is latest)
+#         to one file, so every runner plays the same model;
+# run  -- each runner rebuilds the torch checkpoint the searcher needs from that export
+#         (tools/onnx_to_checkpoint.py, which refuses unless it reproduces the export) and plays its
+#         share of the games, seeds disjoint across parts;
+# pool -- concatenates the parts' dumps and tabulates the bot side.
+name: census-search
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/human-census]
+    paths: [.github/workflows/census_search.yml]
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: "load_agent spec; {model} is the rebuilt checkpoint"
+        default: "gumbel:{model}:32:4"
+      model:
+        description: "`newest` or a .onnx path in the Hugging Face repo"
+        default: "newest"
+      template:
+        description: ".pt in the repo with the model's architecture (onnx_to_checkpoint --template)"
+        default: "shallow_E7-02+03+04+05_1200M.pt"
+      games:
+        description: "Self-play games in all"
+        default: "4096"
+      runners:
+        description: "Runners (a free public repo runs up to 20 jobs at once)"
+        default: "20"
+      hf_repo:
+        description: "Hugging Face repo"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  AGENT: ${{ inputs.agent || 'gumbel:{model}:32:4' }}
+  MODEL: ${{ inputs.model || 'newest' }}
+  TEMPLATE: ${{ inputs.template || 'shallow_E7-02+03+04+05_1200M.pt' }}
+  GAMES: ${{ inputs.games || '4096' }}
+  RUNNERS: ${{ inputs.runners || '20' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      file: ${{ steps.pin.outputs.file }}
+      parts: ${{ steps.pin.outputs.parts }}
+    steps:
+      - id: pin
+        shell: python
+        run: |
+          import json, os, urllib.request
+          repo, model = os.environ["HF_REPO"], os.environ["MODEL"]
+          if model == "newest":
+              url = f"https://huggingface.co/api/models/{repo}/tree/main?recursive=true&expand=true"
+              entries = json.load(urllib.request.urlopen(url, timeout=60))
+              files = [(e["path"], (e.get("lastCommit") or {}).get("date") or "") for e in entries
+                       if e.get("type") == "file" and e["path"].endswith(".onnx")]
+              files.sort(key=lambda f: f[0])
+              files.sort(key=lambda f: f[1], reverse=True)
+              model = files[0][0]
+          n = int(os.environ["RUNNERS"])
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"file={model}\n")
+              f.write(f"parts={json.dumps(list(range(1, n + 1)))}\n")
+          print(f"model: {model}; {n} parts")
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Fetch the model and the template
+        env:
+          FILE: ${{ needs.plan.outputs.file }}
+        run: |
+          mkdir -p data/checkpoints/hf
+          for f in "$FILE" "$TEMPLATE"; do
+            curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$f")" "https://huggingface.co/$HF_REPO/resolve/main/$f"
+          done
+      - name: Rebuild the checkpoint from the export
+        env:
+          FILE: ${{ needs.plan.outputs.file }}
+        run: |
+          onnx="data/checkpoints/hf/$(basename "$FILE")"
+          python tools/onnx_to_checkpoint.py --onnx "$onnx" --template "data/checkpoints/hf/$(basename "$TEMPLATE")" \
+            --out "${onnx%.onnx}.pt"
+      - name: Census (part ${{ matrix.part }})
+        env:
+          FILE: ${{ needs.plan.outputs.file }}
+          PART: ${{ matrix.part }}
+        run: |
+          pt="data/checkpoints/hf/$(basename "${FILE%.onnx}").pt"
+          agent="${AGENT//\{model\}/$pt}"
+          # games split as evenly as the parts allow; seeds 100,000 apart, so no two parts share one
+          games=$(( GAMES / RUNNERS + (PART <= GAMES % RUNNERS ? 1 : 0) ))
+          mkdir -p out
+          python tools/scripts/event_play_census.py --agent "$agent" --games "$games" --batch 64 \
+            --seed $(( 55000 + 100000 * PART )) \
+            --dump "out/holdings-$PART.json" --placement-dump "out/placement-$PART.json" > "out/part-$PART.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: census-search-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  pool:
+    needs: [plan, run]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: census-search-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool
+        env:
+          FILE: ${{ needs.plan.outputs.file }}
+        run: |
+          mkdir -p report
+          python - <<'EOF'
+          import glob, json
+          for kind, key in (("holdings", "holdings"), ("placement", "records")):
+              games, rows = 0, []
+              for f in sorted(glob.glob(f"parts/{kind}-*.json")):
+                  d = json.load(open(f))
+                  games += int(d["games"])
+                  rows += d[key]
+              json.dump({"games": games, key: rows}, open(f"report/{kind}.json", "w"))
+              print(kind, games, "games", len(rows), key)
+          EOF
+          python tools/scripts/event_play_census.py --merge report/holdings.json --output-md report/census.md > /dev/null
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(cat build/release/.engine_fingerprint)"
+            echo "model: $HF_REPO $FILE (rebuilt with tools/onnx_to_checkpoint.py from $TEMPLATE)"
+            echo "agent: $AGENT  games: $GAMES  runners: $RUNNERS"
+          } > report/provenance.txt
+          cat report/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: census-search-${{ github.run_id }}
+          path: report/
+          retention-days: 90
