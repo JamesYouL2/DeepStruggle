@@ -133,6 +133,7 @@ class HoldingTracker:
         self.held: Dict[int, int] = {}                     # card -> side, as of the last decision
         self.latest: Dict[int, Holding] = {}               # card -> its latest holding
         self.selected: Optional[Tuple[int, int]] = None    # (card, side) chosen for an action round
+        self.turn = 0                                      # the turn of the last decision seen
 
     def _spent(self, st: ts.GameState, card: int, outcome: str, a: int) -> None:
         h = self.latest[card]
@@ -142,6 +143,7 @@ class HoldingTracker:
             h.pos = position_token(st)
 
     def observe(self, st: ts.GameState, a: int) -> None:
+        self.turn = int(st.turn)
         now = _holdings_now(st)
         for c, side in now.items():                        # a card entering a hand
             if self.held.get(c) != side:
@@ -282,7 +284,9 @@ def corpus_map(work: Callable[[str], Any], workers: int, limit: int = 0) -> List
 def _human_game(path: str) -> Tuple[List[List[Any]], str]:
     """One corpus game's holdings, dumped, and its status. A game whose record stops early loses
     the holdings still open at its last decision -- how they ended is unknown, and counting them
-    as kept would invent an outcome the log never shows."""
+    as kept would invent an outcome the log never shows -- and everything spent in the turn it
+    stops in: that turn's early rounds are recorded and its late ones are not, so keeping them
+    would tilt the timing toward early rounds."""
     import gzip
     with gzip.open(path, "rt") as f:
         replay_id = int(json.load(f).get("replay_id", 0))
@@ -291,7 +295,7 @@ def _human_game(path: str) -> Tuple[List[List[Any]], str]:
     hs = tracker.holdings
     if status == "partial":
         open_ = {id(tracker.latest[c]) for c in tracker.held if c in tracker.latest}
-        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_)]
+        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_) and h.turn != tracker.turn]
     return ([dump_holding(h) for h in hs] if status != "skipped" else []), status
 
 
