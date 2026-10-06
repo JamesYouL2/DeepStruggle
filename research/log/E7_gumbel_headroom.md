@@ -84,6 +84,29 @@ tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/pyth
   --output-report gumbel_headroom.md --output-json gumbel_headroom.json
 ```
 
+## Budgets on the newest networks (2026-10-06): 256 is worth +12 ± 3 Elo over 64
+
+The three budgets again on the newest single checkpoint, E7-20-44-4390M.46 at 4,800M (sha256
+`84f05bb4…`), and the soup of E7-20-44 and its two seed branches at 4,800M
+(`soup_E7-20-44+4390M.45+4390M.46_4800M.pt`, `ef6f6384…`): the network and Gumbel k=4 @16, k=4 @64
+and k=8 @256, 12,000 greedy games each, 1,000 per side per pair (reports
+`data/reports/e7_gumbel_budget_{4390M46_4800,soup4800}.{md,json}`). Head-to-head Elo, draws as half, ±1 standard error, with the three networks above:
+
+| network | k=8 @256 vs k=4 @64 | k=4 @64 vs k=4 @16 | k=8 @256 vs network | k=4 @64 vs network | k=4 @16 vs network |
+|:---|---:|---:|---:|---:|---:|
+| SWA 4,640-4,720M | +8 ± 8 | +41 ± 8 | +56 ± 8 | +71 ± 8 | +30 ± 8 |
+| SWA 4,720-4,800M | +8 ± 8 | +23 ± 8 | +68 ± 8 | +55 ± 8 | +41 ± 8 |
+| E7-20-44 @4,800M | +15 ± 8 | +9 ± 8 | +60 ± 8 | +55 ± 8 | +41 ± 8 |
+| 4390M.46 @4,800M | +13 ± 8 | +24 ± 8 | +76 ± 8 | +78 ± 8 | +39 ± 8 |
+| soup @4,800M | +14 ± 8 | +13 ± 8 | +69 ± 8 | +45 ± 8 | +24 ± 8 |
+| **pooled, 5 networks** | **+12 ± 3** | **+22 ± 3** | **+66 ± 4** | **+61 ± 4** | **+35 ± 3** |
+
+Every network puts k=8 @256 above k=4 @64, by 8 to 15 Elo: the larger budget is a small, real
+gain, at four times the network evaluations. Search is worth
+less over the soup at 64 (+45, against +55 to +78 elsewhere) and about the same at 256; one
+network, inside two standard errors of the others' spread. Each column is relative to that
+network itself -- these say nothing about how the networks compare with each other.
+
 ## The fork's first measurement (2026-10-05)
 
 The question and the root came from the DeepStruggle fork, which measured it first on its own CI
