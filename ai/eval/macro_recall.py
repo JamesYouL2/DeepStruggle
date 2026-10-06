@@ -145,7 +145,10 @@ def probe(model: torch.nn.Module, positions: Sequence[ts.GameState], micro_specs
     # Micro-action searchers, stepped to the end of the macro.
     for name, agent in micro_specs.items():
         r0, t0 = rows(), time.time()
-        got = searcher_macros(agent, net, positions)
+        # In chunks: a searcher's trees hold game states, and hundreds of positions at once
+        # exhausted a 16 GB runner.
+        got = [x for lo in range(0, len(positions), 64)
+               for x in searcher_macros(agent, net, positions[lo:lo + 64])]
         cost[name] = {"rows": rows() - r0, "seconds": time.time() - t0}
         for i, (acts, key, lp) in enumerate(got):
             recs[i][name] = {"len": len(acts), "logp": lp, "greedy": key.hex() == recs[i]["greedy_key"],

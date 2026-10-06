@@ -104,6 +104,8 @@ class MacroSearchConfig:
     determinize: bool = True
     auto_advance: bool = True
     seed: int = 12345
+    #: Positions searched at once (memory, not results: each position's search is independent).
+    chunk: int = 16
 
 
 @dataclass
@@ -457,9 +459,18 @@ class MacroSearch:
 
     def search(self, states: Sequence[ts.GameState]) -> List[Tuple[List[Macro], List[float]]]:
         """Per position: its root candidates and each one's mean value for the root decider
-        (-inf where it could not be played in any world)."""
-        cfg = self.cfg
+        (-inf where it could not be played in any world). Positions are searched `chunk` at a
+        time: every node of a search holds a game state, so memory grows with the batch (depth 3
+        over a few hundred positions at once exhausted a 16 GB runner)."""
         states = list(states)
+        n = max(1, self.cfg.chunk)
+        out: List[Tuple[List[Macro], List[float]]] = []
+        for lo in range(0, len(states), n):
+            out.extend(self._search(states[lo:lo + n]))
+        return out
+
+    def _search(self, states: List[ts.GameState]) -> List[Tuple[List[Macro], List[float]]]:
+        cfg = self.cfg
         cands = self.gen.candidates(states, cfg.k)
         movers = [int(acting_player(s)) for s in states]
         # (position, candidate, world) -> the node after that candidate in that world.
