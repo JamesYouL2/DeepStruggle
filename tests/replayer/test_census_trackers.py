@@ -62,3 +62,24 @@ def test_placement_records_only_action_round_ops_into_countries() -> None:
     assert len(t.records) > 50
     for side, turn, cid, held in t.records:
         assert side in (1, -1) and 1 <= turn <= 10 and cid in COUNTRY and held >= 0
+
+
+class _Hands:
+    def __init__(self) -> None:
+        self.turns: set = set()
+        self.largest = 0
+
+    def observe(self, st: ts.GameState, a: int) -> None:
+        self.turns.add(int(st.turn))
+        for side in (ts.Player.US, ts.Player.USSR):
+            n = sum(1 for c in range(1, 111) if ts.in_hand_of(st.get_card_location(c), side))
+            self.largest = max(self.largest, n)
+
+
+def test_the_turn_a_record_stops_in_never_reaches_a_tracker() -> None:
+    # Replay 147's record stops in turn 9, where the converter has only a fragment of the hands:
+    # fed that turn, a tracker saw the USSR holding 14 cards at AR1.
+    t = _Hands()
+    assert feed_corpus_game(os.path.join(str(corpus_dir()), "147.json.gz"), t) == "partial"
+    assert max(t.turns) == 8
+    assert t.largest <= 10                          # nine cards and the China Card

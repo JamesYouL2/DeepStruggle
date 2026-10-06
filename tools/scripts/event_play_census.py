@@ -285,8 +285,19 @@ def play(logits_fn: LogitsFn, obs_features: int, games: int, seed: int, batch: i
             for h in t.holdings]
 
 
+def untrusted_turn(conv: Any) -> Optional[int]:
+    """The first turn of a converted game whose positions are not to be trusted, or None. Where the
+    record stops mid-turn (`truncated_at`) or the conversion fails (`failure`), the converter has
+    only a fragment of that turn's hands, and positions from it can hold cards nobody held -- replay
+    147, turn 9: the USSR with 14 cards. The converter keeps such a turn out of its training data;
+    every consumer of its decisions must do the same."""
+    turns = [int(m.turn) for m in (conv.truncated_at, conv.failure) if m is not None]
+    return min(turns) if turns else None
+
+
 def feed_corpus_game(path: str, tracker: Any) -> str:
-    """One corpus game through the converter, each human decision fed to `tracker.observe`:
+    """One corpus game through the converter, each human decision fed to `tracker.observe` --
+    those before `untrusted_turn` only, so the decisions are held until the conversion ends:
     "skipped" (not convertible), "complete", or "partial" (the record stops early, or the
     conversion fails part-way, so the game's end is not seen)."""
     import gzip
@@ -294,9 +305,14 @@ def feed_corpus_game(path: str, tracker: Any) -> str:
 
     with gzip.open(path, "rt") as f:
         game = json.load(f)
-    conv = convert_game(game, on_decision=lambda st, mover, entry, chosen: tracker.observe(st, int(chosen)))
+    held: List[Tuple[ts.GameState, int]] = []
+    conv = convert_game(game, on_decision=lambda st, mover, entry, chosen: held.append((st, int(chosen))))
     if conv.skipped:
         return "skipped"
+    cut = untrusted_turn(conv)
+    for st, a in held:
+        if cut is None or int(st.turn) < cut:
+            tracker.observe(st, a)
     return "complete" if conv.game_ended and conv.failure is None and conv.truncated_at is None else "partial"
 
 
@@ -314,10 +330,10 @@ def corpus_map(work: Callable[[str], Any], workers: int, limit: int = 0) -> List
 
 def _human_game(path: str) -> Tuple[List[List[Any]], str]:
     """One corpus game's holdings, dumped, and its status. A game whose record stops early loses
-    the holdings still open at its last decision -- how they ended is unknown, and counting them
-    as kept would invent an outcome the log never shows -- and everything spent in the turn it
-    stops in: that turn's early rounds are recorded and its late ones are not, so keeping them
-    would tilt the timing toward early rounds."""
+    the holdings still open at its last trusted decision: how they ended is unknown, and counting
+    them as kept would invent an outcome the log never shows. The turn the record stops in never
+    reaches the tracker (`untrusted_turn`), so the turns that do are complete and their timing is
+    not tilted toward early rounds."""
     import gzip
     with gzip.open(path, "rt") as f:
         replay_id = int(json.load(f).get("replay_id", 0))
@@ -326,7 +342,7 @@ def _human_game(path: str) -> Tuple[List[List[Any]], str]:
     hs = tracker.holdings
     if status == "partial":
         open_ = {id(tracker.latest[c]) for c in tracker.held if c in tracker.latest}
-        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_) and h.turn != tracker.turn]
+        hs = [h for h in hs if not (h.outcome == "kept" and id(h) in open_)]
     return ([dump_holding(h) for h in hs] if status != "skipped" else []), status
 
 

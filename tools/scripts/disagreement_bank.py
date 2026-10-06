@@ -212,12 +212,13 @@ PART_ROWS = 8000
 
 
 def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float,
-         clarity: Sequence[str] = (), playouts: Sequence[str] = ()) -> int:
+         clarity: Sequence[str] = (), playouts: Sequence[str] = (), exclude: Optional[str] = None) -> int:
     """Merge banks into the review page's data, deduplicated by position: one file per pattern
     (`bank-<pattern>.json`, so the page can load the large human-alone set only when asked) and a
     `manifest.json` of their sizes."""
     import os
     os.makedirs(out_dir, exist_ok=True)
+    skip = set(json.load(open(exclude))) if exclude else set()
     seen: Dict[str, Dict[str, Any]] = {}
     total = 0
     for path in banks:
@@ -226,6 +227,8 @@ def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float,
                 r = json.loads(line)
                 total += 1
                 if r["pattern"] == "human-alone" and r["p_human"] >= human_alone_max_p:
+                    continue
+                if row_id(r) in skip:
                     continue
                 seen.setdefault(row_id(r), r)
     def read(paths: Sequence[str]) -> Dict[str, Dict[str, Any]]:
@@ -273,6 +276,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--pack", nargs="+", default=None, metavar="BANK",
                     help="instead of scanning: merge these banks into --out as the review page's data file")
     ap.add_argument("--clarity", nargs="*", default=[], help="--pack: bank_clarity.py outputs to merge in")
+    ap.add_argument("--exclude", default=None, help="--pack: a JSON list of row ids to leave out")
     ap.add_argument("--playouts", nargs="*", default=[], help="--pack: bank_playouts.py outputs to merge in")
     ap.add_argument("--human-alone-max-p", type=float, default=1.0,
                     help="--pack keeps a human-alone row only when the network gave the human's move less")
@@ -287,7 +291,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="skip the games --out already holds (their counts are kept in <out>.games.jsonl)")
     a = ap.parse_args(argv)
     if a.pack:
-        return pack(a.pack, a.out, a.human_alone_max_p, a.clarity, a.playouts)
+        return pack(a.pack, a.out, a.human_alone_max_p, a.clarity, a.playouts, a.exclude)
     if not a.net or not a.search:
         ap.error("--net and --search are required unless --pack is given")
     k, n = (int(x) for x in a.part.split("/"))
