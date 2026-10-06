@@ -1,0 +1,135 @@
+# Step 0 of the macro-search experiment (tools/macro_probe.py): does the network's beam of complete
+# decisions hold the macro Gumbel k = 8 @ 256 plays, where does each macro search's choice rank,
+# and what does each method cost?
+#
+#   gh workflow run macro_probe.yml --ref exp/macro-search -f games=40 -f runners=8
+#   gh run download <run-id> -n macro-probe-<run-id> -D data/reports/ci
+#
+# Each runner samples macro starts from `games` greedy self-play games of its own seed (its part
+# number); the pool job merges the parts into one report.
+name: macro-probe
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/macro-search]
+    paths: [.github/workflows/macro_probe.yml]
+  workflow_dispatch:
+    inputs:
+      games:
+        description: "Greedy self-play games per runner to sample positions from"
+        default: "40"
+      rate:
+        description: "Share of macro starts kept"
+        default: "0.1"
+      runners:
+        description: "Runners (each samples different deals)"
+        default: "8"
+      model:
+        description: "A torch checkpoint: hf:relpt:<tag>/<file>.pt or hf:pt:<file>.pt (tools/fetch_hf_model.py)"
+        default: "hf:relpt:e7-20-44-soups/C2_soup+A.pt"
+      micro:
+        description: "Micro-action searchers, NAME=search:MODEL:... (MODEL is replaced by the checkpoint)"
+        default: "gumbel256=search:MODEL:256:determinize:all:gumbel_k=8:gumbel_scale=0:fpu_reduction=0.2"
+      macro:
+        description: "Macro-search settings, NAME=field=value,... (MacroSearchConfig)"
+        default: "d1=depth=1 d2=depth=2 d2_prior=depth=2,prior_weight=0.03 d3=depth=3"
+      hf_repo:
+        description: "Hugging Face repo for hf:pt: files"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GAMES: ${{ inputs.games || '40' }}
+  RATE: ${{ inputs.rate || '0.1' }}
+  RUNNERS: ${{ inputs.runners || '8' }}
+  MODEL: ${{ inputs.model || 'hf:relpt:e7-20-44-soups/C2_soup+A.pt' }}
+  MICRO: ${{ inputs.micro || 'gumbel256=search:MODEL:256:determinize:all:gumbel_k=8:gumbel_scale=0:fpu_reduction=0.2' }}
+  MACRO: ${{ inputs.macro || 'd1=depth=1 d2=depth=2 d2_prior=depth=2,prior_weight=0.03 d3=depth=3' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+    steps:
+      - name: List the parts
+        id: plan
+        run: python3 -c "import json,os; print('parts=' + json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - name: Probe part ${{ matrix.part }} of ${{ env.RUNNERS }}
+        run: |
+          # Fetched on its own line: inside $( ... | tail -1) a failed download exits 0.
+          python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "${MODEL#hf:}" --out-dir data/checkpoints > fetched.txt
+          m=$(tail -1 fetched.txt)
+          read -r -a micro <<< "$MICRO"
+          read -r -a macro <<< "$MACRO"
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/macro_probe.py run \
+            --model "$m" --games "$GAMES" --rate "$RATE" --seed "${{ matrix.part }}" \
+            --micro "${micro[@]}" --macro "${macro[@]}" \
+            --out "parts/part-${{ matrix.part }}.json.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macro-probe-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-engine
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macro-probe-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          n=$(ls parts/part-*.json.gz 2>/dev/null | wc -l)
+          if [ "$n" -ne "$RUNNERS" ]; then echo "only $n of $RUNNERS parts arrived; re-run the failed jobs"; exit 1; fi
+          PYTHONPATH=.:build/release .venv/bin/python tools/macro_probe.py report \
+            --parts "parts/part-*.json.gz" --out-md reports/report.md
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
+            echo "model: $MODEL"
+            echo "games/runner: $GAMES  rate: $RATE  runners: $RUNNERS"
+          } > reports/provenance.txt
+          cp parts/part-*.json.gz reports/
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macro-probe-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn

@@ -570,6 +570,30 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         tag += "".join(f"-{k}{v}" for k, v in overrides.items())
         label = f"search{sims}{'-det' if determinize else ''}{tag}"
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
+    if s.lower().startswith("macro:"):
+        # macro:<checkpoint>[:field=value...] -- search over complete player decisions
+        # (ai/search/macro_search.py) with the checkpoint frozen: its beam proposes the macros,
+        # its value head scores them. Each `field=value` sets a MacroSearchConfig field (k,
+        # k_reply, depth, worlds, rollout_ars, prior_weight, ...); the name records them.
+        import dataclasses
+        from ai.search.macro_search import MacroSearchAgent, MacroSearchConfig
+
+        parts = s.split(":")
+        path = parts[1]
+        types = {f.name: f.type for f in dataclasses.fields(MacroSearchConfig)}
+        kw: Dict[str, Any] = {}
+        for item in parts[2:]:
+            key, raw = item.split("=", 1)
+            t = types.get(key)
+            if t is None:
+                raise ValueError(f"macro: spec option {item!r}: not a MacroSearchConfig field "
+                                 f"(known: {sorted(types)})")
+            kw[key] = (raw.lower() in ("1", "true")) if t == "bool" else int(raw) if t == "int" \
+                else float(raw) if t == "float" else raw
+        base = NeuralAgent.from_checkpoint(path, device=device)
+        label = "macro" + "".join(f"-{k}{v}" for k, v in kw.items())
+        return MacroSearchAgent(base.model, name=label, device=resolve_device(device),
+                                config=MacroSearchConfig(**kw))
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
         #
