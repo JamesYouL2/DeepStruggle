@@ -64,11 +64,17 @@ jobs:
       - id: pin
         shell: python
         run: |
-          import json, os, urllib.request
+          import json, os, re, urllib.request
           repo, model = os.environ["HF_REPO"], os.environ["MODEL"]
           if model == "newest":
+              # The listing is paginated (a Link header names the next page), as fetch_hf_model.py reads it.
               url = f"https://huggingface.co/api/models/{repo}/tree/main?recursive=true&expand=true"
-              entries = json.load(urllib.request.urlopen(url, timeout=60))
+              entries = []
+              while url:
+                  with urllib.request.urlopen(url, timeout=60) as res:
+                      entries += json.load(res)
+                      m = re.search(r'<([^>]+)>;\s*rel="next"', res.headers.get("Link") or "")
+                      url = m.group(1) if m else None
               files = [(e["path"], (e.get("lastCommit") or {}).get("date") or "") for e in entries
                        if e.get("type") == "file" and e["path"].endswith(".onnx")]
               files.sort(key=lambda f: f[0])
