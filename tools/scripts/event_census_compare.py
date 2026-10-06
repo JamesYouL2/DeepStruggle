@@ -16,6 +16,8 @@ Sections:
 * **Neutral cards by side** -- the evented share when the US holds the card and when the USSR does.
 * **The opponent's cards** -- what the holder does with a card whose event belongs to the other side:
   headline it, play it for Ops, space it, or keep it.
+* **When in the turn** -- for every card played in an action round by its holder (own, neutral or
+  the opponent's), the share played in the turn's last action round, and the mean round.
 
     PYTHONPATH=. python tools/scripts/event_census_compare.py --human human.json \\
         --bot SWA=swa.json E7-20-44=e720.json soup=soup.json --output-md compare.md
@@ -32,14 +34,22 @@ from typing import Dict, List, Optional, Sequence, Tuple
 US, USSR = 1, -1
 USES = ("headline", "event", "ops", "space", "kept")
 USE_NAMES = {"headline": "headline", "event": "event in a round", "ops": "Ops", "space": "space", "kept": "kept"}
-#: one dumped holding: card, side, outcome, legal (the event was playable at some point)
-Rec = Tuple[int, int, str, bool]
+#: one dumped holding: card, side, outcome, legal (the event was playable at some point), and the
+#: turn and action round it was spent in (0, 0 when kept, or in a dump older than the timing)
+Rec = Tuple[int, int, str, bool, int, int]
 
 
 def load(path: str) -> Tuple[List[Rec], int]:
     d = json.load(open(path))
-    recs = [(int(r[0]), int(r[1]), str(r[2]), bool(r[3]) if len(r) > 3 else True) for r in d["holdings"]]
+    recs = [(int(r[0]), int(r[1]), str(r[2]), bool(r[3]) if len(r) > 3 else True,
+             int(r[4]) if len(r) > 4 else 0, int(r[5]) if len(r) > 5 else 0) for r in d["holdings"]]
     return recs, int(d["games"])
+
+
+def last_round(turn: int) -> int:
+    """The turn's last scheduled action round: 6 in the Early War, 7 from turn 4 (an extra round
+    from the space race counts as last too)."""
+    return 6 if turn <= 3 else 7
 
 
 def cards() -> Dict[int, Dict]:
@@ -56,7 +66,7 @@ class Counts:
     def __init__(self, recs: Sequence[Rec]) -> None:
         self.legal: Dict[Tuple[int, int], collections.Counter] = collections.defaultdict(collections.Counter)
         self.all: Dict[Tuple[int, int], collections.Counter] = collections.defaultdict(collections.Counter)
-        for card, side, outcome, legal in recs:
+        for card, side, outcome, legal, _, _ in recs:
             # Dumps from before the split say "ops/space"; they cannot answer the Ops/space questions.
             self.all[(card, side)][outcome] += 1
             if legal:
@@ -225,7 +235,61 @@ def report(human: Tuple[List[Rec], int], bots: Dict[str, Tuple[List[Rec], int]],
     for _, name, s, n, split, mark, bcells in opp_rows:
         out.append(f"| {name} | {s} | {n:,} | {split[0]} | {split[1]} | {split[2]}{mark} | {split[3]} | "
                    + " | ".join(bcells) + " |")
+    out += timing(human[0], {n: r for n, (r, _) in bots.items()}, info, min_gap, min_n)
     return "\n".join(out) + "\n"
+
+
+def timing(human: Sequence[Rec], bots: Dict[str, List[Rec]], info: Dict[int, Dict], min_gap: float,
+           min_n: int) -> List[str]:
+    """Last-round share and mean round of action-round plays, per card and holder side."""
+    def plays(recs: Sequence[Rec]) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
+        by: Dict[Tuple[int, int], List[Tuple[int, int]]] = collections.defaultdict(list)
+        for card, side, outcome, _, turn, ar in recs:
+            if outcome in ("event", "ops", "space") and ar > 0:
+                by[(card, side)].append((turn, ar))
+        return by
+
+    def stats(ps: Sequence[Tuple[int, int]]) -> Tuple[Tuple[float, float, int], float]:
+        n = len(ps)
+        if n == 0:
+            return (math.nan, math.nan, 0), math.nan
+        p = sum(1 for t, a in ps if a >= last_round(t)) / n
+        return (p, math.sqrt(max(p * (1 - p), 1.0 / n) / n), n), sum(a for _, a in ps) / n
+
+    H = plays(human)
+    B = {n: plays(r) for n, r in bots.items()}
+    names = list(bots)
+    if not any(B[n] for n in names):
+        return ["", "## When in the turn", "", "The bot dumps carry no timing (written before it was recorded)."]
+    rows = []
+    for (cid, side), ps in H.items():
+        if cid not in info or cid == 6:
+            continue
+        h, hm = stats(ps)
+        if h[2] < min_n:
+            continue
+        bs = [stats(B[n].get((cid, side), [])) for n in names]
+        v = gap_verdict(h, [b for b, _ in bs], min_gap, min_n)
+        mean_b = [b[0] for b, _ in bs if b[2]]
+        d = h[0] - (sum(mean_b) / len(mean_b) if mean_b else math.nan)
+        owner = side_of(info[cid])
+        whose = "neutral" if owner == "neutral" else "own" if (owner == "us") == (side == US) else "opponent's"
+        rows.append((v is None, -abs(d) if not math.isnan(d) else 0.0, info[cid]["name"],
+                     "US" if side == US else "USSR", whose, h, hm, bs, v, d))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    out = ["", "## When in the turn", "",
+           "Plays in an action round (event, Ops or space) by the holder, per card and side: the share in the "
+           "turn's last action round (AR6 in the Early War, AR7 from turn 4) and the mean action round. "
+           f"At least {min_n} human plays; robust differences in the last-round share first (▲/▼ as above).", "",
+           "| card | holder | whose card | humans: last AR (n), mean AR | "
+           + " | ".join(f"{n}: last AR, mean AR" for n in names) + " | humans − bots, last AR |",
+           "|:---|:---|:---|---:|" + "---:|" * len(names) + "---:|"]
+    for _, _, name, side, whose, h, hm, bs, v, d in rows:
+        mark = "" if v is None else (" ▲" if v > 0 else " ▼")
+        out.append(f"| {name} | {side} | {whose} | {pct(h[0])} ({h[2]:,}), {hm:.1f} | "
+                   + " | ".join("—" if b[2] == 0 else f"{pct(b[0])}, {bm:.1f}" for b, bm in bs)
+                   + f" | {100 * d:+.0f}{mark} |")
+    return out
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
