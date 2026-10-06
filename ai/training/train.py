@@ -602,6 +602,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P31 1d: the fraction of decisions sampled as positions to label.")
     parser.add_argument("--aux-opp-legality-min-batch", type=int, default=4096,
                         help="P31 1d: labelled positions needed before an update step.")
+    parser.add_argument("--mode-cf-coef", type=float, default=0.0,
+                        help="P31 1c: weight of the counterfactual mode credit. At 1 in "
+                             "--mode-cf-subsample of the learner's floor decisions (play mode and the "
+                             "non-country choices inside events), every legal option is played out to the "
+                             "end by the current network on both sides from a clone of the state, and the "
+                             "loss gets -c * sum_a pi(a) * (Q(a) - Q(taken)). 0 is off.")
+    parser.add_argument("--mode-cf-subsample", type=int, default=16,
+                        help="P31 1c: price 1 in this many of the learner's floor decisions.")
+    parser.add_argument("--mode-cf-playouts", type=int, default=1,
+                        help="P31 1c: games played per option; the option's value is their mean result.")
+    parser.add_argument("--mode-cf-from", type=int, default=0,
+                        help="P31 1c: no decision is priced before this many total env steps.")
     parser.add_argument("--setup-script-openings", nargs="+", default=None,
                         help="Opening names from tools/lib/openings.py for --setup-script-frac, drawn "
                              "uniformly per scripted game. Default: the four human variants "
@@ -933,6 +945,10 @@ def main():
             aux_opp_legality=args.aux_opp_legality,
             aux_opp_legality_frac=args.aux_opp_legality_frac,
             aux_opp_legality_min_batch=args.aux_opp_legality_min_batch,
+            mode_cf_coef=args.mode_cf_coef,
+            mode_cf_subsample=args.mode_cf_subsample,
+            mode_cf_playouts=args.mode_cf_playouts,
+            mode_cf_from=args.mode_cf_from,
             setup_mc_coef=args.setup_mc_coef,
             setup_mc_min_batch=args.setup_mc_min_batch,
             aux_own_coef=args.aux_ownership,

@@ -136,6 +136,9 @@ def test_off_the_floor_and_seeding_leave_a_rollout_bit_identical() -> None:
 def _random_play_with(seeder: ScenarioSeeder, envs: int, steps: int, seed: int) -> List[tuple]:
     """Random legal play with the seeder applied, as the trainer applies it; returns every forced
     (env, action, decision_type) in order."""
+    # the env draws new games' seeds from numpy's global RNG, so seed it: otherwise how far games
+    # get -- and whether a late-war card like Chernobyl is ever held -- depends on test order
+    np.random.seed(seed)
     env = TsVectorizedEnv(num_envs=envs, base_seed=seed)
     rng = np.random.default_rng(seed)
     _o, mk, _ = env.reset_all()
@@ -156,7 +159,7 @@ def _random_play_with(seeder: ScenarioSeeder, envs: int, steps: int, seed: int) 
 
 def test_seeding_forces_the_precursor_plays_the_engine_expects() -> None:
     seeder = ScenarioSeeder(["subs", "chernobyl"], 1.0, num_envs=64)
-    forced = _random_play_with(seeder, envs=64, steps=1500, seed=7)
+    forced = _random_play_with(seeder, envs=64, steps=3000, seed=7)
     assert seeder.forced["subs"] > 0 and seeder.forced["chernobyl"] > 0
     by_env: dict[int, List[tuple]] = {}
     for e, a, d in forced:
@@ -291,3 +294,122 @@ def test_the_head_trains_and_reports(tmp_path: Any) -> None:
     assert not torch.equal(head, b.active_net.opp_legal_head[0].weight)  # type: ignore[union-attr]
     with pytest.raises(ValueError, match="opponent-legality head"):
         _trainer(aux_opp_legality=0.1)
+
+
+# ------------------------------------------------------------- 1c: counterfactual mode credit
+
+def _queue_play_mode_decisions(cf: Any, n_decisions: int, seed: int) -> TsVectorizedEnv:
+    """Random play until `n_decisions` play-mode decisions are queued (one per env at most per step)."""
+    env = TsVectorizedEnv(num_envs=16, base_seed=seed)
+    rng = np.random.default_rng(seed)
+    _o, mk, _ = env.reset_all()
+    for step in range(2000):
+        dp = np.asarray(env.runner.get_decision_players(), dtype=np.int8)
+        acts = np.asarray([int(rng.choice(np.flatnonzero(r))) for r in mk])
+        rows = np.flatnonzero(floor_rows(torch.from_numpy(np.asarray(mk))).numpy())
+        if rows.size and len(cf.queue) < n_decisions:
+            cf.enqueue(step, rows[:n_decisions - len(cf.queue)], env.runner, np.asarray(mk), acts, dp)
+        if len(cf.queue) >= n_decisions:
+            return env
+        _o, mk, _r, _d, _i = env.step(acts)
+    raise AssertionError("not enough play-mode decisions")
+
+
+def test_counterfactual_playouts_price_every_option_without_touching_the_game() -> None:
+    from ai.training.mode_cf import ModeCounterfactual
+    torch.manual_seed(0)
+    net = create_ladder_net(torch.device("cpu"), **SHALLOW).eval()
+    cf = ModeCounterfactual(subsample=1, playouts=1, auto_advance=True)
+    env = _queue_play_mode_decisions(cf, 6, seed=11)
+    before = [(int(env.runner.get_state(e).rng_state), int(env.runner.get_state(e).turn)) for e in range(16)]
+    queued = list(cf.queue)
+    results = cf.flush(net, torch.device("cpu"))
+    assert [q for q, _ in results] == queued and cf.queue == []
+    for q, qv in results:
+        assert qv.shape == q.options.shape
+        assert set(np.unique(qv)) <= {-1.0, 0.0, 1.0}
+    assert cf.plies_played > 0
+    after = [(int(env.runner.get_state(e).rng_state), int(env.runner.get_state(e).turn)) for e in range(16)]
+    assert before == after                                # the live games were not stepped
+
+
+def test_options_of_one_decision_share_their_dice() -> None:
+    """With a (near-)deterministic network, two playouts of the same option from the same clone end
+    the same way: every die and redeal comes from the cloned state's RNG."""
+    from ai.training.mode_cf import ModeCounterfactual
+
+    class Sharp(torch.nn.Module):
+        def __init__(self, inner: torch.nn.Module) -> None:
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, obs: torch.Tensor, masks: torch.Tensor) -> Any:
+            out = self.inner(obs, masks)
+            return (out[0] * 1e4,) + tuple(out[1:])
+
+    torch.manual_seed(1)
+    net = Sharp(create_ladder_net(torch.device("cpu"), **SHALLOW)).eval()
+    cf = ModeCounterfactual(subsample=1, playouts=4, auto_advance=True)
+    _queue_play_mode_decisions(cf, 4, seed=5)
+    games = []
+    orig = cf._play
+
+    def spy(n: Any, d: Any, part: Any) -> np.ndarray:
+        v = orig(n, d, part)
+        games.append((list(part), v))
+        return v
+
+    cf._play = spy  # type: ignore[method-assign]
+    cf.flush(net, torch.device("cpu"))
+    per_job: dict = {}
+    for part, v in games:
+        for job, val in zip(part, v):
+            per_job.setdefault(job, []).append(float(val))
+    assert per_job and all(len(set(vs)) == 1 for vs in per_job.values())
+
+
+def test_counterfactual_credit_is_filed_against_its_rows_and_trains() -> None:
+    t = _trainer(buffer=48, mode_cf_coef=0.5, mode_cf_subsample=2)
+    m = t.collect_rollouts()
+    assert t._cf_has is not None and t._cf_adv is not None
+    has = t._cf_has.nonzero().squeeze(1)
+    assert has.numel() > 0
+    acts = t.buffer.actions.reshape(-1).long()
+    masks = t.buffer.masks.reshape(-1, t.buffer.masks.shape[-1]).bool()
+    adv = t._cf_adv.float()
+    assert torch.all(adv[has, acts[has]] == 0)          # centred on the option taken
+    assert torch.all(adv[has][~masks[has]] == 0)        # nothing outside the legal set
+    assert torch.all(t.buffer.learner.reshape(-1)[has] > 0.5)
+    out = t.train_step()
+    assert "mode_cf_loss" in out and np.isfinite(out["mode_cf_loss"])
+
+
+def test_off_counterfactual_credit_leaves_a_rollout_bit_identical() -> None:
+    a = _trainer()
+    a.collect_rollouts()
+    b = _trainer(mode_cf_coef=0.0, mode_cf_subsample=3, mode_cf_playouts=2)
+    b.collect_rollouts()
+    assert torch.equal(a.buffer.actions, b.buffer.actions)
+    assert b._cf_has is None
+
+
+def test_the_counterfactual_term_moves_probability_toward_the_better_option() -> None:
+    from ai.training.mode_cf import mode_cf_loss
+    logits = torch.zeros(3, 220)
+    logits[:, :4] = torch.tensor([2.0, 0.0, -1.0, 0.0])
+    logits[:, 4:] = -1e9
+    logits.requires_grad_(True)
+    adv = torch.zeros(3, 220)
+    adv[0, 2] = 1.0                       # row 0: option 2 beat the option taken (0)
+    adv[1, 1] = -1.0                      # row 1: option 1 lost to it
+    has = torch.tensor([True, True, False])
+    adv[2, 3] = 5.0                       # row 2 is not priced: must contribute nothing
+    loss = mode_cf_loss(logits, adv, has)
+    loss.backward()
+    g = logits.grad
+    assert g is not None
+    assert float(g[0, 2]) < 0 and float(g[1, 1]) > 0     # descent raises option 2, lowers option 1
+    assert torch.all(g[2] == 0)
+    p = torch.softmax(logits.detach(), -1)
+    want = -((p[0] * adv[0]).sum() + (p[1] * adv[1]).sum()) / 2
+    assert torch.allclose(loss.detach(), want)

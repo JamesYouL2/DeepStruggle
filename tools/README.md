@@ -174,6 +174,18 @@ opponent moves again get no label; an update needs `--aux-opp-legality-min-batch
 `opp_legal_copy_acc` (how often the position's own `can_opp` flags were already the answer) and
 `opp_legal_changed_frac` (how often they were not: the part the head must learn), `opp_legal_n`.
 
+`--mode-cf-coef C` (P31 1c, owner 2026-10-06; default 0 = off) adds counterfactual mode credit from paired
+playouts. At 1 in `--mode-cf-subsample` (16) of the learner's floor decisions (as `--play-mode-floor`'s rows), the
+state is cloned before the step; at the rollout's end every legal option is played out to the end of the game by the
+current network on both sides (temperature 1), `--mode-cf-playouts` (1) games each, all options of a decision starting
+from the same state and RNG, so their dice start in common. An option's value is the mean result from the deciding
+side, centred on the option taken, and the policy loss gets `-C * sum_a pi(a) * (Q(a) - Q(taken))` on those rows (the
+all-actions policy gradient; centring changes nothing in expectation). Nothing is acted on: rollouts still sample the
+policy. `--mode-cf-from S` starts it at `S` steps. **Cost:** a playout plies like a rollout step (~3 ms for the batch)
+until its longest game ends; at k = 16 on E7 that is ~7 s per iteration (~8k steps/s against ~100k). Metrics:
+`mode_cf_n`, `mode_cf_options`, `mode_cf_spread` (best minus worst option value), `mode_cf_taken_beaten_frac`,
+`mode_cf_seconds`, `mode_cf_loss`. `ai/training/mode_cf.py`.
+
 `--ladder-token-layers L` / `--ladder-token-dim D` (P30 C1, default 0 = off; grouped trunk only) add a
 token path beside the grouped projections: each of the 84 country rows and 110 card rows becomes a token
 (a projection of its row plus a learned identity), the globals one more, and `L` pre-norm transformer

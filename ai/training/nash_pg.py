@@ -33,6 +33,7 @@ from bindings.action_encoder import ActionEncoder as _AE
 #: and the rows that choose among it, defined once in show_and_decide (P31 1a builds on them).
 from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E402,F401
                               ScenarioSeeder, apply_floor, floor_eps, floor_rows, play_mode_rows)
+from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -326,6 +327,10 @@ class BaseNashPGTrainer:
         aux_opp_legality: float = 0.0,
         aux_opp_legality_frac: float = 0.1,
         aux_opp_legality_min_batch: int = 4096,
+        mode_cf_coef: float = 0.0,
+        mode_cf_subsample: int = 16,
+        mode_cf_playouts: int = 1,
+        mode_cf_from: int = 0,
         setup_mc_coef: float = 1.0,
         setup_mc_min_batch: int = 512,
         aux_own_coef: float = 0.0,
@@ -673,6 +678,24 @@ class BaseNashPGTrainer:
             [[], []] for _ in range(self.num_envs)]
         self._ol_npend = np.zeros((self.num_envs, 2), dtype=np.int64)
         self._ol_ready: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        # P31 1c: counterfactual mode credit (ai/training/mode_cf.py). Values per option are stored
+        # flat over the buffer, [T * N, A], and read in the update by each minibatch's flat index.
+        self.mode_cf_coef = float(mode_cf_coef)
+        self.mode_cf_from = int(mode_cf_from)
+        self.mode_cf: Optional[ModeCounterfactual] = None
+        self._cf_adv: Optional[torch.Tensor] = None
+        self._cf_has: Optional[torch.Tensor] = None
+        self._cf_stats: Dict[str, float] = {}
+        if self.mode_cf_coef > 0.0:
+            if self.merged_influence:
+                raise ValueError("--mode-cf-coef with --merged-influence is not supported: the "
+                                 "playouts step E4 actions")
+            self.mode_cf = ModeCounterfactual(int(mode_cf_subsample), int(mode_cf_playouts),
+                                              auto_advance=bool(getattr(self.env, "_auto_advance", True)),
+                                              obs_features=int(model_obs_features(self.active_net)))
+            print(f"[mode cf] coef {self.mode_cf_coef:g}: every option of 1 in {int(mode_cf_subsample)} "
+                  f"learner floor decisions played out ({int(mode_cf_playouts)} game(s) each), "
+                  f"from {self.mode_cf_from:,} steps", flush=True)
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -1345,6 +1368,13 @@ class BaseNashPGTrainer:
                 setup_entropy_n += _setup_sel.sum()
 
             actions_np = actions_t.cpu().numpy()
+            if self.mode_cf is not None and self.total_env_steps >= self.mode_cf_from:
+                # P31 1c: the learner's floor decisions, 1 in k, cloned before the step.
+                _cand = np.flatnonzero((floor_rows(masks_t) & learner_t).cpu().numpy())
+                _pick = self.mode_cf.pick(_cand)
+                if _pick.size:
+                    self.mode_cf.enqueue(self.buffer.step, _pick, self.env.runner,
+                                         np.asarray(self._masks_np), actions_np, _dp)
             if self.setup_mc_credit:
                 self._setup_mc_record(obs_t, masks_t, actions_t, log_probs_t, v_win_t,
                                       np.asarray(learner_np, dtype=bool), _dp)
@@ -1483,6 +1513,8 @@ class BaseNashPGTrainer:
             self._masks_np = next_masks_np
 
         self._flush_search_targets()
+        if self.mode_cf is not None:
+            self._flush_mode_cf()
 
         # Evaluate last state for GAE bootstrapping
         last_obs_t = torch.from_numpy(self._obs_np).float().to(self.device)
@@ -1574,6 +1606,43 @@ class BaseNashPGTrainer:
 
     def train_step(self) -> Dict[str, float]:
         raise NotImplementedError("Subclasses must implement train_step")
+
+    def _flush_mode_cf(self) -> None:
+        """P31 1c: price the queued decisions' options and file them against their buffer rows."""
+        assert self.mode_cf is not None
+        n_rows = self.buffer_size * self.num_envs
+        if self._cf_adv is None:
+            self._cf_adv = torch.zeros((n_rows, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.float16,
+                                       device=self.device)
+            self._cf_has = torch.zeros(n_rows, dtype=torch.bool, device=self.device)
+        assert self._cf_has is not None
+        self._cf_adv.zero_()
+        self._cf_has.zero_()
+        t0 = time.perf_counter()
+        plies0 = self.mode_cf.plies_played
+        was_training = self.active_net.training
+        self.active_net.eval()
+        results = self.mode_cf.flush(self.active_net, self.device)
+        self.active_net.train(was_training)
+        spread, worse, n_opt = 0.0, 0, 0
+        for q, qv in results:
+            taken = np.flatnonzero(q.options == q.taken)
+            if taken.size != 1:
+                raise RuntimeError(f"the taken action {q.taken} is not among the decision's options")
+            adv = qv - qv[taken[0]]
+            idx = q.step * self.num_envs + q.env
+            self._cf_adv[idx, torch.from_numpy(q.options).to(self.device)] = torch.from_numpy(
+                adv).to(self.device, torch.float16)
+            self._cf_has[idx] = True
+            spread += float(qv.max() - qv.min())
+            worse += int(adv.max() > 0)
+            n_opt += int(q.options.size)
+        n = len(results)
+        self._cf_stats = {"mode_cf_n": float(n), "mode_cf_options": n_opt / max(n, 1),
+                          "mode_cf_spread": spread / max(n, 1),
+                          "mode_cf_taken_beaten_frac": worse / max(n, 1),
+                          "mode_cf_plies": float(self.mode_cf.plies_played - plies0),
+                          "mode_cf_seconds": time.perf_counter() - t0}
 
     def _current_floor_eps(self) -> float:
         """P31 1a: the floor's eps at the current step count."""
@@ -1777,6 +1846,8 @@ class BaseNashPGTrainer:
             combined["floor_eps"] = self._current_floor_eps()
             combined["floor_row_frac"] = _fs[0] / max(_fs[2], 1.0)
             combined["floor_draw_frac"] = _fs[1] / max(_fs[0], 1.0)
+        if self.mode_cf is not None:
+            combined.update(self._cf_stats)
         if self.seeder is not None:
             _g = self.seeder.games
             combined["seed_games_frac"] = float(_g[0]) / max(float(_g.sum()), 1.0)
@@ -1914,6 +1985,7 @@ class NashPGTrainer(BaseNashPGTrainer):
             # float64, as the Python floats these replace were.
             return torch.full((), v, dtype=torch.float64, device=self.device)
         loss_t, policy_loss_t, policy_loss_total_t = _z(), _z(), _z()
+        cf_loss_t = _z()
         val_loss_t, kl_t, entropy_t, clip_frac_t, risk_loss_t = _z(), _z(), _z(), _z(), _z()
         logratio_max_t, old_lp_min_t, ratio_negadv_max_t = _z(-1e30), _z(1e30), _z()
         lse_sum_t, lse_absmax_t, z_loss_t = _z(), _z(), _z()
@@ -2148,6 +2220,13 @@ class NashPGTrainer(BaseNashPGTrainer):
                     ent_loss = ent_loss + setup_c * (cur_entropy * _setup_f).sum() / _own_n
                 policy_loss = (ppo_loss + self.eta * kl_term - ent_loss
                                + self.search_ce_coef * search_ce)
+                if self._cf_has is not None and self._cf_adv is not None and self.mode_cf_coef > 0.0:
+                    # P31 1c: the all-options term, -c * sum_a pi(a) * (Q(a) - Q(taken)), on the
+                    # minibatch's priced rows only (no host sync: an empty selection adds zero).
+                    _cf_loss = mode_cf_loss(cur_logits, self._cf_adv.index_select(0, b_idx),
+                                            self._cf_has.index_select(0, b_idx))
+                    policy_loss = policy_loss + self.mode_cf_coef * _cf_loss
+                    cf_loss_t += _cf_loss.detach()
                 # The log-normaliser over the legal actions (masked logits are -1e9, so they add
                 # exactly nothing): the level the z-loss holds down.
                 lse = torch.logsumexp(cur_logits.float(), dim=-1)
@@ -2245,6 +2324,7 @@ class NashPGTrainer(BaseNashPGTrainer):
             # improvement and become regularisation.
             "policy_loss_total": policy_loss_total_accum / max(1, num_updates),
             "kl_term": kl_term_accum / max(1, num_updates),
+            **({"mode_cf_loss": float(cf_loss_t) / max(1, num_updates)} if self.mode_cf is not None else {}),
             # The policy logits' level (log-normaliser over legal actions), mean over minibatches
             # and largest |value| seen; and the z-loss term when it is on.
             "logit_lse_mean": lse_sum_accum / max(1, num_updates),
