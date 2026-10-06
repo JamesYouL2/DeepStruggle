@@ -790,6 +790,38 @@ there; a trainer must drop them from the value loss and keep them in the policy 
 
 ---
 
+## 7b. Humans against bots: the card and placement censuses
+
+Four scripts count the same things in a policy's self-play and in the human corpus, so the rows
+line up. Each census's tracker is fed one decision at a time, by `selfplay()` or by the converter
+(`corpus_map()` / `feed_corpus_game()` in `tools/scripts/event_play_census.py`). A policy is a
+`.pt` checkpoint or an `.onnx` export (the published models exist only as ONNX).
+
+```bash
+export PYTHONPATH=.:build/release
+# how each card in hand is used: headline / event / Ops / space / kept, with turn and round
+.venv/bin/python tools/scripts/event_play_census.py --human-corpus --dump human.json
+.venv/bin/python tools/scripts/event_play_census.py --checkpoint swa.onnx --games 4096 --dump swa.json
+# humans against several bots: event rates, near-unanimous human uses, neutral cards by side,
+# the opponent's cards, and the last-round share of each card's plays
+.venv/bin/python tools/scripts/event_census_compare.py --human human.json --bot SWA=swa.json B=b.json
+# one card's human plays: workbench link, the model's probability of the human's move, least likely first
+.venv/bin/python tools/scripts/census_spots.py --human human.json --card "John Paul II" --checkpoint swa.onnx
+# where Ops influence goes: region by era, the scoring card in hand, countries
+.venv/bin/python tools/scripts/placement_census.py --human-corpus --dump human_pl.json
+.venv/bin/python tools/scripts/placement_census.py --checkpoint swa.onnx --dump swa_pl.json
+.venv/bin/python tools/scripts/placement_census.py --compare human_pl.json SWA=swa_pl.json
+```
+
+A census rate belongs to one checkpoint unless others agree -- about one card in five moves 10
+points between two seeds of one recipe -- so `event_census_compare` calls a gap robust only when
+every bot is on the same side of the humans. Human holdings still open where a game's record stops
+early (about half the corpus) are dropped rather than counted as kept. The human dump holds a
+`pos=` token per spent holding (~30 MB for the corpus); the links open on the published workbench,
+whose engine must read this engine's save format.
+
+---
+
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
