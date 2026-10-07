@@ -849,6 +849,13 @@ committed bank:
 .venv/bin/python tools/scripts/bank_verdicts.py collect <exported-verdicts-dir>
 ```
 
+To read the reviews, open `tools/scripts/disagreement_review.html` straight from disk and load
+`ai/eval/banks/disagreement_verdicts.jsonl` with its "Reviews file" picker: each position shows its
+three moves, the marks, the confidence and the note, and "Open in workbench" opens the board (set
+the workbench address to your own, e.g. `http://localhost:8000/` after `tools/scripts/build_web.sh`
+and `web.server.main`). Opened that way the page has no database, so a change made there stays on
+the page; the network's probabilities, values and playouts are not in the file and are not shown.
+
 A verdict the page carried to a new id after the CONV-1 fix replaces the one it came from, and a
 mark on a move that is no longer legal (a card the fix took out of the hand) is kept apart as
 `stale_marks`. The positions are the corpus's converted positions, so the bank must be rebuilt --

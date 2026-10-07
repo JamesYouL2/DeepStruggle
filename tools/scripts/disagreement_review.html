@@ -69,7 +69,9 @@ aside { position: sticky; top: env(safe-area-inset-top, 0px); display: grid; gap
 .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
 .chip:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="search"], input[type="url"], select, textarea { width: 100%; font: 14px var(--f-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
+input[type="file"] { width: 100%; font: 13px var(--f-body); color: var(--ink); }
 .hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+.stale { font: 12.5px var(--f-body); color: var(--warn); }
 .status { font: 13px var(--f-body); color: var(--muted); }
 .queue { display: grid; gap: 10px; min-width: 0; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
@@ -136,6 +138,11 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   <div class="layout">
     <aside aria-label="Filters">
       <div class="group">
+        <label class="label" for="file">Reviews file</label>
+        <input type="file" id="file" accept=".jsonl,.json,application/json">
+        <p class="hint">A saved set of reviews, such as <code>ai/eval/banks/disagreement_verdicts.jsonl</code>: its positions appear with their marks, confidence and notes. Works with the page opened straight from disk.</p>
+      </div>
+      <div class="group">
         <span class="label">Who stands alone</span>
         <div class="chips" id="f-pattern"></div>
       </div>
@@ -199,7 +206,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         <p class="hint">Positions open here with <code>?pos=</code>. The workbench must run this engine's save format.</p>
       </div>
       <p class="hint">Keys: <kbd>j</kbd>/<kbd>k</kbd> next/previous, <kbd>o</kbd> open, <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> mark that move good → bad → unmarked, <kbd>4</kbd> unclear, <kbd>c</kbd> clear, <kbd>l</kbd> leaning, <kbd>b</kbd> bank.</p>
-      <p class="hint"><b>Value</b>: each move searched (64 simulations) after redealing the hidden cards 8 times, as the mover's expected result from −1 to +1, ± its standard error. <b>Lead</b>: the best move's advantage over the next, in win-probability points; <b>sure</b> subtracts two standard errors. <b>Value gap order</b>: largest lead first, halved when playouts show the two moves within 3 points of each other even at two standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
+      <p class="hint"><b>Value</b>: each move searched (64 simulations) in each of several deals of the hidden cards (<code>bank_clarity.py --worlds</code>, 4 by default), as the mover's expected result from −1 to +1, ± its standard error. <b>Lead</b>: the best move's advantage over the next, in win-probability points; <b>sure</b> subtracts two standard errors. <b>Value gap order</b>: largest lead first, halved when playouts show the two moves within 3 points of each other even at two standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
     </aside>
 
     <main class="queue" id="queue">
@@ -406,14 +413,17 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     d.className = "move" + (mark ? " " + mark : (g.who.length === 1 && alone(r) === who ? " alone" : ""));
     const w = document.createElement("span"); w.className = "who"; w.textContent = (idx + 1) + " · " + g.labels.join(" & ");
     const m = document.createElement("span"); m.className = "what"; m.textContent = g.name;
+    d.append(w, m);
     const p = p_of(r, who);
-    const pr = document.createElement("div"); pr.className = "p";
-    const tr = document.createElement("div"); tr.className = "track";
-    const f = document.createElement("div"); f.className = "fill"; f.style.width = Math.max(1, Math.round(p * 100)) + "%";
-    tr.append(f);
-    const n = document.createElement("span"); n.textContent = "net " + pct(p);
-    pr.append(tr, n);
-    d.append(w, m, pr);
+    if (p != null) {               // a saved reviews file does not carry the network's probabilities
+      const pr = document.createElement("div"); pr.className = "p";
+      const tr = document.createElement("div"); tr.className = "track";
+      const f = document.createElement("div"); f.className = "fill"; f.style.width = Math.max(1, Math.round(p * 100)) + "%";
+      tr.append(f);
+      const n = document.createElement("span"); n.textContent = "net " + pct(p);
+      pr.append(tr, n);
+      d.append(pr);
+    }
     if (r.q && r.q[who]) {
       const [q, se] = r.q[who];
       const e = document.createElement("span");
@@ -504,9 +514,20 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     const kind = document.createElement("span"); kind.className = "kind";
     kind.textContent = KINDS.find(k => k[0] === r.kind)[1] + (r.card ? ": " + r.card : "");
     const ctx = document.createElement("span");
-    ctx.textContent = "DEFCON " + r.defcon + " · VP " + (r.vp > 0 ? "+" : "") + r.vp + " (US +)"
-      + (r.v_win == null ? "" : " · net win chance " + pct(r.v_win)) + " · replay " + r.game;
+    const facts = [];
+    if (r.defcon != null) facts.push("DEFCON " + r.defcon);
+    if (r.vp != null) facts.push("VP " + (r.vp > 0 ? "+" : "") + r.vp + " (US +)");
+    if (r.v_win != null) facts.push("net win chance " + pct(r.v_win));
+    facts.push("replay " + r.game);
+    ctx.textContent = facts.join(" · ");
     meta.append(when, side, pat, kind, ctx);
+    const stale = Object.entries(v.stale_marks || {});
+    if (stale.length) {
+      const sm = document.createElement("span"); sm.className = "stale";
+      sm.textContent = "Marked on moves no longer legal here (the hand fix took the card out): "
+        + stale.map(([m, x]) => m + " " + x).join(", ");
+      meta.append(sm);
+    }
     if (v.moves_changed) {
       const mc = document.createElement("span"); mc.className = "strong";
       mc.textContent = "Moves changed since your verdict (hand fix): " + Object.entries(v.moves_changed)
@@ -515,7 +536,8 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     }
     if (r.strong) {
       const st = document.createElement("span"); st.className = "strong";
-      const who = (r.strong_is || []).filter(w => w !== "other");
+      // A saved reviews file names the stronger search's move but not whose it is: match it by name.
+      const who = (r.strong_is || WHO.map(x => x[0]).filter(w => r[w] === r.strong)).filter(w => w !== "other");
       st.textContent = "Stronger search (k 8 @256): " + r.strong + (who.length ? " = " + who.join(" & ") : " (another move)");
       meta.append(st);
     }
@@ -598,7 +620,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     if (current >= visible.length) current = Math.max(0, visible.length - 1);
     const host = $("rows");
     host.replaceChildren();
-    if (!visible.length && !loading.size && manifest) {
+    if (!visible.length && !loading.size && (manifest || fromFile)) {
       const e = document.createElement("div"); e.className = "empty";
       e.textContent = "No positions match these filters. Turn a filter back on to see more.";
       host.append(e);
@@ -609,7 +631,8 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     const wait = [...loading].map(p => PATTERNS.find(x => x[0] === p)[1].toLowerCase());
     $("status").textContent = visible.length.toLocaleString() + " of " + rows.length.toLocaleString()
       + " loaded positions match" + (wait.length ? " · loading " + wait.join(", ") + "…" : "")
-      + (db ? "" : " · verdicts are not being saved (sign in to keep them)");
+      + (db ? "" : runtime ? " · verdicts are not being saved (sign in to keep them)"
+                           : " · changes stay on this page: it is not connected to a database");
     tally();
   }
 
@@ -669,14 +692,61 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     });
   }
 
+  // A saved reviews file -- bank_verdicts.py's JSONL, one position per line, or a JSON array of
+  // the same rows: each row is a position and its verdict at once. Rows join any the page already
+  // has, by id. The marks are shown as the file has them; a database, if there is one, still
+  // holds the live verdicts and replaces them as it updates.
+  let fromFile = 0;
+  function loadReviews(text) {
+    const t = text.trim();
+    const items = t.startsWith("[") ? JSON.parse(t)
+      : t.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line));
+    const byId = new Map(rows.map(r => [r.id, r]));
+    let n = 0;
+    for (const x of items) {
+      if (!x || !x.id || !x.pos || !x.kind || !x.pattern) continue;
+      byId.set(x.id, { ...(byId.get(x.id) || {}), ...x });
+      verdicts.set(x.id, { verdict: "", marks: x.marks || {}, unclear: !!x.unclear, confidence: x.confidence || "",
+                           bank: !!x.bank, note: x.note || "", stale_marks: x.stale_marks || undefined });
+      sel.pattern.add(x.pattern);
+      n++;
+    }
+    rows = [...byId.values()];
+    fromFile += n;
+    totalRows = Math.max(totalRows, rows.length);
+    chips($("f-pattern"), PATTERNS, sel.pattern, () => { loadSelected(); render(); });
+    if (manifest) labelChips();
+    $("sort").value = "time";      // a saved file has no values or playouts to order by
+    shown = PAGE; current = 0;
+    loadSelected();
+    return n;
+  }
+  $("file").addEventListener("change", () => {
+    const f = $("file").files[0];
+    if (!f) return;
+    f.text().then(text => {
+      const n = loadReviews(text);
+      render();
+      $("status").textContent = n + " reviews loaded from " + f.name + " · " + $("status").textContent;
+    }).catch(e => {
+      $("status").textContent = "Could not read " + f.name + " (" + (e && e.message || "error") + ").";
+    });
+  });
+
   fetch("manifest.json").then(res => res.json()).then(m => {
     manifest = m;
-    totalRows = Object.values(m.files).reduce((n, f) => n + f.rows, 0);
+    totalRows = Math.max(Object.values(m.files).reduce((n, f) => n + f.rows, 0), rows.length);
     labelChips();
     loadSelected();
-  }).catch(() => { $("status").textContent = "The positions did not load. Reload the page to try again."; });
+  }).catch(() => {
+    if (!fromFile) $("status").textContent = "No bank is published next to this page (manifest.json did not load). "
+      + "Load a reviews file to view one.";
+  });
 
-  claude.use("db").then(d => {
+  // The artifact runtime, which keeps the verdicts in a shared database. A page opened from disk
+  // has none, and still shows a loaded reviews file.
+  const runtime = typeof claude === "undefined" ? null : claude;
+  (runtime ? runtime.use("db") : Promise.resolve(null)).then(d => {
     if (!d) { render(); return; }
     db = d;
     db.collection("verdicts").onSnapshot(snap => {
