@@ -184,6 +184,8 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
       <div class="group">
         <label class="label" for="sort">Order</label>
         <select id="sort">
+          <option value="gap">Biggest value gap, best vs. second move</option>
+          <option value="gapraw">Biggest value gap, playouts ignored</option>
           <option value="playout">Biggest sure lead in playouts</option>
           <option value="value">Biggest sure lead in values</option>
           <option value="priority">Network least expects the human's move</option>
@@ -197,7 +199,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         <p class="hint">Positions open here with <code>?pos=</code>. The workbench must run this engine's save format.</p>
       </div>
       <p class="hint">Keys: <kbd>j</kbd>/<kbd>k</kbd> next/previous, <kbd>o</kbd> open, <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> mark that move good → bad → unmarked, <kbd>4</kbd> unclear, <kbd>c</kbd> clear, <kbd>l</kbd> leaning, <kbd>b</kbd> bank.</p>
-      <p class="hint"><b>Value</b>: each move searched (64 simulations) after redealing the hidden cards 8 times, as the mover's expected result from −1 to +1, ± its standard error. <b>Lead</b>: the best move's advantage over the next, in win-probability points; <b>sure</b> subtracts two standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
+      <p class="hint"><b>Value</b>: each move searched (64 simulations) after redealing the hidden cards 8 times, as the mover's expected result from −1 to +1, ± its standard error. <b>Lead</b>: the best move's advantage over the next, in win-probability points; <b>sure</b> subtracts two standard errors. <b>Value gap order</b>: largest lead first, halved when playouts show the two moves within 3 points of each other even at two standard errors. <b>Playouts</b>: the network plays each move out to the end, same dice and redeal per pair; the share of games the mover wins.</p>
     </aside>
 
     <main class="queue" id="queue">
@@ -303,12 +305,35 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
   // Leads in win-probability points. Values run from -1 to +1, so a point of value is 50 points.
   function valueLead(r) {
     if (!r.q) return null;
-    const vals = [...new Map(Object.values(r.q).map(v => [v[0] + ":" + v[1], v])).values()]
-      .sort((a, b) => b[0] - a[0]);
+    // One entry per distinct move: players who chose the same move share a value.
+    const byMove = new Map();
+    for (const [w, v] of Object.entries(r.q)) {
+      const k = v[0] + ":" + v[1];
+      if (byMove.has(k)) byMove.get(k).who.push(w); else byMove.set(k, { v, who: [w] });
+    }
+    const vals = [...byMove.values()].sort((a, b) => b.v[0] - a.v[0]);
     if (vals.length < 2) return null;
-    const se = Math.hypot(vals[0][1] || 0, vals[1][1] || 0);
-    const gap = (vals[0][0] - vals[1][0]) * 50;
-    return { gap, sure: gap - 2 * se * 50 };
+    const se = Math.hypot(vals[0].v[1] || 0, vals[1].v[1] || 0);
+    const gap = (vals[0].v[0] - vals[1].v[0]) * 50;
+    return { gap, sure: gap - 2 * se * 50, first: vals[0].who[0], second: vals[1].who[0] };
+  }
+  // The paired playout difference between the value-best and value-second moves, in points.
+  function playPair(r, vl) {
+    if (!r.pl_diff || !vl) return null;
+    const d = r.pl_diff[vl.first + "-" + vl.second] || r.pl_diff[vl.second + "-" + vl.first];
+    return d ? { gap: Math.abs(d[0]) * 100, se: d[1] * 100 } : null;
+  }
+  // Playouts confidently say the two moves score about the same: the difference is under
+  // TIE_PTS points even at two standard errors.
+  const TIE_PTS = 3, TIE_PENALTY = 0.5;
+  function playoutTie(r, vl) {
+    const pp = playPair(r, vl);
+    return !!pp && pp.gap + 2 * pp.se < TIE_PTS;
+  }
+  function gapKey(r, usePlayouts) {
+    const vl = valueLead(r);
+    if (!vl) return -1e9;
+    return usePlayouts && playoutTie(r, vl) ? vl.gap * TIE_PENALTY : vl.gap;
   }
   function playLead(r) {
     if (!r.pl_diff) return null;
@@ -348,7 +373,9 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     else if (ev === "played") out = out.filter(r => r.pl_score);
     const order = $("sort").value;
     const key = (f, r) => { const l = f(r); return l ? l.sure : -1e9; };
-    if (order === "playout") out.sort((a, b) => key(playLead, b) - key(playLead, a));
+    if (order === "gap") out.sort((a, b) => gapKey(b, true) - gapKey(a, true));
+    else if (order === "gapraw") out.sort((a, b) => gapKey(b, false) - gapKey(a, false));
+    else if (order === "playout") out.sort((a, b) => key(playLead, b) - key(playLead, a));
     else if (order === "value") out.sort((a, b) => key(valueLead, b) - key(valueLead, a));
     else if (order === "priority") out.sort((a, b) => a.p_human - b.p_human);
     else if (order === "search") out.sort((a, b) => a.p_search - b.p_search);
@@ -454,6 +481,8 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
         updatedAt: next.updatedAt, z: r.z ?? null, strong: r.strong ?? null, pl_best: r.pl_best ?? null,
         game: r.game, kind: r.kind, side: r.side, turn: r.turn, ar: r.ar, card: r.card, pattern: r.pattern,
         human: r.human, network: r.network, search: r.search, pos: r.pos,
+        ...(next.moves_changed ? { moves_changed: next.moves_changed } : {}),
+        ...(next.moved_from ? { moved_from: next.moved_from } : {}),
       });
     } catch (e) {
       $("status").textContent = "Could not save the verdict (" + (e && e.code || "error") + "). It is kept on this page until you reload.";
@@ -478,6 +507,12 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     ctx.textContent = "DEFCON " + r.defcon + " · VP " + (r.vp > 0 ? "+" : "") + r.vp + " (US +)"
       + (r.v_win == null ? "" : " · net win chance " + pct(r.v_win)) + " · replay " + r.game;
     meta.append(when, side, pat, kind, ctx);
+    if (v.moves_changed) {
+      const mc = document.createElement("span"); mc.className = "strong";
+      mc.textContent = "Moves changed since your verdict (hand fix): " + Object.entries(v.moves_changed)
+        .filter(([f]) => f !== "pattern").map(([f, x]) => f + " " + x[0] + " → " + x[1]).join(", ");
+      meta.append(mc);
+    }
     if (r.strong) {
       const st = document.createElement("span"); st.className = "strong";
       const who = (r.strong_is || []).filter(w => w !== "other");
@@ -487,7 +522,8 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     const vl = valueLead(r);
     if (vl) {
       const z = document.createElement("span"); z.className = "z";
-      z.textContent = "value lead " + Math.round(vl.gap) + " pts (sure " + Math.round(vl.sure) + ")";
+      z.textContent = "value lead " + Math.round(vl.gap) + " pts (sure " + Math.round(vl.sure) + ")"
+        + (playoutTie(r, vl) ? " · playouts: a tie" : "");
       z.title = "The value-best move's lead over the next in win-probability points; 'sure' is the lead minus 2 standard errors";
       meta.append(z);
     }
@@ -646,9 +682,10 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
     db.collection("verdicts").onSnapshot(snap => {
       for (const doc of snap.docs) {
         const x = doc.data() || {};
+        if (x.superseded_by) continue;   // carried to the position's new id after the converter fix
         verdicts.set(doc.id, { verdict: x.verdict || "", marks: x.marks || undefined, unclear: !!x.unclear,
                                confidence: x.confidence || "", bank: !!x.bank,
-                               note: x.note || "", updatedAt: x.updatedAt });
+                               note: x.note || "", updatedAt: x.updatedAt, moves_changed: x.moves_changed, moved_from: x.moved_from });
       }
       render();
     }, e => {
