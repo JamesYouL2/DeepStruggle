@@ -253,3 +253,44 @@ The trunk's own linear readout stays at 0.99 AUC.
   longer run are the obvious next step.
 * Learning ran in two phases: at 50M the policy had mostly learned "do not end" (three in four visits
   are at losing leads), and only later to take the 7+ wins.
+
+## E7-31-44: E7-30-44 continued 400M with twice the forcing (owner, 2026-10-06)
+
+E7-30-44's 4,800M end state to 5,200M, its flags with `--force-event-frac 0.2` (Wargames at DEFCON 2, any
+lead, environment credit). `launch_flags --diff` against E7-30-44: only that and `--train-steps`.
+
+**Wargames' branch, P(end) by lead** (ending wins at 7+):
+
+| | < 5 | 5 | 6 | 7 | 8+ | AUC | P(end): wins / loses |
+|:---|---:|---:|---:|---:|---:|---:|:---|
+| E7-20-44 (plain) | 0.19 | 0.21 | 0.17 | 0.19 | 0.29 | 0.63 | 0.28 / 0.19 |
+| E7-30-44 @4800M (10%) | 0.06 | 0.24 | 0.41 | 0.35 | 0.85 | 0.95 | 0.78 / 0.09 |
+| **E7-31-44 @5200M (20%)** | **0.02** | 0.27 | 0.37 | **0.68** | **0.97** | **0.99** | **0.93 / 0.05** |
+
+**Strength** (`data/reports/p31_E7-31-44_rr.{md,json}`): against E7-30-44@4800M +1.3 ± 0.7 / +0.6 ± 0.8,
+head to head 49.5%; SWAs +0.4 / −0.6, 49.6%; against the plain siblings at 4,800M (not step-matched)
++0.6 / +0.1, 49.0%; SWA against the plain line's SWA +0.8 / −0.9, 50.1%. Level throughout.
+
+**Cards** (4,000 games, T 0.1 / T 1):
+
+| Wargames played for the event | applicable | not applicable |
+|:---|:---|:---|
+| plain line | ~1–2% | ~0.5–1% |
+| E7-30-44 | US 11.1 / 8.8%, USSR 4.5 / 4.3% | 0.5–1.8% |
+| **E7-31-44** | **US 59.6 / 50.0%, USSR 45.9 / 49.0%** | **US 15.5 / 15.4%, USSR 8.3 / 7.1%** |
+
+Ended by Wargames 5.45% / 5.15% (plain 0.2–0.6%). One Small Step, Arms Race and Chernobyl inside the
+siblings' range (0.1–4.2%; Chernobyl 1.0% / 1.4%).
+
+### Reading
+
+* **Twice the forcing sharpened the branch:** the 6 / 7 line is ordered and wider (0.37 / 0.68 against
+  E7-30-44's 0.41 / 0.35), 0.93 when ending wins, 0.05 when it loses; still 0.27–0.37 at leads 5–6.
+* **The Wargames leak has largely closed:** where a win is on offer the model now plays the event about
+  half the time (plain ~1–2%; the review's "429 of 430 declined").
+* **It now also plays it where it does not apply, 7–15%** -- DEFCON above 2 (the event does nothing;
+  the card's Ops are lost) or a lead under 7 (the branch mostly passes, the card is wasted; at 5–6 it
+  still ends, and loses, 27–37% of the time). Likely the forcing condition's doing: forced at DEFCON 2 at
+  any lead, the event is mostly seen at losing leads where passing is safe, so playing it looks free.
+* **Strength is level**: the wins taken and the cards wasted roughly cancel in self-play, as P31
+  expected of a leak worth about a point a game in both seats.
