@@ -56,6 +56,11 @@ web/ui/
      controller's influence box outlined in white (`data-control` on the node). Not the border
      alone, because a legal target's border is replaced by the pulsing highlight.
    - Highlights valid country targets with dynamic glowing borders when a `POINT_NODE` decision is active.
+   - Each region's scoring badge has a **scoring-card row** (`scoringCardWhereabouts`, from
+     `state.card_locations`): `LIVE` while the card is in the draw deck or a hand (or headlined,
+     or peeked), `OUT` once discarded or removed, `NOT YET` for a Mid War card before Mid War;
+     the hover tooltip says where exactly. It sits inside the badge because country nodes are
+     drawn over the badges.
    - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge in the
      corner right of the influence boxes, placed from `rect.inf-us`, so it never covers a
      number. The HTML badge's CSS is scoped to `span.trace-choice-badge`: unscoped, it reached the

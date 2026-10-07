@@ -410,6 +410,31 @@ def test_an_unreachable_default_repo_is_reported_not_fatal(browser: Any, static_
     assert not page.errors
 
 
+def _scoring_tags(page: Any) -> Dict[str, str]:
+    return page.eval_on_selector_all(
+        ".svg-region-badge",
+        "gs => Object.fromEntries(gs.map(g => [g.dataset.region, g.querySelector('.svg-region-card-tag').dataset.status]))")
+
+
+def test_each_region_says_whether_its_scoring_card_can_still_come(browser: Any, static_site: str) -> None:
+    page = _open(browser, static_site + "/?model=off")
+    assert _scoring_tags(page) == {
+        "EUROPE": "live", "ASIA": "live", "MIDDLE EAST": "live",
+        "AFRICA": "later", "CENTRAL AMERICA": "later", "SOUTH AMERICA": "later", "SOUTHEAST ASIA": "later",
+    }, "at the start the Early War scoring cards are dealt or in the deck; the Mid War ones are not in yet"
+    page.evaluate("""() => {
+        const wb = window.__wb, s = structuredClone(wb.state);
+        s.card_locations['2'] = 'DISCARD_PILE';
+        s.card_locations['1'] = 'HAND_USSR_UNKNOWN';
+        s.card_locations['37'] = 'DRAW_DECK';
+        s.card_locations['38'] = 'REMOVED_FROM_GAME';
+        wb.mapView.render(s);
+    }""")
+    tags = _scoring_tags(page)
+    assert (tags["EUROPE"], tags["ASIA"], tags["CENTRAL AMERICA"], tags["SOUTHEAST ASIA"]) == ("out", "live", "live", "out")
+    assert not page.errors
+
+
 def test_the_page_says_it_is_unofficial(browser: Any, static_site: str) -> None:
     page = _open(browser, static_site + "/?model=off")
     bar = page.locator("#disclaimer-bar")

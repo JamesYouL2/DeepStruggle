@@ -7,6 +7,8 @@ export interface RegionScoreAudit {
   badgePos: [number, number]; // [x, y]
   color: string;
   scoringCardName: string;
+  /** Where the region's scoring card is, which says whether it can still score this cycle. */
+  scoringCard: ScoringCardWhereabouts;
   totalBattlegrounds: number;
   usCountries: number;
   ussrCountries: number;
@@ -25,6 +27,42 @@ export interface RegionScoreAudit {
   isInstantWinUssr?: boolean;
   details: string[];
 }
+
+/**
+ * A scoring card is `live` while it can still be played before the next reshuffle -- in the draw
+ * deck or a hand (or face down in a headline, or being looked at by an event) -- and `out` once
+ * discarded or removed. `later` is a Mid War scoring card before the Mid War deck comes in.
+ */
+export interface ScoringCardWhereabouts {
+  status: "live" | "out" | "later";
+  /** The engine's location, in words. */
+  where: string;
+}
+
+const SCORING_CARD_WHERE: Record<string, ScoringCardWhereabouts> = {
+  DRAW_DECK: { status: "live", where: "in the draw deck" },
+  HAND_US_UNKNOWN: { status: "live", where: "in the US hand" },
+  HAND_US_KNOWN: { status: "live", where: "in the US hand (the USSR knows)" },
+  HAND_USSR_UNKNOWN: { status: "live", where: "in the USSR hand" },
+  HAND_USSR_KNOWN: { status: "live", where: "in the USSR hand (the US knows)" },
+  HEADLINE_COMMITTED: { status: "live", where: "headlined, not yet resolved" },
+  PEEKED_TEMP: { status: "live", where: "being looked at by an event" },
+  DISCARD_PILE: { status: "out", where: "discarded -- back only after a reshuffle" },
+  REMOVED_FROM_GAME: { status: "out", where: "removed from the game -- never scores again" },
+  ONGOING_EVENT: { status: "out", where: "in play as an ongoing event" },
+  UNAVAILABLE: { status: "later", where: "not in the game yet -- comes in with its war's deck" },
+};
+
+export function scoringCardWhereabouts(state: GameState, cardId: number): ScoringCardWhereabouts {
+  const loc = state.card_locations?.[String(cardId)] ?? "";
+  return SCORING_CARD_WHERE[loc] ?? { status: "later", where: loc ? loc.toLowerCase() : "unknown" };
+}
+
+const SCORING_CARD_TAG: Record<ScoringCardWhereabouts["status"], { text: string; fill: string; stroke: string; ink: string }> = {
+  live: { text: "LIVE", fill: "rgba(22, 101, 52, 0.95)", stroke: "#4ADE80", ink: "#DCFCE7" },
+  out: { text: "OUT", fill: "rgba(51, 65, 85, 0.95)", stroke: "#64748B", ink: "#94A3B8" },
+  later: { text: "NOT YET", fill: "rgba(15, 23, 42, 0.90)", stroke: "#475569", ink: "#64748B" },
+};
 
 export class MapView {
   private svg: SVGSVGElement;
@@ -126,16 +164,17 @@ export class MapView {
       id: number;
       name: string;
       cardName: string;
+      cardId: number;
       color: string;
       pos: [number, number];
       baseVps: { PRESENCE: number; DOMINATION: number; CONTROL: number };
     }> = [
-      { id: 0, name: "EUROPE", cardName: "Europe Scoring (#2)", color: "#3B82F6", pos: [440, 24], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 0 } },
-      { id: 1, name: "ASIA", cardName: "Asia Scoring (#1)", color: "#EA580C", pos: [830, 180], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 9 } },
-      { id: 2, name: "MIDDLE EAST", cardName: "Middle East Scoring (#3)", color: "#0284C7", pos: [630, 230], baseVps: { PRESENCE: 3, DOMINATION: 5, CONTROL: 7 } },
-      { id: 3, name: "AFRICA", cardName: "Africa Scoring (#79)", color: "#D97706", pos: [425, 535], baseVps: { PRESENCE: 1, DOMINATION: 4, CONTROL: 6 } },
-      { id: 4, name: "CENTRAL AMERICA", cardName: "Central America Scoring (#88)", color: "#16A34A", pos: [115, 260], baseVps: { PRESENCE: 1, DOMINATION: 3, CONTROL: 5 } },
-      { id: 5, name: "SOUTH AMERICA", cardName: "South America Scoring (#81)", color: "#059669", pos: [232, 465], baseVps: { PRESENCE: 2, DOMINATION: 5, CONTROL: 6 } },
+      { id: 0, name: "EUROPE", cardName: "Europe Scoring (#2)", cardId: 2, color: "#3B82F6", pos: [440, 24], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 0 } },
+      { id: 1, name: "ASIA", cardName: "Asia Scoring (#1)", cardId: 1, color: "#EA580C", pos: [830, 180], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 9 } },
+      { id: 2, name: "MIDDLE EAST", cardName: "Middle East Scoring (#3)", cardId: 3, color: "#0284C7", pos: [630, 230], baseVps: { PRESENCE: 3, DOMINATION: 5, CONTROL: 7 } },
+      { id: 3, name: "AFRICA", cardName: "Africa Scoring (#79)", cardId: 79, color: "#D97706", pos: [425, 535], baseVps: { PRESENCE: 1, DOMINATION: 4, CONTROL: 6 } },
+      { id: 4, name: "CENTRAL AMERICA", cardName: "Central America Scoring (#37)", cardId: 37, color: "#16A34A", pos: [115, 260], baseVps: { PRESENCE: 1, DOMINATION: 3, CONTROL: 5 } },
+      { id: 5, name: "SOUTH AMERICA", cardName: "South America Scoring (#81)", cardId: 81, color: "#059669", pos: [232, 465], baseVps: { PRESENCE: 2, DOMINATION: 5, CONTROL: 6 } },
     ];
 
     const audits: RegionScoreAudit[] = [];
@@ -258,6 +297,7 @@ export class MapView {
         badgePos: cfg.pos,
         color: cfg.color,
         scoringCardName: cfg.cardName,
+        scoringCard: scoringCardWhereabouts(state, cfg.cardId),
         totalBattlegrounds: totalBg,
         usCountries,
         ussrCountries,
@@ -312,6 +352,7 @@ export class MapView {
       badgePos: [875, 485],
       color: "#F59E0B",
       scoringCardName: "Southeast Asia Scoring (#38)",
+      scoringCard: scoringCardWhereabouts(state, 38),
       totalBattlegrounds: 1,
       usCountries: seUsList.length,
       ussrCountries: seUssrList.length,
@@ -701,6 +742,48 @@ export class MapView {
       subText.textContent = `US: ${audit.usStatus.substring(0,4)} (${audit.usTotalVp}) | USSR: ${audit.ussrStatus.substring(0,4)} (${audit.ussrTotalVp})`;
       g.appendChild(subText);
 
+      // Middle row: can the region's scoring card still come this cycle? Inside the badge,
+      // because country nodes are drawn over the badges and would hide anything sticking out.
+      const tag = SCORING_CARD_TAG[audit.scoringCard.status];
+      const tagW = tag.text.length * 2.4 + 4;
+      const tagH = 5.2;
+      const tagX = x + badgeW / 2 - tagW - 3;
+      const tagY = y - tagH / 2 - 0.4;
+      const tagG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      tagG.setAttribute("class", "svg-region-card-tag");
+      tagG.setAttribute("data-status", audit.scoringCard.status);
+      const tagLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tagLabel.setAttribute("x", (x - badgeW / 2 + 4).toString());
+      tagLabel.setAttribute("y", (tagY + tagH / 2 + 1.0).toString());
+      tagLabel.setAttribute("fill", "#64748B");
+      tagLabel.setAttribute("font-size", "2.8");
+      tagLabel.setAttribute("font-weight", "700");
+      tagLabel.setAttribute("letter-spacing", "0.4");
+      tagLabel.textContent = "SCORING CARD";
+      tagG.appendChild(tagLabel);
+      const tagRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      tagRect.setAttribute("x", tagX.toString());
+      tagRect.setAttribute("y", tagY.toString());
+      tagRect.setAttribute("width", tagW.toString());
+      tagRect.setAttribute("height", tagH.toString());
+      tagRect.setAttribute("rx", "1.6");
+      tagRect.setAttribute("fill", tag.fill);
+      tagRect.setAttribute("stroke", tag.stroke);
+      tagRect.setAttribute("stroke-width", "0.6");
+      if (audit.scoringCard.status === "later") tagRect.setAttribute("stroke-dasharray", "1,0.8");
+      tagG.appendChild(tagRect);
+      const tagText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tagText.setAttribute("x", (tagX + tagW / 2).toString());
+      tagText.setAttribute("y", (tagY + tagH / 2 + 1.2).toString());
+      tagText.setAttribute("text-anchor", "middle");
+      tagText.setAttribute("fill", tag.ink);
+      tagText.setAttribute("font-size", "3.4");
+      tagText.setAttribute("font-weight", "800");
+      tagText.setAttribute("letter-spacing", "0.3");
+      tagText.textContent = tag.text;
+      tagG.appendChild(tagText);
+      g.appendChild(tagG);
+
       // Hover / Tooltip listeners
       g.addEventListener("mouseenter", (e) => this.showRegionTooltip(e, audit));
       g.addEventListener("mouseleave", () => this.hideRegionTooltip());
@@ -717,6 +800,9 @@ export class MapView {
     this.tooltipEl.innerHTML = `
       <div style="font-weight: bold; font-size: 13px; color: #F8FAFC; margin-bottom: 4px;">
         ${audit.scoringCardName}
+      </div>
+      <div style="font-size: 11px; color: ${SCORING_CARD_TAG[audit.scoringCard.status].stroke}; margin-bottom: 4px;">
+        Scoring card ${audit.scoringCard.where}
       </div>
       <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 8px;">
         CURRENT US NET VALUE: <strong style="color: ${audit.netVpUs > 0 ? '#60A5FA' : (audit.netVpUs < 0 ? '#F87171' : '#CBD5E1')}; font-size: 12px;">${audit.netVpUs > 0 ? '+' + audit.netVpUs : audit.netVpUs} VP</strong>
