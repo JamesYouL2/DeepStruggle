@@ -1,0 +1,136 @@
+# The search disagreement bank (tools/search_bank.py), one stage at a time, split over runners and
+# pooled. The model is a published ONNX export, rebuilt as the torch checkpoint search needs on each
+# runner (tools/onnx_to_checkpoint.py refuses unless the rebuild reproduces the export).
+#
+#   gh workflow run search_bank.yml --ref exp/search-bank -f stage=annotate -f args="--games 1500"
+#   # later stages read the bank from a release asset of this repository:
+#   gh release create search-bank-<date> bank.jsonl.gz --prerelease --title "search bank"
+#   gh workflow run search_bank.yml --ref exp/search-bank -f stage=reference -f release=search-bank-<date>
+#   gh run download <run-id> -n search-bank-<run-id> -D data/reports/search_bank/<stage>
+name: search-bank
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/search-bank]
+    paths: [.github/workflows/search_bank.yml]
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "tools/search_bank.py stage"
+        default: "annotate"
+      args:
+        description: "Further arguments for the stage (each part also gets --part k/N --out)"
+        default: "--games 1500"
+      release:
+        description: "Release whose bank.jsonl.gz the stage reads as --bank (stages after annotate)"
+        default: ""
+      model:
+        description: ".onnx in the Hugging Face repo"
+        default: "E7line_swa_4720-4800M.onnx"
+      template:
+        description: ".pt in the repo with the export's architecture"
+        default: "shallow_E7-02+03+04+05_1200M.pt"
+      runners:
+        description: "Runners (a free public repo runs up to 20 jobs at once)"
+        default: "20"
+      hf_repo:
+        description: "Hugging Face repo"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  STAGE: ${{ inputs.stage || 'annotate' }}
+  ARGS: ${{ inputs.args || '--games 1500' }}
+  RELEASE: ${{ inputs.release }}
+  MODEL: ${{ inputs.model || 'E7line_swa_4720-4800M.onnx' }}
+  TEMPLATE: ${{ inputs.template || 'shallow_E7-02+03+04+05_1200M.pt' }}
+  RUNNERS: ${{ inputs.runners || '20' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Fetch the model, the template and the bank
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/checkpoints/hf input
+          for f in "$MODEL" "$TEMPLATE"; do
+            curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$f")" "https://huggingface.co/$HF_REPO/resolve/main/$f"
+          done
+          if [ -n "$RELEASE" ]; then
+            gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern bank.jsonl.gz --dir input
+          fi
+      - name: Rebuild the checkpoint from the export
+        run: |
+          onnx="data/checkpoints/hf/$(basename "$MODEL")"
+          PYTHONPATH=.:build/release python tools/onnx_to_checkpoint.py --onnx "$onnx" \
+            --template "data/checkpoints/hf/$(basename "$TEMPLATE")" --out "${onnx%.onnx}.pt"
+      - name: ${{ env.STAGE }} (part ${{ matrix.part }})
+        run: |
+          mkdir -p out
+          pt="data/checkpoints/hf/$(basename "${MODEL%.onnx}").pt"
+          bank=()
+          if [ -n "$RELEASE" ]; then bank=(--bank input/bank.jsonl.gz); fi
+          OMP_NUM_THREADS=4 PYTHONPATH=.:build/release python tools/search_bank.py "$STAGE" --model "$pt" \
+            "${bank[@]}" --part "${{ matrix.part }}/$RUNNERS" --out "out/part-${{ matrix.part }}.jsonl.gz" $ARGS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-bank-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  pool:
+    needs: [plan, run]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: search-bank-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool
+        run: |
+          mkdir -p report
+          ls parts
+          cat $(ls parts/part-*.jsonl.gz | sort -V) > "report/$STAGE.jsonl.gz"
+          cp parts/part-1.jsonl.gz.meta.json "report/$STAGE.meta.json" 2>/dev/null || true
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "stage: $STAGE  args: $ARGS"
+            echo "model: $HF_REPO $MODEL (template $TEMPLATE)  release: $RELEASE"
+            echo "runners: $RUNNERS (parts received: $(ls parts/part-*.jsonl.gz | wc -l))"
+            echo "rows: $(zcat "report/$STAGE.jsonl.gz" | wc -l)"
+          } > report/provenance.txt
+          cat report/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: search-bank-${{ github.run_id }}
+          path: report/
+          retention-days: 90
