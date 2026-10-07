@@ -790,6 +790,81 @@ there; a trainer must drop them from the value loss and keep them in the policy 
 
 ---
 
+## 7b. The Disagreement Bank and Its Human Verdicts
+
+`ai/eval/banks/disagreement_verdicts.jsonl` is a bank of 100 positions from the human corpus,
+72 of them with each candidate move marked good or bad by a strong human reviewer (with a
+confidence and, often, a note on why). Every row was a human headline, card or play-mode decision
+where the human, the raw network and its search did not all choose the same move. Score a model
+against the marks:
+
+```bash
+export PYTHONPATH=.:build/release
+.venv/bin/python tools/scripts/bank_verdicts.py score --agent newest.onnx               # the raw network
+.venv/bin/python tools/scripts/bank_verdicts.py score --agent gumbel:newest.pt:32:4     # a searcher
+```
+
+It prints the share of positions where the agent's move is marked good, marked bad, or unmarked,
+overall and by kind and confidence (`--by`; `--out` keeps the per-position moves). The positions
+were chosen *because* the network or its search disagreed with someone, so the rates compare one
+model with another; they are not an estimate of how often a model errs in play.
+`tests/training/test_disagreement_bank.py` holds the bank to the current engine: every position
+loads and asks the decision it was reviewed as, and every mark is a legal move there.
+
+How the bank is made:
+
+```bash
+# 1. the network's .pt for the searcher, rebuilt from the published ONNX and checked against it
+.venv/bin/python tools/onnx_to_checkpoint.py --onnx newest.onnx --template shallow_E7-02+03+04+05_1200M.pt --out newest.pt
+# 2. every disagreement in the corpus (resumable, in parts: a long run can stop on a rare nanobind
+#    instance collision)
+.venv/bin/python tools/scripts/disagreement_bank.py --net newest.onnx --search "gumbel:newest.pt:32:4" \
+    --part 1/3 --out part1.jsonl.gz --summary part1.json --resume
+# 3. how clear each position is: a stronger search's pick and the moves valued over redealt worlds
+.venv/bin/python tools/scripts/bank_clarity.py --bank part*.jsonl.gz --checkpoint newest.pt \
+    --out clarity.jsonl.gz --emit-playouts 1000 playout_input.jsonl.gz
+# 4. paired playouts of the clearest (select / run / pool; .github/workflows/bank_playouts.yml runs
+#    `run` over CI runners)
+.venv/bin/python tools/scripts/bank_playouts.py select --clarity clarity*.jsonl.gz --bank part*.jsonl.gz \
+    --min-gap 10 --out playout_input.jsonl.gz
+# 5. positions whose hand is over the rules' limit (BUGS.md CONV-1), as an exclusion list
+.venv/bin/python tools/scripts/bank_hand_check.py --bank part*.jsonl.gz --flags hand_flags.json \
+    --untrusted untrusted_turns.json --exclude exclude_ids.json
+# 6. the review page's data files: one per pattern, in parts under the 16 MB file limit
+.venv/bin/python tools/scripts/disagreement_bank.py --pack part*.jsonl.gz --clarity clarity.jsonl.gz \
+    --playouts playouts.jsonl.gz --exclude exclude_ids.json --out review/
+```
+
+`tools/scripts/disagreement_review.html` is the review page, published as an artifact with the
+`db` capability next to the packed files. A reviewer marks each distinct move good or bad (or the
+position Unclear), with a confidence, a note and a bank flag; the page stores this per position id
+-- a hash of the position and the decision kind -- so a rebuilt bank keeps the verdicts already
+given. Export the page's `verdicts` collection (one `<id>.json` per document) and fold it into the
+committed bank:
+
+```bash
+.venv/bin/python tools/scripts/bank_verdicts.py collect <exported-verdicts-dir>
+```
+
+A verdict the page carried to a new id after the CONV-1 fix replaces the one it came from, and a
+mark on a move that is no longer legal (a card the fix took out of the hand) is kept apart as
+`stale_marks`. The positions are the corpus's converted positions, so the bank must be rebuilt --
+and its verdicts carried over by id -- after any change to the converter or the save format.
+
+The corpus driver the bank runs on, `feed_corpus_game` in `tools/scripts/event_play_census.py`,
+also counts how each card in hand is used, and `placement_census.py` where Ops influence goes, in
+the human corpus and in a policy's self-play:
+
+```bash
+.venv/bin/python tools/scripts/event_play_census.py --human-corpus --dump human.json
+.venv/bin/python tools/scripts/event_play_census.py --checkpoint newest.onnx --games 4096 --dump newest.json \
+    --placement-dump newest_pl.json
+.venv/bin/python tools/scripts/placement_census.py --human-corpus --dump human_pl.json
+.venv/bin/python tools/scripts/placement_census.py --compare human_pl.json NEWEST=newest_pl.json
+```
+
+---
+
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
