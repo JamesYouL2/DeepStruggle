@@ -340,3 +340,79 @@ being held for DEFCON 2.
   too thin and noisy a signal to sharpen.
 * **Strength stays level**, as through every Wargames arm: the extra wins and the wasted or lost cards
   roughly cancel in self-play.
+
+## E7-33-44: card-conditioned play-mode and branch heads, from scratch (owner, 2026-10-07)
+
+Owner: "add a similar head to 'play mode' (trunk context + one-hot of cards played), and train it from
+scratch to 1200M" -- both heads, no forcing. `--ladder-play-mode-head` adds to the five play-mode logits
+(110..114) a zero-initialised correction from [trunk output, one-hot of the card being played];
+`--ladder-branch-head` does the same for the branch block (200..219) with the resolving card (E7-30-44's
+head). E7-02-44's recipe from scratch, seed 44 (`launch_flags --diff` against E7-01-44: only the two
+heads and `--train-steps`), read at 1,200M against E7-02-44@1200M.
+
+**Training** was healthy throughout: entropy within 0.02 of E7-02-44's and level with it at the end
+(0.380 / 0.381 at 1,120–1,160M). US self-play ran 2–4 points under E7-02-44's in every 40M window from
+680M (0.46–0.48 against 0.48–0.52) -- and, as the strength reading shows, that one time it was a real US
+deficit. An early pair at 600M (53.9%, +3.5 SE) did not hold.
+
+**Strength** (`data/reports/e7_33_rr.{md,json}`), against E7-02-44 on the E6-03-44 panel:
+
+| | US | USSR | head to head |
+|:---|:---|:---|:---|
+| 1,160–1,200M snapshots, 3 each | **−3.3 ± 0.6** | −0.9 ± 0.5 | **46.9% ± 0.4** (as US 44.6, as USSR 49.2) |
+| 1,120–1,200M SWAs | −2.0 ± 0.9 | −0.6 ± 0.9 | 48.3% ± 1.1 (as US 46.0, as USSR 50.6) |
+| branch spread: E7-03-44 SWA | +1.1 ± 0.9 | −0.4 ± 0.9 | 50.3% ± 1.1 |
+
+Elo: SWAs 1613 (E7-02-44) / 1610 (E7-03-44) / 1601; every E7-33-44 snapshot (1546–1554) below every
+E7-02-44 snapshot (1562–1575). **Not accepted** by the owner's rule.
+
+**But the deficit is the size of a from-scratch draw, not clearly the heads'.** E7-23-44 (compile, also
+E7-02-44's recipe from scratch at seed 44) lost to E7-02-44 by as much, in the other seat. The three SWAs
+in one field (`data/reports/e7_33_vs_23_rr.{md,json}`):
+
+| | US | USSR | head to head |
+|:---|:---|:---|:---|
+| E7-33-44 vs E7-23-44 | −1.5 | +1.9 | 50.6% ± 1.1 (as US 53.4, as USSR 47.9) |
+| E7-33-44 vs E7-02-44 | −2.0 | −0.6 | 48.3% ± 1.1 |
+| E7-23-44 vs E7-02-44 | −0.5 | −2.5 | 46.2% ± 1.1 |
+
+Elo there 1680 / 1665 / 1661. The two variants are level with each other and both ~1.5–4 points below
+E7-02-44: either E7-02-44 is a good draw (the branch spread, E7-03-44, measures branches from a shared
+870M state, not from-scratch runs), or each change costs about the same. One seed cannot separate the
+two; a from-scratch E7-02-44 replica at another seed would.
+
+**What the heads did** -- here they clearly work. Card counts (4,000 games, T 0.1 / T 1), share played
+for the event with the event legal:
+
+| | E7-33-44 | E7-02-44 |
+|:---|:---|:---|
+| games ended by Wargames | **4.5 / 5.4%** | 0.25 / 0.23% |
+| Wargames US: applicable / DEFCON 2 lead < 7 / DEFCON > 2 | **54 / 53%** · 5.3 / 6.3% · 8.1 / 7.1% | 0.6 / 1.4% · 0.8 / 0.5% · 1.2 / 1.0% |
+| Wargames USSR: same | **60 / 62%** · 7.9 / 8.5% · 3.8 / 1.6% | 1.6 / 0.0% · 0.3 / 1.0% · 0.2 / 0.2% |
+| Arms Race US applicable / not | 3.3 / 4.1% · 2.8 / 2.3% | 0.7 / 0.8% · 0.6 / 0.7% |
+| Arms Race USSR applicable / not | 9.9 / 7.6% · 5.9 / 3.9% | 2.1 / 2.8% · 1.3 / 1.0% |
+| One Small Step US / USSR applicable | 0.7 / 0.7% · 0.1 / 0.6% | 0.1 / 0.5% · 1.1 / 1.1% |
+| Chernobyl US | 1.7 / 2.5% | 0.6 / 1.5% |
+
+Wargames' branch, P(end) by lead (8,000 games):
+
+| | < 5 | 5 | 6 | 7 | 8+ | policy AUC | trunk LR AUC |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| E7-33-44 @1200M | 0.107 | 0.29 | 0.38 | 0.48 | **0.875** | **0.938** | 0.994 |
+| E7-02-44 @1200M | 0.198 | 0.32 | 0.43 | 0.53 | 0.640 | 0.812 | 0.989 |
+
+### Reading
+
+* **The play-mode head found Wargames without forcing.** E7-02-44 never plays it for the event (≤1.6%);
+  E7-33-44 does where it wins in 54–62% of spots and 5–8% where it does not -- a 7–11x discrimination
+  that the forced arms reached only by being shown the move (E7-29..32: 55–88%, with 12–25% misfires).
+  The shared play-mode head could not learn a per-card EVENT preference without spilling it onto every
+  card (E7-29-44); conditioning on the card removes that, and the plain on-policy gradient then suffices.
+* **The branch head sharpens the clear cases, not the threshold.** P(end) rises to 0.875 at leads of 8+
+  and falls to 0.107 below 5; at 6 against 7 neither run separates (0.38 / 0.48, 0.43 / 0.53). The trunk
+  knows the answer equally well in both (AUC 0.99): the head lets the policy use it.
+* **Arms Race moved, but not by its condition** (US 3.3 vs 2.8%), and One Small Step not at all: an
+  event the model rarely benefits from gets no signal to learn a condition from.
+* **Strength: not accepted against E7-02-44, level with the other from-scratch variant.** The Wargames
+  gain is too rare (≈5% of games) to show in strength either way; the seat losses are from the rest of
+  play, at the size two from-scratch seed-44 runs already differ by.
