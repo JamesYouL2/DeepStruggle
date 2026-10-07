@@ -24,7 +24,7 @@ turn-by-turn borrowing, which is why this module keeps its own entry point.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Protocol, Set, Tuple
+from typing import AbstractSet, Dict, List, Optional, Protocol, Set, Tuple
 
 import ts_engine as ts
 
@@ -578,17 +578,22 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
                 explain: bool = False,
                 pin: Optional[Dict[Tuple[int, int, str], bool]] = None,
                 report_cost: Optional[List[int]] = None,
-                use_reveals: bool = True
+                ignore_reveals: AbstractSet[int] = frozenset(),
+                reveal_conflicts: Optional[Set[int]] = None
                 ) -> Optional[Dict[int, Dict[str, List[int]]]]:
     """The cards each side holds as each turn opens, or None where the log allows no hand.
 
     A card revealed out of a hand was dealt into it unless something brought it in mid-turn, and
-    the model requires that -- where it can. A reveal can also expose something the model does
-    not know of: at turn 6 of replay 212 "Lone Gunman" reveals six US cards at AR3 and the US
-    later plays one that was not among them; at turn 10 of replay 321 Aldrich Ames reveals a
-    card the model has in the discard pile since turn 7 with no reshuffle recorded. Where the
-    reveals make the model unsatisfiable it is solved again without them, which is the hand the
-    game had before they were read.
+    the model requires that, in every turn but those in `ignore_reveals`. A reveal can also
+    expose something the model does not know of: at turn 6 of replay 212 "Lone Gunman" reveals
+    six US cards at AR3 and the US later plays one that was not among them; at turn 10 of replay
+    321 Aldrich Ames reveals a card the model has in the discard pile since turn 7 with no
+    reshuffle recorded. Where the reveals make the model unsatisfiable this returns None, unless
+    the caller passes `reveal_conflicts`: then the turns whose reveals the rest of the log
+    contradicts are found -- as few as will do, each one's reveals dropped only if the model
+    stays unsatisfiable with them -- the hands are solved without those turns' reveals, and the
+    turns are added to `reveal_conflicts`. Their hands are the ones the log allowed before its
+    reveals were read, which is not known to be right, so the caller must not trust them.
 
     One boolean per card, turn and side -- "this card is in that hand as the turn opens" -- and
     the rules as constraints over them. Satisfying them is quick; choosing *well* among the
@@ -690,7 +695,7 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
                         continue
                     require(c, t, s, "the log shows them spending it")
                     continue
-                if use_reveals and c in facts.revealed[(t, s)] and c not in arrived:
+                if t not in ignore_reveals and c in facts.revealed[(t, s)] and c not in arrived:
                     revealed_late = bool(drew) and (facts.revealed_at.get((t, s, c), -1)
                                                     >= facts.drew_at.get((t, s), 99))
                     if not revealed_late:
@@ -780,10 +785,25 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
     if solver.check() != z3.sat:
         if explain:
             _print_core(hard, tags, ctx)
-        if use_reveals and any(facts.revealed.values()):
-            return solve_hands(raws, hands, card_id, rlimit, explain, pin, report_cost,
-                               use_reveals=False)
-        return None
+        reveal_turns = sorted({t for (t, _s), cs in facts.revealed.items()
+                               if cs and t not in ignore_reveals})
+        if reveal_conflicts is None or not reveal_turns:
+            return None
+
+        def satisfiable(ignored: AbstractSet[int]) -> bool:
+            # rlimit 1 stops the optimiser at once, so this costs one solve of the hard model.
+            return solve_hands(raws, hands, card_id, 1, False, pin,
+                               ignore_reveals=set(ignore_reveals) | set(ignored)) is not None
+
+        ignored = set(reveal_turns)
+        if not satisfiable(ignored):
+            return None            # not the reveals: the log admits no hand even without them
+        for t in reveal_turns:
+            if satisfiable(ignored - {t}):
+                ignored.discard(t)
+        reveal_conflicts.update(ignored)
+        return solve_hands(raws, hands, card_id, rlimit, explain, pin, report_cost,
+                           ignore_reveals=set(ignore_reveals) | ignored)
     model = solver.model()
 
     free = [(c, t, s) for c in cards for t in turns for s in facts.sides

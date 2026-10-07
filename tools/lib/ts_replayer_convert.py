@@ -298,6 +298,15 @@ class Conversion:
     cards_carried_over: int = 0
     # Whether the hands came from the constraint model rather than the turn-by-turn borrowing.
     hands_solved: bool = False
+    # Turns whose reveals the rest of the log contradicts, so the hands were solved without
+    # them (solve_hands). Those hands are not known to be the players', so the turns' decisions
+    # are driven but not emitted -- as samples or to on_decision. Replays 212 (turn 6) and 321
+    # (turn 10).
+    reveal_conflict_turns: List[int] = field(default_factory=list)
+    # Cards a turn's hand list gives a side that nothing in the turn shows that side holding,
+    # and that the solved deal leaves out: never seated. At turn 7 of replay 285 both lists
+    # name ABM Treaty, which the USSR headlines, reclaims with SALT Negotiations and plays.
+    listed_never_held: int = 0
     # Cards whose event the engine resolved while driving the current entry. Reset per entry.
     events_resolved: Set[int] = field(default_factory=set)
     # (turn, entries converted, samples emitted) as the current turn began.
@@ -3145,7 +3154,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
             if _force_random_discard(state, random_discards, action=int(chosen)):
                 random_discards = []
 
-        if informative:
+        if informative and int(e.turn or 0) not in conv.reveal_conflict_turns:
             obs = np.asarray(ts.extract_observation(state, mover), dtype=np.float32)
             conv.samples.append((obs, mask.copy(), int(chosen),
                                  1 if mover == ts.Player.US else -1))
@@ -3309,16 +3318,38 @@ def _peeked_this_turn(raws: List[Dict], turn: int) -> Set[int]:
     return out
 
 
-def _arrival_entry(raws: List[Dict], turn: int, side: str, card: int, first: int) -> int:
-    """The entry after which a card the solved hand left out of the deal is in `side`'s hand.
+def _ask_not_entry(raws: List[Dict], turn: int, side: str) -> Optional[int]:
+    """The entry at which "Ask Not What Your Country Can Do For You" draws `side` new cards in
+    a turn: the event fired, and this side discarding (it draws as many as it discards)."""
+    for index, raw in enumerate(raws):
+        e = parse_entry(raw)
+        if e.turn != turn:
+            continue
+        fired = {card_id(nm) for nm in (e.events or [])}
+        if e.card and " & " not in e.card:
+            fired.add(card_id(e.card))
+        fired |= {card_id(nm) for nm in (e.headlines or {}).values()}
+        if _ASK_NOT in fired and any(sd == side for sd, _nm in (e.discards or [])):
+            return index
+    return None
 
-    Received from the opponent (Missile Envy, Grain Sales): the entry that hands it over. Ask
-    Not's draws and SALT's reclaim are settled before this is asked (_mid_turn_acquisitions).
-    Anything else is in hand from the first entry that shows this side with it -- playing it,
-    discarding it, revealing it -- and not before: the log says nothing of it earlier, and
-    seating it at the turn's start held more cards than the rules deal (the turn's first entry
-    was the default, which is AR1 once the headline is done).
+
+def _arrival_entry(raws: List[Dict], turn: int, side: str, card: int,
+                   first: int) -> Optional[int]:
+    """The entry after which a card the solved hand left out of the deal is in `side`'s hand,
+    or None where nothing in the turn shows this side with it.
+
+    Received from the opponent (Missile Envy, Grain Sales): the entry that hands it over. Drawn
+    by Ask Not: that entry. _mid_turn_acquisitions settles Ask Not's draws first, but by a
+    preference among the turn's cards, and where the solved deal leaves out a different card
+    that card is drawn all the same -- placed at its first mention, 66 of them sat out of the
+    hand for 301 entries in all. Anything else is in hand from the first entry that shows this
+    side with it -- playing it, discarding it, revealing it -- and not before: the log says
+    nothing of it earlier, and seating it at the turn's start held more cards than the rules
+    deal. A card nothing shows at all is one the turn's list names wrongly, which the solved
+    deal has already said; it is not seated (replay 285, turn 7: ABM Treaty, the USSR's).
     """
+    ask_not = _ask_not_entry(raws, turn, side)
     for index, raw in enumerate(raws):
         if index < first:
             continue
@@ -3352,7 +3383,9 @@ def _arrival_entry(raws: List[Dict], turn: int, side: str, card: int, first: int
                   for sd, nm in (e.revealed or []) if sd == side]
         if card in named:
             return index - 1
-    return first
+        if index == ask_not:
+            return index
+    return None
 
 
 def _apply_hands(state, us_cards, ussr_cards) -> None:
@@ -3679,8 +3712,10 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
     # Both hands, for every turn, solved from the log and the rules in one pass. Where z3 is
     # not installed, or the log will not admit a hand, this is None and the turn-by-turn
     # borrowing below stands in.
-    solved_hands = solve_hands(raws, hands, card_id)
+    conflicts: Set[int] = set()
+    solved_hands = solve_hands(raws, hands, card_id, reveal_conflicts=conflicts)
     conv.hands_solved = solved_hands is not None
+    conv.reveal_conflict_turns = sorted(conflicts)
     cur_turn = None
     turn_hands = {"US": [], "USSR": []}
     played = {"US": set(), "USSR": set()}
@@ -3830,14 +3865,19 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
                     solved = set(solved_hands[int(e.turn)][side])
                     known = pending[side]
                     pending[side] = {}
+                    never: Set[int] = set()
                     for c in turn_hands[side]:
                         if c in solved:
                             continue
                         at = known.get(c)
                         if at is None:
                             at = _arrival_entry(raws, int(e.turn), side, c, index)
-                        if at >= index:
+                        if at is None:
+                            never.add(c)
+                        elif at >= index:
                             pending[side][c] = at
+                    turn_hands[side] = [c for c in turn_hands[side] if c not in never]
+                    conv.listed_never_held += len(never)
 
         # --- rebuild the position this entry was decided from ---
         if prev_raw is not None:

@@ -123,27 +123,67 @@ over the rules' limit in some action round of a trusted turn (2,590 of 111,194 d
   Ames) was in it, but the solver never read reveals, so it dealt other cards and the revealed
   ones came back as late arrivals: both at once (replay 147, turn 9: CIA Created reveals eight
   USSR cards; 14 held at AR1). `GameFacts.revealed` now requires them in the deal unless they
-  arrived mid-turn. Where a reveal makes the model unsatisfiable (replays 212 and 321, whose logs
-  contradict the model elsewhere), `solve_hands` solves again without reveals: 256 of 274 games
-  are solved, as before.
+  arrived mid-turn. Where a turn's reveals make the model unsatisfiable, the converter finds the
+  fewest such turns, solves without their reveals, and records them in
+  `Conversion.reveal_conflict_turns`: replay 212 turn 6 ("Lone Gunman" reveals six US cards and
+  the US then plays a seventh) and replay 321 turn 10 (Aldrich Ames reveals a card the model has
+  in the discard pile). Those hands are not known to be right, so the turns' 65 decisions are
+  driven but not emitted, to the samples or to `on_decision`. `solve_hands` itself never drops a
+  reveal unless its caller asks to be told which: called plainly, it returns None. 256 of 274
+  games are solved, as before.
 * *Every late arrival came at the turn's start.* Only Ask Not and SALT had an arrival entry;
   anything else defaulted to the turn's first entry, i.e. AR1. `_arrival_entry` now places a card
-  received from the opponent (Missile Envy, Grain Sales) at the entry that hands it over, and any
-  other at the first entry that shows the side with it.
+  received from the opponent (Missile Envy, Grain Sales) at the entry that hands it over, an Ask
+  Not draw at the Ask Not entry, and any other at the first entry that shows the side with it.
+  Ask Not's draws need the second rule as well as `_mid_turn_acquisitions`: that function picks
+  the draws by a preference among the turn's cards, and where the solved deal leaves out a
+  different card, that card was drawn all the same (replay 35, turn 7: Brush War, drawn at the
+  headline and played at AR6, was out of the US hand through AR1-AR5). A card the turn's list
+  names that nothing shows the side holding is not seated at all, and is counted in
+  `Conversion.listed_never_held` (replay 285, turn 7: both lists name ABM Treaty, which the USSR
+  headlines, reclaims with SALT and plays; it sat in the US hand too).
 
 **After.** 39 games / 186 decisions are over the limit, by one card in 180 of them, and every such
 turn but two has a mid-turn acquisition (SALT, Ask Not, Missile Envy, Grain Sales) that makes the
-extra card legal; the two are in replays 212 and 321. The converted board, VP and decisions are
-unchanged (`tests/replayer`, and `-m corpus_full`). Regression tests:
-`tests/replayer/test_replay_hand_contents.py` (two of its three fail on the old converter).
+extra card legal; the two are in replays 212 and 321, whose turns are now left out. The Ask Not
+and listed-card rules also shrink the hands that came out *short*: below each round's limit by two
+or more, 209 decisions in 64 games before them and 156 in 42 after -- what remains includes the
+events that discard from a hand. The converted board and VP are unchanged (`tests/replayer`, and
+`-m corpus_full`), and so are the decisions but for the two left-out turns. Regression tests:
+`tests/replayer/test_replay_hand_contents.py`.
 
 **Rebuild** everything made from converted human positions -- the human BC dataset
 (`tools/build_human_dataset.py`), human-agreement probes, the card census and the disagreement
 bank -- since the hands, and so the observations, changed.
 
-`tools/scripts/event_play_census.feed_corpus_game` also stops passing on decisions from a game's
-untrusted turn (where the record stops or the conversion fails), which the converter already kept
-out of its own training data.
+`tools/lib/corpus_driver.feed_corpus_game` also stops passing on decisions from a game's untrusted
+turn (where the record stops or the conversion fails), which the converter already kept out of its
+own training data.
+
+**Open: the committed verdict bank predates the final converter.** Of the 100 positions in
+`ai/eval/banks/disagreement_verdicts.jsonl`, 33 are no longer produced by the converter they were
+committed with (34 after the Ask Not and listed-card rules): 32 differ in what the network
+observes -- in several the mover's hand holds other cards, or fewer -- and one (replay 147, turn
+9) is in a turn now left out as untrusted. 28 of them carry marks. The reviewer judged those exact
+positions, so the verdicts are not moved here; carrying them to the current positions, or
+re-reviewing, is the owner's decision. `tests/training/test_disagreement_bank.py` checks that each
+position loads and each mark is legal, not that the converter still produces the position.
+
+---
+
+## BIND-1 — a long disagreement-bank run can stop on a nanobind instance collision
+
+**Area:** bindings · **Severity:** low · **Status:** open, not reproduced
+
+Reported with the disagreement bank (`tools/README.md` §7b): a long `disagreement_bank.py` scan
+occasionally stops on a nanobind instance collision, and the scan was made resumable
+(`--resume`) to work around it rather than fixed. No traceback or reproducer was recorded. A
+collision means two Python objects claimed one C++ address, which points at an object's lifetime
+-- a `GameState` or a runner slot freed while a Python reference still names it -- and the same
+fault could corrupt a position silently rather than stop the run.
+
+**Next.** Reproduce under the sanitizer build (`tools/scripts/run_asan.sh`) with a long scan, and
+record the traceback here.
 
 ---
 
