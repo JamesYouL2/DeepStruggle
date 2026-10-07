@@ -501,7 +501,8 @@ def _wq(xs: Sequence[float], ws: Sequence[float], q: float) -> float:
 def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, Any]],
              oracle_rows: Sequence[Dict[str, Any]] = (), playout_rows: Sequence[Dict[str, Any]] = (),
              cards: Optional[Dict[int, str]] = None,
-             decisions_per_game: Optional[float] = None) -> Tuple[str, Dict[str, Any]]:
+             decisions_per_game: Optional[float] = None,
+             playout_incl: Optional[Dict[str, float]] = None) -> Tuple[str, Dict[str, Any]]:
     """The report (Markdown) and its numbers."""
     refs = {r["id"]: r for r in ref_rows}
     rows = [(b, refs[b["id"]], solve(b, refs[b["id"]])) for b in bank_rows if b["id"] in refs]
@@ -637,31 +638,65 @@ def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, A
         table(["searcher", "positions", "picks the forced best move"], body)
 
     if playout_rows:
-        out += ["## Playout check of search-valued regret", ""]
+        # Each playout row stands for weight / inclusion raw-play decisions: the bank's weight, over
+        # the chance the playout sample took the row (playout input's `pl_incl`, 1 if not given).
+        out += ["## Playout check: outcomes, independent of the value head", ""]
         pl = {p["id"]: p for p in playout_rows}
-        body = []
-        agree = n_ = 0
+        incl = playout_incl or {}
+
+        def diff(p: Dict[str, Any], x: int, y: int) -> Optional[Tuple[float, float]]:
+            if x == y:
+                return 0.0, 0.0
+            if str(x) not in p["scores"] or str(y) not in p["scores"]:
+                return None
+            d = [u - w for u, w in zip(p["scores"][str(x)], p["scores"][str(y)])]
+            mu = sum(d) / len(d)
+            return mu, math.sqrt(sum((t - mu) ** 2 for t in d) / max(1, len(d) - 1) / len(d))
+
+        # (bank row, verdict, population weight, playout lead and SE, search-valued lead) per comparison
+        Cmp = Tuple[Dict[str, Any], Dict[str, Any], float, Tuple[float, float], float]
+        vs_best: List[Cmp] = []
+        vs_g256: List[Cmp] = []
         for b, _, v in rows:
             p = pl.get(b["id"])
-            if not p or str(v["best"]) not in p["scores"] or str(b["raw"]) not in p["scores"] or v["best"] == b["raw"]:
+            if p is None:
                 continue
-            sb, sr = p["scores"][str(v["best"])], p["scores"][str(b["raw"])]
-            d = [x - y for x, y in zip(sb, sr)]
-            mu = sum(d) / len(d)
-            se = math.sqrt(sum((x - mu) ** 2 for x in d) / max(1, len(d) - 1) / len(d))
-            n_ += 1
-            agree += mu > 0
-            body.append((v["regret"]["raw"][0], mu, se))
-        if body:
-            big = [x for x in body if x[0] >= 0.04]
-            out.append(f"{n_} positions where the reference best differs from raw: the playouts favour the "
-                       f"reference move in {pct(agree / max(1, n_))}; mean playout lead "
-                       f"{sum(x[1] for x in body) / len(body):+.3f} (win probability), against a mean search-valued "
-                       f"regret of {sum(x[0] for x in body) / len(body) / 2:+.3f}. Where search says raw loses "
-                       f"two or more points ({len(big)} positions): playout lead "
-                       f"{(sum(x[1] for x in big) / len(big)) if big else math.nan:+.3f}.")
-            out.append("")
-            num["playout_agree"] = agree / max(1, n_)
+            w = b["weight"] / incl.get(b["id"], 1.0)
+            db = diff(p, v["best"], b["raw"])
+            if db is not None:
+                vs_best.append((b, v, w, db, v["regret"]["raw"][0]))
+            if "g256" in b["methods"]:
+                dg = diff(p, b["methods"]["g256"]["choice"], b["raw"])
+                if dg is not None:
+                    vs_g256.append((b, v, w, dg, v["regret"]["raw"][0] - v["regret"]["g256"][0]))
+        for name, sel in (("the reference best", vs_best), ("Gumbel k=8 @256's move", vs_g256)):
+            sw = sum(g[2] for g in sel) or 1.0
+            pl_gain = sum(g[2] * g[3][0] for g in sel) / sw
+            se = math.sqrt(sum((g[2] * g[3][1]) ** 2 for g in sel)) / sw
+            sv_gain = sum(g[2] * g[4] for g in sel) / sw / 2
+            line = (f"**{name} over the raw move**, per raw-play decision: playouts {100 * pl_gain:+.3f} "
+                    f"± {100 * se:.3f} points of win probability; search-valued {100 * sv_gain:+.3f}.")
+            if decisions_per_game:
+                line += (f" Per game ({decisions_per_game:.0f} decisions): playouts "
+                         f"{100 * pl_gain * decisions_per_game:+.1f} ± {100 * se * decisions_per_game:.1f}, "
+                         f"search-valued {100 * sv_gain * decisions_per_game:+.1f}.")
+                num[f"playout_gain_per_game[{name}]"] = pl_gain * decisions_per_game
+                num[f"playout_gain_per_game_se[{name}]"] = se * decisions_per_game
+                num[f"search_gain_per_game[{name}]"] = sv_gain * decisions_per_game
+            out += [line, ""]
+        body = []
+        for lo, hi_, lab in ((-9.0, 0.01, "< 1 point"), (0.01, 0.04, "1-2 points"),
+                             (0.04, 0.1, "2-5 points"), (0.1, 9.0, "5+ points")):
+            bucket = [g for g in vs_best if g[1]["best"] != g[0]["raw"] and lo <= g[4] < hi_]
+            if not bucket:
+                continue
+            m = sum(g[3][0] for g in bucket) / len(bucket)
+            se = math.sqrt(sum(g[3][1] ** 2 for g in bucket)) / len(bucket)
+            body.append([lab, len(bucket), f"{100 * sum(g[4] for g in bucket) / len(bucket) / 2:+.2f}",
+                         f"{100 * m:+.2f} ± {100 * se:.2f}", pct(sum(g[3][0] > 0 for g in bucket) / len(bucket))])
+        out += ["Where the reference best differs from raw, by the search-valued regret (unweighted):", ""]
+        table(["search-valued regret", "positions", "search says (points)", "playouts say (points)",
+               "playouts favour best"], body)
 
     # 6. The worst raw decisions.
     out += ["## Highest-regret raw decisions", ""]
@@ -752,6 +787,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rp.add_argument("--reference", nargs="+", required=True)
     rp.add_argument("--oracle", nargs="*", default=[])
     rp.add_argument("--playouts", nargs="*", default=[])
+    rp.add_argument("--playouts-input", default=None,
+                    help="the playout stage's input bank, for each row's inclusion probability (pl_incl)")
     rp.add_argument("--decisions-per-game", type=float, default=None,
                     help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
     rp.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
@@ -759,7 +796,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if a.cmd == "report":
         cards = {int(c["id"]): str(c["name"]) for c in json.load(open("rules/cards.json"))}
         md, num = analysis(read_rows([a.bank]), read_rows(a.reference), read_all(a.oracle) if a.oracle else [],
-                           read_rows(a.playouts) if a.playouts else [], cards, a.decisions_per_game)
+                           read_rows(a.playouts) if a.playouts else [], cards, a.decisions_per_game,
+                           {r["id"]: float(r.get("pl_incl", 1.0)) for r in read_rows([a.playouts_input])}
+                           if a.playouts_input else None)
         open(a.out, "w").write(md + "\n")
         json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
         print(f"report -> {a.out}", file=sys.stderr)
