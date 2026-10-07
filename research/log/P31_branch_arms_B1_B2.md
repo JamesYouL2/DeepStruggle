@@ -294,3 +294,49 @@ siblings' range (0.1–4.2%; Chernobyl 1.0% / 1.4%).
   any lead, the event is mostly seen at losing leads where passing is safe, so playing it looks free.
 * **Strength is level**: the wins taken and the cards wasted roughly cancel in self-play, as P31
   expected of a leak worth about a point a game in both seats.
+
+## E7-32-44: the washout check -- E7-31-44 continued with the forcing off (owner, 2026-10-07)
+
+Owner: "If we try to make model train more on its own, now, when it plays wargames, can we expect it to
+learn when to play them?" E7-31-44's 5,200M end state to 5,600M, branch head kept, no forcing
+(`launch_flags --diff`: only the three forcing flags back to their defaults and `--train-steps`). Read
+at 5,400M and 5,600M against the start, with Wargames' not-applicable plays split in two.
+
+**Wargames played for its event** (4,000 games; T 0.1 / T 1):
+
+| | applicable | DEFCON 2, lead < 7 | DEFCON > 2 |
+|:---|:---|:---|:---|
+| US @5200M (start) | 58.7 / 53.0% | 19.2 / 18.9% | 8.8 / 11.3% (102 / 106) |
+| US @5400M | 87.6 / 77.9% | 24.7 / 20.8% | 9.7 / 6.1% (62 / 98) |
+| US @5600M | **83.6 / 83.4%** | 12.7 / 14.8% | 12.3 / 7.8% (57 / 51) |
+| USSR @5200M (start) | 60.9 / 51.9% | 12.4 / 14.9% | 2.9 / 4.0% (345 / 353) |
+| USSR @5400M | 71.1 / 62.2% | 12.0 / 8.4% | 1.8 / 2.2% (166 / 185) |
+| USSR @5600M | **84.6 / 79.1%** | 16.2 / 14.1% | 18.4 / 6.9% (76 / 58) |
+
+Games ended by Wargames: 6.1 / 5.4% -> 8.4 / 7.3% -> 10.0 / 10.7%. Plays at DEFCON above 2 fell from
+~100 / ~350 to ~55 per side while applicable spots rose (230 / 160 -> 259 / 230 at T 1): the card is
+being held for DEFCON 2.
+
+**Wargames' branch, P(end) by lead** (8,000 games):
+
+| | < 5 | 5 | 6 | 7 | 8+ | AUC |
+|:---|---:|---:|---:|---:|---:|---:|
+| E7-31-44 @5200M (start, re-run) | 0.025 | 0.24 | 0.48 | 0.69 | 0.98 | 0.986 |
+| E7-32-44 @5400M | 0.019 | 0.19 | 0.38 | 0.65 | 0.95 | 0.987 |
+| E7-32-44 @5600M | 0.030 | 0.35 | 0.57 | 0.75 | 0.98 | 0.981 |
+
+**Strength** (`data/reports/p31_E7-32-44_rr.{md,json}`): @5600M against E7-31-44@5200M −0.2 ± 0.7 / +0.5 ±
+0.8, head to head 52.3% ± 1.1; SWAs +0.6 / +1.3, head to head 47.2% ± 1.1; against the plain E7-20-44@4800M
++1.0 / +0.2, 51.4%. Elo in the field: SWAs 1684 (E7-31-44) / 1680, snapshots 1655 / 1644. Level.
+
+### Reading
+
+* **The skill persists and grows on its own.** With no forcing, Wargames where it wins went from ~55% to
+  ~83% in both seats, and the card is held for DEFCON 2 more often -- P31's "persisting" case: the spot
+  recurs and the move wins, so on-policy training keeps it. **The forcing is needed for acquisition only.**
+* **What the model does not learn on its own is the boundary.** The not-applicable plays at DEFCON 2 with
+  a lead under 7 stay at 12–25%, and the branch's P(end) at leads 5–6 drifts (0.24 / 0.48 -> 0.19 / 0.38
+  -> 0.35 / 0.57) instead of falling: a one-VP threshold reached only through the model's own plays gets
+  too thin and noisy a signal to sharpen.
+* **Strength stays level**, as through every Wargames arm: the extra wins and the wasted or lost cards
+  roughly cancel in self-play.
