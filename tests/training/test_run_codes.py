@@ -28,7 +28,7 @@ def _run(root: str, name: str, parent: Optional[str] = None, resume: str = "resu
                             "opponent_self_pool": True}
     meta.update(flags)
     if parent is not None:
-        meta["resumed_from"] = os.path.join(parent, resume)
+        meta["resumed_from"] = parent if resume == "<dir>" else os.path.join(parent, resume)
     with open(os.path.join(d, "metadata.json"), "w") as f:
         json.dump(meta, f)
     return d
@@ -121,7 +121,7 @@ def test_link_directories_alias_runs_without_becoming_runs(lineage: Dict[str, st
     assert rc.link_runs(runs, names, root) == []                  # idempotent
     # a continuation launched under the new name, resumed through the link directory
     c_link = os.path.join(root, "E9-A1-R1-S44@150M+S45_" + lineage["c"].split("_", 1)[1])
-    _run(root, "E9-A1-R1-S44@150M+S45", parent=c_link, seed=45, steps=400_000_000)
+    _run(root, "E9-A1-R1-S44@150M+S45", parent=c_link, resume="<dir>", seed=45, steps=400_000_000)
     runs2 = rc.load_runs(root)
     assert len(runs2) == len(runs) + 1
     names2, _ = rc.assign(runs2, {"architectures": {}, "recipes": {}, "overrides": {}}, True)

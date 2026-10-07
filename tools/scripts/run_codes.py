@@ -196,6 +196,17 @@ def link_models(codes: Dict[str, Any], root: str) -> List[str]:
     return made
 
 
+def _resume_source(src: str) -> Tuple[str, str]:
+    """(run directory, state file) of a recorded `resumed_from`: a state file, a run directory
+    (its end state), or `<run_dir>:<steps>` (that step's state) -- the forms `--resume` takes."""
+    head, sep, tail = src.rpartition(":")
+    if sep and tail.isdigit():
+        return head.rstrip("/"), f"resume_{tail}steps.pt"
+    if os.path.isdir(src) or not src.endswith(".pt"):
+        return src.rstrip("/"), "resume_state.pt"
+    return os.path.dirname(src), os.path.basename(src)
+
+
 def load_runs(root: str) -> List[Run]:
     runs: List[Run] = []
     for d in sorted(glob.glob(os.path.join(root, "E*_*"))):
@@ -211,7 +222,8 @@ def load_runs(root: str) -> List[Run]:
         src = r.meta.get("resumed_from")
         if not src:
             continue
-        pdir = os.path.basename(os.path.dirname(src))
+        src_dir, src_file = _resume_source(src)
+        pdir = os.path.basename(src_dir)
         alias = os.path.join(root, pdir)
         if is_link_dir(alias):            # resumed through a new-name link directory
             pdir = os.path.basename(os.path.dirname(os.path.realpath(os.path.join(alias, "metadata.json"))))
@@ -219,7 +231,7 @@ def load_runs(root: str) -> List[Run]:
         if parent is None:
             raise ValueError(f"{r.dir} resumed from {src}, which is not a run directory here")
         r.parent = parent
-        m = _RESUME_STEP_RE.search(os.path.basename(src))
+        m = _RESUME_STEP_RE.search(src_file)
         r.branch_step = int(m.group(1)) if m else parent.end_step
     runs.sort(key=lambda r: r.ts)
     return runs
