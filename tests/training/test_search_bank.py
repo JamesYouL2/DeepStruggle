@@ -104,3 +104,39 @@ def test_the_gumbel_hooks_leave_play_unchanged_and_forced_candidates_are_searche
     for s, f in zip(b._gumbel.last_stats, forced):
         if f is not None:
             assert sorted(s["candidates"]) == sorted(f)
+
+
+def _row(i: int, raw: int, choices: List[int], q_choice: float, dt: str = "POINT_NODE") -> dict:
+    return {"id": f"{i:016x}", "raw": raw, "turn": 1 + i % 10, "ar": 1, "phase": "ACTION_ROUND",
+            "decision_type": dt, "card": 0, "legal": [raw, 7, 8], "logits": [2.0, 1.0, 0.0],
+            "methods": {f"g{j}": {"choice": c, "candidates": [raw, 7, 8], "q": {str(raw): 0.0, str(c): q_choice}}
+                        for j, c in enumerate(choices)}}
+
+
+def test_select_weights_reproduce_each_strata_population() -> None:
+    from tools.search_bank import select, stratum
+    rows = [_row(i, 5, [5, 5], 0.0) for i in range(300)] + [_row(1000 + i, 5, [7, 5], 0.1) for i in range(90)]
+    bank = select(rows, size=60, control=20, seed=1)
+    assert len(bank) == 60
+    assert sum(r["stratum"].startswith("agree") for r in bank) == 20
+    pop: dict = {}
+    for r in rows:
+        k = "/".join(stratum(r))
+        pop[k] = pop.get(k, 0) + 1
+    got: dict = {}
+    for r in bank:
+        got[r["stratum"]] = got.get(r["stratum"], 0.0) + r["weight"]
+    for k, w in got.items():
+        assert abs(w - pop[k]) < 1e-6
+
+
+def test_regret_is_measured_on_worlds_the_best_move_was_not_chosen_on() -> None:
+    from tools.search_bank import solve
+    bank = {"raw": 5, "legal": [5, 7], "logits": [1.0, 0.0], "methods": {"g": {"choice": 7}}}
+    # Move 7 is better on the even worlds only: chosen there, it shows no regret advantage on the odd ones.
+    ref = {"values": {"5": [0.0, 0.1] * 8, "7": [0.2, 0.1] * 8}, "critic": {"5": [0.0] * 16, "7": [0.1] * 16},
+           "reference": {"action": 7, "agreement": 1.0}}
+    v = solve(bank, ref)
+    assert v["pick"] == 7 and v["best"] == 7 and v["rank"] == 2
+    assert abs(v["regret"]["raw"][0]) < 1e-9
+    assert v["critic_best"] == 7
