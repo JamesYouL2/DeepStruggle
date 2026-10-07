@@ -10,6 +10,7 @@ Needs web/ui/dist (tools/scripts/build_web.sh) and a Playwright Chromium.
 from __future__ import annotations
 
 import functools
+import hashlib
 import http.server
 import json
 import os
@@ -17,6 +18,7 @@ import socket
 import threading
 import time
 from typing import Any, Callable, Dict, Iterator, List, Optional
+from urllib.parse import parse_qs
 
 import numpy as np
 import pytest
@@ -111,8 +113,9 @@ def browser() -> Iterator[Any]:
         b.close()
 
 
-def _open(browser: Any, url: str, setup: Optional[Callable[[Any], None]] = None) -> Any:
-    page = browser.new_page(viewport={"width": 1440, "height": 900})
+def _open(browser: Any, url: str, setup: Optional[Callable[[Any], None]] = None, context: Any = None) -> Any:
+    """A page in a fresh browser context -- or in `context`, to share its storage across pages."""
+    page = context.new_page() if context else browser.new_page(viewport={"width": 1440, "height": 900})
     errors: list = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.errors = errors
@@ -339,13 +342,15 @@ def onnx_bytes(checkpoint: Dict[str, str], tmp_path_factory: pytest.TempPathFact
         return f.read()
 
 
-def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str]) -> None:
+def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str], sha256: Optional[str] = None) -> None:
     """The default repo, served by the test: two listing pages, the newest upload on the second.
 
     Every request to huggingface.co is recorded. The listing is paged the way the real API pages
     an expanded tree -- a `Link: <...>; rel="next"` header -- so a page that read only the first
-    page would load `old.onnx`.
+    page would load `old.onnx`. `paths-info` reports every file's LFS sha256 as `sha256`, by
+    default the real one of `onnx`.
     """
+    lfs_oid = sha256 or hashlib.sha256(onnx).hexdigest()
     cors = {"access-control-allow-origin": "*", "access-control-expose-headers": "Link"}
     first = [
         {"type": "file", "path": "README.md", "lastCommit": {"date": "2026-09-24T10:00:00.000Z"}},
@@ -356,6 +361,11 @@ def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str]) -> None:
 
     def tree(route: Any) -> None:
         requests.append(route.request.url)
+        if "/paths-info/" in route.request.url:
+            paths = parse_qs(route.request.post_data or "")["paths"]
+            body = [{"type": "file", "path": p, "lfs": {"oid": lfs_oid, "size": len(onnx)}} for p in paths]
+            route.fulfill(status=200, headers=cors, content_type="application/json", body=json.dumps(body))
+            return
         more = "cursor=" not in route.request.url
         headers = {**cors, "link": f'<{HF_TREE}&cursor=p2>; rel="next"'} if more else cors
         route.fulfill(status=200, headers=headers, content_type="application/json",
@@ -382,6 +392,44 @@ def test_a_link_that_names_no_model_loads_the_newest_upload(browser: Any, static
     assert requests[-1] == "https://huggingface.co/mihaild/deepstruggle/resolve/main/runs/new.onnx"
     page.wait_for_function("new URLSearchParams(location.search).get('model') === 'hf:mihaild/deepstruggle@main:runs/new.onnx'")
     assert not page.errors
+
+
+def test_a_downloaded_model_is_kept_for_the_next_visit(browser: Any, static_site: str, onnx_bytes: bytes) -> None:
+    """Reopening the page loads the same file from the browser, not Hugging Face -- but a file
+    the repo has since replaced (another sha256 under the same name) is downloaded again."""
+    resolve = "https://huggingface.co/mihaild/deepstruggle/resolve/main/runs/new.onnx"
+    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        first: List[str] = []
+        page = _open(browser, static_site + "/", lambda p: _fake_hf_repo(p, onnx_bytes, first), context)
+        page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+        assert first[-1] == resolve
+        assert "cached" not in page.inner_text("#analysis-model-info")
+        page.wait_for_function("!document.getElementById('analysis-hf-clear').disabled")
+        page.close()
+
+        again: List[str] = []
+        page = _open(browser, static_site + "/", lambda p: _fake_hf_repo(p, onnx_bytes, again), context)
+        page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+        assert resolve not in again, "the kept file was downloaded again"
+        assert "cached" in page.inner_text("#analysis-model-info")
+        page.close()
+
+        replaced: List[str] = []
+        page = _open(browser, static_site + "/",
+                     lambda p: _fake_hf_repo(p, onnx_bytes, replaced, sha256="0" * 64), context)
+        page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+        assert replaced[-1] == resolve, "a file the repo replaced must not come from the cache"
+        assert "cached" not in page.inner_text("#analysis-model-info")
+        # The bytes do not hash to what the repo claimed, so they are not kept under that name.
+        assert page.evaluate("caches.open('ts-models-v1').then(c => c.keys()).then(k => k.length)") == 1
+
+        page.click("#analysis-hf-clear")
+        page.wait_for_function("document.getElementById('analysis-hf-clear').disabled")
+        assert page.evaluate("caches.has('ts-models-v1')") is False
+        assert not page.errors
+    finally:
+        context.close()
 
 
 def test_turning_analysis_off_stays_off_in_the_link(browser: Any, static_site: str, onnx_bytes: bytes) -> None:

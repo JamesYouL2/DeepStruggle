@@ -280,6 +280,7 @@ export class TSApp {
         label: m.meta.label,
         merged: m.meta.mergedInfluence,
         checkpoint: m.meta.checkpoint,
+        fromCache: m.fromCache,
         engineWarning: fp && fp !== this.engine!.fingerprint
           ? `Exported next to another engine build (${fp.slice(0, 8)}; this page runs ${this.engine!.fingerprint.slice(0, 8)}).`
           : undefined,

@@ -21,6 +21,7 @@ import { CriticTrace, PolicyTrace } from "./replay_controls";
 import {
   DEFAULT_HF_REPO, DEFAULT_HF_REVISION, HfModelFile, listHfModels, ModelSource, sourceLabel,
 } from "./analysis/model";
+import { cachedModelCount, clearModelCache } from "./analysis/model_cache";
 
 export interface AnalysisChoice {
   idx: number;
@@ -60,6 +61,8 @@ export interface LoadedInfo {
   label: string;
   merged: boolean;
   checkpoint: string;
+  /** The file came from the browser's model cache, not a download. */
+  fromCache?: boolean;
   /** Set when the model was exported next to another engine build than the page runs. */
   engineWarning?: string;
 }
@@ -116,6 +119,7 @@ export class AnalysisPanel {
   private hfRepo = el<HTMLInputElement>("analysis-hf-repo");
   private hfRevision = el<HTMLInputElement>("analysis-hf-revision");
   private hfFile = el<HTMLSelectElement>("analysis-hf-file");
+  private hfClear = el<HTMLButtonElement>("analysis-hf-clear");
   private fileInput = el<HTMLInputElement>("analysis-file-input");
   private favButton = el<HTMLButtonElement>("btn-play-favourite");
   private autoSelect = el<HTMLSelectElement>("analysis-autoplay-select");
@@ -151,6 +155,10 @@ export class AnalysisPanel {
         this.pick({ source: { kind: "hf", repo: this.hfRepo.value.trim(), revision: this.hfRevision.value.trim() || "main", path: this.hfFile.value } });
       }
     });
+    this.hfClear.addEventListener("click", async () => {
+      await clearModelCache();
+      this.refreshCacheButton();
+    });
     this.fileInput.addEventListener("change", async () => {
       const f = this.fileInput.files?.[0];
       if (f) this.pick({ source: { kind: "file", name: f.name }, bytes: new Uint8Array(await f.arrayBuffer()) });
@@ -163,6 +171,16 @@ export class AnalysisPanel {
     if (!this.hfRepo.value) this.hfRepo.value = DEFAULT_HF_REPO;
     this.showSourceControls();
     this.loadLocalModels();
+    this.refreshCacheButton();
+  }
+
+  /** The Hugging Face models this browser keeps (analysis/model_cache.ts), on the clear button. */
+  private async refreshCacheButton(): Promise<void> {
+    const n = await cachedModelCount().catch(() => 0);
+    this.hfClear.disabled = n === 0;
+    this.hfClear.title = n === 0
+      ? "This browser keeps no downloaded models"
+      : `Delete the ${n} downloaded model${n === 1 ? "" : "s"} this browser keeps; they are downloaded again when next used`;
   }
 
   /** A model file dropped anywhere on the page. */
@@ -228,6 +246,7 @@ export class AnalysisPanel {
     this.pending = null;
     this.error = null;
     this.renderBody();
+    this.refreshCacheButton();   // a download may just have been kept
   }
 
   public setOff(): void {
@@ -385,7 +404,7 @@ export class AnalysisPanel {
   private renderInfo(): void {
     if (this.status === "ready" && this.loaded) {
       const l = this.loaded;
-      this.info.innerHTML = `<b>${esc(l.label)}</b> <span class="analysis-info-dim">${l.merged ? "E4.1 view" : "E4 view"}${l.checkpoint ? ` · ${esc(l.checkpoint)}` : ""}</span>`
+      this.info.innerHTML = `<b>${esc(l.label)}</b> <span class="analysis-info-dim">${l.merged ? "E4.1 view" : "E4 view"}${l.checkpoint ? ` · ${esc(l.checkpoint)}` : ""}${l.fromCache ? " · cached" : ""}</span>`
         + (l.engineWarning ? `<div class="analysis-warning">${esc(l.engineWarning)}</div>` : "");
       this.info.classList.remove("hidden");
     } else {

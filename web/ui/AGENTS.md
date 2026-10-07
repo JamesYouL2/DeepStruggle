@@ -21,6 +21,7 @@ web/ui/
 │   ├── game/                   # session.ts (stepping, undo, log, export), describe.ts (log text),
 │   │                           # names.ts (flat action names), position.ts (link tokens)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
+│   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen)
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
@@ -125,6 +126,14 @@ web/ui/
      listing. Turning analysis off writes `model=off`, so that link does not load the default.
      The E2E browsers launch with `HF_BLOCKED` (huggingface.co does not resolve); tests that need
      the repo serve it with `page.route`.
+   - **Downloaded models are kept** (`analysis/model_cache.ts`), in the Cache API (`ts-models-v1`,
+     the 8 newest), keyed by the file's LFS sha256, not its URL: `main` is mutable, so each load
+     asks `paths-info` for the hash (one small request) and downloads only on a miss. Bytes are
+     hashed before they are kept, so a file replaced mid-load is never stored under the old hash.
+     The cache only saves a download, so when it is unavailable (an insecure origin, `paths-info`
+     failing, quota) the model is downloaded as before. Local checkpoints are not cached in the
+     page: the server already keeps their exports. The panel marks a cached load, and **Clear
+     cache** empties it.
    - `analysis/readout.ts` is the port of the old server readout: one batched forward (the
      decider's observation with its real mask, and both sides' observations for the critic),
      softmax over the legal actions at temperature 1, the argmax as the favourite.

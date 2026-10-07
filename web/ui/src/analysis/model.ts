@@ -5,6 +5,8 @@
  *   local  the checkpoints tree the local server lists (`/api/local/models`); it exports a
  *          .pt to ONNX on first request and caches it, so any snapshot can be picked
  *   hf     a file in a Hugging Face model repo, fetched from huggingface.co/<repo>/resolve/...
+ *          and kept in the browser under its sha256 (model_cache.ts), so reopening the page
+ *          does not download it again
  *   file   an .onnx dropped onto the page
  *
  * The file carries its own description (metadata_props, see onnx_meta.ts). The observation
@@ -18,6 +20,7 @@ import * as ort from "onnxruntime-web/wasm";
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.wasm?url";
 import ortMjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";
 import { onnxMetadata } from "./onnx_meta";
+import { cachedModel, hfFileSha256, storeModel } from "./model_cache";
 
 // The runtime is served from this build, not a CDN, and single-threaded: GitHub Pages cannot send
 // the cross-origin-isolation headers threads need, and one position is well under a millisecond.
@@ -99,6 +102,15 @@ export interface ModelMeta {
   raw: Record<string, string>;
 }
 
+async function download(source: ModelSource, url: string): Promise<Uint8Array> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`could not fetch ${sourceLabel(source)}: HTTP ${res.status} ${detail.slice(0, 300)}`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 export interface Forward {
   logits: Float32Array;   // rows * actionSize
   vWin: Float32Array;     // rows
@@ -110,13 +122,16 @@ export class Model {
     readonly source: ModelSource,
     readonly meta: ModelMeta,
     private readonly session: ort.InferenceSession,
+    /** The bytes came from the browser's model cache rather than the network. */
+    readonly fromCache: boolean,
   ) {}
 
   /**
    * Build from the file's bytes. `obsSize`/`actionSize` are the engine's; a model for another
    * width is refused here, with the reason, before it can misread a single observation.
    */
-  static async fromBytes(source: ModelSource, bytes: Uint8Array, obsSize: number, actionSize: number): Promise<Model> {
+  static async fromBytes(source: ModelSource, bytes: Uint8Array, obsSize: number, actionSize: number,
+                         fromCache = false): Promise<Model> {
     let raw: Record<string, string>;
     try {
       raw = onnxMetadata(bytes);
@@ -140,7 +155,7 @@ export class Model {
         + `this engine has ${obsSize} and ${actionSize}. It was trained on another layout and would misread every position.`);
     }
     const session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
-    return new Model(source, meta, session);
+    return new Model(source, meta, session, fromCache);
   }
 
   static async fetch(source: ModelSource, obsSize: number, actionSize: number, fileBytes?: Uint8Array): Promise<Model> {
@@ -148,15 +163,21 @@ export class Model {
       if (!fileBytes) throw new Error("a dropped model needs its bytes");
       return Model.fromBytes(source, fileBytes, obsSize, actionSize);
     }
-    const url = source.kind === "local"
-      ? `/api/local/models/onnx?path=${encodeURIComponent(source.path)}`
-      : hfFileUrl(source.repo, source.revision, source.path);
-    const res = await fetch(url);
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`could not fetch ${sourceLabel(source)}: HTTP ${res.status} ${detail.slice(0, 300)}`);
+    if (source.kind === "local") {
+      // The local server exports and keeps the ONNX itself, and serves it from this machine.
+      const url = `/api/local/models/onnx?path=${encodeURIComponent(source.path)}`;
+      return Model.fromBytes(source, await download(source, url), obsSize, actionSize);
     }
-    return Model.fromBytes(source, new Uint8Array(await res.arrayBuffer()), obsSize, actionSize);
+    // The cache only saves a download: if Hugging Face will not say what the file is, or the
+    // browser will not keep it, the model is downloaded and used all the same.
+    const sha256 = await hfFileSha256(source.repo, source.revision, source.path).catch(() => null);
+    const hit = sha256 ? await cachedModel(sha256).catch(() => null) : null;
+    if (hit) return Model.fromBytes(source, hit, obsSize, actionSize, true);
+    const bytes = await download(source, hfFileUrl(source.repo, source.revision, source.path));
+    const model = await Model.fromBytes(source, bytes, obsSize, actionSize);
+    // Only a model that loaded is kept: one refused here would be refused again from the cache.
+    if (sha256) await storeModel(sha256, bytes).catch(() => false);
+    return model;
   }
 
   /** One forward over `rows` positions: observations and masks row-major. */
