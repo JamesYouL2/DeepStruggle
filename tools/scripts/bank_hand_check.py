@@ -9,6 +9,11 @@ deciding side:
   8 in turns 1-3 and 9 after, one fewer once the headline is spent;
 * **missing** -- a card the log lists in that side's hand for the turn is still in the draw deck.
 
+Since the CONV-1 fix, only **over** marks a bad hand. A card that arrives mid-turn (SALT
+Negotiations, Missile Envy, Grain Sales, a reshuffle) is in the deck until it arrives, so
+**missing** now flags correct positions too, and an exclusion list should be built from **over**
+alone. The remaining **over** rows (58 of 27,753 after the fix) hold a card that arrived mid-turn.
+
 Writes the flagged rows' ids with their reasons, and with `--untrusted` (a {replay id: first
 untrusted turn} map) an exclusion list for `disagreement_bank.py --pack --exclude` that also
 holds every row from an untrusted turn.
