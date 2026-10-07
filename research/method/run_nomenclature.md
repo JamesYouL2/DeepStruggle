@@ -50,8 +50,17 @@ recorded by hand as an `override` in the JSON and makes a recipe of its own.
 **`@<n>M` is always an absolute step on the lineage's own clock**, never a length -- the clock the
 snapshots already use, so a typo cannot silently shift every later number. In a run's name every
 `@` is a **branch point**: `+` and the fields that change, in E, A, R, S order, naming only what
-changed. A **continuation that changes nothing keeps its name** (each leg is a new
-`<name>_<timestamp>` directory); a re-run of a from-scratch run takes a replicate index `-2`.
+changed. A **continuation that changes nothing keeps its name and its directory**; a re-run of a
+from-scratch run takes a replicate index `-2`.
+
+**A run is one directory (since 2026-10-07).** `tools/train.py --resume <run-dir> --run-name <its
+name>`, from the run's newest state, writes into that directory: metrics and TensorBoard are
+appended, snapshots join the earlier ones, the untrained `snapshot_0s.pt` is kept, and
+`metadata.json` keeps the current leg's settings at the top level (what every tool reads) with every
+leg -- commit, flags, description, `start_steps`, `train_steps` -- under `legs`. A branch (any change
+of name), a resume from an earlier state than the newest, and an old run's link directory get a
+new directory as before; `--new-directory` asks for one explicitly, and a run still writing is
+refused. Runs launched before this have one directory per leg, all under one name.
 
 | what happened | name |
 |:---|:---|
@@ -281,8 +290,9 @@ variance or rate. They are different experiments and the names should not blur t
 ## Continuing an arm keeps its name; branching it adds a suffix (the old scheme)
 
 **A continuation is not a new attempt.** Taking an arm further on its own seed changes only the
-budget, so it keeps the short name and gets a new directory, `<short>_<timestamp>`, beside the
-old one:
+budget, so it keeps the short name. Until 2026-10-07 it also got a new directory,
+`<short>_<timestamp>`, beside the old one; since then it continues in the run's own directory
+(above):
 
 ```
 E4-08-03_20260919_223012     0 →  80M

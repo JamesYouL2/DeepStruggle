@@ -61,7 +61,7 @@ BOOKKEEPING = frozenset({
     "run_name", "description", "device", "tensorboard", "seed", "seed_init", "seed_sampling",
     "seed_env", "seed_pool", "warmup_checkpoint", "warmup_dataset", "distill_dataset",
     "distill_epochs", "distill_lr", "bc_epochs", "curriculum_switch_fraction", "no_cuda_graphs",
-    "merged_influence",
+    "merged_influence", "new_directory",
 })
 #: Settings that do nothing while their switch is off: dropped then, so a stray value cannot make
 #: two identical recipes look different. (switch, its off value, the settings it gates)
@@ -219,7 +219,8 @@ def load_runs(root: str) -> List[Run]:
         runs.append(Run(d, meta, lf.non_default(d)))
     by_dir = {r.dir: r for r in runs}
     for r in runs:
-        src = r.meta.get("resumed_from")
+        # A run continued in place keeps every leg; where it came from is its first leg's resume.
+        src = (r.meta.get("legs") or [r.meta])[0].get("resumed_from")
         if not src:
             continue
         src_dir, src_file = _resume_source(src)

@@ -373,6 +373,13 @@ state), or `<run_dir>:<steps>` to branch from a particular snapshot:
 --resume <run-dir>:160038912    # branch from that snapshot of a run that went further
 ```
 
+**An unchanged continuation stays in the run's directory.** `--resume <run-dir> --run-name <the
+same name>` from the run's newest state appends to that directory -- metrics, TensorBoard,
+snapshots -- and adds a leg to its `metadata.json` (`legs`: each leg's commit, flags, description,
+`start_steps` and `train_steps`; the top level is the current leg). A different name (a branch), an
+earlier state, or an old run's link directory gets a new `<name>_<timestamp>` directory, as does
+`--new-directory`. A run whose `run.pid` is still alive is refused rather than written twice.
+
 A resume state is written beside **every** snapshot (`resume_<steps>steps.pt`, several times the
 size of the snapshot itself), not only at the run's end, so any point of a run stays branchable.
 `--no-resume-every-snapshot` turns that off if disk matters more; a run then keeps only its newest

@@ -1284,6 +1284,70 @@ def resolve_resume(resume: str) -> str:
     return os.path.join(resume, RESUME_FILENAME)
 
 
+_RUN_DIR_NAME_RE: Final = re.compile(r"^(?P<name>[^_]+)_\d{8}_\d{6}$")
+
+
+def continuation_dir(resume: Optional[str], run_name: Optional[str]) -> Optional[str]:
+    """The run directory an unchanged continuation writes into, or None for a new one.
+
+    A run is one directory: continuing it under its own name from its newest state appends to
+    its metrics, TensorBoard and snapshots, and adds a leg to its metadata, instead of opening a
+    `<name>_<timestamp>` directory per leg. Not in place: a resume under another name (a branch
+    -- a new seed, recipe or architecture is another run), from an earlier state than the newest
+    (whose later snapshots would collide), or through a link directory of an old-scheme run
+    (`tools/scripts/run_codes.py --link`), whose files belong to the original. A run still alive
+    in that directory is an error, not a second writer.
+    """
+    if not resume or not run_name:
+        return None
+    src = os.path.abspath(resolve_resume(resume))
+    d = os.path.dirname(src)
+    m = _RUN_DIR_NAME_RE.match(os.path.basename(d))
+    if not m or m.group("name") != run_name:
+        return None
+    if os.path.islink(os.path.join(d, "metadata.json")) or not os.path.isfile(os.path.join(d, "metadata.json")):
+        return None
+    states = resume_states_in(d)
+    if os.path.basename(src) != RESUME_FILENAME:
+        sm = re.fullmatch(r"resume_(\d+)steps\.pt", os.path.basename(src))
+        if not sm or (states and int(sm.group(1)) < max(states)):
+            return None
+    try:
+        with open(os.path.join(d, "run.pid"), encoding="utf-8") as f:
+            pid = int(f.read().strip())
+        if pid != os.getpid():
+            os.kill(pid, 0)
+            raise RuntimeError(f"{d} is still being written by process {pid}; stop it before "
+                               "continuing the run")
+    except (OSError, ValueError):
+        pass                                      # no pid file, or its process is gone
+    return d
+
+
+def with_leg(previous: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    """Metadata for a run continued in place: the current leg's settings at the top level (what
+    every tool reads), and every leg -- its commit, flags, description, step range -- in `legs`.
+    A directory written before legs existed becomes its own first leg."""
+    legs = list(previous.get("legs") or [{k: v for k, v in previous.items() if k != "legs"}])
+    out = dict(current)
+    out["legs"] = legs + [dict(current)]
+    return out
+
+
+def record_start_steps(metadata_path: str, steps: int) -> None:
+    """Note the step this leg started from, once the resume state has said it."""
+    try:
+        with open(metadata_path, encoding="utf-8") as f:
+            meta = json.load(f)
+    except (OSError, ValueError):
+        return
+    meta["start_steps"] = int(steps)
+    if meta.get("legs"):
+        meta["legs"][-1]["start_steps"] = int(steps)
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+
 def locate_pool_members(saved_pool: Dict[str, Any],
                         run_snapshots: Dict[int, str]) -> Tuple[List[int], List[str]]:
     """The recorded pool members whose weights can still be found: (steps, paths), in order.
@@ -1518,6 +1582,7 @@ def train_pipeline(
     reward_scheme: str = "blunder_aware",
     output_dir: Optional[str] = None,
     run_name: Optional[str] = None,
+    new_directory: bool = False,
     description: Optional[str] = None,
     device: Optional[Union[torch.device, str]] = None,
     post_tournament: bool = False,
@@ -1698,7 +1763,12 @@ def train_pipeline(
     # directory name does not say which engine the run was trained on or which seed it used --
     # and that is how a set of cross-engine comparisons came to be written up as same-engine
     # ones.
-    out_dir = _resolve_run_dir(output_dir, run_name, arch, timestamp)
+    # An unchanged continuation of a run writes into that run's own directory.
+    in_place = (None if output_dir is not None or new_directory
+                else continuation_dir(resume, run_name))
+    out_dir = in_place or _resolve_run_dir(output_dir, run_name, arch, timestamp)
+    if in_place:
+        print(f"[continuation] {run_name} continues in its own directory {out_dir}", flush=True)
     os.makedirs(out_dir, exist_ok=True)
     # This run's own PID, so a watcher can tell THIS run from any other training process on the
     # box. tools/scripts/watch_run.py otherwise matches `pgrep -f tools/train.py`, which is true
@@ -1943,6 +2013,9 @@ def train_pipeline(
         "merged_influence_from_step": int(merged_from_step),
         "description": description or f"Self-play RL training with arch={arch}, reward={reward_scheme}, budget={train_steps:,} steps.",
     }
+    if in_place and os.path.isfile(metadata_path):
+        with open(metadata_path, encoding="utf-8") as f:
+            metadata_info = with_leg(json.load(f), metadata_info)
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata_info, f, indent=2)
     tb.log_text("run/metadata", "```json\n" + json.dumps(metadata_info, indent=2) + "\n```", 0)
@@ -2478,8 +2551,10 @@ def train_pipeline(
           f"(+ up to {max_snapshot_opponents} recent snapshots)", flush=True)
     print("=" * 80, flush=True)
 
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(f"# Snapshot Tournament Evaluation Report ({arch.upper()})\n\n")
+    # A continuation in place adds to the run's report rather than replacing the earlier legs'.
+    with open(report_path, "a" if in_place else "w", encoding="utf-8") as f:
+        f.write(f"\n## Continued {timestamp}\n\n" if in_place
+                else f"# Snapshot Tournament Evaluation Report ({arch.upper()})\n\n")
 
     # Initial Snapshot (0s / start)
     resume_path = os.path.join(out_dir, RESUME_FILENAME)
@@ -2499,6 +2574,7 @@ def train_pipeline(
         next_pool_steps = ((state["total_env_steps"] // pool_every) + 1) * pool_every
         print(f"Resumed from {src}: {state['total_env_steps']:,} steps, iteration {it}, "
               f"{resumed_elapsed:.0f}s of training already done", flush=True)
+        record_start_steps(metadata_path, int(state["total_env_steps"]))
 
     # Restored before anything reads or writes the weights: snapshot_0s.pt claims to be
     # this run's starting point, and an eval of it costs real time, so both have to see
@@ -2529,7 +2605,9 @@ def train_pipeline(
     rated = ema.model if ema is not None else model
 
     snap_0_path = os.path.join(out_dir, "snapshot_0s.pt")
-    torch.save(model.state_dict(), snap_0_path)
+    # snapshot_0s.pt is the run's untrained start; a continuation in place keeps it.
+    if not in_place:
+        torch.save(model.state_dict(), snap_0_path)
     evaluate_and_log_snapshot(
         model=model,
         merged_influence=merged_influence,

@@ -458,7 +458,9 @@ checkpoints mounted at `/data/checkpoints`. See `deploy/web/README.md`.
    `research/architectures_and_recipes.md`) — plus the start date and time. Pass
    `tools/train.py --run-name <name>` and the directory is built for you, with the name also
    recorded in `metadata.json`; `tools/scripts/run_codes.py --run <dir>` then checks the name
-   against the flags the run recorded. Directories from before 2026-10-07 keep their
+   against the flags the run recorded. An unchanged continuation (`--resume` of the run's own
+   directory under the same name, from its newest state) writes into that directory and records
+   the leg under `legs` in its metadata. Directories from before 2026-10-07 keep their
    `<engine>-<attempt>-<seed>` names (`research/run_name_map.md` maps them). Omit any
    step count: one directory holds every budget of a lineage, and each snapshot's filename
    already carries its own. A `run_<version>_<date>_<time>` form remains the fallback for smoke

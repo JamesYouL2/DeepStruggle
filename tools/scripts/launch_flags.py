@@ -79,7 +79,7 @@ UNCHECKED_BY_DESIGN = frozenset({
     "resume", "output_dir", "device", "tensorboard", "mode", "post_tournament",
     "post_tournament_models", "post_tournament_games", "bc_epochs", "distill_dataset",
     "distill_epochs", "distill_lr", "warmup_dataset", "run_name", "description",
-    "curriculum_switch_fraction",
+    "curriculum_switch_fraction", "new_directory",
 })
 
 

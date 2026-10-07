@@ -842,7 +842,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--attn-readout", type=int, default=0,
                         help="Width of an end-of-trunk attention read-out (0 = off; try 64). After the residual trunk, the state vector queries the 84 country and 110 card tokens -- each concatenated with its raw observation slots -- and the result is folded back in. Targets the other half of the same finding: the pre-pooling token holds two thirds of the recoverable per-country influence and the pooled trunk holds none.")
     parser.add_argument("--run-name", type=str, default=None,
-                        help="Run short name as <engine>-<attempt>-<seed>, e.g. E9-99-01. Becomes the checkpoint directory prefix (<run-name>_[date]_[time]) and is recorded in metadata.json. Omit any step budget: one directory holds every budget of a lineage and each snapshot's filename already carries its own.")
+                        help="Run name, E<n>-A<n>-R<n>-S<n> plus its branch points (research/method/run_nomenclature.md), e.g. E7-A4-R1-S44@4390M+S45. Becomes the checkpoint directory prefix (<run-name>_[date]_[time]) and is recorded in metadata.json; resuming the run under its own name from its newest state continues in that directory (--new-directory to opt out). Omit any step budget: each snapshot's filename carries its own.")
+    parser.add_argument("--new-directory", action="store_true",
+                        help="Write an unchanged continuation (--resume of this --run-name's own directory from its newest state) into a new <run-name>_<timestamp> directory instead of continuing in the run's own directory, which is the default.")
     parser.add_argument("--description", type=str, default=None, help="Short description of what was changed and training objective to save in checkpoint metadata.json")
     parser.add_argument("--device", type=str, default="cuda", help="Compute device (cuda or cpu)")
     parser.add_argument("--tensorboard", action=argparse.BooleanOptionalAction, default=True,
@@ -922,6 +924,7 @@ def main():
             reward_scheme=eff_reward_scheme,
             output_dir=args.output_dir,
             run_name=args.run_name,
+            new_directory=args.new_directory,
             self_transform=args.self_transform,
             attn_readout=args.attn_readout,
             per_entity_heads=args.per_entity_heads,
