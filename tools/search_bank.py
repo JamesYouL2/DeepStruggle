@@ -7,6 +7,27 @@ statistics (`GumbelRoot.last_stats`).
 
 Stages (each resumable, each writing JSONL.gz rows of schema `SCHEMA`):
 
+* `select` -- (local) the bank: a stratified random sample of the annotated positions, most of it
+  where some searcher departs from the raw network and the rest an agreement control. Strata are
+  (agreement, decision group, era, departure size), and every row carries `weight` = positions in
+  its stratum / positions kept from it, so population figures (regret per game, the share of regret
+  in the tail) reweight the bank back to the decisions the raw network meets.
+* `reference` -- each bank position solved by a larger Gumbel root (`--ref-k`, default 16, so the
+  reference can choose a move outside every deployed searcher's candidates) at `--ref-sims`, with
+  `--ref-seeds` independent runs; then the moves that matter (raw, each searcher's, every reference
+  run's, the raw network's top `--top`) each valued by an equal-budget search (`--value-sims`) in
+  the same `--worlds` redealt worlds, and by the bare critic (one evaluation) in those worlds, so
+  the difference between two moves is taken world by world.
+* `oracle` -- for bank rows carrying a `target` move (the reference best) that a deployed searcher
+  never considered, that searcher run again with the target forced into its candidates in place of
+  its least probable one (the set's size unchanged), `--seeds` times: does search pick the move once
+  it is shown it? Diagnostic only (`GumbelRoot.choose(candidates=...)`).
+* `playouts` -- for bank rows carrying `pmoves`, paired playouts of each move by the raw network
+  playing both sides (ai/eval/paired_playouts.py: the mover's unseen cards redealt per pair, the dice
+  shared): an outcome-based check on the search-valued regret, independent of the value head.
+* `report` -- (local) the tables: reference recall against raw top-k, the regret distribution and its
+  concentration, each method's agreement with the reference, breakdowns, the worst raw decisions,
+  the candidate/ranking decomposition, the oracle and the playout check (`analysis()`).
 * `annotate` -- the raw network plays itself (`--temperature`, default 0.1, the tournaments'
   setting); one decision in `--sample` with two or more legal moves is kept, and each is put to the
   raw network and to every Gumbel configuration in `--budgets` (default the three measured in
@@ -38,9 +59,11 @@ A row (`SCHEMA` 1):
 from __future__ import annotations
 
 import argparse
+import collections
 import gzip
 import hashlib
 import json
+import math
 import os
 import random
 import sys
@@ -219,6 +242,447 @@ def annotate(a: argparse.Namespace) -> int:
     return 0
 
 
+def decision_group(r: Dict[str, Any]) -> str:
+    """Coarse decision class for stratification: the card decisions apart, then the rest by type."""
+    dt = r["decision_type"]
+    if dt == "SELECT_CARD":
+        return "headline" if r["phase"] == "HEADLINE" else "card"
+    if dt in ("SELECT_PLAY_MODE", "SELECT_OP_MODE", "POINT_NODE"):
+        return dt.lower()
+    return "event_choice"
+
+
+def era(turn: int) -> str:
+    return "early" if turn <= 3 else ("mid" if turn <= 7 else "late")
+
+
+def departure(r: Dict[str, Any], label: Optional[str] = None) -> float:
+    """How much better a searcher (default the last, i.e. the largest, budget) thinks its move is than
+    the raw argmax: q(choice) - q(raw), both from the searcher's own record (0 where it played the
+    raw move or lacks a value)."""
+    m = r["methods"][label or list(r["methods"])[-1]]
+    qc, qr = m["q"].get(str(m["choice"])), m["q"].get(str(r["raw"]))
+    if m["choice"] == r["raw"] or qc is None or qr is None:
+        return 0.0
+    return float(qc) - float(qr)
+
+
+def stratum(r: Dict[str, Any]) -> Tuple[str, str, str, str]:
+    choices = {m["choice"] for m in r["methods"].values()}
+    agree = choices == {r["raw"]}
+    d = departure(r)
+    size = "-" if agree else ("small" if d < 0.02 else ("medium" if d < 0.08 else "large"))
+    return ("agree" if agree else "disagree", decision_group(r), era(int(r["turn"])), size)
+
+
+def select(rows: Sequence[Dict[str, Any]], size: int, control: int, seed: int) -> List[Dict[str, Any]]:
+    """`size - control` disagreement rows spread as evenly as availability allows over their strata
+    (water-filling), and `control` agreement rows the same way; each row weighted by its stratum's
+    population over its sample."""
+    rng = random.Random(seed)
+    groups: Dict[Tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    for r in sorted(rows, key=lambda r: r["id"]):
+        groups.setdefault(stratum(r), []).append(r)
+    out: List[Dict[str, Any]] = []
+    for kind, budget in (("disagree", size - control), ("agree", control)):
+        keys = sorted(k for k in groups if k[0] == kind)
+        alloc = {k: 0 for k in keys}
+        left = budget
+        open_ = [k for k in keys if groups[k]]
+        while left > 0 and open_:
+            share = max(1, left // len(open_))
+            for k in list(open_):
+                take = min(share, len(groups[k]) - alloc[k], left)
+                alloc[k] += take
+                left -= take
+                if alloc[k] >= len(groups[k]):
+                    open_.remove(k)
+                if left == 0:
+                    break
+        for k in keys:
+            if alloc[k] == 0:
+                continue
+            pick = rng.sample(groups[k], alloc[k])
+            w = len(groups[k]) / alloc[k]
+            for r in pick:
+                out.append(dict(r, stratum="/".join(k), weight=round(w, 4)))
+    return out
+
+
+def moves_to_value(r: Dict[str, Any], ref_choices: Sequence[int], top: int) -> List[int]:
+    """The moves a reference values at a position: the raw argmax, every searcher's choice, every
+    reference run's, and the raw network's `top` most probable, most probable first."""
+    order = sorted(range(len(r["legal"])), key=lambda i: -r["logits"][i])
+    want = [r["legal"][i] for i in order[:top]] + [r["raw"]]
+    want += [m["choice"] for m in r["methods"].values()] + list(ref_choices)
+    rank = {r["legal"][i]: k for k, i in enumerate(order)}
+    return sorted(dict.fromkeys(int(a) for a in want), key=lambda a: rank[a])
+
+
+def reference(a: argparse.Namespace) -> int:
+    import torch
+
+    from tools.lib.player_agent import load_agent
+    from tools.scripts.bank_clarity import value_moves_per_world
+    from tools.scripts.event_play_census import state_from_token
+
+    torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
+    k, n = (int(x) for x in a.part.split("/"))
+    rows = sorted(read_rows([a.bank]), key=lambda r: r["id"])
+    rows = [r for i, r in enumerate(rows) if i % n == k - 1]
+    done = set()
+    if os.path.exists(a.out):
+        if not a.resume:
+            raise SystemExit(f"{a.out} exists: pass --resume to continue it, or remove it")
+        with gzip.open(a.out, "rt") as f:
+            done = {json.loads(line)["id"] for line in f}
+    todo = [r for r in rows if r["id"] not in done]
+    json.dump({"schema": SCHEMA, "stage": "reference", "model": os.path.basename(a.model),
+               "model_sha256": _sha256(a.model), "ref": {"simulations": a.ref_sims, "k": a.ref_k,
+                                                          "seeds": a.ref_seeds},
+               "values": {"simulations": a.value_sims, "worlds": a.worlds, "top": a.top},
+               "critic": {"simulations": a.critic_sims}}, open(a.out + ".meta.json", "w"), indent=1)
+    agent: Any = load_agent(f"gumbel:{a.model}:{a.ref_sims}:{a.ref_k}", device="cpu")
+    t0 = time.time()
+    for lo in range(0, len(todo), a.chunk):
+        batch = todo[lo:lo + a.chunk]
+        states = [state_from_token(r["pos"]) for r in batch]
+        runs: List[List[Dict[str, Any]]] = [[] for _ in batch]
+        for j in range(a.ref_seeds):
+            seed = (int(batch[0]["id"], 16) + 7919 * j) % (1 << 31)
+            agent.reseed(seed)
+            picks = agent.select_actions_batch(states)
+            for i, (c, st) in enumerate(zip(picks, agent.mcts._gumbel.last_stats)):
+                runs[i].append({"seed": seed, "choice": int(c), "candidates": list(st["candidates"]),
+                                "n": _key(st["n"]), "q": _key(st["q"])})
+        moves = [moves_to_value(r, [x["choice"] for x in rr], a.top) for r, rr in zip(batch, runs)]
+        seed = int(batch[0]["id"], 16) % (1 << 31)
+        vals = value_moves_per_world(agent.mcts, states, moves, a.value_sims, a.worlds, seed)
+        crit = value_moves_per_world(agent.mcts, states, moves, a.critic_sims, a.worlds, seed)
+        with gzip.open(a.out, "at") as f:
+            for r, st, rr, ms, v, c in zip(batch, states, runs, moves, vals, crit):
+                choices = [x["choice"] for x in rr]
+                best = max(set(choices), key=lambda x: (choices.count(x), -choices.index(x)))
+                out = {"schema": SCHEMA, "id": r["id"], "moves": ms,
+                       "names": {str(m): ActionEncoder.get_action_name(st, m) for m in ms},
+                       "reference": {"runs": rr, "action": best, "agreement": choices.count(best) / len(choices)},
+                       "values": {str(m): [None if x is None else round(x, 5) for x in v[m]] for m in ms},
+                       "critic": {str(m): [None if x is None else round(x, 5) for x in c[m]] for m in ms}}
+                f.write(json.dumps(out, separators=(",", ":")) + "\n")
+        print(f"{lo + len(batch)}/{len(todo)} positions, {time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    return 0
+
+
+def _my_rows(a: argparse.Namespace) -> List[Dict[str, Any]]:
+    k, n = (int(x) for x in a.part.split("/"))
+    rows = sorted(read_rows([a.bank]), key=lambda r: r["id"])
+    return [r for i, r in enumerate(rows) if i % n == k - 1]
+
+
+def oracle(a: argparse.Namespace) -> int:
+    import torch
+
+    from tools.lib.player_agent import load_agent
+    from tools.scripts.event_play_census import state_from_token
+
+    torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
+    rows = _my_rows(a)
+    budgets = parse_budgets(a.budgets)
+    with gzip.open(a.out, "wt") as f:
+        for label, sims, kk in budgets:
+            agent: Any = load_agent(f"gumbel:{a.model}:{sims}:{kk}", device="cpu")
+            todo = []
+            for r in rows:
+                order = sorted(range(len(r["legal"])), key=lambda i: -r["logits"][i])
+                top = [r["legal"][i] for i in order[:kk]]
+                if r["target"] in top or len(top) < 2:
+                    continue
+                todo.append((r, top[:-1] + [r["target"]]))
+            for lo in range(0, len(todo), a.chunk):
+                batch = todo[lo:lo + a.chunk]
+                states = [state_from_token(r["pos"]) for r, _ in batch]
+                picks: List[List[int]] = [[] for _ in batch]
+                for j in range(a.seeds):
+                    agent.reseed(1000 + j)
+                    got = agent.mcts._gumbel.choose(states, candidates=[c for _, c in batch])
+                    for i, c in enumerate(got):
+                        picks[i].append(int(c))
+                for (r, cands), pk in zip(batch, picks):
+                    f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "label": label, "target": r["target"],
+                                        "candidates": cands, "choices": pk}, separators=(",", ":")) + "\n")
+            print(f"{label}: {len(todo)} positions", file=sys.stderr, flush=True)
+    return 0
+
+
+def playouts(a: argparse.Namespace) -> int:
+    from ai.eval.paired_playouts import compare
+    from tools.lib.player_agent import OnnxAgent
+    from tools.scripts.event_play_census import state_from_token
+
+    rows = _my_rows(a)
+    onnx = a.onnx or (os.path.splitext(a.model)[0] + ".onnx")
+    agent = OnnxAgent(onnx)
+
+    def act(obs: Any, masks: Any) -> Any:
+        return agent.act_batch(obs, masks, 0.0, True)
+
+    k = int(a.part.split("/")[0])
+    t0 = time.time()
+    with gzip.open(a.out, "wt") as f:
+        for lo in range(0, len(rows), a.chunk):
+            batch = rows[lo:lo + a.chunk]
+            positions = [(state_from_token(r["pos"]), [int(m) for m in r["pmoves"]]) for r in batch]
+            scores = compare(positions, act, a.pairs, a.seed + 100_003 * k + lo)
+            for r, sc in zip(batch, scores):
+                f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "pairs": a.pairs,
+                                    "scores": {str(m): v for m, v in sc.items()}}, separators=(",", ":")) + "\n")
+            print(f"{lo + len(batch)}/{len(rows)} positions, {time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    return 0
+
+
+def _paired(a: Sequence[Optional[float]], b: Sequence[Optional[float]], idx: Sequence[int]) -> Tuple[float, float, int]:
+    """Mean and SE of a - b over the worlds in `idx` where both are defined."""
+    d = [a[i] - b[i] for i in idx if a[i] is not None and b[i] is not None]   # type: ignore[operator]
+    if not d:
+        return math.nan, math.nan, 0
+    mu = sum(d) / len(d)
+    se = math.sqrt(sum((x - mu) ** 2 for x in d) / (len(d) - 1) / len(d)) if len(d) > 1 else math.nan
+    return mu, se, len(d)
+
+
+def _mean(v: Sequence[Optional[float]], idx: Sequence[int]) -> float:
+    xs = [v[i] for i in idx if v[i] is not None]
+    return sum(xs) / len(xs) if xs else -math.inf     # type: ignore[arg-type]
+
+
+def solve(bank: Dict[str, Any], ref: Dict[str, Any]) -> Dict[str, Any]:
+    """One position's verdict from its equal-budget move values.
+
+    The best move is chosen on the even worlds and every move's regret measured on the odd ones,
+    so choosing the best of several noisy values does not inflate the regret (the winner's curse);
+    `best` and its `lead` over the runner-up (paired, all worlds) say how sure the verdict is."""
+    vals = {int(m): v for m, v in ref["values"].items()}
+    nw = len(next(iter(vals.values())))
+    even, odd, every = list(range(0, nw, 2)), list(range(1, nw, 2)), list(range(nw))
+    pick = max(vals, key=lambda m: _mean(vals[m], even))
+    best = max(vals, key=lambda m: _mean(vals[m], every))
+    others = [m for m in vals if m != best]
+    lead, lead_se = (math.inf, 0.0) if not others else min(
+        (_paired(vals[best], vals[m], every)[:2] for m in others), key=lambda t: t[0])
+    regret: Dict[str, Tuple[float, float]] = {}
+    who = {"raw": bank["raw"], **{lb: m["choice"] for lb, m in bank["methods"].items()},
+           "ref": ref["reference"]["action"]}
+    for lb, mv in who.items():
+        mu, se, _ = _paired(vals[pick], vals[mv], odd) if mv in vals else (math.nan, math.nan, 0)
+        regret[lb] = (0.0 if mv == pick else mu, 0.0 if mv == pick else se)
+    rank = raw_rank(bank["logits"], bank["legal"], best)
+    sure = lead_se > 0 and lead >= 2 * lead_se if others else True
+    agree = ref["reference"]["action"] == best
+    conf = "high" if (sure and agree and ref["reference"]["agreement"] >= 2 / 3) else \
+        ("medium" if (sure or agree) else "low")
+    crit = {int(m): _mean(v, every) for m, v in ref["critic"].items()}
+    return {"best": best, "pick": pick, "lead": lead, "lead_se": lead_se, "confidence": conf,
+            "rank": rank, "regret": regret, "who": who,
+            "critic_best": max(crit, key=lambda m: crit[m]) if crit else None,
+            "p_best": float(softmax(bank["logits"])[bank["legal"].index(best)])}
+
+
+def _wq(xs: Sequence[float], ws: Sequence[float], q: float) -> float:
+    pairs = sorted(zip(xs, ws))
+    tot = sum(ws)
+    acc = 0.0
+    for x, w in pairs:
+        acc += w
+        if acc >= q * tot:
+            return x
+    return pairs[-1][0] if pairs else math.nan
+
+
+def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, Any]],
+             oracle_rows: Sequence[Dict[str, Any]] = (), playout_rows: Sequence[Dict[str, Any]] = (),
+             cards: Optional[Dict[int, str]] = None,
+             decisions_per_game: Optional[float] = None) -> Tuple[str, Dict[str, Any]]:
+    """The report (Markdown) and its numbers."""
+    refs = {r["id"]: r for r in ref_rows}
+    rows = [(b, refs[b["id"]], solve(b, refs[b["id"]])) for b in bank_rows if b["id"] in refs]
+    methods = ["raw"] + list(bank_rows[0]["methods"]) if bank_rows else ["raw"]
+    cards = cards or {}
+    out: List[str] = []
+    num: Dict[str, Any] = {"positions": len(rows)}
+    W = sum(b["weight"] for b, _, _ in rows)
+
+    def pct(x: float) -> str:
+        return f"{100 * x:.1f}%"
+
+    def table(head: Sequence[str], body: Sequence[Sequence[Any]]) -> None:
+        out.append("| " + " | ".join(head) + " |")
+        out.append("|" + "|".join(":---" if i == 0 else "---:" for i in range(len(head))) + "|")
+        for line in body:
+            out.append("| " + " | ".join(str(x) for x in line) + " |")
+        out.append("")
+
+    conf = collections.Counter(v["confidence"] for _, _, v in rows)
+    out += [f"# Search disagreement bank: {len(rows)} positions", "",
+            "Population-weighted (each bank row stands for `weight` raw-play decisions). Values and regret "
+            "are in the value head's units, the mover's [-1, 1]: 0.02 is one point of win probability.", "",
+            f"Confidence of the reference: high {conf['high']}, medium {conf['medium']}, low {conf['low']}.", ""]
+    hi = [(b, r, v) for b, r, v in rows if v["confidence"] == "high"]
+
+    # 1. Recall of the reference move by the raw policy's top k.
+    out += ["## Reference-best recall by raw top-k (high-confidence positions)", ""]
+    ks = [1, 2, 4, 8, 16]
+    body = []
+    for sub, name in ((hi, "all"), ([x for x in hi if x[2]["best"] != x[0]["raw"]], "raw wrong")):
+        w = sum(b["weight"] for b, _, _ in sub) or 1.0
+        rw = sum(b["weight"] * max(0.0, v["regret"]["raw"][0]) for b, _, v in sub) or 1.0
+        line = [name, len(sub)] + [pct(sum(b["weight"] for b, _, v in sub if v["rank"] <= k) / w) for k in ks]
+        line += [pct(sum(b["weight"] * max(0.0, v["regret"]["raw"][0]) for b, _, v in sub if v["rank"] > 4) / rw),
+                 pct(sum(b["weight"] * max(0.0, v["regret"]["raw"][0]) for b, _, v in sub if v["rank"] > 8) / rw)]
+        body.append(line)
+        num[f"recall_{name}"] = {k: sum(b["weight"] for b, _, v in sub if v["rank"] <= k) / w for k in ks}
+    table(["positions", "n"] + [f"top-{k}" for k in ks] + ["raw regret outside top-4", "outside top-8"], body)
+
+    # 2. Agreement and regret per method.
+    out += ["## Each method against the reference", ""]
+    body = []
+    for m in methods:
+        sel = [(b, v) for b, _, v in rows if not math.isnan(v["regret"][m][0])]
+        w = sum(b["weight"] for b, _ in sel) or 1.0
+        agree_ref = sum(b["weight"] for b, v in sel if v["who"][m] == v["best"]) / w
+        agree_raw = sum(b["weight"] for b, v in sel if v["who"][m] == b["raw"]) / w
+        mean_reg = sum(b["weight"] * v["regret"][m][0] for b, v in sel) / w
+        regs = [v["regret"][m][0] for _, v in sel]
+        ws = [b["weight"] for b, _ in sel]
+        body.append([m, pct(agree_ref), pct(agree_raw), f"{mean_reg:.4f}"] +
+                    [f"{_wq(regs, ws, q):.4f}" for q in (0.5, 0.9, 0.95, 0.99)])
+        num[f"mean_regret_{m}"] = mean_reg
+    table(["method", "= reference", "= raw", "mean regret", "median", "p90", "p95", "p99"], body)
+
+    if decisions_per_game:
+        per_game = {m: num[f"mean_regret_{m}"] * decisions_per_game / 2 for m in methods}
+        num["regret_per_game_points"] = per_game
+        out += ["**Calibration.** Over the decisions a raw game makes "
+                f"({decisions_per_game:.0f} with two or more legal moves), the measured regret adds up to "
+                + ", ".join(f"{m} {100 * per_game[m]:.1f}" for m in methods)
+                + " points of win probability a game. A tournament measured Gumbel k=8 @256 at about +9 "
+                "points over the raw network; a total far from that says the regret measures search's opinion "
+                "of itself more than strength.", ""]
+
+    # 3. Concentration: the share of raw regret held by the worst positions.
+    sel = sorted(((max(0.0, v["regret"]["raw"][0]), b["weight"]) for b, _, v in rows), reverse=True)
+    tot_r = sum(r * w for r, w in sel) or 1.0
+    tot_w = sum(w for _, w in sel) or 1.0
+    out += ["## Concentration of raw regret (positive part)", ""]
+    body = []
+    acc_r = acc_w = 0.0
+    marks = [0.001, 0.01, 0.05, 0.1, 0.2, 0.5]
+    mi = 0
+    for r, w in sel:
+        acc_r += r * w
+        acc_w += w
+        while mi < len(marks) and acc_w / tot_w >= marks[mi]:
+            body.append([pct(marks[mi]), pct(acc_r / tot_r)])
+            num[f"regret_share_top_{marks[mi]}"] = acc_r / tot_r
+            mi += 1
+    table(["worst share of decisions", "share of raw regret"], body)
+
+    # 4. Breakdowns of raw regret.
+    def breakdown(title: str, key: Any) -> None:
+        g: Dict[Any, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+        for b, _, v in rows:
+            g.setdefault(key(b, v), []).append((b, v))
+        body = []
+        for k_, sub in sorted(g.items(), key=lambda kv: str(kv[0])):
+            w = sum(b["weight"] for b, _ in sub) or 1.0
+            share = sum(b["weight"] for b, _ in sub) / W if W else 0.0
+            body.append([k_, len(sub), pct(share)] +
+                        [f"{sum(b['weight'] * v['regret'][m][0] for b, v in sub) / w:.4f}" for m in methods] +
+                        [pct(sum(b["weight"] for b, v in sub if v["best"] != b["raw"]) / w)])
+        out.extend([f"## Raw regret by {title}", ""])
+        table([title, "n", "of decisions"] + [f"regret {m}" for m in methods] + ["raw ≠ best"], body)
+
+    breakdown("turn", lambda b, v: int(b["turn"]))
+    breakdown("action round", lambda b, v: int(b["ar"]))
+    breakdown("decision", lambda b, v: decision_group(b))
+    breakdown("raw rank of the best move", lambda b, v: min(v["rank"], 9) if v["rank"] < 9 else "9+")
+    breakdown("confidence", lambda b, v: v["confidence"])
+    breakdown("agreement", lambda b, v: b.get("stratum", "/").split("/")[0])
+    breakdown("card", lambda b, v: cards.get(int(b["card"]), "-") if b["card"] else "-")
+
+    # 5. Decomposition of raw's errors.
+    out += ["## Why raw is wrong (high-confidence positions where raw is not the best)", ""]
+    err = [(b, v) for b, _, v in hi if v["best"] != b["raw"]]
+    w = sum(b["weight"] for b, _ in err) or 1.0
+    rw = sum(b["weight"] * max(0.0, v["regret"]["raw"][0]) for b, v in err) or 1.0
+    body = []
+    for m in (methods[1:] if err else []):
+        inside = [(b, v) for b, v in err if v["best"] in b["methods"][m]["candidates"]]
+        wi = sum(b["weight"] for b, _ in inside) or 1.0
+        body.append([m, pct(1 - sum(b["weight"] for b, _ in inside) / w),
+                     pct(1 - sum(b["weight"] * max(0.0, v["regret"]["raw"][0]) for b, v in inside) / rw),
+                     pct(sum(b["weight"] for b, v in inside if b["methods"][m]["choice"] == v["best"]) / wi),
+                     pct(sum(b["weight"] for b, v in inside if v["critic_best"] == v["best"]) / wi)])
+    table(["searcher", "best outside its candidates (errors)", "(regret)", "picks best when inside",
+           "bare critic ranks best first when inside"], body)
+
+    if oracle_rows:
+        out += ["## Oracle candidates: the best move forced into the candidate set", ""]
+        body = []
+        for lb in sorted({o["label"] for o in oracle_rows}):
+            sub = [o for o in oracle_rows if o["label"] == lb]
+            hits = sum(c == o["target"] for o in sub for c in o["choices"])
+            runs = sum(len(o["choices"]) for o in sub) or 1
+            body.append([lb, len(sub), pct(hits / runs)])
+            num[f"oracle_{lb}"] = hits / runs
+        table(["searcher", "positions", "picks the forced best move"], body)
+
+    if playout_rows:
+        out += ["## Playout check of search-valued regret", ""]
+        pl = {p["id"]: p for p in playout_rows}
+        body = []
+        agree = n_ = 0
+        for b, _, v in rows:
+            p = pl.get(b["id"])
+            if not p or str(v["best"]) not in p["scores"] or str(b["raw"]) not in p["scores"] or v["best"] == b["raw"]:
+                continue
+            sb, sr = p["scores"][str(v["best"])], p["scores"][str(b["raw"])]
+            d = [x - y for x, y in zip(sb, sr)]
+            mu = sum(d) / len(d)
+            se = math.sqrt(sum((x - mu) ** 2 for x in d) / max(1, len(d) - 1) / len(d))
+            n_ += 1
+            agree += mu > 0
+            body.append((v["regret"]["raw"][0], mu, se))
+        if body:
+            big = [x for x in body if x[0] >= 0.04]
+            out.append(f"{n_} positions where the reference best differs from raw: the playouts favour the "
+                       f"reference move in {pct(agree / max(1, n_))}; mean playout lead "
+                       f"{sum(x[1] for x in body) / len(body):+.3f} (win probability), against a mean search-valued "
+                       f"regret of {sum(x[0] for x in body) / len(body) / 2:+.3f}. Where search says raw loses "
+                       f"two or more points ({len(big)} positions): playout lead "
+                       f"{(sum(x[1] for x in big) / len(big)) if big else math.nan:+.3f}.")
+            out.append("")
+            num["playout_agree"] = agree / max(1, n_)
+
+    # 6. The worst raw decisions.
+    out += ["## Highest-regret raw decisions", ""]
+    worst = sorted(hi, key=lambda x: -x[2]["regret"]["raw"][0])[:25]
+    table(["id", "turn/AR", "side", "decision", "card", "raw", "best (raw rank)", "regret ± SE"],
+          [[b["id"], f"T{b['turn']} AR{b['ar']}", b["side"], b["decision_type"],
+            cards.get(int(b["card"]), "-") if b["card"] else "-", r["names"].get(str(b["raw"]), b["raw"]),
+            f"{r['names'].get(str(v['best']), v['best'])} ({v['rank']})",
+            f"{v['regret']['raw'][0]:.3f} ± {v['regret']['raw'][1]:.3f}"] for b, r, v in worst])
+    return "\n".join(out), num
+
+
+def read_all(paths: Sequence[str]) -> List[Dict[str, Any]]:
+    """Every row of the files, duplicates kept (oracle rows repeat an id once per searcher)."""
+    out: List[Dict[str, Any]] = []
+    for p in paths:
+        with gzip.open(p, "rt") as f:
+            out += [json.loads(line) for line in f]
+    return out
+
+
 def read_rows(paths: Sequence[str]) -> List[Dict[str, Any]]:
     """Rows of one or more bank files, deduplicated by id (first wins)."""
     seen: Dict[str, Dict[str, Any]] = {}
@@ -246,9 +710,76 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     an.add_argument("--chunk", type=int, default=64, help="positions per search call")
     an.add_argument("--out", required=True)
     an.add_argument("--resume", action="store_true")
+    se = sub.add_parser("select", help="the stratified bank from annotated positions")
+    se.add_argument("--annotated", nargs="+", required=True)
+    se.add_argument("--size", type=int, default=8000)
+    se.add_argument("--control", type=int, default=2000, help="agreement positions among --size")
+    se.add_argument("--seed", type=int, default=0)
+    se.add_argument("--out", required=True)
+    rf = sub.add_parser("reference", help="high-budget reference solves and equal-budget move values")
+    rf.add_argument("--model", required=True)
+    rf.add_argument("--bank", required=True)
+    rf.add_argument("--part", default="1/1")
+    rf.add_argument("--ref-sims", type=int, default=1024)
+    rf.add_argument("--ref-k", type=int, default=16)
+    rf.add_argument("--ref-seeds", type=int, default=3)
+    rf.add_argument("--value-sims", type=int, default=256)
+    rf.add_argument("--critic-sims", type=int, default=1)
+    rf.add_argument("--worlds", type=int, default=64)
+    rf.add_argument("--top", type=int, default=4, help="also value the raw network's top moves")
+    rf.add_argument("--chunk", type=int, default=4, help="positions per search call (memory)")
+    rf.add_argument("--out", required=True)
+    rf.add_argument("--resume", action="store_true")
+    orc = sub.add_parser("oracle", help="searchers rerun with the reference move forced into their candidates")
+    orc.add_argument("--model", required=True)
+    orc.add_argument("--bank", required=True, help="rows with a `target` move")
+    orc.add_argument("--part", default="1/1")
+    orc.add_argument("--budgets", nargs="+", default=["g64=64:4", "g256=256:8"])
+    orc.add_argument("--seeds", type=int, default=3)
+    orc.add_argument("--chunk", type=int, default=64)
+    orc.add_argument("--out", required=True)
+    pl = sub.add_parser("playouts", help="paired playouts of each row's `pmoves` by the raw network")
+    pl.add_argument("--model", required=True, help="the .pt; its .onnx beside it plays (or --onnx)")
+    pl.add_argument("--onnx", default=None)
+    pl.add_argument("--bank", required=True, help="rows with `pmoves`")
+    pl.add_argument("--part", default="1/1")
+    pl.add_argument("--pairs", type=int, default=64)
+    pl.add_argument("--seed", type=int, default=0)
+    pl.add_argument("--chunk", type=int, default=16)
+    pl.add_argument("--out", required=True)
+    rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
+    rp.add_argument("--bank", required=True)
+    rp.add_argument("--reference", nargs="+", required=True)
+    rp.add_argument("--oracle", nargs="*", default=[])
+    rp.add_argument("--playouts", nargs="*", default=[])
+    rp.add_argument("--decisions-per-game", type=float, default=None,
+                    help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
+    rp.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
     a = ap.parse_args(argv)
+    if a.cmd == "report":
+        cards = {int(c["id"]): str(c["name"]) for c in json.load(open("rules/cards.json"))}
+        md, num = analysis(read_rows([a.bank]), read_rows(a.reference), read_all(a.oracle) if a.oracle else [],
+                           read_rows(a.playouts) if a.playouts else [], cards, a.decisions_per_game)
+        open(a.out, "w").write(md + "\n")
+        json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
+        print(f"report -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "oracle":
+        return oracle(a)
+    if a.cmd == "playouts":
+        return playouts(a)
     if a.cmd == "annotate":
         return annotate(a)
+    if a.cmd == "select":
+        bank = select(read_rows(a.annotated), a.size, a.control, a.seed)
+        with gzip.open(a.out, "wt") as f:
+            for r in bank:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        strata = collections.Counter(r["stratum"] for r in bank)
+        print(f"{len(bank)} positions in {len(strata)} strata -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "reference":
+        return reference(a)
     return 1
 
 
