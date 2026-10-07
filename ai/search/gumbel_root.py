@@ -68,6 +68,7 @@ class GumbelStats(TypedDict):
     candidates: List[int]                  # the root's candidates, most probable first
     n: Dict[int, float]                    # evaluations spent on each
     q: Dict[int, Optional[float]]          # mean value of its position for the mover (None: unvisited)
+    dropped: Dict[int, Optional[int]]      # the halving phase it was dropped in; None if it survived
     value: float                           # the network's value of the position for the mover
 
 
@@ -154,9 +155,12 @@ class GumbelRoot:
             lg, v, _ = self.mcts.model(torch.from_numpy(obs).to(dev), torch.from_numpy(masks).to(dev))
         return lg.float().cpu().numpy(), masks, v.float().reshape(-1).cpu().numpy()
 
-    def choose(self, states: Sequence[ts.GameState]) -> List[int]:
-        """The move to play at each position: the last survivor of the halving."""
-        alive = self._halve(states)[2]
+    def choose(self, states: Sequence[ts.GameState],
+               candidates: Optional[Sequence[Optional[Sequence[int]]]] = None) -> List[int]:
+        """The move to play at each position: the last survivor of the halving. `candidates`, for
+        a diagnostic only (tools/search_bank.py oracle), replaces a position's top-k candidates
+        with the given legal moves (None keeps the usual ones)."""
+        alive = self._halve(states, candidates)[2]
         return [int(c[0]) if c else 0 for c in alive]
 
     def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
@@ -187,7 +191,8 @@ class GumbelRoot:
             out.append((acts, pi))
         return out
 
-    def _halve(self, states: Sequence[ts.GameState]) -> Tuple[
+    def _halve(self, states: Sequence[ts.GameState],
+               candidates: Optional[Sequence[Optional[Sequence[int]]]] = None) -> Tuple[
             List[Dict[int, float]], List[Dict[int, float]], List[List[int]],
             List[Dict[int, float]], List[Dict[int, float]], np.ndarray]:
         """Sequential halving at each position: (logits, Gumbel noise, survivors best first,
@@ -216,7 +221,12 @@ class GumbelRoot:
             else:
                 g.append({a: 0.0 for a in legal})
             alive.append(sorted(legal, key=lambda a: -(g[i][a] + logits[i][a]))[:m_max])
+            want = candidates[i] if candidates is not None else None
+            if want is not None:
+                forced = [int(a) for a in want if int(a) in logits[i]]
+                alive[-1] = sorted(dict.fromkeys(forced), key=lambda a: -(g[i][a] + logits[i][a]))
         initial = [list(c) for c in alive]
+        dropped: List[Dict[int, Optional[int]]] = [{a: None for a in c} for c in alive]
         n = [{a: 0.0 for a in lo} for lo in logits]
         w = [{a: 0.0 for a in lo} for lo in logits]
         phases = [halving_phases(len(c)) for c in alive]
@@ -266,10 +276,14 @@ class GumbelRoot:
                 sig = sigma_completed(logits[i], float(v[i]), n[i], q)
                 ranked = sorted(alive[i], key=lambda a: -(g[i][a] + logits[i][a] + sig[a]))
                 alive[i] = ranked[:1] if ph == phases[i] - 1 else ranked[:max(1, (len(ranked) + 1) // 2)]
+                for a in ranked[len(alive[i]):]:
+                    dropped[i][a] = ph
         # Survivors are ranked best first, whether the halving finished or the budget ran out.
         self.last_stats = [
             GumbelStats(candidates=initial[i], n={a: n[i][a] for a in initial[i]},
                         q={a: (w[i][a] / n[i][a] if n[i][a] > 0 else None) for a in initial[i]},
+                        dropped={a: (None if alive[i] and a == alive[i][0] else dropped[i][a])
+                                 for a in initial[i]},
                         value=float(v[i]))
             for i in range(len(states))]
         return logits, g, alive, n, w, v
