@@ -379,9 +379,22 @@ in one field (`data/reports/e7_33_vs_23_rr.{md,json}`):
 Elo there 1680 / 1665 / 1661. The two variants are level with each other and both ~1.5–4 points below
 E7-02-44. All three share seed 44, so this is not seed variance: a changed computation (compile's
 numerics, two extra heads) sends a from-scratch run down another trajectory, which acts like a fresh
-draw. Either E7-02-44 is a good trajectory (the branch spread, E7-03-44, measures branches from a shared
-870M state, not from-scratch runs), or each change costs about the same. These runs cannot separate the
-two; E7-02-45 -- E7-02-44's recipe at seed 45 -- would measure the from-scratch spread directly.
+draw.
+
+**The recipe's own seed spread already exists: E7-08-43**, E7-02-44's recipe from scratch at seed 43
+(`E7-A4-R1-S43`), which I had overlooked. The four from-scratch SWAs at 1,120–1,200M in one field
+(`data/reports/e7_scratch_spread_rr.{md,json}`):
+
+| SWA | Elo | panel US / USSR | against E7-02-44 (seed 44) | against E7-08-43 (seed 43) |
+|:---|---:|:---|:---|:---|
+| E7-02-44 (plain, seed 44) | 1661 | 86.3 / 86.3 | -- | 56.6% ± 1.1 |
+| E7-33-44 (heads) | 1648 | 84.4 / 85.7 | 48.3% | 55.8% (as US 59.6, as USSR 52.0) |
+| E7-23-44 (compile) | 1644 | 85.9 / 83.8 | 46.2% | 55.9% |
+| E7-08-43 (plain, seed 43) | 1604 | 80.7 / 83.4 | 43.4% | -- |
+
+The plain recipe's two seeds are 57 Elo and 56.6% apart; both variants land between them, nearer
+seed 44. Against the control the owner's rule fails, but **within the recipe's seed spread E7-33-44
+is level with the plain recipe** -- neither better nor shown worse.
 
 **What the heads did** -- here they clearly work. Card counts (4,000 games, T 0.1 / T 1), share played
 for the event with the event legal:
@@ -415,6 +428,6 @@ Wargames' branch, P(end) by lead (8,000 games):
   knows the answer equally well in both (AUC 0.99): the head lets the policy use it.
 * **Arms Race moved, but not by its condition** (US 3.3 vs 2.8%), and One Small Step not at all: an
   event the model rarely benefits from gets no signal to learn a condition from.
-* **Strength: not accepted against E7-02-44, level with the other from-scratch variant.** The Wargames
-  gain is too rare (≈5% of games) to show in strength either way; the seat losses are from the rest of
-  play, at the size by which two from-scratch runs at the same seed already diverge.
+* **Strength: not accepted against E7-02-44, but inside the plain recipe's seed spread** (between
+  E7-02-44 and E7-08-43, level with E7-23-44). The Wargames gain is too rare (≈5% of games) to show
+  in strength either way.
