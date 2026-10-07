@@ -115,6 +115,7 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
            if args.ladder_token_layers else {}),
         # Owner 2026-10-06. Recorded only when on, as the token path.
         **({"branch_head": True} if getattr(args, "ladder_branch_head", False) else {}),
+        **({"play_mode_head": True} if getattr(args, "ladder_play_mode_head", False) else {}),
     )
 
 
@@ -211,6 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="A head on the branch block (event branches, DEFCON values, regions) reading "
                           "the trunk plus a one-hot of the resolving card, zero-initialised; a --resume "
                           "from a state without it adds it. Off by default.")
+    lad.add_argument("--ladder-play-mode-head", action="store_true", default=False,
+                     help="A head on the play-mode block (EVENT, SPACE, the three Ops modes) reading the "
+                          "trunk plus a one-hot of the card being played, zero-initialised; addable on "
+                          "--resume. Off by default.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,

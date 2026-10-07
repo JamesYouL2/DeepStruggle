@@ -67,7 +67,7 @@ _LADDER = {
     "card_lookup_heads": "ladder_card_lookup_heads", "card_lookup_dim": "ladder_card_lookup_dim",
     "card_lookup_identity_dim": "ladder_card_lookup_identity_dim",
     "token_layers": "ladder_token_layers", "token_dim": "ladder_token_dim",
-    "branch_head": "ladder_branch_head",
+    "branch_head": "ladder_branch_head", "play_mode_head": "ladder_play_mode_head",
 }
 
 
@@ -152,6 +152,7 @@ def recorded(run_dir: str) -> dict:
             out.setdefault("ladder_token_dim", 128)
             # the branch head (2026-10-06): recorded only when on
             out.setdefault("ladder_branch_head", False)
+            out.setdefault("ladder_play_mode_head", False)
         elif k in dflt:
             out[k] = v
     # Before 2026-09-27 a run that took the default rollout bands recorded None, and the default

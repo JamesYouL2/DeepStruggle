@@ -208,6 +208,12 @@ branch the trunk predicts whether ending wins at 0.98 AUC while the plain policy
 `--resume` from a state without it adds it (`branch_head_net.*`). The one-hot spans all 110 cards; only those with a
 branch ever reach those rows.
 
+`--ladder-play-mode-head` (owner, 2026-10-07; default off) is the same for the play-mode block (flat 110..114:
+EVENT, SPACE and the three Ops modes, the last three also the deferred Ops-mode choice): a correction from the trunk
+plus a one-hot of the card being played (ACTIVE_NOW at those decisions). The play-mode slots are shared by all 110
+cards, so a push on one card's event otherwise moves every card's (E7-29-44: forcing three events halved the event
+share of every play-mode decision). Zero-initialised, addable on `--resume` (`play_mode_head_net.*`).
+
 `--force-event-credit {own,environment}` chooses how `--force-applicable-events` credits a forced play: `own` (the
 default, as above) or `environment` (`learner = 0`, no policy gradient, as `--seed-scenarios`). The condition
 `wargames_branch` is Wargames at DEFCON 2 **at any lead**: with `environment` credit it supplies visits to Wargames'

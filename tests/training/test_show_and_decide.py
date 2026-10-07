@@ -652,3 +652,43 @@ def test_conditions_on_one_card_are_refused() -> None:
     from ai.training.show_and_decide import ApplicableEventForcer
     with pytest.raises(ValueError, match="twice"):
         ApplicableEventForcer(["wargames", "wargames_branch"], 0.1)
+
+
+# ------------------------------------------- the play-mode head (owner, 2026-10-07)
+
+def test_the_play_mode_head_starts_as_the_network_without_it_and_only_touches_its_block() -> None:
+    torch.manual_seed(0)
+    plain = create_ladder_net(torch.device("cpu"), **SHALLOW).eval()
+    both = create_ladder_net(torch.device("cpu"), **SHALLOW, branch_head=True, play_mode_head=True).eval()
+    missing, unexpected = both.load_state_dict(plain.state_dict(), strict=False)
+    assert not unexpected and all(k.startswith(("branch_head_net.", "play_mode_head_net.")) for k in missing)
+    obs = _branch_obs(3, [100, 39, 80])
+    mask = torch.ones(3, 220, dtype=torch.bool)
+    with torch.no_grad():
+        assert torch.equal(plain(obs, mask)[0], both(obs, mask)[0])        # both zero-initialised
+        pm = both.play_mode_head_net[-1]
+        assert isinstance(pm, torch.nn.Linear)
+        torch.nn.init.normal_(pm.weight, std=0.5)
+        a, b = plain(obs, mask)[0], both(obs, mask)[0]
+    lo, hi = A.PLAY_MODE_OFFSET, A.PLAY_MODE_OFFSET + 5
+    assert torch.equal(a[:, :lo], b[:, :lo]) and torch.equal(a[:, hi:], b[:, hi:])   # only 110..114
+    d = (b - a)[:, lo:hi]
+    assert not torch.allclose(d[0], d[1]) and not torch.allclose(d[1], d[2])         # the card changes it
+
+
+def test_the_play_mode_head_is_recovered_from_the_weights_and_added_on_resume(tmp_path: Any) -> None:
+    from ai.models.ladder_net import ladder_config_from_state_dict
+    from ai.training.generic_trainer import load_resume_state, save_resume_state
+    m = create_ladder_net(torch.device("cpu"), **SHALLOW, play_mode_head=True)
+    cfg = ladder_config_from_state_dict(m.state_dict())
+    assert cfg is not None and cfg["play_mode_head"] is True and cfg["branch_head"] is False
+    a = _trainer()
+    path = str(tmp_path / "resume.pt")
+    save_resume_state(path, a.active_net, a, iteration=1, total_env_steps=128, elapsed_seconds=1.0, seed=0)
+    torch.manual_seed(0)
+    model = create_ladder_net(torch.device("cpu"), **SHALLOW, play_mode_head=True, branch_head=True)
+    b = NashPGTrainer(active_net=model, env=TsVectorizedEnv(num_envs=8, base_seed=123), num_envs=8,
+                      buffer_size=16, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=torch.device("cpu"))
+    load_resume_state(path, b.active_net, b, seed=0)
+    b.train_iteration()

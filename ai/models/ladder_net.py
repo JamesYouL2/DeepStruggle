@@ -38,6 +38,8 @@ from bindings.action_encoder import ActionEncoder
 
 #: The branch block of the flat action space (event branches, CONFIRM_DONE, DEFCON values, regions).
 BRANCH_BLOCK = ActionEncoder.FLAT_ACTION_SIZE - ActionEncoder.BRANCH_OFFSET
+#: The play-mode block (EVENT, SPACE, OPS_INFLUENCE, OPS_COUP, OPS_REALIGN).
+PLAY_MODE_BLOCK = 5
 #: Card-feature slot 13: 1.0 for the card the decision is about (engine/include/ts/game_state.hpp).
 ACTIVE_CARD_SLOT = 13
 
@@ -106,6 +108,7 @@ class LadderNet(ColdWarNetV2):
                  card_aux: bool = False,
                  opp_legal_aux: bool = False,
                  branch_head: bool = False,
+                 play_mode_head: bool = False,
                  obs_features: int = 0,
                  token_layers: int = 0,
                  token_dim: int = 0,
@@ -432,6 +435,22 @@ class LadderNet(ColdWarNetV2):
             assert isinstance(out, nn.Linear)
             nn.init.zeros_(out.weight)
             nn.init.zeros_(out.bias)
+        # --ladder-play-mode-head (owner, 2026-10-07): the same for the play-mode block (flat 110..114:
+        # EVENT, SPACE, OPS_INFLUENCE / COUP / REALIGN -- the last three also the deferred Ops-mode
+        # choice), read from the trunk and the card being played (ACTIVE_NOW at those decisions). The
+        # play-mode slots are shared by all 110 cards, so a push on one card's event moves every card's
+        # (E7-29-44: forcing three cards' events halved the event share of every play-mode decision).
+        # Zero-initialised.
+        self.play_mode_head = bool(play_mode_head)
+        if self.play_mode_head:
+            if input_mode == "flat":
+                raise ValueError("play_mode_head reads the card nodes; the flat input mode has none")
+            self.play_mode_head_net = nn.Sequential(
+                nn.Linear(hidden_dim + 110, 128), nn.GELU(), nn.Linear(128, PLAY_MODE_BLOCK))
+            out = self.play_mode_head_net[-1]
+            assert isinstance(out, nn.Linear)
+            nn.init.zeros_(out.weight)
+            nn.init.zeros_(out.bias)
 
     def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
         """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
@@ -570,6 +589,7 @@ class LadderNet(ColdWarNetV2):
             card_aux=self.card_aux,
             opp_legal_aux=self.opp_legal_aux,
             branch_head=self.branch_head,
+            play_mode_head=self.play_mode_head,
             obs_features=self.obs_feature_bits,
         )
 
@@ -586,14 +606,19 @@ class LadderNet(ColdWarNetV2):
         """The per-entity logits (`_entity_policy_logits`), plus the branch head's correction on the
         branch block when the network has one."""
         logits = self._entity_policy_logits(h, tokens)
-        if not self.branch_head:
+        if not (self.branch_head or self.play_mode_head):
             return logits
         assert tokens is not None
         card_nodes = tokens[3]
-        active = (card_nodes[..., ACTIVE_CARD_SLOT] > 0.95).to(h.dtype)          # (B, 110)
-        corr = self.branch_head_net(torch.cat([h, active], dim=-1)).to(logits.dtype)
-        lo = ActionEncoder.BRANCH_OFFSET
-        return torch.cat([logits[:, :lo], logits[:, lo:] + corr], dim=-1)
+        x = torch.cat([h, (card_nodes[..., ACTIVE_CARD_SLOT] > 0.95).to(h.dtype)], dim=-1)   # (B, H + 110)
+        zero = logits.new_zeros(())
+        pm = (self.play_mode_head_net(x).to(logits.dtype) if self.play_mode_head
+              else zero.expand(logits.shape[0], PLAY_MODE_BLOCK))
+        br = (self.branch_head_net(x).to(logits.dtype) if self.branch_head
+              else zero.expand(logits.shape[0], BRANCH_BLOCK))
+        a, b = ActionEncoder.PLAY_MODE_OFFSET, ActionEncoder.BRANCH_OFFSET
+        return torch.cat([logits[:, :a], logits[:, a:a + PLAY_MODE_BLOCK] + pm,
+                          logits[:, a + PLAY_MODE_BLOCK:b], logits[:, b:] + br], dim=-1)
 
     def _entity_policy_logits(self, h: torch.Tensor,
                               tokens: tuple[torch.Tensor, ...] | None) -> torch.Tensor:
@@ -875,6 +900,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         card_aux=any(k.startswith("card_aux_head.") for k in sd),
         opp_legal_aux=any(k.startswith("opp_legal_head.") for k in sd),
         branch_head=any(k.startswith("branch_head_net.") for k in sd),
+        play_mode_head=any(k.startswith("play_mode_head_net.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
     )
 

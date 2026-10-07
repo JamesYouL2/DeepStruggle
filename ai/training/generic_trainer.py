@@ -1362,7 +1362,7 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
 ADDABLE_HEADS: Tuple[str, ...] = ("card_aux_head.", "aux_own_head.", "aux_vp_head.",
                                  "opp_legal_head.",
                                  # zero-initialised, so the policy starts exactly as the saved one
-                                 "branch_head_net.")
+                                 "branch_head_net.", "play_mode_head_net.")
 
 
 def _load_allowing_added_heads(module: nn.Module, state: Dict[str, Any]) -> List[str]:
