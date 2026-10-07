@@ -431,3 +431,39 @@ Wargames' branch, P(end) by lead (8,000 games):
 * **Strength: not accepted against E7-02-44, but inside the plain recipe's seed spread** (between
   E7-02-44 and E7-08-43, level with E7-23-44). The Wargames gain is too rare (≈5% of games) to show
   in strength either way.
+
+## E7-A8-R1-S44 and E7-A4-R1-S43 continued to 2,000M (owner, 2026-10-07)
+
+Owner: "train E7-A8-R1-S44@1200M and E7-A4-R1-S43@1200M for 800M more steps each" -- both continued
+unchanged from their 1,200M end states (`launch_flags --diff`: only `--train-steps`; `run_codes.py
+--run`: the names agree with the flags), one after the other, read at 2,000M against
+`E7-A4-R1-S44`'s own 2,000M. One field, greedy, 1,000 games a side per pair
+(`data/reports/cont2000_rr.{md,json}`); engine 6c036593 (main's CachedState and observation work,
+the same games), rebuilt after the rebase once both legs had finished on d81e54f0.
+
+| model | Elo | panel US / USSR | 1,200M SWA → 2,000M SWA |
+|:---|---:|:---|:---|
+| `E7-A4-R1-S43@1920..2000M` | **1628** | 89.7 / 90.1 | 1525 → 1628 (+103) |
+| `E7-A4-R1-S44@1920..2000M` | 1625 | 88.1 / 88.1 | 1579 → 1625 (+46) |
+| `E7-A8-R1-S44@1920..2000M` | 1619 | 90.6 / 86.6 | 1569 → 1619 (+50) |
+| `E7-A4-R1-S43@2000M` | 1586 | 87.5 / 85.7 | |
+| `E7-A4-R1-S44@2000M` | 1584 | 85.7 / 85.9 | |
+| `E7-A8-R1-S44@2000M` | 1575 | 87.1 / 85.1 | |
+
+Head to head (± 1.1): SWAs `S43` vs `S44` 50.9%, `S43` vs `A8` 52.0%, `S44` vs `A8` 51.0% (`A8` as US
+49.6, as USSR 48.4); snapshots `S43` vs `S44` 49.5%, `S43` vs `A8` 52.2%, `S44` vs `A8` 51.6%.
+
+* **At 2,000M the three are level.** Every pair is within two standard errors of 50%, and the SWAs
+  span 9 Elo.
+* **The seed gap closed.** `E7-A4-R1-S43` was 54 Elo and 43% below seed 44 at 1,200M; it gained twice
+  as much over the next 800M and is level at 2,000M. The 1,200M spread was a difference in pace,
+  not in where the recipe goes -- the step-matched comparisons at 1,200M overstated it.
+* **The heads neither help nor cost strength at 2,000M.** By the owner's rule against `E7-A4-R1-S44`
+  on the SWAs: US +2.5, USSR −1.5 (about ±0.8 each), head to head 49.0% -- not accepted, as at
+  1,200M, but the 1,200M deficit (48.3%) has not grown.
+* **Wargames** (self-play, T 0.1, 4,000 games): `E7-A8-R1-S44@2000M` plays the event at DEFCON 2 in
+  98% of spots with a lead of 8+, 72% at 7, 32% at 5–6 (52% at 1,640M) and 1% below 5, and then ends
+  the game 97.5% / 67% / 44% / 17% of the time; 11.3% of its games end by Wargames.
+  `E7-A4-R1-S44@2000M` never plays the event (≤ 0.4%) and spends the card on Ops, coups at DEFCON 3
+  (77%). The boundary keeps sharpening without forcing, but a lead of 5–6 still loses it a game in
+  about one spot in seven.
