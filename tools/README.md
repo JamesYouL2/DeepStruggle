@@ -865,6 +865,19 @@ the human corpus and in a policy's self-play:
 
 ---
 
+## 7c. The Search Disagreement Bank (`tools/search_bank.py`)
+
+Where Gumbel search departs from the raw network on raw-play positions, and whether those
+departures are worth anything: stages `annotate` (raw self-play positions put to the raw network
+and to Gumbel k=4 @16, k=4 @64, k=8 @256), `select` (a stratified, population-weighted bank),
+`reference` (Gumbel k=16 @1024 x3 and equal-budget move values in shared redealt worlds), `oracle`
+(the best move forced into a searcher's candidates), `playouts` (paired playouts by the raw
+network) and `report`. The CI stages run through `.github/workflows/search_bank.yml`, which
+rebuilds the published ONNX export as a torch checkpoint on each runner. Results, method and the
+full command sequence: `research/log/E7_search_disagreement_bank.md`.
+
+---
+
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.

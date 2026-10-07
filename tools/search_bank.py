@@ -694,6 +694,25 @@ def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, A
             se = math.sqrt(sum(g[3][1] ** 2 for g in bucket)) / len(bucket)
             body.append([lab, len(bucket), f"{100 * sum(g[4] for g in bucket) / len(bucket) / 2:+.2f}",
                          f"{100 * m:+.2f} ± {100 * se:.2f}", pct(sum(g[3][0] > 0 for g in bucket) / len(bucket))])
+        body2 = []
+        for lab, keep in (("search-valued regret < 2 points", lambda g: g[4] < 0.04),
+                          ("search-valued regret >= 2 points", lambda g: g[4] >= 0.04)):
+            for name, sel in (("best", vs_best), ("g256", vs_g256)):
+                part = [g for g in sel if keep((g[0], g[1], g[2], g[3], g[1]["regret"]["raw"][0]))]
+                share = sum(g[2] for g in part) / W if W else 0.0
+                gain = sum(g[2] * g[3][0] for g in part) / W * (decisions_per_game or 1.0) if W else 0.0
+                se = math.sqrt(sum((g[2] * g[3][1]) ** 2 for g in part)) / W * (decisions_per_game or 1.0) if W else 0.0
+                body2.append([lab, name, pct(share), f"{100 * gain:+.1f} ± {100 * se:.1f}"])
+                num[f"playout_gain_split[{lab}][{name}]"] = gain
+        out += ["Where the playout-measured gain sits (population-weighted; gain per game if "
+                "--decisions-per-game is given, else per decision):", ""]
+        table(["decisions", "move", "share of decisions", "playout gain over raw (points)"], body2)
+        conf = [g for g in vs_best if g[4] >= 0.04 and g[1]["best"] != g[0]["raw"] and g[3][0] > 2 * g[3][1]]
+        if conf:
+            out += [f"Recall where the playouts confirm a search-valued regret of 2+ points ({len(conf)} positions): "
+                    + ", ".join(f"top-{k} {pct(sum(g[1]['rank'] <= k for g in conf) / len(conf))}" for k in (2, 4, 8))
+                    + ".", ""]
+            num["recall_playout_confirmed"] = {k: sum(g[1]["rank"] <= k for g in conf) / len(conf) for k in (2, 4, 8)}
         out += ["Where the reference best differs from raw, by the search-valued regret (unweighted):", ""]
         table(["search-valued regret", "positions", "search says (points)", "playouts say (points)",
                "playouts favour best"], body)
