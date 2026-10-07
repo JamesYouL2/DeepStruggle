@@ -60,7 +60,9 @@ h1 { font: 700 30px/1.05 var(--f-display); letter-spacing: .01em; margin: 0; tex
 .tally b { color: var(--accent); }
 .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; align-items: start; }
 @media (max-width: 820px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-aside { position: sticky; top: env(safe-area-inset-top, 0px); display: grid; gap: 14px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+/* minmax(0, 1fr): the rail's column is the rail's width, so a long word or a wide control inside it
+   wraps or shrinks instead of widening the column past the border and over the queue. */
+aside { position: sticky; top: env(safe-area-inset-top, 0px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 @media (max-width: 820px) { aside { position: static; } }
 .group { display: grid; gap: 6px; }
 .label { font: 600 12px var(--f-display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
@@ -69,8 +71,8 @@ aside { position: sticky; top: env(safe-area-inset-top, 0px); display: grid; gap
 .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
 .chip:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="search"], input[type="url"], select, textarea { width: 100%; font: 14px var(--f-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; }
-input[type="file"] { width: 100%; font: 13px var(--f-body); color: var(--ink); }
-.hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+input[type="file"] { width: 100%; min-width: 0; font: 13px var(--f-body); color: var(--ink); }
+.hint { font-size: 12.5px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
 .stale { font: 12.5px var(--f-body); color: var(--warn); }
 .status { font: 13px var(--f-body); color: var(--muted); }
 .queue { display: grid; gap: 10px; min-width: 0; }
@@ -140,7 +142,7 @@ kbd { font: 11.5px var(--f-data); border: 1px solid var(--line); border-bottom-w
       <div class="group">
         <label class="label" for="file">Reviews file</label>
         <input type="file" id="file" accept=".jsonl,.json,application/json">
-        <p class="hint">A saved set of reviews, such as <code>ai/eval/banks/disagreement_verdicts.jsonl</code>: its positions appear with their marks, confidence and notes. Works with the page opened straight from disk.</p>
+        <p class="hint">A saved set of reviews (the repository's is <code>disagreement_verdicts.jsonl</code> in <code>ai/eval/banks/</code>): its positions appear with their marks, confidence and notes. Works with the page opened straight from disk.</p>
       </div>
       <div class="group">
         <span class="label">Who stands alone</span>
