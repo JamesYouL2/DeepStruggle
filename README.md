@@ -68,8 +68,8 @@ of `requirements.txt` installs on top of whatever `torch` is already present.
 
 ### 2. Build C++ Engine
 
-The engine is built with clang (`apt-get install clang`); CMake finds it and refuses other
-compilers.
+The engine is built with clang and link-time optimisation (`apt-get install clang llvm lld`);
+CMake finds them and refuses other compilers.
 
 ```bash
 cmake -B build/release -S . -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3

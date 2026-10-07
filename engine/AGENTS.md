@@ -172,7 +172,8 @@ asserted, so none of them was driving an illegal action; the Python side was not
 The root `CMakeLists.txt` orchestrates `engine/` and `bindings/` together, and the rest of the
 repository expects the result in `build/release`. **The engine is built with clang**; the root
 `CMakeLists.txt` picks `clang++` and refuses any other compiler (measured +20% over GCC on the
-same sources, identical games -- see CLAUDE.md). Install it with `apt-get install clang`, or
+same sources, identical games -- see CLAUDE.md). Install it with `apt-get install clang llvm lld`
+(llvm and lld for the link-time optimisation below), or
 without root with `tools/scripts/install_clang_userspace.sh`. The root `CMakeLists.txt` is part
 of the engine fingerprint, so a change of compiler or flags there marks every build stale.
 

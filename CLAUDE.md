@@ -26,7 +26,8 @@ pip install -r requirements.txt
 cd web/ui && npm install && npm run build && cd ../..
 
 # C++ engine + nanobind extension (root CMake orchestrates engine/ and bindings/)
-# Needs clang: apt-get install clang   (no root: tools/scripts/install_clang_userspace.sh)
+# Needs clang and LLVM's LTO tools: apt-get install clang llvm lld
+#   (no root: tools/scripts/install_clang_userspace.sh)
 cmake -B build/release -S . -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3
 cmake --build build/release -j
 ```

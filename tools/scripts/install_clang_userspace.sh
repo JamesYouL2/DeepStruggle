@@ -7,7 +7,8 @@
 #     LLVM_VERSION=20 PREFIX=/some/dir tools/scripts/install_clang_userspace.sh
 #
 # The engine is built with clang (see the root CMakeLists.txt, which refuses any other compiler).
-# With root, `apt-get install clang` is the whole story and this script is not needed.
+# With root, `apt-get install clang llvm lld` is the whole story and this script is not needed
+# (llvm-$V-linker-tools below is what brings LLVMgold.so, which link-time optimisation needs).
 #
 # `apt-get download` fetches the .deb files without installing them and `dpkg -x` unpacks them
 # into PREFIX -- neither needs root. The compiler's own shared libraries (libLLVM, libclang-cpp)

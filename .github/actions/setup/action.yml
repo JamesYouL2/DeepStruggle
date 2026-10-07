@@ -29,10 +29,12 @@ runs:
         python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
         python -m pip install -r requirements.txt
 
+    # llvm and lld: the build links with -flto, and on Ubuntu the `clang` package alone brings
+    # neither llvm-ar nor a linker that reads LTO objects (the root CMakeLists.txt checks).
     - name: Install clang
       if: inputs.build-engine == 'true'
       shell: bash
-      run: sudo apt-get update -q && sudo apt-get install -y -q clang libgomp1
+      run: sudo apt-get update -q && sudo apt-get install -y -q clang llvm lld libgomp1
 
     - name: Build the engine
       if: inputs.build-engine == 'true'

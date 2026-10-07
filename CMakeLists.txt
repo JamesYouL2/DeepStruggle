@@ -58,29 +58,76 @@ else()
     if(TS_LTO)
         add_compile_options(-flto=${TS_LTO_MODE})
         add_link_options(-flto=${TS_LTO_MODE})
-        # A static library of LTO objects holds LLVM bitcode, which the archiver has to be able
-        # to read to index it: llvm-ar can, and GNU ar can through LLVM's gold plugin -- the only
-        # one tools/scripts/install_clang_userspace.sh brings along.
+        # LTO objects are LLVM bitcode, and two tools have to read them:
+        #  * the LINKER: GNU ld only through LLVM's gold plugin (LLVMgold.so), or lld natively;
+        #  * the ARCHIVER, for the static libraries: llvm-ar, or GNU ar through the same plugin.
+        # `apt-get install clang` brings neither the plugin nor llvm-ar on Ubuntu (the GitHub
+        # runner failed here); `apt-get install llvm lld` brings both. The userspace installer
+        # (tools/scripts/install_clang_userspace.sh) brings the plugin. Debian names the tools
+        # with the version (llvm-ar-18) and keeps them in /usr/lib/llvm-<N>/bin, next to the real
+        # compiler /usr/bin/clang++ links to.
+        string(REGEX MATCH "^[0-9]+" TS_CLANG_MAJOR "${CMAKE_CXX_COMPILER_VERSION}")
         get_filename_component(TS_CLANG_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-        find_program(TS_LLVM_AR NAMES llvm-ar llvm-ar-22 llvm-ar-21 llvm-ar-20 HINTS "${TS_CLANG_DIR}")
-        find_program(TS_LLVM_RANLIB NAMES llvm-ranlib llvm-ranlib-22 llvm-ranlib-21 llvm-ranlib-20
-                     HINTS "${TS_CLANG_DIR}")
+        get_filename_component(TS_CLANG_REAL "${CMAKE_CXX_COMPILER}" REALPATH)
+        get_filename_component(TS_CLANG_REAL_DIR "${TS_CLANG_REAL}" DIRECTORY)
+        set(TS_LLVM_HINTS "${TS_CLANG_DIR}" "${TS_CLANG_REAL_DIR}" "/usr/lib/llvm-${TS_CLANG_MAJOR}/bin")
+        find_program(TS_LLVM_AR NAMES llvm-ar-${TS_CLANG_MAJOR} llvm-ar HINTS ${TS_LLVM_HINTS})
+        find_program(TS_LLVM_RANLIB NAMES llvm-ranlib-${TS_CLANG_MAJOR} llvm-ranlib HINTS ${TS_LLVM_HINTS})
+        find_program(TS_LLD NAMES ld.lld-${TS_CLANG_MAJOR} ld.lld HINTS ${TS_LLVM_HINTS})
+        execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=LLVMgold.so
+                        OUTPUT_VARIABLE TS_LLVMGOLD OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT IS_ABSOLUTE "${TS_LLVMGOLD}" OR NOT EXISTS "${TS_LLVMGOLD}")
+            set(TS_LLVMGOLD "")
+        endif()
+        string(CONCAT TS_LTO_HELP
+            "Install LLVM's tools next to clang -- on Debian/Ubuntu `apt-get install llvm lld`, "
+            "without root tools/scripts/install_clang_userspace.sh -- or configure with -DTS_LTO=OFF.")
+
+        # Linker: GNU ld with the plugin when it is there, lld otherwise.
+        set(TS_LTO_LINK_OPTIONS "")
+        set(TS_LTO_LINKER "the system linker with ${TS_LLVMGOLD}")
+        if(NOT TS_LLVMGOLD)
+            if(NOT TS_LLD)
+                message(FATAL_ERROR "TS_LTO: the linker cannot read LTO objects -- neither LLVM's "
+                    "gold plugin (LLVMgold.so) nor ld.lld was found for ${CMAKE_CXX_COMPILER} "
+                    "(clang ${CMAKE_CXX_COMPILER_VERSION}). ${TS_LTO_HELP}")
+            endif()
+            set(TS_LTO_LINK_OPTIONS "--ld-path=${TS_LLD}")
+            set(TS_LTO_LINKER "${TS_LLD}")
+            add_link_options(${TS_LTO_LINK_OPTIONS})
+        endif()
+
+        # Archiver: llvm-ar when it is there, GNU ar through the plugin otherwise.
         if(TS_LLVM_AR AND TS_LLVM_RANLIB)
             set(CMAKE_AR "${TS_LLVM_AR}" CACHE FILEPATH "" FORCE)
             set(CMAKE_RANLIB "${TS_LLVM_RANLIB}" CACHE FILEPATH "" FORCE)
-        else()
-            execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=LLVMgold.so
-                            OUTPUT_VARIABLE TS_LLVMGOLD OUTPUT_STRIP_TRAILING_WHITESPACE)
-            if(NOT EXISTS "${TS_LLVMGOLD}")
-                message(FATAL_ERROR
-                    "TS_LTO needs llvm-ar or LLVM's gold plugin (LLVMgold.so) to archive LTO "
-                    "objects, and found neither next to ${CMAKE_CXX_COMPILER}. Install llvm "
-                    "(apt-get install llvm), or configure with -DTS_LTO=OFF.")
-            endif()
+            set(TS_LTO_ARCHIVER "${TS_LLVM_AR}")
+        elseif(TS_LLVMGOLD)
+            set(TS_LTO_ARCHIVER "${CMAKE_AR} with ${TS_LLVMGOLD}")
             set(CMAKE_CXX_ARCHIVE_CREATE "<CMAKE_AR> --plugin ${TS_LLVMGOLD} qc <TARGET> <OBJECTS>")
             set(CMAKE_CXX_ARCHIVE_APPEND "<CMAKE_AR> --plugin ${TS_LLVMGOLD} q <TARGET> <OBJECTS>")
             set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> --plugin ${TS_LLVMGOLD} <TARGET>")
+        else()
+            message(FATAL_ERROR "TS_LTO: the static libraries cannot be archived -- neither "
+                "llvm-ar nor LLVM's gold plugin (LLVMgold.so) was found for ${CMAKE_CXX_COMPILER} "
+                "(clang ${CMAKE_CXX_COMPILER_VERSION}). ${TS_LTO_HELP}")
         endif()
+
+        # And prove the linker half here, so a toolchain that cannot link LTO objects stops at
+        # configure with this message rather than deep in the build with a plugin error.
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_FLAGS "-flto=${TS_LTO_MODE}")
+        set(CMAKE_REQUIRED_LINK_OPTIONS "-flto=${TS_LTO_MODE};${TS_LTO_LINK_OPTIONS}")
+        check_cxx_source_compiles("int f(int x) { return x + 1; } int main() { return f(-1); }"
+                                  TS_LTO_LINKS)
+        unset(CMAKE_REQUIRED_FLAGS)
+        unset(CMAKE_REQUIRED_LINK_OPTIONS)
+        if(NOT TS_LTO_LINKS)
+            message(FATAL_ERROR "TS_LTO: clang could not link a program with -flto=${TS_LTO_MODE} "
+                "(see CMakeFiles/CMakeConfigureLog.yaml). ${TS_LTO_HELP}")
+        endif()
+        message(STATUS "LTO: -flto=${TS_LTO_MODE}; linking with ${TS_LTO_LINKER}; "
+            "archiving with ${TS_LTO_ARCHIVER}")
     endif()
 endif()
 
