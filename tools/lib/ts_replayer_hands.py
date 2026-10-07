@@ -126,12 +126,20 @@ class GameFacts:
         self.no_scoring_at: Dict[Tuple[int, str], int] = {}
         # The action round a card was played at, where the log places it in one.
         self.played_at: Dict[Tuple[int, str, int], int] = {}
+        # Cards the log shows revealed out of a hand (CIA Created, "Lone Gunman", Aldrich Ames
+        # and the like), against the action round (0 for a headline): the card was in that hand
+        # at that moment. The exchanges' reveals -- Missile Envy, Grain Sales, SALT -- are
+        # recorded as `taken` / `arrived` instead.
+        self.revealed: Dict[Tuple[int, str], Set[int]] = {}
+        self.revealed_at: Dict[Tuple[int, str, int], int] = {}
+        self._exchanged: Set[int] = set()
         self._is_last = False
         for turn in range(1, self.last_turn + 1):
             for side in self.sides:
                 self.spent[(turn, side)] = set()
                 self.arrived[(turn, side)] = set()
                 self.taken[(turn, side)] = set()
+                self.revealed[(turn, side)] = set()
                 lists = (hands or {}).get(str(turn)) or {}
                 self.listed[(turn, side)] = {
                     c for c in (card_id(nm) for nm in (lists.get(side.lower()) or [])) if c}
@@ -191,7 +199,15 @@ class GameFacts:
                     self.empty_hand.add((turn, side))
                 if f"{side} has no cards in hand to reveal" in text:
                     self.empty_hand.add((turn, side))
+            self._exchanged = set()
             self._read_exchanges(e, turn)
+            for side, nm in (e.revealed or []):
+                cid = self.card_id(nm.replace(" from hand", "").strip(" ."))
+                if (cid and cid != THE_CHINA_CARD and side in self.sides
+                        and cid not in self._exchanged and cid not in peeked):
+                    self.revealed[(turn, side)].add(cid)
+                    at_r = _round_number(e)
+                    self.revealed_at.setdefault((turn, side, cid), at_r if at_r is not None else 0)
             self._read_constraints(e, turn)
             self._read_scoring_reveals(e, turn)
 
@@ -215,6 +231,7 @@ class GameFacts:
                 cid = self.card_id(name)
                 if not cid or side not in self.sides:
                     break
+                self._exchanged.add(cid)
                 if mover == "salt":
                     # Reclaimed from the discard pile, so it was not in the dealt hand.
                     self.arrived[(turn, side)].add(cid)
@@ -560,9 +577,18 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
                 rlimit: int = 4_000_000,
                 explain: bool = False,
                 pin: Optional[Dict[Tuple[int, int, str], bool]] = None,
-                report_cost: Optional[List[int]] = None
+                report_cost: Optional[List[int]] = None,
+                use_reveals: bool = True
                 ) -> Optional[Dict[int, Dict[str, List[int]]]]:
     """The cards each side holds as each turn opens, or None where the log allows no hand.
+
+    A card revealed out of a hand was dealt into it unless something brought it in mid-turn, and
+    the model requires that -- where it can. A reveal can also expose something the model does
+    not know of: at turn 6 of replay 212 "Lone Gunman" reveals six US cards at AR3 and the US
+    later plays one that was not among them; at turn 10 of replay 321 Aldrich Ames reveals a
+    card the model has in the discard pile since turn 7 with no reshuffle recorded. Where the
+    reveals make the model unsatisfiable it is solved again without them, which is the hand the
+    game had before they were read.
 
     One boolean per card, turn and side -- "this card is in that hand as the turn opens" -- and
     the rules as constraints over them. Satisfying them is quick; choosing *well* among the
@@ -664,6 +690,16 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
                         continue
                     require(c, t, s, "the log shows them spending it")
                     continue
+                if use_reveals and c in facts.revealed[(t, s)] and c not in arrived:
+                    revealed_late = bool(drew) and (facts.revealed_at.get((t, s, c), -1)
+                                                    >= facts.drew_at.get((t, s), 99))
+                    if not revealed_late:
+                        # Shown out of the hand, and nothing brought it in mid-turn: it was
+                        # dealt. At turn 9's headline of replay 147 CIA Created reveals eight
+                        # USSR cards; left free, six of them were swapped for cards the log never
+                        # shows, which then came back as "late" arrivals and the USSR held 14.
+                        require(c, t, s, "the log shows it revealed from their hand")
+                        continue
                 if c in facts.taken[(t, s)]:
                     require(c, t, s, "the opponent takes it out of their hand")
                     continue
@@ -744,6 +780,9 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
     if solver.check() != z3.sat:
         if explain:
             _print_core(hard, tags, ctx)
+        if use_reveals and any(facts.revealed.values()):
+            return solve_hands(raws, hands, card_id, rlimit, explain, pin, report_cost,
+                               use_reveals=False)
         return None
     model = solver.model()
 
