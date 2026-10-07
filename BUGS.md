@@ -103,6 +103,50 @@ honestly gated.
 
 ---
 
+## CONV-1 — the human-log converter held cards in a hand that the player did not have
+
+**Area:** human replay conversion (`tools/lib/ts_replayer_*`) · **Severity:** high · **Status:** FIXED
+
+A converted position could show the deciding player holding cards they never had. The board and
+the VP were right -- the converter checks those against the log at every entry -- but nothing
+checked a hand, so the error was silent. Before the fix, 178 of the corpus's 274 games held a hand
+over the rules' limit in some action round of a trusted turn (2,590 of 111,194 decisions).
+
+**Causes, and what changed.**
+
+* *Our Man in Tehran.* The cards it shows the US are named in the turn's hand list, because the US
+  saw them, but they come off the draw pile and are never held. The solver rightly left them out
+  of the deal; the converter then seated every listed card the deal lacked as a late arrival, from
+  the turn's first entry -- so they were in the US hand from AR1 (replay 30, turn 4: three cards).
+  `_peeked_this_turn` now keeps them out of hands.
+* *Reveals were not evidence.* A card revealed out of a hand (CIA Created, "Lone Gunman", Aldrich
+  Ames) was in it, but the solver never read reveals, so it dealt other cards and the revealed
+  ones came back as late arrivals: both at once (replay 147, turn 9: CIA Created reveals eight
+  USSR cards; 14 held at AR1). `GameFacts.revealed` now requires them in the deal unless they
+  arrived mid-turn. Where a reveal makes the model unsatisfiable (replays 212 and 321, whose logs
+  contradict the model elsewhere), `solve_hands` solves again without reveals: 256 of 274 games
+  are solved, as before.
+* *Every late arrival came at the turn's start.* Only Ask Not and SALT had an arrival entry;
+  anything else defaulted to the turn's first entry, i.e. AR1. `_arrival_entry` now places a card
+  received from the opponent (Missile Envy, Grain Sales) at the entry that hands it over, and any
+  other at the first entry that shows the side with it.
+
+**After.** 39 games / 186 decisions are over the limit, by one card in 180 of them, and every such
+turn but two has a mid-turn acquisition (SALT, Ask Not, Missile Envy, Grain Sales) that makes the
+extra card legal; the two are in replays 212 and 321. The converted board, VP and decisions are
+unchanged (`tests/replayer`, and `-m corpus_full`). Regression tests:
+`tests/replayer/test_replay_hand_contents.py` (two of its three fail on the old converter).
+
+**Rebuild** everything made from converted human positions -- the human BC dataset
+(`tools/build_human_dataset.py`), human-agreement probes, the card census and the disagreement
+bank -- since the hands, and so the observations, changed.
+
+`tools/scripts/event_play_census.feed_corpus_game` also stops passing on decisions from a game's
+untrusted turn (where the record stops or the conversion fails), which the converter already kept
+out of its own training data.
+
+---
+
 ## TODO — no forced-deal affordance, so replays cannot survive a shuffle change
 
 **Status:** DONE (P17). `GameState.set_forced_deal(player, cards)` names the cards the next deal
