@@ -1,0 +1,50 @@
+# Architectures and recipes
+
+The A and R codes of the run names ([`method/run_nomenclature.md`](method/run_nomenclature.md)).
+A code is a set of `tools/train.py` flags, derived from the runs' own `metadata.json` by
+`tools/scripts/run_codes.py`, which also writes this file; the descriptions are kept in
+[`run_codes.json`](run_codes.json). An architecture is the network -- its shape, its input
+and its policy heads; a recipe is everything else that trains it. Flags are listed against
+the CLI's defaults: A1 and R1 in full, every other code as its difference from them.
+
+## Architectures
+
+| code | what it is | flags | runs (old names) |
+|:---|:---|:---|:---|
+| **A1** | M2d, the E5/E6 baseline: LadderNet, grouped input flattened, 4 residual blocks at width 480, per-country heads (64) centred, static features dropped | `--arch ladder` `--drop-static` `--ladder-aggregation flatten` `--no-ladder-card-lookup` `--ladder-card-lookup-dim 0` `--ladder-card-lookup-heads 0` `--ladder-card-lookup-identity-dim 0` `--no-ladder-card-self-attention` `--no-ladder-cross-attention` `--ladder-entity-dim 16` `--ladder-entity-proj-dim 256` `--ladder-head-center` `--ladder-head-entities country` `--ladder-hidden-dim 480` `--ladder-input-mode grouped` `--ladder-res-blocks 4` `--per-entity-heads 64` | E6-03-43, E6-03-44, E6-04-43, E6-04-44, E6-05-43-1, E6-05-43-2, E6-05-43-3, E6-05-43-4, E6-05-43-5, E6-05-44-1, E6-05-44-2, E6-05-44-3, E6-05-44-4, E6-05-44-5, E6-05-44-6, E6-06-44, E6-07-44, E6-08-44, E6-11-44, E7-06-44 |
+| **A2** | A1 with uncentred country heads -- what the merged-influence view (E6.1) requires | `--no-ladder-head-center` | E6-09-44 |
+| **A3** | A1 wider and deeper: width 768, 8 residual blocks | `--ladder-hidden-dim 768` `--ladder-res-blocks 8` | E6-10-44 |
+| **A4** | The shallow trunk: A1 with no residual blocks. The E6-12 / E7 line | `--ladder-res-blocks 0` | E6-12-43, E6-12-44, E6-13-44, E6-14-44-1, E6-14-44-2, E6-14-44-3, E6-14-44-4, E6-14-44-5, E7-01-44, E7-02-44, E7-03-44, E7-04-44, E7-05-44, E7-08-43, E7-10-44, E7-11-44, E7-12-44, E7-13-44, E7-14-44, E7-15-44, E7-16-44, E7-17-44, E7-18-44, E7-19-44, E7-20-44, E7-20-44-4390M.45, E7-20-44-4390M.46, E7-21-44, E7-22-44-1, E7-22-44-10, E7-22-44-11, E7-22-44-12, E7-22-44-13, E7-22-44-14, E7-22-44-15, E7-22-44-16, E7-22-44-2, E7-22-44-3, E7-22-44-4, E7-22-44-5, E7-22-44-6, E7-22-44-7, E7-22-44-8, E7-22-44-9, E7-23-44, E7-27-44, E7-28-44, E7-29-44 |
+| **A5** | A4 reading the OPS_BUDGET observation block (3 floats appended; P30 C4) | `--ladder-res-blocks 0` `--obs-features ops_budget` | E7-07-44 |
+| **A6** | A4 plus two card/country token-attention layers, width 128 (P30 C1) | `--ladder-res-blocks 0` `--ladder-token-layers 2` | E7-09-44 |
+| **A7** | A4 plus the branch head: branch logits corrected from the trunk and a one-hot of the resolving card (P31) | `--ladder-branch-head` `--ladder-res-blocks 0` | E7-30-44, E7-31-44, E7-32-44 |
+| **A8** | A7 plus the play-mode head: play-mode logits corrected from the trunk and a one-hot of the card being played | `--ladder-branch-head` `--ladder-play-mode-head` `--ladder-res-blocks 0` | E7-33-44 |
+
+## Recipes
+
+| code | what it is | flags | runs (old names) |
+|:---|:---|:---|:---|
+| **R1** | The plain recipe: NashPG self-play with the opponent pool (30% of games against own snapshots), block lambda off, constant learning rate | `--block-lambda off` `--opponent-frac 0.3` `--opponent-self-pool` | E6-03-43, E6-03-44, E6-09-44, E6-10-44, E6-12-43, E6-12-44, E7-01-44, E7-02-44, E7-03-44, E7-06-44, E7-07-44, E7-08-43, E7-17-44, E7-19-44, E7-20-44, E7-20-44-4390M.45, E7-20-44-4390M.46, E7-32-44, E7-33-44 |
+| **R2** | R1 plus the P24 league (half the pool games against the live main-exploiter's published snapshots) and setup credit with an entropy floor of 0.3 | `--league-dirs <this lineage's league>` `--league-frac 0.5` `--setup-entropy-floor 0.3` `--setup-mc-credit` | E6-04-43, E6-04-44, E6-13-44 |
+| **R3** | League main-exploiter: a best response to the parent's frozen snapshot at the branch point -- that opponent in every game, played greedily; no KL, no entropy bonus, learner-only advantage normalisation | `--adv-norm-learner-only` `--entropy-coef 0.0` `--eta 0.0` `--opponent-checkpoints <parent snapshot at the branch point>` `--opponent-frac 1.0` `--opponent-temperature 0.0` `--opponent-self-pool` (default) | E6-05-43-1, E6-05-43-2, E6-05-43-3, E6-05-43-4, E6-05-43-5, E6-05-44-1, E6-05-44-2, E6-05-44-3, E6-05-44-4, E6-05-44-5, E6-05-44-6, E6-14-44-1, E6-14-44-2, E6-14-44-3, E6-14-44-4, E6-14-44-5, E7-22-44-1, E7-22-44-10, E7-22-44-11, E7-22-44-12, E7-22-44-13, E7-22-44-14, E7-22-44-15, E7-22-44-16, E7-22-44-2, E7-22-44-3, E7-22-44-4, E7-22-44-5, E7-22-44-6, E7-22-44-7, E7-22-44-8, E7-22-44-9 |
+| **R4** | R2 with the league pool static -- the published exploiters, none training (P28 control) | `--league-dirs <this lineage's league>` `--league-frac 0.5` `--setup-entropy-floor 0.3` `--setup-mc-credit` -- *league pool static: the published exploiters, none training* | E6-06-44 |
+| **R5** | R4 plus the step learning-rate schedule (P28 step 2a) | `--league-dirs <this lineage's league>` `--league-frac 0.5` `--lr-schedule step` `--setup-entropy-floor 0.3` `--setup-mc-credit` -- *league pool static: the published exploiters, none training* | E6-07-44 |
+| **R6** | R4 plus EMA weights, tau 10M steps (P28 step 2b) | `--ema-weights 10000000.0` `--league-dirs <this lineage's league>` `--league-frac 0.5` `--setup-entropy-floor 0.3` `--setup-mc-credit` -- *league pool static: the published exploiters, none training* | E6-08-44 |
+| **R7** | R1 plus auxiliary ownership and VP-margin targets, 0.1 each (P29 bet 2) | `--aux-ownership 0.1` `--aux-vp-margin 0.1` | E6-11-44 |
+| **R8** | R1 plus a step learning-rate schedule, 1e-4 then 3e-5, every 110M (a soup ingredient) | `--lr-schedule step` `--lr-schedule-every 110000000` | E7-04-44 |
+| **R9** | R1 plus setup credit with an entropy floor of 0.3, no league | `--setup-entropy-floor 0.3` `--setup-mc-credit` | E7-05-44 |
+| **R10** | R1 with the update compiled (torch.compile, default mode) | `--compile-update default` | E7-09-44, E7-23-44 |
+| **R11** | R1 plus scripted human openings in half the games, trained as the policy's own (setup credit) | `--setup-mc-credit` `--setup-script-frac 0.5` `--setup-script-openings human human_yugo_it4 human_austria_it3 human_austria_it4` | E7-10-44 |
+| **R12** | R11's mechanism with a deliberately bad scripted opening (its control) | `--setup-mc-credit` `--setup-script-frac 0.5` `--setup-script-openings stupid_romania_australia` | E7-11-44 |
+| **R13** | R12 with the setup credit centred per side (a code change) | `--setup-mc-credit` `--setup-script-frac 0.5` `--setup-script-openings stupid_romania_australia` -- *setup credit centred per side (a code change; the flags equal E7-11-44's)* | E7-12-44 |
+| **R14** | R1 plus the card-event auxiliary target, 1.0 (P30 C2) | `--aux-card-events 1.0` | E7-13-44 |
+| **R15** | R1 plus play-mode temperature 2.0 (P30) | `--play-mode-temp 2.0` | E7-14-44 |
+| **R16** | R1 with the terminal reward only and no blunder window | `--no-blunder-window` `--reward-scheme terminal` | E7-15-44 |
+| **R17** | R1 plus VP potential shaping, 0.01 | `--vp-potential 0.01` | E7-16-44 |
+| **R18** | R1 plus search cross-entropy targets: 64 simulations, every node type, coefficient 0.5 (P15 X4b's settings) | `--search-ce-coef 0.5` `--search-node-filter all` `--search-sims 64` | E7-18-44 |
+| **R19** | R1 plus the P24 league with a live exploiter, no setup credit | `--league-dirs <this lineage's league>` `--league-frac 0.5` | E7-21-44 |
+| **R20** | R1 plus scenario seeding: the Nuclear Subs and Chernobyl precursors forced in 5% of games (P31 B2) | `--seed-frac 0.05` `--seed-scenarios subs chernobyl` | E7-27-44 |
+| **R21** | R1 plus the play-mode floor, 0.03 (P31 B1, the corrected 1a) | `--play-mode-floor 0.03` | E7-28-44 |
+| **R22** | R1 plus applicable events forced in 10% of spots -- Wargames, Arms Race, One Small Step -- credited as the policy's own | `--force-applicable-events wargames arms_race one_small_step` | E7-29-44 |
+| **R23** | R1 plus Wargames played at DEFCON 2 in 10% of the learner's plays, credited as environment, so its end-or-pass branch is visited | `--force-applicable-events wargames_branch` `--force-event-credit environment` | E7-30-44 |
+| **R24** | R23 at 20% | `--force-applicable-events wargames_branch` `--force-event-credit environment` `--force-event-frac 0.2` | E7-31-44 |

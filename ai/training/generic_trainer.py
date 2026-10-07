@@ -28,6 +28,7 @@ from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
 from bindings.ts_env import OBS_LAYOUT_NAME, TsVectorizedEnv
 from ai.training.rollout_buffer import RolloutBuffer
+from ai.training.run_name import is_run_name
 from ai.training.schedule import WeightEMA, scheduled_lr
 from ai.training.nash_pg import DEFAULT_ROLLOUT_TEMPS, NashPGTrainer
 from ai.training.start_pool import DEFAULT_TURN_MIX, StartPositionPool
@@ -171,16 +172,11 @@ GAME_STEMS: Tuple[str, ...] = (
 ) + tuple(f"ending_frac_{k}" for k in tuple(ENDING_REASON_KEYS) + ("defcon1",))
 
 
-#: A run's short name is `<engine>-<attempt>-<seed>`, e.g. `E9-99-01`. A step budget is
-#: deliberately not part of it: one directory holds every budget of a lineage, and the budget is
-#: already in each snapshot's filename.
-#: Optional suffixes, from research/method/run_nomenclature.md:
-#:   -<n>            a same-seed REPLICATE                   E4-08-01-2
-#:   -<M>M.<seed>    a BRANCH resumed under a new seed,      E4-17-06-50M.11
-#:                   repeatable, one per branch point        E4-17-06-50M.11-90M.07
-#: A same-seed CONTINUATION takes no suffix: it keeps its lineage's name, and the budget is
-#: in each snapshot's filename.
-RUN_NAME_RE: Final = re.compile(r"^E\d+(?:\.\d+)?-\d{2}-\d{2}(?:-\d+)?(?:-\d+M\.\d{2})*$")
+#: A run's name says engine, architecture, recipe and seed, and the branch points that led to it:
+#: `E7-A4-R1-S44`, `E7-A4-R1-S44@4390M+S45`. A step budget is deliberately not part of it: one
+#: directory holds every budget of a lineage, and the budget is in each snapshot's filename. The
+#: grammar is ai.training.run_name (research/method/run_nomenclature.md); names in the scheme before
+#: 2026-10-07 (`E7-20-44-4390M.45`) are still accepted, for the lineages that carry them.
 
 
 def _resolve_run_dir(output_dir: Optional[str], run_name: Optional[str],
@@ -194,10 +190,11 @@ def _resolve_run_dir(output_dir: Optional[str], run_name: Optional[str],
     the short name would then say one thing and the path another, and the path is what every
     later command quotes.
     """
-    if run_name is not None and not RUN_NAME_RE.match(run_name):
+    if run_name is not None and not is_run_name(run_name):
         raise ValueError(
-            f"run_name {run_name!r} is not <engine>-<attempt>-<seed> (e.g. 'E9-99-01'). "
-            "Register the run under a conforming name before launching it.")
+            f"run_name {run_name!r} is not E<n>-A<n>-R<n>-S<n>[@<n>M+<changes>]... "
+            "(e.g. 'E9-A1-R1-S01'; research/method/run_nomenclature.md). Register the run under "
+            "a conforming name before launching it.")
     if output_dir is not None:
         if run_name is not None and run_name not in os.path.basename(output_dir.rstrip("/")):
             raise ValueError(

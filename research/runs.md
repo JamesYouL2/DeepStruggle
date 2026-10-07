@@ -5,8 +5,12 @@ One row per arm: what it varied, at which seeds and budgets, which directory und
 row says *no writeup* rather than leaving the cell blank — an arm that was run and never reported
 is a fact about this project, and hiding it behind an empty cell is how an arm gets re-run.
 
-The naming scheme — what `E4-02-01` means, when the engine letter bumps — is
-[`method/run_nomenclature.md`](method/run_nomenclature.md). For *what we concluded* about a
+The naming scheme — what `E7-A4-R1-S44@4390M+S45` means, when the engine letter bumps — is
+[`method/run_nomenclature.md`](method/run_nomenclature.md). **Since 2026-10-07 runs are named
+engine-architecture-recipe-seed plus their branch points**; the codes are
+[`architectures_and_recipes.md`](architectures_and_recipes.md), and the rows below, launched under
+the earlier `<engine>-<attempt>-<seed>` names, are mapped onto the new grammar in
+[`run_name_map.md`](run_name_map.md). For *what we concluded* about a
 question rather than a particular arm, start from [`questions.md`](questions.md).
 
 **Pre-E6 checkpoints archived 2026-09-29.** The E4, E5 and intermediate-E6 run directories named below are under `/workspace/data/archive/{E4_ladder,E5_ladder,E6_intermediate}/checkpoints/` ([`checkpoints.md`](checkpoints.md)).

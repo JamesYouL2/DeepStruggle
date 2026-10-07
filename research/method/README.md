@@ -7,7 +7,7 @@ when a result looks too good.
 | file | what it is for |
 |:---|:---|
 | [`bookkeeping.md`](bookkeeping.md) | how an experiment must be recorded to stay findable — the rule that an experiment is not recorded until the *question* it answers has a row |
-| [`run_nomenclature.md`](run_nomenclature.md) | the naming scheme, `<engine>-<attempt>-<seed>-<steps>`, and when the engine letter bumps |
+| [`run_nomenclature.md`](run_nomenclature.md) | the naming scheme, `E<n>-A<n>-R<n>-S<n>` plus branch points, SWAs and soups, and when the engine letter bumps |
 | [`running_experiments.md`](running_experiments.md) | launching, resuming and monitoring a run |
 | [`measurement_pitfalls.md`](measurement_pitfalls.md) | the checklist to work through before trusting a number |
 | [`measurement_tiers.md`](measurement_tiers.md) | how much evidence a claim needs before it counts as settled |

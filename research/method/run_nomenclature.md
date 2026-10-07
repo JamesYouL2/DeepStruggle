@@ -19,7 +19,100 @@ establish that H2 predates the Aldrich Ames and Star Wars fixes and so was train
 game from everything in P1 — which makes every "rated against H2" number a cross-engine
 comparison. That should have been legible from the name.
 
-## The scheme
+## The scheme (since 2026-10-07): engine, architecture, recipe, seed, and the path taken
+
+A run is named by the four things a number depends on, each a labelled field, and by every
+branch point on the way to it:
+
+    E7-A4-R1-S44                                   from scratch
+    E7-A4-R1-S44@4390M+S45                         its 4,390M state, continued under seed 45
+    E7-A4-R1-S44@4390M+A7-R23@4800M+R24            two changes in a row
+    E7-A4-R1-S44-2                                 a same-seed replicate of the first
+
+- **`E`** — the engine revision, as below (`E7`; a minor version is `E4.1`).
+- **`A`** — the **architecture**: the network's shape, what it reads (its observation features)
+  and its policy heads. A code, defined in [`../architectures_and_recipes.md`](../architectures_and_recipes.md).
+- **`R`** — the **recipe**: every other training setting -- reward, loss, opponents, schedules,
+  forcing. A code in the same file. An auxiliary head trained only as a target (the card-event
+  head) is recipe: the policy never reads it.
+- **`S`** — the **seed** of the environment, sampling and opponent pool.
+
+**A code is a set of flags, not a description.** `tools/scripts/run_codes.py` reads each run's
+`metadata.json`, splits its non-default `tools/train.py` flags into architecture, recipe and
+bookkeeping (output, cadence, evals, budget, seeds), and gives each distinct set a code --
+recorded with its description in [`../run_codes.json`](../run_codes.json). Two runs with one code
+therefore cannot quietly differ in a flag, which is how lineage-critical flags drifted four times
+(CLAUDE.md, invariant 15). A and R are numbered across the whole project, not per engine:
+`E6-A4-R1-S44` and `E7-A4-R1-S44` are visibly one recipe on two engines. What flags cannot
+show -- a code change under the same flags, a league whose exploiter was not training -- is
+recorded by hand as an `override` in the JSON and makes a recipe of its own.
+
+**`@<n>M` is always an absolute step on the lineage's own clock**, never a length -- the clock the
+snapshots already use, so a typo cannot silently shift every later number. In a run's name every
+`@` is a **branch point**: `+` and the fields that change, in E, A, R, S order, naming only what
+changed. A **continuation that changes nothing keeps its name** (each leg is a new
+`<name>_<timestamp>` directory); a re-run of a from-scratch run takes a replicate index `-2`.
+
+| what happened | name |
+|:---|:---|
+| plain run, 0 → 2000M | `E7-A4-R1-S47` |
+| a head added at 2000M | `E7-A4-R1-S47@2000M+A8` |
+| two more seeds from 2600M of that | `E7-A4-R1-S47@2000M+A8@2600M+S45`, `…+S46` |
+| a recipe change from 820M | `E7-A4-R1-S44@820M+R14` (E7-13-44) |
+| an engine change | `E6-A1-R1-S44@560M+E7` (E7-06-44: the deep E6 run continued on E7) |
+| back to the plain recipe | `E7-A4-R1-S44@4390M+A7-R23@4800M+R24@5200M+R1` (E7-32-44) |
+
+### A model: one snapshot, an SWA, or a soup
+
+A *label* names a model, so it ends in a **selector** -- `@4800M` for one snapshot, `@4720..4800M`
+for the SWA of every snapshot in that range -- and may put a **group** after the last branch point,
+which is a soup of the alternatives:
+
+    E7-A4-R1-S44@4800M                                   one snapshot
+    E7-A4-R1-S44@4720..4800M                             the SWA of that range
+    E7-A4-R1-S44@4390M+(S44,45,46)@4800M                 the best model (2026-10-06): a soup
+    E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M           the same soup made from SWAs
+    E7-A4-R1-S44@870M+(S44,S45,R8,R9)@1200M              the first shallow soup: seeds and recipes
+    E7-A2-R2-S5@800M+R3@1200M+(S6,R4-S7)@1500..1600M     two branches of 1200M, each an SWA
+    (E7-A4-R1-S44,E7-A4-R10-S44)@1200M                   two runs with no common state
+
+- An item that changes nothing (`S44` on a seed-44 parent) is the **parent's own continuation**;
+  write it out, since an empty item is easy to miss. A bare number repeats the previous item's
+  letter: `S44,45,46`.
+- The selector applies to every item. Groups nest, and a top-level group lists whole runs.
+- A soup has **one A and one E**: weights of different architectures cannot be averaged, and a
+  soup across engines plays no one game. The parser refuses both.
+- A soup of runs with no common state (the top-level group) parses, and
+  `shares_a_state()` says it is suspect: independent runs are not aligned, and their average is
+  usually broken. Every soup that has worked here branched from one checkpoint.
+- **Parentheses, not braces.** Both shells expand `{a,b}` silently into separate words, and `[a]` is
+  a filename pattern bash silently rewrites when a file matches; an unquoted `(` is a syntax error
+  in bash and zsh -- loud, never wrong. Quote a label with a group on the command line. Directories
+  never contain one: a run is a single path, so a soup or SWA is a model file named by its label.
+- In a URL query string `+` decodes to a space: encode names there.
+
+The grammar's one parser is `ai/training/run_name.py` (`parse_run_name`, `parse_label`,
+`is_run_name`); `tools/train.py --run-name`, the league driver and `tools/lib/checkpoint_id.py`
+use it, and a snapshot's label (`E7-A4-R1-S44@4390M+S45@4800M`) parses back to its run.
+
+### Launching a run
+
+1. Derive the flags from a healthy run (`tools/scripts/launch_flags.py`, invariant 15).
+2. Find the A and R codes those flags are in [`../architectures_and_recipes.md`](../architectures_and_recipes.md).
+   A setting no code has is a new code: launch, then `tools/scripts/run_codes.py --update`
+   assigns it and you write its description into `run_codes.json`.
+3. Name the run from its root and branch points, and launch with `--run-name`.
+4. After launch, `tools/scripts/run_codes.py --run <dir>` checks the name against the flags the run
+   recorded and fails if they disagree.
+
+### The old names
+
+Directories launched before 2026-10-07 keep their old names, because research cites them by path;
+[`../run_name_map.md`](../run_name_map.md) gives each one's name in this grammar, generated from
+its metadata. The current tree (E6 and E7) is mapped; the archived E3–E5 ladders are not. The old
+scheme, below, still parses for the lineages that carry it.
+
+## The scheme before 2026-10-07: attempt numbers
 
 A run is named
 
@@ -106,7 +199,7 @@ invalidated, is [`../findings/engine/engine_revisions.md`](../findings/engine/en
 What a letter bump does and does not invalidate is
 [`what_survives_an_engine_change.md`](what_survives_an_engine_change.md).
 
-## Attempt numbers restart with each engine
+## Attempt numbers restart with each engine (the old scheme)
 
 An attempt number is unique **within its engine letter**, not across the project. The first
 arm on a new engine is `01`.
@@ -157,7 +250,7 @@ Three rules follow, and all three were broken at least once before the scheme ex
    11.8 points apart on anchor win rate while being +3 Elo apart head to head. Giving it its own
    field is what makes that visible without opening the registry.
 
-## Re-running the same seed: append a replicate index
+## Re-running the same seed: append a replicate index (both schemes)
 
 The trailing number is the **seed**, so a re-run of an existing arm is not a new seed and must not
 take the next seed number. It appends a replicate index instead:
@@ -180,7 +273,7 @@ A replicate is worth running when the question is reproducibility — whether a 
 determined by its seeded starting conditions. A new seed is worth running when the question is
 variance or rate. They are different experiments and the names should not blur them.
 
-## Continuing an arm keeps its name; branching it adds a suffix
+## Continuing an arm keeps its name; branching it adds a suffix (the old scheme)
 
 **A continuation is not a new attempt.** Taking an arm further on its own seed changes only the
 budget, so it keeps the short name and gets a new directory, `<short>_<timestamp>`, beside the

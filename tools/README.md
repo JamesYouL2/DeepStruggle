@@ -384,6 +384,22 @@ run's action sampling and minibatch order and only the environment deals differ 
 change, and a seed replicate that understates the variance it exists to measure. The same seed, or
 none, restores the stream as before.
 
+#### Naming the run
+
+`--run-name` takes `E<n>-A<n>-R<n>-S<n>` plus the branch points that led to the run
+(`E7-A4-R1-S44@4390M+S45`; `research/method/run_nomenclature.md`). The A and R codes are sets of
+flags, so they are read off the run rather than chosen:
+
+```bash
+tools/scripts/run_codes.py                 # every run's name in the grammar; fails on an uncoded recipe
+tools/scripts/run_codes.py --update        # code new architectures/recipes; rewrite research/run_codes.json,
+                                           # research/architectures_and_recipes.md and run_name_map.md
+tools/scripts/run_codes.py --run <dir>     # does this run's name match the flags it recorded?
+```
+
+A new code needs a one-line description in `research/run_codes.json`; a code change that alters
+training under the same flags is recorded there as an `override`, since no flag can show it.
+
 #### Splitting the seed
 
 One `--seed` drives four independent sources at once, which is what makes "seed 1 collapses"

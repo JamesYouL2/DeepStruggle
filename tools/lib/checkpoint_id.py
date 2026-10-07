@@ -22,11 +22,13 @@ import os
 import re
 from typing import Dict, Iterable, List
 
-#: A run directory is `<short-name>_<YYYYMMDD>_<HHMMSS>`, e.g. `E4-02-01_20260919_040456`.
-#: The short name is what runs.md indexes by, so it is what a label should carry.
-#: The short name may carry a replicate index (`-2`) or branch suffixes (`-50M.11`); see
-#: ai.training.generic_trainer.RUN_NAME_RE. Anchored on the timestamp, never split on `_`.
-_RUN_DIR_RE = re.compile(r"^(E\d+(?:\.\d+)?-\d{2}-\d{2}(?:-\d+)?(?:-\d+M\.\d{2})*)_\d{8}_\d{6}$")
+from ai.training.run_name import is_run_name
+
+#: A run directory is `<run-name>_<YYYYMMDD>_<HHMMSS>`, e.g. `E7-A4-R1-S44@4390M+S45_20261006_074128`
+#: or, in the scheme before 2026-10-07, `E4-02-01_20260919_040456`. The run name is what runs.md
+#: indexes by, so it is what a label carries. Anchored on the timestamp, never split on `_` (a name
+#: has none); whether the rest is a name is ai.training.run_name's call, not a second regex's.
+_RUN_DIR_RE = re.compile(r"^(?P<name>[^_]+)_\d{8}_\d{6}$")
 _STEPS_RE = re.compile(r"(\d+)steps")
 
 
@@ -76,9 +78,9 @@ def checkpoint_label(path: str) -> str:
     parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
 
     m = _RUN_DIR_RE.match(parent)
-    if m:
+    if m and is_run_name(m.group("name")):
         run_dir = os.path.dirname(os.path.abspath(path))
-        return f"{m.group(1)}@{_steps_suffix(filename, run_dir)}"
+        return f"{m.group('name')}@{_steps_suffix(filename, run_dir)}"
 
     stem = os.path.splitext(filename)[0]
     # A run directory that does not match the naming scheme still beats nothing, as long as it is

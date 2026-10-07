@@ -61,7 +61,7 @@ def test_a_name_that_is_not_the_scheme_is_rejected(bad: str) -> None:
     """A trailing step budget is rejected along with the rest: one directory holds every budget
     of a lineage, so a steps field in the directory name is a claim that goes stale the moment
     the run is continued."""
-    with pytest.raises(ValueError, match="is not <engine>-<attempt>-<seed>"):
+    with pytest.raises(ValueError, match="is not E<n>-A<n>-R<n>-S<n>"):
         _resolve_run_dir(None, bad, "v2", TS)
 
 
@@ -76,7 +76,7 @@ def test_replicate_and_branch_suffixes_are_accepted(good: str) -> None:
 def test_a_malformed_branch_is_rejected(bad: str) -> None:
     """`_` separates the short name from the timestamp in a directory name, so it may not appear
     inside the short name; and a branch names both the step it left at and its new seed."""
-    with pytest.raises(ValueError, match="is not <engine>-<attempt>-<seed>"):
+    with pytest.raises(ValueError, match="is not E<n>-A<n>-R<n>-S<n>"):
         _resolve_run_dir(None, bad, "v2", TS)
 
 
@@ -89,5 +89,5 @@ def test_a_minor_engine_version_is_accepted(good: str) -> None:
 
 @pytest.mark.parametrize("bad", ["E4.-01-03", "E4.1.2-01-03", "E4_1-01-03"])
 def test_a_malformed_engine_version_is_rejected(bad: str) -> None:
-    with pytest.raises(ValueError, match="is not <engine>-<attempt>-<seed>"):
+    with pytest.raises(ValueError, match="is not E<n>-A<n>-R<n>-S<n>"):
         _resolve_run_dir(None, bad, "v2", TS)

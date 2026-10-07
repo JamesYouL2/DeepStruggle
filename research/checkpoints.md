@@ -41,6 +41,11 @@ do not compare with the 2026-10-01 numbers ([`log/E7_soup_4800M.md`](log/E7_soup
 | **best SWA model** (uniform average of the last 80M) | **E7-20-44, 4,720–4,800M SWA** | `/workspace/data/checkpoints/_swa_line_ctl/E7line_swa_4720-4800M.pt` | `094a22073974…c072ab` | **1619** (the branches' SWAs, 1622/1617, are level) |
 | **best model soup**, **best overall** | **soup of E7-20-44, E7-20-44-4390M.45 and E7-20-44-4390M.46, SWA-made** (the three runs' 4,720–4,800M SWAs) | `/workspace/data/checkpoints/_soups/soup_E7-20-44+4390M.45+4390M.46_swa4720-4800M.pt` | `e2447821624a…0db00487` | **1664** (its raw twin `soup_E7-20-44+4390M.45+4390M.46_4800M.pt`, `ef6f6384ea29…`, 1658, is level) |
 
+In the run-name grammar of 2026-10-07 ([`method/run_nomenclature.md`](method/run_nomenclature.md)):
+best raw `E7-A4-R1-S44@4800M`; best SWA `E7-A4-R1-S44@4720..4800M`; best overall
+`E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M`, raw twin `E7-A4-R1-S44@4390M+(S44,45,46)@4800M`.
+The 2026-10-01 soup below is `E7-A4-R1-S44@870M+(S44,S45,R8,R9)@1200M`.
+
 * **Against the previous designations:** the raw soup beats the 2026-10-01 best soup (E7-02/03/04/05
   at 1,200M) **63.5%** head to head (+4.8 / +2.9 per seat on the E6-03-44 panel); E7-20-44@4,800M
   beats E7-02-44@1,200M **64.3%** (66.6 as US, 62.1 as USSR; `data/reports/e7_20_4800_vs_e7_02_1200.json`).

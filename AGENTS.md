@@ -452,9 +452,14 @@ checkpoints mounted at `/data/checkpoints`. See `deploy/web/README.md`.
    does, pinned by `tests/training/test_policy_readout.py`; `tests/training/test_replay_trace.py`
    checks the whole game), and **every reader treats the blocks as optional**.
 7. **Mandatory Checkpoint Directory Naming Convention**:
-   A run's checkpoint directory MUST be named from its short name — `<engine>-<attempt>-<seed>`
-   — plus the start date and time. Pass `tools/train.py --run-name <engine>-<attempt>-<seed>`
-   and the directory is built for you, with the name also recorded in `metadata.json`. Omit any
+   A run's checkpoint directory MUST be named from its name — `E<n>-A<n>-R<n>-S<n>` (engine,
+   architecture code, recipe code, seed) plus its branch points `@<step>M+<changes>`, as in
+   `E7-A4-R1-S44@4390M+S45` (`research/method/run_nomenclature.md`; the codes are
+   `research/architectures_and_recipes.md`) — plus the start date and time. Pass
+   `tools/train.py --run-name <name>` and the directory is built for you, with the name also
+   recorded in `metadata.json`; `tools/scripts/run_codes.py --run <dir>` then checks the name
+   against the flags the run recorded. Directories from before 2026-10-07 keep their
+   `<engine>-<attempt>-<seed>` names (`research/run_name_map.md` maps them). Omit any
    step count: one directory holds every budget of a lineage, and each snapshot's filename
    already carries its own. A `run_<version>_<date>_<time>` form remains the fallback for smoke
    runs that are not part of a lineage. Hardcoded, ad-hoc names are forbidden — they say nothing

@@ -49,6 +49,11 @@ import time
 from typing import Any, Dict, List, Optional
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from ai.training.run_name import is_run_name  # noqa: E402  (ROOT must be importable first)
+
 CHECKPOINTS = "/workspace/data/checkpoints"
 SNAP_RE = re.compile(r"^snapshot_(\d+)steps\.pt$")
 RESUME_RE = re.compile(r"^resume_(\d+)steps\.pt$")
@@ -193,12 +198,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Both names are checked up front, against the rule tools/train.py enforces, generation suffix
     # included: a non-conforming exploiter name used to fail only when its first generation
     # launched, and the driver then died while the main agent trained on alone.
-    sys.path.insert(0, ROOT)
-    from ai.training.generic_trainer import RUN_NAME_RE
     if a.first_generation < 1:
         raise SystemExit("--first-generation must be at least 1")
     for n in (a.main_name, f"{a.exploiter_name}-{a.first_generation}"):
-        if not RUN_NAME_RE.match(n):
+        if not is_run_name(n):
             raise SystemExit(f"run name {n!r} is not <engine>-<attempt>-<seed>; tools/train.py would refuse it")
     os.makedirs(a.league_dir, exist_ok=True)
     os.makedirs(a.log_dir, exist_ok=True)
