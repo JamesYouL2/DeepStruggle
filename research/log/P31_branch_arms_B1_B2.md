@@ -366,7 +366,7 @@ deficit. An early pair at 600M (53.9%, +3.5 SE) did not hold.
 Elo: SWAs 1613 (E7-02-44) / 1610 (E7-03-44) / 1601; every E7-33-44 snapshot (1546–1554) below every
 E7-02-44 snapshot (1562–1575). **Not accepted** by the owner's rule.
 
-**But the deficit is the size of a from-scratch draw, not clearly the heads'.** E7-23-44 (compile, also
+**But the deficit is the size of a from-scratch divergence, not clearly the heads'.** E7-23-44 (compile, also
 E7-02-44's recipe from scratch at seed 44) lost to E7-02-44 by as much, in the other seat. The three SWAs
 in one field (`data/reports/e7_33_vs_23_rr.{md,json}`):
 
@@ -377,9 +377,11 @@ in one field (`data/reports/e7_33_vs_23_rr.{md,json}`):
 | E7-23-44 vs E7-02-44 | −0.5 | −2.5 | 46.2% ± 1.1 |
 
 Elo there 1680 / 1665 / 1661. The two variants are level with each other and both ~1.5–4 points below
-E7-02-44: either E7-02-44 is a good draw (the branch spread, E7-03-44, measures branches from a shared
-870M state, not from-scratch runs), or each change costs about the same. One seed cannot separate the
-two; a from-scratch E7-02-44 replica at another seed would.
+E7-02-44. All three share seed 44, so this is not seed variance: a changed computation (compile's
+numerics, two extra heads) sends a from-scratch run down another trajectory, which acts like a fresh
+draw. Either E7-02-44 is a good trajectory (the branch spread, E7-03-44, measures branches from a shared
+870M state, not from-scratch runs), or each change costs about the same. These runs cannot separate the
+two; E7-02-45 -- E7-02-44's recipe at seed 45 -- would measure the from-scratch spread directly.
 
 **What the heads did** -- here they clearly work. Card counts (4,000 games, T 0.1 / T 1), share played
 for the event with the event legal:
@@ -415,4 +417,4 @@ Wargames' branch, P(end) by lead (8,000 games):
   event the model rarely benefits from gets no signal to learn a condition from.
 * **Strength: not accepted against E7-02-44, level with the other from-scratch variant.** The Wargames
   gain is too rare (≈5% of games) to show in strength either way; the seat losses are from the rest of
-  play, at the size two from-scratch seed-44 runs already differ by.
+  play, at the size by which two from-scratch runs at the same seed already diverge.
