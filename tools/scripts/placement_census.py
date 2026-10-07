@@ -35,10 +35,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import ts_engine as ts
 
-from tools.scripts.event_play_census import corpus_map, feed_corpus_game, load_policy, selfplay
+from tools.lib.corpus_driver import corpus_map, feed_corpus_game, load_policy, rules_json, selfplay
 
 US, USSR = 1, -1
-_MAP = json.load(open("rules/map.json"))["countries"]
+_MAP = rules_json("map.json")["countries"]
 COUNTRY = {int(c["id"]): c for c in _MAP}
 REGIONS = ("Europe", "Asia", "Middle East", "Africa", "Central America", "South America")
 #: the scoring cards, in the order of the bits of a record's `held` mask, and what each scores

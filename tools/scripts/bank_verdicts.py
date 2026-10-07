@@ -33,11 +33,13 @@ import sys
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
+import torch
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
+from tools.lib.corpus_driver import require_e4_view, state_from_token
+from tools.lib.player_agent import BatchSelector, load_agent
 from tools.scripts.disagreement_bank import _name, mover_of, row_id
-from tools.scripts.event_play_census import state_from_token
 
 BANK = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "ai", "eval", "banks",
                                     "disagreement_verdicts.jsonl"))
@@ -50,7 +52,8 @@ FIELDS = ("id", "game", "kind", "pattern", "side", "turn", "ar", "card", "human"
 def collect(src: str, out: str) -> int:
     docs: Dict[str, Dict[str, Any]] = {}
     for path in sorted(glob.glob(os.path.join(src, "*.json"))):
-        d = json.load(open(path))
+        with open(path) as f:
+            d = json.load(f)
         docs[os.path.splitext(os.path.basename(path))[0]] = d.get("data", d)
     superseded = {d["moved_from"] for d in docs.values() if d.get("moved_from")}
     rows: List[Dict[str, Any]] = []
@@ -76,7 +79,8 @@ def collect(src: str, out: str) -> int:
 
 
 def load(path: str = BANK) -> List[Dict[str, Any]]:
-    return [json.loads(line) for line in open(path) if line.strip()]
+    with open(path) as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def legal_names(st: ts.GameState) -> Dict[str, int]:
@@ -86,12 +90,10 @@ def legal_names(st: ts.GameState) -> Dict[str, int]:
 
 
 def score(agent_spec: str, path: str, by: Sequence[str], out: Optional[str]) -> int:
-    import torch
-
-    from tools.lib.player_agent import BatchSelector, load_agent
-
     rows = [r for r in load(path) if r["marks"]]
     agent: Any = load_agent(agent_spec, device="cuda" if torch.cuda.is_available() else "cpu")
+    # The marks name moves as decoded in the E4 view (legal_names), so the agent must decide in it.
+    require_e4_view(agent_spec, agent)
     if hasattr(agent, "reseed"):
         agent.reseed(0)
     states = [state_from_token(r["pos"]) for r in rows]

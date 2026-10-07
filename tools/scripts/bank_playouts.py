@@ -9,7 +9,11 @@ Three steps:
   written with their positions and move indices as one input file;
 * `run` -- this part's share of an input file (`--part k/N`, for CI runners): every distinct move
   of every position, `--pairs` pairs each, the network playing both sides greedily;
-* `pool` -- the parts merged into one file.
+* `pool` -- the parts merged into one file; with `--expect N` the parts that did not arrive (a
+  runner that failed) are named in `<out>.parts.json` rather than silently missing.
+
+Each position's pairs are seeded from its row id and `--seed` alone, so a position plays the same
+redeals and dice whichever part it falls in: every part of one run must share one `--seed`.
 
 A row of `run`'s output: each move's mean score for the mover (1 win, 0.5 draw, 0 loss), and the
 paired differences between the three moves with their standard errors.
@@ -18,7 +22,8 @@ paired differences between the three moves with their standard errors.
         --bank part*.jsonl.gz --top 1000 --out playout_input.jsonl.gz
     PYTHONPATH=.:build/release python tools/scripts/bank_playouts.py run --input playout_input.jsonl.gz \\
         --onnx newest.onnx --pairs 32 --part 1/20 --out playouts-1.jsonl.gz
-    PYTHONPATH=. python tools/scripts/bank_playouts.py pool --parts playouts-*.jsonl.gz --out playouts.jsonl.gz
+    PYTHONPATH=.:build/release python tools/scripts/bank_playouts.py pool --parts playouts-*.jsonl.gz \\
+        --expect 20 --out playouts.jsonl.gz
 """
 
 from __future__ import annotations
@@ -26,9 +31,16 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
+import re
 import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional, Sequence
+
+from ai.eval.paired_playouts import compare, paired_diff
+from tools.lib.corpus_driver import require_e4_view, state_from_token
+from tools.lib.player_agent import OnnxAgent
+from tools.scripts.disagreement_bank import row_id
 
 WHO = ("human", "network", "search")
 
@@ -55,8 +67,6 @@ def value_gap(c: Dict[str, Any]) -> Optional[float]:
 
 
 def select(clarity: Sequence[str], banks: Sequence[str], top: int, out: str, min_gap: float = 0.0) -> int:
-    from tools.scripts.disagreement_bank import row_id
-
     if min_gap > 0:
         cl = [c for c in _read(clarity) if (value_gap(c) or 0.0) >= min_gap]
         cl.sort(key=lambda c: -(value_gap(c) or 0.0))
@@ -75,21 +85,23 @@ def select(clarity: Sequence[str], banks: Sequence[str], top: int, out: str, min
     return 0
 
 
-def run(inp: str, onnx: str, pairs: int, part: str, seed: int, out: str) -> int:
-    from ai.eval.paired_playouts import compare, paired_diff
-    from tools.lib.player_agent import OnnxAgent
-    from tools.scripts.event_play_census import state_from_token
+def position_seed(rid: str, seed: int) -> int:
+    """A position's seed: its row id (16 hex digits) mixed with the run's seed, kept below 2**63."""
+    return (int(rid, 16) ^ (seed * 0x9E3779B97F4A7C15)) & 0x7FFF_FFFF_FFFF_FFFF
 
+
+def run(inp: str, onnx: str, pairs: int, part: str, seed: int, out: str) -> int:
     k, n = (int(x) for x in part.split("/"))
     rows = [r for i, r in enumerate(_read([inp])) if i % n == k - 1]
     agent = OnnxAgent(onnx)
+    require_e4_view(onnx, agent)
 
     def act(obs: Any, masks: Any) -> Any:
         return agent.act_batch(obs, masks, 0.0, True)
 
     t0 = time.time()
     positions = [(state_from_token(r["pos"]), sorted(set(int(v) for v in r["a"].values()))) for r in rows]
-    scores = compare(positions, act, pairs, seed)
+    scores = compare(positions, act, pairs, [position_seed(r["id"], seed) for r in rows])
     res: List[Dict[str, Any]] = []
     for r, sc in zip(rows, scores):
         a = {w: int(v) for w, v in r["a"].items()}
@@ -104,6 +116,20 @@ def run(inp: str, onnx: str, pairs: int, part: str, seed: int, out: str) -> int:
                     "best": [w for w in WHO if a[w] == best]})
     _write(out, res)
     print(f"{len(res)} positions, {pairs} pairs, in {time.time() - t0:.0f}s", file=sys.stderr)
+    return 0
+
+
+def pool(parts: Sequence[str], out: str, expect: int = 0) -> int:
+    """Merge the parts (`playouts-<k>.jsonl.gz`); with `expect`, name the parts that are missing in
+    `<out>.parts.json`, so a pool over a run with a failed runner says which share it lacks."""
+    _write(out, list(_read(parts)))
+    found = sorted(int(m.group(1)) for m in (re.search(r"playouts-(\d+)\.jsonl\.gz$", os.path.basename(p))
+                                             for p in parts) if m)
+    missing = [k for k in range(1, expect + 1) if k not in found]
+    with open(out + ".parts.json", "w") as f:
+        json.dump({"expected": expect, "found": found, "missing": missing}, f)
+    if missing:
+        print(f"parts missing: {missing} -- their positions are not in {out}", file=sys.stderr)
     return 0
 
 
@@ -128,13 +154,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = sub.add_parser("pool")
     p.add_argument("--parts", nargs="+", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--expect", type=int, default=0, help="the number of parts the run was split into")
     a = ap.parse_args(argv)
     if a.cmd == "select":
         return select(a.clarity, a.bank, a.top, a.out, a.min_gap)
     if a.cmd == "run":
         return run(a.input, a.onnx, a.pairs, a.part, a.seed, a.out)
-    _write(a.out, list(_read(a.parts)))
-    return 0
+    return pool(a.parts, a.out, a.expect)
 
 
 if __name__ == "__main__":

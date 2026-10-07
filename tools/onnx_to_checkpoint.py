@@ -21,18 +21,23 @@ matches nothing, or a constant that fits two parameters, refuses rather than gue
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import onnx
+import onnxruntime as ort
 import torch
+import ts_engine as ts
+from onnx import numpy_helper
+
+from bindings.action_encoder import ActionEncoder
+from tools.lib.player_agent import NeuralAgent
 
 
 def rebuild(onnx_path: str, template_path: str) -> Tuple[Dict[str, torch.Tensor], List[str], List[str]]:
     """(state dict, the parameters taken from anonymous constants, the template tensors kept)."""
-    import onnx
-    from onnx import numpy_helper
-
     model = onnx.load(onnx_path)
     inits = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}
     sd = torch.load(template_path, map_location="cpu", weights_only=True)
@@ -68,9 +73,6 @@ def rebuild(onnx_path: str, template_path: str) -> Tuple[Dict[str, torch.Tensor]
 
 def _positions(n: int, seed: int) -> List:
     """Decision positions from a few random games -- real positions, not random tensors."""
-    import ts_engine as ts
-    from bindings.action_encoder import ActionEncoder
-
     rng = np.random.default_rng(seed)
     out: List = []
     g = 0
@@ -92,17 +94,11 @@ def _positions(n: int, seed: int) -> List:
 
 def verify(sd: Dict[str, torch.Tensor], onnx_path: str, n: int, tol: float) -> Tuple[float, float, float]:
     """Max |torch - onnx| over logits (legal moves), v_win and v_vp; raises on a different favourite."""
-    import onnxruntime as ort
-    import ts_engine as ts
-    from bindings.action_encoder import ActionEncoder
-    from tools.lib.player_agent import NeuralAgent
-
     tmp = onnx_path + ".verify.pt"
     torch.save(sd, tmp)
     try:
         net = NeuralAgent.from_checkpoint(tmp, device="cpu").model.eval()
     finally:
-        import os
         os.remove(tmp)
     states = _positions(n, 7)
     mover = [s.ctx().decision_player if s.ctx().decision_player != ts.Player.NONE else s.phasing_player

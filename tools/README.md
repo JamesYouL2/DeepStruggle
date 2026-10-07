@@ -817,17 +817,20 @@ How the bank is made:
 # 1. the network's .pt for the searcher, rebuilt from the published ONNX and checked against it
 .venv/bin/python tools/onnx_to_checkpoint.py --onnx newest.onnx --template shallow_E7-02+03+04+05_1200M.pt --out newest.pt
 # 2. every disagreement in the corpus (resumable, in parts: a long run can stop on a rare nanobind
-#    instance collision)
+#    instance collision, BUGS.md BIND-1). The searcher is reseeded with each game's replay id, so
+#    the rows do not depend on the split or on a resume.
 .venv/bin/python tools/scripts/disagreement_bank.py --net newest.onnx --search "gumbel:newest.pt:32:4" \
     --part 1/3 --out part1.jsonl.gz --summary part1.json --resume
 # 3. how clear each position is: a stronger search's pick and the moves valued over redealt worlds
 .venv/bin/python tools/scripts/bank_clarity.py --bank part*.jsonl.gz --checkpoint newest.pt \
     --out clarity.jsonl.gz --emit-playouts 1000 playout_input.jsonl.gz
 # 4. paired playouts of the clearest (select / run / pool; .github/workflows/bank_playouts.yml runs
-#    `run` over CI runners)
+#    `run` over CI runners). A position's pairs are seeded from its row id and the run's --seed,
+#    which every part shares; `pool --expect N` names the parts that did not arrive.
 .venv/bin/python tools/scripts/bank_playouts.py select --clarity clarity*.jsonl.gz --bank part*.jsonl.gz \
     --min-gap 10 --out playout_input.jsonl.gz
-# 5. positions whose hand is over the rules' limit (BUGS.md CONV-1), as an exclusion list
+# 5. positions whose hand is over the rules' limit (BUGS.md CONV-1), as an exclusion list -- the
+#    "over" rows and untrusted turns only; "missing" also flags correct positions and is reported
 .venv/bin/python tools/scripts/bank_hand_check.py --bank part*.jsonl.gz --flags hand_flags.json \
     --untrusted untrusted_turns.json --exclude exclude_ids.json
 # 6. the review page's data files: one per pattern, in parts under the 16 MB file limit
@@ -851,9 +854,17 @@ mark on a move that is no longer legal (a card the fix took out of the hand) is 
 `stale_marks`. The positions are the corpus's converted positions, so the bank must be rebuilt --
 and its verdicts carried over by id -- after any change to the converter or the save format.
 
-The corpus driver the bank runs on, `feed_corpus_game` in `tools/scripts/event_play_census.py`,
-also counts how each card in hand is used, and `placement_census.py` where Ops influence goes, in
-the human corpus and in a policy's self-play:
+The network's win chance in a bank row (`v_win`) is `(1 + v_win) / 2` of the value head's output,
+which regresses the mover's result on [-1, +1]. Banks packed before that was so read a raw or
+sigmoid-squashed value as a probability, so repack them before reviewing from them.
+
+Every bank tool builds E4 masks, so an agent that decides in the merged-influence view is refused
+(`tools/lib/corpus_driver.require_e4_view`) rather than handed masks it would misread.
+
+The corpus driver the bank runs on, `tools/lib/corpus_driver.py` (`feed_corpus_game`, `selfplay`,
+the `pos=` tokens), also feeds `event_play_census.py`, which counts how each card in hand is used,
+and `placement_census.py`, where Ops influence goes, in the human corpus and in a policy's
+self-play:
 
 ```bash
 .venv/bin/python tools/scripts/event_play_census.py --human-corpus --dump human.json
@@ -875,3 +886,4 @@ Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/scoring_formatter.py`: regional scoring calculation formatter.
 - `tools/lib/checkpoint_utils.py`: architecture detection and checkpoint discovery utilities.
 - `tools/lib/corpus_paths.py`: where the ts-replayer corpus lives, and content-based deduplication.
+- `tools/lib/corpus_driver.py`: feeds a policy's self-play or the converted human corpus, one decision at a time, to any tracker; the workbench's `pos=` tokens; the E4-view check the bank tools share.

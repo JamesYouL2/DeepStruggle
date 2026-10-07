@@ -32,21 +32,27 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
+import os
 import sys
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import onnxruntime as ort
 import torch
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
-from tools.scripts.event_play_census import feed_corpus_game, load_policy, position_token
+from tools.lib.corpus_driver import (feed_corpus_game, load_policy, position_token, read_corpus_game,
+                                     require_e4_view, rules_json)
+from tools.lib.corpus_paths import distinct_corpus_files
+from tools.lib.player_agent import load_agent
 
 KINDS = ("headline", "card", "mode")
 PATTERNS = ("human-alone", "network-alone", "search-alone", "all-differ")
-_CARDS = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
+_CARDS = {int(c["id"]): c for c in rules_json("cards.json")}
 
 
 def kind_of(st: ts.GameState) -> Optional[str]:
@@ -91,7 +97,7 @@ class Collector:
 
     def observe(self, st: ts.GameState, a: int) -> None:
         k = kind_of(st)
-        if k in self.kinds and int(np.asarray(ActionEncoder.get_legal_mask(st)).sum()) >= 2:
+        if k is not None and k in self.kinds and int(np.asarray(ActionEncoder.get_legal_mask(st)).sum()) >= 2:
             self.seen.append((st, k, a))
 
 
@@ -117,18 +123,16 @@ def _name(st: ts.GameState, a: int) -> str:
 def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[str],
          chunk: int, on_game: Optional[Any] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, int]]]:
     """Every game's kept rows and agreement counts. `on_game(replay_id, rows, counts)` is called as
-    each game finishes, so a long run can be written out -- and resumed -- game by game."""
-    from tools.lib.player_agent import load_agent
-
+    each game finishes, so a long run can be written out -- and resumed -- game by game. The
+    searcher is reseeded with each game's replay id, so a game's rows do not depend on which part
+    it fell in or whether the run was resumed before it."""
     net_fn, features = load_policy(net_spec)
     searcher: Any = load_agent(search_spec, device="cuda" if torch.cuda.is_available() else "cpu")
-    if hasattr(searcher, "reseed"):
-        searcher.reseed(0)
+    require_e4_view(search_spec, searcher)
     rows: List[Dict[str, Any]] = []
     summary: Dict[str, Dict[str, int]] = {k: {"decisions": 0, **{p: 0 for p in PATTERNS}} for k in kinds}
     for gi, path in enumerate(paths):
-        with gzip.open(path, "rt") as f:
-            replay_id = int(json.load(f).get("replay_id", 0))
+        replay_id = int(read_corpus_game(path).get("replay_id", 0))
         col = Collector(kinds)
         if feed_corpus_game(path, col) == "skipped" or not col.seen:
             if on_game is not None:
@@ -142,6 +146,8 @@ def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         logits = net_fn(obs, masks)
         v_win = _v_win(net_spec, obs, masks)
+        if hasattr(searcher, "reseed"):
+            searcher.reseed(replay_id)
         picks: List[int] = []
         for i in range(0, len(states), chunk):
             picks += [int(a) for a in searcher.select_actions_batch(states[i:i + chunk])]
@@ -175,18 +181,22 @@ def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[
     return rows, summary
 
 
+def win_probability(v_win: np.ndarray) -> np.ndarray:
+    """The value head regresses the mover's result on [-1, +1] (a loss -1, a win +1), so the win
+    probability is (1 + v_win) / 2 -- the workbench's reading (web/ui/src/trace_view.ts) --
+    clipped, since a regressed value can stray past the ends."""
+    return np.clip((1.0 + np.asarray(v_win, dtype=np.float64)) / 2.0, 0.0, 1.0)
+
+
 def _v_win(net_spec: str, obs: np.ndarray, masks: np.ndarray) -> Optional[np.ndarray]:
     """The network's win probability for the mover, when the net is an ONNX export (which names it)."""
     if not net_spec.endswith(".onnx"):
         return None
-    import onnxruntime as ort
     sess = _SESSIONS.get(net_spec)
     if sess is None:
         sess = _SESSIONS[net_spec] = ort.InferenceSession(net_spec, providers=["CPUExecutionProvider"])
     out = sess.run(["v_win"], {"obs": obs, "mask": masks})[0]
-    v = np.asarray(out, dtype=np.float64).reshape(-1)
-    # v_win is a logit or a probability depending on the export; squash only what is outside [0, 1].
-    return v if (v.min() >= 0.0 and v.max() <= 1.0) else 1.0 / (1.0 + np.exp(-v))
+    return win_probability(np.asarray(out).reshape(-1))
 
 
 _SESSIONS: Dict[str, Any] = {}
@@ -204,7 +214,6 @@ FIELDS = ("id", "game", "kind", "pattern", "side", "turn", "ar", "defcon", "vp",
 def row_id(r: Dict[str, Any]) -> str:
     """A stable id: the position and the kind of decision asked there, so a rebuilt bank keeps
     the verdicts already given."""
-    import hashlib
     return hashlib.sha1((r["kind"] + ":" + r["pos"]).encode()).hexdigest()[:16]
 
 
@@ -216,7 +225,6 @@ def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float,
     """Merge banks into the review page's data, deduplicated by position: one file per pattern
     (`bank-<pattern>.json`, so the page can load the large human-alone set only when asked) and a
     `manifest.json` of their sizes."""
-    import os
     os.makedirs(out_dir, exist_ok=True)
     skip = set(json.load(open(exclude))) if exclude else set()
     seen: Dict[str, Dict[str, Any]] = {}
@@ -268,8 +276,6 @@ def pack(banks: Sequence[str], out_dir: str, human_alone_max_p: float,
     return 0
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    from tools.lib.corpus_paths import distinct_corpus_files
-
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--net", default=None, help="the raw network: .onnx or .pt")
     ap.add_argument("--search", default=None, help="a load_agent spec, e.g. gumbel:<ckpt.pt>:32:4")
@@ -297,7 +303,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     k, n = (int(x) for x in a.part.split("/"))
     files, _ = distinct_corpus_files()
     paths = [str(p) for i, p in enumerate(sorted(files)) if i % n == k - 1][: a.games or None]
-    import os
     ledger = a.out + ".games.jsonl"
     done: Dict[int, Dict[str, Dict[str, int]]] = {}
     if a.resume and os.path.exists(ledger):
@@ -308,8 +313,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit(f"{a.out} exists: pass --resume to continue it, or remove it")
 
     def replay_id(path: str) -> int:
-        with gzip.open(path, "rt") as f:
-            return int(json.load(f).get("replay_id", 0))
+        return int(read_corpus_game(path).get("replay_id", 0))
 
     todo = [p for p in paths if replay_id(p) not in done]
 

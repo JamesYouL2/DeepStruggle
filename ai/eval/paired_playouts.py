@@ -25,6 +25,7 @@ from typing import Callable, Dict, List, Sequence, Tuple
 import numpy as np
 import ts_engine as ts
 
+from ai.search.dmcts import determinize
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import drain_chance
 
@@ -44,8 +45,6 @@ def ar_key(st: ts.GameState) -> Tuple[int, int, int, int]:
 
 def pair_start(state: ts.GameState, k: int, seed: int) -> ts.GameState:
     """Pair k's world: the mover's unseen cards redealt, and its own dice."""
-    from ai.search.dmcts import determinize
-
     rng = random.Random(seed * 1_000_003 + k)
     st = determinize(state.clone(), decider(state), rng)
     st.rng_state = rng.getrandbits(64) % _UINT64
@@ -112,6 +111,10 @@ def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
         refused = [int(i) for i in rows if res[i] == 0]
         if refused:
             raise RuntimeError(f"the engine refused a playout action in game {refused[0]}")
+    active &= ~np.array(runner.get_terminals())
+    if active.any():
+        # Scoring an unfinished game would read a utility the engine has not decided.
+        raise RuntimeError(f"{int(active.sum())} playouts had not ended after {max_steps} steps")
     out = []
     for i in range(n):
         u = float(ts.Engine.get_terminal_utility(runner.get_state(i)))
@@ -121,9 +124,13 @@ def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
 
 
 def compare(positions: Sequence[Tuple[ts.GameState, Sequence[int]]], act: PolicyFn, pairs: int,
-            seed: int, chunk: int = 1536) -> List[Dict[int, List[float]]]:
+            seeds: Sequence[int], chunk: int = 1536) -> List[Dict[int, List[float]]]:
     """Per position, every move's score in each pair: {action: [score of pair 0, 1, ...]}. All
-    moves of one pair share the redeal and the dice, so differences are paired."""
+    moves of one pair share the redeal and the dice, so differences are paired. `seeds` holds one
+    seed per position, so a position's pairs do not depend on what it was batched with -- a
+    seed from its index would give two positions in two runs the same redeals."""
+    if len(seeds) != len(positions):
+        raise ValueError(f"{len(seeds)} seeds for {len(positions)} positions")
     out: List[Dict[int, List[float]]] = []
     per_pos = [max(1, len(moves)) * pairs for _, moves in positions]
     lo = 0
@@ -136,13 +143,13 @@ def compare(positions: Sequence[Tuple[ts.GameState, Sequence[int]]], act: Policy
         for p in range(lo, hi):
             st, moves = positions[p]
             for k in range(pairs):
-                base = pair_start(st, k, seed + p)
+                base = pair_start(st, k, seeds[p])
                 for a in moves:
                     starts.append(apply_move(base, a))
                     movers.append(decider(st))
                     keys.append(ar_key(st))
                     index.append((p, a))
-        scores = play_safe(starts, movers, keys, act, seed + lo)
+        scores = play_safe(starts, movers, keys, act, seeds[lo])
         res: List[Dict[int, List[float]]] = [{a: [] for a in positions[p][1]} for p in range(lo, hi)]
         for (p, a), s in zip(index, scores):
             res[p - lo][a].append(s)

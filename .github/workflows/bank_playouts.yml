@@ -70,22 +70,23 @@ jobs:
           mkdir -p out
           python tools/scripts/bank_playouts.py run --input input/playout_input.jsonl.gz \
             --onnx "data/checkpoints/hf/$(basename "$MODEL")" --pairs "$PAIRS" \
-            --part "${{ matrix.part }}/$RUNNERS" --seed "${{ matrix.part }}" --out "out/playouts-${{ matrix.part }}.jsonl.gz"
+            --part "${{ matrix.part }}/$RUNNERS" --out "out/playouts-${{ matrix.part }}.jsonl.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: bank-playouts-part-${{ github.run_id }}-${{ matrix.part }}
           path: out/
           retention-days: 14
 
+  # Pools whatever parts arrived, so one failed runner does not discard the others' hours; the
+  # missing parts are named in report/playouts.jsonl.gz.parts.json and in provenance.txt.
   pool:
     needs: [plan, run]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-        with:
-          build-engine: "false"
       - uses: actions/download-artifact@v4
         with:
           pattern: bank-playouts-part-${{ github.run_id }}-*
@@ -94,11 +95,13 @@ jobs:
       - name: Pool
         run: |
           mkdir -p report
-          python tools/scripts/bank_playouts.py pool --parts parts/playouts-*.jsonl.gz --out report/playouts.jsonl.gz
+          python tools/scripts/bank_playouts.py pool --parts parts/playouts-*.jsonl.gz --expect "$RUNNERS" \
+            --out report/playouts.jsonl.gz
           {
             echo "commit: $GITHUB_SHA"
             echo "positions: release $RELEASE"
             echo "model: $HF_REPO $MODEL  pairs: $PAIRS  runners: $RUNNERS"
+            echo "parts: $(cat report/playouts.jsonl.gz.parts.json)"
           } > report/provenance.txt
       - uses: actions/upload-artifact@v4
         with:

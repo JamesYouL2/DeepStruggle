@@ -12,7 +12,10 @@ default -- there are 21,000 of them):
   whose unseen cards are redealt from the mover's side; a move's value is the mover's mean over the
   worlds, with its standard error;
 * **clarity** -- the best move's margin over the runner-up in standard errors (`z`), and whether
-  the stronger search picks the same move.
+  the stronger search picks the same move. Each SE is estimated from `--worlds` values (4 by
+  default, so 3 degrees of freedom): ranking by `z` favours the positions whose spread happened
+  to come out small, so the top of that order is clearer on paper than in fact. Raise `--worlds`
+  where the order matters more than the time.
 
 `--emit-playouts N` also writes the N clearest positions as the input of `bank_playouts.py`.
 
@@ -35,9 +38,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import ts_engine as ts
 
+from ai.search.batched_mcts import BatchedMCTS, settle
+from ai.search.dmcts import determinize
 from bindings.action_encoder import ActionEncoder
+from tools.lib.corpus_driver import require_e4_view, state_from_token
+from tools.lib.player_agent import load_agent
 from tools.scripts.disagreement_bank import _name, mover_of, row_id
-from tools.scripts.event_play_census import state_from_token
 
 WHO = ("human", "network", "search")
 _UINT64 = 1 << 64
@@ -65,9 +71,6 @@ def load_rows(banks: Sequence[str], patterns: Sequence[str]) -> List[Dict[str, A
 def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[int]], sims: int,
                 worlds: int, seed: int) -> List[Dict[int, Tuple[float, float]]]:
     """Per position, each move's mean value for the mover over `worlds` redeals, and its SE."""
-    from ai.search.batched_mcts import BatchedMCTS, settle
-    from ai.search.dmcts import determinize
-
     cfg = replace(mcts.cfg, simulations=sims, determinize=False, node_filter="all", subsample=1.0,
                   gumbel_k=0, reuse_subtree=False, dirichlet_frac=0.0)
     sub = BatchedMCTS(mcts.model, device=mcts.device, config=cfg, featurise_capacity=mcts._featurise_capacity)
@@ -106,8 +109,6 @@ def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    from tools.lib.player_agent import load_agent
-
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bank", nargs="+", required=True, help="disagreement_bank.py outputs (JSONL.gz)")
     ap.add_argument("--checkpoint", required=True, help="the searcher's .pt (onnx_to_checkpoint.py)")
@@ -128,7 +129,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = load_rows(a.bank, a.patterns)
     k, n = (int(x) for x in a.part.split("/"))
     rows = [r for i, r in enumerate(sorted(rows, key=lambda r: r["id"])) if i % n == k - 1][: a.limit or None]
-    agent: Any = load_agent(f"gumbel:{a.checkpoint}:{a.strong_sims}:{a.strong_k}", device="cpu")
+    spec = f"gumbel:{a.checkpoint}:{a.strong_sims}:{a.strong_k}"
+    agent: Any = load_agent(spec, device="cpu")
+    require_e4_view(spec, agent)
     agent.reseed(a.seed)
     mcts = agent.mcts
     t0 = time.time()
@@ -141,6 +144,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         moves = [sorted(set(d.values())) for d in idx]
         values = value_moves(mcts, states, moves, a.sims, a.worlds, a.seed * 7919 + lo)
         for r, st, d, s_act, val in zip(group, states, idx, strong, values):
+            if not val:
+                # Every move was illegal in every redealt world: nothing to value, so the
+                # position is left out rather than given a best move it never had.
+                print(f"{r['id']}: no move legal in any of {a.worlds} worlds, left out", file=sys.stderr)
+                continue
             ranked = sorted(val.items(), key=lambda kv: -kv[1][0])
             best_a, (best_q, best_se) = ranked[0]
             if len(ranked) > 1:

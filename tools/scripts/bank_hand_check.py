@@ -14,9 +14,10 @@ Negotiations, Missile Envy, Grain Sales, a reshuffle) is in the deck until it ar
 **missing** now flags correct positions too, and an exclusion list should be built from **over**
 alone. The remaining **over** rows (58 of 27,753 after the fix) hold a card that arrived mid-turn.
 
-Writes the flagged rows' ids with their reasons, and with `--untrusted` (a {replay id: first
-untrusted turn} map) an exclusion list for `disagreement_bank.py --pack --exclude` that also
-holds every row from an untrusted turn.
+Writes the flagged rows' ids with their reasons, and an exclusion list for
+`disagreement_bank.py --pack --exclude` of the **over** rows -- and, with `--untrusted` (a
+{replay id: first untrusted turn} map), every row from an untrusted turn. A **missing**-only row
+is reported in `--flags` and kept.
 
     PYTHONPATH=.:build/release python tools/scripts/bank_hand_check.py --bank part*.jsonl.gz \
         --flags hand_flags.json --untrusted untrusted_turns.json --exclude exclude_ids.json
@@ -32,10 +33,10 @@ from typing import Dict, List, Optional, Sequence, Set
 
 import ts_engine as ts
 
+from tools.lib.corpus_driver import state_from_token
 from tools.lib.corpus_paths import corpus_path
 from tools.lib.ts_replayer_convert import card_id
 from tools.scripts.disagreement_bank import row_id
-from tools.scripts.event_play_census import state_from_token
 
 CHINA = 6
 
@@ -50,6 +51,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     hands: Dict[int, Dict[str, Dict[str, List[str]]]] = {}
     untrusted: Dict[str, Optional[int]] = json.load(open(a.untrusted)) if a.untrusted else {}
     flags: Dict[str, List[str]] = {}
+    over: Set[str] = set()
     late: Set[str] = set()
     why: collections.Counter = collections.Counter()
     total = 0
@@ -74,15 +76,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 reasons = []
                 if len(held) > limit:
                     reasons.append("over")
+                    over.add(rid)
                 if any(st.get_card_location(c) == ts.CardLocation.DRAW_DECK for c in logged):
                     reasons.append("missing")
                 if reasons:
                     flags[rid] = reasons
                     why["+".join(reasons)] += 1
-    json.dump(flags, open(a.flags, "w"))
+    with open(a.flags, "w") as f:
+        json.dump(flags, f)
     print(f"{len(flags)} of {total} rows flagged: {dict(why)}; {len(late)} rows in untrusted turns")
     if a.exclude:
-        json.dump(sorted(set(flags) | late), open(a.exclude, "w"))
+        excluded = sorted(over | late)
+        with open(a.exclude, "w") as f:
+            json.dump(excluded, f)
+        print(f"{len(excluded)} rows excluded (over the limit, or in an untrusted turn)")
     return 0
 
 

@@ -14,9 +14,9 @@ import numpy as np
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
+from tools.lib.corpus_driver import feed_corpus_game, state_from_token
 from tools.lib.corpus_paths import corpus_dir
-from tools.scripts.event_play_census import (HoldingTracker, _human_game, feed_corpus_game, load_holding,
-                                             state_from_token)
+from tools.scripts.event_play_census import HoldingTracker, _human_game, load_holding
 from tools.scripts.placement_census import COUNTRY, PlacementTracker
 
 #: a complete game (it converts to the end), used throughout
