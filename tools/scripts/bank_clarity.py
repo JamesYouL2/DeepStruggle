@@ -65,6 +65,22 @@ def load_rows(banks: Sequence[str], patterns: Sequence[str]) -> List[Dict[str, A
 def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[int]], sims: int,
                 worlds: int, seed: int) -> List[Dict[int, Tuple[float, float]]]:
     """Per position, each move's mean value for the mover over `worlds` redeals, and its SE."""
+    out: List[Dict[int, Tuple[float, float]]] = []
+    for v in value_moves_per_world(mcts, states, moves, sims, worlds, seed):
+        d: Dict[int, Tuple[float, float]] = {}
+        for a, xs in v.items():
+            arr = np.asarray([x for x in xs if x is not None], dtype=float)
+            if len(arr):
+                d[a] = (float(arr.mean()), float(arr.std(ddof=1) / math.sqrt(len(arr))) if len(arr) > 1 else math.nan)
+        out.append(d)
+    return out
+
+
+def value_moves_per_world(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[int]], sims: int,
+                          worlds: int, seed: int) -> List[Dict[int, List[Optional[float]]]]:
+    """Per position, each move's value for the mover in each of `worlds` redeals (None where the
+    redeal made it illegal). Every move of a position is searched in the same worlds, so the
+    difference between two moves can be taken world by world."""
     from ai.search.batched_mcts import BatchedMCTS, settle
     from ai.search.dmcts import determinize
 
@@ -72,9 +88,9 @@ def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[
                   gumbel_k=0, reuse_subtree=False, dirichlet_frac=0.0)
     sub = BatchedMCTS(mcts.model, device=mcts.device, config=cfg, featurise_capacity=mcts._featurise_capacity)
     rng = random.Random(seed)
-    jobs: List[Tuple[int, int, ts.GameState]] = []
+    jobs: List[Tuple[int, int, int, ts.GameState]] = []
     for i, (st, ms) in enumerate(zip(states, moves)):
-        for _ in range(worlds):
+        for w in range(worlds):
             world = determinize(st.clone(), mover_of(st), rng)
             world.rng_state = rng.getrandbits(64) % _UINT64
             for a in ms:
@@ -83,26 +99,18 @@ def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[
                     continue                   # the redeal made it illegal (Cambridge Five and the like)
                 ts.Engine.step_flat(child, a)
                 settle(child, cfg.auto_advance)
-                jobs.append((i, a, child))
-    vals: List[Dict[int, List[float]]] = [{a: [] for a in ms} for ms in moves]
-    roots = sub._search([j[2] for j in jobs])
-    for (i, a, child), r in zip(jobs, roots):
+                jobs.append((i, w, a, child))
+    vals: List[Dict[int, List[Optional[float]]]] = [{a: [None] * worlds for a in ms} for ms in moves]
+    roots = sub._search([j[3] for j in jobs])
+    for (i, w, a, child), r in zip(jobs, roots):
         if r is None:
             continue
         if r.terminal or not r.actions:
             v_us = float(r.value_us)
         else:
             v_us = (float(r.value_us) + float(sum(r.w))) / (1.0 + float(sum(r.n)))
-        vals[i][a].append(v_us if mover_of(states[i]) == ts.Player.US else -v_us)
-    out: List[Dict[int, Tuple[float, float]]] = []
-    for v in vals:
-        d: Dict[int, Tuple[float, float]] = {}
-        for a, xs in v.items():
-            arr = np.asarray(xs, dtype=float)
-            if len(arr):
-                d[a] = (float(arr.mean()), float(arr.std(ddof=1) / math.sqrt(len(arr))) if len(arr) > 1 else math.nan)
-        out.append(d)
-    return out
+        vals[i][a][w] = v_us if mover_of(states[i]) == ts.Player.US else -v_us
+    return vals
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
