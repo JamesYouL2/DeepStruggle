@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:pt:<file.pt> = a torch checkpoint as it is (for search:), hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx>, hf:rel:<tag>/<run>@<steps>M.pt (exported to ONNX) or hf:relpt:<tag>/<run>@<steps>M.pt (kept as torch, for models with obs features) as in tools/fetch_hf_model.py"
+        description: "Entrants (load_agent specs). `newest` = the newest .onnx on Hugging Face, hf:<file.onnx> = that file, hf:pt:<file.pt> = a torch checkpoint as it is (for search:), hf:<revision>:<run>/<snapshot>.pt and hf:gh:<run>/<artifact>/<file.onnx>, hf:rel:<tag>/<run>@<steps>M.pt (exported to ONNX) or hf:relpt:<tag>/<run>@<steps>M.pt (kept as torch, for models with obs features) as in tools/fetch_hf_model.py, or hf:onnxpt:<file.onnx> (a published export rebuilt as a torch checkpoint on each runner, for search: and macro: entrants of a model published only as ONNX)"
         default: "doctrine newest"
       games_per_side:
         description: "Games per side per matchup"
@@ -41,6 +41,9 @@ on:
       hf_repo:
         description: "Hugging Face repo that `newest` is read from"
         default: "mihaild/deepstruggle"
+      template:
+        description: "hf:onnxpt: entrants -- a .pt in the repo with the export's architecture (tools/onnx_to_checkpoint.py --template)"
+        default: "shallow_E7-02+03+04+05_1200M.pt"
 
 permissions:
   contents: read
@@ -57,6 +60,7 @@ env:
   SHARD_PAIRS: ${{ inputs.shard_pairs || '1' }}
   TEMPERATURE: ${{ inputs.temperature || '0.1' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+  TEMPLATE: ${{ inputs.template || 'shallow_E7-02+03+04+05_1200M.pt' }}
 
 jobs:
   plan:
@@ -87,6 +91,8 @@ jobs:
               # <run>@<steps>M.onnx, an artifact (gh:<run>/<artifact>/<file>) keeps its file name.
               if f not in files:
                   files.append(f)
+              if f.startswith("onnxpt:"):    # an export rebuilt as torch on each runner
+                  return "data/checkpoints/" + os.path.basename(f[len("onnxpt:"):])[:-len(".onnx")] + ".pt"
               if f.startswith("pt:"):        # the torch checkpoint as it is (search: entrants)
                   return "data/checkpoints/" + os.path.basename(f[len("pt:"):])
               if f.startswith("relpt:"):     # a release .pt as it is (models with obs features)
@@ -103,7 +109,7 @@ jobs:
                           ["python3", "tools/fetch_hf_model.py", "--repo", repo, "--resolve-only"],
                           check=True, capture_output=True, text=True).stdout.strip().splitlines()[-1]
                   m = re.sub(r"(^|(?<=[:+]))newest(?=$|[:+])", local(newest), m)
-              m = re.sub(r"hf:((?:pt:|gh:\d+/[\w.\-]+/|rel:[\w.\-]+/|relpt:[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
+              m = re.sub(r"hf:((?:onnxpt:|pt:|gh:\d+/[\w.\-]+/|rel:[\w.\-]+/|relpt:[\w.\-]+/|[0-9a-f]+:)?[\w.\-/@+]+\.(?:onnx|pt))", lambda g: local(g.group(1)), m)
               out.append(m)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"specs={' '.join(out)}\n")
@@ -129,7 +135,24 @@ jobs:
       - name: Fetch the pinned models
         run: |
           for f in ${{ needs.plan.outputs.hf_files }}; do
+            if [[ $f == onnxpt:* ]]; then continue; fi
             python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "$f" --out-dir data/checkpoints
+          done
+
+      - name: Rebuild hf:onnxpt entrants as torch checkpoints
+        # onnx_to_checkpoint.py refuses to write unless the rebuilt network reproduces the export's
+        # logits and values on real positions, so a runner cannot play a different model.
+        run: |
+          for f in ${{ needs.plan.outputs.hf_files }}; do
+            [[ $f == onnxpt:* ]] || continue
+            onnx="${f#onnxpt:}"
+            python3 tools/fetch_hf_model.py --repo "$HF_REPO" --path "$onnx" --out-dir data/checkpoints
+            mkdir -p data/checkpoints/template
+            curl -sSfL --retry 3 -o "data/checkpoints/template/$(basename "$TEMPLATE")" \
+              "https://huggingface.co/$HF_REPO/resolve/main/$TEMPLATE"
+            local_onnx="data/checkpoints/$(basename "$onnx")"
+            PYTHONPATH=.:build/release .venv/bin/python tools/onnx_to_checkpoint.py --onnx "$local_onnx" \
+              --template "data/checkpoints/template/$(basename "$TEMPLATE")" --out "${local_onnx%.onnx}.pt"
           done
 
       - name: Play part ${{ matrix.part }} of ${{ env.RUNNERS }}
@@ -183,6 +206,7 @@ jobs:
             echo "engine_fingerprint: $(PYTHONPATH=.:build/release .venv/bin/python -c 'from tools.lib.engine_fingerprint import fingerprint; print(fingerprint())')"
             echo "entrants: ${{ needs.plan.outputs.specs }}"
             echo "hugging_face: $HF_REPO ${{ needs.plan.outputs.hf_files }}"
+            echo "onnxpt_template: $TEMPLATE"
             echo "games_per_side: $GAMES_PER_SIDE"
             echo "shard_pairs: $SHARD_PAIRS"
             echo "temperature: $TEMPERATURE"
