@@ -22,7 +22,7 @@ import os
 import re
 from typing import Dict, Iterable, List
 
-from ai.training.run_name import is_run_name
+from ai.training.run_name import RunNameError, is_run_name, parse_label
 
 #: A run directory is `<run-name>_<YYYYMMDD>_<HHMMSS>`, e.g. `E7-A4-R1-S44@4390M+S45_20261006_074128`
 #: or, in the scheme before 2026-10-07, `E4-02-01_20260919_040456`. The run name is what runs.md
@@ -30,6 +30,8 @@ from ai.training.run_name import is_run_name
 #: has none); whether the rest is a name is ai.training.run_name's call, not a second regex's.
 _RUN_DIR_RE = re.compile(r"^(?P<name>[^_]+)_\d{8}_\d{6}$")
 _STEPS_RE = re.compile(r"(\d+)steps")
+#: An SWA written beside a run's snapshots: `swa_1120-1200M.pt` is the label range `1120..1200M`.
+_SWA_RE = re.compile(r"^swa_(\d+)-(\d+M)$")
 
 
 def _final_steps(run_dir: str) -> str:
@@ -49,6 +51,9 @@ def _final_steps(run_dir: str) -> str:
 
 def _steps_suffix(filename: str, run_dir: str = "") -> str:
     """`snapshot_150011904steps.pt` -> `150M`. Empty when the name carries no step count."""
+    swa = _SWA_RE.match(os.path.splitext(filename)[0])
+    if swa:
+        return f"{swa.group(1)}..{swa.group(2)}"
     m = _STEPS_RE.search(filename)
     if not m:
         if run_dir and os.path.splitext(filename)[0] == "snapshot_final":
@@ -77,6 +82,14 @@ def checkpoint_label(path: str) -> str:
     filename = os.path.basename(path)
     parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
 
+    stem = os.path.splitext(filename)[0]
+    # A model file named by its own label (data/checkpoints/_models/: soups, line SWAs) says it.
+    if "@" in stem:
+        try:
+            parse_label(stem)
+            return stem
+        except RunNameError:
+            pass
     m = _RUN_DIR_RE.match(parent)
     if m and is_run_name(m.group("name")):
         run_dir = os.path.dirname(os.path.abspath(path))

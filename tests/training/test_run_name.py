@@ -113,3 +113,11 @@ class TestCheckpointLabels:
         lab = parse_label(checkpoint_label(
             "/d/E7-A4-R1-S44@4390M+S45_20261006_074128/snapshot_4800000000steps.pt"))
         assert [r.text() for r in lab.ingredients] == ["E7-A4-R1-S44@4390M+S45"]
+
+    def test_an_swa_beside_the_snapshots_is_labelled_by_its_range(self) -> None:
+        assert checkpoint_label("/d/E7-A8-R1-S44_20261007_092825/swa_1120-1200M.pt") \
+            == "E7-A8-R1-S44@1120..1200M"
+
+    def test_a_model_file_named_by_its_label_keeps_it(self) -> None:
+        assert checkpoint_label("/d/_models/E7-A4-R1-S44@4390M+(S44,45,46)@4800M.pt") \
+            == "E7-A4-R1-S44@4390M+(S44,45,46)@4800M"

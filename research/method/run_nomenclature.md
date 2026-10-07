@@ -109,7 +109,12 @@ use it, and a snapshot's label (`E7-A4-R1-S44@4390M+S45@4800M`) parses back to i
 
 Directories launched before 2026-10-07 keep their old names, because research cites them by path;
 [`../run_name_map.md`](../run_name_map.md) gives each one's name in this grammar, generated from
-its metadata. The current tree (E6 and E7) is mapped; the archived E3–E5 ladders are not. The old
+its metadata. Each also has a **link directory under its new name** -- `E7-A4-R1-S44_20261005_174535`
+beside `E7-20-44_20261005_174535`, every file a relative symlink (`tools/scripts/run_codes.py
+--link`) -- so a checkpoint is labelled, resolved and resumed by its new name; a run resumed through
+one is still traced to the real directory. Soups and line SWAs kept outside run directories are
+linked as `data/checkpoints/_models/<label>.pt` (the map is `models` in
+[`../run_codes.json`](../run_codes.json)), and a file named by its label is labelled by it. The current tree (E6 and E7) is mapped; the archived E3–E5 ladders are not. The old
 scheme, below, still parses for the lineages that carry it.
 
 ## The scheme before 2026-10-07: attempt numbers

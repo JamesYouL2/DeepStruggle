@@ -106,3 +106,24 @@ class TestTheCommittedRegistry:
         lab = parse_label("E7-A4-R1-S44@4390M+(S44,45,46)@4800M")
         mapped = set(codes["runs"].values())
         assert all(r.text() in mapped for r in lab.ingredients)
+
+
+def test_link_directories_alias_runs_without_becoming_runs(lineage: Dict[str, str]) -> None:
+    """`--link` gives each old-scheme run a new-name directory of symlinks. It is an alias: the
+    derivation must not count it as a run, and a run resumed through it hangs off the real one."""
+    root = lineage["root"]
+    runs = rc.load_runs(root)
+    names, _ = rc.assign(runs, {"architectures": {}, "recipes": {}, "overrides": {}}, True)
+    made = rc.link_runs(runs, names, root)
+    assert len(made) == 6 and "E9-A1-R1-S44@150M+S45_" + lineage["c"].split("_", 1)[1] in made
+    link = os.path.join(root, made[0])
+    assert os.path.islink(os.path.join(link, "metadata.json"))
+    assert rc.link_runs(runs, names, root) == []                  # idempotent
+    # a continuation launched under the new name, resumed through the link directory
+    c_link = os.path.join(root, "E9-A1-R1-S44@150M+S45_" + lineage["c"].split("_", 1)[1])
+    _run(root, "E9-A1-R1-S44@150M+S45", parent=c_link, seed=45, steps=400_000_000)
+    runs2 = rc.load_runs(root)
+    assert len(runs2) == len(runs) + 1
+    names2, _ = rc.assign(runs2, {"architectures": {}, "recipes": {}, "overrides": {}}, True)
+    newest = max(runs2, key=lambda r: r.ts)
+    assert names2[newest.dir].text() == "E9-A1-R1-S44@150M+S45"   # a continuation keeps the name
