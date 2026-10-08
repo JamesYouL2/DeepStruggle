@@ -536,3 +536,27 @@ alike in both.)
   leads 5 / 6 / 7 / 8+ (4,000M: 16 / 47 / 84 / 99.8), and once played the game is ended 64 / 85 /
   99 / 100%. The over-eager plays at 5–6 fell, but so did the winning ones at 7: the threshold moved
   up rather than sharpened. 12% of games end by Wargames; `E7-A4-R1-S44@4800M` 0.2%.
+
+## E7-A8-R1-S44 to its plateau: 6,800M (owner, 2026-10-08)
+
+Owner: "continue its training until plateau". Continued in place from 4,800M with a stop rule fixed
+before the data: every 400M the newest 80M SWA plays the same three references -- `E7-A8-R1-S44@1920..2000M`,
+`E7-A4-R1-S44@1920..2000M` and the best soup `E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M` -- 1,000
+games a side each (`data/reports/a8_plateau_<K>M.*`), and training stops when the mean of the last two
+windows is within +1.5 points of the two before (the plain line's rule).
+
+| window | vs `A8@2000` | vs `A4@2000` | vs soup | mean |
+|:---|---:|---:|---:|---:|
+| 4,720–4,800M | 62.5 | 60.9 | 47.9 | 57.1 |
+| 5,120–5,200M | 63.4 | 62.9 | 49.1 | 58.5 |
+| 5,520–5,600M | 65.7 | 63.3 | 50.5 | 59.9 |
+| 5,920–6,000M | 67.0 | 66.6 | 51.3 | 61.6 |
+| 6,320–6,400M | 66.7 | 65.0 | 52.2 | 61.3 |
+| 6,720–6,800M | 66.4 | 66.3 | 52.7 | 61.8 |
+
+**Plateau at 6,800M**: the last two windows' mean 61.56 against 60.74 for the two before, +0.82. The
+run climbed a steady +1.4–1.8 points per 400M from 4,800M to 6,000M -- faster than the +0.7–0.8 of
+4,000–4,800M, which was noise -- then flattened. Against the best soup a single heads run went from
+47.9% to 52.7%: **one `E7-A8-R1-S44` is now level with or slightly above the best soup of three
+plain runs.** The plain line plateaued around 3,700M; the heads run kept improving for about 3,000M
+more. A host suspend of 7.4 hours at ~2,450M paused the leg without effect on it.
