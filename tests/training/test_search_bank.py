@@ -8,7 +8,7 @@ from __future__ import annotations
 import gzip
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import numpy as np
 import torch
@@ -251,7 +251,7 @@ def test_a_state_selector_plays_the_continuation_and_reproduces_the_policy_it_wr
     movers, keys = [decider(s) for s in starts], [ar_key(s) for s in starts]
     seen: List[int] = []
 
-    def select_first(states: List[ts.GameState]) -> List[int]:
+    def select_first(states: Sequence[ts.GameState]) -> List[int]:
         seen.append(len(states))
         return [legal_actions(s)[0] for s in states]
 
