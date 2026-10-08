@@ -329,6 +329,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
     opec = OwnCardChoices(OPEC, ts.Player.USSR, lambda st: _controlled(st, OPEC_COUNTRIES, ts.Player.USSR))
     alliance = OwnCardChoices(ALLIANCE, ts.Player.US, lambda st: _controlled(st, ALLIANCE_COUNTRIES, ts.Player.US))
     un, modes, setup = UNIntervention(), PlayModes(), SetupTracker()
+    endings: List[Dict[str, Any]] = []
     observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup)
     for b0 in range(0, games, batch):
         n = min(batch, games - b0)
@@ -363,7 +364,8 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
                 un.see(g, st, a, masks_np[i])
                 modes.see(g, st, a)
                 setup.see(g, st, a)
-            obs, masks, _, dones, _ = env.step(actions)
+            obs, masks, _, dones, info = env.step(actions)
+            _collect_endings(info, done, b0, endings)
             for i, d in enumerate(dones):
                 if d and not done[i]:
                     done[i] = True
@@ -379,7 +381,51 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             "five_year_plan": fyp.plays, "aldrich_ames": ames.plays,
             "kal_007": kal.choices, "opec": opec.choices, "alliance_for_progress": alliance.choices,
             "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space},
-            "setups": setup.records}
+            "setups": setup.records, "endings": endings}
+
+
+def _collect_endings(info: Dict[str, Any], done: List[bool], b0: int, out: List[Dict[str, Any]]) -> None:
+    """The env's own record of each game that just finished (`completed_episodes`: the winner, the
+    canonical ending reason, the final turn and VP), once per game -- after the first finish the
+    env has reset to a new deal, which is not part of the run."""
+    for ep in info.get("completed_episodes", []):
+        i = int(ep["env_idx"])
+        if not done[i]:
+            out.append({"game": b0 + i, "winner": str(ep["winner"]), "reason": str(ep["ending_reason"]),
+                        "turn": int(ep["turn"]), "vp": int(ep["victory_points"])})
+
+
+def play_endings(model: Any, merged: bool, games: int, seed: int, batch: int) -> List[Dict[str, Any]]:
+    """How the same games as `play` end (same seeds, batches and greedy policy, so the same games),
+    without the per-decision bookkeeping -- for adding the endings section to a report built from
+    records that predate it."""
+    from bindings.ts_env import TsVectorizedEnv, model_obs_features
+    feats = model_obs_features(model)
+    width = int(ts.obs_size_for(feats))
+    device = next(model.parameters()).device
+    model.eval()
+    endings: List[Dict[str, Any]] = []
+    for b0 in range(0, games, batch):
+        n = min(batch, games - b0)
+        env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
+        env.set_obs_features(feats, feats)
+        if merged:
+            env.set_merged_influence(True, True)
+        obs, masks, _ = env.reset_all()
+        done = [False] * n
+        for _ in range(20_000):
+            if all(done):
+                break
+            with torch.no_grad():
+                logits = model(torch.from_numpy(np.asarray(obs, dtype=np.float32)[:, :width]).to(device),
+                               torch.from_numpy(np.asarray(masks)).to(device))[0].float()
+            actions = logits.argmax(-1).cpu().numpy()
+            obs, masks, _, dones, info = env.step(actions)
+            _collect_endings(info, done, b0, endings)
+            for i, d in enumerate(dones):
+                if d:
+                    done[i] = True
+    return endings
 
 
 def play_setups(model: Any, merged: bool, games: int, seed: int, batch: int) -> List[Dict[str, Dict[str, int]]]:
@@ -658,6 +704,42 @@ def setup_section(records: Sequence[Dict[str, Dict[str, int]]], top: int = 5) ->
     return "\n".join(out)
 
 
+#: The env's ending keys (bindings.ts_env.ENDING_REASON_KEYS), named as the tournament reports name them.
+#: The DEFCON-1 pair is from the loser's side: its own move took DEFCON to 1 (or it couped under the
+#: Cuban Missile Crisis), or the winner's play forced it.
+ENDING_NAMES = [("20vp", "20 VP"), ("europe_control", "Europe Control"), ("final_scoring", "final scoring"),
+                ("held_scoring", "a scoring card held at turn end"), ("wargames", "Wargames"),
+                ("defcon1_self", "DEFCON 1, the loser's own move"),
+                ("defcon1_provoked", "DEFCON 1, forced by the winner's play")]
+
+
+def endings_section(endings: Sequence[Dict[str, Any]]) -> str:
+    n = len(endings)
+    out = ["## How games end", ""]
+    if n == 0:
+        return "\n".join(out + ["No endings recorded."])
+    by = {w: [e for e in endings if e["winner"] == w] for w in ("US", "USSR", "DRAW")}
+    out += [f"{n:,} games: the US wins {_pct(len(by['US']), n)}, the USSR {_pct(len(by['USSR']), n)}, "
+            f"drawn {_pct(len(by['DRAW']), n)}. The ending as the engine classifies it (the tournament's "
+            f"categories), as a share of each side's wins:", "",
+            "| how the game ended | US wins | USSR wins | draws | all games |", "|:---|---:|---:|---:|---:|"]
+    known = {k for k, _ in ENDING_NAMES}
+    for key, name in ENDING_NAMES + [("other", "other")]:
+        def cnt(es: Sequence[Dict[str, Any]]) -> int:
+            return sum((e["reason"] == key) if key != "other" else (e["reason"] not in known) for e in es)
+        if cnt(endings) == 0:
+            continue
+        cells = [f"{cnt(by[w]):,} ({_pct(cnt(by[w]), len(by[w]))})" if by[w] else "—" for w in ("US", "USSR", "DRAW")]
+        out.append(f"| {name} | " + " | ".join(cells) + f" | {cnt(endings):,} ({_pct(cnt(endings), n)}) |")
+    out += ["", "| | US wins | USSR wins |", "|:---|---:|---:|",
+            "| mean final turn | " + " | ".join(
+                f"{float(np.mean([e['turn'] for e in by[w]])):.1f}" if by[w] else "—" for w in ("US", "USSR")) + " |",
+            "| won before final scoring | " + " | ".join(
+                _pct(sum(e["reason"] != "final_scoring" for e in by[w]), len(by[w])) if by[w] else "—"
+                for w in ("US", "USSR")) + " |"]
+    return "\n".join(out)
+
+
 def _sha(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -698,9 +780,10 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     out += [f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}",
             f"* **Games:** {d['games']:,} greedy self-play games of the checkpoint against itself, seed "
             f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games.", "",
-            "Sections: Opening setups · Star Wars · Five Year Plan played by the USSR · Aldrich Ames Remix played by the US · OPEC "
+            "Sections: How games end · Opening setups · Star Wars · Five Year Plan played by the USSR · Aldrich Ames Remix played by the US · OPEC "
             "and Alliance for Progress · Soviets Shoot Down KAL-007 · UN Intervention · Space race · and, last, "
             "Events vs Ops for every card.", "",
+            endings_section(d.get("endings", [])), "",
             setup_section(d.get("setups", [])), "",
             star_wars_section(d["star_wars"]), "",
             opponent_card_section(
@@ -777,6 +860,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             d = json.load(open(dump))
             if "setups" not in d:            # records from before the setup section: replay the setups
                 d["setups"] = play_setups(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
+                json.dump(d, open(dump, "w"))
+            if "endings" not in d:           # ... and before the endings section: replay the games
+                d["endings"] = play_endings(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
                 json.dump(d, open(dump, "w"))
         else:
             d = play(model, merged, a.games, a.seed, a.batch)
