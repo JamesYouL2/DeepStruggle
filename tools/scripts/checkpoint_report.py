@@ -128,7 +128,8 @@ class StarWars:
             by_us = (int(st.headline_us_card) == STAR_WARS if headline else st.phasing_player == ts.Player.US)
             self.retrievals.append({
                 "game": g, "turn": int(st.turn), "by": "US" if by_us else "USSR",
-                "phase": "headline" if headline else "ar", "card": int(ts.decode_flat_action(st, a).primary_id),
+                "phase": "headline" if headline else "ar", "ar": 0 if headline else int(st.action_round),
+                "card": int(ts.decode_flat_action(st, a).primary_id),
                 "options": [int(ts.decode_flat_action(st, int(k)).primary_id)
                             for k in np.flatnonzero(mask[:ActionEncoder.PLAY_MODE_OFFSET])]})
         if int(ctx.resolving_card) != 0 or ctx.decision_player != ts.Player.US:
@@ -260,6 +261,65 @@ class WarsawPact:
 
     def done(self, g: int) -> None:
         pass
+
+
+class KalAftermath:
+    """After the USSR plays KAL-007 so that the US event fires (headline, event first or Ops first):
+    whether the US got the event's Ops (an Ops choice the event grants only when the US controls
+    South Korea as it resolves), South Korea's control at the choice and once the play is over, DEFCON after,
+    and whether the game ended before the next card choice. With Ops first the USSR's Ops come
+    before the event, so they can break US control first."""
+
+    def __init__(self) -> None:
+        self.plays: List[Dict[str, Any]] = []
+        self.watch: Dict[int, Dict[str, Any]] = {}
+        self.selected: Dict[int, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _sk(st: ts.GameState) -> int:
+        return int(ts.Scoring.is_controlled_by(st, SOUTH_KOREA, ts.Player.US))
+
+    def see(self, g: int, st: ts.GameState, a: int) -> None:
+        ctx = st.ctx()
+        w = self.watch.get(g)
+        if w is not None:
+            # The event hands the US its Ops as an ordinary Ops choice (SELECT_OP_MODE with KAL-007
+            # pending, event_granted_ops set, resolving_card reset to 0) -- only when it controls
+            # South Korea as the event resolves.
+            if (ctx.decision_player == ts.Player.US and ctx.decision_type == ts.DecisionType.SELECT_OP_MODE
+                    and int(ctx.pending_op_card) == KAL_007):
+                w["us_ops"] = True
+            elif (ctx.decision_type == ts.DecisionType.SELECT_CARD and int(ctx.resolving_card) == 0
+                  and not (st.current_phase == ts.Phase.HEADLINE and w["mode"] == "headline")):
+                w.update(sk_after=self._sk(st), defcon_after=int(st.defcon), vp_after=int(st.victory_points))
+                del self.watch[g]
+        sel = self.selected.pop(g, None)
+        if sel is not None and ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and int(ctx.pending_op_card) == KAL_007:
+            if a != SPACE:
+                sel["mode"] = _mode(a)
+                self._start(g, sel)
+        if (int(ctx.resolving_card) != 0 or ctx.decision_player != ts.Player.USSR
+                or ctx.decision_type != ts.DecisionType.SELECT_CARD or a >= ActionEncoder.PLAY_MODE_OFFSET
+                or int(ts.decode_flat_action(st, a).primary_id) != KAL_007
+                or not ts.in_hand_of(st.get_card_location(KAL_007), ts.Player.USSR)):
+            return
+        rec: Dict[str, Any] = {"game": g, "turn": int(st.turn), "defcon": int(st.defcon), "sk_us": self._sk(st),
+                               "vp": int(st.victory_points), "us_ops": False, "ended": False}
+        if st.current_phase == ts.Phase.HEADLINE:
+            rec["mode"] = "headline"
+            self._start(g, rec)
+        else:
+            self.selected[g] = rec
+
+    def _start(self, g: int, rec: Dict[str, Any]) -> None:
+        self.plays.append(rec)
+        self.watch[g] = rec
+
+    def done(self, g: int) -> None:
+        w = self.watch.pop(g, None)
+        if w is not None:
+            w["ended"] = True
+        self.selected.pop(g, None)
 
 
 class OwnCardChoices:
@@ -404,9 +464,9 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
     ortega_us = OpponentCardPlay(ORTEGA, ts.Player.US, {"cuba_us": lambda st: st.get_country(CUBA).us_influence})
     kal_ussr = OpponentCardPlay(KAL_007, ts.Player.USSR,
                                 {"sk_us": lambda st: ts.Scoring.is_controlled_by(st, SOUTH_KOREA, ts.Player.US)})
-    ortega, warsaw = OrtegaResponse(), WarsawPact()
+    ortega, warsaw, kal_after = OrtegaResponse(), WarsawPact(), KalAftermath()
     endings: List[Dict[str, Any]] = []
-    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw)
+    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw, kal_after)
     for b0 in range(0, games, batch):
         n = min(batch, games - b0)
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
@@ -444,6 +504,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
                 kal_ussr.see(g, st, a)
                 ortega.see(g, st, a)
                 warsaw.see(g, st, a)
+                kal_after.see(g, st, a)
             obs, masks, _, dones, info = env.step(actions)
             _collect_endings(info, done, b0, endings)
             for i, d in enumerate(dones):
@@ -463,7 +524,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space},
             "setups": setup.records, "endings": endings,
             "ortega_us": ortega_us.plays, "ortega_response": ortega.responses, "kal_ussr": kal_ussr.plays,
-            "warsaw_pact": warsaw.choices}
+            "warsaw_pact": warsaw.choices, "kal_aftermath": kal_after.plays}
 
 
 def _collect_endings(info: Dict[str, Any], done: List[bool], b0: int, out: List[Dict[str, Any]]) -> None:
@@ -717,7 +778,8 @@ def kal_section(choices: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
-def kal_ussr_section(plays: Sequence[Dict[str, Any]]) -> str:
+def kal_ussr_section(plays: Sequence[Dict[str, Any]], after: Sequence[Dict[str, Any]] = (),
+                     endings: Sequence[Dict[str, Any]] = ()) -> str:
     """The USSR playing the US card: everything but the space race fires the US event (DEFCON -1,
     US +2 VP, and with South Korea the US's Ops)."""
     out = ["", "### The USSR playing KAL-007", "",
@@ -734,11 +796,34 @@ def kal_ussr_section(plays: Sequence[Dict[str, Any]]) -> str:
                 continue
             cells = [_pct(sum(p["mode"] == m for p in xs), len(xs)) for m in ("headline", "event first", "Ops first", "space race")]
             out.append(f"| {dc} | {'yes' if sk else 'no'} | {len(xs):,} | " + " | ".join(cells) + " |")
+    if after:
+        winner = {int(e["game"]): str(e["winner"]) for e in endings}
+        out += ["", "What followed when the event fired -- whether the US got the event's Ops (South Korea still US "
+                    "controlled when it resolved), whether the USSR's Ops first broke that control, DEFCON, and the "
+                    "game ending before the next card choice:", "",
+                "| DEFCON | US controlled South Korea at the choice | how | plays | the US got the Ops | "
+                "USSR broke control first | DEFCON fell | the game ended | of those, the USSR won |",
+                "|---:|:---|:---|---:|---:|---:|---:|---:|---:|"]
+        for dc in sorted({int(p["defcon"]) for p in after}):
+            for sk in (1, 0):
+                for how in ("headline", "event first", "Ops first"):
+                    xs = [p for p in after if int(p["defcon"]) == dc and int(p["sk_us"]) == sk and p["mode"] == how]
+                    if not xs:
+                        continue
+                    ended = [p for p in xs if p["ended"]]
+                    broke = (_pct(sum(not p["us_ops"] and p.get("sk_after", 1) == 0 for p in xs), len(xs))
+                             if sk and how == "Ops first" else "—")
+                    fell = [p for p in xs if "defcon_after" in p]
+                    out.append(f"| {dc} | {'yes' if sk else 'no'} | {how} | {len(xs):,} | "
+                               f"{_pct(sum(p['us_ops'] for p in xs), len(xs))} | {broke} | "
+                               f"{_pct(sum(p['defcon_after'] < p['defcon'] for p in fell), len(fell)) if fell else '—'} | "
+                               f"{_pct(len(ended), len(xs))} | "
+                               f"{_pct(sum(winner.get(int(p['game'])) == 'USSR' for p in ended), len(ended)) if ended and winner else '—'} |")
     return "\n".join(out)
 
 
 def ortega_section(plays: Sequence[Dict[str, Any]], responses: Sequence[Dict[str, Any]],
-                   endings: Sequence[Dict[str, Any]] = ()) -> str:
+                   endings: Sequence[Dict[str, Any]] = (), retrievals: Sequence[Dict[str, Any]] = ()) -> str:
     out = ["## Ortega Elected in Nicaragua played by the US", "",
            "Ortega Elected in Nicaragua (USSR, 2 Ops): all US influence leaves Nicaragua and the USSR may make a free "
            "coup with the card's Ops in Cuba (a battleground, so a coup there degrades DEFCON), Honduras or Costa "
@@ -746,6 +831,12 @@ def ortega_section(plays: Sequence[Dict[str, Any]], responses: Sequence[Dict[str
            "whether the US had influence in Cuba when it chose the card:", "",
            "| DEFCON | US influence in Cuba | plays | headline | event first | Ops first | space race |",
            "|---:|:---|---:|---:|---:|---:|---:|"]
+    risky = [p for p in plays if int(p["defcon"]) == 2 and int(p["feat"].get("cuba_us", 0)) > 0]
+    if risky:
+        fired = [p for p in risky if p["mode"] != "space race"]
+        out[-2:-2] = [f"**The suicide case** -- DEFCON 2 with US influence in Cuba, where the USSR's free coup in Cuba "
+                      f"takes DEFCON to 1 on the US's play: {len(risky):,} US plays, of which {len(fired):,} "
+                      f"({_pct(len(fired), len(risky))}) fired the event rather than going to the space race.", ""]
     if not plays:
         out.append("| — | — | 0 | | | | |")
     for dc in sorted({int(p["defcon"]) for p in plays}):
@@ -790,33 +881,56 @@ def ortega_section(plays: Sequence[Dict[str, Any]], responses: Sequence[Dict[str
                        f"{_pct(sum(winner.get(int(r['game'])) == 'USSR' for r in xs if r['ended']), sum(r['ended'] for r in xs)) if winner else '—'} |")
         ended = [r for r in coups if r["target"] == CUBA and r["ended"] and int(r["defcon"]) == 2]
         if ended:
+            by_play: Dict[Tuple[int, int], Dict[str, Any]] = {}
+            for p in plays:
+                by_play[(int(p["game"]), int(p["turn"]))] = p
+            sw = {(int(r["game"]), int(r["turn"])) for r in retrievals if int(r["card"]) == ORTEGA}
+            routes: collections.Counter = collections.Counter()
+            for r in ended:
+                p = by_play.get((int(r["game"]), int(r["turn"])))
+                if p is not None:
+                    routes[f"from the US hand at DEFCON {p['defcon']}, {p['mode']}"
+                           + (", US influence in Cuba" if int(p["feat"].get("cuba_us", 0)) > 0 else ", no US influence in Cuba")] += 1
+                elif (int(r["game"]), int(r["turn"])) in sw:
+                    routes["taken with Star Wars"] += 1
+                else:
+                    routes["not from the US hand nor Star Wars (played inside another event, such as Grain Sales)"] += 1
             out += ["", f"A coup in Cuba at DEFCON 2 takes DEFCON to 1 on the US's play of the card, which almost always loses the "
                         f"game for the US (the last column): {len(ended):,} games here ({_pct(len(ended), len(winner) or 1)} of all "
-                        f"games), from the US's Ortega plays at DEFCON 2 that were not sent to the space race."]
+                        f"games). How the US came to play the card (DEFCON when it chose it -- at DEFCON 3 a headline can still "
+                        f"resolve at 2, after the other side's headline):", "",
+                    "| how the US played Ortega | games lost |", "|:---|---:|"]
+            out += [f"| {k} | {v:,} ({_pct(v, len(ended))}) |" for k, v in routes.most_common()]
     own = len(responses) - len(rs)
     if own:
         out += ["", f"(Not counted above: {own:,} events of the USSR's own Ortega plays.)"]
     return "\n".join(out)
 
 
-def red_scare_section(holdings: Sequence[Holding]) -> str:
-    ev = [h for h in holdings if h.card == RED_SCARE and h.outcome in ("headline", "event")]
+def red_scare_section(holdings: Sequence[Holding], retrievals: Sequence[Dict[str, Any]] = ()) -> str:
+    """Red Scare/Purge evented, by action round: each side's own plays (the census's holdings that
+    ended as a headline or an event) and the US taking it from the discard pile with Star Wars."""
+    own = [h for h in holdings if h.card == RED_SCARE and h.outcome in ("headline", "event") and h.turn > 0]
+    sw = [r for r in retrievals if r["card"] == RED_SCARE and "ar" in r]
     out = ["## Red Scare/Purge: when it is evented", "",
-           "Red Scare/Purge (neutral, 4 Ops): the opponent's cards get −1 Ops for the rest of the turn, so the earlier "
-           "in the turn, the more of the opponent's plays it reaches. The action round each side events it in (H = "
-           "headline):", ""]
-    timed = [h for h in ev if h.turn > 0]
-    if not timed:
+           "Red Scare/Purge (neutral, 4 Ops): the opponent's cards get −1 Ops for the rest of the turn, so its worth "
+           "falls with every action round already gone -- late in the turn it reaches one or two of the opponent's "
+           "plays, or none. The action round it is evented in (H = headline), from each side's own plays and from the "
+           "US taking it with Star Wars:", ""]
+    if not own and not sw:
         return "\n".join(out + ["No timing recorded (records from before the census kept the turn and round)."])
-    out += ["| | US (n) | USSR (n) |", "|:---|---:|---:|"]
-    by = {s: [h for h in timed if h.side == (US if s == "US" else USSR)] for s in ("US", "USSR")}
-    for ar in sorted({0 if h.outcome == "headline" else h.ar for h in timed}):
-        cells = []
-        for side in ("US", "USSR"):
-            k = sum((0 if h.outcome == "headline" else h.ar) == ar for h in by[side])
-            cells.append(f"{k:,} ({_pct(k, len(by[side]))})" if by[side] else "—")
-        out.append(f"| {'H' if ar == 0 else f'AR{ar}'} | " + " | ".join(cells) + " |")
-    out.append(f"| evented | {len(by['US']):,} | {len(by['USSR']):,} |")
+    cols = [("US, own play", [0 if h.outcome == "headline" else h.ar for h in own if h.side == US]),
+            ("USSR, own play", [0 if h.outcome == "headline" else h.ar for h in own if h.side == USSR]),
+            ("US, with Star Wars", [int(r["ar"]) for r in sw])]
+    out += ["| | " + " | ".join(c for c, _ in cols) + " |", "|:---|" + "---:|" * len(cols)]
+    for ar in sorted({x for _, xs in cols for x in xs}):
+        out.append(f"| {'H' if ar == 0 else f'AR{ar}'} | " + " | ".join(
+            f"{sum(x == ar for x in xs):,} ({_pct(sum(x == ar for x in xs), len(xs))})" if xs else "—" for _, xs in cols) + " |")
+    out.append("| evented | " + " | ".join(f"{len(xs):,}" for _, xs in cols) + " |")
+    out.append("| **AR5 or later** | " + " | ".join(
+        f"**{_pct(sum(x >= 5 for x in xs), len(xs))}**" if xs else "—" for _, xs in cols) + " |")
+    if not sw and retrievals:
+        out += ["", "(The Star Wars column needs records that keep each retrieval's action round.)"]
     return "\n".join(out)
 
 
@@ -1001,7 +1115,8 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
                 "discards a card of its choice from it. Here: the US playing it from its own hand so that the event "
                 "fires (a Late War card, so all plays fall in Mid+Late War).",
                 d["aldrich_ames"], "us", show_mode=False), "",
-            ortega_section(d.get("ortega_us", []), d.get("ortega_response", []), d.get("endings", [])), "",
+            ortega_section(d.get("ortega_us", []), d.get("ortega_response", []), d.get("endings", []),
+                           d["star_wars"]["retrievals"]), "",
             "## OPEC and Alliance for Progress", "",
             vp_card_section("OPEC (USSR)", "OPEC (USSR, 3 Ops): the USSR gains 1 VP for each of Egypt, Iran, Libya, "
                             "Saudi Arabia, Iraq, the Gulf States and Venezuela it controls (cancelled by North Sea Oil, "
@@ -1009,8 +1124,9 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
             vp_card_section("Alliance for Progress (US)", "Alliance for Progress (US, 3 Ops): the US gains 1 VP for "
                             "each battleground it controls in Central and South America (Mexico, Panama, Cuba, "
                             "Venezuela, Brazil, Chile, Argentina).", d["alliance_for_progress"]), "",
-            kal_section(d["kal_007"]) + kal_ussr_section(d.get("kal_ussr", [])), "",
-            red_scare_section(holdings), "",
+            kal_section(d["kal_007"]) + kal_ussr_section(d.get("kal_ussr", []), d.get("kal_aftermath", []),
+                                                         d.get("endings", [])), "",
+            red_scare_section(holdings, d["star_wars"]["retrievals"]), "",
             warsaw_section(d.get("warsaw_pact", [])), "",
             un_section(d["un_intervention"]), "",
             space_section(d["play_modes"]), "",
