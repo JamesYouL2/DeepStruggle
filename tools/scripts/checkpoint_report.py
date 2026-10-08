@@ -234,6 +234,41 @@ class OwnCardChoices:
             d.pop(g, None)
 
 
+class SetupTracker:
+    """Each side's opening placement: the influence it places at the setup decisions (USSR 6 in
+    Eastern Europe, then the US 7 in Western Europe and 2 more where it already has influence),
+    per country, recorded once the game leaves the setup phase."""
+
+    def __init__(self) -> None:
+        self.records: List[Dict[str, Dict[str, int]]] = []
+        self.cur: Dict[int, Dict[str, Dict[str, int]]] = {}
+        self.closed: set = set()
+
+    def see(self, g: int, st: ts.GameState, a: int) -> None:
+        if g in self.closed:
+            return
+        if st.current_phase != ts.Phase.SETUP:
+            self.done(g)
+            return
+        ctx = st.ctx()
+        if ctx.decision_type != ts.DecisionType.POINT_NODE or int(ctx.resolving_card) != 0:
+            return
+        cid = int(ts.decode_flat_action(st, a).primary_id)
+        if not 0 <= cid < 84:
+            return
+        side = "US" if ctx.decision_player == ts.Player.US else "USSR"
+        rec = self.cur.setdefault(g, {"US": {}, "USSR": {}})
+        rec[side][str(cid)] = rec[side].get(str(cid), 0) + 1
+
+    def done(self, g: int) -> None:
+        if g in self.closed:
+            return
+        self.closed.add(g)
+        rec = self.cur.pop(g, None)
+        if rec is not None:
+            self.records.append(rec)
+
+
 class UNIntervention:
     """The card a side plays with UN Intervention: the opponent card whose Ops it uses."""
 
@@ -293,8 +328,8 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
                          lambda st: int(ts.Scoring.is_controlled_by(st, SOUTH_KOREA, ts.Player.US)))
     opec = OwnCardChoices(OPEC, ts.Player.USSR, lambda st: _controlled(st, OPEC_COUNTRIES, ts.Player.USSR))
     alliance = OwnCardChoices(ALLIANCE, ts.Player.US, lambda st: _controlled(st, ALLIANCE_COUNTRIES, ts.Player.US))
-    un, modes = UNIntervention(), PlayModes()
-    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes)
+    un, modes, setup = UNIntervention(), PlayModes(), SetupTracker()
+    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup)
     for b0 in range(0, games, batch):
         n = min(batch, games - b0)
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
@@ -327,6 +362,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
                 alliance.see(g, st, a)
                 un.see(g, st, a, masks_np[i])
                 modes.see(g, st, a)
+                setup.see(g, st, a)
             obs, masks, _, dones, _ = env.step(actions)
             for i, d in enumerate(dones):
                 if d and not done[i]:
@@ -342,7 +378,43 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             "star_wars": {"plays": sw.plays, "retrievals": sw.retrievals},
             "five_year_plan": fyp.plays, "aldrich_ames": ames.plays,
             "kal_007": kal.choices, "opec": opec.choices, "alliance_for_progress": alliance.choices,
-            "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space}}
+            "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space},
+            "setups": setup.records}
+
+
+def play_setups(model: Any, merged: bool, games: int, seed: int, batch: int) -> List[Dict[str, Dict[str, int]]]:
+    """Only the setup of the same games as `play` (same seeds, batches and greedy policy, so the
+    same placements), stopping each batch once every game has left the setup phase -- for adding
+    the setup section to a report built from records that predate it."""
+    from bindings.ts_env import TsVectorizedEnv, model_obs_features
+    feats = model_obs_features(model)
+    width = int(ts.obs_size_for(feats))
+    device = next(model.parameters()).device
+    model.eval()
+    setup = SetupTracker()
+    for b0 in range(0, games, batch):
+        n = min(batch, games - b0)
+        env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
+        env.set_obs_features(feats, feats)
+        if merged:
+            env.set_merged_influence(True, True)
+        obs, masks, _ = env.reset_all()
+        for _ in range(200):
+            states = [env.runner.get_state(i) for i in range(n)]
+            if all(st.current_phase != ts.Phase.SETUP for st in states):
+                break
+            masks_np = np.asarray(masks)
+            with torch.no_grad():
+                logits = model(torch.from_numpy(np.asarray(obs, dtype=np.float32)[:, :width]).to(device),
+                               torch.from_numpy(masks_np).to(device))[0].float()
+            actions = logits.argmax(-1).cpu().numpy()
+            for i, st in enumerate(states):
+                setup.see(b0 + i, st, int(actions[i]))
+            obs, masks, _, _, _ = env.step(actions)
+        for i in range(n):
+            setup.see(b0 + i, env.runner.get_state(i), 0)
+            setup.done(b0 + i)
+    return setup.records
 
 
 # --------------------------------------------------------------------------------------------
@@ -555,6 +627,37 @@ def space_section(modes: Dict[str, Dict[str, Dict[str, int]]], top: int = 15) ->
     return "\n".join(out)
 
 
+#: Starting influence in the setup regions the placements add to (the engine's initial board).
+SETUP_NOTE = ("East Germany starts with 3 USSR influence and the United Kingdom with 5 US, so \"East Germany +1\" "
+              "is East Germany at 4.")
+
+
+def _setup_name(placed: Dict[str, int]) -> str:
+    items = sorted(placed.items(), key=lambda kv: (-kv[1], ts.MapData.get_country_name(int(kv[0]))))
+    return ", ".join(f"{ts.MapData.get_country_name(int(c))} +{n}" for c, n in items)
+
+
+def setup_section(records: Sequence[Dict[str, Dict[str, int]]], top: int = 5) -> str:
+    out = ["## Opening setups", "",
+           "Each side's opening placement -- the influence it places at the setup decisions, by country (USSR 6 "
+           "in Eastern Europe, then the US 7 in Western Europe and 2 more where it already has influence). "
+           + SETUP_NOTE + " The placement can vary from game to game with the hand dealt and, for the US, with "
+           "the USSR's placement."]
+    n = len(records)
+    for side in ("USSR", "US"):
+        cnt = collections.Counter(_setup_name(r[side]) for r in records if r.get(side))
+        tot = sum(cnt.values())
+        out += ["", f"### {side}", "",
+                f"{len(cnt):,} distinct placement{'' if len(cnt) == 1 else 's'} in {tot:,} games; the top {top} cover "
+                f"{_pct(sum(k for _, k in cnt.most_common(top)), tot)}.", "",
+                "| # | placement | games | share |", "|---:|:---|---:|---:|"]
+        for i, (name, k) in enumerate(cnt.most_common(top), 1):
+            out.append(f"| {i} | {name} | {k:,} | {_pct(k, tot)} |")
+    if n == 0:
+        out += ["", "No setups recorded."]
+    return "\n".join(out)
+
+
 def _sha(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -595,9 +698,10 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     out += [f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}",
             f"* **Games:** {d['games']:,} greedy self-play games of the checkpoint against itself, seed "
             f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games.", "",
-            "Sections: Star Wars · Five Year Plan played by the USSR · Aldrich Ames Remix played by the US · OPEC "
+            "Sections: Opening setups · Star Wars · Five Year Plan played by the USSR · Aldrich Ames Remix played by the US · OPEC "
             "and Alliance for Progress · Soviets Shoot Down KAL-007 · UN Intervention · Space race · and, last, "
             "Events vs Ops for every card.", "",
+            setup_section(d.get("setups", [])), "",
             star_wars_section(d["star_wars"]), "",
             opponent_card_section(
                 "Five Year Plan played by the USSR",
@@ -671,6 +775,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         feats = model_obs_features(model)
         if a.load:
             d = json.load(open(dump))
+            if "setups" not in d:            # records from before the setup section: replay the setups
+                d["setups"] = play_setups(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
+                json.dump(d, open(dump, "w"))
         else:
             d = play(model, merged, a.games, a.seed, a.batch)
             json.dump(d, open(dump, "w"))
