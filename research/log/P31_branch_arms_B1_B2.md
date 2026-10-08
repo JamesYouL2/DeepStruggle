@@ -467,3 +467,37 @@ Head to head (± 1.1): SWAs `S43` vs `S44` 50.9%, `S43` vs `A8` 52.0%, `S44` vs 
   `E7-A4-R1-S44@2000M` never plays the event (≤ 0.4%) and spends the card on Ops, coups at DEFCON 3
   (77%). The boundary keeps sharpening without forcing, but a lead of 5–6 still loses it a game in
   about one spot in seven.
+
+## E7-A8-R1-S44 extended to 4,000M (owner, 2026-10-07/08)
+
+Owner: "extend E7-A8-R1-S44 to 4000M". Continued unchanged from 2,000M -- the first run to continue in
+its own directory (`E7-A8-R1-S44_20261007_162257`, legs in its metadata; a first launch in a new
+directory was stopped at 2,010M and voided). Engine 6c036593. Read at 4,000M against
+`E7-A4-R1-S44`'s own 4,000M (`data/reports/a8_4000_rr.{md,json}`; greedy, 1,000 games a side per pair).
+
+| model | Elo | panel US / USSR |
+|:---|---:|:---|
+| `E7-A8-R1-S44@3920..4000M` | **1679** | 92.4 / 91.3 |
+| `E7-A4-R1-S44@3920..4000M` | 1666 | 93.7 / 90.4 |
+| `E7-A8-R1-S44@4000M` | 1638 | 90.4 / 89.2 |
+| `E7-A4-R1-S44@4000M` | 1633 | 90.7 / 88.4 |
+| `E7-A4-R1-S44@1920..2000M` | 1606 | 88.1 / 88.1 |
+| `E7-A8-R1-S44@1920..2000M` | 1601 | 90.6 / 86.6 |
+
+* **Head to head the heads now win:** SWAs 53.9% ± 1.1 for `E7-A8-R1-S44` (as US 53.4, as USSR 54.5);
+  snapshots 50.6%. The edge grew with training -- 49.0% at 2,000M, 50.7% at 2,720M, 52.8% at 3,200M
+  (SWAs, `data/reports/a8_{2720,3200}_check.*`), 53.9% at 4,000M.
+* **The panel no longer separates them:** US −1.3, USSR +0.9 (SWAs), within noise at ~91% -- the
+  E6-03-44 panel is near its ceiling for models this strong, so the owner's per-seat rule cannot
+  confirm the gain; only head to head shows it.
+* **The self-play US rate is not a weakness.** From 2,680M the heads run's US self-play ran 4–7
+  points under `E7-A4-R1-S44`'s; against frozen opponents its US was level and its USSR stronger
+  (2,720M: USSR +2.6 on the panel), and at 4,000M it beats `E7-A4-R1-S44` as US too. Its self-play
+  games end by Wargames in ~12% of wins on each side and its USSR almost stops winning by Europe
+  control (3.2% of USSR wins against 12.5%; endings of the 2,760–2,840M SWAs, 4,000 games).
+* **Wargames at 4,000M** (self-play, T 0.1, 8,000 games): played for the event at DEFCON 2 in
+  16 / 47 / 84 / 99.8% of spots at leads 5 / 6 / 7 / 8+ (2,000M: 21 / 51 / 69 / 98%), and once
+  played the game is ended 80 / 95 / 97 / 100% of the time -- the decision has moved to the play mode,
+  where the threshold is now about a point low: at a lead of 6 it takes the event, and with it a
+  draw, in ~45% of spots. 13% of its games end by Wargames; `E7-A4-R1-S44` still never plays it
+  (0.4%).
