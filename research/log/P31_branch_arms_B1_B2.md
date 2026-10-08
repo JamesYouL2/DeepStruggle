@@ -501,3 +501,38 @@ directory was stopped at 2,010M and voided). Engine 6c036593. Read at 4,000M aga
   where the threshold is now about a point low: at a lead of 6 it takes the event, and with it a
   draw, in ~45% of spots. 13% of its games end by Wargames; `E7-A4-R1-S44` still never plays it
   (0.4%).
+
+## E7-A8-R1-S44 to 4,800M: near its plateau, ahead of the plain line, just under the best soup (owner, 2026-10-08)
+
+Owner: "Check if heads model is saturated at 4000M" -- not quite (`data/reports/a8_saturation_rr.*`) --
+then "run it to 4800M". Continued in place from 4,000M (a third leg in its metadata). One field at
+4,800M (`data/reports/a8_4800_rr.{md,json}`; greedy, 1,000 games a side per pair). The trace is each
+80M SWA of `E7-A8-R1-S44` against three fixed references -- the two 2,000M SWAs and the best soup,
+`E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M`; each head to head ± 1.1, their mean ± 0.65:
+
+| `E7-A8-R1-S44` SWA | vs `A8@2000` | vs `A4@2000` | vs soup | mean | panel US / USSR |
+|:---|---:|---:|---:|---:|:---|
+| 2,320–2,400M | 56.8 | 51.6 | 38.9 | 49.1 | 89.1 / 89.2 |
+| 2,720–2,800M | 56.5 | 53.8 | 40.0 | 50.1 | 89.3 / 89.8 |
+| 3,120–3,200M | 58.8 | 56.7 | 42.3 | 52.6 | 90.7 / 89.5 |
+| 3,520–3,600M | 57.2 | 58.9 | 45.2 | 53.8 | 91.4 / 91.3 |
+| 3,920–4,000M | 61.9 | 59.3 | 45.5 | 55.6 | 92.4 / 91.3 |
+| 4,320–4,400M | 62.3 | 61.1 | 45.8 | 56.4 | 92.5 / 91.2 |
+| 4,720–4,800M | 62.5 | 60.9 | 47.9 | 57.1 | 93.1 / 91.7 |
+
+(Rows up to 4,000M from the saturation field, the rest from the 4,800M field; the references rate
+alike in both.)
+
+* **Close to its plateau.** +1.8 points over 3,600–4,000M, then +0.8 and +0.7 per 400M -- each about
+  one standard error. By the plain line's rule it is still just short of saturated (last two windows'
+  mean +2.0 over the two before, against +1.5).
+* **Ahead of the plain line at 4,800M:** SWAs 54.2% ± 1.1 (as US 51.1, as USSR 57.4), Elo 1633 vs
+  1606; snapshots 51.8%. Panel: US level (93.1 / 93.0), USSR +1.3. The edge has grown: 49.0% at
+  2,000M, 53.9% at 4,000M, 54.2% at 4,800M.
+* **Just under the best soup:** one heads run scores 48.0% ± 1.1 against the soup of three plain
+  runs (Elo 1633 vs 1653). A heads soup -- seed branches of `E7-A8-R1-S44` from ~4,390M, souped at
+  4,800M as the best soup was -- is the like-for-like comparison.
+* **Wargames at 4,800M** (8,000 games, T 0.1): event at DEFCON 2 in 12 / 27 / 58 / 98% of spots at
+  leads 5 / 6 / 7 / 8+ (4,000M: 16 / 47 / 84 / 99.8), and once played the game is ended 64 / 85 /
+  99 / 100%. The over-eager plays at 5–6 fell, but so did the winning ones at 7: the threshold moved
+  up rather than sharpened. 12% of games end by Wargames; `E7-A4-R1-S44@4800M` 0.2%.
