@@ -28,6 +28,16 @@ Stages (each resumable, each writing JSONL.gz rows of schema `SCHEMA`):
 * `report` -- (local) the tables: reference recall against raw top-k, the regret distribution and its
   concentration, each method's agreement with the reference, breakdowns, the worst raw decisions,
   the candidate/ranking decomposition, the oracle and the playout check (`analysis()`).
+* `event-select` -- (local) the event-decision bank, a second bank from the same annotated positions:
+  every action-round play-mode decision where the event is legal beside another play, at most
+  `--cap` per (card, side), weighted back to its group's population. Each row's `pmoves` are the
+  event and the raw network's most probable alternative; on an opponent's card the event is the
+  event-first play, the alternative the most probable Ops-first mode, and Space is added, the one
+  play that keeps the opponent's event from firing. The `playouts` stage plays them.
+* `event-report` -- (local) per card and side: how often the decision comes up, how often raw
+  events, the event's playout lead over the alternative, raw's split-sample regret and its loss a
+  game split into missed events, wrong events and other departures, beside the model's and the
+  human corpus's action-round event rates (event_play_census dumps).
 * `annotate` -- the raw network plays itself (`--temperature`, default 0.1, the tournaments'
   setting); one decision in `--sample` with two or more legal moves is kept, and each is put to the
   raw network and to every Gumbel configuration in `--budgets` (default the three measured in
@@ -68,7 +78,7 @@ import os
 import random
 import sys
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import ts_engine as ts
@@ -440,6 +450,233 @@ def playouts(a: argparse.Namespace) -> int:
     return 0
 
 
+EVENT = ActionEncoder.PLAY_MODE_OFFSET
+SPACE = ActionEncoder.PLAY_MODE_OFFSET + 1
+OPS_MODES = (EVENT + 2, EVENT + 3, EVENT + 4)
+
+
+def card_relation(card_side: str, mover: str) -> str:
+    """Whose event a card is, seen from the side playing it: "own", "opponent" or "neutral"."""
+    s = card_side.lower()
+    return "neutral" if s == "neutral" else ("own" if s == mover.lower() else "opponent")
+
+
+def event_moves(r: Dict[str, Any], relation: str) -> List[int]:
+    """The moves an event-decision row plays out, the event first: the event (on an opponent's card,
+    event-first), then the raw network's most probable alternative (on an opponent's card, its most
+    probable Ops-first mode), and on an opponent's card Space as well when it is legal -- the only
+    play that keeps the opponent's event from firing. The raw argmax is always among them."""
+    lg = dict(zip(r["legal"], r["logits"]))
+    alts = [a for a in (OPS_MODES if relation == "opponent" else (SPACE,) + OPS_MODES) if a in lg]
+    out = [EVENT, max(alts, key=lambda a: lg[a])]
+    if relation == "opponent" and SPACE in lg:
+        out.append(SPACE)
+    return out
+
+
+def is_event_decision(r: Dict[str, Any]) -> bool:
+    """An action-round play-mode decision whose event is legal beside some other play. Headlines are
+    left out: they have no Ops alternative, the choice there is which event to fire."""
+    if r["decision_type"] != "SELECT_PLAY_MODE" or r["phase"] != "ACTION_ROUND" or EVENT not in r["legal"]:
+        return False
+    return any(a in r["legal"] for a in (SPACE,) + OPS_MODES)
+
+
+def event_select(rows: Iterable[Dict[str, Any]], cards: Dict[int, Dict[str, Any]], cap: int,
+                 seed: int) -> List[Dict[str, Any]]:
+    """The event-decision bank: every event decision in `rows` grouped by (card, side), at most `cap`
+    drawn at random from each, each weighted by its group's population over its sample; each row
+    carries its card's `relation` to the mover and the `pmoves` the playouts stage plays."""
+    rng = random.Random(seed)
+    groups: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+    for r in rows:
+        if is_event_decision(r):
+            groups.setdefault((int(r["card"]), str(r["side"])), []).append(r)
+    out: List[Dict[str, Any]] = []
+    for card, side in sorted(groups):
+        g = sorted(groups[(card, side)], key=lambda r: r["id"])
+        pick = rng.sample(g, min(cap, len(g)))
+        rel = card_relation(str(cards[card]["side"]), side)
+        for r in pick:
+            out.append(dict(r, stratum=f"{card}/{side}", relation=rel, weight=round(len(g) / len(pick), 4),
+                            pmoves=event_moves(r, rel)))
+    return out
+
+
+def iter_annotated(paths: Sequence[str], keep: Callable[[Dict[str, Any]], bool]) -> Iterator[Dict[str, Any]]:
+    """Annotated rows one at a time, those `keep` accepts (the annotated files are too large to hold)."""
+    for p in paths:
+        with gzip.open(p, "rt") as f:
+            for line in f:
+                r = json.loads(line)
+                if r.get("schema") != SCHEMA:
+                    raise ValueError(f"{p}: schema {r.get('schema')} is not {SCHEMA}")
+                if keep(r):
+                    yield r
+
+
+def event_verdict(b: Dict[str, Any], scores: Dict[str, List[float]]) -> Dict[str, Any]:
+    """One event-decision row's playout verdict, in points of win probability for the mover.
+
+    `gain` is the event's lead over the alternative on all pairs, `gain_se` its paired SE. The best
+    move is picked on the even pairs and raw's `regret` measured on the odd ones, so choosing the
+    largest of several noisy means does not inflate it; `kind` says whether that regret is a missed
+    event, a wrong event, or another departure (on an opponent's card, Space against Ops)."""
+    sc = {int(m): v for m, v in scores.items()}
+    alt, raw = int(b["pmoves"][1]), int(b["raw"])
+    d = [100 * (x - y) for x, y in zip(sc[EVENT], sc[alt])]
+    n = len(d)
+    gain = sum(d) / n
+    se = math.sqrt(sum((x - gain) ** 2 for x in d) / (n - 1) / n) if n > 1 else math.nan
+    pick = max(sc, key=lambda m: sum(sc[m][0::2]))
+    odd = [100 * (x - y) for x, y in zip(sc[pick][1::2], sc[raw][1::2])] if raw in sc else []
+    regret = 0.0 if pick == raw or not odd else sum(odd) / len(odd)
+    kind = ("none" if pick == raw else "missed_event" if pick == EVENT else
+            "wrong_event" if raw == EVENT else "other")
+    return {"gain": gain, "gain_se": se, "regret": regret, "kind": kind, "raw_event": raw == EVENT,
+            "pick": pick}
+
+
+def ar_event_rates(holdings: Sequence[Any]) -> Dict[Tuple[int, str], Tuple[int, int]]:
+    """(card, side) -> (holdings spent in an action round, of them evented), from event_play_census
+    holdings (only the owner's for a side's card, either side's for a neutral one)."""
+    out: Dict[Tuple[int, str], List[int]] = collections.defaultdict(lambda: [0, 0])
+    for h in holdings:
+        if h.legal and h.outcome in ("event", "ops", "space"):
+            k = (int(h.card), "US" if h.side == int(ts.Player.US) else "USSR")
+            out[k][0] += 1
+            out[k][1] += h.outcome == "event"
+    return {k: (v[0], v[1]) for k, v in out.items()}
+
+
+Verdicts = Sequence[Tuple[Dict[str, Any], Dict[str, Any]]]
+
+
+def _wmean_se(rs: Verdicts, f: Callable[[Dict[str, Any]], float]) -> Tuple[float, float]:
+    """Weighted mean over positions and its SE between positions (each one's playout noise is in it)."""
+    w = [b["weight"] for b, _ in rs]
+    x = [float(f(v)) for _, v in rs]
+    tw = sum(w)
+    mu = sum(wi * xi for wi, xi in zip(w, x)) / tw
+    if len(x) < 2:
+        return mu, math.nan
+    var = sum((wi / tw) ** 2 * (xi - mu) ** 2 for wi, xi in zip(w, x)) * len(x) / (len(x) - 1)
+    return mu, math.sqrt(var)
+
+
+def event_summary(rs: Verdicts, per_game: float) -> Dict[str, float]:
+    """A group's figures; `per_game` turns a row's weight into decisions a game."""
+    pop = sum(b["weight"] for b, _ in rs)
+
+    def share(f: Callable[[Dict[str, Any]], float]) -> float:
+        return sum(b["weight"] * f(v) for b, v in rs) / pop
+
+    g, gse = _wmean_se(rs, lambda v: v["gain"])
+    rg, rse = _wmean_se(rs, lambda v: v["regret"])
+    games = pop * per_game
+    return {"n": len(rs), "per_game": games, "raw_event": share(lambda v: v["raw_event"]),
+            "best_event": share(lambda v: v["pick"] == EVENT), "gain": g, "gain_se": gse,
+            "regret": rg, "regret_se": rse, "loss": rg * games, "loss_se": rse * games,
+            **{k: share(lambda v, k=k: v["regret"] * (v["kind"] == k)) * games
+               for k in ("missed_event", "wrong_event", "other")}}
+
+
+def event_analysis(bank_rows: Sequence[Dict[str, Any]], pl_rows: Sequence[Dict[str, Any]],
+                   cards: Dict[int, Dict[str, Any]], per_game: float,
+                   human: Optional[Dict[Tuple[int, str], Tuple[int, int]]] = None,
+                   bot: Optional[Dict[Tuple[int, str], Tuple[int, int]]] = None) -> Tuple[str, Dict[str, Any]]:
+    """The event-decision tables. `per_game` = annotate's --sample over its game count."""
+    pl = {r["id"]: r["scores"] for r in pl_rows}
+    rows = [(b, event_verdict(b, pl[b["id"]])) for b in bank_rows if b["id"] in pl]
+    out = [f"# Event decisions: {len(rows)} positions", "",
+           "Action-round play-mode decisions where the event is legal beside another play, from the raw network's "
+           "self-play: up to a fixed number per (card, side), reweighted to how often each comes up. At each, the "
+           "event and the raw network's most probable alternative (on an opponent's card: event-first against its "
+           "most probable Ops-first mode, and Space) are played out in pairs by the raw network. Points are win "
+           "probability for the side deciding. **Event lead**: the event over the alternative, all pairs. "
+           "**Regret**: the best move's lead over raw's, the best picked on the even pairs and measured on the odd "
+           "ones. **Loss a game**: regret times how often the decision comes up, split into missed events, wrong "
+           "events and other departures. The playouts are the raw network's continuation, a lower bound on a move "
+           "whose payoff needs a follow-up it does not find.", ""]
+
+    def table(head: Sequence[str], body: Sequence[Sequence[Any]]) -> None:
+        out.append("| " + " | ".join(head) + " |")
+        out.append("|" + "|".join([":---"] + ["---:"] * (len(head) - 1)) + "|")
+        out.extend("| " + " | ".join(str(x) for x in r) + " |" for r in body)
+        out.append("")
+
+    def fmt(s: Dict[str, float]) -> List[str]:
+        return [str(s["n"]), f"{s['per_game']:.2f}", f"{100 * s['raw_event']:.0f}%", f"{100 * s['best_event']:.0f}%",
+                f"{s['gain']:+.2f} ± {s['gain_se']:.2f}", f"{s['regret']:+.2f} ± {s['regret_se']:.2f}",
+                f"{s['loss']:+.2f} ± {s['loss_se']:.2f}", f"{s['missed_event']:+.2f}", f"{s['wrong_event']:+.2f}",
+                f"{s['other']:+.2f}"]
+
+    def grouped(key: Callable[[Dict[str, Any]], Any]) -> Dict[Any, List[Tuple[Dict[str, Any], Dict[str, Any]]]]:
+        g: Dict[Any, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = collections.defaultdict(list)
+        for b, v in rows:
+            g[key(b)].append((b, v))
+        return dict(sorted(g.items()))
+
+    head = ["n", "a game", "raw events", "best is event", "event lead (pts)", "regret (pts)", "loss a game (pts)",
+            "missed event", "wrong event", "other"]
+    tot = event_summary(rows, per_game)
+    num: Dict[str, Any] = {"positions": len(rows), "all": tot}
+    out += [f"Over all of them: {tot['per_game']:.1f} such decisions a game; raw events {100 * tot['raw_event']:.0f}% "
+            f"of them, the playouts' best is the event in {100 * tot['best_event']:.0f}%. Raw's loss: "
+            f"**{tot['loss']:+.1f} ± {tot['loss_se']:.1f} points a game** (missed events {tot['missed_event']:+.1f}, "
+            f"wrong events {tot['wrong_event']:+.1f}, other {tot['other']:+.1f}).", ""]
+    for title, key in (("By side and whose event the card is", lambda b: f"{b['side']} / {b['relation']}"),
+                       ("By whose event and era", lambda b: f"{b['relation']} / {era(int(b['turn']))}")):
+        g = grouped(key)
+        num[title] = {k: event_summary(v, per_game) for k, v in g.items()}
+        out += [f"## {title}", ""]
+        table(["group"] + head, [[k] + fmt(num[title][k]) for k in g])
+
+    by_card = grouped(lambda b: (int(b["card"]), str(b["side"])))
+    per_card = {k: event_summary(v, per_game) for k, v in by_card.items()}
+    num["by_card"] = {f"{cards[c]['name']}/{s}": x for (c, s), x in per_card.items()}
+
+    def rate(src: Optional[Dict[Tuple[int, str], Tuple[int, int]]], k: Tuple[int, str]) -> str:
+        if src is None or src.get(k, (0, 0))[0] == 0:
+            return "—"
+        n, e = src[k]
+        return f"{100 * e / n:.0f}% ({n:,})"
+
+    card_head = ["card", "side", "whose", "n", "a game", "raw events", "bot AR event rate", "human AR event rate",
+                 "event lead (pts)", "regret (pts)", "loss a game (pts)", "missed", "wrong", "other"]
+
+    def card_row(k: Tuple[int, str]) -> List[str]:
+        f = fmt(per_card[k])
+        return [str(cards[k[0]]["name"]), k[1], card_relation(str(cards[k[0]]["side"]), k[1]), f[0], f[1], f[2],
+                rate(bot, k), rate(human, k)] + f[4:]
+
+    out += ["## Cards by raw's loss a game", "",
+            "The AR event rates are per holding spent in an action round (evented / evented + Ops + Space) from "
+            "tools/scripts/event_play_census.py: the same model's greedy self-play, and the human corpus. Neither "
+            "counts an opponent's card, whose event fires unless it goes to Space.", ""]
+    table(card_head, [card_row(k) for k in sorted(per_card, key=lambda k: -per_card[k]["loss"])[:30]])
+    for title, key in (("missed events", "missed_event"), ("wrong events", "wrong_event")):
+        out += [f"## Largest {title} (loss a game)", ""]
+        table(card_head, [card_row(k) for k in sorted(per_card, key=lambda k: -per_card[k][key])[:15]
+                          if per_card[k][key] > 0])
+    clear = []
+    for k, rs in by_card.items():
+        better = [v for _, v in rs if v["gain"] > 2 * v["gain_se"]]
+        worse = [v for _, v in rs if v["gain"] < -2 * v["gain_se"]]
+        miss = sum(not v["raw_event"] for v in better)
+        wrong = sum(v["raw_event"] for v in worse)
+        if miss + wrong:
+            clear.append((k, len(rs), len(better), miss, len(worse), wrong))
+    clear.sort(key=lambda t: (-(t[3] + t[5]), t[0]))
+    out += ["## Positions where the playouts are clear (event lead beyond 2 SE either way)", "",
+            "Unweighted counts of bank positions, cards with at least one clear raw error.", ""]
+    table(["card", "side", "n", "event clearly better", "raw did not event", "event clearly worse", "raw evented"],
+          [[cards[k[0]]["name"], k[1], n, b, m, w, wr] for k, n, b, m, w, wr in clear[:30]])
+    out += ["## Every card", ""]
+    table(card_head, [card_row(k) for k in sorted(per_card, key=lambda k: (str(cards[k[0]]["name"]), k[1]))])
+    return "\n".join(out), num
+
+
 def _paired(a: Sequence[Optional[float]], b: Sequence[Optional[float]], idx: Sequence[int]) -> Tuple[float, float, int]:
     """Mean and SE of a - b over the worlds in `idx` where both are defined."""
     d = [a[i] - b[i] for i in idx if a[i] is not None and b[i] is not None]   # type: ignore[operator]
@@ -801,6 +1038,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pl.add_argument("--seed", type=int, default=0)
     pl.add_argument("--chunk", type=int, default=16)
     pl.add_argument("--out", required=True)
+    es = sub.add_parser("event-select", help="the event-decision bank: play-mode decisions by card and side")
+    es.add_argument("--annotated", nargs="+", required=True)
+    es.add_argument("--cap", type=int, default=30, help="positions per (card, side) at most")
+    es.add_argument("--seed", type=int, default=0)
+    es.add_argument("--out", required=True)
+    er = sub.add_parser("event-report", help="the event-decision tables, from its bank and playouts")
+    er.add_argument("--bank", required=True)
+    er.add_argument("--playouts", nargs="+", required=True)
+    er.add_argument("--games", type=int, required=True, help="annotate's game count")
+    er.add_argument("--sample", type=int, default=8, help="annotate's --sample")
+    er.add_argument("--human-holdings", default=None, help="event_play_census --dump of the human corpus")
+    er.add_argument("--bot-holdings", default=None, help="event_play_census --dump of the model's self-play")
+    er.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
     rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
     rp.add_argument("--bank", required=True)
     rp.add_argument("--reference", nargs="+", required=True)
@@ -821,6 +1071,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         open(a.out, "w").write(md + "\n")
         json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
         print(f"report -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "event-select":
+        cards = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
+        bank = event_select(iter_annotated(a.annotated, is_event_decision), cards, a.cap, a.seed)
+        with gzip.open(a.out, "wt") as f:
+            for r in bank:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        groups = collections.Counter(r["stratum"] for r in bank)
+        print(f"{len(bank)} positions in {len(groups)} (card, side) groups, "
+              f"{sum(len(r['pmoves']) for r in bank)} moves to play out -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "event-report":
+        from tools.scripts.event_play_census import load_holding
+
+        def rates(path: Optional[str]) -> Optional[Dict[Tuple[int, str], Tuple[int, int]]]:
+            return ar_event_rates([load_holding(r) for r in json.load(open(path))["holdings"]]) if path else None
+
+        cards = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
+        md, num = event_analysis(read_rows([a.bank]), read_rows(a.playouts), cards, a.sample / a.games,
+                                 rates(a.human_holdings), rates(a.bot_holdings))
+        open(a.out, "w").write(md + "\n")
+        json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
+        print(f"event report -> {a.out}", file=sys.stderr)
         return 0
     if a.cmd == "oracle":
         return oracle(a)

@@ -876,6 +876,12 @@ network) and `report`. The CI stages run through `.github/workflows/search_bank.
 rebuilds the published ONNX export as a torch checkpoint on each runner. Results, method and the
 full command sequence: `research/log/E7_search_disagreement_bank.md`.
 
+A second bank comes from the same annotated positions: `event-select` takes every action-round
+play-mode decision where the event is a legal choice, at most `--cap` per (card, side), with the
+event and the raw network's most probable alternative (Space as well on an opponent's card) as the
+moves for `playouts`; `event-report` ranks the cards by raw's playout-measured loss a game, split
+into missed and wrong events, beside the model's and the human corpus's event rates.
+
 ---
 
 ## 8. Shared Helpers Library (`tools/lib/`)
