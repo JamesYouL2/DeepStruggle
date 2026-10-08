@@ -191,3 +191,48 @@ def test_event_regret_is_measured_on_pairs_the_best_move_was_not_picked_on() -> 
     assert v["kind"] == "missed_event" and abs(v["regret"] - 100.0) < 1e-9
     w = event_verdict(dict(b, raw=EVENT), {str(EVENT): [0.0] * 16, str(infl): [1.0] * 16})
     assert w["kind"] == "wrong_event" and abs(w["regret"] - 100.0) < 1e-9 and w["raw_event"]
+
+
+def test_subs_select_keeps_us_subs_decisions_with_raws_best_non_event_play() -> None:
+    from tools.search_bank import EVENT, SPACE, is_subs_decision, subs_select
+    infl, coup = EVENT + 2, EVENT + 3
+    r = _play_mode_row(0, 41, "US", [EVENT, SPACE, infl, coup], [3.0, 0.0, 1.0, 2.0])
+    assert is_subs_decision(r)
+    assert subs_select([r])[0]["alt"] == coup                 # the best play other than the event
+    assert not is_subs_decision(dict(r, side="USSR"))
+    assert not is_subs_decision(_play_mode_row(1, 42, "US", [EVENT, infl], [0.0, 1.0]))
+
+
+def _us_play_mode_state() -> ts.GameState:
+    """A US action-round play-mode decision, reached by the first legal action at every step."""
+    st = ts.GameState()
+    ts.Engine.init_game(st, 7)
+    for _ in range(5000):
+        ctx = st.ctx()
+        if (st.current_phase == ts.Phase.ACTION_ROUND and ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE
+                and ctx.decision_player == ts.Player.US
+                and np.asarray(ActionEncoder.get_legal_mask(st))[ActionEncoder.PLAY_MODE_OFFSET + 3]):
+            return st
+        ts.Engine.step_flat(st, int(np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))[0]))
+    raise AssertionError("no US play-mode decision with a coup reached")
+
+
+def test_subs_watch_steers_to_a_battleground_coup_only_under_subs_and_counts_it() -> None:
+    from ai.eval.subs_followup import OPS_COUP, SubsWatch, bg_coup_open, is_us_coup_target
+    st = _us_play_mode_state()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st)).copy()
+    w = SubsWatch([int(st.turn)], ["next"])
+    assert (w.steer(0, st, mask) == mask).all()                # Subs not in effect: untouched
+    st.persistent_effects |= ts.EffectBits.NUCLEAR_SUBS_ACTIVE
+    assert bg_coup_open(st)
+    forced = w.steer(0, st, mask)
+    assert list(np.flatnonzero(forced)) == [OPS_COUP]
+    ts.Engine.step_flat(st, OPS_COUP)
+    assert is_us_coup_target(st)
+    tmask = np.asarray(ActionEncoder.get_legal_mask(st)).copy()
+    targets = np.flatnonzero(w.steer(0, st, tmask))
+    assert len(targets) and all(ts.MapData.get_country_info(int(a) - ActionEncoder.NODE_OFFSET)["battleground"]
+                                for a in targets)
+    w.seen(0, st, int(targets[0]))
+    assert w.counts[0]["coups"] == 1 and w.counts[0]["bg_coups"] == 1 and w.counts[0]["forced"] == 1
+    assert w.left[0] == 0                                      # "next" forces one coup only

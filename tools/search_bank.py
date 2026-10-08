@@ -38,6 +38,14 @@ Stages (each resumable, each writing JSONL.gz rows of schema `SCHEMA`):
   events, the event's playout lead over the alternative, raw's split-sample regret and its loss a
   game split into missed events, wrong events and other departures, beside the model's and the
   human corpus's action-round event rates (event_play_census dumps).
+* `subs-select` -- (local) every US play-mode decision for Nuclear Subs with the event legal in the
+  annotated positions, with `alt`, the raw network's most probable non-event play.
+* `subs` -- per row, paired playouts of four branches (ai/eval/subs_followup.py): `alt`; the Subs
+  event with the model playing on; the event then one scripted battleground coup (`next`); the
+  event then a battleground coup at every US play-mode decision left in the turn (`all`); with the
+  US's coups for the rest of the turn counted in each.
+* `subs-report` -- (local) does the model follow Subs with battleground coups, and what the event
+  is worth with and without the scripted follow-up, by DEFCON.
 * `annotate` -- the raw network plays itself (`--temperature`, default 0.1, the tournaments'
   setting); one decision in `--sample` with two or more legal moves is kept, and each is put to the
   raw network and to every Gumbel configuration in `--budgets` (default the three measured in
@@ -552,6 +560,129 @@ def ar_event_rates(holdings: Sequence[Any]) -> Dict[Tuple[int, str], Tuple[int, 
 Verdicts = Sequence[Tuple[Dict[str, Any], Dict[str, Any]]]
 
 
+def is_subs_decision(r: Dict[str, Any]) -> bool:
+    """A US action-round play-mode decision for Nuclear Subs with the event legal."""
+    from ai.eval.subs_followup import NUCLEAR_SUBS
+
+    return (r["decision_type"] == "SELECT_PLAY_MODE" and r["phase"] == "ACTION_ROUND" and r["side"] == "US"
+            and int(r["card"]) == NUCLEAR_SUBS and EVENT in r["legal"] and len(r["legal"]) > 1)
+
+
+def subs_select(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every Subs decision in `rows`, each with `alt`: the raw network's most probable non-event play."""
+    out = []
+    for r in rows:
+        lg = {a: x for a, x in zip(r["legal"], r["logits"]) if a != EVENT}
+        out.append(dict(r, alt=max(lg, key=lambda a: lg[a])))
+    return sorted(out, key=lambda r: r["id"])
+
+
+def subs_stage(a: argparse.Namespace) -> int:
+    from ai.eval.subs_followup import subs_branches
+    from tools.lib.player_agent import OnnxAgent
+    from tools.scripts.event_play_census import state_from_token
+
+    rows = _my_rows(a)
+    agent = OnnxAgent(a.onnx or (os.path.splitext(a.model)[0] + ".onnx"))
+
+    def act(obs: Any, masks: Any) -> Any:
+        return agent.act_batch(obs, masks, 0.0, True)
+
+    k = int(a.part.split("/")[0])
+    t0 = time.time()
+    with gzip.open(a.out, "wt") as f:
+        for lo in range(0, len(rows), a.chunk):
+            batch = rows[lo:lo + a.chunk]
+            res = subs_branches([state_from_token(r["pos"]) for r in batch], [int(r["alt"]) for r in batch],
+                                act, a.pairs, a.seed + 100_003 * k + lo)
+            for r, x in zip(batch, res):
+                f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "pairs": a.pairs, "alt": r["alt"],
+                                    "branches": x}, separators=(",", ":")) + "\n")
+            print(f"{lo + len(batch)}/{len(rows)} positions, {time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    return 0
+
+
+def subs_analysis(bank: Sequence[Dict[str, Any]], rows: Sequence[Dict[str, Any]],
+                  per_game: float) -> Tuple[str, Dict[str, Any]]:
+    """The Subs tables: coups after the event, each branch against `alt`, and a split-sample best
+    branch (chosen on even pairs, measured on odd), overall and by DEFCON."""
+    from ai.eval.subs_followup import BRANCHES, COUNTS
+    from tools.scripts.event_play_census import state_from_token
+
+    by_id = {r["id"]: r for r in bank}
+    pos: List[Dict[str, Any]] = []
+    for x in rows:
+        b = by_id[x["id"]]
+        st = state_from_token(b["pos"])
+        br = x["branches"]
+        alt = np.asarray(br["alt"]["score"])
+        d = {k: np.asarray(br[k]["score"]) - alt for k in BRANCHES if k != "alt"}
+        ev, od = slice(0, None, 2), slice(1, None, 2)
+        pick = max(BRANCHES, key=lambda k: float(np.mean(np.asarray(br[k]["score"])[ev])))
+        pos.append({"id": x["id"], "turn": b["turn"], "ar": b["ar"], "defcon": int(st.defcon),
+                    "raw_event": b["raw"] == EVENT, "alt": b["alt"],
+                    "lead": {k: (100 * float(v.mean()), 100 * float(v.std(ddof=1) / math.sqrt(len(v))))
+                             for k, v in d.items()},
+                    "pick": pick,
+                    "regret": 100 * float(np.mean(np.asarray(br[pick]["score"])[od] - alt[od])),
+                    "counts": {k: {c: float(np.mean(br[k][c])) for c in COUNTS} for k in BRANCHES},
+                    "any_forced": float(np.mean(np.asarray(br["next"]["forced"]) > 0))})
+
+    def mse(v: Sequence[float]) -> Tuple[float, float]:
+        a_ = np.asarray(v, dtype=float)
+        return (float(a_.mean()), float(a_.std(ddof=1) / math.sqrt(len(a_)))) if len(a_) > 1 else (float(a_.mean()), math.nan)
+
+    groups = [("all", pos), ("DEFCON 2", [p for p in pos if p["defcon"] == 2]),
+              ("DEFCON 3+", [p for p in pos if p["defcon"] > 2]),
+              ("DEFCON 2, AR 1-3", [p for p in pos if p["defcon"] == 2 and p["ar"] <= 3]),
+              ("DEFCON 2, AR 4+", [p for p in pos if p["defcon"] == 2 and p["ar"] > 3])]
+    num: Dict[str, Any] = {"per_game": per_game, "positions": pos, "groups": {}}
+    md = [f"# Nuclear Subs and its follow-up: {len(pos)} US positions", "",
+          "US action-round play-mode decisions for Nuclear Subs (event legal) from the raw network's "
+          "self-play, each played out in paired branches by the raw network: `alt` its own choice "
+          "there; `event` Subs for its event, the model playing on; `next` the event, then a "
+          "battleground coup at the US's first later play-mode decision of the turn where one is "
+          "possible (card the model's, target its most probable battleground); `all` the same at every "
+          "such decision left in the turn. Leads are points of win probability for the US over `alt`, "
+          "the SE across positions. **Best branch**: chosen on the even pairs, measured against `alt` "
+          "on the odd ones. Coups are the US's, for the rest of the turn, per pair; `alt`'s include a "
+          "coup it makes itself.", "",
+          "## Leads over the raw network's play", "",
+          "| group | n | a game | raw events | event | event + next | event + all | best branch (split) | loss a game |",
+          "|:---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for name, g in groups:
+        if not g:
+            continue
+        row = {k: mse([p["lead"][k][0] for p in g]) for k in ("event", "next", "all")}
+        rg = mse([p["regret"] for p in g])
+        n_g = len(g) * per_game
+        num["groups"][name] = {"n": len(g), "per_game": n_g, "lead": row, "regret": rg}
+        md.append(f"| {name} | {len(g)} | {n_g:.2f} | {sum(p['raw_event'] for p in g) / len(g):.0%} | "
+                  + " | ".join(f"{row[k][0]:+.2f} ± {row[k][1]:.2f}" for k in ("event", "next", "all"))
+                  + f" | {rg[0]:+.2f} ± {rg[1]:.2f} | {rg[0] * n_g:+.2f} ± {rg[1] * n_g:.2f} |")
+    md += ["", "## The US's coups for the rest of the turn, per pair", "",
+           "| group | branch | coups | in battlegrounds | battleground at DEFCON 2 under Subs | scripted |",
+           "|:---|:---|---:|---:|---:|---:|"]
+    for name, g in groups:
+        if not g:
+            continue
+        for k in BRANCHES:
+            c = {cc: float(np.mean([p["counts"][k][cc] for p in g])) for cc in COUNTS}
+            num["groups"][name].setdefault("counts", {})[k] = c
+            md.append(f"| {name} | {k} | {c['coups']:.2f} | {c['bg_coups']:.2f} | {c['bg_coups_d2_subs']:.2f} | "
+                      f"{c['forced']:.2f} |")
+    md += ["", "Share of pairs where the scripted coup found a battleground (the `next` branch): "
+           f"{np.mean([p['any_forced'] for p in pos]):.0%}.", "",
+           "## Every position", "",
+           "| turn | AR | DEFCON | raw | event | event + next | event + all | best (even pairs) |",
+           "|---:|---:|---:|---:|---:|---:|---:|:---|"]
+    for p in sorted(pos, key=lambda p: (p["defcon"], p["turn"], p["ar"])):
+        md.append(f"| {p['turn']} | {p['ar']} | {p['defcon']} | {'event' if p['raw_event'] else p['alt']} | "
+                  + " | ".join(f"{p['lead'][k][0]:+.1f} ± {p['lead'][k][1]:.1f}" for k in ("event", "next", "all"))
+                  + f" | {p['pick']} |")
+    return "\n".join(md), num
+
+
 def _wmean_se(rs: Verdicts, f: Callable[[Dict[str, Any]], float]) -> Tuple[float, float]:
     """Weighted mean over positions and its SE between positions (each one's playout noise is in it)."""
     w = [b["weight"] for b, _ in rs]
@@ -1051,6 +1182,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     er.add_argument("--human-holdings", default=None, help="event_play_census --dump of the human corpus")
     er.add_argument("--bot-holdings", default=None, help="event_play_census --dump of the model's self-play")
     er.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
+    ss = sub.add_parser("subs-select", help="every US Nuclear Subs play-mode decision in the annotated positions")
+    ss.add_argument("--annotated", nargs="+", required=True)
+    ss.add_argument("--out", required=True)
+    sb = sub.add_parser("subs", help="Nuclear Subs: the event with and without a scripted battleground coup")
+    sb.add_argument("--model", required=True, help="the .pt; its .onnx beside it plays (or --onnx)")
+    sb.add_argument("--onnx", default=None)
+    sb.add_argument("--bank", required=True, help="subs-select rows")
+    sb.add_argument("--part", default="1/1")
+    sb.add_argument("--pairs", type=int, default=256)
+    sb.add_argument("--seed", type=int, default=0)
+    sb.add_argument("--chunk", type=int, default=4)
+    sb.add_argument("--out", required=True)
+    sr = sub.add_parser("subs-report", help="the Nuclear Subs tables")
+    sr.add_argument("--bank", required=True)
+    sr.add_argument("--subs", nargs="+", required=True)
+    sr.add_argument("--games", type=int, required=True, help="annotate's game count")
+    sr.add_argument("--sample", type=int, default=8, help="annotate's --sample")
+    sr.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
     rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
     rp.add_argument("--bank", required=True)
     rp.add_argument("--reference", nargs="+", required=True)
@@ -1094,6 +1243,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         open(a.out, "w").write(md + "\n")
         json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
         print(f"event report -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "subs-select":
+        bank = subs_select(iter_annotated(a.annotated, is_subs_decision))
+        with gzip.open(a.out, "wt") as f:
+            for r in bank:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        print(f"{len(bank)} Subs positions -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "subs":
+        return subs_stage(a)
+    if a.cmd == "subs-report":
+        md, num = subs_analysis(read_rows([a.bank]), read_rows(a.subs), a.sample / a.games)
+        open(a.out, "w").write(md + "\n")
+        json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
+        print(f"subs report -> {a.out}", file=sys.stderr)
         return 0
     if a.cmd == "oracle":
         return oracle(a)

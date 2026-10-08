@@ -882,6 +882,12 @@ event and the raw network's most probable alternative (Space as well on an oppon
 moves for `playouts`; `event-report` ranks the cards by raw's playout-measured loss a game, split
 into missed and wrong events, beside the model's and the human corpus's event rates.
 
+A third asks one card's question: `subs-select` takes every US play-mode decision for Nuclear Subs,
+`subs` plays four paired branches at each (`ai/eval/subs_followup.py`: raw's own play, the event,
+the event then one scripted battleground coup, the event then a battleground coup at every US
+play-mode decision left in the turn) and counts the US's coups for the rest of the turn in each,
+and `subs-report` gives the leads over raw's play and the coup counts by DEFCON.
+
 ---
 
 ## 8. Shared Helpers Library (`tools/lib/`)

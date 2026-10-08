@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
 import numpy as np
 import ts_engine as ts
@@ -31,6 +31,18 @@ from tools.lib.game_step import drain_chance
 #: (observations, masks) -> one greedy action per row
 PolicyFn = Callable[[np.ndarray, np.ndarray], np.ndarray]
 _UINT64 = 1 << 64
+
+
+class Watch(Protocol):
+    """Looks at, and may steer, chosen rows of a playout batch: `wants(i)` says whether row i is
+    watched at this step; for a watched row `steer` may narrow its legal mask before the policy
+    picks, and `seen` is told the action taken from that state."""
+
+    def wants(self, i: int) -> bool: ...
+
+    def steer(self, i: int, st: ts.GameState, mask: np.ndarray) -> np.ndarray: ...
+
+    def seen(self, i: int, st: ts.GameState, action: int) -> None: ...
 
 
 def decider(st: ts.GameState) -> ts.Player:
@@ -74,10 +86,11 @@ def loses_now(st: ts.GameState, a: int, mover: ts.Player) -> bool:
 
 def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
               keys: Sequence[Tuple[int, int, int, int]], act: PolicyFn, seed: int,
-              max_steps: int = 4000) -> List[float]:
+              max_steps: int = 4000, watch: Optional[Watch] = None) -> List[float]:
     """Play every state to the end with `act` on both sides, in one batch, never taking an
     option that loses on the spot while another exists during the mover's action round (`keys`,
-    read before the forced move). The mover's score per state: 1 win, 0.5 draw, 0 loss."""
+    read before the forced move). The mover's score per state: 1 win, 0.5 draw, 0 loss. `watch`,
+    if given, sees and may steer the rows it asks for, after the safety guard."""
     n = len(starts)
     runner = ts.VectorizedBatchRunner(n, seed)
     for i, st in enumerate(starts):
@@ -92,22 +105,28 @@ def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
         obs = np.asarray(runner.get_observations())
         masks = np.asarray(runner.get_action_masks()).copy()
         rows = np.flatnonzero(active)
+        watched: Dict[int, ts.GameState] = {}
         for i in (int(x) for x in rows):
-            if not guarding[i]:
-                continue
-            st = runner.get_state(i)
-            if ar_key(st) != keys[i] or decider(st) != movers[i]:
-                guarding[i] = False
-                continue
-            if int(st.defcon) > 2:
-                continue               # nothing one decision does loses on the spot above DEFCON 2
-            legal = np.flatnonzero(masks[i])
-            safe = [a for a in legal if not loses_now(st, int(a), movers[i])]
-            if safe and len(safe) < len(legal):
-                masks[i] = 0
-                masks[i, safe] = 1
+            st: Optional[ts.GameState] = None
+            if guarding[i]:
+                st = runner.get_state(i)
+                if ar_key(st) != keys[i] or decider(st) != movers[i]:
+                    guarding[i] = False
+                elif int(st.defcon) <= 2:  # nothing one decision does loses on the spot above DEFCON 2
+                    legal = np.flatnonzero(masks[i])
+                    safe = [a for a in legal if not loses_now(st, int(a), movers[i])]
+                    if safe and len(safe) < len(legal):
+                        masks[i] = 0
+                        masks[i, safe] = 1
+            if watch is not None and watch.wants(i):
+                st = st if st is not None else runner.get_state(i)
+                masks[i] = watch.steer(i, st, masks[i])
+                watched[i] = st
         acts = np.zeros(n, dtype=np.int32)
         acts[rows] = act(obs[rows], masks[rows])
+        if watch is not None:
+            for i, st in watched.items():
+                watch.seen(i, st, int(acts[i]))
         res = runner.step_flat_all(acts.tolist(), auto_advance=True)
         refused = [int(i) for i in rows if res[i] == 0]
         if refused:
