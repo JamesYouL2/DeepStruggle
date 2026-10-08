@@ -259,3 +259,21 @@ def test_a_state_selector_plays_the_continuation_and_reproduces_the_policy_it_wr
     # `act` is only the fallback for a choice outside a narrowed mask, so the selector decides
     assert play_safe(starts, movers, keys, last, 5, select=select_first) == plain
     assert seen
+
+
+def test_china_bank_plays_the_china_card_against_raws_choice_or_its_best_other_card() -> None:
+    from tools.search_bank import CHINA, china_select, china_verdict, is_china_decision
+
+    def row(i: int, raw: int, legal: List[int], logits: List[float], ar: int = 2) -> dict:
+        return {"id": f"r{i}", "decision_type": "SELECT_CARD", "phase": "ACTION_ROUND", "side": "US",
+                "ar": ar, "turn": 4, "legal": legal, "logits": logits, "raw": raw}
+
+    other = row(1, 40, [CHINA, 40, 60], [0.0, 2.0, 1.0])
+    eager = row(2, CHINA, [CHINA, 40, 60], [3.0, 1.0, 2.0])
+    assert is_china_decision(other) and not is_china_decision(row(3, CHINA, [CHINA, 208], [0.0, 0.0]))
+    bank = {r["id"]: r for r in china_select([other, eager] + [dict(other, id=f"x{i}") for i in range(3)], 2, 0)}
+    assert bank["r2"]["pmoves"] == [60, CHINA]                 # raw plays China: its best other card
+    sample = [r for r in bank.values() if r["stratum"].endswith("raw other")]
+    assert len(sample) == 2 and all(r["weight"] == 2.0 for r in sample)   # 4 in the stratum, 2 drawn
+    v = china_verdict(bank["r2"], {"60": [1.0, 1.0, 1.0, 1.0], str(CHINA): [0.0, 0.0, 0.0, 0.0]})
+    assert v["gain"] == -100.0 and v["kind"] == "too eager" and v["regret"] == 100.0

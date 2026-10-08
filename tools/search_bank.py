@@ -691,6 +691,110 @@ def subs_analysis(bank: Sequence[Dict[str, Any]], rows: Sequence[Dict[str, Any]]
     return "\n".join(md), num
 
 
+CHINA = 5   # the flat SELECT_CARD action of card 6, the China Card
+
+
+def is_china_decision(r: Dict[str, Any]) -> bool:
+    """An action-round card choice with the China Card playable beside some other card."""
+    return (r["decision_type"] == "SELECT_CARD" and r["phase"] == "ACTION_ROUND" and CHINA in r["legal"]
+            and any(a < 110 and a != CHINA for a in r["legal"]))
+
+
+def china_stratum(r: Dict[str, Any]) -> str:
+    """side / action round / cards in hand (the China Card included) / whether raw plays it."""
+    ar = int(r["ar"])
+    hand = sum(1 for a in r["legal"] if a < 110)
+    return "/".join([str(r["side"]), "AR1" if ar <= 1 else "AR2-3" if ar <= 3 else "AR4-5" if ar <= 5 else "AR6+",
+                     "2 cards" if hand <= 2 else "3-4 cards" if hand <= 4 else "5+ cards",
+                     "raw China" if int(r["raw"]) == CHINA else "raw other"])
+
+
+def china_select(rows: Iterable[Dict[str, Any]], cap: int, seed: int) -> List[Dict[str, Any]]:
+    """The China Card bank: China Card decisions grouped by `china_stratum`, at most `cap` drawn at
+    random from each, each weighted by its group's population over its sample. `pmoves` is the
+    alternative -- raw's choice, or where raw plays the China Card its most probable other play --
+    and the China Card."""
+    rng = random.Random(seed)
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        if is_china_decision(r):
+            groups.setdefault(china_stratum(r), []).append(r)
+    out: List[Dict[str, Any]] = []
+    for k in sorted(groups):
+        g = sorted(groups[k], key=lambda r: r["id"])
+        pick = rng.sample(g, min(cap, len(g)))
+        for r in pick:
+            lg = {a: x for a, x in zip(r["legal"], r["logits"]) if a != CHINA}
+            alt = int(r["raw"]) if int(r["raw"]) != CHINA else max(lg, key=lambda a: lg[a])
+            out.append(dict(r, stratum=k, alt=alt, weight=round(len(g) / len(pick), 4), pmoves=[alt, CHINA]))
+    return out
+
+
+def china_verdict(b: Dict[str, Any], scores: Dict[str, List[float]]) -> Dict[str, Any]:
+    """The China Card's lead over the alternative (points, all pairs, with its paired SE), and raw's
+    regret: the better of the two picked on the even pairs, its lead over raw's move on the odd."""
+    sc = {int(m): v for m, v in scores.items()}
+    alt, raw = int(b["alt"]), int(b["raw"])
+    d = [100 * (x - y) for x, y in zip(sc[CHINA], sc[alt])]
+    n = len(d)
+    gain = sum(d) / n
+    se = math.sqrt(sum((x - gain) ** 2 for x in d) / (n - 1) / n) if n > 1 else math.nan
+    pick = CHINA if sum(sc[CHINA][0::2]) > sum(sc[alt][0::2]) else alt
+    odd = [100 * (x - y) for x, y in zip(sc[pick][1::2], sc[raw][1::2])]
+    regret = 0.0 if pick == raw else sum(odd) / len(odd)
+    return {"gain": gain, "gain_se": se, "regret": regret, "raw_china": raw == CHINA, "pick_china": pick == CHINA,
+            "kind": "none" if pick == raw else ("too passive" if pick == CHINA else "too eager")}
+
+
+def china_analysis(bank_rows: Sequence[Dict[str, Any]], runs: Sequence[Tuple[str, Sequence[Dict[str, Any]]]],
+                   per_game: float) -> Tuple[str, Dict[str, Any]]:
+    """Per group and per continuation: how often raw plays the China Card, the China Card's lead over
+    the alternative, and raw's split-sample regret a game, split into too passive (the China Card
+    was better and raw played another card) and too eager (the reverse)."""
+    out: List[str] = [f"# China Card bank: {len(bank_rows)} positions", "",
+                      "Points of win probability for the mover. *China lead* is the China Card over the "
+                      "alternative (raw's card, or where raw plays the China Card its most probable other card), "
+                      "averaged over the population; *loss a game* is raw's split-sample regret, as too passive "
+                      "(the China Card was better) and too eager (the alternative was).", ""]
+    num: Dict[str, Any] = {}
+    groupings: List[Tuple[str, Callable[[Dict[str, Any]], str]]] = [
+        ("all", lambda b: "all"), ("side", lambda b: str(b["side"])),
+        ("action round", lambda b: b["stratum"].split("/")[1]),
+        ("cards in hand", lambda b: b["stratum"].split("/")[2]),
+        ("era", lambda b: era(int(b["turn"]))),
+        ("raw's choice", lambda b: b["stratum"].split("/")[3]),
+        ("side x action round", lambda b: "/".join(b["stratum"].split("/")[:2])),
+    ]
+    for label, sc in runs:
+        pl = {p["id"]: p["scores"] for p in sc}
+        rs: Verdicts = [(b, china_verdict(b, pl[b["id"]])) for b in bank_rows if b["id"] in pl]
+        out += [f"## Continuation: {label} ({len(rs)} positions)", ""]
+        for title, key in groupings:
+            groups: Dict[str, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = collections.defaultdict(list)
+            for b, v in rs:
+                groups[key(b)].append((b, v))
+            out += [f"### By {title}", "",
+                    "| group | n | a game | raw plays China | best is China | China lead (pts) | loss a game (pts) | too passive | too eager |",
+                    "|:---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+            for k in sorted(groups):
+                g = groups[k]
+                pop = sum(b["weight"] for b, _ in g)
+                share = lambda f, g=g, pop=pop: sum(b["weight"] * f(v) for b, v in g) / pop
+                gain, gse = _wmean_se(g, lambda v: v["gain"])
+                rg, rse = _wmean_se(g, lambda v: v["regret"])
+                games = pop * per_game
+                passive = share(lambda v: v["regret"] * (v["kind"] == "too passive")) * games
+                eager = share(lambda v: v["regret"] * (v["kind"] == "too eager")) * games
+                out.append(f"| {k} | {len(g)} | {games:.1f} | {100 * share(lambda v: v['raw_china']):.1f}% | "
+                           f"{100 * share(lambda v: v['pick_china']):.1f}% | {gain:+.2f} ± {gse:.2f} | "
+                           f"{rg * games:+.2f} ± {rse * games:.2f} | {passive:+.2f} | {eager:+.2f} |")
+                num[f"{label}|{title}|{k}"] = {"n": len(g), "per_game": games, "gain": gain, "gain_se": gse,
+                                                 "loss": rg * games, "loss_se": rse * games,
+                                                 "passive": passive, "eager": eager}
+            out.append("")
+    return "\n".join(out), num
+
+
 def _wmean_se(rs: Verdicts, f: Callable[[Dict[str, Any]], float]) -> Tuple[float, float]:
     """Weighted mean over positions and its SE between positions (each one's playout noise is in it)."""
     w = [b["weight"] for b, _ in rs]
@@ -1180,6 +1284,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="play both sides on with Gumbel search of --model at SIMS evaluations and "
                          "K candidates (e.g. 16:4) instead of the raw network")
     pl.add_argument("--out", required=True)
+    cs = sub.add_parser("china-select", help="the China Card bank: card choices with the China Card playable")
+    cs.add_argument("--annotated", nargs="+", required=True)
+    cs.add_argument("--cap", type=int, default=30, help="positions per stratum at most")
+    cs.add_argument("--seed", type=int, default=0)
+    cs.add_argument("--out", required=True)
+    cr = sub.add_parser("china-report", help="the China Card bank's verdicts, per continuation")
+    cr.add_argument("--bank", required=True)
+    cr.add_argument("--playouts", nargs="+", required=True, metavar="LABEL=PATH",
+                    help="a playouts stage's output, labelled by its continuation (e.g. raw=..., g16=...)")
+    cr.add_argument("--games", type=int, required=True, help="annotate's game count")
+    cr.add_argument("--sample", type=int, default=8, help="annotate's --sample")
+    cr.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
     es = sub.add_parser("event-select", help="the event-decision bank: play-mode decisions by card and side")
     es.add_argument("--annotated", nargs="+", required=True)
     es.add_argument("--cap", type=int, default=30, help="positions per (card, side) at most")
@@ -1254,6 +1370,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         open(a.out, "w").write(md + "\n")
         json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
         print(f"event report -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "china-select":
+        bank = china_select(iter_annotated(a.annotated, is_china_decision), a.cap, a.seed)
+        with gzip.open(a.out, "wt") as f:
+            for r in bank:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        groups = collections.Counter(r["stratum"] for r in bank)
+        print(f"{len(bank)} positions in {len(groups)} strata -> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "china-report":
+        runs = [(spec.split("=", 1)[0], read_rows([spec.split("=", 1)[1]])) for spec in a.playouts]
+        md, num = china_analysis(read_rows([a.bank]), runs, a.sample / a.games)
+        open(a.out, "w").write(md + "\n")
+        json.dump(num, open(a.out + ".json", "w"), indent=1, default=str)
+        print(f"china report -> {a.out}", file=sys.stderr)
         return 0
     if a.cmd == "subs-select":
         bank = subs_select(iter_annotated(a.annotated, is_subs_decision))
