@@ -560,3 +560,19 @@ run climbed a steady +1.4–1.8 points per 400M from 4,800M to 6,000M -- faster 
 47.9% to 52.7%: **one `E7-A8-R1-S44` is now level with or slightly above the best soup of three
 plain runs.** The plain line plateaued around 3,700M; the heads run kept improving for about 3,000M
 more. A host suspend of 7.4 hours at ~2,450M paused the leg without effect on it.
+
+## Search on the plateau network (owner's plan, 2026-10-08)
+
+Each network against itself searched -- PUCT at 128 simulations (`search:<ckpt>:128:determinize:all::cpp:0`)
+and a Gumbel root, k = 8 at 256 evaluations (`gumbel:<ckpt>:256:8`), the strongest searcher of
+[`E7_gumbel_headroom.md`](E7_gumbel_headroom.md) -- 1,000 games a side, greedy
+(`data/reports/a8_search_{raw6800,swa6800}.*`):
+
+| network | PUCT @128 vs it | Gumbel k=8 @256 vs it |
+|:---|:---|:---|
+| `E7-A8-R1-S44@6800M` (raw) | **55.0% ± 1.1** (as US 52.7, as USSR 57.3) | **59.3% ± 1.1** (56.5 / 62.2) |
+| `E7-A8-R1-S44@6720..6800M` (SWA) | **53.7% ± 1.1** (50.9 / 56.5) | **59.6% ± 1.1** (58.2 / 61.0) |
+
+Search still pays on the plateau network, by about what it did on the plain line at 4,800M
+(Gumbel +61–66 Elo, PUCT +19–28 there): here Gumbel ~+65 Elo, PUCT ~+26–35. By the owner's rule
+("if PUCT improves strength, use it") training continues with PUCT search targets -- below.
