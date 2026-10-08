@@ -140,3 +140,54 @@ def test_regret_is_measured_on_worlds_the_best_move_was_not_chosen_on() -> None:
     assert v["pick"] == 7 and v["best"] == 7 and v["rank"] == 2
     assert abs(v["regret"]["raw"][0]) < 1e-9
     assert v["critic_best"] == 7
+
+
+def _play_mode_row(i: int, card: int, side: str, legal: List[int], logits: List[float]) -> dict:
+    return {"id": f"{i:016x}", "decision_type": "SELECT_PLAY_MODE", "phase": "ACTION_ROUND", "card": card,
+            "side": side, "turn": 4, "legal": legal, "logits": logits,
+            "raw": legal[max(range(len(legal)), key=lambda j: logits[j])]}
+
+
+def test_event_moves_play_the_event_against_raws_alternative_and_space_on_an_opponent_card() -> None:
+    from tools.search_bank import EVENT, SPACE, event_moves, is_event_decision
+    infl, coup = EVENT + 2, EVENT + 3
+    own = _play_mode_row(0, 5, "US", [EVENT, SPACE, infl, coup], [2.0, 0.5, 1.0, 0.0])
+    assert event_moves(own, "own") == [EVENT, infl]          # raw events; the alternative is its best other play
+    spaced = _play_mode_row(1, 5, "US", [EVENT, SPACE, infl], [0.0, 3.0, 1.0])
+    assert event_moves(spaced, "own") == [EVENT, SPACE]      # Space is an alternative on one's own card
+    opp = _play_mode_row(2, 5, "USSR", [EVENT, SPACE, infl, coup], [0.0, 3.0, 1.0, 2.0])
+    assert event_moves(opp, "opponent") == [EVENT, coup, SPACE]
+    for r, rel in ((own, "own"), (spaced, "own"), (opp, "opponent")):
+        assert r["raw"] in event_moves(r, rel)
+    assert not is_event_decision(dict(own, phase="HEADLINE"))
+    assert not is_event_decision(_play_mode_row(3, 6, "US", [SPACE, infl], [0.0, 1.0]))   # no event (China Card)
+
+
+def test_event_select_caps_each_card_and_side_and_weights_back_to_its_population() -> None:
+    from tools.search_bank import EVENT, event_select
+    cards = {5: {"side": "US"}, 9: {"side": "neutral"}}
+    rows = ([_play_mode_row(i, 5, "US", [EVENT, EVENT + 2], [0.0, 1.0]) for i in range(50)]
+            + [_play_mode_row(100 + i, 5, "USSR", [EVENT, EVENT + 2], [0.0, 1.0]) for i in range(7)]
+            + [_play_mode_row(200 + i, 9, "US", [EVENT, EVENT + 2], [0.0, 1.0]) for i in range(12)])
+    bank = event_select(iter(rows), cards, cap=10, seed=3)
+    by: dict = {}
+    for r in bank:
+        by.setdefault(r["stratum"], []).append(r)
+    assert {k: len(v) for k, v in by.items()} == {"5/US": 10, "5/USSR": 7, "9/US": 10}
+    assert {k: round(sum(r["weight"] for r in v)) for k, v in by.items()} == {"5/US": 50, "5/USSR": 7, "9/US": 12}
+    assert {r["relation"] for r in by["5/USSR"]} == {"opponent"} and by["9/US"][0]["relation"] == "neutral"
+
+
+def test_event_regret_is_measured_on_pairs_the_best_move_was_not_picked_on() -> None:
+    from tools.search_bank import EVENT, event_verdict
+    infl = EVENT + 2
+    b = {"raw": infl, "pmoves": [EVENT, infl], "legal": [EVENT, infl], "logits": [0.0, 1.0]}
+    # The event wins the even pairs only: picked there, it shows no lead on the odd ones.
+    v = event_verdict(b, {str(EVENT): [1.0, 0.0] * 8, str(infl): [0.0, 0.0] * 8})
+    assert v["pick"] == EVENT and v["kind"] == "missed_event" and abs(v["regret"]) < 1e-9
+    assert abs(v["gain"] - 50.0) < 1e-9
+    # Better on every pair: a missed event worth the whole lead.
+    v = event_verdict(b, {str(EVENT): [1.0] * 16, str(infl): [0.0] * 16})
+    assert v["kind"] == "missed_event" and abs(v["regret"] - 100.0) < 1e-9
+    w = event_verdict(dict(b, raw=EVENT), {str(EVENT): [0.0] * 16, str(infl): [1.0] * 16})
+    assert w["kind"] == "wrong_event" and abs(w["regret"] - 100.0) < 1e-9 and w["raw_event"]
