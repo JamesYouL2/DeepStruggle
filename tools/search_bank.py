@@ -445,14 +445,22 @@ def playouts(a: argparse.Namespace) -> int:
         return agent.act_batch(obs, masks, 0.0, True)
 
     k = int(a.part.split("/")[0])
+    searcher: Any = None
+    if a.continue_with:
+        from tools.lib.player_agent import load_agent
+        searcher = load_agent(f"gumbel:{a.model}:{a.continue_with}", device="cpu")
     t0 = time.time()
     with gzip.open(a.out, "wt") as f:
         for lo in range(0, len(rows), a.chunk):
             batch = rows[lo:lo + a.chunk]
             positions = [(state_from_token(r["pos"]), [int(m) for m in r["pmoves"]]) for r in batch]
-            scores = compare(positions, act, a.pairs, a.seed + 100_003 * k + lo)
+            if searcher is not None:
+                searcher.reseed(a.seed + 100_003 * k + lo)
+            scores = compare(positions, act, a.pairs, a.seed + 100_003 * k + lo,
+                             select=searcher.select_actions_batch if searcher is not None else None)
             for r, sc in zip(batch, scores):
                 f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "pairs": a.pairs,
+                                    "continue_with": a.continue_with or "raw",
                                     "scores": {str(m): v for m, v in sc.items()}}, separators=(",", ":")) + "\n")
             print(f"{lo + len(batch)}/{len(rows)} positions, {time.time() - t0:.0f}s", file=sys.stderr, flush=True)
     return 0
@@ -1168,6 +1176,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pl.add_argument("--pairs", type=int, default=64)
     pl.add_argument("--seed", type=int, default=0)
     pl.add_argument("--chunk", type=int, default=16)
+    pl.add_argument("--continue-with", default=None, metavar="SIMS:K",
+                    help="play both sides on with Gumbel search of --model at SIMS evaluations and "
+                         "K candidates (e.g. 16:4) instead of the raw network")
     pl.add_argument("--out", required=True)
     es = sub.add_parser("event-select", help="the event-decision bank: play-mode decisions by card and side")
     es.add_argument("--annotated", nargs="+", required=True)

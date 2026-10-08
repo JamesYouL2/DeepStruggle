@@ -236,3 +236,26 @@ def test_subs_watch_steers_to_a_battleground_coup_only_under_subs_and_counts_it(
     w.seen(0, st, int(targets[0]))
     assert w.counts[0]["coups"] == 1 and w.counts[0]["bg_coups"] == 1 and w.counts[0]["forced"] == 1
     assert w.left[0] == 0                                      # "next" forces one coup only
+
+
+def test_a_state_selector_plays_the_continuation_and_reproduces_the_policy_it_wraps() -> None:
+    from ai.eval.paired_playouts import ar_key, decider, play_safe
+
+    def first(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
+        return np.array([int(np.flatnonzero(m)[0]) for m in masks], dtype=np.int32)
+
+    def last(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
+        return np.array([int(np.flatnonzero(m)[-1]) for m in masks], dtype=np.int32)
+
+    starts = _states(4)
+    movers, keys = [decider(s) for s in starts], [ar_key(s) for s in starts]
+    seen: List[int] = []
+
+    def select_first(states: List[ts.GameState]) -> List[int]:
+        seen.append(len(states))
+        return [legal_actions(s)[0] for s in states]
+
+    plain = play_safe(starts, movers, keys, first, 5)
+    # `act` is only the fallback for a choice outside a narrowed mask, so the selector decides
+    assert play_safe(starts, movers, keys, last, 5, select=select_first) == plain
+    assert seen
