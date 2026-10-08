@@ -1,0 +1,130 @@
+# A tournament of a published ONNX export against Gumbel searchers built on it, split over runners
+# and pooled. Search needs a torch checkpoint, so the export is rebuilt as one on each runner
+# (tools/onnx_to_checkpoint.py refuses unless the rebuild reproduces the export). `$C` in `entrants`
+# stands for that checkpoint; the plain network is anchored at Elo 0.
+#
+#   gh workflow run gumbel_tournament.yml --ref exp/search-bank \
+#     -f entrants='$C gumbel:$C:16:4 gumbel:$C:8:4 gumbel:$C:8:2' -f games_per_side=1000
+#   gh run download <run-id> -n gumbel-tournament-<run-id> -D data/reports/ci/gumbel_tournament
+name: gumbel-tournament
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/search-bank]
+    paths: [.github/workflows/gumbel_tournament.yml]
+  workflow_dispatch:
+    inputs:
+      entrants:
+        description: "Agent specs; $C is the rebuilt checkpoint"
+        default: "$C gumbel:$C:16:4 gumbel:$C:8:4 gumbel:$C:8:2"
+      games_per_side:
+        description: "Games per side per matchup"
+        default: "1000"
+      model:
+        description: ".onnx in the Hugging Face repo"
+        default: "E7line_swa_4720-4800M.onnx"
+      template:
+        description: ".pt in the repo with the export's architecture"
+        default: "shallow_E7-02+03+04+05_1200M.pt"
+      runners:
+        description: "Runners (a free public repo runs up to 20 jobs at once)"
+        default: "20"
+      hf_repo:
+        description: "Hugging Face repo"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  ENTRANTS: ${{ inputs.entrants || '$C gumbel:$C:16:4 gumbel:$C:8:4 gumbel:$C:8:2' }}
+  GAMES_PER_SIDE: ${{ inputs.games_per_side || '1000' }}
+  MODEL: ${{ inputs.model || 'E7line_swa_4720-4800M.onnx' }}
+  TEMPLATE: ${{ inputs.template || 'shallow_E7-02+03+04+05_1200M.pt' }}
+  RUNNERS: ${{ inputs.runners || '20' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Fetch the model and the template
+        run: |
+          mkdir -p data/checkpoints/hf
+          for f in "$MODEL" "$TEMPLATE"; do
+            curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$f")" "https://huggingface.co/$HF_REPO/resolve/main/$f"
+          done
+      - name: Rebuild the checkpoint from the export
+        run: |
+          onnx="data/checkpoints/hf/$(basename "$MODEL")"
+          PYTHONPATH=.:build/release python tools/onnx_to_checkpoint.py --onnx "$onnx" \
+            --template "data/checkpoints/hf/$(basename "$TEMPLATE")" --out "${onnx%.onnx}.pt"
+      - name: Play part ${{ matrix.part }}
+        env:
+          TS_PYTHON: python
+        run: |
+          stem="$(basename "${MODEL%.onnx}")"
+          C="data/checkpoints/hf/$stem.pt"
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/tournament.py \
+            --models ${ENTRANTS//\$C/$C} --games-per-side "$GAMES_PER_SIDE" --temperature 0 \
+            --device cpu --workers 0 --shard-pairs 1 --anchor-model "hf@$stem" --anchor-elo 0 \
+            --part "${{ matrix.part }}/$RUNNERS" --output-part "parts/part-${{ matrix.part }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gumbel-tournament-part-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gumbel-tournament-part-${{ github.run_id }}-*
+          path: parts/
+          merge-multiple: true
+      - name: Pool the parts
+        run: |
+          mkdir -p reports
+          PYTHONPATH=.:build/release python tools/tournament.py --pool-parts parts/part-*.json \
+            --output-report reports/tournament.md --output-json reports/tournament.json \
+            --log-games reports/games.jsonl
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL (template $TEMPLATE)"
+            echo "entrants: $ENTRANTS  games_per_side: $GAMES_PER_SIDE  temperature: 0"
+            echo "runners: $RUNNERS (parts received: $(ls parts/part-*.json | wc -l))"
+          } > reports/provenance.txt
+          { echo '```'; cat reports/provenance.txt; echo '```'; cat reports/tournament.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gumbel-tournament-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
