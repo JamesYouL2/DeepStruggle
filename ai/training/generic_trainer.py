@@ -2827,7 +2827,7 @@ def train_pipeline(
                     "card_aux_n", "card_aux_ready", "card_aux_labelled", "card_aux_loss", "card_aux_r2", "card_aux_label_s",
                     # P31: the floor, the seeded games and the opponent-legality head
                     "floor_eps", "floor_row_frac", "floor_draw_frac", "seed_games_frac",
-                    "seed_forced_subs", "seed_forced_chernobyl",
+                    "seed_forced_subs", "seed_forced_chernobyl", "seed_forced_cmc_combo",
                     "opp_legal_n", "opp_legal_ready", "opp_legal_pending", "opp_legal_loss",
                     "opp_legal_acc", "opp_legal_copy_acc", "opp_legal_changed_frac",
                     "mode_cf_n", "mode_cf_options", "mode_cf_spread", "mode_cf_taken_beaten_frac",

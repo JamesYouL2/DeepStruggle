@@ -249,3 +249,34 @@ candidates) but a median 17 nats behind the top move (max 39).
 * So a search-only exploiter at this budget would seldom set this trap. Finding plans of this kind
   needs the opponent's moves collapsed out of the tree (played greedily without spending a
   simulation each), or a much larger budget, as well as the softened prior.
+
+## Sanity check: can training teach the USSR to avoid it? Not with plain RL (owner, 2026-10-09)
+
+`E7-A8-R1-S44@6400M+R28`: the heads run's own flags from 6,400M plus `--seed-scenarios cmc_combo
+--seed-frac 1.0` (new): wherever it applies, the US's scripted combo is forced as environment, with
+no policy gradient on the forced moves, so the only learner decision in the trap is the USSR's
+answer. Run directly, the seeder forces the crisis headline in 31 of 303 greedy games (~10%), so
+by 200M the learner had met the trap in tens of thousands of games.
+
+The scripted combo US (the 6,400M main + script) against each snapshot, 2,000 games:
+
+| step | R28: USSR suicides / follow-ups | plain leg |
+|:---|---:|---:|
+| 6,450M | 163 / 179 (91%) | 172 / 194 (89%) |
+| 6,500M | 138 / 163 (85%) | 141 / 170 (83%) |
+| 6,550M | 141 / 155 (91%) | 167 / 193 (87%) |
+| 6,600M | 153 / 177 (86%) | 137 / 157 (87%) |
+
+**No learning.** The reason is in the logits: on 60 USSR Lone Gunman decisions under the US's crisis
+with nothing in Cuba, the coup leads the best alternative by a median 19.4 nats at the start, 23.3 /
+19.4 on the plain leg at 6,450 / 6,600M, and **32.9 / 27.4 on R28** -- P(coup) is 1 to float precision
+in most of them (1 − P underflows). A policy-gradient step on a sampled coup is scaled by 1 − P, so
+an immediate loss produces no gradient, and influence is never sampled, so there is no positive
+example either; the lead even grew, pushed by the rest of the game. The network can represent "do
+not coup under the crisis" -- it does on its own cards (section above) -- but plain PPO cannot move a
+softmax this saturated. That is also why the main never learnt it.
+
+What would let it learn: a cap on the policy logits (c·tanh(z/c)), so no gap saturates and gradients
+survive; or a cross-entropy target towards a better policy (gradient target − π does not vanish at
+saturation), e.g. a Gumbel improved-policy target softmax(logits/T + sigma(Q)) with a softened root.
+An exploration floor alone does not: it reweights by pi_old / mu, which is ~0 for such an action.
