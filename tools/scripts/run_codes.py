@@ -86,6 +86,7 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
     ("league_dirs", None, ("league_frac", "league_pool_size")),
     ("opponent_pfsp", False, ("opponent_pfsp_weighting", "opponent_pfsp_uniform_mix")),
     ("aux_ownership", 0.0, ()),
+    ("ladder_logit_cap", 0.0, ("ladder_logit_cap_grad",)),
 )
 
 _RUN_DIR_RE = re.compile(r"^(?P<name>[^_]+)_(?P<ts>\d{8}_\d{6})(?P<void>_VOID)?$")

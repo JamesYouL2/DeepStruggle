@@ -55,3 +55,24 @@ def test_the_cap_is_recorded_in_the_weights_and_off_by_default() -> None:
     assert plain_cfg is not None and "logit_cap" not in plain_cfg     # uncapped configs unchanged
     x = torch.zeros(2, 220)
     assert torch.equal(plain._cap_logits(x, None), x)
+
+
+def test_a_straight_through_cap_plays_the_same_and_passes_the_raw_gradient() -> None:
+    """--ladder-logit-cap-grad straight: forward identical to the tanh cap; the gradient on a
+    saturated alternative is the softmax's (~p), not attenuated by the tanh's derivative."""
+    torch.manual_seed(0)
+    nets = [create_ladder_net("cpu", **M2D, logit_cap=7.0, logit_cap_grad=g).eval() for g in ("tanh", "straight")]
+    z = torch.tensor([[34.0, 6.0, -2.6]])
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    grads, outs = [], []
+    for net in nets:
+        zz = z.clone().requires_grad_(True)
+        out = net._cap_logits(zz, mask)
+        torch.log_softmax(out, -1)[0, 0].backward()
+        grads.append(zz.grad[0, 1].item())
+        outs.append(out.detach())
+    assert torch.allclose(outs[0], outs[1])
+    p_inf = float(torch.softmax(outs[0], -1)[0, 1])
+    assert abs(grads[0]) < 1e-5 and abs(grads[1] + p_inf) < 1e-6
+    assert ladder_config_from_state_dict(nets[1].state_dict()) is not None
+    assert nets[1].ladder_config()["logit_cap_grad"] == "straight"

@@ -111,6 +111,7 @@ class LadderNet(ColdWarNetV2):
                  play_mode_head: bool = False,
                  obs_features: int = 0,
                  logit_cap: float = 0.0,
+                 logit_cap_grad: str = "tanh",
                  token_layers: int = 0,
                  token_dim: int = 0,
                  **kwargs: Any) -> None:
@@ -413,6 +414,15 @@ class LadderNet(ColdWarNetV2):
         # the good moves together. Monotonic, so the greedy move is unchanged. A buffer only when
         # on, so uncapped checkpoints are unchanged.
         self.logit_cap_value = float(logit_cap)
+        # How the gradient passes the cap. "tanh": through it -- d/dz of c*tanh(d/c) is
+        # 1 - tanh^2(d/c), ~0.0013 at a 28-nat deficit, so a saturated move's raw logit learns
+        # ~750x slower than its capped probability says, and moving the top logit moves every
+        # saturated capped logit with it. "straight": the capped values forward, the raw logits'
+        # gradient as if uncapped (straight-through) -- a sampled alternative is pushed at the
+        # full softmax gradient. Forward, and so play, is identical; only training differs.
+        if logit_cap_grad not in ("tanh", "straight"):
+            raise ValueError(f"logit_cap_grad must be 'tanh' or 'straight', not {logit_cap_grad!r}")
+        self.logit_cap_grad = str(logit_cap_grad)
         if self.logit_cap_value > 0.0:
             self.register_buffer("logit_cap", torch.tensor(self.logit_cap_value, dtype=torch.float32))
         self.card_aux = bool(card_aux)
@@ -604,6 +614,7 @@ class LadderNet(ColdWarNetV2):
             play_mode_head=self.play_mode_head,
             obs_features=self.obs_feature_bits,
             **({"logit_cap": self.logit_cap_value} if self.logit_cap_value > 0.0 else {}),
+            **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
         )
 
 
@@ -625,7 +636,10 @@ class LadderNet(ColdWarNetV2):
             top = torch.where(torch.isfinite(top), top, torch.zeros_like(top))   # no legal move
         else:
             top = z.amax(dim=-1, keepdim=True)
-        return (top + c * torch.tanh((z - top) / c)).to(logits.dtype)
+        capped = top + c * torch.tanh((z - top) / c)
+        if self.logit_cap_grad == "straight":
+            capped = z + (capped - z).detach()
+        return capped.to(logits.dtype)
 
     def _policy_logits(self, h: torch.Tensor,
                        tokens: tuple[torch.Tensor, ...] | None) -> torch.Tensor:

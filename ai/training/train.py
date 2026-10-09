@@ -118,6 +118,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         **({"play_mode_head": True} if getattr(args, "ladder_play_mode_head", False) else {}),
         # Owner 2026-10-09. Recorded only when on.
         **({"logit_cap": float(args.ladder_logit_cap)} if getattr(args, "ladder_logit_cap", 0.0) else {}),
+        **({"logit_cap_grad": str(args.ladder_logit_cap_grad)}
+           if getattr(args, "ladder_logit_cap", 0.0) and getattr(args, "ladder_logit_cap_grad", "tanh") != "tanh" else {}),
     )
 
 
@@ -222,6 +224,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Bound each legal move's logit deficit to the top legal move to C through "
                           "C*tanh(deficit/C), so no policy saturates (owner 2026-10-09). Greedy play "
                           "unchanged; addable on --resume. 0 (default): off.")
+    lad.add_argument("--ladder-logit-cap-grad", type=str, default="tanh", choices=["tanh", "straight"],
+                     help="How the gradient passes the logit cap: through the tanh (default), or "
+                          "straight-through as if uncapped -- the tanh's derivative is ~0.001 at a "
+                          "saturated move, so it barely learns. Play is identical either way.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,
