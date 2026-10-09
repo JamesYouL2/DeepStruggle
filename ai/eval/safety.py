@@ -51,11 +51,15 @@ from ai.eval.positions import PLAY_MODE_ACTION
 # Events that degrade DEFCON with no intervening choice. Firing one at DEFCON 2 ends the
 # game against whoever is phasing. Verified in both directions (own event, and opponent's
 # card played for Ops).
+#
+# How I Learned to Stop Worrying is not one: its event asks the player to set DEFCON to any
+# level (a CHOOSE_BRANCH over 1-5), so only choosing 1 loses, and it is neutral, so playing it
+# for Ops never fires it. Listed here, it labelled both its event and its Ops a forced loss at
+# DEFCON 2 -- 124 of the first blunder census's 184 "exact" mistakes.
 DEFCON_DEGRADING_CARDS = {
     4: "Duck and Cover",
     50: "We Will Bury You",
     89: "Soviets Shoot Down KAL-007",
-    46: "How I Learned to Stop Worrying",
 }
 
 # Degrades DEFCON only if the opponent picks the boycott branch, so it is decisive only
