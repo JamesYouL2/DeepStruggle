@@ -60,6 +60,25 @@ teacher that works shrinks it, and it reads long before strength can.
 | **T3 teach only where the teacher knows better** | the CE term weighted by the root's value improvement over the policy's choice (or KataGo's policy-surprise weight), zero where the search agrees; `POINT_NODE` only when the gap is large | removes the flat-target noise at 84-way nodes without naming a node type |
 | **T4 R18 with an entropy target** | R18's recipe plus a dual-variable entropy target held at the plateau's 0.30 | separates "the targets are informative but broad" from "the targets are noise": if T4 gains where R18 did not, the information was there |
 
+**A precondition, from the Cuban Missile Crisis probe (ts-main, 2026-10-10;
+`research/log/E7_cuban_missile_crisis_probe.md` on `hand-knowledge-tracking`).** The heads
+policy is saturated in places: a USSR coup under the US's Cuban Missile Crisis that loses on the
+spot leads the alternatives by a median 19–33 nats, P(coup) = 1 in float32. Forcing the combo as
+environment in every game (`E7-A8-R1-S44@6400M+R28`, 200M) taught nothing -- PPO's gradient is
+scaled by 1 − P = 0 and the alternative is never sampled -- and Gumbel @256 cannot override it
+either: σ(completed Q) tops out near 15 at 256 evaluations, so a 28-nat prior wins and the
+search walks into the trap 64% of the time. **For T1 this means π′ = π·exp(σ(Q)) equals π
+wherever π is saturated, so the CE gradient (π′ − π) is ~0 exactly where the teacher knows
+better.** T1 therefore runs on a bounded logit gap -- `--ladder-logit-cap C` (A9 = A8 + cap 7:
+each legal move's deficit to the top legal move through C·tanh(d/C); greedy play unchanged,
+addable on resume, stored in the weights; at C = 7 sampled entropy 0.28 → 0.41, KL from the
+current policy 0.016; mean-centring was measured destructive, KL 0.65) -- or on a root prior
+temperature (`BatchedMCTSConfig.gumbel_prior_temperature`), and every T arm reports **the share
+of searched decisions with max p > 1 − 1e-6** before and after, as the saturation instrument.
+The cap arms running now (`E7-A8-R1-S44@6400M+A9` and `+A9-R28`, to 6,800M) decide whether the
+cap costs strength on its own and whether the trap becomes learnable under it; T1 branches from
+whichever of A8 / A9 those readings favour.
+
 **Decision.** Promote an arm iff its search gap shrinks by > 3 SE over the leg *and* it beats the
 plateau SWA head to head with the three-reference mean not lower; adopt on the seed-43 replicate
 (section 5). If T1–T4 all stay level, the ~+65 Elo is lookahead the network cannot represent at this
