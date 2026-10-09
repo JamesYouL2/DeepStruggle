@@ -89,3 +89,19 @@ The network's own choice -- usually not to headline it -- is better in both seat
 networks, though the opponent's crisis suicides (section 2) are a gift whenever it is headlined.
 Headlining it spends the headline on an event that drops DEFCON to 2 for both sides for the turn,
 and the opponent's suicidal coups come in only a few percent of those games.
+
+## Only when the opponent cannot pay: level (owner, 2026-10-09)
+
+"Lets check rule 'headline Crisis only when opponent can't pay'." `headline:40+oppcantpay:<checkpoint>`
+headlines the crisis only when, at that headline, the opponent could not pay it off (USSR: fewer
+than 2 in Cuba; US: fewer than 2 in both West Germany and Turkey); otherwise the network chooses.
+Same pairing, deals and size as above (`data/reports/cmc_rule_*_rule40_oppcantpay.jsonl`).
+
+| network | rule as US vs self-play | rule as USSR vs self-play | games changed (US / USSR seat) |
+|:---|---:|---:|---:|
+| heads soup | 47.67 vs 47.85: −0.18 ± 0.22 | 52.02 vs 52.15: −0.12 ± 0.13 | 32% / 11% |
+| raw `E7-A8-R1-S44@6800M` | 47.07 vs 47.15: −0.08 ± 0.21 | 52.78 vs 52.85: −0.07 ± 0.12 | 28% / 9% |
+
+Level on both networks, in both seats: the condition removes the cost of headlining the crisis
+blind, but adds nothing. The opponent's suicidal coups are too rare to pay for the headline, and it
+can still put Influence back into Cuba (or West Germany / Turkey) before it coups.
