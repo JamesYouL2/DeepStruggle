@@ -188,6 +188,10 @@ def _load_entrants(model_specs: List[str], device: torch.device,
     # identical step counts, so a field could report "snapshot_150011904steps#1 beat
     # snapshot_150011904steps#2" with no way to tell which run either was. Agents are now named
     # <run>@<steps> by checkpoint_id, so a genuine clash is a mistake and is refused.
+    # --self-play enters one checkpoint twice on purpose; its second copy is named for what it is,
+    # which stays attributable (both are the same checkpoint) where #1/#2 on two runs was not.
+    if len(model_specs) == 2 and model_specs[0] == model_specs[1]:
+        setattr(agents[1], "name", f"{agents[1].name}#self")
     name_counts: Dict[str, int] = {}
     for a in agents:
         name_counts[a.name] = name_counts.get(a.name, 0) + 1
