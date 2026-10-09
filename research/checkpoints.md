@@ -27,6 +27,30 @@ A win rate is only meaningful with its opponent, its game count and its side spl
 frozen anchor, the only cross-engine-comparable opponents are the rule-based bots, so every row
 below is against `HeuristicBot` at 50 games a side.
 
+## The E7 leaderboard (owner, 2026-10-09)
+
+Ratings now live in `leaderboard/` (`tools/README.md` §2b): one scale for the E7 engine, anchored
+at **E7-A4-R1-S44@4800M = 1500** (the best raw model of 2026-10-06, old name E7-20-44@4800M), the
+main players fitted on their own round robin and everyone else against them held fixed. The owner's
+main set names the current bests: best single checkpoint **E7-A8-R1-S44@6800M**, best SWA
+**E7-A8-R1-S44@6720..6800M**, best soup **E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M**, beside the
+2026-10-06 three. First table (1,000 deals a side per pair, greedy unless the id says otherwise;
+`tools/leaderboard.py show`, records `leaderboard/matches/E7.jsonl`):
+
+| player | Elo | ± |
+|:---|---:|---:|
+| `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M~gumbel(sims=256,k=8,fpu=0.2)` (not main) | 1670 | 3 |
+| `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M` | 1628 | 5 |
+| `E7-A8-R1-S44@6720..6800M` | 1585 | 5 |
+| `E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M` | 1571 | 5 |
+| `E7-A8-R1-S44@6800M` | 1553 | 5 |
+| `E7-A4-R1-S44@4720..4800M` | 1533 | 5 |
+| `E7-A4-R1-S44@4800M` | 1500 | anchor |
+
+The order matches `data/reports/a8_soup_6800M`; Gumbel k=8 @256 beats its own network 57.9% here
+(57.6% in [`log/P31_branch_arms_B1_B2.md`](log/P31_branch_arms_B1_B2.md)). Each network's behaviour
+report is in [`log/per_checkpoint/`](log/per_checkpoint/README.md), linked from the leaderboard page.
+
 ## Best models (owner, 2026-10-06)
 
 Designations on E7 (owner, 2026-10-06: "write it down"). They supersede the 2026-10-01 designations
