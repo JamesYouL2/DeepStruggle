@@ -163,7 +163,10 @@ class GumbelRoot:
                     jobs.append((i, a, s, per))
             # Every candidate of the phase in one search, each with its own share, so the phase
             # takes as many network rounds as its largest share rather than the sum of them.
-            roots = self._search([j[2] for j in jobs], [j[3] for j in jobs]) if jobs else []
+            # The root's mover is the side searching, also in candidate positions where the
+            # opponent moves next (read only by a best-response search, opponent="greedy").
+            roots = self._search([j[2] for j in jobs], [j[3] for j in jobs],
+                                 [movers[j[0]] for j in jobs]) if jobs else []
             for (i, a, _s, k), r in zip(jobs, roots):
                 if r is None:
                     continue
@@ -181,11 +184,12 @@ class GumbelRoot:
         # Survivors are ranked best first, whether the halving finished or the budget ran out.
         return [int(c[0]) if c else 0 for c in alive]
 
-    def _search(self, positions: Sequence[ts.GameState],
-                evaluations: Sequence[int]) -> List[Optional["_BNode"]]:
+    def _search(self, positions: Sequence[ts.GameState], evaluations: Sequence[int],
+                searchers: Optional[Sequence[int]] = None) -> List[Optional["_BNode"]]:
         """Search each position with its `evaluations` network evaluations: its own, then
         `evaluations - 1` simulations, all in one batched search. The sub-searcher's streams are
         reseeded from the deciding searcher's, so a game depends only on the deciding searcher's
         seed."""
         self.sub._rng.seed(self.mcts._rng.getrandbits(64))
-        return self.sub._search(positions, simulations=[e - 1 for e in evaluations])
+        return self.sub._search(positions, simulations=[e - 1 for e in evaluations],
+                                searchers=searchers)

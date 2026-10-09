@@ -138,6 +138,12 @@ class BatchedMCTSConfig(PIMCTSConfig):
     #: First-play urgency: an unvisited move is valued at its node's value less this, from the
     #: mover's side. 0, the default, is the original rule (the node's value). Both trees.
     fpu_reduction: float = 0.0
+    #: How the side not searching plays inside the tree. "search" (the default): both sides are
+    #: searched, PUCT at every node. "greedy": a best-response search -- at every node where the
+    #: other side moves it takes that side's most probable move by the network's prior, so the
+    #: searcher plans against the greedy policy rather than against a searching opponent (owner,
+    #: 2026-10-09: can search find what the greedy network walks into?). Python tree only.
+    opponent: str = "search"
     #: Choose the move by a Gumbel root (ai/search/gumbel_root.py): k candidates by Gumbel-top-k,
     #: the budget split by sequential halving. `simulations` is then a budget of network
     #: evaluations, which PUCT at the same `simulations` never undercuts. 0, the default, is the
@@ -228,6 +234,9 @@ class _BNode:
     #: An expanded node has had its priors filled in from a network evaluation. A node created
     #: during descent starts unexpanded and is completed by the batch it belongs to.
     expanded: bool = False
+    #: The side the search is for (the root's mover unless the caller says otherwise); read only by
+    #: `opponent="greedy"`, which plays the network's top move wherever the other side moves.
+    searcher: int = 0
 
 
 class _SearchBuffers:
@@ -375,11 +384,12 @@ class BatchedMCTS:
         return runner
 
     @staticmethod
-    def _make_node(state: ts.GameState) -> _BNode:
+    def _make_node(state: ts.GameState, searcher: int = 0) -> _BNode:
         if ts.Engine.is_terminal(state):
             return _BNode(state=state, mover=0, terminal=True, expanded=True,
-                          value_us=float(ts.Engine.get_terminal_utility(state)))
-        return _BNode(state=state, mover=int(acting_player(state)), terminal=False)
+                          value_us=float(ts.Engine.get_terminal_utility(state)), searcher=searcher)
+        mover = int(acting_player(state))
+        return _BNode(state=state, mover=mover, terminal=False, searcher=searcher or mover)
 
     # -- search ---------------------------------------------------------------------------
 
@@ -390,6 +400,8 @@ class BatchedMCTS:
         calls cost 4.17us against 0.89us here, and both pick the same index -- verified over 3,000
         random draws per branching level, near-ties included.
         """
+        if self.cfg.opponent == "greedy" and node.mover != node.searcher:
+            return max(range(len(node.priors)), key=node.priors.__getitem__)
         total = node.total
         sqrt_total = math.sqrt(total if total > 1.0 else 1.0)
         c = self.cfg.c_puct
@@ -425,7 +437,7 @@ class BatchedMCTS:
                 nxt.rng_state = self._rng.getrandbits(64) % _UINT64
                 ts.Engine.step_flat(nxt, action)
                 settle(nxt, self.cfg.auto_advance)
-                child = self._make_node(nxt)
+                child = self._make_node(nxt, node.searcher)
                 node.children[action] = child
                 return path, child
             node = child
@@ -454,7 +466,8 @@ class BatchedMCTS:
 
     def _search(self, states: Sequence[ts.GameState],
                 keys: Optional[Sequence[object]] = None,
-                simulations: Optional[Sequence[int]] = None) -> List[Optional[_BNode]]:
+                simulations: Optional[Sequence[int]] = None,
+                searchers: Optional[Sequence[int]] = None) -> List[Optional[_BNode]]:
         """The search behind `run`, returning each position's root node rather than its visit
         counts, so a caller choosing a move can see the values and priors behind them.
 
@@ -466,7 +479,12 @@ class BatchedMCTS:
         if len(budgets) != len(states):
             raise ValueError(f"{len(budgets)} budgets for {len(states)} positions")
         reuse = cfg.reuse_subtree and not cfg.determinize and keys is not None
+        if cfg.opponent not in ("search", "greedy"):
+            raise ValueError(f"unknown opponent model {cfg.opponent!r}")
         if cfg.backend == "cpp" and not reuse:
+            if cfg.opponent != "search":
+                raise ValueError("opponent='greedy' is implemented in the Python tree only "
+                                 "(backend='python')")
             return self._search_cpp(states, budgets)
         # A concrete list, so the type checker can see the indexing below is guarded. `reuse`
         # already encodes `keys is not None`, but that narrowing does not survive the variable.
@@ -485,7 +503,7 @@ class BatchedMCTS:
             if cfg.determinize and not ts.Engine.is_terminal(s):
                 s = determinize(s, acting_player(s), self._rng)
                 s.rng_state = self._rng.getrandbits(64) % _UINT64
-            roots.append(self._make_node(s))
+            roots.append(self._make_node(s, int(searchers[i]) if searchers is not None else 0))
             inherited.append(False)
 
         # One batch per group for the roots, then one per group per simulation round.

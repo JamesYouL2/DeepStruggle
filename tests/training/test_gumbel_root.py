@@ -177,3 +177,37 @@ def test_play_match_plays_the_same_searcher(tmp_path: Path) -> None:
     state = _states()[0]
     choice = bot.select_from_state(state)
     assert choice["decision_type"] == int(state.ctx().decision_type)
+
+
+def _walk(node: Any) -> List[Any]:
+    out = [node]
+    for ch in node.children.values():
+        out.extend(_walk(ch))
+    return out
+
+
+def test_a_best_response_search_plays_the_greedy_move_wherever_the_other_side_moves() -> None:
+    """opponent="greedy": inside the tree every node where the side not searching moves has visits
+    on one move only, its top prior; the searching side's nodes still branch."""
+    states = _states()
+    cfg = BatchedMCTSConfig(simulations=64, backend="python", opponent="greedy", seed=3)
+    roots = BatchedMCTS(_model(), device="cpu", config=cfg, featurise_capacity=256)._search(states)
+    branched = False
+    for r in roots:
+        if r is None or r.terminal:
+            continue
+        for nd in _walk(r):
+            if nd.terminal or not nd.expanded or nd.total == 0:
+                continue
+            visited = [i for i, x in enumerate(nd.n) if x > 0]
+            if nd.mover != r.searcher:
+                assert visited == [max(range(len(nd.priors)), key=nd.priors.__getitem__)]
+            elif len(visited) > 1:
+                branched = True
+    assert branched
+
+
+def test_a_best_response_search_needs_the_python_tree() -> None:
+    with pytest.raises(ValueError, match="Python tree only"):
+        BatchedMCTS(_model(), device="cpu", featurise_capacity=256,
+                    config=BatchedMCTSConfig(simulations=8, opponent="greedy"))._search(_states(4))
