@@ -18,13 +18,13 @@ the CLI's defaults: A1 and R1 in full, every other code as its difference from t
 | **A5** | A4 reading the OPS_BUDGET observation block (3 floats appended; P30 C4) | `--ladder-res-blocks 0` `--obs-features ops_budget` | E7-07-44 |
 | **A6** | A4 plus two card/country token-attention layers, width 128 (P30 C1) | `--ladder-res-blocks 0` `--ladder-token-layers 2` | E7-09-44 |
 | **A7** | A4 plus the branch head: branch logits corrected from the trunk and a one-hot of the resolving card (P31) | `--ladder-branch-head` `--ladder-res-blocks 0` | E7-30-44, E7-31-44, E7-32-44 |
-| **A8** | A7 plus the play-mode head: play-mode logits corrected from the trunk and a one-hot of the card being played | `--ladder-branch-head` `--ladder-play-mode-head` `--ladder-res-blocks 0` | E7-33-44, E7-A8-R1-S44 |
+| **A8** | A7 plus the play-mode head: play-mode logits corrected from the trunk and a one-hot of the card being played | `--ladder-branch-head` `--ladder-play-mode-head` `--ladder-res-blocks 0` | E7-33-44, E7-A8-R1-S44, E7-A8-R1-S44@6400M+S45, E7-A8-R1-S44@6400M+S46, E7-A8-R1-S44@6790M+R18 |
 
 ## Recipes
 
 | code | what it is | flags | runs (old names) |
 |:---|:---|:---|:---|
-| **R1** | The plain recipe: NashPG self-play with the opponent pool (30% of games against own snapshots), block lambda off, constant learning rate | `--block-lambda off` `--opponent-frac 0.3` `--opponent-self-pool` | E6-03-43, E6-03-44, E6-09-44, E6-10-44, E6-12-43, E6-12-44, E7-01-44, E7-02-44, E7-03-44, E7-06-44, E7-07-44, E7-08-43, E7-17-44, E7-19-44, E7-20-44, E7-20-44-4390M.45, E7-20-44-4390M.46, E7-32-44, E7-33-44, E7-A4-R1-S43, E7-A8-R1-S44 |
+| **R1** | The plain recipe: NashPG self-play with the opponent pool (30% of games against own snapshots), block lambda off, constant learning rate | `--block-lambda off` `--opponent-frac 0.3` `--opponent-self-pool` | E6-03-43, E6-03-44, E6-09-44, E6-10-44, E6-12-43, E6-12-44, E7-01-44, E7-02-44, E7-03-44, E7-06-44, E7-07-44, E7-08-43, E7-17-44, E7-19-44, E7-20-44, E7-20-44-4390M.45, E7-20-44-4390M.46, E7-32-44, E7-33-44, E7-A4-R1-S43, E7-A8-R1-S44, E7-A8-R1-S44@6400M+S45, E7-A8-R1-S44@6400M+S46 |
 | **R2** | R1 plus the P24 league (half the pool games against the live main-exploiter's published snapshots) and setup credit with an entropy floor of 0.3 | `--league-dirs <this lineage's league>` `--league-frac 0.5` `--setup-entropy-floor 0.3` `--setup-mc-credit` | E6-04-43, E6-04-44, E6-13-44 |
 | **R3** | League main-exploiter: a best response to the parent's frozen snapshot at the branch point -- that opponent in every game, played greedily; no KL, no entropy bonus, learner-only advantage normalisation | `--adv-norm-learner-only` `--entropy-coef 0.0` `--eta 0.0` `--opponent-checkpoints <parent snapshot at the branch point>` `--opponent-frac 1.0` `--opponent-temperature 0.0` `--opponent-self-pool` (default) | E6-05-43-1, E6-05-43-2, E6-05-43-3, E6-05-43-4, E6-05-43-5, E6-05-44-1, E6-05-44-2, E6-05-44-3, E6-05-44-4, E6-05-44-5, E6-05-44-6, E6-14-44-1, E6-14-44-2, E6-14-44-3, E6-14-44-4, E6-14-44-5, E7-22-44-1, E7-22-44-10, E7-22-44-11, E7-22-44-12, E7-22-44-13, E7-22-44-14, E7-22-44-15, E7-22-44-16, E7-22-44-2, E7-22-44-3, E7-22-44-4, E7-22-44-5, E7-22-44-6, E7-22-44-7, E7-22-44-8, E7-22-44-9 |
 | **R4** | R2 with the league pool static -- the published exploiters, none training (P28 control) | `--league-dirs <this lineage's league>` `--league-frac 0.5` `--setup-entropy-floor 0.3` `--setup-mc-credit` -- *league pool static: the published exploiters, none training* | E6-06-44 |
@@ -41,7 +41,7 @@ the CLI's defaults: A1 and R1 in full, every other code as its difference from t
 | **R15** | R1 plus play-mode temperature 2.0 (P30) | `--play-mode-temp 2.0` | E7-14-44 |
 | **R16** | R1 with the terminal reward only and no blunder window | `--no-blunder-window` `--reward-scheme terminal` | E7-15-44 |
 | **R17** | R1 plus VP potential shaping, 0.01 | `--vp-potential 0.01` | E7-16-44 |
-| **R18** | R1 plus search cross-entropy targets: 64 simulations, every node type, coefficient 0.5 (P15 X4b's settings) | `--search-ce-coef 0.5` `--search-node-filter all` `--search-sims 64` | E7-18-44 |
+| **R18** | R1 plus search cross-entropy targets: 64 simulations, every node type, coefficient 0.5 (P15 X4b's settings) | `--search-ce-coef 0.5` `--search-node-filter all` `--search-sims 64` | E7-18-44, E7-A8-R1-S44@6790M+R18 |
 | **R19** | R1 plus the P24 league with a live exploiter, no setup credit | `--league-dirs <this lineage's league>` `--league-frac 0.5` | E7-21-44 |
 | **R20** | R1 plus scenario seeding: the Nuclear Subs and Chernobyl precursors forced in 5% of games (P31 B2) | `--seed-frac 0.05` `--seed-scenarios subs chernobyl` | E7-27-44 |
 | **R21** | R1 plus the play-mode floor, 0.03 (P31 B1, the corrected 1a) | `--play-mode-floor 0.03` | E7-28-44 |

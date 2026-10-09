@@ -576,3 +576,28 @@ and a Gumbel root, k = 8 at 256 evaluations (`gumbel:<ckpt>:256:8`), the stronge
 Search still pays on the plateau network, by about what it did on the plain line at 4,800M
 (Gumbel +61–66 Elo, PUCT +19–28 there): here Gumbel ~+65 Elo, PUCT ~+26–35. By the owner's rule
 ("if PUCT improves strength, use it") training continues with PUCT search targets -- below.
+
+## The heads soup at the plateau (owner's plan, 2026-10-09)
+
+Two seed branches of `E7-A8-R1-S44` from its 6,400M state (`resume_6400049152steps.pt`, 400M before
+the plateau), seeds 45 and 46, its own flags otherwise (`launch_flags --diff`: the seeds and the
+budget), each to 6,800M; souped with the main run's own 6,400 → 6,800M stretch, as the best soup was
+made: raw (the three 6,800M snapshots) and SWA-made (the three 6,720–6,800M SWAs). One field, greedy,
+1,000 games a side per pair (`data/reports/a8_soup_6800M.{md,json}`):
+
+| model | Elo | panel US / USSR |
+|:---|---:|:---|
+| **`E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M`** (SWA-made heads soup) | **1683** | 95.3 / 93.7 |
+| `E7-A8-R1-S44@6400M+(S44,45,46)@6800M` (raw heads soup) | 1676 | 95.6 / 94.8 |
+| `E7-A8-R1-S44@6400M+S45@6720..6800M` | 1646 | 94.9 / 92.6 |
+| `E7-A8-R1-S44@6400M+S46@6720..6800M` | 1639 | 94.1 / 91.8 |
+| `E7-A8-R1-S44@6720..6800M` | 1638 | 94.5 / 92.9 |
+| `E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M` (the best soup until now) | 1632 | 95.0 / 92.8 |
+| `E7-A8-R1-S44@6800M` | 1607 | 92.4 / 91.0 |
+
+* **The SWA-made heads soup beats the best soup until now 59.4% ± 1.1** (as US 54.2, as USSR 64.5);
+  the raw heads soup 55.4%. It beats the main run's SWA 56.8% and each branch's SWA 56.5 / 54.9% --
+  souping adds about +45 Elo, as soups have before -- and the raw heads soup 50.7%.
+* Files: `data/checkpoints/_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt` (sha256 `91a43a8b089c…`)
+  and its raw twin `…@6800M.pt` (`ce5c98126a99…`). A candidate for best overall; the designation is the
+  owner's.
