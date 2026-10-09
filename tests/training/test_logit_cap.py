@@ -69,6 +69,7 @@ def test_a_straight_through_cap_plays_the_same_and_passes_the_raw_gradient() -> 
         zz = z.clone().requires_grad_(True)
         out = net._cap_logits(zz, mask)
         torch.log_softmax(out, -1)[0, 0].backward()
+        assert zz.grad is not None
         grads.append(zz.grad[0, 1].item())
         outs.append(out.detach())
     assert torch.allclose(outs[0], outs[1])
