@@ -220,6 +220,9 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             errs.append(f"{where}: sha256 must be 64 lowercase hex digits")
         if not isinstance(net["old_names"], list) or not all(isinstance(x, str) for x in net["old_names"]):
             errs.append(f"{where}: old_names must be a list of strings")
+        if isinstance(net["file"], str) and net["file"].rsplit("/", 1)[-1] == "snapshot_final.pt":
+            errs.append(f"{where}: register the snapshot by step (snapshot_<N>steps.pt), not "
+                        f"snapshot_final.pt, a copy that names no step")
         if net["report"] is not None and not (repo_root / net["report"]).is_file():
             errs.append(f"{where}: report {net['report']} does not exist")
         if net["hf"] is not None and (not isinstance(net["hf"], str) or net["hf"].startswith("/")):

@@ -10,14 +10,15 @@ outside one (an SWA or a soup under `_models/`) as `_models/<name>.pt`. The work
 files (tools/export_onnx.py, verified against torch before one is written), and a run saves a
 snapshot every 10M steps, so only these get one, beside their `.pt`:
 
-* in a run directory: the final plain snapshot (`snapshot_final.pt`, else the highest step), the
+* in a run directory: the final plain snapshot (the highest `snapshot_<N>steps.pt`), the
   final SWA (the `swa_<lo>-<hi>M.pt` with the highest `hi`), and every file of it registered in
   leaderboard/networks.json;
 * every file given to `files` -- the soups and SWAs under `_models/`.
 
 Every other `.pt` goes up without one; `files` adds one later. `run` leaves out the resume and
 opponent-pool states (`resume_*.pt`, `pool_*.pt` -- optimizer state, about two thirds of a run's
-size), `run.pid`, and any `.onnx` it did not select. `default` writes the repo's `default.json`,
+size), `run.pid`, `snapshot_final.pt` (a copy named by no step: snapshots are always referred to by
+step), and any `.onnx` it did not select. `default` writes the repo's `default.json`,
 the model a workbench link that names none opens.
 
 After an upload, every network in leaderboard/networks.json whose file was published gets its
@@ -41,8 +42,10 @@ from tools.export_onnx import ExportRefused, export
 from tools.lib.data_root import data_path
 from tools.lib.leaderboard import HF_REPO, LeaderboardError, load, save_registry, validate
 
-#: Never published: optimizer / opponent-pool state for resuming, and the live process id.
-EXCLUDE = ["resume_*.pt", "resume_state.pt", "pool_*.pt", "run.pid", "*.tmp"]
+#: Never published: optimizer / opponent-pool state for resuming, the live process id, and the
+#: final-weights copy, which names no step (snapshots are referred to by step).
+EXCLUDE = ["resume_*.pt", "resume_state.pt", "pool_*.pt", "run.pid", "*.tmp",
+           "snapshot_final.pt", "snapshot_final.onnx"]
 _SNAPSHOT_RE = re.compile(r"^snapshot_(\d+)steps\.pt$")
 _SWA_RE = re.compile(r"^swa_(\d+)-(\d+)M\.pt$")
 
@@ -82,12 +85,9 @@ def onnx_selection(files: Sequence[str], registered: Set[str]) -> List[str]:
     """Which of a run directory's .pt files get an .onnx: the final plain snapshot, the final SWA,
     and the ones on the leaderboard."""
     chosen = set(f for f in registered if f in files)
-    if "snapshot_final.pt" in files:
-        chosen.add("snapshot_final.pt")
-    else:
-        steps = [(int(m.group(1)), f) for f in files if (m := _SNAPSHOT_RE.match(f))]
-        if steps:
-            chosen.add(max(steps)[1])
+    steps = [(int(m.group(1)), f) for f in files if (m := _SNAPSHOT_RE.match(f))]
+    if steps:
+        chosen.add(max(steps)[1])
     swas = [((int(m.group(2)), int(m.group(1))), f) for f in files if (m := _SWA_RE.match(f))]
     if swas:
         chosen.add(max(swas)[1])
