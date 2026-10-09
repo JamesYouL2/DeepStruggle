@@ -23,6 +23,7 @@ from bindings.ts_env import check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
 from tools.lib.openings import OPENINGS
+from tools.lib.player_spec import Gumbel, Search
 from tools.lib.p17_adapter import LegacyPolicyAdapter
 
 ColdWarModel = Union[ColdWarNet, ColdWarNetV2]
@@ -476,7 +477,7 @@ def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
       Honest search at every decision with the move chosen by a noise-free Gumbel root
       (ai/search/gumbel_root.py): the k most probable moves, sequential halving over `sims`
       network evaluations. Defaults 256 evaluations, k = 8, first-play urgency 0.2
-      (research/log/E7_gumbel_headroom.md).
+      (research/log/E7_gumbel_headroom.md); both kinds' defaults live in tools/lib/player_spec.py.
 
     Every searcher here has advance_root=False because the CLIs hand over a state they have NOT
     settled -- tools/tournament.py only auto-advances under --auto-advance, and play_match.py steps
@@ -495,24 +496,26 @@ def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
         return parts[i] if len(parts) > i and parts[i] else None
 
     if kind == "gumbel":
-        sims = int(field(2) or 256)
-        k = int(field(3) or 8)
-        fpu = float(field(4) or 0.2)
+        g = Gumbel()
+        sims = int(field(2) or g.sims)
+        k = int(field(3) or g.k)
+        fpu = float(field(4) or g.fpu)
         cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
                                 advance_root=False, determinize=True, node_filter="all",
                                 gumbel_k=k, gumbel_scale=0.0, fpu_reduction=fpu)
-        label = f"gumbel{sims}-k{k}" + ("" if fpu == 0.2 else f"-fpu{fpu:g}")
+        label = f"gumbel{sims}-k{k}" + ("" if fpu == g.fpu else f"-fpu{fpu:g}")
         return path, cfg, label
     if kind != "search":
         raise ValueError(f"not a search spec: {spec!r}")
-    sims = int(field(2) or 64)
-    determinize = (field(3) or "").lower().startswith("determin")
-    node_filter = field(4) or "all"
+    d = Search()
+    sims = int(field(2) or d.sims)
+    determinize = (field(3) or "").lower().startswith("determin") if field(3) else d.determinize
+    node_filter = field(4) or d.node_filter
     if node_filter.lower().startswith("card"):
         node_filter = "card_playmode"
-    subsample = float(field(5) or 1.0)
-    backend = (field(6) or "cpp").lower()
-    fpu = float(field(7) or 0.0)
+    subsample = float(field(5) or d.subsample)
+    backend = (field(6) or d.backend).lower()
+    fpu = float(field(7) or d.fpu)
     cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
                             advance_root=False, determinize=determinize,
                             node_filter=node_filter, subsample=subsample, backend=backend,

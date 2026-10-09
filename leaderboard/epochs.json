@@ -1,0 +1,18 @@
+{
+  "E7": {
+    "description": "The E7 engine (since the rules audit of 2026-09-30). The main players play each other and every newcomer 1,000 deals a side; greedy unless a player's id says otherwise.",
+    "engines": [
+      "6c036593786fa67c434cf671a66fc79124870a1ecd6045fb41183bf98b51f41b"
+    ],
+    "anchor": "E7-A4-R1-S44@4800M",
+    "anchor_elo": 1500.0,
+    "main": [
+      "E7-A4-R1-S44@4800M",
+      "E7-A4-R1-S44@4720..4800M",
+      "E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M",
+      "E7-A8-R1-S44@6800M",
+      "E7-A8-R1-S44@6720..6800M",
+      "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M"
+    ]
+  }
+}

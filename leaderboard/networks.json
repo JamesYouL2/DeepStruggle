@@ -1,0 +1,57 @@
+{
+  "E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M": {
+    "file": "checkpoints/_models/E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M.pt",
+    "sha256": "e2447821624a023f1c0012fb2cf91c2f8b237d4d9b7ab64b8402b28f0db00487",
+    "description": "Soup of three SWAs over 4,720-4,800M: E7-A4-R1-S44 and its seed branches S45 and S46 from 4,390M (old names E7-20-44, E7-20-44-4390M.45, E7-20-44-4390M.46). The best soup of 2026-10-06.",
+    "old_names": [
+      "soup_E7-20-44+4390M.45+4390M.46_swa4720-4800M"
+    ],
+    "hf": null,
+    "report": null
+  },
+  "E7-A4-R1-S44@4720..4800M": {
+    "file": "checkpoints/_models/E7-A4-R1-S44@4720..4800M.pt",
+    "sha256": "094a22073974554146a26ea4a748fa505c732e8fcd545144cd77ac848cc072ab",
+    "description": "SWA (weight average) of E7-A4-R1-S44's 4,720-4,800M snapshots. The best SWA of 2026-10-06.",
+    "old_names": [
+      "E7-20-44 SWA 4720-4800M",
+      "E7line_swa_4720-4800M"
+    ],
+    "hf": null,
+    "report": null
+  },
+  "E7-A4-R1-S44@4800M": {
+    "file": "checkpoints/E7-20-44_20261005_174535/snapshot_4800053248steps.pt",
+    "sha256": "7ca02cc3b432cb0d23e6bb1650f31bdd560e51f22765990150d864011a8cc164",
+    "description": "Architecture A4, recipe R1, seed 44 at 4,800M steps: the seed-44 line continued without the league from 3,600M, plain self-play (run directory E7-20-44_20261005_174535). The best raw checkpoint of 2026-10-06; E7's 1500 anchor.",
+    "old_names": [
+      "E7-20-44@4800M"
+    ],
+    "hf": null,
+    "report": null
+  },
+  "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M": {
+    "file": "checkpoints/_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt",
+    "sha256": "91a43a8b089c5889ddd8e46ea24e4c9c0235e8ada70b76b0213b92d1849bcf1b",
+    "description": "Soup of three SWAs over 6,720-6,800M: E7-A8-R1-S44 and its seed branches S45 and S46 from 6,400M (the heads soup). The best soup.",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
+  "E7-A8-R1-S44@6720..6800M": {
+    "file": "checkpoints/E7-A8-R1-S44_20261007_162257/swa_6720-6800M.pt",
+    "sha256": "131274c7e79d125d754279a02ec4d9b907e2b4ef7f0b01f4b77e8a7e10220818",
+    "description": "SWA (weight average) of E7-A8-R1-S44's 6,720-6,800M snapshots. The best SWA.",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
+  "E7-A8-R1-S44@6800M": {
+    "file": "checkpoints/E7-A8-R1-S44_20261007_162257/snapshot_6800015360steps.pt",
+    "sha256": "2e28a1d5d53ab716d67560388b0be96aab176e4c319908fbc5de3b85cc15b0f2",
+    "description": "Architecture A8 (play-mode and branch heads), recipe R1, seed 44 at 6,800M steps, where it plateaus (research/log/P31_branch_arms_B1_B2.md). The best single checkpoint.",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  }
+}

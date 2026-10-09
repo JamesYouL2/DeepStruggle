@@ -18,7 +18,7 @@ import sys
 import time
 import json
 import argparse
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
@@ -125,13 +125,15 @@ def run_head_to_head_report(
     return "".join(lines)
 
 
-def _pack_schedule(M: int, pack_pairs: int) -> List[List[Pair]]:
+def _pack_schedule(M: int, pack_pairs: int,
+                   only: Optional[Sequence[Pair]] = None) -> List[List[Pair]]:
     """Every pairing (i < j) of M agents, grouped into packs that involve few distinct agents.
 
     A pack's cost per step is one forward per distinct agent in it, so the pairings of a pack
     should share agents: the agents are split into blocks of g = floor(sqrt(pack_pairs)), and a
     pack is either all g x g pairings between two blocks (2g agents) or the pairings inside
     several blocks (g agents each), filled up to pack_pairs. Every pairing appears exactly once.
+    With `only`, the same packs keep just those pairings (a gauntlet rather than a round robin).
     """
     g = max(2, int(pack_pairs ** 0.5))
     blocks = [list(range(b, min(b + g, M))) for b in range(0, M, g)]
@@ -148,17 +150,24 @@ def _pack_schedule(M: int, pack_pairs: int) -> List[List[Pair]]:
         inside += within
     if inside:
         packs.append(inside)
+    if only is not None:
+        wanted = set(only)
+        packs = [[pr for pr in p if pr in wanted] for p in packs]
     return [p for p in packs if p]
 
 
 def _load_entrants(model_specs: List[str], device: torch.device,
-                   opening: Optional[str]) -> Tuple[List[PlayerAgent], List[str]]:
+                   opening: Optional[str],
+                   names: Optional[Sequence[str]] = None) -> Tuple[List[PlayerAgent], List[str]]:
     """Every entrant, loaded, and the spec a worker process loads to get the same agent.
 
     With `opening`, every agent's setup is the named opening (tools/lib/openings.py; a per-agent
     `opening:<name>:` prefix on a spec takes precedence) and its name says so. Workers load their
-    agents afresh from specs, so the opening travels as each spec's own prefix.
+    agents afresh from specs, so the opening travels as each spec's own prefix. `names`, one per
+    spec, replace the agents' own names (tools/leaderboard.py names each entrant by its player id).
     """
+    if names is not None and len(names) != len(model_specs):
+        raise ValueError(f"{len(names)} names for {len(model_specs)} entrants")
     agents: List[PlayerAgent] = []
     worker_specs: List[str] = []
     for spec in model_specs:
@@ -168,6 +177,8 @@ def _load_entrants(model_specs: List[str], device: torch.device,
             setattr(agent, "forced_opening", opening)
             setattr(agent, "name", f"{agent.name}+{opening}")
             worker_spec = f"opening:{opening}:{spec}"
+        if names is not None:
+            setattr(agent, "name", names[len(agents)])
         agents.append(agent)
         worker_specs.append(worker_spec)
         print(f" Loaded Agent: {agent.name:<35s} (from {spec})")
@@ -220,8 +231,17 @@ def run_massive_tournament(
     opening: Optional[str] = None,
     workers: Optional[int] = None,
     shard_pairs: int = 10,
+    matchups: Optional[Sequence[Pair]] = None,
+    entrant_names: Optional[Sequence[str]] = None,
+    base_seed: int = 10000,
+    on_matchup: Optional[Callable[[str, str, MatchupResult], None]] = None,
 ) -> Dict[str, Any]:
     """Runs high-throughput round-robin tournament across all specified models.
+
+    `matchups` (pairs of indices into `model_specs`, i < j) plays only those pairings instead of
+    the round robin; `entrant_names` names the agents; `base_seed` is the first game pair's deal
+    seed (the same pairing at the same seed replays the same deals); `on_matchup(a, b, result)`
+    is called as each pairing finishes, so a caller can keep what is done if the rest fails.
 
     `pack_pairs` pairings are played in one engine batch (BatchMatchRunner.play_packed_matchups),
     each agent's positions across them in one forward per step; the same deal seeds per game as
@@ -239,14 +259,22 @@ def run_massive_tournament(
     if workers is not None:
         check_workers_device(workers, device)
     _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
-    agents, worker_specs = _load_entrants(model_specs, dev, opening)
+    agents, worker_specs = _load_entrants(model_specs, dev, opening, entrant_names)
     model_names = [a.name for a in agents]
-    matchups = _round_robin(len(agents))
+    if matchups is None:
+        matchups = _round_robin(len(agents))
+    else:
+        matchups = [(int(i), int(j)) for i, j in matchups]
+        bad = [m for m in matchups if not 0 <= m[0] < m[1] < len(agents)]
+        if bad or len(set(matchups)) != len(matchups):
+            raise ValueError(f"matchups must be distinct index pairs i < j < {len(agents)}; got {bad or matchups}")
     results: Dict[Pair, MatchupResult] = {}
     t_start = time.time()
 
     def record(i: int, j: int, m_res: MatchupResult, pair_time: float) -> None:
         results[(i, j)] = m_res
+        if on_matchup is not None:
+            on_matchup(model_names[i], model_names[j], m_res)
         w_a, w_b, d, tot = m_res["a_wins"], m_res["b_wins"], m_res["draws"], m_res["total_games"]
         print(
             f"[{len(results):2d}/{len(matchups):2d}] {model_names[i]:<25s} vs {model_names[j]:<25s} -> "
@@ -258,14 +286,14 @@ def run_massive_tournament(
         # matchup has no start time of its own.
         run_matchups_parallel(
             worker_specs, matchups, games_per_side, workers, shard_pairs,
-            MatchOptions(device=str(dev), temperature=temperature,
+            MatchOptions(device=str(dev), base_seed=base_seed, temperature=temperature,
                          batch_chunk_size=batch_chunk_size, track_choices=track_choices,
                          auto_advance=auto_advance),
             log_games=log_games,
             on_matchup_done=lambda p, r: record(p[0], p[1], r, time.time() - t_start))
     else:
         pack = 1 if (track_choices or log_games) else max(1, int(pack_pairs))
-        groups_of_pairs = (_pack_schedule(len(agents), pack) if pack > 1
+        groups_of_pairs = (_pack_schedule(len(agents), pack, matchups) if pack > 1
                            else [[pr] for pr in matchups])
         for group in groups_of_pairs:
             t_g = time.time()
@@ -273,13 +301,14 @@ def run_massive_tournament(
                 (gi, gj), = group
                 res = [BatchMatchRunner.play_parallel_matchup(
                     agents[gi], agents[gj], games_per_side=games_per_side, device=dev,
-                    temperature=temperature, batch_chunk_size=batch_chunk_size,
+                    base_seed=base_seed, temperature=temperature, batch_chunk_size=batch_chunk_size,
                     track_choices=track_choices, log_games_file=log_games,
                     auto_advance=auto_advance)]
             else:
                 res = BatchMatchRunner.play_packed_matchups(
                     [(agents[gi], agents[gj]) for gi, gj in group], games_per_side=games_per_side,
-                    device=dev, temperature=temperature, batch_chunk_size=batch_chunk_size,
+                    base_seed=base_seed, device=dev, temperature=temperature,
+                    batch_chunk_size=batch_chunk_size,
                     auto_advance=auto_advance)
             share = (time.time() - t_g) / len(group)
             for (i, j), m_res in zip(group, res):

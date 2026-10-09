@@ -8,7 +8,8 @@ import ts_engine as ts
 from bindings import ActionEncoder, TsSingleEnv, TsVectorizedEnv
 from ai.models import ColdWarNet, create_coldwar_net, ColdWarNetV2, create_coldwar_net_v2
 from ai.training import RolloutBuffer, BehavioralCloningTrainer, NashPGTrainer
-from tools.lib import TournamentEvaluator, NeuralAgent, RandomAgent
+from tools.lib.player_agent import NeuralAgent, RandomAgent
+from tools.lib.tournament_evaluator import TournamentEvaluator
 from bot.neural_bot import NeuralBot
 from bindings.action_encoder import ActionEncoder
 

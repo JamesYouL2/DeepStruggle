@@ -1,0 +1,4 @@
+# Leaderboard match records are append-only, one independent line per pairing: two branches that
+# both appended merge as the union of their lines. A line that arrives twice is caught by
+# `tools/leaderboard.py validate` (each record's id is a hash of its content).
+leaderboard/matches/*.jsonl merge=union
