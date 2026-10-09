@@ -70,3 +70,22 @@ no legal target.)
 cannot pay. It treats a free coup as a free coup. The lost games are a few percent of the games in
 which the crisis is played, and the US exploits nothing deliberately: it plays Che and Lone Gunman
 under its crisis about as often as it holds them.
+
+## Does "always headline it" pay? No: −1 to −2 points a seat (owner, 2026-10-09)
+
+"Check if simple rule 'always headline cuban missile crisis if you got it' improves winrate (for each
+seat separately), on raw model and on soup." The rule player is `headline:40:<checkpoint>` (new: a
+scripted headline rule over any agent, `tools/lib/batch_tournament.apply_headline_rule`), playing
+the plain network; each of its games is paired with the network's own self-play on the same deal
+(`--log-games`, fixed deal seeds), so the two are the same game until the rule changes a headline.
+Greedy, 20,000 games a seat; reports `data/reports/cmc_rule_{soup,raw6800}_*.jsonl`.
+
+| network | rule as US vs self-play | rule as USSR vs self-play | games the rule changed |
+|:---|---:|---:|---:|
+| heads soup | 46.82 vs 47.85: **−1.03 ± 0.28** | 50.56 vs 52.15: **−1.59 ± 0.28** | ~51% |
+| raw `E7-A8-R1-S44@6800M` | 46.17 vs 47.15: **−0.98 ± 0.28** | 50.86 vs 52.85: **−1.99 ± 0.29** | ~51% |
+
+The network's own choice -- usually not to headline it -- is better in both seats, on both
+networks, though the opponent's crisis suicides (section 2) are a gift whenever it is headlined.
+Headlining it spends the headline on an event that drops DEFCON to 2 for both sides for the turn,
+and the opponent's suicidal coups come in only a few percent of those games.
