@@ -202,19 +202,27 @@ def test_metrics_weights_the_control_sample_by_the_unscreened_decisions() -> Non
     screened = [{"id": "a"}, {"id": "b"}]
     control = [{"id": "c"}]
     validation = [{"id": "a", "verdict": "confirmed-regret", "moves": {"greedy": 5, "search": 6},
-                   "exact": {"missed_win": False, "forced_loss": False},
+                   "exact": {"missed_win": False, "forced_loss": False}, "best": 6,
+                   "diff_vs_greedy": {"6": [0.30, 0.10]},
                    "score": {"5": 0.0, "6": 1.0}},
                   {"id": "b", "verdict": "refuted", "moves": {"greedy": 5, "search": 5},
-                   "exact": {}, "score": {}},
+                   "exact": {}, "best": 5, "score": {}},
                   {"id": "c", "verdict": "exact-forced-loss", "moves": {"greedy": 5, "search": 6},
                    "exact": {"missed_win": False, "forced_loss": True, "labels": {"6": "normal"}},
+                   "best": 6, "diff_vs_greedy": {"6": [0.30, 0.10]},
                    "score": {}}]
     c = metrics(screened, control, validation, validation, decisions=1000)
     # 998 unscreened decisions over 1 control row: the control stands for 998 positions
     assert c["control_weight"] == 998.0
     assert c["confirmed_candidates"] == 1 and c["confirmed_control"] == 1
     assert c["per_1000_decisions"] == pytest.approx((1 + 998.0) / 1000 * 1000)
+    assert c["per_1000_exact"] == pytest.approx(998.0 / 1000 * 1000)
+    assert c["per_1000_estimated"] == pytest.approx(1 / 1000 * 1000)
     assert c["detected_by_screen"] == pytest.approx(1 / 999.0)
+    assert c["detected_exact"] == 0.0       # the one exact mistake sat in the control sample
+    assert c["detected_estimated"] == pytest.approx(1.0)   # only the candidate is estimated-class
+    assert c["noise"]["control_with_alternative"] == 1 and c["noise"]["control_z_ge_2"] == 1
+    assert c["noise"]["candidate_with_alternative"] == 1 and c["noise"]["candidate_z_ge_2"] == 1
     assert c["rescued_by_256"] == pytest.approx(1.0)     # both confirmed rows are rescued by search
     assert c["confirmation_rate"] == pytest.approx(0.5)
     assert c["unresolved_share"] == 0.0

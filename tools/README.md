@@ -1106,7 +1106,9 @@ re-runs without regenerating positions.
 
 **`report`** merges the stages into the census report: candidate count and confirmation rate,
 confirmed catastrophic blunders per 1,000 decisions (candidates plus the control's confirmed
-mistakes at their weight), the share of confirmed mistakes the cheap screening found, the share
+mistakes at their weight, split into the engine-proven exact mistakes and the estimated class
+with the paired test's noise floor measured on the control), the share of confirmed mistakes the
+cheap screening found, the share
 rescued by 256-simulation search, the share unresolved even under the stronger search, the worst
 failures grouped by root cause (with each one's game seed and `pos=` token, openable in the
 workbench), and the runtime and runner-minutes of each stage.
