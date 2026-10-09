@@ -1267,6 +1267,40 @@ def _label(path: str) -> Tuple[str, str, str]:
     return short, step, stem
 
 
+#: Where `report` puts the table of contents, built once the sections below it are written.
+CONTENTS = "<!-- contents -->"
+
+
+def _slug(heading: str, seen: Dict[str, int]) -> str:
+    """GitHub's anchor for a heading: lower case, punctuation dropped, each space a hyphen; a heading
+    repeated anywhere in the file (an earlier "US" subsection) gets -1, -2, ..."""
+    base = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+    n = seen.get(base, 0)
+    seen[base] = n + 1
+    return base if n == 0 else f"{base}-{n}"
+
+
+def _with_contents(text: str) -> str:
+    """Replace the `CONTENTS` marker with links to the `##` sections after it, each with its `###`
+    subsections. Every heading of the file is slugged in order, so repeated names number as GitHub
+    numbers them."""
+    seen: Dict[str, int] = {}
+    entries: List[str] = []
+    after = False
+    for line in text.split("\n"):
+        if line == CONTENTS:
+            after = True
+            continue
+        m = re.match(r"(#{1,6}) (.+)$", line)
+        if not m:
+            continue
+        slug = _slug(m.group(2), seen)
+        if after and len(m.group(1)) in (2, 3):
+            indent = "" if len(m.group(1)) == 2 else "  "
+            entries.append(f"{indent}* [{m.group(2).strip()}](#{slug})")
+    return text.replace(CONTENTS, "**Contents**\n\n" + "\n".join(entries), 1)
+
+
 def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
            label: Optional[str] = None, note: Optional[str] = None) -> str:
     short, step, _ = _label(path)
@@ -1289,10 +1323,7 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     out += [f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}",
             f"* **Games:** {d['games']:,} greedy self-play games of the checkpoint against itself, seed "
             f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games.", "",
-            "Sections: How games end · Opening setups · Star Wars · Five Year Plan played by the USSR · Aldrich Ames "
-            "Remix played by the US · Ortega Elected in Nicaragua played by the US · OPEC and Alliance for Progress · "
-            "Soviets Shoot Down KAL-007 (both sides) · Red Scare/Purge · Warsaw Pact Formed · Chernobyl · UN Intervention · Space "
-            "race · and, last, Events vs Ops for every card.", "",
+            CONTENTS, "",
             endings_section(d.get("endings", [])), "",
             setup_section(d.get("setups", [])), "",
             star_wars_section(d["star_wars"]), "",
@@ -1325,7 +1356,7 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
             un_section(d["un_intervention"]), "",
             space_section(d["play_modes"]), "",
             "## Events vs Ops, every card", "", census_table(holdings, d["games"])]
-    return "\n".join(out) + "\n"
+    return _with_contents("\n".join(out)) + "\n"
 
 
 def write_index() -> None:
