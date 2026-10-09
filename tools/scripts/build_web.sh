@@ -36,7 +36,16 @@ fi
 FINGERPRINT="$(PYTHONPATH="$ROOT" "$PY" "$ROOT/tools/lib/engine_fingerprint.py")"
 
 BUILD="$ROOT/build/wasm"
-emcmake cmake -B "$BUILD" -S "$ROOT" -DCMAKE_BUILD_TYPE=Release \
+# A build directory remembers the source tree it was configured for, and CMake refuses it from any
+# other path -- the same checkout seen under another name included (a container's /workspace and
+# the host's home directory). Such a cache is configured afresh rather than failing.
+FRESH=()
+cached_src="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$BUILD/CMakeCache.txt" 2>/dev/null | head -n 1)"
+if [[ -n "$cached_src" && "$(realpath -e -- "$cached_src" 2>/dev/null)" != "$(realpath -e -- "$ROOT")" ]]; then
+    echo "build_web: $BUILD was configured for $cached_src; configuring it afresh for $ROOT" >&2
+    FRESH=(--fresh)
+fi
+emcmake cmake ${FRESH[@]+"${FRESH[@]}"} -B "$BUILD" -S "$ROOT" -DCMAKE_BUILD_TYPE=Release \
     -DTS_ENGINE_FINGERPRINT="$FINGERPRINT" >/dev/null
 cmake --build "$BUILD" --target ts_engine_wasm -j "$(nproc)"
 echo "build_web: engine $FINGERPRINT -> web/ui/public/engine/"

@@ -78,8 +78,16 @@ compiler_id="$(sed -n 's/^set(CMAKE_CXX_COMPILER_ID "\(.*\)")$/\1/p' \
 cached_python="$(cached Python_EXECUTABLE)"
 python_missing=0
 [[ -n "$cached_python" && ! -x "$cached_python" ]] && python_missing=1
-if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_missing == 1 ) ]]; then
-    if [[ "$compiler_id" != *Clang* ]]; then
+# And a cache records the source tree it was configured for: CMake refuses it from any other path,
+# the same checkout under another name included (a container's /workspace and the host's home).
+cached_src="$(cached CMAKE_HOME_DIRECTORY)"
+src_moved=0
+[[ -n "$cached_src" && "$(realpath -e -- "$cached_src" 2>/dev/null)" != "$(realpath -e -- "$ROOT")" ]] && src_moved=1
+if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_missing == 1 || $src_moved == 1 ) ]]; then
+    if [[ $src_moved == 1 ]]; then
+        echo "check_engine_fresh: $BUILD_DIR was configured for $cached_src;" \
+             "reconfiguring it for $ROOT" >&2
+    elif [[ "$compiler_id" != *Clang* ]]; then
         echo "check_engine_fresh: $BUILD_DIR was configured with ${compiler_id:-an unknown compiler};" \
              "reconfiguring it with clang" >&2
     else
