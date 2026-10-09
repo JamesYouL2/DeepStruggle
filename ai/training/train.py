@@ -595,11 +595,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--floor-anneal-steps", type=int, default=0,
                         help="P31 1a: the length of the anneal.")
     parser.add_argument("--seed-scenarios", nargs="+", default=None,
-                        choices=["subs", "chernobyl"],
+                        choices=["subs", "chernobyl", "cmc_combo"],
                         help="P31 1b: in --seed-frac of games, the listed card is played for its event "
                              "for the US as ENVIRONMENT the first time the US holds it at an action "
                              "round's card play (Chernobyl's region drawn uniformly); the forced plays "
-                             "get no policy gradient.")
+                             "get no policy gradient. cmc_combo instead forces the US's whole scripted "
+                             "Cuban Missile Crisis combo (tools/lib/scripted_rules.py) wherever it applies.")
     parser.add_argument("--seed-frac", type=float, default=0.0,
                         help="P31 1b: the fraction of games seeded, drawn afresh at every game start.")
     parser.add_argument("--seed-scenarios-from", type=int, default=0,

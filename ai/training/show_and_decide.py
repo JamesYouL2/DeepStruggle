@@ -28,6 +28,7 @@ import torch
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder as _A
+from tools.lib.scripted_rules import SCRIPTS
 
 PLAY_MODE_LO = _A.PLAY_MODE_OFFSET
 PLAY_MODE_HI = _A.PLAY_MODE_OFFSET + 5
@@ -127,6 +128,12 @@ SCENARIOS: Dict[str, Scenario] = {
     "chernobyl": Scenario(card=94, region=True),   # Chernobyl
 }
 
+#: Scenarios that are a scripted line rather than one card's event: the script (tools/lib/
+#: scripted_rules.py) forces every US move it covers in a seeded game, as environment.
+#: cmc_combo (owner, 2026-10-09): the US Cuban Missile Crisis combo -- a sanity check that the
+#: learner, as the USSR, can learn not to coup under the crisis when it cannot pay.
+SCRIPTED_SCENARIOS: Dict[str, str] = {"cmc_combo": "cmc-combo"}
+
 #: Per-env stage of a forced play: 0 nothing pending, 1 card chosen (play mode next), 2 event
 #: chosen (region next).
 _IDLE, _MODE, _REGION = 0, 1, 2
@@ -143,13 +150,15 @@ class ScenarioSeeder:
 
     def __init__(self, names: Sequence[str], frac: float, num_envs: int, start_step: int = 0,
                  seed: int = 24680) -> None:
-        unknown = [n for n in names if n not in SCENARIOS]
+        unknown = [n for n in names if n not in SCENARIOS and n not in SCRIPTED_SCENARIOS]
         if unknown:
             raise ValueError(f"unknown scenario(s) {unknown}; known: {sorted(SCENARIOS)}")
         if not names:
             raise ValueError("scenario seeding needs at least one scenario")
         if not 0.0 < frac <= 1.0:
             raise ValueError("--seed-frac must be in (0, 1]")
+        self.scripts = [(n, SCRIPTS[SCRIPTED_SCENARIOS[n]]) for n in names if n in SCRIPTED_SCENARIOS]
+        names = [n for n in names if n in SCENARIOS]
         for n in names:
             name = ts.CardData.get_card_info(SCENARIOS[n].card)["name"]
             expect = {"subs": "Nuclear Subs", "chernobyl": "Chernobyl"}[n]
@@ -167,6 +176,8 @@ class ScenarioSeeder:
         self.card = np.zeros(num_envs, dtype=np.int16)
         self.games = np.zeros(2, dtype=np.int64)                      # (seeded, not) drawn
         self.forced: Dict[str, int] = {n: 0 for n in names}           # forced plays per scenario
+        for n, _ in self.scripts:
+            self.forced[n] = 0                                        # forced moves per script
 
     def draw(self, envs: np.ndarray, steps: int) -> None:
         """At a game start: decide afresh whether each of `envs` is seeded."""
@@ -197,6 +208,19 @@ class ScenarioSeeder:
         rows = np.flatnonzero(self.seeded & (np.asarray(dp) == int(ts.Player.US)))
         for r in rows:
             r = int(r)
+            if self.scripts:
+                st_s = runner.get_state(r)                      # type: ignore[attr-defined]
+                hit = False
+                for n, fn in self.scripts:
+                    move = fn(st_s, masks_np[r])
+                    if move is not None:
+                        actions[r] = int(move)
+                        forced[r] = True
+                        self.forced[n] += 1
+                        hit = True
+                        break
+                if hit:
+                    continue
             legal = np.flatnonzero(masks_np[r])
             stage = int(self.stage[r])
             if stage == _MODE:

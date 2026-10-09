@@ -544,6 +544,19 @@
     "opponent_self_pool": true,
     "block_lambda": "off"
    }
+  },
+  "R28": {
+   "description": "R1 plus scenario seeding cmc_combo in every game: the US's scripted Cuban Missile Crisis combo forced as environment wherever it applies (a sanity check that the USSR can learn not to coup under the crisis when it cannot pay)",
+   "first": "E7-A8-R1-S44@6400M+R28_20261009_222714",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "seed_scenarios": [
+     "cmc_combo"
+    ],
+    "seed_frac": 1.0,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -660,7 +673,8 @@
   "E7-A8-R1-S44@6400M+R3_20261009_090353": "E7-A8-R1-S44@6400M+R3",
   "E7-A8-R1-S44@6400M+R25_20261009_092349": "E7-A8-R1-S44@6400M+R25",
   "E7-A8-R1-S44@6400M+R26_20261009_092409": "E7-A8-R1-S44@6400M+R26",
-  "E7-A8-R1-S44@6400M+R27_20261009_105451": "E7-A8-R1-S44@6400M+R27"
+  "E7-A8-R1-S44@6400M+R27_20261009_105451": "E7-A8-R1-S44@6400M+R27",
+  "E7-A8-R1-S44@6400M+R28_20261009_222714": "E7-A8-R1-S44@6400M+R28"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

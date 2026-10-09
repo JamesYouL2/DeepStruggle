@@ -692,3 +692,21 @@ def test_the_play_mode_head_is_recovered_from_the_weights_and_added_on_resume(tm
                       device=torch.device("cpu"))
     load_resume_state(path, b.active_net, b, seed=0)
     b.train_iteration()
+
+
+def test_a_scripted_scenario_forces_what_its_script_returns_and_nothing_else() -> None:
+    """cmc_combo is a scripted line: wherever the script names a move for the US in a seeded game,
+    that move is forced (as environment); where it returns None the row is left alone."""
+    seeder = ScenarioSeeder(["cmc_combo"], 1.0, num_envs=16)
+    assert [n for n, _ in seeder.scripts] == ["cmc_combo"] and seeder.scenarios == []
+    calls: List[int] = []
+
+    def every_other(st: Any, mask: Any) -> Any:              # a stand-in script
+        calls.append(1)
+        legal = np.flatnonzero(mask)
+        return int(legal[0]) if len(calls) % 2 else None
+
+    seeder.scripts = [("cmc_combo", every_other)]
+    forced = _random_play_with(seeder, envs=16, steps=200, seed=5)
+    assert forced and seeder.forced["cmc_combo"] == len(forced)
+    assert all(d is not None for _, _, d in forced)

@@ -5,7 +5,8 @@ from __future__ import annotations
 import numpy as np
 
 import ts_engine as ts
-from tools.lib.batch_tournament import HEADLINE_CONDITIONS, SCRIPTS, _che_targets, apply_headline_rule
+from tools.lib.batch_tournament import HEADLINE_CONDITIONS, apply_headline_rule
+from tools.lib.scripted_rules import SCRIPTS, _che_targets
 from tools.lib.player_agent import load_agent
 
 
