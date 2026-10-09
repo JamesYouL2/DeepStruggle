@@ -354,6 +354,49 @@ def test_a_battleground_coup_at_defcon_two_is_a_loss() -> None:
     assert out[NODE_OFFSET + _cid("Zimbabwe")] != "loss"
 
 
+HOW_I_LEARNED = 46
+KAL_007 = 89
+
+
+def _play_mode(side: ts.Player, card: int, defcon: int = 2) -> ts.GameState:
+    """`side` at the play mode of `card`, at `defcon`."""
+    st = _card_choice(side)
+    st.defcon = defcon
+    _hand(st, side, [card])
+    _step(st, card - 1)
+    assert st.ctx().decision_type == ts.DecisionType.SELECT_PLAY_MODE
+    return st
+
+
+@pytest.mark.parametrize("side", [US, USSR])
+def test_how_i_learned_at_defcon_two_is_not_a_forced_loss(side: ts.Player) -> None:
+    """Its event is a choice of DEFCON 1-5, and it is neutral: Ops never fire it. Listed among the
+    DEFCON degraders, both its event and its Ops read "loss"."""
+    st = _play_mode(side, HOW_I_LEARNED)
+    out = classify_legal_actions(st)
+    assert out[EVENT_ACTION] != "loss" and out[OPS_ACTION] != "loss"
+    ops = st.clone()                              # the engine agrees: Ops leave the game running
+    _step(ops, OPS_ACTION)
+    assert not ts.Engine.is_terminal(ops)
+    ev = st.clone()                               # the event asks for a level, and 2 keeps it going
+    _step(ev, EVENT_ACTION)
+    assert ev.ctx().decision_type == ts.DecisionType.CHOOSE_BRANCH and int(ev.ctx().decision_player) == int(side)
+    keep = [a for a in np.flatnonzero(_legal(ev)) if not _ends_game(ev, int(a))]
+    assert keep, "every DEFCON level would end the game"
+
+
+def _ends_game(st: ts.GameState, a: int) -> bool:
+    s = st.clone()
+    _step(s, a)
+    return bool(ts.Engine.is_terminal(s))
+
+
+def test_the_degraders_at_defcon_two_stay_forced_losses() -> None:
+    """KAL-007, a US card: the US's event and the USSR's Ops both fire it, and both lose."""
+    assert classify_legal_actions(_play_mode(US, KAL_007))[EVENT_ACTION] == "loss"
+    assert classify_legal_actions(_play_mode(USSR, KAL_007))[OPS_ACTION] == "loss"
+
+
 def test_not_a_loss_under_nuclear_subs() -> None:
     st = _coup_targets(nuclear_subs=True)
     assert classify_legal_actions(st)[NODE_OFFSET + _cid("Angola")] != "loss"
