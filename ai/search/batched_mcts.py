@@ -41,7 +41,7 @@ import ts_engine as ts
 from bindings.settle import SettleMode
 from bindings.settle import settle as _settle
 from ai.search.dmcts import determinize
-from ai.search.gumbel_root import GumbelRoot
+from ai.search.gumbel_root import GumbelRoot, GumbelStats
 from ai.search.pimcts import PIMCTSConfig, acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
@@ -695,6 +695,12 @@ class BatchedMCTS:
         if self.cfg.subsample >= 1.0:
             return True
         return self._rng.random() < self.cfg.subsample
+
+    @property
+    def gumbel_stats(self) -> List[GumbelStats]:
+        """The Gumbel root's record of the last `best_actions` call, one per position
+        (`GumbelRoot.last_stats`); empty without `gumbel_k`."""
+        return self._gumbel.last_stats if self._gumbel is not None else []
 
     def best_actions(self, states: Sequence[ts.GameState]) -> List[int]:
         """Most-visited action per position; falls back to the first legal action. With

@@ -1136,6 +1136,35 @@ export PYTHONPATH=.:build/release
 
 ---
 
+## 7d. Gumbel-Choice Expert Iteration (one offline round)
+
+Does the network absorb the moves its own Gumbel search plays? `tools/generate_search_targets.py
+--target gchoice` plays the raw network against itself and, at a sampled share of its decisions
+(`--subsample`), records a noise-free Gumbel root's choice at every budget in `--gumbel-sims`, with
+each candidate's evaluations and value, beside the network's argmax and distribution. `search_pi`
+is a one-hot on the first budget's choice where it departs from the argmax, and the network's own
+distribution where they agree, so the agreeing positions hold the policy where it is.
+`tools/gchoice_targets.py arm` rewrites the same games into each arm (`departures`, `gated` on the
+root's own value margin, `own` -- the no-signal control), `tools/train.py --mode distill` fine-tunes
+from the base, and `tools/gchoice_targets.py check` reports on held-out games how often the
+checkpoint now plays the search's choice where it departs, and how far it moved where it agrees.
+`.github/workflows/gchoice_distill.yml` runs targets, arms, checks and a greedy round robin on CI.
+
+```bash
+export PYTHONPATH=.:build/release
+.venv/bin/python tools/generate_search_targets.py --checkpoint base.pt --target gchoice \
+    --gumbel-sims 256 64 --node-filter all --subsample 0.25 --total-games 200 --batch-size 50 \
+    --device cpu --seed-offset 10000000 --output-path targets-1.jsonl.gz
+.venv/bin/python tools/gchoice_targets.py arm --input targets-*.jsonl.gz --form departures \
+    --budget 256 --out departures.jsonl.gz
+.venv/bin/python tools/train.py --mode distill --warmup-checkpoint base.pt \
+    --distill-dataset departures.jsonl.gz --distill-epochs 2 --device cpu --output-dir gc.pt
+.venv/bin/python tools/gchoice_targets.py check --input heldout.jsonl.gz --base base.pt \
+    --model gc.pt --budget 256 --out check.json
+```
+
+---
+
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.

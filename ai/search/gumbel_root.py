@@ -35,7 +35,7 @@ builds the root, and importing it back would make the two modules a cycle.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, TypedDict
 
 import numpy as np
 import torch
@@ -53,6 +53,15 @@ if TYPE_CHECKING:
 _UINT64 = 1 << 64
 _US = int(ts.Player.US)
 C_VISIT, C_SCALE = 50.0, 0.1
+
+
+class GumbelStats(TypedDict):
+    """One position's record of a `GumbelRoot.choose` call (`GumbelRoot.last_stats`)."""
+    candidates: List[int]                  # most probable first
+    n: Dict[int, float]                    # evaluations spent on each
+    q: Dict[int, Optional[float]]          # mean value of its position for the mover
+    dropped: Dict[int, Optional[int]]      # the halving phase it was dropped in; None if played
+    value: float                           # the network's value of the position for the mover
 
 
 def sigma_completed(logits: Dict[int, float], value_mover: float, n: Dict[int, float],
@@ -103,6 +112,11 @@ class GumbelRoot:
     def __init__(self, mcts: "BatchedMCTS", sub: "BatchedMCTS") -> None:
         self.mcts = mcts
         self.sub = sub
+        #: Per position of the last `choose` call: the candidates (most probable first), each
+        #: one's evaluations and mean value for the mover, the phase it was dropped in (None for the
+        #: move played) and the mover's network value. Read by offline tools (search targets that
+        #: keep the root's values beside its choice); nothing in play reads it.
+        self.last_stats: List[GumbelStats] = []
 
     def _network(self, states: Sequence[ts.GameState]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Logits, legal masks and the mover's value at the real positions."""
@@ -133,6 +147,8 @@ class GumbelRoot:
             else:
                 g.append({a: 0.0 for a in legal})
             alive.append(sorted(legal, key=lambda a: -(g[i][a] + logits[i][a]))[:m_max])
+        initial = [list(c) for c in alive]
+        dropped: List[Dict[int, Optional[int]]] = [{a: None for a in c} for c in alive]
         n = [{a: 0.0 for a in lo} for lo in logits]
         w = [{a: 0.0 for a in lo} for lo in logits]
         phases = [halving_phases(len(c)) for c in alive]
@@ -178,8 +194,17 @@ class GumbelRoot:
                 sig = sigma_completed(logits[i], float(v[i]), n[i], q)
                 ranked = sorted(alive[i], key=lambda a: -(g[i][a] + logits[i][a] + sig[a]))
                 alive[i] = ranked[:1] if ph == phases[i] - 1 else ranked[:max(1, (len(ranked) + 1) // 2)]
+                for a in ranked[len(alive[i]):]:
+                    dropped[i][a] = ph
         # Survivors are ranked best first, whether the halving finished or the budget ran out.
-        return [int(c[0]) if c else 0 for c in alive]
+        chosen = [int(c[0]) if c else 0 for c in alive]
+        self.last_stats = [
+            GumbelStats(candidates=initial[i], n={a: n[i][a] for a in initial[i]},
+                        q={a: (w[i][a] / n[i][a] if n[i][a] > 0 else None) for a in initial[i]},
+                        dropped={a: (None if a == chosen[i] else dropped[i][a]) for a in initial[i]},
+                        value=float(v[i]))
+            for i in range(len(states))]
+        return chosen
 
     def _search(self, positions: Sequence[ts.GameState],
                 evaluations: Sequence[int]) -> List[Optional["_BNode"]]:
