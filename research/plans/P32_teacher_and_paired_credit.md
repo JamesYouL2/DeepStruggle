@@ -69,15 +69,25 @@ scaled by 1 − P = 0 and the alternative is never sampled -- and Gumbel @256 ca
 either: σ(completed Q) tops out near 15 at 256 evaluations, so a 28-nat prior wins and the
 search walks into the trap 64% of the time. **For T1 this means π′ = π·exp(σ(Q)) equals π
 wherever π is saturated, so the CE gradient (π′ − π) is ~0 exactly where the teacher knows
-better.** T1 therefore runs on a bounded logit gap -- `--ladder-logit-cap C` (A9 = A8 + cap 7:
-each legal move's deficit to the top legal move through C·tanh(d/C); greedy play unchanged,
-addable on resume, stored in the weights; at C = 7 sampled entropy 0.28 → 0.41, KL from the
-current policy 0.016; mean-centring was measured destructive, KL 0.65) -- or on a root prior
-temperature (`BatchedMCTSConfig.gumbel_prior_temperature`), and every T arm reports **the share
-of searched decisions with max p > 1 − 1e-6** before and after, as the saturation instrument.
-The cap arms running now (`E7-A8-R1-S44@6400M+A9` and `+A9-R28`, to 6,800M) decide whether the
-cap costs strength on its own and whether the trap becomes learnable under it; T1 branches from
-whichever of A8 / A9 those readings favour.
+better.** T1 therefore runs on a bounded logit gap. **Not the tanh cap (A9).** As first built,
+`--ladder-logit-cap C` put each legal move's deficit to the top legal move through C·tanh(d/C):
+greedy play unchanged, addable on resume, sampled entropy 0.28 → 0.41 at C = 7 -- but it restores
+exploration and not learning. The gradient reaching a saturated move's raw logit is the softmax
+gradient times 1 − tanh²(d/C), about 0.0013 at a 28-nat deficit (1.2e-6 against 9.2e-4 on the
+trap's influence), and lowering the top logit moves every capped logit with it, so the softmax
+does not change. Measured: the tanh cap with the trap scenario (`E7-A8-R1-S44@6400M+A9-R28`)
+showed no change at 50M (154 of 172 suicides) and was stopped at 6,460M. The same attenuation
+would hit T1's CE (π′ − π) through the tanh. (Mean-centring was measured destructive too, KL
+0.65 at C = 7.)
+
+**T1 runs on the straight-through cap, A10** (`--ladder-logit-cap 7 --ladder-logit-cap-grad
+straight`): the capped logits forward, play identical to A9's, the raw gradient back as if
+uncapped. The sanity check is the trap scenario on it (`E7-A8-R1-S44@6400M+A10-R28`, running:
+does the USSR learn the trap now?), then an A10 cap-only control from 6,400M, then **T1 on A10
+from 6,400M against that control**. Every T arm reports **the share of searched decisions with
+max p > 1 − 1e-6** before and after, as the saturation instrument; a root prior temperature
+(`BatchedMCTSConfig.gumbel_prior_temperature`) is the fallback if the straight-through cap costs
+strength on its own.
 
 **Decision.** Promote an arm iff its search gap shrinks by > 3 SE over the leg *and* it beats the
 plateau SWA head to head with the three-reference mean not lower; adopt on the seed-43 replicate
@@ -135,22 +145,20 @@ chains: Nuclear Subs still needs the state shown first (P31 1b, the exploitation
 environment), and the Subs coup needs an effect-conditioned coup-target correction before any credit
 can land on it -- queued behind T and B4′ as **B6**.
 
-## Checks (CPU, before or alongside the arms)
+## Checks (CPU) -- done 2026-10-10 by ts-main, `research/log/P32_cpu_checks.md` on `hand-knowledge-tracking`
 
-1. **The US opening on the heads line.** It is locked at France +6, Italy +2, Iran +1 in 98.9% of
-   games, West Germany untouched; the human opening is West Germany 4, Italy 3, Iran 2. Run
-   `setup_oracle.py` on the heads soup against the human opening and West-Germany-first variants.
-   If a sane opening reads +3 or more, the E5-21 recipe (game-result setup credit + the entropy
-   floor, +32 Elo there, never tried on this line) is the known fix and becomes an arm.
-2. **Wargames at a lead of 6.** The event is taken in ~45% of such spots and ends in a draw (28% of
-   all draws). Paired playouts at the branch: if the position's win probability is below 50% the
-   draw is right and this is not a leak; if not, B4′ at the branch (two options) is the sharpening
-   tool the washout run showed on-policy play cannot supply.
-3. **Chernobyl off Europe.** The report shows the exploitation for Europe; the same table for Asia,
-   Central and South America (the USSR's own plays fire it there far more often) says whether the
-   region choice is right or Europe-only.
+1. **The US opening on the heads line.** Locked at France +6, Italy +2, Iran +1 in 98.9% of
+   games; the human opening is West Germany 4, Italy 3, Iran 2. `setup_oracle.py` on the heads
+   soup: the human opening is **+0.5 ± 1.5** against its own -- no arm. But the critic rates the
+   human opening **−12.9** against a +0.5 playout: the critic is biased toward its habitual
+   opening, a calibration finding carried into T2's reads (search values into the critic should
+   move exactly this kind of familiarity bias).
+2. **Wargames at a lead of 6.** The draw is right: playing on reads **−0.212 ± 0.045** over 46
+   positions. Not a leak; nothing to sharpen.
+3. **Chernobyl off Europe.** The region choice holds: forcing Europe is **−0.019 ± 0.008**
+   against the chosen region over 220 positions. B5's Chernobyl trigger does not fire.
 4. **The search gap as a leaderboard column** for every main player, and searched players as
-   leaderboard anchors above the saturated panel.
+   leaderboard anchors above the saturated panel -- still to do.
 
 ## 4. The forced-exit DEFCON trap (owner's observation, 2026-10-10) -- replaces a withdrawn proposal
 
@@ -211,6 +219,13 @@ strength. Error small → the critic knows and the policy does not use it: a car
 the hand-management decisions (the play-mode head already exists; the discard/keep choices may
 need the same treatment).
 
+**4a done (ts-main, 2026-10-10, `P32_cpu_checks.md`): the critic sees the trap** -- error at entry
+−0.08 for the US and 0.00 for the USSR -- so **4b is not triggered**, and the trap accounts for only
+29 of 142 DEFCON-1 losses in the bank. The "critic completely unaware" reading was the policy's
+behaviour, not the critic's estimate. What remains of §4 is 4c: whether the *choices* that enter the
+trap (the attacker's discard and Five Year Plan timing; the defender's keep-or-return) get their
+credit, which B4′'s leak log answers by decision type.
+
 ## 5. Replication and the human loop
 
 * **A seed-43 heads run from scratch** (A8, R1, S43), with P30 C2 (the card-event target, the one
@@ -242,8 +257,9 @@ after, `run_codes.py --run` on the name, readouts at 40M marks.
   closes; the product is the searched soup.
 * B4′: promote iff ≥ 2 of its target spots move by > 3 SE on direct counts with strength not worse;
   the leak log's top entries are reported whether or not it is promoted.
-* Checks: 1 → an arm if the opening gap is ≥ +3; 2 → B4′ at the branch if the draw is wrong; 3 → B5
-  (the opponent-legality head, built, unrun) if the region choice is Europe-only.
+* Checks, resolved: 1 → no arm (+0.5 ± 1.5; the critic's −12.9 goes to T2's reads); 2 → no leak
+  (the draw is right); 3 → B5's trigger does not fire (the region choice holds); 4a → 4b not
+  triggered (the critic sees the trap).
 * 4: the owner's.
 
 ## Follow-ups
