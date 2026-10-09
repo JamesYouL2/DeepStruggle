@@ -15,7 +15,8 @@ One pass of greedy self-play per checkpoint feeds every section:
 5. **Soviets Shoot Down KAL-007** -- the US's choices holding it, split by South Korea's control.
 6. **Chernobyl** -- when each side plays it (headline / action round / mode), the region the US
    designates, whether the US then places its Ops influence in that region more than usual, and
-   US Europe Control wins in games where Chernobyl closed Europe.
+   US Europe Control wins in games where Chernobyl closed Europe -- only when the US plays the
+   event in more than 1% of its plays of the card; otherwise the section says so and stops.
 7. **UN Intervention** -- the opponent card each side plays with it.
 8. **Space race** -- the cards each side sends there most.
 9. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
@@ -70,6 +71,9 @@ REGIONS = ["Europe", "Asia", "Middle East", "Africa", "Central America", "South 
 _MAP = {c["name"]: c for c in json.load(open("rules/map.json"))["countries"]}
 COUNTRY_REGION = {int(c["id"]): REGIONS.index(c["region"]) for c in _MAP.values()}
 LATE_WAR = 8
+#: The Chernobyl section analyses a checkpoint only when the US plays the event in more than this
+#: share of its plays of the card.
+CHERNOBYL_EVENT_MIN = 0.01
 OP_INFLUENCE = int(ts.OpMode.INFLUENCE)
 SOUTH_KOREA = int(_MAP["South Korea"]["id"])
 CUBA = int(_MAP["Cuba"]["id"])
@@ -1035,6 +1039,12 @@ def chernobyl_section(c: Dict[str, Any], endings: Sequence[Dict[str, Any]]) -> s
     if not c:
         return "\n".join(out + ["", "Not recorded for this report (records from before the section)."])
     us, ussr, regions = c["us_plays"], c["ussr_plays"], c["regions"]
+    # Only a checkpoint whose US actually plays the event gets the analysis: below 1% of its plays the
+    # region and placement statistics describe the USSR's triggers, not a US decision.
+    us_events = sum(p["mode"] in ("headline", "event first") for p in us)
+    if not us or us_events / len(us) <= CHERNOBYL_EVENT_MIN:
+        share = f"{100 * us_events / len(us):.1f}%" if us else "0% (the US never played it)"
+        return "\n".join(out + ["", f"Chernobyl played for event only {share}, no further analysis."])
     # 1. The US playing it from its own hand.
     mode_us = {"headline": "headline", "event first": "event in a round", "Ops first": "Ops", "space race": "space race"}
     n = len(us)
