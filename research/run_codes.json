@@ -533,6 +533,17 @@
     "opponent_temperature": 0.0,
     "block_lambda": "off"
    }
+  },
+  "R27": {
+   "description": "R1 plus per-seat distillation: KL(teacher || policy) at coef 1.0 on the learner's own US decisions, the teacher the US-locked exploiter E7-A8-R1-S44@6400M+R25@6520M",
+   "first": "E7-A8-R1-S44@6400M+R27_20261009_105451",
+   "flags": {
+    "teacher_checkpoint": "/workspace/data/checkpoints/E7-A8-R1-S44@6400M+R25_20261009_092349/snapshot_6520045568steps.pt",
+    "teacher_coef": 1.0,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -648,7 +659,8 @@
   "E7-A8-R1-S44@6400M+R19@6550M+R3_20261009_084920": "E7-A8-R1-S44@6400M+R19@6550M+R3",
   "E7-A8-R1-S44@6400M+R3_20261009_090353": "E7-A8-R1-S44@6400M+R3",
   "E7-A8-R1-S44@6400M+R25_20261009_092349": "E7-A8-R1-S44@6400M+R25",
-  "E7-A8-R1-S44@6400M+R26_20261009_092409": "E7-A8-R1-S44@6400M+R26"
+  "E7-A8-R1-S44@6400M+R26_20261009_092409": "E7-A8-R1-S44@6400M+R26",
+  "E7-A8-R1-S44@6400M+R27_20261009_105451": "E7-A8-R1-S44@6400M+R27"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
