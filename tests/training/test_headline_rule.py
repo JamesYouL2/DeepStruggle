@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 import ts_engine as ts
-from tools.lib.batch_tournament import HEADLINE_CONDITIONS, apply_headline_rule
+from tools.lib.batch_tournament import HEADLINE_CONDITIONS, SCRIPTS, _che_targets, apply_headline_rule
 from tools.lib.player_agent import load_agent
 
 
@@ -42,3 +42,19 @@ def test_cannot_pay_reads_the_opponents_crisis_countries() -> None:
     """On an empty board neither side could pay off a crisis headlined against it."""
     st = ts.GameState()
     assert HEADLINE_CONDITIONS["oppcantpay"](st)
+
+
+def test_a_script_wraps_an_agent_by_name() -> None:
+    agent = load_agent("script:cmc-combo:heuristic", device="cpu")
+    assert getattr(agent, "script") == "cmc-combo" and agent.name.endswith("+cmc-combo")
+    assert "cmc-combo" in SCRIPTS
+
+
+def test_che_targets_are_the_countries_ches_coup_can_reach() -> None:
+    """Non-battlegrounds of Central America, South America and Africa: Costa Rica in, Cuba out."""
+    targets = _che_targets()
+    assert 68 in targets and 71 not in targets
+    for c in targets:
+        info = ts.MapData.get_country_info(c)
+        assert not info["battleground"]
+        assert info["region"] in (ts.Region.CENTRAL_AMERICA, ts.Region.SOUTH_AMERICA, ts.Region.AFRICA)

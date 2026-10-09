@@ -549,6 +549,14 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "temperature", float(t_str))
         setattr(agent, "name", f"{agent.name}@T{float(t_str):g}")
         return agent
+    if s.lower().startswith("script:"):
+        # script:<name>:<rest-of-spec> -- a named scripted rule (tools/lib/batch_tournament.SCRIPTS)
+        # played on top of the agent: it forces the moves it covers and leaves the rest alone.
+        _, script_name, rest = s.split(":", 2)
+        agent = load_agent(rest, device=device)
+        setattr(agent, "script", script_name)
+        setattr(agent, "name", f"{agent.name}+{script_name}")
+        return agent
     if s.lower().startswith("headline:"):
         # headline:<card>:<rest-of-spec> -- a scripted rule over the agent: whenever it chooses its
         # headline holding <card>, it headlines <card>. Everything else is the agent's own choice.
