@@ -110,6 +110,7 @@ class LadderNet(ColdWarNetV2):
                  branch_head: bool = False,
                  play_mode_head: bool = False,
                  obs_features: int = 0,
+                 logit_cap: float = 0.0,
                  token_layers: int = 0,
                  token_dim: int = 0,
                  **kwargs: Any) -> None:
@@ -403,6 +404,17 @@ class LadderNet(ColdWarNetV2):
         self.obs_feature_bits = int(obs_features)
         if self.obs_feature_bits:
             self.register_buffer("obs_features", torch.tensor(self.obs_feature_bits, dtype=torch.int64))
+        # --ladder-logit-cap (owner, 2026-10-09): each legal move's deficit to the top legal move is
+        # bounded to c through c * tanh(deficit / c). Uncapped, the policy saturates -- a coup under
+        # the opponent's Cuban Missile Crisis led influence by 28 nats, P(coup) was 1 in float32, and
+        # policy gradient, scaled by 1 - P, could not move it however the game ended
+        # (research/log/E7_cuban_missile_crisis_probe.md). Centred on the top move, not the mean:
+        # the mean is dragged down by the many hopeless legal moves, and centring there squashes
+        # the good moves together. Monotonic, so the greedy move is unchanged. A buffer only when
+        # on, so uncapped checkpoints are unchanged.
+        self.logit_cap_value = float(logit_cap)
+        if self.logit_cap_value > 0.0:
+            self.register_buffer("logit_cap", torch.tensor(self.logit_cap_value, dtype=torch.float32))
         self.card_aux = bool(card_aux)
         if self.card_aux:
             self.card_aux_head = nn.Sequential(
@@ -591,6 +603,7 @@ class LadderNet(ColdWarNetV2):
             branch_head=self.branch_head,
             play_mode_head=self.play_mode_head,
             obs_features=self.obs_feature_bits,
+            **({"logit_cap": self.logit_cap_value} if self.logit_cap_value > 0.0 else {}),
         )
 
 
@@ -600,6 +613,19 @@ class LadderNet(ColdWarNetV2):
     def _dynamic_slice(self, nodes: torch.Tensor, static: Tuple[int, ...]) -> torch.Tensor:
         keep = [i for i in range(nodes.shape[-1]) if i not in static]
         return nodes[..., keep]
+
+    def _cap_logits(self, logits: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+        c = self.logit_cap_value
+        if c <= 0.0:
+            return logits
+        z = logits.float()
+        if mask is not None:
+            legal = mask.bool() if mask.dtype != torch.bool else mask
+            top = z.masked_fill(~legal, float("-inf")).amax(dim=-1, keepdim=True)
+            top = torch.where(torch.isfinite(top), top, torch.zeros_like(top))   # no legal move
+        else:
+            top = z.amax(dim=-1, keepdim=True)
+        return (top + c * torch.tanh((z - top) / c)).to(logits.dtype)
 
     def _policy_logits(self, h: torch.Tensor,
                        tokens: tuple[torch.Tensor, ...] | None) -> torch.Tensor:
@@ -902,6 +928,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         branch_head=any(k.startswith("branch_head_net.") for k in sd),
         play_mode_head=any(k.startswith("play_mode_head_net.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
+        **({"logit_cap": float(sd["logit_cap"])} if "logit_cap" in sd else {}),
     )
 
 def create_ladder_net(device: torch.device | str, **config: Any) -> LadderNet:

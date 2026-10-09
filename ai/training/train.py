@@ -116,6 +116,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         # Owner 2026-10-06. Recorded only when on, as the token path.
         **({"branch_head": True} if getattr(args, "ladder_branch_head", False) else {}),
         **({"play_mode_head": True} if getattr(args, "ladder_play_mode_head", False) else {}),
+        # Owner 2026-10-09. Recorded only when on.
+        **({"logit_cap": float(args.ladder_logit_cap)} if getattr(args, "ladder_logit_cap", 0.0) else {}),
     )
 
 
@@ -216,6 +218,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="A head on the play-mode block (EVENT, SPACE, the three Ops modes) reading the "
                           "trunk plus a one-hot of the card being played, zero-initialised; addable on "
                           "--resume. Off by default.")
+    lad.add_argument("--ladder-logit-cap", type=float, default=0.0,
+                     help="Bound each legal move's logit deficit to the top legal move to C through "
+                          "C*tanh(deficit/C), so no policy saturates (owner 2026-10-09). Greedy play "
+                          "unchanged; addable on --resume. 0 (default): off.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,

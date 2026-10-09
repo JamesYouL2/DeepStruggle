@@ -446,7 +446,7 @@ class ColdWarNetV2(nn.Module):
         double the cost of every update. `None` on a scalar-headed model.
         """
         h, _attn, tokens = self._encode(obs)
-        raw_logits = self._policy_logits(h, tokens)
+        raw_logits = self._cap_logits(self._policy_logits(h, tokens), mask)
         if mask is not None:
             mask_bool = mask.bool() if mask.dtype != torch.bool else mask
             # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
@@ -576,6 +576,11 @@ class ColdWarNetV2(nn.Module):
             return h, attn_weights
         return h
 
+    def _cap_logits(self, logits: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+        """The policy logits as the policy uses them; uncapped here. LadderNet's --ladder-logit-cap
+        overrides it."""
+        return logits
+
     def _policy_logits(self, h: torch.Tensor,
                        tokens: tuple[torch.Tensor, ...] | None) -> torch.Tensor:
         """The action logits, per-entity where the action names an entity.
@@ -642,7 +647,7 @@ class ColdWarNetV2(nn.Module):
             v_vp: (B, 1) float tensor in [-20, 20].
         """
         h, _attn, tokens = self._encode(obs)
-        raw_logits = self._policy_logits(h, tokens)
+        raw_logits = self._cap_logits(self._policy_logits(h, tokens), mask)
 
         if mask is not None:
             mask_bool = mask.bool() if mask.dtype != torch.bool else mask
@@ -666,7 +671,7 @@ class ColdWarNetV2(nn.Module):
         other caller depends on, is untouched.
         """
         h, _attn, tokens = self._encode(obs)
-        raw_logits = self._policy_logits(h, tokens)
+        raw_logits = self._cap_logits(self._policy_logits(h, tokens), mask)
         if mask is not None:
             mask_bool = mask.bool() if mask.dtype != torch.bool else mask
             # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
