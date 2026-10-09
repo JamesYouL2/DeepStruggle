@@ -13,6 +13,21 @@ Current status:
 * interface to plumb different player implementations, record games between them, replay them in web viewer, and run tournamnets
 * some baseline network architecture and training scripts, that in few hours on 4090 can learn to almost never propose Olympic Games at Defcon 2
 
+## Play, and the leaderboard
+
+* **[Play against the models](https://mihaild.github.io/DeepStruggle/)** in the browser (GitHub
+  Pages; no install, no server): choose *Play as US* or *Play as USSR* and the model takes the other
+  side, or use the developer view to see every model's move probabilities and evaluation.
+* **[Elo leaderboard](https://mihaild.github.io/DeepStruggle/leaderboard.html)** of the published
+  models, with each one's head-to-head results and a behaviour report.
+* **Models** are on Hugging Face: [`mihaild/deepstruggle`](https://huggingface.co/mihaild/deepstruggle).
+
+> **About the Elo numbers.** The leaderboard's Elo is computed only from games between these
+> models, on a scale anchored at one of them (`E7-A4-R1-S44@4800M` = 1500). It does **not**
+> correspond to the human Elo ratings of the Playdek Twilight Struggle app or any other human
+> rating: a model rated 1600 here is not a 1600 player there, and no game against a human
+> contributes to it.
+
 ## AI Slop warning
 
 This repository is developed with heavy usage of AI. Most code is reviewed, but not all of it, neither documentation. Be even more skeptical code quality here than usually.

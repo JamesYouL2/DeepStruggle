@@ -67,6 +67,8 @@ a:hover { text-decoration: underline; }
   background: var(--bg-card); border-radius: 6px; font-family: var(--font-mono); font-size: 12px; }
 
 .lb-scale { color: var(--text-muted); font-size: 13px; margin: 6px 0 12px; line-height: 1.5; }
+.lb-note { margin: 4px 0 8px; padding: 8px 12px; border-left: 3px solid var(--gold); background: var(--bg-card);
+  border-radius: 4px; color: var(--text-main); font-size: 13px; line-height: 1.5; }
 
 .lb-table-wrap { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px; }
 .lb-table { width: 100%; border-collapse: collapse; }
