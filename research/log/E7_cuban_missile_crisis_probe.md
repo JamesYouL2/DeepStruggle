@@ -172,6 +172,6 @@ stable first. Lone Gunman's mode is the network's. Everything else is the networ
 
 A scripted exploit of the USSR's blind spot is worth about 3 points of the US's win rate overall,
 from one game in ten. When the USSR has nothing in Cuba, the event's coup is taken 87-100% of the
-time and the game is lost on the spot. (The earlier, looser "USSR cannot pay" condition -- fewer
-than 2 in Cuba at the headline -- left the USSR time to reach 2 before the follow-up; with none, it
-rarely does.)
+time and the game is lost on the spot. (The earlier forced run headlined the crisis whatever Cuba
+held, and the USSR could pay in about 40% of its coups; with nothing in Cuba at the headline, it
+rarely gets to 2 before the follow-up.)
