@@ -602,3 +602,32 @@ made: raw (the three 6,800M snapshots) and SWA-made (the three 6,720–6,800M SW
 * Files: `data/checkpoints/_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt` (sha256 `91a43a8b089c…`)
   and its raw twin `…@6800M.pt` (`ce5c98126a99…`). A candidate for best overall; the designation is the
   owner's.
+
+## Training with search targets from the plateau (owner's plan, 2026-10-09)
+
+Search improved the raw plateau network (PUCT @128 55.0%), so by the owner's rule training continued
+with PUCT search targets: recipe R18 -- search cross-entropy coefficient 0.5, 64 simulations, every node
+type, 1 in 8 decisions -- as `E7-A8-R1-S44@6790M+R18`, a branch from the 6,790M state (the last saved
+before the plateau), its own flags otherwise (`launch_flags --diff`: the three search flags). It ran
+01:47–05:20 UTC at ~27k steps/s (16k while the soup's search evaluation shared the machine), to 7,100M:
+310M steps. One field, greedy, 1,000 games a side (`data/reports/a8_searchtrain_rr.{md,json}`; an
+interim check at 6,880M in `a8_r18_6880_check.*`).
+
+| model | Elo | panel US / USSR | vs the three references (mean) |
+|:---|---:|:---|---:|
+| `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M` (heads soup) | 1701 | 95.3 / 93.7 | -- |
+| `E7-A8-R1-S44@6720..6800M` (plateau SWA) | 1657 | 94.5 / 92.9 | 61.8 |
+| `E7-A8-R1-S44@6790M+R18@7020..7100M` | 1652 | 92.8 / 93.1 | 59.6 |
+| `E7-A8-R1-S44@6790M+R18@7100M` | 1626 | 91.8 / 90.7 | 55.6 |
+| `E7-A8-R1-S44@6800M` (plateau raw) | 1625 | 92.4 / 91.0 | 56.5 |
+
+* **No clear gain in 310M steps.** Head to head the search-trained SWA beats the plateau SWA 52.9% ±
+  1.1 (raw 51.4%), but it is 2.2 points lower against the three fixed references and 1.7 points weaker
+  as US on the panel; Elo in the field 1652 against 1657. Mixed, so level. The heads soup beats it
+  56.0%.
+* **Search targets broadened the policy**, as on E7-18-44: entropy 0.30 → 0.47–0.53 within 10M steps
+  (E7-18-44: +0.1 over its control throughout), and self-play's seat balance moved (US 0.46 → 0.53).
+* **Caveats:** 310M is short -- E7-18-44 also showed no gain in 400M -- and the comparison is against
+  the plateau itself, not a step-matched plain continuation, which the plateau makes a fair stand-in.
+  The searcher measured at evaluation (PUCT @128, Gumbel k=8 @256) is stronger than the 64-simulation
+  targets trained on.
