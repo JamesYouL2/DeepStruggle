@@ -58,7 +58,8 @@ export function hfFileUrl(repo: string, revision: string, path: string): string 
   return `https://huggingface.co/${repo}/resolve/${encodeURIComponent(revision)}/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-/** Where the page takes its model from when a link names none: the newest upload here. */
+/** Where the page takes its model from when a link names none: the model this repo's
+ *  default.json names, or its newest upload if it has none. */
 export const DEFAULT_HF_REPO = "mihaild/deepstruggle";
 export const DEFAULT_HF_REVISION = "main";
 
@@ -90,6 +91,50 @@ export async function listHfModels(repo: string, revision: string): Promise<HfMo
   // ISO-8601 times order as strings; files uploaded in one commit fall back to their path.
   files.sort((a, b) => (a.date === b.date ? a.path.localeCompare(b.path) : a.date < b.date ? 1 : -1));
   return files;
+}
+
+export interface HfModelGroup {
+  /** The directory, "" for the repo's top level. A published run is one directory. */
+  dir: string;
+  files: HfModelFile[];
+}
+
+/**
+ * `files` (newest first, as listHfModels returns them) by directory: a run published whole is a
+ * directory with an .onnx beside every snapshot, so a flat list of every file is unreadable after
+ * two runs. Groups are ordered by their newest file and keep the newest-first order inside.
+ */
+export function groupHfModels(files: HfModelFile[]): HfModelGroup[] {
+  const groups = new Map<string, HfModelFile[]>();
+  for (const f of files) {
+    const cut = f.path.lastIndexOf("/");
+    const dir = cut < 0 ? "" : f.path.slice(0, cut);
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir)!.push(f);
+  }
+  return [...groups].map(([dir, fs]) => ({ dir, files: fs }));
+}
+
+/**
+ * The model the repo itself names as its default: `default.json` at the top level,
+ * `{"model": "<path>.onnx"}`. null when the repo has no such file -- the page then takes the newest
+ * upload, which is what it did before repos had one.
+ */
+export async function fetchHfDefault(repo: string, revision: string): Promise<string | null> {
+  const res = await fetch(hfFileUrl(repo, revision, "default.json"));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`default.json: HTTP ${res.status}`);
+  let doc: unknown;
+  try {
+    doc = await res.json();
+  } catch {
+    throw new Error(`${repo}'s default.json is not JSON`);
+  }
+  const model = (doc as { model?: unknown } | null)?.model;
+  if (typeof model !== "string" || !model.endsWith(".onnx")) {
+    throw new Error(`${repo}'s default.json must be {"model": "<path>.onnx"}`);
+  }
+  return model;
 }
 
 export interface ModelMeta {

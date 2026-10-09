@@ -7,7 +7,7 @@
       "soup_E7-20-44+4390M.45+4390M.46_swa4720-4800M"
     ],
     "hf": null,
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A4-R1-S44_4390M+_S44_45_46_4720..4800M.md"
   },
   "E7-A4-R1-S44@4720..4800M": {
     "file": "checkpoints/_models/E7-A4-R1-S44@4720..4800M.pt",
@@ -18,7 +18,7 @@
       "E7line_swa_4720-4800M"
     ],
     "hf": null,
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A4-R1-S44_4720..4800M.md"
   },
   "E7-A4-R1-S44@4800M": {
     "file": "checkpoints/E7-20-44_20261005_174535/snapshot_4800053248steps.pt",
@@ -28,7 +28,7 @@
       "E7-20-44@4800M"
     ],
     "hf": null,
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A4-R1-S44_4800M.md"
   },
   "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M": {
     "file": "checkpoints/_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt",
@@ -36,7 +36,7 @@
     "description": "Soup of three SWAs over 6,720-6,800M: E7-A8-R1-S44 and its seed branches S45 and S46 from 6,400M (the heads soup). The best soup.",
     "old_names": [],
     "hf": null,
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+_S44_45_46_6720..6800M.md"
   },
   "E7-A8-R1-S44@6720..6800M": {
     "file": "checkpoints/E7-A8-R1-S44_20261007_162257/swa_6720-6800M.pt",
@@ -44,7 +44,7 @@
     "description": "SWA (weight average) of E7-A8-R1-S44's 6,720-6,800M snapshots. The best SWA.",
     "old_names": [],
     "hf": null,
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6720..6800M.md"
   },
   "E7-A8-R1-S44@6800M": {
     "file": "checkpoints/E7-A8-R1-S44_20261007_162257/snapshot_6800015360steps.pt",
@@ -52,6 +52,6 @@
     "description": "Architecture A8 (play-mode and branch heads), recipe R1, seed 44 at 6,800M steps, where it plateaus (research/log/P31_branch_arms_B1_B2.md). The best single checkpoint.",
     "old_names": [],
     "hf": null,
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6800M.md"
   }
 }

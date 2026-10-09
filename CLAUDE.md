@@ -244,6 +244,16 @@ PYTHONPATH=. .venv/bin/python tools/tournament.py \
   --anchor-model HeuristicBot --anchor-elo 1500.0 \
   --output-report <run-dir>/tournament_report.md
 
+# The Elo leaderboard (one scale per engine epoch; records in leaderboard/, tools/README.md §2b):
+# register a network and a player, play it against the epoch's main players, show the table
+PYTHONPATH=. .venv/bin/python tools/leaderboard.py add-network <name> <file.pt> --description "..."
+PYTHONPATH=. .venv/bin/python tools/leaderboard.py add-player '<name>[~gumbel(sims=256,k=8)]'
+tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python \
+  tools/leaderboard_play.py --epoch E7 --players '<player-id>' --games-per-side 1000
+PYTHONPATH=. .venv/bin/python tools/leaderboard.py show --main-only   # or --lineage <run-name>
+# Publish to Hugging Face (repo mirrors data/checkpoints/, an .onnx beside every .pt): §2c
+PYTHONPATH=.:build/release .venv/bin/python tools/publish_hf.py run <run-dir> --dry-run
+
 # Single match / replay generation (also supports --us human for interactive CLI play)
 PYTHONPATH=. .venv/bin/python tools/play_match.py --us heuristic --ussr strategic
 

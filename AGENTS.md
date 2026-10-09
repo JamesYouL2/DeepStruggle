@@ -157,6 +157,9 @@ graph TD
 │   ├── README.md               # Tool descriptions, CLI flags, and usage examples
 │   ├── train.py                # Unified RL training & fine-tuning runner
 │   ├── tournament.py           # Unified tournament & head-to-head evaluator
+│   ├── leaderboard.py          # Elo leaderboard: register, validate, fit, show (stdlib only)
+│   ├── leaderboard_play.py     # Plays leaderboard pairings and appends their records
+│   ├── publish_hf.py           # Publishes run dirs / models (+ .onnx) to Hugging Face; default.json
 │   ├── play_match.py           # Unified match runner & replay generator (.tslog.json)
 │   ├── generate_dataset.py     # High-throughput vectorized demonstration generator (.jsonl.gz)
 │   ├── build_human_dataset.py  # Human-corpus demonstration dataset builder
@@ -173,6 +176,8 @@ graph TD
 │   │   ├── card_mappings.py    # Card name <-> id mapping shared by the corpus tools
 │   │   ├── engine_fingerprint.py # Content hash of engine/ + bindings/, for staleness checks
 │   │   ├── player_agent.py     # Unified Agent loader (random, heuristic, neural)
+│   │   ├── player_spec.py      # A player = network + typed inference spec; canonical ids
+│   │   ├── leaderboard.py      # Leaderboard records, validation, two-stage Bradley-Terry fit
 │   │   ├── tournament_evaluator.py # Matchup runner & loss cause classifier
 │   │   ├── self_play.py        # Self-play simulation & .tslog.json recorder
 │   │   ├── batch_tournament.py # Vectorized batch tournament runner & Bradley-Terry MLE
@@ -209,6 +214,9 @@ graph TD
 │                               # behind the differential_fuzz marker / --run-fuzz, not run by
 │                               # default (BUGS.md TEST-1)
 │
+├── leaderboard/                # Elo leaderboard records (tools/README.md §2b): networks.json, players.json,
+│   │                           # epochs.json, matches/<epoch>.jsonl (append-only, union-merged);
+│   │                           # fitted at page build, never committed as ratings
 ├── rules/                      # Formal spec the engine implements (tracked, except the PDF)
 │   ├── Rules_Final.pdf         # [GIT IGNORED] Official rulebook -- GMT Games copyright, not ours to commit
 │   ├── rules.md / rules.json   # Formal mathematical rules specification

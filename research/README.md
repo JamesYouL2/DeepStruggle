@@ -1,9 +1,10 @@
 # research/
 
-The project's research record. **None of this is published** — `tools/scripts/publish_snapshot.sh`
-strips the whole directory, and `check_public_hygiene.sh` fails the publish if anything in the
-public tree so much as cites it. That is deliberate: the public repository is code, and this is
-the reasoning behind the code.
+The project's research record: the reasoning behind the code. It is published with the code (the
+repository's `main` is pushed whole since 2026-09-25; the separate stripped public snapshot is
+gone). Ratings live in `leaderboard/`, not here: a log entry cites a player's Elo from
+`tools/leaderboard.py show` at a commit rather than copying a tournament's table, and the
+leaderboard page links each network's behaviour report in `log/per_checkpoint/`.
 
 ## The one rule: file by update discipline
 

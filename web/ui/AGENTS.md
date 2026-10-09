@@ -12,8 +12,9 @@ WebAssembly, models as ONNX -- so `dist/` works from GitHub Pages as well as fro
 ```
 web/ui/
 ├── index.html                  # Workbench layout (Top Bar; cards | SVG Map | HUD rail; Bottom Drawer)
+├── leaderboard.html            # The Elo leaderboard page (src/leaderboard_page.ts, src/leaderboard.css)
 ├── package.json                # Dependencies and build scripts
-├── vite.config.ts              # base path (TS_WEB_BASE, for Pages), /api proxy to the local server
+├── vite.config.ts              # base path (TS_WEB_BASE, for Pages), /api proxy, the two pages
 ├── tsconfig.json
 ├── src/
 │   ├── main.ts                 # TSApp coordinator: boot, refresh(), links, auto-play, Action Stream
@@ -36,8 +37,11 @@ web/ui/
 │   ├── analysis_view.ts        # Live model analysis panel: model picker, critic readings, top choices, badges
 │   ├── debug_panel.ts          # State inspector and engine override tools
 │   ├── style.css               # Theme tokens, dark mode palette, animations, layout styles
+│   ├── leaderboard_page.ts     # The leaderboard: views (main / + lineages / all) filter one fit,
+│   │                           # head-to-head on click, links to reports, weights and the workbench
 │   └── types.ts                # TypeScript interface mirrors of engine GameState and MicroAction
 ├── public/engine/              # ts_engine.mjs + .wasm, not committed (tools/scripts/build_web.sh)
+├── public/leaderboard.json     # fitted from leaderboard/ by build_web.sh (tools/leaderboard.py fit), not committed
 └── dist/                       # Production bundle, not committed (local server, or GitHub Pages)
 ```
 
@@ -121,11 +125,17 @@ web/ui/
      dropped **file**. The file carries its description in ONNX metadata (`analysis/onnx_meta.ts`):
      a model whose observation width differs from the engine's is refused, one exported next to
      another engine build is flagged.
-   - **The default model.** A link with no `model` loads the newest `.onnx` in
-     `DEFAULT_HF_REPO` (`mihaild/deepstruggle@main`, `analysis/model.ts`): `listHfModels` asks the
-     tree API with `expand=true`, which gives each file's last commit date, follows the `Link`
-     pages, and sorts newest first. The default is dropped if the user picks a model while it is
-     listing. Turning analysis off writes `model=off`, so that link does not load the default.
+   - **The default model.** A link with no `model` loads the model `DEFAULT_HF_REPO`
+     (`mihaild/deepstruggle@main`, `analysis/model.ts`) names in its `default.json`
+     (`{"model": "<path>.onnx"}`, written by `tools/publish_hf.py default`), or its newest `.onnx`
+     when it has none: `listHfModels` asks the tree API with `expand=true`, which gives each
+     file's last commit date, follows the `Link` pages, and sorts newest first. A `default.json`
+     naming a file the repo lacks is an error, not a fallback. The default is dropped if the user
+     picks a model while it is listing. Turning analysis off writes `model=off`, so that link
+     does not load the default.
+   - **The repo mirrors `data/checkpoints/`** (`tools/publish_hf.py`): a run directory is
+     published whole, an `.onnx` beside every `.pt`, so the picker groups files by directory
+     (`groupHfModels`, one `<optgroup>` per run, groups ordered by their newest file).
      The E2E browsers launch with `HF_BLOCKED` (huggingface.co does not resolve); tests that need
      the repo serve it with `page.route`.
    - **Downloaded models are kept** (`analysis/model_cache.ts`), in the Cache API (`ts-models-v1`,

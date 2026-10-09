@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Build the browser workbench: the WebAssembly engine from engine/ + bindings/, then the page.
+# Build the browser workbench: the WebAssembly engine from engine/ + bindings/, then the pages
+# (the workbench and the Elo leaderboard, whose data is fitted here from leaderboard/).
 #
-#     tools/scripts/build_web.sh             # engine + page (web/ui/dist)
+#     tools/scripts/build_web.sh             # engine + pages (web/ui/dist)
 #     tools/scripts/build_web.sh --engine    # the WebAssembly engine only (web/ui/public/engine)
 #
 # The page runs the engine in the browser, so after any engine change this is what makes the
@@ -53,6 +54,9 @@ echo "build_web: engine $FINGERPRINT -> web/ui/public/engine/"
 if [[ $ENGINE_ONLY == 1 ]]; then
     exit 0
 fi
+# The leaderboard page's data: fitted from the records in leaderboard/, never committed. Plain
+# python, no torch or engine needed -- on CI this is the runner's python3.
+PYTHONPATH="$ROOT" "$PY" "$ROOT/tools/leaderboard.py" fit --output "$ROOT/web/ui/public/leaderboard.json"
 cd "$ROOT/web/ui"
 # Install when missing, and again when package-lock.json has changed since the last install
 # (npm records that install in node_modules/.package-lock.json): a checkout whose node_modules

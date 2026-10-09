@@ -342,13 +342,15 @@ def onnx_bytes(checkpoint: Dict[str, str], tmp_path_factory: pytest.TempPathFact
         return f.read()
 
 
-def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str], sha256: Optional[str] = None) -> None:
+def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str], sha256: Optional[str] = None,
+                  default_model: Optional[str] = None) -> None:
     """The default repo, served by the test: two listing pages, the newest upload on the second.
 
     Every request to huggingface.co is recorded. The listing is paged the way the real API pages
     an expanded tree -- a `Link: <...>; rel="next"` header -- so a page that read only the first
     page would load `old.onnx`. `paths-info` reports every file's LFS sha256 as `sha256`, by
-    default the real one of `onnx`.
+    default the real one of `onnx`. `default.json` names `default_model`, or is missing (404, as
+    Hugging Face answers for a file a repo does not hold).
     """
     lfs_oid = sha256 or hashlib.sha256(onnx).hexdigest()
     cors = {"access-control-allow-origin": "*", "access-control-expose-headers": "Link"}
@@ -373,6 +375,13 @@ def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str], sha256: Optional[
 
     def resolve(route: Any) -> None:
         requests.append(route.request.url)
+        if route.request.url.endswith("/default.json"):
+            if default_model is None:
+                route.fulfill(status=404, headers=cors, body="Entry not found")
+            else:
+                route.fulfill(status=200, headers=cors, content_type="application/json",
+                              body=json.dumps({"model": default_model}))
+            return
         route.fulfill(status=200, headers=cors, body=onnx)
 
     page.route("https://huggingface.co/api/models/**", tree)
@@ -391,7 +400,55 @@ def test_a_link_that_names_no_model_loads_the_newest_upload(browser: Any, static
     assert options == ["runs/new.onnx", "old.onnx"], "newest upload first, and only .onnx files"
     assert requests[-1] == "https://huggingface.co/mihaild/deepstruggle/resolve/main/runs/new.onnx"
     page.wait_for_function("new URLSearchParams(location.search).get('model') === 'hf:mihaild/deepstruggle@main:runs/new.onnx'")
+    groups = page.eval_on_selector_all("#analysis-hf-file optgroup", "gs => gs.map(g => g.label)")
+    assert groups == ["runs"], "a directory (a published run) is one group; top-level files are not grouped"
     assert not page.errors
+
+
+def test_a_repo_default_json_names_the_default_model(browser: Any, static_site: str, onnx_bytes: bytes) -> None:
+    """A repo of whole published runs has an .onnx beside every snapshot, so "newest upload" is
+    whatever was uploaded last; `default.json` names the model a bare link gets instead."""
+    requests: List[str] = []
+    page = _open(browser, static_site + "/",
+                 lambda p: _fake_hf_repo(p, onnx_bytes, requests, default_model="old.onnx"))
+    page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+    assert page.input_value("#analysis-hf-file") == "old.onnx"
+    assert requests[-1] == "https://huggingface.co/mihaild/deepstruggle/resolve/main/old.onnx"
+    assert not page.errors
+
+
+def test_the_leaderboard_page_filters_one_fit(browser: Any, static_site: str) -> None:
+    """leaderboard.html shows the leaderboard.json that build_web.sh fitted from leaderboard/: the
+    main players by default, every player under "All", each with the same rating in both views;
+    a row opens its head-to-head results, and the view is kept in the link."""
+    with open(os.path.join(DIST, "leaderboard.json")) as f:
+        data = json.load(f)
+    with open(os.path.join(REPO, "leaderboard", "epochs.json")) as f:
+        epoch = list(json.load(f))[-1]
+    ep = data["epochs"][epoch]
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    errors: List[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(static_site + "/leaderboard.html")
+    page.wait_for_selector("#lb-body tr")
+
+    def shown() -> Dict[str, str]:
+        rows = page.eval_on_selector_all(
+            "#lb-body tr", "rs => rs.map(r => [r.dataset.player, r.querySelector('.lb-elo').textContent])")
+        return dict(rows)
+
+    mains = shown()
+    assert list(mains) == [r["player"] for r in ep["ratings"] if r["main"]]
+    page.check("input[name=lb-view][value=all]")
+    every = shown()
+    assert list(every) == [r["player"] for r in ep["ratings"]]
+    assert all(every[p] == mains[p] for p in mains), "a view filters the fit; it never refits"
+    page.click(f"#lb-body tr[data-player='{ep['anchor']}']")
+    assert page.inner_text("#lb-detail h2") == ep["anchor"]
+    anchor = next(r for r in ep["ratings"] if r["player"] == ep["anchor"])
+    assert page.eval_on_selector_all("#lb-detail tbody tr", "rs => rs.length") == anchor["opponents"]
+    assert "view=all" in page.url
+    assert not errors
 
 
 def test_a_downloaded_model_is_kept_for_the_next_visit(browser: Any, static_site: str, onnx_bytes: bytes) -> None:

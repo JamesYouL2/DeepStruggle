@@ -155,13 +155,14 @@ export class TSApp {
   }
 
   /**
-   * A link that names no model gets the newest upload in the default Hugging Face repo. Dropped
+   * A link that names no model gets the default Hugging Face repo's default model (its
+   * default.json, else its newest upload). Dropped
    * -- result and error alike -- if a model was picked while the repo was being listed.
    */
   private async loadDefaultModel() {
     const before = this.modelLoads;
     try {
-      const source = await this.analysisPanel.newestDefaultHf();
+      const source = await this.analysisPanel.defaultHf();
       if (this.modelLoads === before) this.loadModel({ source });
     } catch (e) {
       if (this.modelLoads === before) this.analysisPanel.setError(e instanceof Error ? e.message : String(e));

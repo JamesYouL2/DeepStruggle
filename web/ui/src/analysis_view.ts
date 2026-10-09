@@ -19,7 +19,8 @@ import {
 } from "./trace_view";
 import { CriticTrace, PolicyTrace } from "./replay_controls";
 import {
-  DEFAULT_HF_REPO, DEFAULT_HF_REVISION, HfModelFile, listHfModels, ModelSource, sourceLabel,
+  DEFAULT_HF_REPO, DEFAULT_HF_REVISION, fetchHfDefault, groupHfModels, HfModelFile, listHfModels,
+  ModelSource, sourceLabel,
 } from "./analysis/model";
 import { cachedModelCount, clearModelCache } from "./analysis/model_cache";
 
@@ -384,7 +385,8 @@ export class AnalysisPanel {
     if (pick) this.snapSelect.value = pick;
   }
 
-  /** List the Hugging Face repo in the inputs into the file select, newest upload first. */
+  /** List the Hugging Face repo in the inputs into the file select: one group per directory (a run
+   *  published whole), newest upload first. */
   private async listHf(): Promise<HfModelFile[]> {
     const repo = this.hfRepo.value.trim();
     const rev = this.hfRevision.value.trim() || "main";
@@ -392,8 +394,12 @@ export class AnalysisPanel {
     try {
       const files = await listHfModels(repo, rev);
       if (files.length === 0) throw new Error("no .onnx files in the repo (export them with tools/export_onnx.py)");
+      const option = (f: HfModelFile, text: string) =>
+        `<option value="${esc(f.path)}">${esc(text)}${f.date ? ` · ${esc(f.date.slice(0, 10))}` : ""}</option>`;
       this.hfFile.innerHTML = `<option value="">— choose a model —</option>`
-        + files.map(f => `<option value="${esc(f.path)}">${esc(f.path)}${f.date ? ` · ${esc(f.date.slice(0, 10))}` : ""}</option>`).join("");
+        + groupHfModels(files).map(g => g.dir
+          ? `<optgroup label="${esc(g.dir)}">${g.files.map(f => option(f, f.path.slice(g.dir.length + 1))).join("")}</optgroup>`
+          : g.files.map(f => option(f, f.path)).join("")).join("");
       return files;
     } catch (e) {
       this.hfFile.innerHTML = "";
@@ -402,18 +408,23 @@ export class AnalysisPanel {
   }
 
   /**
-   * The model a link that names none gets: the newest upload in the default repo, shown as
-   * selected. Throws if the repo cannot be listed; the caller decides whether that is still
-   * worth showing, since the user may have picked a model while it was listing.
+   * The model a link that names none gets, shown as selected: the one the default repo's
+   * default.json names, or its newest upload when it has none. Throws if the repo cannot be
+   * listed or names a file it does not hold; the caller decides whether that is still worth
+   * showing, since the user may have picked a model while it was listing.
    */
-  public async newestDefaultHf(): Promise<ModelSource> {
+  public async defaultHf(): Promise<ModelSource> {
     this.sourceSelect.value = "hf";
     this.hfRepo.value = DEFAULT_HF_REPO;
     this.hfRevision.value = DEFAULT_HF_REVISION;
     this.showSourceControls();
-    const files = await this.listHf();
-    this.hfFile.value = files[0].path;
-    return { kind: "hf", repo: DEFAULT_HF_REPO, revision: DEFAULT_HF_REVISION, path: files[0].path };
+    const [files, named] = await Promise.all([this.listHf(), fetchHfDefault(DEFAULT_HF_REPO, DEFAULT_HF_REVISION)]);
+    if (named !== null && !files.some(f => f.path === named)) {
+      throw new Error(`${DEFAULT_HF_REPO}'s default.json names ${named}, which the repo does not hold`);
+    }
+    const path = named ?? files[0].path;
+    this.hfFile.value = path;
+    return { kind: "hf", repo: DEFAULT_HF_REPO, revision: DEFAULT_HF_REVISION, path };
   }
 
   // ---- rendering ----------------------------------------------------------------------------------

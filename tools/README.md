@@ -668,6 +668,78 @@ tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/po
 
 ---
 
+## 2b. The Elo leaderboard (`tools/leaderboard.py`, `tools/leaderboard_play.py`)
+
+A tournament's Elo is fitted to its own field, so the same model rates differently in two
+tournaments. The leaderboard is one scale per engine epoch, kept as records in `leaderboard/`
+(reviewed like code, published with it) and fitted on demand:
+
+| file | holds |
+|:---|:---|
+| `networks.json` | each network: file (relative to `data/`), sha256, `hf` path once published, behaviour `report`, description, `old_names` |
+| `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`) |
+| `epochs.json` | each engine epoch: accepted engine fingerprints, the main players, the anchor and its rating |
+| `matches/<epoch>.jsonl` | one line per pairing played: both seats' w/l/d, base seed, engine, commit -- append-only, union-merged |
+
+**A player is a network plus an inference spec.** The id spells the spec: the bare network name is
+its greedy policy; anything else is `<network>~<kind>(<field>=<value>,...)` with every field
+named, e.g. `E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)` or
+`...~search(sims=128,determinize=true,node_filter=all,subsample=1,backend=cpp,fpu=0)` or
+`...~policy(temperature=0.5)`; bots are `HeuristicBot` / `RandomBot`. A search id names its
+defaults too, so it never changes meaning when a default does.
+
+**The fit** is Bradley-Terry with a US-seat term, draws half a win, in two stages: the main
+players on their games against each other (anchor pinned), then everyone else against the main
+players held fixed (non-main against non-main games included). Adding games without a main player
+never moves a main rating, and "main only" / "main + lineage X" are filters over the one fit. A
+player no pairing connects to the main players is listed as unrated.
+
+```bash
+# register (computes the sha256), then rate against the epoch's main players
+PYTHONPATH=. python tools/leaderboard.py add-network E7-A8-R1-S44@6800M \
+  data/checkpoints/E7-A8-R1-S44_20261007_162257/snapshot_6800015360steps.pt --description "..."
+PYTHONPATH=. python tools/leaderboard.py add-player 'E7-A8-R1-S44@6800M~gumbel(sims=256,k=8)'
+tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/leaderboard_play.py \
+  --epoch E7 --players 'E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)' --games-per-side 1000
+#   --opponents A B ...   other opponents; --round-robin  every pairing among --players
+#   a pairing on record is skipped; --base-seed S adds new deals to it
+
+PYTHONPATH=. python tools/leaderboard.py show --main-only            # or --lineage E7-A8-R1-S44
+PYTHONPATH=. python tools/leaderboard.py validate                    # what tests/training checks
+```
+
+`leaderboard_play.py` refuses a stale build, an engine fingerprint the epoch does not list, a
+network file whose sha256 changed, and uncommitted changes to `ai/ bot/ bindings/ engine/ tools/`
+(each record names its commit). The main players are the owner's choice, edited in
+`epochs.json`; a new main player is played against every existing one. An engine change opens a
+new epoch unless a recorded pairing replays identically, in which case its fingerprint is added.
+
+**The page.** `tools/scripts/build_web.sh` runs `tools/leaderboard.py fit` into
+`web/ui/public/leaderboard.json` (git-ignored; stdlib only, so CI needs no torch) and builds
+`leaderboard.html` beside the workbench. Each row links the network's behaviour report on GitHub,
+its weights on Hugging Face and the workbench with that network loaded; a click shows the
+head-to-head results; the view is kept in the link.
+
+## 2c. Publishing to Hugging Face (`tools/publish_hf.py`)
+
+The repo (`mihaild/deepstruggle`) mirrors `data/checkpoints/`: a run directory goes up whole,
+an SWA or soup as `_models/<name>.pt`, and beside every `.pt` its `.onnx` (exported and verified
+by `tools/export_onnx.py`), which is what the workbench runs. Resume and opponent-pool states
+(`resume_*.pt`, `pool_*.pt`) and `run.pid` stay local. After an upload, registered networks whose
+file went up get their `hf` path in `leaderboard/networks.json` -- commit that change.
+
+```bash
+PYTHONPATH=.:build/release python tools/publish_hf.py run data/checkpoints/<run-dir> --dry-run
+PYTHONPATH=.:build/release python tools/publish_hf.py files 'data/checkpoints/_models/<name>.pt'
+PYTHONPATH=.:build/release python tools/publish_hf.py default '<run-dir>/snapshot_<N>steps.onnx'
+```
+
+`default` writes the repo's `default.json` -- the model a workbench link that names none opens;
+without one the page takes the newest upload. The page's model picker groups the repo's files by
+directory. Uploading needs a write token (`hf auth login` or `HF_TOKEN`).
+
+---
+
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)
 Plays a match between any pair of agents, supports two distinct checkpoints, provides interactive
 CLI terminal play, and writes standardized `.tslog.json` replays for the Web Workbench.
@@ -988,6 +1060,9 @@ self-play:
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
+- `tools/lib/player_spec.py`: a player as a network plus a typed inference spec (policy / gumbel / search / bot), its canonical id and its `load_agent` string; the search defaults live here.
+- `tools/lib/leaderboard.py`: the Elo leaderboard's records, their validation and the two-stage fit (stdlib only).
+- `tools/lib/__init__.py` re-exports nothing: import from the submodules, so the torch-free ones stay importable without torch.
 - `tools/lib/batch_tournament.py`: high-throughput C++ batch tournament runner and Bradley-Terry MLE solver; plays any subset of a matchup's pairs with their own deals, and merges the parts (`merge_matchup_results`).
 - `tools/lib/parallel_tournament.py`: splits a tournament into shards played in worker processes (`tools/tournament.py --workers`).
 - `tools/lib/tournament_evaluator.py`: diagnostic loss cause classifier (`classify_game_ending_reason`).

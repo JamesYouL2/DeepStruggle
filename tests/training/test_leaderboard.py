@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
+import tools.publish_hf as publish
 from tools.lib import leaderboard as lb
 from tools.lib.player_agent import search_spec_config
 from tools.lib.player_spec import (Bot, Gumbel, Policy, PlayerSpecError, Search, load_spec,
@@ -236,3 +237,23 @@ def test_the_fit_needs_neither_torch_nor_the_engine() -> None:
             "assert not bad, bad")
     subprocess.run([sys.executable, "-c", code], check=True, cwd=ROOT, env={"PYTHONPATH": str(ROOT)})
     assert math.isfinite(lb.ELO_SCALE)
+
+
+# ---- publishing -------------------------------------------------------------------------------
+
+
+def test_the_hf_repo_mirrors_data_checkpoints(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run's files keep their run directory; a model under _models/ keeps its readable name
+    even when it is a symlink into _soups/."""
+    data = tmp_path / "data"
+    (data / "checkpoints" / "R_20260101_000000").mkdir(parents=True)
+    (data / "checkpoints" / "_soups").mkdir()
+    (data / "checkpoints" / "_models").mkdir()
+    (data / "checkpoints" / "_soups" / "soup.pt").write_bytes(b"x")
+    (data / "checkpoints" / "_models" / "N@1M+(S1,2)@2M.pt").symlink_to("../_soups/soup.pt")
+    monkeypatch.setattr(publish, "data_path", lambda *p: str(data.joinpath(*p)))
+    run_file = data / "checkpoints" / "R_20260101_000000" / "snapshot_10steps.pt"
+    assert publish.repo_path(str(run_file)) == "R_20260101_000000/snapshot_10steps.pt"
+    assert publish.repo_path(str(data / "checkpoints" / "_models" / "N@1M+(S1,2)@2M.pt")) == "_models/N@1M+(S1,2)@2M.pt"
+    with pytest.raises(lb.LeaderboardError):
+        publish.repo_path(str(tmp_path / "elsewhere.pt"))

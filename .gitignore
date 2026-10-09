@@ -41,6 +41,8 @@ node_modules/
 web/ui/dist/
 # The WebAssembly engine, built from engine/ + bindings/ by tools/scripts/build_web.sh.
 web/ui/public/engine/
+# The leaderboard page's data, fitted from leaderboard/ by tools/scripts/build_web.sh.
+web/ui/public/leaderboard.json
 dist/
 frontend/.vite/
 

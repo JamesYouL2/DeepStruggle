@@ -1,0 +1,105 @@
+/* The leaderboard page (leaderboard.html): the workbench's colours, but a document that scrolls. */
+:root {
+  --bg-dark: #090D16;
+  --bg-panel-solid: #121A2B;
+  --bg-card: #1A2438;
+  --border-color: rgba(255, 255, 255, 0.12);
+  --text-main: #F1F5F9;
+  --text-muted: #94A3B8;
+  --text-dim: #64748B;
+  --us-blue-light: #60A5FA;
+  --ussr-red-light: #F87171;
+  --gold: #F59E0B;
+  --accent: #A78BFA;
+  --danger: #EF4444;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Cinzel', serif;
+}
+
+* { box-sizing: border-box; }
+/* `hidden` must win over the display a class sets (the lineage panel is a flex box). */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg-dark);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+a { color: var(--us-blue-light); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.disclaimer-bar {
+  padding: 4px 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: #05080F;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.lb-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-panel-solid);
+  border-bottom: 1px solid var(--border-color);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.brand-title { font-family: var(--font-display); font-weight: 700; font-size: 18px; letter-spacing: 2px; }
+.brand-badge { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: var(--gold); }
+.lb-nav { font-size: 13px; white-space: nowrap; }
+
+.lb-main { max-width: 1180px; margin: 0 auto; padding: 16px; }
+
+.lb-controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; margin-bottom: 10px; }
+.lb-controls select {
+  margin-left: 6px; background: var(--bg-card); color: var(--text-main);
+  border: 1px solid var(--border-color); border-radius: 4px; padding: 3px 6px; font: inherit;
+}
+.lb-view { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.lb-view label, .lb-lineages label { cursor: pointer; white-space: nowrap; }
+.lb-lineages { display: flex; flex-wrap: wrap; gap: 6px 14px; width: 100%; padding: 8px 10px;
+  background: var(--bg-card); border-radius: 6px; font-family: var(--font-mono); font-size: 12px; }
+
+.lb-scale { color: var(--text-muted); font-size: 13px; margin: 6px 0 12px; line-height: 1.5; }
+
+.lb-table-wrap { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px; }
+.lb-table { width: 100%; border-collapse: collapse; }
+.lb-table th, .lb-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-color); text-align: left; }
+.lb-table th { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted);
+  background: var(--bg-panel-solid); position: sticky; top: 0; }
+.lb-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lb-table tbody tr { cursor: pointer; }
+.lb-table tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
+.lb-table tbody tr.selected { background: rgba(167, 139, 250, 0.12); }
+.lb-player { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.lb-elo { font-weight: 700; }
+.lb-dim { color: var(--text-dim); }
+.lb-links { white-space: nowrap; font-size: 12.5px; }
+.lb-links a + a { margin-left: 10px; }
+
+.lb-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 3px; font-family: var(--font-sans);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; vertical-align: 1px; }
+.lb-tag.main { background: rgba(245, 158, 11, 0.18); color: var(--gold); }
+.lb-tag.kind { background: rgba(167, 139, 250, 0.18); color: var(--accent); }
+
+.lb-detail { margin-top: 18px; padding: 14px 16px; background: var(--bg-panel-solid);
+  border: 1px solid var(--border-color); border-radius: 6px; }
+.lb-detail h2 { margin: 0 0 4px; font-size: 15px; font-family: var(--font-mono); word-break: break-all; }
+.lb-detail p { margin: 4px 0 10px; color: var(--text-muted); line-height: 1.5; }
+.lb-detail .us { color: var(--us-blue-light); }
+.lb-detail .ussr { color: var(--ussr-red-light); }
+
+.lb-error { color: var(--danger); }
+.lb-footer { margin-top: 18px; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+
+@media (max-width: 640px) {
+  .lb-main { padding: 12px; }
+  .lb-table th, .lb-table td { padding: 6px 6px; }
+  .lb-hide-narrow { display: none; }
+}
