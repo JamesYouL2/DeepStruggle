@@ -51,6 +51,8 @@ const SCORING_CARD_WHERE: Record<string, ScoringCardWhereabouts> = {
   REMOVED_FROM_GAME: { status: "out", where: "removed from the game -- never scores again" },
   ONGOING_EVENT: { status: "out", where: "in play as an ongoing event" },
   UNAVAILABLE: { status: "later", where: "not in the game yet -- comes in with its war's deck" },
+  // A player's view (game/view.ts): the deck and the other side's unseen cards are one pile.
+  UNSEEN: { status: "live", where: "in the draw deck or the other side's hand" },
 };
 
 export function scoringCardWhereabouts(state: GameState, cardId: number): ScoringCardWhereabouts {

@@ -381,7 +381,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 # 3. Open http://localhost:8000/
 ```
 
-The workbench serves three purposes, all in the page:
+The workbench serves four purposes, all in the page:
 
 * **Watch replays** -- the local server's list, *Load Replay*, or drop a `.tslog.json` on the page.
   A traced replay shows the model's probabilities and critic at every step.
@@ -393,8 +393,13 @@ The workbench serves three purposes, all in the page:
   side's P(victory) and expected VP, the side to move -- the only reading the value head is
   trained on -- highlighted and the other dimmed; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
   *Auto-play* (none / USSR / US) makes that side play by itself.
+* **Play one side against the model** -- the header's view select (*Play as US / USSR*, `view=` in
+  the URL) hides what that side may not know: the other hand's unknown cards (shown face down and
+  merged with the draw deck into one unseen pile), its deal lines in the log, its face-down
+  headline, and the model's readout while it decides; the model plays it by auto-play, and Debug
+  Tools and replays are developer-view only (`web/ui/src/game/view.ts`).
 
-The address bar always carries `pos` (the position itself), `model` and `auto`, updated with
+The address bar always carries `pos` (the position itself), `model`, `auto` and `view`, updated with
 `replaceState`, so copying it shares the exact board. The engine badge shows the page engine's
 fingerprint and turns **STALE** when the local sources have moved on from the build the page loaded.
 

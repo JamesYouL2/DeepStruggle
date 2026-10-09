@@ -1,5 +1,6 @@
 import { GameState, CardMetadata } from "./types";
 import { CARDS_METADATA } from "./metadata";
+import { UNSEEN } from "./game/view";
 
 export interface EffectInfo {
   name: string;
@@ -387,9 +388,11 @@ export class CardsView {
     this.lastState = state;
     (window as any).__CURRENT_STATE__ = state;
 
-    // Render Hand Counts in Tab Titles
-    const ussrCount = (state.hands?.USSR || []).length;
-    const usCount = (state.hands?.US || []).length;
+    // Render Hand Counts in Tab Titles. A player's view withholds the other hand's unseen cards
+    // (game/view.ts) but not how many there are: hand sizes are public.
+    const hidden = state.hidden_cards || { US: 0, USSR: 0 };
+    const ussrCount = (state.hands?.USSR || []).length + hidden.USSR;
+    const usCount = (state.hands?.US || []).length + hidden.US;
     const discardCount = (state.discard_pile || []).length;
     const removedCount = (state.removed_pile || []).length;
 
@@ -410,8 +413,14 @@ export class CardsView {
     const removedCountEl = document.getElementById("removed-count");
     if (removedCountEl) removedCountEl.textContent = removedCount.toString();
 
+    // In a player's view the draw deck and the other side's unseen cards are one pile.
+    const opp = this.opponent(state);
     const drawCountEl = document.getElementById("draw-count");
-    if (drawCountEl) drawCountEl.textContent = (state.draw_deck_count || 0).toString();
+    if (drawCountEl) drawCountEl.textContent = (opp ? state.unseen_count ?? 0 : state.draw_deck_count || 0).toString();
+    const drawNameEl = document.getElementById("draw-count-name");
+    if (drawNameEl) drawNameEl.textContent = opp ? `Draw Deck + ${opp} hand (unseen)` : "Draw Deck";
+    const deckOption = document.querySelector<HTMLOptionElement>('#all-cards-filter option[value="DRAW_DECK"]');
+    if (deckOption) deckOption.textContent = opp ? `Draw Deck or ${opp} hand` : "Draw Deck";
 
     // Render Hand Lists
     this.renderHand("tab-ussr-hand", state.hands?.USSR || [], "USSR", state);
@@ -480,7 +489,8 @@ export class CardsView {
       container.appendChild(chinaEl);
     }
 
-    if (cardIds.length === 0 && !holdsChina) {
+    const hiddenCount = state.hidden_cards?.[player] ?? 0;
+    if (cardIds.length === 0 && !holdsChina && hiddenCount === 0) {
       container.innerHTML = `<div style="color: var(--text-dim); text-align: center; padding: 20px; font-size: 11px;">Hand is empty</div>`;
       return;
     }
@@ -524,6 +534,24 @@ export class CardsView {
 
       container.appendChild(cardEl);
     });
+
+    // A player's view: the other side's cards it has not seen, face down.
+    for (let i = 0; i < hiddenCount; i++) {
+      const el = document.createElement("div");
+      el.className = "card-item card-hidden";
+      el.title = "A card this side has not seen";
+      el.innerHTML = `
+        <div class="card-item-era-bar"></div>
+        <div class="card-ops-badge neutral">?</div>
+        <div class="card-name-single">Face-down card</div>
+      `;
+      container.appendChild(el);
+    }
+  }
+
+  /** The side a player's view hides (null for the developer's view). */
+  private opponent(state: GameState): "US" | "USSR" | null {
+    return state.view === "US" ? "USSR" : state.view === "USSR" ? "US" : null;
   }
 
   private renderAllCardsList(state: GameState) {
@@ -551,7 +579,10 @@ export class CardsView {
       const raw = locations[id.toString()] || "DRAW_DECK";
       const loc = raw.startsWith("HAND_USSR") ? "HAND_USSR" : raw.startsWith("HAND_US") ? "HAND_US" : raw;
 
-      if (this.locationFilter !== "ALL" && loc !== this.locationFilter) {
+      // In a player's view UNSEEN (the draw deck or the other side's unseen cards) answers to
+      // the draw-deck filter.
+      const filterLoc = loc === UNSEEN ? "DRAW_DECK" : loc;
+      if (this.locationFilter !== "ALL" && filterLoc !== this.locationFilter) {
         continue;
       }
 
@@ -565,8 +596,9 @@ export class CardsView {
       const itemEl = document.createElement("div");
       itemEl.className = "all-cards-item";
 
-      const locBadgeClass = this.getLocationBadgeClass(loc);
-      const locLabel = this.getLocationLabel(loc);
+      const locBadgeClass = this.getLocationBadgeClass(loc === UNSEEN ? "DRAW_DECK" : loc);
+      const opp = this.opponent(state);
+      const locLabel = loc === UNSEEN ? `Deck or ${opp ?? "other"} hand` : this.getLocationLabel(loc);
       const eraClass = meta.age === "early war" ? "era-early" : (meta.age === "mid war" ? "era-mid" : "era-late");
 
       itemEl.innerHTML = `

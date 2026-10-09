@@ -19,7 +19,8 @@ web/ui/
 │   ├── main.ts                 # TSApp coordinator: boot, refresh(), links, auto-play, Action Stream
 │   ├── engine/wasm_engine.ts   # the WebAssembly engine (public/engine/, built by build_web.sh)
 │   ├── game/                   # session.ts (stepping, undo, log, export), describe.ts (log text),
-│   │                           # names.ts (flat action names), position.ts (link tokens)
+│   │                           # names.ts (flat action names), position.ts (link tokens),
+│   │                           # view.ts (the US / USSR player views: what the other side hides)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen)
@@ -164,11 +165,35 @@ web/ui/
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
    - **The address bar is the share link.** `syncUrl()` writes `pos` (the engine's save JSON,
      zlib, base64url -- `game/position.ts`, interchangeable with Python's zlib), `model`
-     (`local:` / `hf:` source, or `off`; a dropped file has no address) and `auto`, with
+     (`local:` / `hf:` source, or `off`; a dropped file has no address), `auto` and `view`, with
      `history.replaceState`, never `pushState`, so moves do not pile up in Back. A reload of the
-     same link keeps the game's history; *New Game* starts afresh in the page.
+     same link keeps the game's history; *New Game* starts afresh in the page (in the same view).
    - A generic `.hidden { display: none }` rule backs every mode-specific panel.
-9. **Bundled metadata (`metadata.ts`)**:
+   - The header wraps rather than overflows: below ~1750px the tracks take a second row, so
+     *New Game*, *Debug Tools*, *Replay Mode* and the view select stay on screen (they used to be
+     pushed off the right edge on a laptop screen).
+9. **Player views (`game/view.ts`, the header's view select, `view=us|ussr` in the URL)**:
+   - *Developer view* shows everything. *Play as US / USSR* is for playing one side against the
+     model without seeing the other side's private information. `main.ts` keeps the engine's full
+     state in `state` and draws **every** panel from `shown = redactState(state, view)`; a panel
+     must never read `state` directly, or it leaks.
+   - What the other side hides: its cards whose location is `HAND_<opp>_UNKNOWN` (its `_KNOWN`
+     cards stay named, as in the rules), the draw deck's contents, a card it peeks at
+     (`PEEKED_TEMP` while it decides), and its headline until both are revealed (unless your Man
+     in Space perk makes it reveal first). The hidden hand cards and the deck become one
+     `UNSEEN` pile -- the *All* list says "Deck or <opp> hand", the deck count adds the hand --
+     while the hand tab keeps its size as face-down cards (`hidden_cards`; hand sizes are public).
+   - `redactLogs` drops the log's card-move lines from or to `HAND_<opp>_UNKNOWN` (the other
+     side's deal and its unknown discards' origin) and its `PEEKED_TEMP` moves, and replaces its
+     face-down headline commit with a line that does not name the card.
+   - While the other side decides, the state carries `view_hidden_decision` and no legal actions:
+     the HUD says who is to move, the analysis panel withholds the model's readout (its policy
+     would read the hidden hand off the probabilities), auto-play is locked to the other side, and
+     `sendAction` / `sendFlatAction` refuse clicks for it (only auto-play moves for it).
+   - Debug Tools and Replay Mode are developer-only; loading or dropping a replay switches to the
+     developer view. Limitation: the `pos=` link token is the full save, so a player view hides
+     the other side from the page, not from someone who decodes the link.
+10. **Bundled metadata (`metadata.ts`)**:
    - `rules/map.json` and `rules/cards.json` are imported at build time, so the page needs no
      server to draw the board. The flat action layout comes from the engine
      (`WasmEngine.layout`), never from a hand-kept copy.
@@ -206,6 +231,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
+| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |

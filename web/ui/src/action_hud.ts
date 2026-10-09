@@ -170,6 +170,15 @@ export class ActionHud {
       badgeEl.className = `badge badge-${player.toLowerCase()}`;
     }
 
+    // A player's view while the other side decides (game/view.ts): its options are its own.
+    if (state.view_hidden_decision) {
+      this.container.innerHTML = `<div class="hud-waiting">
+        <div><strong>${player}</strong> to move — ${phaseName.toLowerCase().replace("_", " ")}.</div>
+        <div class="hud-waiting-note">Its options are hidden in the ${state.view} view; the model plays this side (auto-play).</div>
+      </div>`;
+      return;
+    }
+
     let promptText = "";
     let buttonsHtml = "";
     let showDieSelector = false;

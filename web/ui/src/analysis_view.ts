@@ -112,6 +112,11 @@ export class AnalysisPanel {
   private error: string | null = null;
   private lastAnalysis: LiveAnalysis | null = null;
   private auto: AutoSide = "";
+  /**
+   * A player's view (game/view.ts): the side the model plays, whose readout -- its options, its
+   * probabilities, its critic, all read from its own hand -- is not shown while it decides.
+   */
+  private hiddenSide: "US" | "USSR" | null = null;
 
   private sourceSelect = el<HTMLSelectElement>("analysis-source-select");
   private runSelect = el<HTMLSelectElement>("analysis-run-select");
@@ -273,8 +278,26 @@ export class AnalysisPanel {
   }
 
   public playFavourite(): void {
+    if (this.hidingDecision()) return;   // the model's own move, made by auto-play
     const idx = this.favourite();
     if (idx !== null) this.onPlayFlat(idx);
+  }
+
+  /**
+   * Set the player's view: `side` is the model's side (auto-play is locked to it), or null for
+   * the developer's view, which unlocks auto-play and shows everything.
+   */
+  public setHiddenSide(side: "US" | "USSR" | null): void {
+    this.hiddenSide = side;
+    if (side) this.setAutoSide(side);
+    this.autoSelect.disabled = side !== null;
+    this.autoSelect.title = side ? `Locked to ${side}: in a player's view the model plays the other side` : "";
+    this.renderBody();
+  }
+
+  /** The analysis on screen is the hidden side's decision. */
+  private hidingDecision(): boolean {
+    return !!this.hiddenSide && this.lastAnalysis?.decision_player === this.hiddenSide;
   }
 
   /** The side that plays the model's favourite by itself ("" = nobody). */
@@ -439,6 +462,12 @@ export class AnalysisPanel {
       return;
     }
     this.badge.textContent = a.merged_influence ? "E4.1 view" : "E4 view";
+    if (this.hidingDecision()) {
+      this.favButton.disabled = true;
+      this.body.innerHTML = `<div class="trace-empty">The model is choosing for <b>${esc(this.hiddenSide!)}</b> (auto-play). `
+        + `Its readout is hidden in this view: its options and its critic are read from its own hand.</div>`;
+      return;
+    }
 
     const parts: string[] = [];
     if (a.critic) {
@@ -486,6 +515,7 @@ export class AnalysisPanel {
    */
   public decorate(state: GameState | null): void {
     clearDecorations();
+    if (this.hidingDecision()) return;
     const a = this.lastAnalysis;
     if (!a || !a.policy || !state || a.choices.length === 0) return;
     const dType = state.decision_context?.decision_type;

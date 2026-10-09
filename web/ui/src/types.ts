@@ -114,6 +114,14 @@ export interface GameState {
   players?: { US: string; USSR: string };
   /** URL-safe token for this exact position (the server's encode_position). */
   position?: string;
+  /** Whose view the state was redacted for (game/view.ts); absent or "DEV" means everything. */
+  view?: "DEV" | "US" | "USSR";
+  /** A player's view: how many of each hand's cards it may not see (only the other side's). */
+  hidden_cards?: { US: number; USSR: number };
+  /** A player's view: the draw deck plus the other side's unseen cards. */
+  unseen_count?: number;
+  /** A player's view: the other side is deciding, and its options are withheld. */
+  view_hidden_decision?: boolean;
 }
 
 export interface CardMetadata {

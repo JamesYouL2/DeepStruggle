@@ -36,7 +36,14 @@
         </div>
         <div class="header-buttons">
           <button id="btn-undo-action" class="btn btn-warning btn-sm" title="Undo / Cancel Last Action (Ctrl+Z / Esc)">⟲ Cancel Action</button>
-          <button id="btn-new-game" class="btn btn-secondary btn-sm">New Game</button>
+          <!-- Whose eyes the board is drawn for (game/view.ts): a player's view hides the other
+               side's hand, face-down headline and options; the model plays that side. -->
+          <select id="view-select" class="view-select" title="Developer: everything. Play as US / USSR: the other side's private information is hidden and the model plays it.">
+            <option value="DEV">Developer view</option>
+            <option value="US">Play as US</option>
+            <option value="USSR">Play as USSR</option>
+          </select>
+          <button id="btn-new-game" class="btn btn-secondary btn-sm" title="A new game with a fresh deal, in the view selected">New Game</button>
           <button id="btn-toggle-debug" class="btn btn-secondary btn-sm">Debug Tools</button>
           <button id="btn-toggle-replay" class="btn btn-primary btn-sm">Replay Mode</button>
         </div>
@@ -67,7 +74,7 @@
             <div class="piles-summary">
               <button id="btn-view-discard" class="btn btn-secondary btn-block">View Discard Pile (<span id="discard-count">0</span>)</button>
               <button id="btn-view-removed" class="btn btn-secondary btn-block">View Removed Pile (<span id="removed-count">0</span>)</button>
-              <div class="draw-count-label">Draw Deck: <strong id="draw-count">0</strong> cards remaining</div>
+              <div class="draw-count-label"><span id="draw-count-name">Draw Deck</span>: <strong id="draw-count">0</strong> cards remaining</div>
             </div>
           </div>
           <div class="tab-content" id="tab-all-cards">

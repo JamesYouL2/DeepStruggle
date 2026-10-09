@@ -67,16 +67,20 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
+/* At least 64px, taller only when the session controls have to drop to a line of their own: with
+   a fixed height and no wrap they ran off the right edge below ~1,750px, New Game included. */
 .top-bar {
-  height: 64px;
+  min-height: 64px;
+  flex-shrink: 0;
   background: var(--bg-panel-solid);
   border-bottom: 1px solid var(--border-color);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 4px 16px;
   z-index: 10;
-  gap: 16px;
+  gap: 6px 16px;
 }
 
 .brand {
@@ -620,6 +624,23 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-left: auto;
+}
+/* Too narrow for one line: the brand and the session controls first, the tracks across a second
+   line -- not the tracks squeezed between them, which pushed the controls to a third. */
+@media (max-width: 1750px) {
+  .top-bar .global-tracks {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+
+/* The two badges one above the other, to leave the buttons the width. */
+.session-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
 }
 .status-badge {
   font-size: 10px;
@@ -642,9 +663,50 @@ body {
 .player-badge.us { background: var(--us-blue); color: white; }
 .player-badge.ussr { background: var(--ussr-red); color: white; }
 
+/* Two rows of buttons: Cancel, the view and New Game; then the developer's tools. */
 .header-buttons {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 6px;
+  max-width: 320px;
+}
+
+/* Whose eyes the board is drawn for (game/view.ts). A player's view is marked so it is never
+   mistaken for the developer's. */
+.view-select {
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-panel-solid);
+  color: inherit;
+}
+body.player-view .view-select {
+  border-color: var(--border-highlight);
+  color: var(--border-highlight);
+  font-weight: 600;
+}
+
+/* The other side's cards a player's view has not seen. */
+.card-item.card-hidden {
+  opacity: 0.55;
+  cursor: default;
+  font-style: italic;
+  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.03) 0 6px, rgba(255, 255, 255, 0.07) 6px 12px);
+}
+
+/* The decision HUD while the other side (the model) decides, in a player's view. */
+.hud-waiting {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 18px 10px;
+  font-size: 12px;
+}
+.hud-waiting-note {
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.8;
 }
 
 /* ==========================================================================

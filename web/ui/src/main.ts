@@ -21,12 +21,17 @@ import { GameSession } from "./game/session";
 import { decodePosition, encodePosition } from "./game/position";
 import { Model, sourceFromParam, sourceToParam } from "./analysis/model";
 import { analyze } from "./analysis/readout";
+import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
 
 export class TSApp {
   private state: GameState | null = null;
+  /** `state` as the selected view may see it (game/view.ts) -- what every panel renders. */
+  private shown: GameState | null = null;
+  /** Whose eyes the board is drawn for: the developer, or one side playing the model. */
+  private view: ViewMode = "DEV";
   private isReplayMode: boolean = false;
   private replaySteps: ReplayStep[] = [];
   private replayCurrentStep: number = 0;
@@ -76,6 +81,8 @@ export class TSApp {
     this.debugPanel = new DebugPanel((override: any) => this.sendDebugOverride(override));
 
     this.replayControls = new ReplayControls((replayState: GameState, stepIndex: number, allSteps: ReplayStep[]) => {
+      // A replay's snapshots are the full state: watching one is the developer's view.
+      if (this.view !== "DEV") this.setView("DEV");
       this.setReplayMode(true);
       this.state = replayState;
       this.replaySteps = allSteps;
@@ -97,6 +104,7 @@ export class TSApp {
     this.analysisPanel.show(!this.isReplayMode);
     this.actionHud.onRerender = () => this.redecorate();
 
+    this.setupViewSelect();
     this.setupGlobalControls();
     this.setupBottomResizer();
     this.setupFileDrop();
@@ -187,6 +195,52 @@ export class TSApp {
     this.urlModel = params.get("model");
     const auto = (params.get("auto") || "").toUpperCase();
     this.urlAuto = auto === "US" || auto === "USSR" ? auto : "";
+    // A replay link shows everything; a player's view cannot watch one.
+    this.view = this.isReplayMode ? "DEV" : viewFromParam(params.get("view"));
+  }
+
+  /** The view selector: developer (everything) or one side against the model. */
+  private setupViewSelect() {
+    const sel = document.getElementById("view-select") as HTMLSelectElement | null;
+    sel?.addEventListener("change", () => this.setView(sel.value as ViewMode));
+    this.setView(this.view, false);
+  }
+
+  /**
+   * Switch whose eyes the board is drawn for. A player's view locks auto-play to the other side
+   * (the model plays it), and turns off the tools that show the full state -- Debug Tools and
+   * Replay Mode -- leaving replay mode if it was on.
+   */
+  private setView(v: ViewMode, rerender = true) {
+    this.view = v;
+    const sel = document.getElementById("view-select") as HTMLSelectElement | null;
+    if (sel) sel.value = v;
+    const opp = opponentOf(v);
+    this.analysisPanel.setHiddenSide(opp);
+    document.body.classList.toggle("player-view", opp !== null);
+    for (const id of ["btn-toggle-debug", "btn-toggle-replay"]) {
+      const b = document.getElementById(id) as HTMLButtonElement | null;
+      if (!b) continue;
+      b.disabled = opp !== null;
+      b.title = opp ? "Shows the full state -- switch to the Developer view to use it" : "";
+    }
+    if (!rerender) return;
+    if (opp && this.isReplayMode) {
+      this.setReplayMode(false);
+      this.state = this.liveState;
+      renderTracePanel([], 0);
+    }
+    this.renderState();
+    this.syncUrl();
+    this.maybeAutoPlay();
+  }
+
+  /** A player's view, and the decision on the board is the other side's (the model's). */
+  private hiddenSideToMove(): boolean {
+    const opp = opponentOf(this.view);
+    if (!opp || !this.engine) return false;
+    const p = this.engine.decisionPlayer();
+    return (p > 0 ? "US" : p < 0 ? "USSR" : "") === opp;
   }
 
   /**
@@ -206,6 +260,8 @@ export class TSApp {
     else params.delete("model");
     const auto = this.analysisPanel.autoSide;
     if (auto) params.set("auto", auto.toLowerCase()); else params.delete("auto");
+    const view = viewToParam(this.view);
+    if (view) params.set("view", view); else params.delete("view");
     params.set("pos", this.positionToken);
     const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
     if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
@@ -247,8 +303,8 @@ export class TSApp {
       if (version !== this.version || key !== this.modelKey) return;   // the board moved on
       this.liveAnalysis = a;
       if (!this.isReplayMode) {
-        this.analysisPanel.render(a, this.state);
-        this.analysisPanel.decorate(this.state);
+        this.analysisPanel.render(a, this.shown);
+        this.analysisPanel.decorate(this.shown);
       }
       this.maybeAutoPlay();
     } catch (e) {
@@ -311,6 +367,8 @@ export class TSApp {
         this.analysisPanel.dropFile(f);
       } else if (f.name.endsWith(".json")) {
         try {
+          // A replay shows everything: watching one is the developer's view.
+          if (this.view !== "DEV") this.setView("DEV");
           this.replayControls.loadReplayData(JSON.parse(await f.text()));
         } catch (err) {
           window.alert(`Not a replay: ${err}`);
@@ -332,14 +390,17 @@ export class TSApp {
 
   private renderState() {
     if (!this.state) return;
-    this.tracksView.render(this.state);
-    this.mapView.render(this.state);
-    this.cardsView.render(this.state);
-    this.actionHud.render(this.state);
+    // Every panel draws the view's redaction, never the full state (game/view.ts).
+    const shown = redactState(this.state, this.view);
+    this.shown = shown;
+    this.tracksView.render(shown);
+    this.mapView.render(shown);
+    this.cardsView.render(shown);
+    this.actionHud.render(shown);
     this.renderLogStream();
     if (!this.isReplayMode) {
-      this.analysisPanel.render(this.liveAnalysis, this.state);
-      this.analysisPanel.decorate(this.state);
+      this.analysisPanel.render(this.liveAnalysis, shown);
+      this.analysisPanel.decorate(shown);
     }
   }
 
@@ -347,9 +408,9 @@ export class TSApp {
   private redecorate() {
     if (this.isReplayMode) {
       const next = this.replaySteps[this.replayCurrentStep + 1];
-      decorateChoices(next?.policy, this.state);
+      decorateChoices(next?.policy, this.shown);
     } else {
-      this.analysisPanel.decorate(this.state);
+      this.analysisPanel.decorate(this.shown);
     }
   }
 
@@ -514,9 +575,10 @@ export class TSApp {
       return;
     }
 
-    if (!this.state?.action_logs) return;
+    if (!this.shown?.action_logs) return;
 
-    const logs = this.state.action_logs;
+    // The view's log (game/view.ts redacts the other side's private lines).
+    const logs = this.shown.action_logs;
     const isVpChangingLive = (idx: number) => {
       const log = logs[idx];
       const hasVpDelta = log.vp_delta !== undefined && log.vp_delta !== 0;
@@ -592,7 +654,7 @@ export class TSApp {
   }
 
   private handleCountryClick(countryId: number) {
-    if (this.isReplayMode) return;
+    if (this.isReplayMode || this.hiddenSideToMove()) return;
     if (!this.state || !this.state.legal_actions) return;
 
     // If active decision is POINT_NODE (5), send action
@@ -610,7 +672,7 @@ export class TSApp {
   }
 
   private handleCardClick(cardId: number) {
-    if (this.isReplayMode) return;
+    if (this.isReplayMode || this.hiddenSideToMove()) return;
     if (!this.state || !this.state.legal_actions) return;
 
     if (this.state.decision_context.decision_type === 1) {
@@ -645,6 +707,10 @@ export class TSApp {
    */
   private sendAction(action: MicroAction) {
     if (this.isReplayMode || !this.session) return;
+    if (this.hiddenSideToMove()) {
+      this.refused(`it is ${opponentOf(this.view)}'s move -- the model plays that side in this view`);
+      return;
+    }
     const why = this.session.apply(action, action.secondary_id ?? 0);
     if (why) {
       this.refused(why);
@@ -657,8 +723,13 @@ export class TSApp {
    * Play a flat action in the loaded model's own action view (the favourite button, a row of the
    * panel's list, or auto-play). A composed E4.1 action is applied as its two E4 steps.
    */
-  private sendFlatAction(flatIdx: number, forcedDie: number = this.actionHud.selectedDieRoll) {
+  private sendFlatAction(flatIdx: number, forcedDie: number = this.actionHud.selectedDieRoll, auto = false) {
     if (this.isReplayMode || !this.session) return;
+    // In a player's view only auto-play moves for the other side.
+    if (!auto && this.hiddenSideToMove()) {
+      this.refused(`it is ${opponentOf(this.view)}'s move -- the model plays that side in this view`);
+      return;
+    }
     const why = this.session.applyFlat(flatIdx, this.model?.meta.mergedInfluence ?? false, forcedDie);
     if (why) {
       this.refused(why);
@@ -685,7 +756,7 @@ export class TSApp {
       this.autoPlayTimer = null;
       if (this.isReplayMode || version !== this.version) return;
       // Always the engine's own die: the manual die selector is for the moves you make.
-      this.sendFlatAction(idx, 0);
+      this.sendFlatAction(idx, 0, true);
     }, AUTO_PLAY_DELAY_MS);
   }
 
@@ -794,12 +865,14 @@ export class TSApp {
 
     // Debug Tools button
     document.getElementById("btn-toggle-debug")?.addEventListener("click", () => {
+      if (this.view !== "DEV") return;   // the inspector shows the full state
       if (this.state && !this.isReplayMode) this.debugPanel.openDebugModal(this.state);
     });
 
     // Replay Mode Toggle button
     const replayBtn = document.getElementById("btn-toggle-replay")!;
     replayBtn.addEventListener("click", () => {
+      if (this.view !== "DEV") return;   // a replay's snapshots are the full state
       this.setReplayMode(!this.isReplayMode);
       if (!this.isReplayMode && this.liveState) {
         // Back to the live game: the board still shows the replay's last position.
@@ -807,8 +880,8 @@ export class TSApp {
         renderTracePanel([], 0);
         this.renderState();
         if (this.liveAnalysis) {
-          this.analysisPanel.render(this.liveAnalysis, this.state);
-          this.analysisPanel.decorate(this.state);
+          this.analysisPanel.render(this.liveAnalysis, this.shown);
+          this.analysisPanel.decorate(this.shown);
         }
         this.syncUrl();
         this.maybeAutoPlay();
