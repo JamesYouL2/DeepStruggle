@@ -372,9 +372,22 @@ def metrics(screened: Sequence[Dict[str, Any]], control: Sequence[Dict[str, Any]
     confirmed = confirmed_cand + confirmed_ctrl
     first = {r["id"]: r for r in rows_256}
     rescued = [r for r in confirmed if rescued_by_search(first.get(r["id"], r))]
+
+    def z_of(r: Dict[str, Any]) -> Optional[float]:
+        d = r.get("diff_vs_greedy", {}).get(str(r.get("best")))
+        return (float(d[0]) / float(d[1])) if d and d[1] else None
+
+    z_ctrl = [z for r in validation if r["id"] in ctrl_ids for z in [z_of(r)] if z is not None]
+    z_cand = [z for r in validation if r["id"] in cand_ids for z in [z_of(r)] if z is not None]
     unresolved = [r for r in validation if r["id"] in cand_ids and r["verdict"] == "unresolved"]
     refuted = [r for r in validation if r["id"] in cand_ids and r["verdict"] == "refuted"]
     miss_w = len(confirmed_ctrl) * weight
+    exact = [r for r in confirmed if str(r.get("verdict", "")).startswith("exact")]
+    est = [r for r in confirmed if r.get("verdict") == "confirmed-regret"]
+    exact_cand = [r for r in exact if r["id"] in cand_ids]
+    exact_ctrl = [r for r in exact if r["id"] in ctrl_ids]
+    est_cand = [r for r in est if r["id"] in cand_ids]
+    est_ctrl = [r for r in est if r["id"] in ctrl_ids]
     out: Dict[str, Any] = {
         "decisions": decisions, "candidates": n_cand, "control": n_ctrl,
         "control_weight": round(weight, 2),
@@ -385,18 +398,31 @@ def metrics(screened: Sequence[Dict[str, Any]], control: Sequence[Dict[str, Any]
         "refuted": len(refuted), "unresolved": len(unresolved),
         "per_1000_decisions": ((len(confirmed_cand) + miss_w) / decisions * 1000
                                if decisions else None),
+        "per_1000_exact": ((len(exact_cand) + len(exact_ctrl) * weight) / decisions * 1000
+                           if decisions else None),
+        "per_1000_estimated": ((len(est_cand) + len(est_ctrl) * weight) / decisions * 1000
+                               if decisions else None),
         "detected_by_screen": (len(confirmed_cand) / (len(confirmed_cand) + miss_w)
                                if (confirmed_cand or miss_w) else None),
+        "detected_exact": (len(exact_cand) / (len(exact_cand) + len(exact_ctrl) * weight)
+                           if (exact_cand or exact_ctrl) else None),
+        "detected_estimated": (len(est_cand) / (len(est_cand) + len(est_ctrl) * weight)
+                               if (est_cand or est_ctrl) else None),
         "rescued_by_256": (len(rescued) / len(confirmed) if confirmed else None),
         "unresolved_share": (len(unresolved) / max(1, len([r for r in validation
                                                            if r["id"] in cand_ids]))),
+        "noise": {"control_with_alternative": len(z_ctrl),
+                  "control_z_ge_2": sum(1 for z in z_ctrl if z >= 2),
+                  "candidate_with_alternative": len(z_cand),
+                  "candidate_z_ge_2": sum(1 for z in z_cand if z >= 2)},
     }
     return out
 
 
-def render(census: Dict[str, Any], worst: Sequence[Tuple[str, List[Dict[str, Any]]]],
+def render(census: Dict[str, Any], worst: Sequence[Tuple[str, int, List[Dict[str, Any]]]],
            meta: Dict[str, Any]) -> str:
-    """The report's markdown. `worst` is (root cause, rows) in severity order."""
+    """The report's markdown. `worst` is (root cause, rows of that cause in the census, shown rows)
+    in severity order."""
 
     def f(x: Optional[float], digits: int = 1) -> str:
         return "n/a" if x is None else f"{x:.{digits}f}"
@@ -435,7 +461,11 @@ def render(census: Dict[str, Any], worst: Sequence[Tuple[str, List[Dict[str, Any
         f"| candidate count | {census['candidates']} |",
         f"| confirmation rate (candidates) | {f(census['confirmation_rate'] * 100 if census['confirmation_rate'] is not None else None)}% |",
         f"| confirmed catastrophic blunders per 1,000 decisions | {f(census['per_1000_decisions'], 2)} |",
+        f"| &nbsp;&nbsp;-- exact terminal mistakes (engine-proven) | {f(census['per_1000_exact'], 2)} |",
+        f"| &nbsp;&nbsp;-- estimated strategic regret (playouts, upper bound) | {f(census['per_1000_estimated'], 2)} |",
         f"| share of confirmed mistakes the cheap screening found | {f(census['detected_by_screen'] * 100 if census['detected_by_screen'] is not None else None)}% |",
+        f"| &nbsp;&nbsp;-- exact terminal mistakes | {f(census['detected_exact'] * 100 if census['detected_exact'] is not None else None)}% |",
+        f"| &nbsp;&nbsp;-- estimated strategic regret | {f(census['detected_estimated'] * 100 if census['detected_estimated'] is not None else None)}% |",
         f"| share rescued by 256-simulation search | {f(census['rescued_by_256'] * 100 if census['rescued_by_256'] is not None else None)}% |",
         f"| share unresolved even under the stronger search | {f(census['unresolved_share'] * 100)}% |",
         "",
@@ -444,9 +474,20 @@ def render(census: Dict[str, Any], worst: Sequence[Tuple[str, List[Dict[str, Any
         "adds the control sample's confirmed mistakes at their weight, standing in for the "
         "positions the screening never looked at.",
         "",
+        f"**Noise floor.** The estimated class is an upper bound. With {census['noise']['control_with_alternative']} "
+        f"control rows carrying an alternative to compare, {census['noise']['control_z_ge_2']} clear "
+        f"the confirmation bar (z >= 2 on the best of their alternatives, "
+        f"{f(census['noise']['control_z_ge_2'] / max(1, census['noise']['control_with_alternative']) * 100)}%), "
+        f"against {census['noise']['candidate_z_ge_2']} of "
+        f"{census['noise']['candidate_with_alternative']} candidates "
+        f"({f(census['noise']['candidate_z_ge_2'] / max(1, census['noise']['candidate_with_alternative']) * 100)}%). "
+        "A max over a handful of paired comparisons clears z >= 2 by chance alone a few percent of "
+        "the time, so the control's confirmed rows are consistent with noise plus a few real "
+        "misses; the exact class and the candidates' excess over the control are the signals.",
+        "",
     ]
-    for cause, rows in worst:
-        lines.append(f"### {cause} ({len(rows)})")
+    for cause, total, rows in worst:
+        lines.append(f"### {cause} ({total} in the census, {len(rows)} shown)")
         lines.append("")
         lines.append("| id | side | turn/ar | decision | greedy | search | verdict | regret (SE) | replay |")
         lines.append("|:---|:---|:---|:---|:---|:---|:---|:---|:---|")
@@ -522,10 +563,24 @@ def report(screen_paths: Sequence[str], control_paths: Sequence[str], summary_pa
 
     confirmed = [r for r in rows if str(r.get("verdict", "")).startswith("exact")
                  or r.get("verdict") == "confirmed-regret"]
-    worst_rows = sorted(confirmed, key=rank)[:top]
-    grouped: List[Tuple[str, List[Dict[str, Any]]]] = []
-    for cause in dict.fromkeys(root_cause(r) for r in worst_rows):
-        grouped.append((cause, [r for r in worst_rows if root_cause(r) == cause]))
+    # the top failures grouped by root cause: causes in severity order, their rows in severity
+    # and regret order, taken a round at a cause so the 20 show every kind of failure, not just
+    # the most numerous
+    by_cause: Dict[str, List[Dict[str, Any]]] = {}
+    for r in confirmed:
+        by_cause.setdefault(root_cause(r), []).append(r)
+    for rows_ in by_cause.values():
+        rows_.sort(key=rank)
+    order = sorted(by_cause, key=lambda c: rank(by_cause[c][0]))
+    worst_rows: List[Dict[str, Any]] = []
+    i = 0
+    while len(worst_rows) < top and any(i < len(by_cause[c]) for c in order):
+        for c in order:
+            if i < len(by_cause[c]) and len(worst_rows) < top:
+                worst_rows.append(by_cause[c][i])
+        i += 1
+    grouped = [(c, len(by_cause[c]), [r for r in worst_rows if root_cause(r) == c]) for c in order
+               if any(root_cause(r) == c for r in worst_rows)]
     meta: Dict[str, Any] = {"model": (screened + control or [{"model": "?"}])[0].get("model"),
                             "model_sha256": (screened + control or [{"model_sha256": ""}])[0].get("model_sha256"),
                             "games": 0, "runtime": runtime}
