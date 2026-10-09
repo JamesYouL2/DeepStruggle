@@ -1,6 +1,11 @@
 # P24 — an AlphaStar-style league, without a supervised starting point
 
 **Status:** **stage 1 done (2026-09-26)**: [`../log/P24_stage1_exploiter_collapse.md`](../log/P24_stage1_exploiter_collapse.md). It runs a main agent and one main exploiter from the ~400M plateau, with the exploiter trained against a greedy, frozen main snapshot, with no KL anchor, no entropy bonus and learner-only normalisation. Against E4-61's own legs, the late mean moves −6 on seed 43 and **+65** on seed 44 (head to head 57.9% ± 1.2), a pair mean of +30. Next: more seeds, and an exploiter reset to the main agent's current state.
+**Revised (owner, 2026-10-09)** after the league from the E7 heads plateau published nothing
+([`../log/E7_league_exploiters_by_seat.md`](../log/E7_league_exploiters_by_seat.md)): **exploiters
+are per seat** -- trained with the learner locked to one seat and played only in that seat -- and
+**publishing is decided on live games**, the exploiter's rate in its seat against the main agent
+minus the main's own self-play rate there, not a separate greedy tournament against 50%.
 **Needs approval:** none of it touches `engine/` or the observation. It needs one trainer change
 (a pool that grows from other runs' directories) and a driver built on `tools/train.py`.
 
