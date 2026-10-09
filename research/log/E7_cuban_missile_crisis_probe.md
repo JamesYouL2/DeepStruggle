@@ -216,3 +216,36 @@ other side: the main headlines the crisis in 1.7% of combo positions, so its hea
 and a candidate the prior has written off cannot be rescued by sigma at this budget. A test of the
 idea therefore needs the root's prior softened (a temperature on the root logits) or sigma scaled up,
 and that changes every searched decision, so it has to be checked for strength as well.
+
+## Can best-response search find the combo? Only its last step (owner, 2026-10-09)
+
+`BatchedMCTSConfig.opponent="greedy"` (new, Python tree): at every node where the side not
+searching moves, the tree takes that side's most probable move, so the US plans against the greedy
+network. `gumbel_prior_temperature` (new, default 1) divides the Gumbel root's logits before
+candidates are taken and ranked. `data/reports/br_search_probe.py` (output `br_search_probe.out`):
+positions from 1,000 greedy games of `E7-A8-R1-S44@6400M` -- 109 combo headlines (crisis + Lone
+Gunman / Che / Ortega, no USSR Influence in Cuba) and 105 US card choices under its own crisis
+holding one of the three -- and what each searcher plays there.
+
+At the combo headlines the crisis is the 2nd-7th most probable legal move (inside Gumbel's 8
+candidates) but a median 17 nats behind the top move (max 39).
+
+| searcher (Gumbel k8 @256) | root T | headlines the crisis | plays the follow-up |
+|:---|---:|---:|---:|
+| the network, greedy | -- | 0 / 109 | 6 / 105 |
+| opponent searched | 1 | 1 | 10 |
+| opponent greedy | 1 | 2 | 11 |
+| opponent searched | 3 | 1 | 26 |
+| opponent greedy | 3 | 5 | 33 |
+| opponent searched | 10 | 5 | 40 |
+| opponent greedy | 10 | 8 | **44** |
+
+* **The follow-up -- one decision from the win -- is found once the prior is softened**: 44 of 105
+  at T = 10 against a greedy opponent. Even with the opponent searched it is found 40 times, since
+  the USSR's in-tree choice is driven by the same 28-nat prior towards the coup.
+* **The headline -- the plan's first step -- is not**: 8 of 109 at best. At 256 evaluations a
+  candidate gets ~10 in the first halving phase, and the win lies past the USSR's whole action round
+  (one tree node per USSR decision, greedy or not) and the US's card choice. Depth, not only prior.
+* So a search-only exploiter at this budget would seldom set this trap. Finding plans of this kind
+  needs the opponent's moves collapsed out of the tree (played greedily without spending a
+  simulation each), or a much larger budget, as well as the softened prior.

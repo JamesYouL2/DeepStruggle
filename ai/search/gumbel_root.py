@@ -126,7 +126,7 @@ class GumbelRoot:
         m_max = max(1, min(cfg.gumbel_k, cfg.simulations))
         for i in range(len(states)):
             legal = [int(a) for a in np.flatnonzero(masks[i])]
-            logits.append({a: float(lg[i, a]) for a in legal})
+            logits.append({a: float(lg[i, a]) / cfg.gumbel_prior_temperature for a in legal})
             if cfg.gumbel_scale > 0.0:
                 noise = mcts._np_rng.gumbel(size=len(legal)) * cfg.gumbel_scale
                 g.append({a: float(x) for a, x in zip(legal, noise)})

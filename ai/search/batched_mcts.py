@@ -151,6 +151,12 @@ class BatchedMCTSConfig(PIMCTSConfig):
     gumbel_k: int = 0
     #: Scale of the Gumbel noise; 0 takes the k most probable moves, deterministically.
     gumbel_scale: float = 1.0
+    #: The Gumbel root's logits are divided by this before candidates are taken and ranked. 1, the
+    #: default, is the paper's rule. Above 1 the network's preferences count for less against the
+    #: searched values: with logit gaps of 15-30 nats, sigma(completed Q) -- at most ~15 at 256
+    #: evaluations -- cannot overturn the prior, so a move the network has written off is never
+    #: chosen however it searches (research/log/E7_cuban_missile_crisis_probe.md).
+    gumbel_prior_temperature: float = 1.0
     #: Run the network through CUDA graphs (the C++ tree on CUDA only): one graph per batch size,
     #: padded up to a multiple of GRAPH_BUCKET rows. A graph replays the same kernels eager torch
     #: launches, so at one batch size the outputs are bit-identical -- but the padding changes the
