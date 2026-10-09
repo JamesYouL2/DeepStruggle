@@ -142,3 +142,36 @@ turn never came up. Without a crisis the same options: Lone Gunman 96.7%, Che 94
 * **It does not distinguish "can pay" from "cannot pay" anywhere**: the rates are the same either
   way (own card, Ops mode: 3.0% / 3.0% USSR; Lone Gunman: 91.4% / 90.9%). It has learnt "the
   crisis means no coup" for its own cards, not "no coup unless I can pay".
+
+## The US combo: +3.5 points as US on the soup, +2.9 on the raw network (owner, 2026-10-09)
+
+The owner's rule, `script:cmc-combo:<checkpoint>` (`tools/lib/batch_tournament.SCRIPTS`): the US,
+holding Cuban Missile Crisis and Lone Gunman, Che or Ortega, with **no** USSR Influence in Cuba,
+headlines the crisis and then plays the other card (Lone Gunman, then Ortega, then Che). Ortega and
+Che are played for Influence -- Ops first, then the event -- placed where the event's coup can reach
+it: Ortega into Cuba, else Costa Rica; Che into a non-battleground of the Americas or Africa, least
+stable first. Lone Gunman's mode is the network's. Everything else is the network's own play.
+
+**In the games** (`data/reports/cmc_combo_probe.py`, 4,000 greedy games, the US with the script):
+
+| | heads soup | raw `@6800M` |
+|:---|---:|---:|
+| combo fired | 415 (10.4%) | 364 (9.1%) |
+| Lone Gunman: USSR coups, cannot pay → **loses** | **175 of 201** | **158 of 187** |
+| Che: USSR coups, cannot pay → **loses** | **115 of 129** | **107 of 114** |
+| Ortega: USSR coups, cannot pay → **loses** | **25 of 29** | **15 of 15** |
+| no follow-up reached | 56 | 48 |
+| US wins of the combo games | **356 / 415 (85.8%)** | **313 / 364 (86.0%)** |
+
+**Win rate,** paired with self-play on the same deals, 20,000 a seat:
+
+| network | rule as US vs self-play | as USSR (the script never acts: the method's control) |
+|:---|---:|---:|
+| heads soup | 51.33 vs 47.85: **+3.48 ± 0.15** | −0.01 ± 0.01 |
+| raw `E7-A8-R1-S44@6800M` | 50.01 vs 47.15: **+2.85 ± 0.13** | +0.00 ± 0.00 |
+
+A scripted exploit of the USSR's blind spot is worth about 3 points of the US's win rate overall,
+from one game in ten. When the USSR has nothing in Cuba, the event's coup is taken 87-100% of the
+time and the game is lost on the spot. (The earlier, looser "USSR cannot pay" condition -- fewer
+than 2 in Cuba at the headline -- left the USSR time to reach 2 before the follow-up; with none, it
+rarely does.)
