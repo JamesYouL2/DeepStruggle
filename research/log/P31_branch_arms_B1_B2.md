@@ -631,3 +631,26 @@ interim check at 6,880M in `a8_r18_6880_check.*`).
   the plateau itself, not a step-matched plain continuation, which the plateau makes a fair stand-in.
   The searcher measured at evaluation (PUCT @128, Gumbel k=8 @256) is stronger than the 64-simulation
   targets trained on.
+
+## Gumbel on card and play-mode decisions only (owner, 2026-10-09)
+
+"Recheck what Gumbel search gives on top of our current best plain model, and if searching only card
+and play mode, while using models own country decision, gives similar results (and how it affects
+speed)." `gumbel:<ckpt>:256:8:0.2:card` (new: the spec's node filter) searches SELECT_CARD and
+SELECT_PLAY_MODE decisions and plays the network's own greedy move elsewhere. Greedy fields,
+1,000 a side (± 1.1), reports `data/reports/gumbel_card_{soup6800,swa6800}.md`:
+
+| network | Gumbel k8@256, every decision | card / play mode only | every vs card-only |
+|:---|---:|---:|---:|
+| heads soup `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M` | **58.4%** (US 57.2, USSR 59.5) | **55.8%** (US 53.2, USSR 58.3) | 51.1% |
+| plateau SWA `E7-A8-R1-S44@6720..6800M` | **59.8%** (US 57.7, USSR 61.9) | **56.5%** (US 54.4, USSR 58.7) | 52.8% |
+
+Speed, the SWA against itself unsearched, 300 a side with one side searching: every decision
+2.7 games/s, card-only 4.4 games/s (the network alone 293).
+
+* **Card-only keeps about two thirds of the gain** (+5.8 / +6.5 against +8.4 / +9.8) at ~60% of
+  the time; full search still beats it head to head.
+* **What it loses is in the US seat.** USSR keeps most of its gain (58.3 vs 59.5, 58.7 vs 61.9),
+  US about half (53.2 vs 57.2, 54.4 vs 57.7): searching country decisions -- influence, coups,
+  realignments -- is worth most to US, the seat where the network's play has headroom
+  ([`E7_league_exploiters_by_seat.md`](E7_league_exploiters_by_seat.md)).
