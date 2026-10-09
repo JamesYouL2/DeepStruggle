@@ -20,6 +20,14 @@ restricted side's action rounds. The crisis **is** in the observation: persisten
 (`CMC_ACTIVE_US`) and 12 (`CMC_ACTIVE_USSR`) are global features 23 and 24, by seat rather than by
 perspective. So a suicidal coup is a learning failure, not missing information.
 
+**What "paid" and "could not pay" mean here.** A coup "that paid" is a coup by the restricted side
+while it held the 2 Influence: the engine removed them (Cuba, or West Germany / Turkey) inside the
+coup, the crisis ended, and the coup resolved normally -- legal, at a cost of 2 Influence. A coup
+that "could not pay" was made without them; there is then no way to pay at all, so the only safe
+play is not to coup. No pay prompt is shown during the opponent's round (after Lone Gunman or Che,
+for instance) -- the engine offers one only at the head of the payer's own action round -- but none
+is needed: a coup pays by itself whenever paying is possible.
+
 ## 1. Cancelling: almost never, which is right
 
 Offers at the head of an action round: the US declined 3,193 and paid 43 (1.3%), the USSR declined
