@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from tools.scripts.league import latest_resume
+from tools.scripts.league import exploiter_run_name, latest_resume
 
 
 def _touch(d: str, name: str) -> None:
@@ -34,7 +34,7 @@ def test_the_driver_refuses_a_non_conforming_exploiter_name_before_launching(tmp
     base = ["--main-name", "E5-21-43", "--main-steps", "1", "--seed", "43", "--exploiter-reset", "main-latest",
             "--league-dir", str(tmp_path / "l"), "--log-dir", str(tmp_path / "g"), "--train-args", "",
             "--main-description", "x", "--exploiter-description", "x"]
-    with pytest.raises(SystemExit, match="not <engine>-<attempt>-<seed>"):
+    with pytest.raises(SystemExit, match="not a run name"):
         main(base + ["--exploiter-name", "E5-22-43b"])
     assert not (tmp_path / "l").exists()
 
@@ -49,3 +49,11 @@ def test_a_continued_league_keeps_counting_generations(tmp_path) -> None:
     with pytest.raises(SystemExit, match="first-generation"):
         main(base + ["--first-generation", "0"])
     assert not (tmp_path / "l").exists()
+
+
+def test_a_step_template_names_each_generation_by_its_branch_point() -> None:
+    """In the run-name grammar a generation is a branch of the main agent at its reset state."""
+    t = "E7-A8-R1-S44@6400M+R19@{step}M+R3"
+    assert exploiter_run_name(t, 1, 6_410_053_632) == "E7-A8-R1-S44@6400M+R19@6410M+R3"
+    assert exploiter_run_name(t, 7, 6_719_987_712) == "E7-A8-R1-S44@6400M+R19@6720M+R3"
+    assert exploiter_run_name("E7-22-44", 3, 2_910_000_000) == "E7-22-44-3"
