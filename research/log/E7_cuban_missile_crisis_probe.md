@@ -105,3 +105,40 @@ Same pairing, deals and size as above (`data/reports/cmc_rule_*_rule40_oppcantpa
 Level on both networks, in both seats: the condition removes the cost of headlining the crisis
 blind, but adds nothing. The opponent's suicidal coups are too rare to pay for the headline, and it
 can still put Influence back into Cuba (or West Germany / Turkey) before it coups.
+
+## Does being under the crisis change the decision to coup? (owner, 2026-10-09)
+
+"What exactly is P(USSR coups | CMC on USSR and US plays Lone Gunman or Ortega and USSR can't pay)?
+What is P(US can't pay)? Overall, is model's decision to coup or not coup affected by it being under
+CMC and not able to pay?" `data/reports/cmc_probe2.py` (output `cmc_probe2.out`): 4,000 greedy games,
+the crisis headlined whenever held, the follow-ups forced (US: Lone Gunman, Ortega, Che; USSR: CIA
+Created). At every decision where a side could coup it records the coup probability on the real
+position and on a clone with **only the crisis flag cleared** -- DEFCON 2 and everything else kept,
+so the difference is what the network reads from the flag.
+
+**Can the opponent pay when the crisis is headlined?** USSR, when the US headlines it: cannot in
+1,007 of 1,671 (60.3%). US, when the USSR headlines it: cannot in 386 of 1,902 (20.3%) -- the US
+usually holds 2 in West Germany; at the US's coup decisions under the crisis it cannot in ~16-19%.
+
+| side | coup option | under the opponent's crisis | n | chose coup | P(coup) | P(coup), flag cleared |
+|:---|:---|:---|---:|---:|---:|---:|
+| USSR | Lone Gunman, the US played it | **cannot pay** | 164 | **90.9%** | 0.915 | 0.990 |
+| USSR | Lone Gunman, the US played it | can pay | 152 | 91.4% | 0.908 | 0.972 |
+| USSR | Che, the US played it | **cannot pay** | 71 | **98.6%** | 0.983 | 1.000 |
+| US | CIA Created, the USSR played it | **cannot pay** | 17 | 94.1% | 0.925 | 0.999 |
+| USSR | own card, play-mode choice | cannot pay | 4,044 | 0.4% | 0.004 | 0.202 |
+| USSR | own card, Ops-mode choice | cannot pay | 722 | 3.0% | 0.030 | 0.471 |
+| US | own card, play-mode choice | cannot pay | 1,703 | 1.7% | 0.017 | 0.198 |
+| US | own card, Ops-mode choice | cannot pay | 306 | 8.2% | 0.080 | 0.327 |
+
+(Ortega: no case in 4,000 games -- a late-war card and a mid-war crisis in the US hand in the same
+turn never came up. Without a crisis the same options: Lone Gunman 96.7%, Che 94.6%, CIA 82.3%.)
+
+* **On its own cards the network reads the flag and stops couping:** the coup probability falls from
+  0.20-0.47 with the flag cleared to 0.004-0.08 with it set.
+* **On a coup handed to it by the opponent's card it barely reacts:** Lone Gunman 0.99 → 0.92, Che
+  1.00 → 0.98, CIA 1.00 → 0.93. These are rare positions, and there the policy plays the event's
+  coup almost as it would without a crisis.
+* **It does not distinguish "can pay" from "cannot pay" anywhere**: the rates are the same either
+  way (own card, Ops mode: 3.0% / 3.0% USSR; Lone Gunman: 91.4% / 90.9%). It has learnt "the
+  crisis means no coup" for its own cards, not "no coup unless I can pay".
