@@ -549,6 +549,16 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "temperature", float(t_str))
         setattr(agent, "name", f"{agent.name}@T{float(t_str):g}")
         return agent
+    if s.lower().startswith("headline:"):
+        # headline:<card>:<rest-of-spec> -- a scripted rule over the agent: whenever it chooses its
+        # headline holding <card>, it headlines <card>. Everything else is the agent's own choice.
+        # Read by the batch runner with getattr(agent, "headline_card", None), like the two above;
+        # exists to measure what one headline rule is worth on top of a policy.
+        _, card_str, rest = s.split(":", 2)
+        agent = load_agent(rest, device=device)
+        setattr(agent, "headline_card", int(card_str))
+        setattr(agent, "name", f"{agent.name}+headline{int(card_str)}")
+        return agent
     if s.lower().startswith("opening:"):
         # opening:<name>:<rest-of-spec> -- this agent's setup is the named opening from
         # tools/lib/openings.py instead of its own placements, for checkpoints trained with

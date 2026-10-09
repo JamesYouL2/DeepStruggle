@@ -68,6 +68,20 @@ def _agent_features(agent: Any) -> int:
     return model_obs_features(model) if isinstance(agent, NeuralAgent) and model is not None else 0
 
 
+def apply_headline_rule(card: int, indices: npt.NDArray[np.int64], masks: npt.NDArray[Any],
+                        runner: "ts.VectorizedBatchRunner", actions: npt.NDArray[np.int32]) -> None:
+    """`headline:<card>:` agents: at a headline card choice where `card` is legal (so in hand),
+    the choice is `card`. Card c is flat slot c - 1."""
+    slot = card - 1
+    for idx in indices:
+        i = int(idx)
+        if not masks[i][slot]:
+            continue
+        st = runner.get_state(i)
+        if st.current_phase == ts.Phase.HEADLINE and st.ctx().decision_type == ts.DecisionType.SELECT_CARD:
+            actions[i] = slot
+
+
 def _choose_actions(
     agent: PlayerAgent,
     indices: npt.NDArray[np.int64],
@@ -110,6 +124,9 @@ def _choose_actions(
             st = runner.get_state(int(idx))
             actions[idx] = agent.select_action(st, ts.Player(int(d_players[idx])),
                                                temperature=temperature)
+    headline_card = getattr(agent, "headline_card", None)
+    if headline_card is not None:
+        apply_headline_rule(int(headline_card), indices, masks, runner, actions)
 
 
 class ChoiceStats(TypedDict):
