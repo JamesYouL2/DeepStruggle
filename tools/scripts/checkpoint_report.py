@@ -51,6 +51,7 @@ from tools.scripts.star_wars_play import _tag_retrievals, retrieval_table
 
 US, USSR = int(ts.Player.US), int(ts.Player.USSR)
 SPACE = ActionEncoder.PLAY_MODE_OFFSET + 1
+NODE = ActionEncoder.NODE_OFFSET
 CARDS = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
 ID = {c["name"]: i for i, c in CARDS.items()}
 STAR_WARS = ID["Star Wars"]
@@ -486,8 +487,8 @@ class ChernobylEffect:
             return
         if ctx.decision_type == ts.DecisionType.POINT_NODE and int(ctx.op_mode) == OP_INFLUENCE:
             cid = int(ts.decode_flat_action(st, a).primary_id)
-        elif self.merged and a < 84 and ts.ActionMask.is_merged_influence_action(st, a):
-            cid = a          # E4.1: the op choice "Ops for influence, first point at <a>"
+        elif (self.merged and NODE <= a < NODE + 84 and ts.ActionMask.is_merged_influence_action(st, a)):
+            cid = a - NODE   # E4.1: the op choice "Ops for influence, first point at <country>"
         else:
             return
         if not 0 <= cid < 84:
