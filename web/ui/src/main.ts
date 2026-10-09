@@ -22,6 +22,7 @@ import { decodePosition, encodePosition } from "./game/position";
 import { Model, sourceFromParam, sourceToParam } from "./analysis/model";
 import { analyze } from "./analysis/readout";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
+import { lastTurnOf } from "./game/last_turn";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
@@ -392,6 +393,9 @@ export class TSApp {
     if (!this.state) return;
     // Every panel draws the view's redaction, never the full state (game/view.ts).
     const shown = redactState(this.state, this.view);
+    // A player's view marks what the other side's latest turn did to the map.
+    const opp = opponentOf(this.view);
+    if (opp && !this.isReplayMode && this.session) shown.last_turn = lastTurnOf(this.session.start, this.session.steps, opp);
     this.shown = shown;
     this.tracksView.render(shown);
     this.mapView.render(shown);

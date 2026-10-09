@@ -122,6 +122,25 @@ export interface GameState {
   unseen_count?: number;
   /** A player's view: the other side is deciding, and its options are withheld. */
   view_hidden_decision?: boolean;
+  /** A player's view: what the other side's latest turn did to the map (game/last_turn.ts). */
+  last_turn?: LastTurn | null;
+}
+
+/** One country the other side's latest turn changed (influence deltas) or targeted. */
+export interface LastTurnCountry {
+  id: number;
+  name: string;
+  us: number;
+  ussr: number;
+  /** Chosen as a target (influence, coup, realignment, an event) -- a failed coup changes nothing. */
+  targeted: boolean;
+}
+
+export interface LastTurn {
+  player: "US" | "USSR";
+  /** "Setup", "Headline" or "T3 AR4". */
+  label: string;
+  countries: LastTurnCountry[];
 }
 
 export interface CardMetadata {

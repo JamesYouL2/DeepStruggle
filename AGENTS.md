@@ -395,9 +395,10 @@ The workbench serves four purposes, all in the page:
   *Auto-play* (none / USSR / US) makes that side play by itself.
 * **Play one side against the model** -- the header's view select (*Play as US / USSR*, `view=` in
   the URL) hides what that side may not know: the other hand's unknown cards (shown face down and
-  merged with the draw deck into one unseen pile), its deal lines in the log, its face-down
-  headline, and the model's readout while it decides; the model plays it by auto-play, and Debug
-  Tools and replays are developer-view only (`web/ui/src/game/view.ts`).
+  merged with the draw deck into one unseen pile), its deal lines in the log (the cards it plays
+  or discards stay), its face-down headline, and the model's readout while it decides; the map
+  marks the countries its latest turn changed or targeted. The model plays it by auto-play, and
+  Debug Tools and replays are developer-view only (`web/ui/src/game/view.ts`, `last_turn.ts`).
 
 The address bar always carries `pos` (the position itself), `model`, `auto` and `view`, updated with
 `replaceState`, so copying it shares the exact board. The engine badge shows the page engine's

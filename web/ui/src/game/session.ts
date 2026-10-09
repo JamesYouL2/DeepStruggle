@@ -36,6 +36,8 @@ export class GameSession {
   result: GameResult | null = null;
   /** Set when the game began from a loaded position (a link) rather than from the seed. */
   startPosition: string | null = null;
+  /** The display state before the first of `steps` (the "before" of step 0). */
+  start: GameState | null = null;
   private history: UndoEntry[] = [];
 
   constructor(readonly engine: WasmEngine) {}
@@ -49,6 +51,7 @@ export class GameSession {
     this.result = null;
     this.startPosition = null;
     const s = this.engine.display();
+    this.start = s;
     this.logs = [{
       step_index: 0, turn: s.turn, ar: s.action_round, phase: "SETUP", player: "SYSTEM",
       text: `Game started (Seed: ${seed}). USSR setup: Place 6 Influence in Eastern Europe.`,
@@ -212,6 +215,7 @@ export class GameSession {
     this.result = null;
     this.startPosition = token;
     const s = this.engine.display();
+    this.start = s;
     this.logs = [{
       step_index: 0, turn: s.turn, ar: s.action_round, phase: s.current_phase_name ?? "", player: "SYSTEM",
       text: "Position loaded from a shared link (undo history starts here).",

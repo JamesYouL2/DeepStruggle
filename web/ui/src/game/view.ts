@@ -13,8 +13,11 @@
  *   holds the space race's Man in Space perk, which makes the other side reveal first);
  * - while the other side is deciding, its legal actions are withheld (they are its hand, for a
  *   card choice) and `view_hidden_decision` is set;
- * - the action log drops the lines that name a card going into, or out of, the other side's
- *   unseen hand, and the other side's still face-down headline is logged without the card.
+ * - the action log drops the lines that name a card going into the other side's unseen hand (a
+ *   card leaving it is public: played, discarded, removed), and the other side's still face-down
+ *   headline is logged without the card;
+ * - `last_turn` (game/last_turn.ts, set by main.ts) marks the countries the other side's latest
+ *   turn changed or targeted, for the map.
  *
  * The engine itself, the model and the undo history keep the full state: only what is drawn changes.
  */
@@ -63,7 +66,9 @@ export function redactLogs(logs: ActionLogItem[], view: ViewMode, faceDownHeadli
       const m = MOVED.exec(d);
       if (!m) return true;
       const [, from, to] = m;
-      if (from === unseen || to === unseen) return false;
+      // A card going into the other side's unseen hand (its deal, a card it draws) is its secret;
+      // one leaving it -- played, discarded, removed, taken by an event -- is shown to both.
+      if (to === unseen) return false;
       // Cards the other side draws to choose from (Our Man in Tehran and the like) are its own.
       if (log.player === opp && (from === "PEEKED_TEMP" || to === "PEEKED_TEMP")) return false;
       return true;

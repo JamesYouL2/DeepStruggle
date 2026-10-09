@@ -1,4 +1,4 @@
-import { GameState, MapMetadata } from "./types";
+import { GameState, LastTurn, LastTurnCountry, MapMetadata } from "./types";
 import { MAP_METADATA } from "./metadata";
 
 export interface RegionScoreAudit {
@@ -499,6 +499,9 @@ export class MapView {
 
     const nodesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     nodesGroup.setAttribute("id", "country-nodes");
+    // A player's view: the countries the other side's latest turn changed or targeted.
+    const lastTurn = new Map((state.last_turn?.countries || []).map(lc => [lc.id, lc]));
+    this.renderLastTurnSummary(state);
 
     countries.forEach(c => {
       const stateC = state.countries ? state.countries[c.name] : null;
@@ -650,6 +653,9 @@ export class MapView {
       usText.textContent = usInf.toString();
       g.appendChild(usText);
 
+      const lc = lastTurn.get(c.id);
+      if (lc && state.last_turn) this.markLastTurn(g, lc, state.last_turn, x, y, boxW, boxH, ussrBoxX, usBoxX, infBoxW);
+
       // Click Event Handler
       g.addEventListener("click", () => {
         this.onCountryClick(c.id);
@@ -659,6 +665,56 @@ export class MapView {
     });
 
     this.svg.appendChild(nodesGroup);
+  }
+
+  /**
+   * Mark a country the other side's latest turn touched: a dashed ring around it, the signed
+   * change over each influence box, and the change in its hover title.
+   */
+  private markLastTurn(g: SVGGElement, lc: LastTurnCountry, lt: LastTurn, x: number, y: number,
+                       boxW: number, boxH: number, ussrBoxX: number, usBoxX: number, infBoxW: number) {
+    const NS = "http://www.w3.org/2000/svg";
+    g.classList.add("last-turn");
+    const ring = document.createElementNS(NS, "rect");
+    ring.setAttribute("class", "last-turn-ring");
+    ring.setAttribute("x", (x - boxW/2 - 2.2).toString());
+    ring.setAttribute("y", (y - boxH/2 - 2.2).toString());
+    ring.setAttribute("width", (boxW + 4.4).toString());
+    ring.setAttribute("height", (boxH + 4.4).toString());
+    ring.setAttribute("rx", "3.5");
+    g.insertBefore(ring, g.firstChild);
+    const chip = (delta: number, boxX: number, side: "us" | "ussr") => {
+      if (!delta) return;
+      const t = document.createElementNS(NS, "text");
+      t.setAttribute("class", `last-turn-delta ${side}`);
+      t.setAttribute("x", (boxX + infBoxW/2).toString());
+      t.setAttribute("y", (y + boxH/2 + 7.4).toString());
+      t.setAttribute("text-anchor", "middle");
+      t.textContent = delta > 0 ? `+${delta}` : `\u2212${-delta}`;
+      g.appendChild(t);
+    };
+    chip(lc.ussr, ussrBoxX, "ussr");
+    chip(lc.us, usBoxX, "us");
+    const title = document.createElementNS(NS, "title");
+    title.textContent = `${lt.player}'s last turn (${lt.label}): ${lc.name} ${describeLastTurnCountry(lc)}`;
+    g.appendChild(title);
+  }
+
+  /** The line under the map naming what the other side's latest turn did. */
+  private renderLastTurnSummary(state: GameState) {
+    const el = document.getElementById("map-last-turn");
+    if (!el) return;
+    const lt = state.last_turn;
+    if (!lt) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.classList.remove("hidden");
+    const what = lt.countries.length
+      ? lt.countries.map(lc => `${lc.name} ${describeLastTurnCountry(lc)}`).join(" · ")
+      : "no country changed";
+    el.textContent = `${lt.player}'s last turn (${lt.label}): ${what}`;
   }
 
   private renderRegionalScoringBadges(state: GameState) {
@@ -825,4 +881,13 @@ export class MapView {
     if (!this.tooltipEl) return;
     this.tooltipEl.classList.add("hidden");
   }
+}
+
+/** "USSR +2, US −1", or what a target that moved nothing was: "targeted, no change". */
+export function describeLastTurnCountry(lc: LastTurnCountry): string {
+  const signed = (v: number) => (v > 0 ? `+${v}` : `\u2212${-v}`);
+  const parts: string[] = [];
+  if (lc.ussr) parts.push(`USSR ${signed(lc.ussr)}`);
+  if (lc.us) parts.push(`US ${signed(lc.us)}`);
+  return parts.length ? parts.join(", ") : "targeted, no change";
 }

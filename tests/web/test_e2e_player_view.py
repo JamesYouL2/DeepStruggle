@@ -73,9 +73,12 @@ def test_the_other_sides_deal_and_face_down_headline_are_not_logged(browser: Any
     for view, opp in (("US", "USSR"), ("USSR", "US")):
         page.evaluate(f"window.__wb.setView('{view}')")
         logs = json.dumps(page.evaluate("window.__wb.shown.action_logs"))
-        assert f"HAND_{opp}_UNKNOWN" in full_logs
-        assert f"HAND_{opp}_UNKNOWN" not in logs, f"the {view} view logs the {opp} deal"
-        assert f"HAND_{view}_UNKNOWN" in logs, f"the {view} view lost its own deal"
+        assert f"-> HAND_{opp}_UNKNOWN" in full_logs
+        assert f"-> HAND_{opp}_UNKNOWN" not in logs, f"the {view} view logs the {opp} deal"
+        assert f"-> HAND_{view}_UNKNOWN" in logs, f"the {view} view lost its own deal"
+        # A card leaving the other hand -- played, discarded, removed -- is public.
+        leaving = f"moved: HAND_{opp}_UNKNOWN"
+        assert full_logs.count(leaving) > 0 and logs.count(leaving) == full_logs.count(leaving)
 
     # One side commits its headline; the side still choosing must not see it.
     page.evaluate("window.__wb.setView('DEV')")
@@ -108,6 +111,41 @@ def test_the_other_sides_decision_is_hidden_and_refused(browser: Any, static_sit
                   "window.__wb.state.legal_actions.valid_ids[0], secondary_id: 0, flags: 0})")
     page.evaluate("window.__wb.sendFlatAction(window.__wb.engine.mask(false).findIndex(x => x), 0)")
     assert page.evaluate("window.__wb.state.step_index") == before
+    page.close()
+
+
+#: Random legal moves from a fixed stream (an LCG), a new game whenever one ends, until `stop`.
+_PLAY_RANDOM_UNTIL = """stop => { const wb = window.__wb, until = new Function('s', 'return ' + stop);
+    let x = 12345; const rnd = n => { x = (x * 1103515245 + 12345) % 2147483648; return x % n; };
+    for (let n = 0; n < 20000 && !until(wb.state); n++) {
+        if (wb.state.is_terminal) { document.getElementById('btn-new-game').click(); continue; }
+        const m = wb.engine.mask(false), legal = [];
+        m.forEach((ok, i) => { if (ok) legal.push(i); });
+        wb.sendFlatAction(legal[rnd(legal.length)], 0, true);
+    }
+    return until(wb.state); }"""
+
+
+def test_the_other_sides_last_turn_is_marked_on_the_map(browser: Any, static_site: str) -> None:
+    page = _open(browser, f"{static_site}/?model=off&view=us")
+    assert page.evaluate(_PLAY_RANDOM_UNTIL,
+                         "s.current_phase_name === 'ACTION_ROUND' && s.decision_context.decision_player === 'US' && "
+                         "s.turn >= 2 && window.__wb.shown.last_turn && window.__wb.shown.last_turn.countries.length >= 2")
+    lt: Dict[str, Any] = page.evaluate("window.__wb.shown.last_turn")
+    assert lt["player"] == "USSR" and lt["label"].startswith("T")
+    for c in lt["countries"]:
+        assert c["us"] or c["ussr"] or c["targeted"], c
+    marked = page.evaluate("[...document.querySelectorAll('.svg-country-node.last-turn')].map(g => +g.dataset.id)")
+    assert sorted(marked) == sorted(c["id"] for c in lt["countries"])
+    summary = page.inner_text("#map-last-turn")
+    assert f"USSR's last turn ({lt['label']})" in summary
+    assert all(c["name"] in summary for c in lt["countries"])
+    # The developer's view marks nothing.
+    page.evaluate("window.__wb.setView('DEV')")
+    assert page.evaluate("window.__wb.shown.last_turn") is None
+    assert page.locator(".svg-country-node.last-turn").count() == 0
+    assert not page.locator("#map-last-turn").is_visible()
+    assert page.errors == []
     page.close()
 
 

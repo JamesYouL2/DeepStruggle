@@ -20,7 +20,8 @@ web/ui/
 │   ├── engine/wasm_engine.ts   # the WebAssembly engine (public/engine/, built by build_web.sh)
 │   ├── game/                   # session.ts (stepping, undo, log, export), describe.ts (log text),
 │   │                           # names.ts (flat action names), position.ts (link tokens),
-│   │                           # view.ts (the US / USSR player views: what the other side hides)
+│   │                           # view.ts (the US / USSR player views: what the other side hides),
+│   │                           # last_turn.ts (what the other side's latest turn did to the map)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen)
@@ -183,9 +184,19 @@ web/ui/
      in Space perk makes it reveal first). The hidden hand cards and the deck become one
      `UNSEEN` pile -- the *All* list says "Deck or <opp> hand", the deck count adds the hand --
      while the hand tab keeps its size as face-down cards (`hidden_cards`; hand sizes are public).
-   - `redactLogs` drops the log's card-move lines from or to `HAND_<opp>_UNKNOWN` (the other
-     side's deal and its unknown discards' origin) and its `PEEKED_TEMP` moves, and replaces its
-     face-down headline commit with a line that does not name the card.
+   - `redactLogs` drops the log's card-move lines *into* `HAND_<opp>_UNKNOWN` (the other side's
+     deal, a card it draws) and its `PEEKED_TEMP` moves, and replaces its face-down headline
+     commit with a line that does not name the card. A card *leaving* that hand -- played,
+     discarded, removed, taken by an event -- is public and stays in the log. (A headline card
+     stays in the hand until both are committed, `state_machine.cpp`, so its move is a reveal.)
+   - **The other side's latest turn is marked on the map** (`game/last_turn.ts`, attached by
+     `renderState` as `last_turn`): a dashed cyan ring on each country whose influence it changed
+     or that it targeted (a failed coup changes nothing but matters), the signed change under each
+     influence box, and a summary line at the bottom of the map (`#map-last-turn`). A turn is the
+     latest run of `session.steps` sharing turn, phase, action round and owner -- the phasing
+     player, so the other side's own event decisions inside it count; at setup, the side placing.
+     Choosing a headline card is not a turn; a headline event is its owner's (the engine makes
+     the resolving event's owner the phasing player). The developer's view marks nothing.
    - While the other side decides, the state carries `view_hidden_decision` and no legal actions:
      the HUD says who is to move, the analysis panel withholds the model's readout (its policy
      would read the hidden hand off the probabilities), auto-play is locked to the other side, and
@@ -231,7 +242,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
-| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen |
+| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |
