@@ -133,15 +133,64 @@ can land on it -- queued behind T and B4′ as **B6**.
 4. **The search gap as a leaderboard column** for every main player, and searched players as
    leaderboard anchors above the saturated panel.
 
-## 4. An observation proposal (owner-held): the staged card at Grain Sales
+## 4. The forced-exit DEFCON trap (owner's observation, 2026-10-10) -- replaces a withdrawn proposal
 
-Half of the US's Ortega-suicide losses in the 6,800M report (48 of 91) came from playing Ortega
-*inside another event, such as Grain Sales* -- the keep-or-return branch -- and
-`obs_flags::STAGED_CARDS` is a reserved bit no code varies on: the US decides without seeing the
-drawn card. Dropped in the E4 era as "not demonstrated" by Elo; it now has a mechanism and a count
-(~0.3% of games lost outright, plus every other Grain Sales misplay). As an appended block under
-the view spec: one card identity (110 one-hot, or its 14-float row) for the staged card, zero when
-none -- not a per-card bit. Cost stated; the decision is the owner's.
+**Withdrawn:** a staged-card observation proposal stood here. It was wrong. The engine moves
+Grain Sales' drawn card **into the US hand, marked known, before the keep-or-return decision**
+(`engine/src/events/mid_war.cpp`, `trigger_grain_sales`: the decision is the drawn card's own
+`SELECT_PLAY_MODE` with the decline as one option), and Star Wars' retrieval is a `SELECT_CARD`
+over a discard pile the observation shows in full (`late_war.cpp`, `trigger_star_wars`). The US
+chooses with the card in view both times; `obs_flags::STAGED_CARDS` is a leftover of an older
+two-decision shape. The 48 Ortega-suicide losses "inside another event" are therefore choices,
+not blindness -- a kept Grain Sales card or a Star Wars pick played into a DEFCON-2 Cuba coup --
+and belong to the trap below.
+
+**The trap.** A side holding a DEFCON-suicide card (for the US, Lone Gunman; for either side
+any event in `ai/eval/safety.py`'s degrade-with-no-choice list) and then losing a card to an
+effect -- Aldrich Ames' discard, Five Year Plan, Terrorism, Missile Envy, a kept Grain Sales
+card -- must play its whole hand this turn: it can no longer hold the card over, the space race
+takes at most one card a turn (the second attempt only above box 2), UN Intervention is one
+exit if held. With more suicide cards than exits the loss is decided several decisions before
+AR7, **and the critic does not see it**: "DEFCON 1, forced by the winner's play" is 6.7% of all
+games at 6,800M (8.3% of US wins, 5.4% of USSR wins), and P8's measurement stands -- the critic
+moves by at most 0.014 at the deciding choice, flat from 5M to 480M
+([P8](P8_teach_the_defcon_conjunction.md)).
+
+**Everything needed is in the observation**: own hand count (`globals[71]`), the action round
+(`[7]`), the turn, space attempts used this turn (`[59]`), DEFCON, and every held card's identity
+and side. So this is a conjunction the trunk does not compute -- hand composition reaches the
+policy only through pooled statistics ([`../findings/training/forward_pass_trace.md`](../findings/training/forward_pass_trace.md)) --
+and the outcome is credited several decisions late through a critic that has never priced it.
+It is also the attacker's skill in mirror: forcing the trap on the opponent is the same
+representation.
+
+**4a -- the probe (CPU, first).** A bank from self-play at temperature 1: positions where a side
+holds k suicide cards and, counting its remaining action rounds, its space attempts left and a
+held UN Intervention, has fewer exits than k (an `ai/eval` rule with no card list beyond
+`safety.py`'s). Read the critic's `v_win` there against paired playouts, and the same before and
+after the card loss that closed the exits. Also: the opponent's decision that closed them (an
+Aldrich Ames discard, a Five Year Plan) -- does the attacker's critic see the gain? Two numbers
+decide the next step: the critic's error at trap entry, and how many games end there.
+
+**4b -- the label-driven fix (trainer only).** A **forced-exit auxiliary target**: at every
+decision, whether this side will be forced to fire a DEFCON-degrading event before the turn ends
+-- the label read from the game's own continuation in the buffer (did it happen), no rule. A
+head on the trunk, as P8's 8a (built, `--defcon-coef` on the provoked label) but with a label that
+fires at trap *entry* rather than at the suicide. This teaches the conjunction where the
+critic's target cannot, and the policy term is untouched. 8a itself is the cheaper first cell:
+built, never measured, and its provoked label is a subset of this one.
+
+**4c -- credit at the choices that enter the trap.** B4′ already covers the decisions where the
+defender chooses (Aldrich Ames' own discard, Grain Sales' keep-or-return, Missile Envy's pick) and
+the attacker's (which card to discard with Aldrich Ames; whether to play Five Year Plan): a paired
+turn-end playout sees the forced AR7 inside its horizon, so the trap prices correctly there without
+any special case. Read 4c from B4′'s leak log by decision type before building anything else.
+
+**Decision.** 4a's error at entry > 0.1 → 4b as a branch from the root (two cells: 8a as built; the
+forced-exit label), read on 4a's bank first and on the "forced by the winner's play" share, then
+strength. Error small → the critic knows and the policy does not use it: a card-conditioned head at
+the hand-management decisions (the play-mode head already exists; the discard/keep choices may
+need the same treatment).
 
 ## 5. Replication and the human loop
 
