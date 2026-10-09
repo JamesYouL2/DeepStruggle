@@ -723,9 +723,16 @@ head-to-head results; the view is kept in the link.
 ## 2c. Publishing to Hugging Face (`tools/publish_hf.py`)
 
 The repo (`mihaild/deepstruggle`) mirrors `data/checkpoints/`: a run directory goes up whole,
-an SWA or soup as `_models/<name>.pt`, and beside every `.pt` its `.onnx` (exported and verified
-by `tools/export_onnx.py`), which is what the workbench runs. Resume and opponent-pool states
-(`resume_*.pt`, `pool_*.pt`) and `run.pid` stay local. After an upload, registered networks whose
+an SWA or soup as `_models/<name>.pt`. Resume and opponent-pool states (`resume_*.pt`,
+`pool_*.pt`) and `run.pid` stay local.
+
+The workbench runs `.onnx` files (exported and verified by `tools/export_onnx.py`), and a run
+holds a snapshot every 10M steps, so only these get one, beside their `.pt`: in a run directory
+the **final plain snapshot** (`snapshot_final.pt`, else the highest step), the **final SWA**
+(highest window) and **every file registered in `leaderboard/networks.json`**; and every file
+given to `files` -- the **soups** and SWAs under `_models/`. Any other `.onnx` lying in a run
+directory is not uploaded. To make another snapshot openable later:
+`publish_hf.py files <run-dir>/snapshot_<N>steps.pt`. After an upload, registered networks whose
 file went up get their `hf` path in `leaderboard/networks.json` -- commit that change.
 
 ```bash

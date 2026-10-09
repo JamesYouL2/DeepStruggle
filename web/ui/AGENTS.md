@@ -134,7 +134,8 @@ web/ui/
      picks a model while it is listing. Turning analysis off writes `model=off`, so that link
      does not load the default.
    - **The repo mirrors `data/checkpoints/`** (`tools/publish_hf.py`): a run directory is
-     published whole, an `.onnx` beside every `.pt`, so the picker groups files by directory
+     published whole (an `.onnx` beside its final snapshot, final SWA and leaderboard
+     networks, and beside every soup), so the picker groups files by directory
      (`groupHfModels`, one `<optgroup>` per run, groups ordered by their newest file).
      The E2E browsers launch with `HF_BLOCKED` (huggingface.co does not resolve); tests that need
      the repo serve it with `page.route`.

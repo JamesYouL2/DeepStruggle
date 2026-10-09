@@ -251,7 +251,8 @@ PYTHONPATH=. .venv/bin/python tools/leaderboard.py add-player '<name>[~gumbel(si
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python \
   tools/leaderboard_play.py --epoch E7 --players '<player-id>' --games-per-side 1000
 PYTHONPATH=. .venv/bin/python tools/leaderboard.py show --main-only   # or --lineage <run-name>
-# Publish to Hugging Face (repo mirrors data/checkpoints/, an .onnx beside every .pt): §2c
+# Publish to Hugging Face (repo mirrors data/checkpoints/; .onnx only for the final snapshot,
+# the final SWA, soups and leaderboard networks): tools/README.md §2c
 PYTHONPATH=.:build/release .venv/bin/python tools/publish_hf.py run <run-dir> --dry-run
 
 # Single match / replay generation (also supports --us human for interactive CLI play)

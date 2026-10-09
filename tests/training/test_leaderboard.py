@@ -257,3 +257,13 @@ def test_the_hf_repo_mirrors_data_checkpoints(tmp_path: pathlib.Path, monkeypatc
     assert publish.repo_path(str(data / "checkpoints" / "_models" / "N@1M+(S1,2)@2M.pt")) == "_models/N@1M+(S1,2)@2M.pt"
     with pytest.raises(lb.LeaderboardError):
         publish.repo_path(str(tmp_path / "elsewhere.pt"))
+
+
+def test_only_the_final_snapshot_the_final_swa_and_leaderboard_files_get_an_onnx() -> None:
+    files = ["snapshot_10000steps.pt", "snapshot_990000steps.pt", "snapshot_1000000steps.pt",
+             "swa_80-160M.pt", "swa_880-960M.pt", "swa_920-1000M.pt", "snapshot_0s.pt"]
+    assert publish.onnx_selection(files, set()) == ["snapshot_1000000steps.pt", "swa_920-1000M.pt"]
+    assert publish.onnx_selection(files, {"snapshot_10000steps.pt", "elsewhere.pt"}) == [
+        "snapshot_1000000steps.pt", "snapshot_10000steps.pt", "swa_920-1000M.pt"]
+    assert publish.onnx_selection(files + ["snapshot_final.pt"], set()) == ["snapshot_final.pt", "swa_920-1000M.pt"]
+    assert publish.onnx_selection(["snapshot_5steps.pt"], set()) == ["snapshot_5steps.pt"]

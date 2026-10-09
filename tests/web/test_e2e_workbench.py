@@ -406,7 +406,7 @@ def test_a_link_that_names_no_model_loads_the_newest_upload(browser: Any, static
 
 
 def test_a_repo_default_json_names_the_default_model(browser: Any, static_site: str, onnx_bytes: bytes) -> None:
-    """A repo of whole published runs has an .onnx beside every snapshot, so "newest upload" is
+    """A repo of whole published runs has several .onnx files per run, so "newest upload" is
     whatever was uploaded last; `default.json` names the model a bare link gets instead."""
     requests: List[str] = []
     page = _open(browser, static_site + "/",
