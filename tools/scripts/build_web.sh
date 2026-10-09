@@ -41,7 +41,9 @@ BUILD="$ROOT/build/wasm"
 # other path -- the same checkout seen under another name included (a container's /workspace and
 # the host's home directory). Such a cache is configured afresh rather than failing.
 FRESH=()
-cached_src="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$BUILD/CMakeCache.txt" 2>/dev/null | head -n 1)"
+# No cache yet (a fresh checkout, as on CI) is no cache to compare: sed's exit 2 on the missing file
+# would otherwise end the script under `set -o pipefail`.
+cached_src="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$BUILD/CMakeCache.txt" 2>/dev/null | head -n 1 || true)"
 if [[ -n "$cached_src" && "$(realpath -e -- "$cached_src" 2>/dev/null)" != "$(realpath -e -- "$ROOT")" ]]; then
     echo "build_web: $BUILD was configured for $cached_src; configuring it afresh for $ROOT" >&2
     FRESH=(--fresh)

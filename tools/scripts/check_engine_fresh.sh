@@ -68,10 +68,12 @@ echo "check_engine_fresh: engine build is stale or unstamped -- rebuilding" >&2
 # when it is first configured, so one created under GCC would fail the new check on every
 # reconfigure; it is configured afresh instead, keeping the settings it was made with.
 cached() {
-    sed -n "s/^$1:[A-Z]*=//p" "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -n 1
+    # A build directory with no cache yet records nothing; without `|| true`, sed's exit 2 on the
+    # missing file would end the script under `set -o pipefail`.
+    sed -n "s/^$1:[A-Z]*=//p" "$BUILD_DIR/CMakeCache.txt" 2>/dev/null | head -n 1 || true
 }
 compiler_id="$(sed -n 's/^set(CMAKE_CXX_COMPILER_ID "\(.*\)")$/\1/p' \
-    "$BUILD_DIR"/CMakeFiles/*/CMakeCXXCompiler.cmake 2>/dev/null | head -n 1)"
+    "$BUILD_DIR"/CMakeFiles/*/CMakeCXXCompiler.cmake 2>/dev/null | head -n 1 || true)"
 # A cache can also name an interpreter that is not on this machine -- a build directory copied
 # from another one does -- and every reconfigure then fails. Configured afresh as well, with the
 # interpreter this script uses.
