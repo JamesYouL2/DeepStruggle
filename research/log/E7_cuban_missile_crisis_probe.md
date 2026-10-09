@@ -175,3 +175,44 @@ from one game in ten. When the USSR has nothing in Cuba, the event's coup is tak
 time and the game is lost on the spot. (The earlier forced run headlined the crisis whatever Cuba
 held, and the USSR could pay in about 40% of its coups; with nothing in Cuba at the headline, it
 rarely gets to 2 before the follow-up.)
+
+## Diagnostics for an exploiter and for search (owner, 2026-10-09)
+
+`data/reports/cmc_combo_probe2.py` (output `cmc_diagnostics.out`), the USSR always the frozen
+`E7-A8-R1-S44@6400M` (the US exploiter's target), greedy unless stated. A combo position is a US
+headline with the crisis and Lone Gunman, Che or Ortega in hand and no USSR Influence in Cuba.
+
+| US | games | combo positions | crisis headlined there | follow-up played under it | USSR suicides |
+|:---|---:|---:|---:|---:|---:|
+| the main itself | 4,000 | 349 (8.7%) | 6 (1.7%) | 0 | 0 |
+| US exploiter R25 @6520M | 4,000 | 323 (8.1%) | 10 (3.1%) | 1 | 0 |
+| R25 SWA 6480-6560M | 4,000 | 352 (8.8%) | 11 (3.1%) | 2 | 0 |
+| the main + the scripted combo, against **Gumbel k8@256 USSR** | 2,000 | 176 | 176 | 162 | **103 (64%)** |
+
+* **Neither the main nor the US exploiter plays the combo.** R25's +9 to +12 against this target
+  came from somewhere else; it found nothing of the crisis line in 200M.
+* **Search defends only partly**: against Gumbel the USSR still coups without the means to pay in
+  64% of the follow-ups (Lone Gunman 51 of 93, Che 40 of 52, Ortega 12 of 14), against ~87% greedy.
+
+**Why search does not defend** (`data/reports/cmc_search_debug.py`). On 30 USSR Lone Gunman
+decisions under the US's crisis with nothing in Cuba, Gumbel coups in 21, batched or one at a time
+alike. A hand-played coup there ends the game at once (20 VP, `CMC_SUICIDE_LOSS`), and the search
+sees it -- but the network's preference is extreme. In one of the 21:
+
+| | influence | coup | realign |
+|:---|---:|---:|---:|
+| logit | 5.91 | **34.25** | −2.59 |
+| searched value, for the USSR | −0.78 | **−0.95** | −0.81 |
+| Gumbel's sigma(completed Q) | 9.2 → 15.6 | 0 | 7.7 → 13.2 |
+
+sigma is (c_visit + max visits) * c_scale * Q rescaled to [0, 1] -- c_visit 50, c_scale 0.1, as in
+mctx -- so at 256 evaluations it can add at most ~15 to a logit, and the coup leads by 28. PUCT's
+visits follow the same prior (79 of 128 on the coup) and it plays the most visited. The position
+was losing anyway, so the searched difference is small (−0.95 against −0.78); where the prior is
+less extreme the search does decline (the first position tried: influence).
+
+**For best-response search** -- the opponent modelled as greedy -- the same mechanism bites from the
+other side: the main headlines the crisis in 1.7% of combo positions, so its headline logit is low,
+and a candidate the prior has written off cannot be rescued by sigma at this budget. A test of the
+idea therefore needs the root's prior softened (a temperature on the root logits) or sigma scaled up,
+and that changes every searched decision, so it has to be checked for strength as well.
