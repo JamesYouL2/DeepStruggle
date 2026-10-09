@@ -190,6 +190,32 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A9": {
+   "description": "A8 plus the logit cap at 7: each legal move's logit deficit to the top legal move bounded through 7*tanh(d/7)",
+   "first": "E7-A8-R1-S44@6400M+A9-R28_20261009_233417",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 256,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "ladder_logit_cap": 7.0,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -674,7 +700,9 @@
   "E7-A8-R1-S44@6400M+R25_20261009_092349": "E7-A8-R1-S44@6400M+R25",
   "E7-A8-R1-S44@6400M+R26_20261009_092409": "E7-A8-R1-S44@6400M+R26",
   "E7-A8-R1-S44@6400M+R27_20261009_105451": "E7-A8-R1-S44@6400M+R27",
-  "E7-A8-R1-S44@6400M+R28_20261009_222714": "E7-A8-R1-S44@6400M+R28"
+  "E7-A8-R1-S44@6400M+R28_20261009_222714": "E7-A8-R1-S44@6400M+R28",
+  "E7-A8-R1-S44@6400M+A9-R28_20261009_233417": "E7-A8-R1-S44@6400M+A9-R28",
+  "E7-A8-R1-S44@6400M+A9_20261009_233437": "E7-A8-R1-S44@6400M+A9"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
