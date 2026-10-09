@@ -116,9 +116,47 @@ class GumbelRoot:
         return lg.float().cpu().numpy(), masks, v.float().reshape(-1).cpu().numpy()
 
     def choose(self, states: Sequence[ts.GameState]) -> List[int]:
+        """The move to play at each position: the last survivor of the halving."""
+        alive = self._halve(states)[2]
+        return [int(c[0]) if c else 0 for c in alive]
+
+    def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        """The improved policy at each position, as a training target (P32 T1): softmax over
+        every legal move of logit / gumbel_prior_temperature + sigma(completed Q), with the visits
+        and values the halving gathered -- an unsearched move takes the mixed value (Danihelka et
+        al. 2022, mctx). Unlike PUCT visit counts it is sharp: where the search agrees with the
+        network it stays the network's policy, and it moves only where the searched values differ.
+        It also cannot move a policy whose logits are saturated beyond sigma's reach (at most
+        ~15 at 256 evaluations), hence the logit cap it is meant to run with."""
+        logits, _g, _alive, n, w, v = self._halve(states)
+        out: List[Tuple[List[int], np.ndarray]] = []
+        for i in range(len(logits)):
+            acts = list(logits[i])
+            if not acts:
+                out.append(([], np.zeros(0)))
+                continue
+            q = {a: w[i][a] / n[i][a] for a in n[i] if n[i][a] > 0}
+            sig = sigma_completed(logits[i], float(v[i]), n[i], q)
+            z = np.array([logits[i][a] + sig[a] for a in acts], dtype=np.float64)
+            z = np.exp(z - z.max())
+            out.append((acts, z / z.sum()))
+        return out
+
+    def _halve(self, states: Sequence[ts.GameState]) -> Tuple[
+            List[Dict[int, float]], List[Dict[int, float]], List[List[int]],
+            List[Dict[int, float]], List[Dict[int, float]], np.ndarray]:
+        """Sequential halving at each position: (logits, Gumbel noise, survivors best first,
+        visits, value sums -- from the mover's side -- and the network's value)."""
         mcts, cfg = self.mcts, self.mcts.cfg
         states = list(states)
         lg, masks, v = self._network(states)
+        # The share of these positions whose network policy is saturated (max p > 1 - 1e-6), where
+        # no sigma(completed Q) at this budget can move it (P32 T1 reads it before and after).
+        if len(states):
+            z = np.where(masks > 0, lg, -np.inf)
+            z = z - z.max(axis=1, keepdims=True)
+            pmax = 1.0 / np.exp(z).sum(axis=1)
+            self.last_saturated_frac = float((pmax > 1.0 - 1e-6).mean())
         movers = [int(acting_player(s)) for s in states]
         logits: List[Dict[int, float]] = []
         g: List[Dict[int, float]] = []
@@ -182,7 +220,7 @@ class GumbelRoot:
                 ranked = sorted(alive[i], key=lambda a: -(g[i][a] + logits[i][a] + sig[a]))
                 alive[i] = ranked[:1] if ph == phases[i] - 1 else ranked[:max(1, (len(ranked) + 1) // 2)]
         # Survivors are ranked best first, whether the halving finished or the budget ran out.
-        return [int(c[0]) if c else 0 for c in alive]
+        return logits, g, alive, n, w, v
 
     def _search(self, positions: Sequence[ts.GameState], evaluations: Sequence[int],
                 searchers: Optional[Sequence[int]] = None) -> List[Optional["_BNode"]]:

@@ -482,3 +482,37 @@ def test_the_flush_drops_what_the_real_mask_forbids() -> None:
     assert float(rows[~legal].abs().sum()) == 0.0, "target mass on an action the real mask forbids"
     assert torch.allclose(rows.max(-1).values, torch.ones(rows.shape[0])), "the legal visit is the whole target"
     assert abs(float(getattr(t, "search_dropped_visit_frac")) - 0.75) < 1e-6
+
+
+def test_gumbel_improved_policy_targets_are_full_legal_distributions() -> None:
+    """P32 T1 (--search-gumbel-k): the target is the Gumbel root's improved policy over every legal
+    move -- a distribution on the real mask, sharp where the search agrees -- not a visit count."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    net = create_ladder_net(dev, input_mode="grouped", aggregation="flatten", entity_dim=16,
+                            entity_proj_dim=64, card_self_attention=False, cross_attention=False,
+                            per_entity_heads=16, head_context=True, head_static=True,
+                            head_entities="country", head_center=True, identity_dim=0,
+                            drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+                            card_lookup=False, card_lookup_heads=0, card_lookup_dim=0,
+                            card_lookup_identity_dim=0, categorical_value=False, logit_cap=7.0)
+    t = NashPGTrainer(active_net=net, env=TsVectorizedEnv(num_envs=4, base_seed=7), num_envs=4,
+                      buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_ce_coef=0.5, search_sims=8, search_subsample=1.0,
+                      search_node_filter="all", search_gumbel_k=4)
+    t.collect_rollouts()
+    b = t.buffer
+    flagged = b.has_search > 0.5
+    assert int(flagged.sum()) > 0
+    rows, legal = b.search_pi[flagged], b.masks[flagged].bool()
+    assert float(rows[~legal].abs().sum()) == 0.0
+    assert torch.allclose(rows.sum(-1), torch.ones(rows.shape[0]), atol=1e-5)
+    # every legal move keeps some mass (completed Q), unlike a visit count over a few children
+    many = legal.sum(-1) > 4
+    assert bool(((rows > 0) == legal)[many].all())
+    assert 0.0 <= float(getattr(t, "search_saturated_frac")) <= 1.0
+    t.train_step()

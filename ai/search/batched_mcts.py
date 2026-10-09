@@ -720,6 +720,13 @@ class BatchedMCTS:
             return True
         return self._rng.random() < self.cfg.subsample
 
+    def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        """The Gumbel root's improved policy per position (`gumbel_k` > 0), as (actions, probs)
+        in the shape `run` returns visit counts, so a trainer can use either as its target."""
+        if self._gumbel is None:
+            raise ValueError("improved_policies needs the Gumbel root (gumbel_k > 0)")
+        return self._gumbel.improved_policies(states)
+
     def best_actions(self, states: Sequence[ts.GameState]) -> List[int]:
         """Most-visited action per position; falls back to the first legal action. With
         `gumbel_k` set, the Gumbel root's choice instead (ai/search/gumbel_root.py)."""

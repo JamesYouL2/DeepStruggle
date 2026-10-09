@@ -1613,6 +1613,8 @@ def train_pipeline(
     search_sims: int = 32,
     search_subsample: float = 0.125,
     search_node_filter: str = "card_playmode",
+    search_gumbel_k: int = 0,
+    search_prior_temperature: float = 1.0,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -1873,6 +1875,8 @@ def train_pipeline(
         "search_sims": int(search_sims),
         "search_subsample": float(search_subsample),
         "search_node_filter": search_node_filter,
+        "search_gumbel_k": int(search_gumbel_k),
+        "search_prior_temperature": float(search_prior_temperature),
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2209,6 +2213,8 @@ def train_pipeline(
         search_sims=search_sims,
         search_subsample=search_subsample,
         search_node_filter=search_node_filter,
+        search_gumbel_k=search_gumbel_k,
+        search_prior_temperature=search_prior_temperature,
         teacher_net=teacher_net,
         teacher_coef=teacher_coef,
         teacher_seat={"us": 1, "ussr": -1, "both": 0}[teacher_seat],
@@ -2701,6 +2707,7 @@ def train_pipeline(
         # so the first visible symptom was kl_div reaching 30 with the policy already gone.
         active_aux_losses.append("search_ce")
         active_aux_losses.append("search_ce_grad_frac")
+        active_aux_losses.append("search_saturated_frac")
         # Target/mask alignment, which search_ce only reports by accident: mass on a masked
         # action shows up as an absurd CE because the mask fill is -1e9, while the same
         # misalignment on a legal action is silent. These two measure it directly.

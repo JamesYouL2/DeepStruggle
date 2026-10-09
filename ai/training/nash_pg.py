@@ -285,6 +285,8 @@ class BaseNashPGTrainer:
         search_sims: int = 32,
         search_subsample: float = 0.125,
         search_node_filter: str = "card_playmode",
+        search_gumbel_k: int = 0,      # P32 T1: >0 targets the Gumbel root's improved policy
+        search_prior_temperature: float = 1.0,
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
         teacher_coef: float = 0.0,
         teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
@@ -421,10 +423,19 @@ class BaseNashPGTrainer:
                 config=BatchedMCTSConfig(
                     simulations=search_sims, temperature=0.0, auto_advance=True,
                     advance_root=False, determinize=True,
-                    node_filter=search_node_filter, subsample=search_subsample),
+                    node_filter=search_node_filter, subsample=search_subsample,
+                    # P32 T1: the Gumbel root's improved policy as the target instead of visit
+                    # counts -- sharp where the search agrees, moved where its values differ.
+                    gumbel_k=int(search_gumbel_k), gumbel_scale=1.0,
+                    fpu_reduction=0.2 if search_gumbel_k > 0 else 0.0,
+                    gumbel_prior_temperature=float(search_prior_temperature)),
                 featurise_capacity=SEARCH_CHUNK)
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
-                  f"{search_node_filter}, subsample {search_subsample}", flush=True)
+                  f"{search_node_filter}, subsample {search_subsample}"
+                  + (f", Gumbel improved-policy targets k={search_gumbel_k}, root T={search_prior_temperature}"
+                     if search_gumbel_k > 0 else ", visit-count targets"), flush=True)
+        self.search_gumbel_k = int(search_gumbel_k)
+        self.search_saturated_frac = 0.0
         #: (buffer step, env, cloned state) of every decision to search this rollout; searched in
         #: one batch by `_flush_search_targets` when the rollout ends.
         self._search_queue: List[Tuple[int, int, Any]] = []
@@ -1855,8 +1866,16 @@ class BaseNashPGTrainer:
         self.active_net.eval()
         try:
             res: List[Tuple[List[int], Any]] = []
+            sat_n = 0.0
             for s0 in range(0, len(queue), SEARCH_CHUNK):
-                res.extend(self._searcher.run([st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]))
+                chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
+                if self.search_gumbel_k > 0:
+                    res.extend(self._searcher.improved_policies(chunk))
+                    root = getattr(self._searcher, "_gumbel", None)
+                    sat_n += float(getattr(root, "last_saturated_frac", 0.0)) * len(chunk)
+                else:
+                    res.extend(self._searcher.run(chunk))
+            self.search_saturated_frac = sat_n / max(1, len(queue))
         except Exception as exc:                      # a broken teacher must not kill the run
             print(f"[X4b] search targets unavailable this rollout: {exc}", flush=True)
             return
@@ -2457,6 +2476,9 @@ class NashPGTrainer(BaseNashPGTrainer):
             # decisions, and those decisions per minibatch; 0.0 without a teacher.
             "teacher_kl": float(teacher_kl_t) / max(1, num_updates),
             "teacher_rows": float(teacher_rows_t) / max(1, num_updates),
+            # P32 T1: the share of searched decisions whose policy was saturated (max p > 1 - 1e-6)
+            # at the last rollout -- where an improved-policy target cannot move it.
+            "search_saturated_frac": float(getattr(self, "search_saturated_frac", 0.0)),
             "search_ce": search_ce_accum / max(1, search_rows_accum),
             "search_ce_grad_frac": search_ce_frac_accum / max(1, search_rows_accum),
             # The numerator and denominator of that ratio, and how many minibatches carried a

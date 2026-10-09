@@ -779,6 +779,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-node-filter", type=str, default="card_playmode",
                         choices=["card_playmode", "all"],
                         help="Which decisions are eligible.")
+    parser.add_argument("--search-gumbel-k", type=int, default=0,
+                        help="P32 T1: >0 makes the search CE target the Gumbel root's improved policy "
+                             "(softmax of logit/T + sigma(completed Q) over every legal move, k candidates "
+                             "halved over --search-sims evaluations) instead of PUCT visit counts. 0 (default): "
+                             "visit counts. Meant for a capped policy (--ladder-logit-cap): a saturated "
+                             "policy is beyond sigma's reach.")
+    parser.add_argument("--search-prior-temperature", type=float, default=1.0,
+                        help="P32 T1: the Gumbel root's logits are divided by this (1 = the paper's rule).")
     parser.add_argument("--teacher-checkpoint", type=str, default=None,
                         help="P32: a frozen checkpoint whose policy is distilled, with "
                              "--teacher-coef, on the learner's own decisions in --teacher-seat "
@@ -930,6 +938,8 @@ def main():
             search_sims=args.search_sims,
             search_subsample=args.search_subsample,
             search_node_filter=args.search_node_filter,
+            search_gumbel_k=args.search_gumbel_k,
+            search_prior_temperature=args.search_prior_temperature,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,
