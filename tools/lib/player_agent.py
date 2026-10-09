@@ -554,10 +554,15 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # headline holding <card>, it headlines <card>. Everything else is the agent's own choice.
         # Read by the batch runner with getattr(agent, "headline_card", None), like the two above;
         # exists to measure what one headline rule is worth on top of a policy.
+        # <card> may carry a condition, <card>+<name> (tools/lib/batch_tournament.HEADLINE_CONDITIONS),
+        # e.g. 40+oppcantpay: headline Cuban Missile Crisis only when the opponent cannot pay it off.
         _, card_str, rest = s.split(":", 2)
+        card_s, _, condition = card_str.partition("+")
         agent = load_agent(rest, device=device)
-        setattr(agent, "headline_card", int(card_str))
-        setattr(agent, "name", f"{agent.name}+headline{int(card_str)}")
+        setattr(agent, "headline_card", int(card_s))
+        if condition:
+            setattr(agent, "headline_condition", condition)
+        setattr(agent, "name", f"{agent.name}+headline{int(card_s)}" + (f"-{condition}" if condition else ""))
         return agent
     if s.lower().startswith("opening:"):
         # opening:<name>:<rest-of-spec> -- this agent's setup is the named opening from

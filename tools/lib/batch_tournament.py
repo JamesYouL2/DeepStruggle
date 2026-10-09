@@ -68,17 +68,35 @@ def _agent_features(agent: Any) -> int:
     return model_obs_features(model) if isinstance(agent, NeuralAgent) and model is not None else 0
 
 
+def _opponent_cannot_pay_cmc(st: "ts.GameState") -> bool:
+    """Cuban Missile Crisis headlined now could not be paid off by the decider's opponent as the
+    board stands: the USSR needs 2 Influence in Cuba, the US 2 in West Germany or in Turkey."""
+    if st.ctx().decision_player == ts.Player.US:
+        return st.get_country(71).ussr_influence < 2
+    return st.get_country(7).us_influence < 2 and st.get_country(33).us_influence < 2
+
+
+#: Conditions a `headline:<card>+<name>:` rule can carry, by name.
+HEADLINE_CONDITIONS: Dict[str, Callable[["ts.GameState"], bool]] = {
+    "oppcantpay": _opponent_cannot_pay_cmc,
+}
+
+
 def apply_headline_rule(card: int, indices: npt.NDArray[np.int64], masks: npt.NDArray[Any],
-                        runner: "ts.VectorizedBatchRunner", actions: npt.NDArray[np.int32]) -> None:
+                        runner: "ts.VectorizedBatchRunner", actions: npt.NDArray[np.int32],
+                        condition: Optional[str] = None) -> None:
     """`headline:<card>:` agents: at a headline card choice where `card` is legal (so in hand),
-    the choice is `card`. Card c is flat slot c - 1."""
+    the choice is `card` -- when `condition` names one, only where it holds. Card c is flat slot
+    c - 1."""
+    when = HEADLINE_CONDITIONS[condition] if condition else None
     slot = card - 1
     for idx in indices:
         i = int(idx)
         if not masks[i][slot]:
             continue
         st = runner.get_state(i)
-        if st.current_phase == ts.Phase.HEADLINE and st.ctx().decision_type == ts.DecisionType.SELECT_CARD:
+        if st.current_phase == ts.Phase.HEADLINE and st.ctx().decision_type == ts.DecisionType.SELECT_CARD \
+                and (when is None or when(st)):
             actions[i] = slot
 
 
@@ -126,7 +144,8 @@ def _choose_actions(
                                                temperature=temperature)
     headline_card = getattr(agent, "headline_card", None)
     if headline_card is not None:
-        apply_headline_rule(int(headline_card), indices, masks, runner, actions)
+        apply_headline_rule(int(headline_card), indices, masks, runner, actions,
+                            getattr(agent, "headline_condition", None))
 
 
 class ChoiceStats(TypedDict):
