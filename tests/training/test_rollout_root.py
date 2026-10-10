@@ -98,7 +98,7 @@ def test_a_model_is_read_in_its_own_feature_set() -> None:
 def test_a_stuck_rollout_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     # An unfinished rollout is never read where it stands.
     monkeypatch.setattr(rollout_root, "_MAX_ROLLOUT_STEPS", 1)
-    with pytest.raises(RuntimeError, match="had not reached"):
+    with pytest.raises(RuntimeError, match="still running"):
         RolloutRoot(_model(), RolloutConfig(k=2, worlds=2, horizon=3)).choose(_states(4))
 
 

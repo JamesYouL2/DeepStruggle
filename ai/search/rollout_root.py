@@ -11,8 +11,8 @@ far as the evidence carries it. Here, at one decision:
    candidates' values in one world share the cards and the dice: differences are paired.
 3. **Rollouts.** After the candidate, the network plays both sides greedily through `horizon`
    action-round boundaries (0: none -- the critic reads the position the move leads to), then the
-   critic reads the leaf for the mover; a finished game counts its result. A rollout move that ends
-   the game against its own player on the spot (`loses_now`) is replaced by that player's next-best
+   critic reads the leaf from the mover's side; a finished game counts its result. A rollout move
+   that ends the game against its own player on the spot is replaced by that player's next-best
    move, so a candidate is not credited with an opponent's blind suicide.
 4. **Choice** (`rule`): `argmax` -- the best mean value; `z<x>` -- the best mean value only if its
    paired lead over the network's own move is at least x standard errors, else the network's move;
@@ -23,12 +23,12 @@ The defaults are the measured player, `rollout:<ckpt>:4:16:4:z2`
 (research/log/E7_search_depth_and_value.md section 4). The budget is network rows: k x worlds x
 (1 + rollout steps) plus the root. Honest: candidates come from the real position, values only from
 sampled worlds. A world where a candidate is illegal (The Cambridge Five can change the legal set)
-is dropped for every candidate of that position. The network is read in its own observation feature
-set (`bindings.ts_env.model_obs_features`), as every searcher is.
+is dropped for every candidate of that position.
 
-The suicide probe, the action-round key and the paired statistics are `ai.eval.paired_playouts`'s,
-the instrument that judges every searcher offline; the batched playout itself still steps one state
-per Python call (the batched runner port is queued behind P32 B4''s `ai/search/turn_pricing.py`).
+The playouts are P32 B4''s `ai.search.turn_pricing.price` -- every candidate of every world on one
+`VectorizedBatchRunner`, the network read in its own observation feature set, the critic read from
+the mover's side at the stop -- with its `horizon`, `shared_dice` and `guard` switches; the root's
+own forward is the only per-position network call outside it.
 """
 from __future__ import annotations
 
@@ -41,19 +41,16 @@ import numpy as np
 import torch
 
 import ts_engine as ts
-from ai.eval.paired_playouts import ar_key, loses_now, paired_diff
-from ai.search.dmcts import determinize
+from ai.eval.paired_playouts import paired_diff
 from ai.search.pimcts import acting_player
+from ai.search.turn_pricing import Candidate, price
 from bindings.action_encoder import ActionEncoder
-from bindings.settle import SettleMode, settle
 from bindings.ts_env import model_obs_features
 
-_UINT64 = 1 << 64
-_US = ts.Player.US
-#: A rollout that has not met its horizon in this many steps is an error, not a leaf: reading an
+#: A rollout that has not met its horizon in this many plies is an error, not a leaf: reading an
 #: unfinished rollout where it stands would value it silently at a depth nobody asked for.
 _MAX_ROLLOUT_STEPS = 400
-#: Rows per network call.
+#: Rows per network call at the root.
 _ROWS = 4096
 
 
@@ -76,11 +73,6 @@ def parse_rule(rule: str) -> Tuple[str, float]:
     raise ValueError(f"unknown rule {rule!r}: argmax, z<x> or kl<t>")
 
 
-#: Decisions at which one move can end the game against its own player at DEFCON 2.
-_GUARDED = {int(ts.DecisionType.SELECT_PLAY_MODE), int(ts.DecisionType.CHOOSE_BRANCH),
-            int(ts.DecisionType.POINT_NODE)}
-
-
 class RolloutRoot:
     def __init__(self, model: Any, config: RolloutConfig, device: Any = "cpu") -> None:
         self.model = model
@@ -92,6 +84,7 @@ class RolloutRoot:
         #: Per position of the last `choose`: the candidates, each one's mean value and paired lead
         #: over the network's move with its standard error, and the worlds used.
         self.last_stats: List[Dict[str, Any]] = []
+        #: Network rows of the last `choose`: the root plus every playout step and leaf.
         self.rows = 0
 
     def reseed(self, seed: int) -> None:
@@ -114,93 +107,37 @@ class RolloutRoot:
             self.rows += len(chunk)
         return np.concatenate(lgs), np.concatenate(ms), np.concatenate(vs)
 
-    def _rollout(self, states: List[ts.GameState]) -> None:
-        """The network plays every state on, greedily, through `horizon` action-round boundaries."""
-        if self.cfg.horizon <= 0:
-            return
-        key = [ar_key(s) for s in states]
-        left = [self.cfg.horizon] * len(states)
-        for _ in range(_MAX_ROLLOUT_STEPS):
-            live = [j for j, s in enumerate(states) if left[j] > 0 and not ts.Engine.is_terminal(s)]
-            if not live:
-                return
-            lg, masks, _v = self._forward([states[j] for j in live])
-            for row, j in enumerate(live):
-                s = states[j]
-                z = np.where(masks[row].astype(bool), lg[row], -np.inf)
-                a = int(np.argmax(z))
-                if int(s.defcon) <= 2 and int(s.ctx().decision_type) in _GUARDED:
-                    who = acting_player(s)
-                    order = [int(x) for x in np.argsort(-z) if np.isfinite(z[x])]
-                    for alt in order[:4]:
-                        if not loses_now(s, alt, who):
-                            a = alt
-                            break
-                ts.Engine.step_flat(s, a)
-                settle(s, SettleMode.FORCED)
-                now = ar_key(s)
-                if now != key[j]:
-                    key[j] = now
-                    left[j] -= 1
-        stuck = sum(1 for j, s in enumerate(states) if left[j] > 0 and not ts.Engine.is_terminal(s))
-        raise RuntimeError(f"{stuck} rollouts had not reached {self.cfg.horizon} action-round "
-                           f"boundaries after {_MAX_ROLLOUT_STEPS} steps")
-
     def choose(self, states: Sequence[ts.GameState]) -> List[int]:
         states = list(states)
         self.rows = 0
         lg, masks, _ = self._forward(states)
-        movers = [acting_player(s) for s in states]
         cands: List[List[int]] = []
         for i in range(len(states)):
             z = np.where(masks[i].astype(bool), lg[i], -np.inf)
             cands.append([int(a) for a in np.argsort(-z)[:self.cfg.k] if np.isfinite(z[a])])
-        jobs: List[Tuple[int, int, int]] = []          # (position, world, candidate)
-        kids: List[ts.GameState] = []
+        priced: Dict[int, Candidate] = {}
         for i, st in enumerate(states):
-            if len(cands[i]) < 2:
-                continue
-            for w in range(self.cfg.worlds):
-                world = st.clone()
-                if not ts.Engine.is_terminal(world):
-                    world = determinize(world, movers[i], self._rng)
-                world.rng_state = self._rng.getrandbits(64) % _UINT64
-                wm = np.asarray(ActionEncoder.get_legal_mask(world))
-                if not all(wm[a] for a in cands[i]):
-                    continue
-                for a in cands[i]:
-                    s = world.clone()
-                    ts.Engine.step_flat(s, a)
-                    settle(s, SettleMode.FORCED)
-                    jobs.append((i, w, a))
-                    kids.append(s)
-        self._rollout(kids)
-        value = np.zeros(len(kids))
-        open_ = [j for j, s in enumerate(kids) if not ts.Engine.is_terminal(s)]
-        if open_:
-            _lg, _m, v = self._forward([kids[j] for j in open_])
-            for row, j in enumerate(open_):
-                value[j] = v[row] if acting_player(kids[j]) == movers[jobs[j][0]] else -v[row]
-        for j, s in enumerate(kids):
-            if ts.Engine.is_terminal(s):
-                u = float(ts.Engine.get_terminal_utility(s))
-                value[j] = u if movers[jobs[j][0]] == _US else -u
-        per: Dict[Tuple[int, int], Dict[int, float]] = {}
-        for (i, w, a), v_ in zip(jobs, value):
-            per.setdefault((i, w), {})[a] = float(v_)
+            if len(cands[i]) >= 2 and not ts.Engine.is_terminal(st):
+                priced[i] = Candidate(game=i, choice=0, state=st, options=list(cands[i]), probs=[],
+                                      taken=cands[i][0])
+        if priced:
+            self.rows += price(self.model, self.device, list(priced.values()), self.cfg.worlds,
+                               self._rng.getrandbits(30), max_plies=_MAX_ROLLOUT_STEPS,
+                               horizon=self.cfg.horizon, shared_dice=True, guard=True)
         picks: List[int] = []
         self.last_stats = []
         for i in range(len(states)):
             raw = cands[i][0] if cands[i] else int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf)))
-            worlds = [per[(i, w)] for w in range(self.cfg.worlds) if (i, w) in per]
-            if len(cands[i]) < 2 or not worlds:
+            c = priced.get(i)
+            values = c.values if c is not None else None
+            if values is None or values.shape[1] == 0:
                 picks.append(raw)
                 self.last_stats.append({"candidates": cands[i], "worlds": 0})
                 continue
-            q = {a: float(np.mean([wv[a] for wv in worlds])) for a in cands[i]}
+            q = {a: float(values[j].mean()) for j, a in enumerate(cands[i])}
             lead: Dict[int, Tuple[float, float]] = {}
-            for a in cands[i]:
-                m, se = paired_diff([wv[a] for wv in worlds], [wv[raw] for wv in worlds])
+            for j, a in enumerate(cands[i]):
+                m, se = paired_diff(values[j], values[0])
                 lead[a] = (m, 0.0 if math.isnan(se) else se)
             if self.rule == "argmax":
                 pick = max(cands[i], key=lambda a: q[a])
@@ -213,7 +150,7 @@ class RolloutRoot:
                 logp = {a: float(z[a] - math.log(np.exp(z[masks[i].astype(bool)]).sum())) for a in cands[i]}
                 pick = max(cands[i], key=lambda a: logp[a] + q[a] / self.param)
             picks.append(int(pick))
-            self.last_stats.append({"candidates": cands[i], "worlds": len(worlds), "q": q,
+            self.last_stats.append({"candidates": cands[i], "worlds": int(values.shape[1]), "q": q,
                                     "lead": {a: list(v) for a, v in lead.items()}})
         return picks
 
