@@ -53,3 +53,19 @@ def test_priced_positions_rebuild_and_branch(tmp_path) -> None:
         assert d["metadata"]["result"]["winner"] == "NONE"
         assert d["metadata"]["result"]["end_turn"] == 1
         assert all(s["turn"] <= 2 for s in d["steps"])
+
+
+def test_lookahead_and_nested_pricing_run() -> None:
+    """Depth 2 (the decider's next small decisions priced) and nested collection (decisions met in
+    the untaken branches) both run and keep every value in [-1, 1]."""
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    net = create_ladder_net(dev, **CFG).eval()
+    _games, cands = op.play_games(net, dev, [6], sample_p=0.05, max_options=12, rng=random.Random(2))
+    cs = cands[:3]
+    nested: list = []
+    op.price(net, dev, cs, worlds=4, seed=5, lookahead=2, look_worlds=4, nested=nested, nested_p=1.0)
+    for c in cs:
+        assert c.values is not None and bool((abs(c.values) <= 1.0 + 1e-5).all())
+    assert all(op.priceable(n.cand.state, 12) for n in nested)
+    assert all(n.cand.options[0] in n.cand.options for n in nested)
