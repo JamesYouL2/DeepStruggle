@@ -301,3 +301,7 @@ PYTHONPATH=.:build/release python tools/value_probe.py fit --model E7line_swa_47
 gh workflow run searcher_tournament.yml --ref main \
   -f entrants="name:net:{BASE} name:gumbel256:gumbel:{BASE}:256:8 name:rollout-h4z2:rollout:{BASE}:4:16:4:z2"
 ```
+
+**Follow-up (2026-10-10).** On R32 the rollout root still gains +128 Elo over the raw network
+while Gumbel@256 gains +1, and R32 adopted a fifth of the soup's Gumbel corrections and almost none
+of the rollout root's: [R32_rollout_cpu_experiments](R32_rollout_cpu_experiments.md).
