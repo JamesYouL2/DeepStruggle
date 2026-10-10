@@ -23,6 +23,12 @@ Honest search samples one world from the decider's side for each phase and searc
 positions in it undeterminized -- after the move the opponent usually decides, and resampling from
 there would show the decider the opponent's real hand.
 
+**Worlds** (`BatchedMCTSConfig.gumbel_worlds`). A world fixes the hidden cards and the dice, and the
+search below a candidate resolves each move's dice once, when it expands it: more simulations in
+one world deepen the tree under one roll and never average over rolls. With `gumbel_worlds = m`,
+each phase draws min(m, share) worlds and splits each candidate's share of evaluations over them,
+so a candidate's value averages that many draws of the cards and dice; 1 is one world per phase.
+
 Unlike Gumbel MuZero, each phase searches a candidate's position afresh rather than growing one
 tree (visits and values pooled across phases), so the batched C++ search does the work unchanged.
 Only how a move is chosen in play; the paper's improved-policy training target is not implemented
@@ -87,6 +93,14 @@ def sigma_completed(logits: Dict[int, float], value_mover: float, n: Dict[int, f
     scale = (hi - lo) if hi - lo > 1e-8 else 1.0
     max_n = max((n.get(a, 0.0) for a in acts), default=0.0)
     return {a: (C_VISIT + max_n) * C_SCALE * (cq[a] - lo) / scale for a in acts}
+
+
+def world_shares(per: int, worlds: int) -> List[int]:
+    """A candidate's `per` evaluations in one phase, split as evenly as they go over
+    min(worlds, per) independent worlds (`BatchedMCTSConfig.gumbel_worlds`)."""
+    m = max(1, min(int(worlds), int(per)))
+    base, extra = divmod(int(per), m)
+    return [base + (1 if j < extra else 0) for j in range(m)]
 
 
 def halving_phases(candidates: int) -> int:
@@ -165,18 +179,19 @@ class GumbelRoot:
                     continue
                 remaining[i] -= per * len(alive[i])
                 searched.append(i)
-                world = st.clone()
-                if cfg.determinize and not ts.Engine.is_terminal(world):
-                    world = determinize(world, ts.Player(movers[i]), mcts._rng)
-                world.rng_state = mcts._rng.getrandbits(64) % _UINT64
-                world_mask = np.asarray(ActionEncoder.get_legal_mask(world))
-                for a in alive[i]:
-                    if not world_mask[a]:
-                        continue                      # illegal in this world (Cambridge Five)
-                    s = world.clone()
-                    ts.Engine.step_flat(s, a)
-                    settle(s, SettleMode.FORCED if cfg.auto_advance else SettleMode.CHANCE)
-                    jobs.append((i, a, s, per))
+                for share in world_shares(per, cfg.gumbel_worlds):
+                    world = st.clone()
+                    if cfg.determinize and not ts.Engine.is_terminal(world):
+                        world = determinize(world, ts.Player(movers[i]), mcts._rng)
+                    world.rng_state = mcts._rng.getrandbits(64) % _UINT64
+                    world_mask = np.asarray(ActionEncoder.get_legal_mask(world))
+                    for a in alive[i]:
+                        if not world_mask[a]:
+                            continue                  # illegal in this world (Cambridge Five)
+                        s = world.clone()
+                        ts.Engine.step_flat(s, a)
+                        settle(s, SettleMode.FORCED if cfg.auto_advance else SettleMode.CHANCE)
+                        jobs.append((i, a, s, share))
             # Every candidate of the phase in one search, each with its own share, so the phase
             # takes as many network rounds as its largest share rather than the sum of them.
             roots = self._search([j[2] for j in jobs], [j[3] for j in jobs]) if jobs else []

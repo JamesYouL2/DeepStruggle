@@ -472,7 +472,7 @@ def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
       ts_engine.BatchedSearch) or "python" (the reference tree). `fpu` is the first-play urgency
       reduction, 0 by default.
 
-    gumbel:<checkpoint>[:sims[:k[:fpu[:node_filter]]]]
+    gumbel:<checkpoint>[:sims[:k[:fpu[:node_filter[:worlds]]]]]
 
       Honest search with the move chosen by a noise-free Gumbel root
       (ai/search/gumbel_root.py): the k most probable moves, sequential halving over `sims`
@@ -481,6 +481,9 @@ def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
       `node_filter` as for `search:` -- "all" (the default, every decision) or "card"
       (SELECT_CARD / SELECT_PLAY_MODE only, the agent's own greedy policy elsewhere). The
       leaderboard's Gumbel spec has no such field, so its players always search every decision.
+      `worlds` (default 1) is `BatchedMCTSConfig.gumbel_worlds`: independent draws of the hidden
+      cards and the dice each candidate is searched in per halving phase, its evaluations split
+      over them -- the same budget, averaged over more chance.
 
     Every searcher here has advance_root=False because the CLIs hand over a state they have NOT
     settled -- tools/tournament.py only auto-advances under --auto-advance, and play_match.py steps
@@ -504,11 +507,13 @@ def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
         k = int(field(3) or g.k)
         fpu = float(field(4) or g.fpu)
         g_filter = "card_playmode" if (field(5) or "all").lower().startswith("card") else "all"
+        worlds = int(field(6) or 1)
         cfg = BatchedMCTSConfig(simulations=sims, temperature=0.0, auto_advance=True,
                                 advance_root=False, determinize=True, node_filter=g_filter,
-                                gumbel_k=k, gumbel_scale=0.0, fpu_reduction=fpu)
+                                gumbel_k=k, gumbel_scale=0.0, fpu_reduction=fpu,
+                                gumbel_worlds=worlds)
         label = (f"gumbel{sims}-k{k}" + ("" if fpu == g.fpu else f"-fpu{fpu:g}")
-                 + ("" if g_filter == "all" else "-card"))
+                 + ("" if g_filter == "all" else "-card") + ("" if worlds == 1 else f"-w{worlds}"))
         return path, cfg, label
     if kind != "search":
         raise ValueError(f"not a search spec: {spec!r}")
