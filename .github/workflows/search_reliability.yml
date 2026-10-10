@@ -8,8 +8,9 @@
 #   report    the table, the JSON, provenance.
 #
 # The bank and its model are the search-disagreement bank's: release search-bank-playouts-20261007 of
-# release_repo (JamesYouL2/DeepStruggle, where the bank was built), and E7line_swa_4720-4800M rebuilt
-# from its published export on each runner.
+# release_repo -- the repository holding that release, stated on every run since this repository
+# never built the bank (it was built on the fork, JamesYouL2/DeepStruggle) -- and
+# E7line_swa_4720-4800M rebuilt from its published export on each runner.
 #
 #   gh workflow run search_reliability.yml --ref main
 #   gh run download <run-id> -n search-reliability-<run-id> -D data/reports/search_reliability
@@ -31,8 +32,8 @@ on:
       release:
         default: "search-bank-playouts-20261007"
       release_repo:
-        description: "The repository whose release holds bank.jsonl.gz"
-        default: "JamesYouL2/DeepStruggle"
+        description: "The repository whose release holds bank.jsonl.gz (no default: the bank was built on the fork, JamesYouL2/DeepStruggle, and a run states where it reads it from)"
+        required: true
       model:
         description: "The bank's model: a published export in hf_repo, rebuilt as torch on each runner"
         default: "E7line_swa_4720-4800M.onnx"
