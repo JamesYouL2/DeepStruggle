@@ -1730,6 +1730,7 @@ class BaseNashPGTrainer:
                 metrics["search_value_rows"] = float(getattr(self, "search_value_rows", 0))
                 metrics["search_value_vs_return"] = float(getattr(self, "search_value_vs_return", 0.0))
                 metrics["search_value_vs_critic"] = float(getattr(self, "search_value_vs_critic", 0.0))
+                metrics["search_value_bias"] = float(getattr(self, "search_value_bias", 0.0))
             metrics["search_dropped_visit_frac"] = float(
                 getattr(self, "search_dropped_visit_frac", 0.0))
             metrics["search_dropped_row_frac"] = float(
@@ -1859,6 +1860,9 @@ class BaseNashPGTrainer:
             return
         sv, ret = self.buffer.search_v[sel], self.buffer.returns_win[sel]
         self.search_value_vs_return = float((sv - ret).abs().mean())
+        # Signed: a frozen teacher's search value is its value under its own improved policy, which
+        # can sit uniformly above the student's return -- an optimism only the searched rows carry.
+        self.search_value_bias = float((sv - ret).mean())
         self.search_value_vs_critic = float((sv - self.buffer.values_win[sel]).abs().mean())
         b = self.search_value_beta
         self.buffer.returns_win[sel] = (1.0 - b) * ret + b * sv
