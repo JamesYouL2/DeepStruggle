@@ -185,7 +185,8 @@ Gumbel@256 on the soup, 500 games a side -- **61.2% +- 1.5** (612-377-11; 60.0% 
 +83 Elo. The CI figure (63.7%, +97) is 1.2 SE away. The port changed the defaults, the observation
 call, the suicide probe's settling path and the statistics' code, so its picks are not identical to
 the measured code's; this is the number that stands for the code in the repository
-(`data/reports/rollout_root_port_confirm/`).
+(`data/reports/rollout_root_port_confirm/`). On the batched-runner port that followed: 60.5% +- 1.5, +80
+Elo, 60.4% as US and 60.6% as USSR (the "Made fast" bullet below).
 
 ## 5. Distilling the rollout root (2026-10-10): the same failure as Gumbel's
 
@@ -250,12 +251,19 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
   take it yet: the leaderboard's player grammar (`tools/lib/player_spec.py`) knows policy, gumbel,
   search and bot kinds, so a `rollout` kind with an id grammar comes first, and the workbench has no
   searcher at all. Until then the +97 is a tournament number, not a rating on the E7 scale.
-* **Make it fast.** Its rollouts step the engine one Python call per state; batched C++ rollouts
-  (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time. P32 B4''s
-  `ai/search/turn_pricing.py` is that batched playout -- every option over paired worlds on the
-  runner, the critic read from the decider's side at the stop -- and needs only a stop counted in
-  action-round boundaries and shared dice across a world's options to host the root; the port is
-  queued behind its merge.
+* **Made fast (2026-10-10).** Its rollouts stepped the engine one Python call per state; they now run
+  on P32 B4''s batched playout, `ai/search/turn_pricing.price` -- every candidate of every world on
+  one `VectorizedBatchRunner`, the critic read from the mover's side at the stop -- with three
+  switches: a stop counted in action-round boundaries (read from each row's observation, held to
+  `ar_key` by a test), one dice stream per world for all candidates, and the DEFCON-2 suicide guard.
+  The pilot pairing against Gumbel@256 on the soup, 8 games a side on one GPU, went from 321 s to
+  93 s with the same result (9-7), Gumbel's share of the time included. Against Gumbel@256 on the soup
+  at 500 games a side the ported root scores **60.5% +- 1.5** (605-380-15; 60.4% as US,
+  60.6% as USSR), +80 Elo -- the number that stands for the code in the repository
+  (`data/reports/rollout_root_port_confirm/batched_port/`); 1,000 games took 11 minutes on one GPU in ten parts
+  against 32 for the per-state code. On the leaderboard it is the `rollout` kind,
+  `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)`, registered
+  and not yet played.
 * **Offline distillation rounds and value-head fine-tuning for search are measured null here**; online
   improved-policy targets (R32) are the training route that gains. Whether R32 has absorbed what the
   rollout root adds, or only what Gumbel adds, is the next question -- the rollout root searched on R32
@@ -282,7 +290,8 @@ workflows run here (the bank's positions are read from the fork's release, `rele
 then the rollout root was given the measured player as its defaults, reads the network in its own
 observation feature set, refuses an unfinished rollout instead of valuing it where it stands, and
 takes its suicide probe, action-round key and paired statistics from `ai/eval/paired_playouts.py`;
-section 4's soup pairing was re-played on the ported code (61.2% +- 1.5 against Gumbel@256).
+section 4's soup pairing was re-played on that code (61.2% +- 1.5 against Gumbel@256) and again on
+the batched-runner port (60.5% +- 1.5, "Made fast" above).
 
 ```bash
 # 1 and 3: searchers on the bank (reproducibility + paired playouts), and a merged report
