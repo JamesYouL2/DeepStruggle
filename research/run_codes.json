@@ -691,6 +691,18 @@
     "logit_gap_coef": 0.0001,
     "block_lambda": "off"
    }
+  },
+  "R31": {
+   "description": "P32 T1, second cell: R1 plus search CE 0.1 toward the Gumbel root's improved policy (k=4, 32 evaluations, every node type, 1 in 8)",
+   "first": "E7-A8-R1-S44@6400M+R31_20261010_004648",
+   "flags": {
+    "search_ce_coef": 0.1,
+    "search_node_filter": "all",
+    "search_gumbel_k": 4,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -818,7 +830,8 @@
   "E7-A8-R1-S44@6400M+A12_20261010_002921": "E7-A8-R1-S44@6400M+A12",
   "E7-A8-R1-S44@6400M+A12-R28_20261010_002941": "E7-A8-R1-S44@6400M+A12-R28",
   "E7-A8-R1-S44@6400M+R29_20261010_003613": "E7-A8-R1-S44@6400M+R29",
-  "E7-A8-R1-S44@6400M+R30_20261010_003955": "E7-A8-R1-S44@6400M+R30"
+  "E7-A8-R1-S44@6400M+R30_20261010_003955": "E7-A8-R1-S44@6400M+R30",
+  "E7-A8-R1-S44@6400M+R31_20261010_004648": "E7-A8-R1-S44@6400M+R31"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
