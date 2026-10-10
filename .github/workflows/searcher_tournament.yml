@@ -25,9 +25,10 @@ on:
       runners:
         default: "20"
       labels_run:
-        description: "The value-probe labelling run whose labels tune the critic head"
+        description: "The value-probe labelling run whose labels tune the critic head (used only for {TUNED})"
         default: "38017894445"
       model:
+        description: "A published export (.onnx, rebuilt with the template) or a torch checkpoint (.pt) in hf_repo"
         default: "E7line_swa_4720-4800M.onnx"
       template:
         default: "shallow_E7-02+03+04+05_1200M.pt"
@@ -72,11 +73,20 @@ jobs:
           for f in "$MODEL" "$TEMPLATE"; do
             curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$f")" "https://huggingface.co/$HF_REPO/resolve/main/$f"
           done
-          onnx="data/checkpoints/hf/$(basename "$MODEL")"
-          tools/scripts/check_engine_fresh.sh && python tools/onnx_to_checkpoint.py --onnx "$onnx" \
-            --template "data/checkpoints/hf/$(basename "$TEMPLATE")" --out models/base.pt
-          OMP_NUM_THREADS=4 python tools/value_probe.py tune --model models/base.pt \
-            --labels labels/label-*.jsonl.gz --out models/tuned.pt
+          if [[ "$MODEL" == *.pt ]]; then
+            # A torch checkpoint in the repo (the heads soup is published as .pt): used as it is.
+            cp "data/checkpoints/hf/$(basename "$MODEL")" models/base.pt
+            tools/scripts/check_engine_fresh.sh
+          else
+            onnx="data/checkpoints/hf/$(basename "$MODEL")"
+            tools/scripts/check_engine_fresh.sh && python tools/onnx_to_checkpoint.py --onnx "$onnx" \
+              --template "data/checkpoints/hf/$(basename "$TEMPLATE")" --out models/base.pt
+          fi
+          # The tuned head only when an entrant reads it: its labels are the bank model's.
+          if [[ "$ENTRANTS" == *"{TUNED}"* ]]; then
+            OMP_NUM_THREADS=4 python tools/value_probe.py tune --model models/base.pt \
+              --labels labels/label-*.jsonl.gz --out models/tuned.pt
+          fi
           sha256sum models/*.pt
       - uses: actions/upload-artifact@v4
         with:
