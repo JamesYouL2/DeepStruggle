@@ -125,14 +125,20 @@ web/ui/
      dropped **file**. The file carries its description in ONNX metadata (`analysis/onnx_meta.ts`):
      a model whose observation width differs from the engine's is refused, one exported next to
      another engine build is flagged.
+   - **The repo's catalogue (`hfCatalog`, `analysis/model.ts`) is one request.**
+     `tools/publish_hf.py` writes `models.json` at the repo root on every publish: each `.onnx`
+     with its commit date, sha256 and size, and the default model. The page reads that file and
+     never lists the tree. A repo without one (any other repo typed in) is listed:
+     `listHfModels` pages the tree *without* `expand` (1,000 entries a page; with `expand`, which
+     adds each file's last commit, pages are 50 -- 42 requests and ~17 s for this repo once a few
+     runs were published), then asks `paths-info` for the dates of the `.onnx` files alone, 50
+     paths a request, and reads `default.json` for the default.
    - **The default model.** A link with no `model` loads the model `DEFAULT_HF_REPO`
-     (`mihaild/deepstruggle@main`, `analysis/model.ts`) names in its `default.json`
-     (`{"model": "<path>.onnx"}`, written by `tools/publish_hf.py default`), or its newest `.onnx`
-     when it has none: `listHfModels` asks the tree API with `expand=true`, which gives each
-     file's last commit date, follows the `Link` pages, and sorts newest first. A `default.json`
-     naming a file the repo lacks is an error, not a fallback. The default is dropped if the user
-     picks a model while it is listing. Turning analysis off writes `model=off`, so that link
-     does not load the default.
+     (`mihaild/deepstruggle@main`) names (`models.json`'s `default`, set by
+     `tools/publish_hf.py default`; `default.json` in a repo without a manifest), or its newest
+     `.onnx` when it names none. A default the repo does not hold is an error, not a fallback. The
+     default is dropped if the user picks a model while it is listing. Turning analysis off
+     writes `model=off`, so that link does not load the default.
    - **The repo mirrors `data/checkpoints/`** (`tools/publish_hf.py`): a run directory is
      published whole (an `.onnx` beside its final snapshot, final SWA and leaderboard
      networks, and beside every soup), so the picker groups files by directory

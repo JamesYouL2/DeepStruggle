@@ -41,7 +41,7 @@ SNAP = "snapshot_2000000steps.pt"
 #: the default Hugging Face repo; a test must never depend on -- or download from -- the real one.
 #: Requests a test serves itself with `page.route` are answered before name resolution.
 HF_BLOCKED = "--host-resolver-rules=MAP huggingface.co ~NOTFOUND"
-HF_TREE = "https://huggingface.co/api/models/mihaild/deepstruggle/tree/main?recursive=true&expand=true"
+HF_TREE = "https://huggingface.co/api/models/mihaild/deepstruggle/tree/main?recursive=true"
 
 
 def _free_port() -> int:
@@ -343,29 +343,32 @@ def onnx_bytes(checkpoint: Dict[str, str], tmp_path_factory: pytest.TempPathFact
 
 
 def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str], sha256: Optional[str] = None,
-                  default_model: Optional[str] = None) -> None:
+                  default_model: Optional[str] = None, manifest: Optional[Dict[str, Any]] = None) -> None:
     """The default repo, served by the test: two listing pages, the newest upload on the second.
 
     Every request to huggingface.co is recorded. The listing is paged the way the real API pages
-    an expanded tree -- a `Link: <...>; rel="next"` header -- so a page that read only the first
-    page would load `old.onnx`. `paths-info` reports every file's LFS sha256 as `sha256`, by
-    default the real one of `onnx`. `default.json` names `default_model`, or is missing (404, as
-    Hugging Face answers for a file a repo does not hold).
+    a tree -- a `Link: <...>; rel="next"` header -- so a page that read only the first page would
+    load `old.onnx`. As on the real API, a plain tree entry carries no date: `paths-info` with
+    `expand=true` gives each file's last commit. `paths-info` reports every file's LFS sha256 as
+    `sha256`, by default the real one of `onnx`. `models.json` is `manifest`, `default.json` names
+    `default_model`; each is missing (404, as Hugging Face answers for a file a repo does not
+    hold) when not given.
     """
     lfs_oid = sha256 or hashlib.sha256(onnx).hexdigest()
     cors = {"access-control-allow-origin": "*", "access-control-expose-headers": "Link"}
-    first = [
-        {"type": "file", "path": "README.md", "lastCommit": {"date": "2026-09-24T10:00:00.000Z"}},
-        {"type": "file", "path": "old.onnx", "lastCommit": {"date": "2026-09-01T12:00:00.000Z"}},
-        {"type": "directory", "path": "runs"},
-    ]
-    second = [{"type": "file", "path": "runs/new.onnx", "lastCommit": {"date": "2026-09-25T19:46:55.000Z"}}]
+    dates = {"README.md": "2026-09-24T10:00:00.000Z", "old.onnx": "2026-09-01T12:00:00.000Z",
+             "runs/new.onnx": "2026-09-25T19:46:55.000Z"}
+    first = [{"type": "file", "path": "README.md"}, {"type": "file", "path": "old.onnx"},
+             {"type": "directory", "path": "runs"}]
+    second = [{"type": "file", "path": "runs/new.onnx"}]
 
     def tree(route: Any) -> None:
         requests.append(route.request.url)
         if "/paths-info/" in route.request.url:
-            paths = parse_qs(route.request.post_data or "")["paths"]
-            body = [{"type": "file", "path": p, "lfs": {"oid": lfs_oid, "size": len(onnx)}} for p in paths]
+            form = parse_qs(route.request.post_data or "")
+            expand = form.get("expand") == ["true"]
+            body = [{"type": "file", "path": p, "lfs": {"oid": lfs_oid, "size": len(onnx)},
+                     **({"lastCommit": {"date": dates[p]}} if expand else {})} for p in form["paths"]]
             route.fulfill(status=200, headers=cors, content_type="application/json", body=json.dumps(body))
             return
         more = "cursor=" not in route.request.url
@@ -373,16 +376,20 @@ def _fake_hf_repo(page: Any, onnx: bytes, requests: List[str], sha256: Optional[
         route.fulfill(status=200, headers=headers, content_type="application/json",
                       body=json.dumps(first if more else second))
 
+    def json_file(route: Any, doc: Optional[Any]) -> None:
+        if doc is None:
+            route.fulfill(status=404, headers=cors, body="Entry not found")
+        else:
+            route.fulfill(status=200, headers=cors, content_type="application/json", body=json.dumps(doc))
+
     def resolve(route: Any) -> None:
         requests.append(route.request.url)
-        if route.request.url.endswith("/default.json"):
-            if default_model is None:
-                route.fulfill(status=404, headers=cors, body="Entry not found")
-            else:
-                route.fulfill(status=200, headers=cors, content_type="application/json",
-                              body=json.dumps({"model": default_model}))
-            return
-        route.fulfill(status=200, headers=cors, body=onnx)
+        if route.request.url.endswith("/models.json"):
+            json_file(route, manifest)
+        elif route.request.url.endswith("/default.json"):
+            json_file(route, None if default_model is None else {"model": default_model})
+        else:
+            route.fulfill(status=200, headers=cors, body=onnx)
 
     page.route("https://huggingface.co/api/models/**", tree)
     page.route("https://huggingface.co/mihaild/deepstruggle/resolve/**", resolve)
@@ -402,6 +409,10 @@ def test_a_link_that_names_no_model_loads_the_newest_upload(browser: Any, static
     page.wait_for_function("new URLSearchParams(location.search).get('model') === 'hf:mihaild/deepstruggle@main:runs/new.onnx'")
     groups = page.eval_on_selector_all("#analysis-hf-file optgroup", "gs => gs.map(g => g.label)")
     assert groups == ["runs"], "a directory (a published run) is one group; top-level files are not grouped"
+    # Without a manifest: the plain tree (no expand, which pages 50 at a time), then one
+    # paths-info for the dates of the .onnx files alone.
+    listing = [r for r in requests if "/tree/" in r]
+    assert len(listing) == 2 and not [r for r in listing if "expand" in r]
     assert not page.errors
 
 
@@ -414,6 +425,25 @@ def test_a_repo_default_json_names_the_default_model(browser: Any, static_site: 
     page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
     assert page.input_value("#analysis-hf-file") == "old.onnx"
     assert requests[-1] == "https://huggingface.co/mihaild/deepstruggle/resolve/main/old.onnx"
+    assert not page.errors
+
+
+def test_a_repo_with_models_json_is_not_listed(browser: Any, static_site: str, onnx_bytes: bytes) -> None:
+    """tools/publish_hf.py writes models.json on every publish: the page reads that one file
+    instead of listing the tree (one request per 50 files with dates), and takes its default."""
+    requests: List[str] = []
+    manifest = {"schema": 1, "default": "runs/new.onnx", "models": [
+        {"path": "runs/new.onnx", "date": "2026-09-25T19:46:55.000Z", "sha256": "", "size": 0},
+        {"path": "runs/mid.onnx", "date": "2026-09-20T00:00:00.000Z", "sha256": "", "size": 0},
+        {"path": "old.onnx", "date": "2026-09-01T12:00:00.000Z", "sha256": "", "size": 0}]}
+    page = _open(browser, static_site + "/",
+                 lambda p: _fake_hf_repo(p, onnx_bytes, requests, manifest=manifest))
+    page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+    assert page.input_value("#analysis-hf-file") == "runs/new.onnx"
+    options = page.eval_on_selector_all("#analysis-hf-file option", "os => os.map(o => o.value).filter(Boolean)")
+    assert options == ["runs/new.onnx", "runs/mid.onnx", "old.onnx"]
+    assert not [r for r in requests if "/tree/" in r], "a repo with a manifest is never listed"
+    assert not [r for r in requests if r.endswith("/default.json")]
     assert not page.errors
 
 

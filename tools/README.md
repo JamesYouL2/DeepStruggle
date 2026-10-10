@@ -740,11 +740,17 @@ file went up get their `hf` path in `leaderboard/networks.json` -- commit that c
 PYTHONPATH=.:build/release python tools/publish_hf.py run data/checkpoints/<run-dir> --dry-run
 PYTHONPATH=.:build/release python tools/publish_hf.py files 'data/checkpoints/_models/<name>.pt'
 PYTHONPATH=.:build/release python tools/publish_hf.py default '<run-dir>/snapshot_<N>steps.onnx'
+PYTHONPATH=.:build/release python tools/publish_hf.py index      # rebuild models.json as the repo is
 ```
 
-`default` writes the repo's `default.json` -- the model a workbench link that names none opens;
-without one the page takes the newest upload. The page's model picker groups the repo's files by
-directory. Uploading needs a write token (`hf auth login` or `HF_TOKEN`).
+**`models.json`, the repo's catalogue.** Every publish rewrites it in the same commit: each
+`.onnx` the repo holds with its commit date, sha256 and size, newest first, and `default` -- the
+model a workbench link that names none opens (`default` sets it; without one the page takes the
+newest upload). The page reads this one file instead of listing the tree, which costs one request
+per 50 files when the dates are wanted. Files uploaded any other way are not in it until `index`
+rebuilds it; `index` also carries over a legacy `default.json`'s model, so run it once on a repo
+published before the manifest existed. The page's model picker groups the files by directory.
+Uploading needs a write token (`hf auth login` or `HF_TOKEN`).
 
 ---
 
