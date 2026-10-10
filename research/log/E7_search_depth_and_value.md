@@ -22,8 +22,9 @@ own move. But the trunk knows more than the critic uses: a head trained on rollo
 the correlation** of predicted with true sibling differences on held-out positions (0.25 -> 0.59)
 and lifts clear-pair accuracy 71% -> 76% -- a training-signal limit, not a representation one -- yet
 helps nowhere on the positions search disputes. **Rollouts through 2-4 action rounds** with a
-cautious rule are the best searcher offline (+46 +- 21 points a game over Gumbel@256, about Gumbel@1,024's
-gain at the same network rows). Games: TOURNAMENTS.
+cautious rule are the best searcher offline -- and in games by a wide margin: **+84 Elo over
+Gumbel@256** (61.8% +- 1.4) and +177 over the network, while Gumbel itself gets *worse* with four
+times the budget (42.0% against Gumbel@256, -56 Elo).
 
 ## 1. Worlds against depth (`gumbel_worlds`)
 
@@ -125,12 +126,89 @@ of search's gain against the network (2.4 SE). What it learned, ranking a decisi
 typical positions, is what search already gets by looking deeper; and the head now reads every leaf
 of a tree after being fitted only on positions one move from a decision.
 
-ROLLOUT_TOURNAMENT
+**The rollout root against Gumbel** (CI `38025925220`; the network, Gumbel k=8 @256 and @1,024, and
+the rollout root k=4, 16 worlds, 4 boundaries, z2; 600 games a side per pairing, greedy):
+
+| pairing | score | Elo |
+|:---|---:|---:|
+| **rollout root against the network** | **73.4% +- 1.3** | **+177** |
+| **rollout root against Gumbel@256** | **61.8% +- 1.4** | **+84** |
+| rollout root against Gumbel@1,024 | 69.1% +- 1.3 | +140 |
+| Gumbel@256 against the network | 62.5% +- 1.4 | +89 |
+| Gumbel@1,024 against the network | 52.8% +- 1.4 | +19 |
+| Gumbel@1,024 against Gumbel@256 | **42.0% +- 1.4** | **-56** |
+
+Field Elo (net 1,429): Gumbel@1,024 1,456, Gumbel@256 1,515, rollout root 1,600. The rollout root wins
+in both seats against every opponent (against the network 69% as US, 78% as USSR). Cost: ~910
+network rows per decision (3.6x Gumbel@256) and ~8x its CPU time in this Python implementation.
+
+* **Gumbel's budget curve turns down.** 256 was worth +12 +- 3 over 64 (`E7_gumbel_headroom.md`);
+  1,024 is worth -56 against 256 in games -- although the offline playout judge ranked it above 256
+  (+29 +- 15 a game). Two mechanisms fit, neither yet isolated: a determinized tree optimises both
+  sides' replies against the hidden cards and the single dice roll each edge was expanded with, so a
+  deeper tree trusts more lucky draws (the classic PIMC overfit, and section 1's evidence that a
+  move's roll is never re-drawn); and a searcher that re-plans each micro-decision in new worlds
+  (39% reproducible at 1,024) plays incoherent sequences -- the points of one placement from
+  different plans -- which a per-decision judge continuing the network's own plan cannot see.
+* **The rollout root avoids both by construction.** In its rollouts each side is the network acting on
+  its own observation -- honest play, nothing maximised over a sampled draw -- the dice are redrawn in
+  every world, and the z rule leaves the network's move in place unless another is clearly better,
+  so consecutive decisions stay on the network's plan unless the evidence says otherwise.
+* **The offline judge is not enough on its own.** It ranked the rollout root first, correctly, but
+  Gumbel@1,024 above Gumbel@256, wrongly. Search variants are ranked by games.
+
+**On the frontier network** (the heads soup, CI `38042458244`, running): the network, Gumbel@256 and
+the rollout root at 4 and at 2 boundaries (16 worlds), 500 games a side.
 
 ## Reading: where the limits are, and where to go
 
-TBD
+**Where the limits are.**
+
+1. **The critic cannot choose moves; depth must.** One move ahead it loses 170 points a game against
+   the network's own choices, and averaging it over chance does not help. Every searcher that works
+   puts the critic several decisions downstream.
+2. **The critic's training signal is weak where moves are close, but fixing it alone does not help
+   search.** Rollout labels double its sibling correlation on typical positions; in search that buys
+   nothing (49.3% head to head). The positions search disputes are not resolved by a better
+   one-move reading.
+3. **Determinized tree search is the limit of today's search.** Gumbel/PUCT in sampled worlds gains
+   +85-90 Elo at 256 evaluations and loses ground beyond it. Honest rollouts over many worlds with a
+   cautious rule gain twice as much.
+4. **Search does not distil** (`E7_gchoice_distill.md` on the fork): the policy moves toward search's
+   picks without fitting them and broadens; generic, gated and consensus targets are all level or
+   worse.
+
+**Where to go.**
+
+* **Deploy the rollout root as the strongest player** -- the leaderboard's searcher and the
+  workbench's -- once the frontier run confirms it on the heads soup. Tune it by games, not by the
+  offline judge: worlds, horizon, k, the z threshold, and the KL rule at a larger t.
+* **Make it fast.** Its rollouts step the engine one Python call per state; batched C++ rollouts
+  (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time.
+* **Do not spend GPU on search-target training or on value-head fine-tuning for search** -- both are
+  measured null here.
+* **A training idea that follows from this, untested:** the rollout root's cautious departures are a
+  different teacher from Gumbel's noisy ones; if any distillation is retried, it is this one, and
+  only after the rollout root is confirmed on the frontier network.
 
 ## Replicate
 
-TBD
+All on branch `exp/chance-search` of the fork (merged with upstream main at `2ec0a8b`).
+
+```bash
+# 1 and 3: searchers on the bank (reproducibility + paired playouts), and a merged report
+gh workflow run search_reliability.yml --ref exp/chance-search                    # Gumbel worlds
+gh workflow run search_reliability.yml --ref exp/chance-search \
+  -f specs="h0=rollout:4:64:0:argmax h2z2=rollout:4:32:2:z2 h4z2=rollout:4:16:4:z2"
+PYTHONPATH=. python tools/search_reliability.py report --bank bank.jsonl.gz \
+  --search run1/search-*.jsonl.gz run2/search-*.jsonl.gz --playouts run1/playouts-*.jsonl.gz \
+  run2/playouts-*.jsonl.gz --out combined.md
+# 2: rollout labels on CI, the probe locally
+gh workflow run value_probe.yml --ref exp/chance-search
+PYTHONPATH=.:build/release python tools/value_probe.py fit --model E7line_swa_4720-4800M.pt \
+  --labels labels/label-*.jsonl.gz --bank bank.jsonl.gz --bank-playouts full/playouts.jsonl.gz \
+  --out probe.md
+# 4: games
+gh workflow run searcher_tournament.yml --ref exp/chance-search \
+  -f entrants="name:net:{BASE} name:gumbel256:gumbel:{BASE}:256:8 name:rollout-h4z2:rollout:{BASE}:4:16:4:z2"
+```
