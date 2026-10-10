@@ -767,6 +767,17 @@
     "logit_gap_coef": 0.001,
     "block_lambda": "off"
    }
+  },
+  "R37": {
+   "description": "P32 B4': R1 plus turn credit -- 64 learner decisions per rollout (2-12 options, half narrow spots, up to a third nested) priced over 16 worlds to the end of the turn, trained toward max(pi, 1e-3) * exp(10 Q) by evidence-weighted CE",
+   "first": "E7-A8-R1-S44@6400M+R37_20261010_135507",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "turn_credit_coef": 1.0,
+    "turn_credit_nested_p": 0.05,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -900,7 +911,8 @@
   "E7-A8-R1-S44@6400M+R33_20261010_011133": "E7-A8-R1-S44@6400M+R33",
   "E7-A8-R1-S44@6400M+R34_20261010_031009": "E7-A8-R1-S44@6400M+R34",
   "E7-A8-R1-S44@6400M+R35_20261010_050831": "E7-A8-R1-S44@6400M+R35",
-  "E7-A8-R1-S44@6400M+R36_20261010_065406": "E7-A8-R1-S44@6400M+R36"
+  "E7-A8-R1-S44@6400M+R36_20261010_065406": "E7-A8-R1-S44@6400M+R36",
+  "E7-A8-R1-S44@6400M+R37_20261010_135507": "E7-A8-R1-S44@6400M+R37"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
