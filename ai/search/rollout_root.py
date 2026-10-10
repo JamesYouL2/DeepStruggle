@@ -6,9 +6,9 @@ far as the evidence carries it. Here, at one decision:
 
 1. **Candidates.** The network's `k` most probable legal moves (the search bank found the better
    move inside the top 4 for ~92% of the network's errors).
-2. **Worlds.** `worlds` independent draws of the mover's unseen cards and of the dice
-   (`determinize` plus a fresh random stream). Every candidate is played in every world, so two
-   candidates' values in one world share the cards and the dice: differences are paired.
+2. **Worlds.** `worlds` independent draws of the mover's unseen cards and of the dice. Every
+   candidate is played in every world, so two candidates' values in one world share the cards and
+   the dice: differences are paired.
 3. **Rollouts.** After the candidate, the network plays both sides greedily through `horizon`
    action-round boundaries (0: none -- the critic reads the position the move leads to), then the
    critic reads the leaf from the mover's side; a finished game counts its result. A rollout move
@@ -25,10 +25,10 @@ The defaults are the measured player, `rollout:<ckpt>:4:16:4:z2`
 sampled worlds. A world where a candidate is illegal (The Cambridge Five can change the legal set)
 is dropped for every candidate of that position.
 
-The playouts are P32 B4''s `ai.search.turn_pricing.price` -- every candidate of every world on one
-`VectorizedBatchRunner`, the network read in its own observation feature set, the critic read from
-the mover's side at the stop -- with its `horizon`, `shared_dice` and `guard` switches; the root's
-own forward is the only per-position network call outside it.
+Steps 2 and 3 are `ts.RolloutBatch` (bindings/rollout_batch.hpp): the worlds, the greedy playouts,
+the boundary count, the guard and the leaves are one C++ implementation compiled into this module
+and into the browser's engine, so the page's rollout root plays the very same worlds. This file
+keeps the root forward, the network calls per ply, and the choice rule.
 """
 from __future__ import annotations
 
@@ -43,14 +43,13 @@ import torch
 import ts_engine as ts
 from ai.eval.paired_playouts import paired_diff
 from ai.search.pimcts import acting_player
-from ai.search.turn_pricing import Candidate, price
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 
-#: A rollout that has not met its horizon in this many plies is an error, not a leaf: reading an
+#: A playout that has not met its horizon in this many plies is an error, not a leaf: reading an
 #: unfinished rollout where it stands would value it silently at a depth nobody asked for.
 _MAX_ROLLOUT_STEPS = 400
-#: Rows per network call at the root.
+#: Rows per network call.
 _ROWS = 4096
 
 
@@ -84,28 +83,54 @@ class RolloutRoot:
         #: Per position of the last `choose`: the candidates, each one's mean value and paired lead
         #: over the network's move with its standard error, and the worlds used.
         self.last_stats: List[Dict[str, Any]] = []
-        #: Network rows of the last `choose`: the root plus every playout step and leaf.
+        #: Network rows of the last `choose`: the root plus every playout ply and leaf.
         self.rows = 0
 
     def reseed(self, seed: int) -> None:
         self._rng = random.Random(seed)
 
-    def _forward(self, states: Sequence[ts.GameState]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Logits, masks and each position's value for its own acting player."""
-        lgs, vs, ms = [], [], []
-        for lo in range(0, len(states), _ROWS):
-            chunk = states[lo:lo + _ROWS]
-            obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), self.features),
-                                       dtype=np.float32) for s in chunk])
-            masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in chunk])
+    def _net(self, obs: np.ndarray, masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Logits and values for observation rows already built, in chunks of _ROWS."""
+        lgs, vs = [], []
+        for lo in range(0, obs.shape[0], _ROWS):
             with torch.no_grad():
-                lg, v, _ = self.model(torch.from_numpy(obs).to(self.device),
-                                      torch.from_numpy(masks).to(self.device))
+                lg, v, _ = self.model(torch.from_numpy(obs[lo:lo + _ROWS]).to(self.device),
+                                      torch.from_numpy(masks[lo:lo + _ROWS]).to(self.device))
             lgs.append(lg.float().cpu().numpy())
             vs.append(v.float().reshape(-1).cpu().numpy())
-            ms.append(masks)
-            self.rows += len(chunk)
-        return np.concatenate(lgs), np.concatenate(ms), np.concatenate(vs)
+        self.rows += int(obs.shape[0])
+        if not lgs:
+            return np.zeros((0, ActionEncoder.FLAT_ACTION_SIZE), dtype=np.float32), np.zeros(0, dtype=np.float32)
+        return np.concatenate(lgs), np.concatenate(vs)
+
+    def _forward(self, states: Sequence[ts.GameState]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Logits, masks and each position's value for its own acting player."""
+        obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), self.features),
+                                   dtype=np.float32) for s in states])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
+        lg, v = self._net(obs, masks)
+        return lg, masks, v
+
+    def _playouts(self, batch: Any) -> np.ndarray:
+        """Drive the batch to its leaves, read them with the critic, and return every row's value."""
+        for _ in range(_MAX_ROLLOUT_STEPS):
+            if batch.all_done():
+                break
+            obs, masks = batch.fill_live()
+            lg, _v = self._net(np.ascontiguousarray(obs), np.ascontiguousarray(masks))
+            batch.step(np.ascontiguousarray(lg, dtype=np.float32))
+        else:
+            raise RuntimeError(f"{batch.live()} playouts still running after {_MAX_ROLLOUT_STEPS} plies")
+        if batch.refused():
+            raise RuntimeError(f"the engine refused a playout action in {batch.refused()} rows")
+        obs, masks = batch.fill_leaves()
+        if obs.shape[0]:
+            _lg, v = self._net(np.ascontiguousarray(obs), np.ascontiguousarray(masks))
+            batch.set_leaf_values(np.ascontiguousarray(v, dtype=np.float32))
+        values = np.asarray(batch.values(), dtype=np.float64)
+        if np.isnan(values).any():
+            raise RuntimeError("a playout row has no value")
+        return values
 
     def choose(self, states: Sequence[ts.GameState]) -> List[int]:
         states = list(states)
@@ -115,21 +140,30 @@ class RolloutRoot:
         for i in range(len(states)):
             z = np.where(masks[i].astype(bool), lg[i], -np.inf)
             cands.append([int(a) for a in np.argsort(-z)[:self.cfg.k] if np.isfinite(z[a])])
-        priced: Dict[int, Candidate] = {}
+        batch = ts.RolloutBatch(horizon=self.cfg.horizon, shared_dice=True, guard=True,
+                                features=self.features, seed=self._rng.getrandbits(64))
+        position_of: Dict[int, int] = {}
         for i, st in enumerate(states):
             if len(cands[i]) >= 2 and not ts.Engine.is_terminal(st):
-                priced[i] = Candidate(game=i, choice=0, state=st, options=list(cands[i]), probs=[],
-                                      taken=cands[i][0])
-        if priced:
-            self.rows += price(self.model, self.device, list(priced.values()), self.cfg.worlds,
-                               self._rng.getrandbits(30), max_plies=_MAX_ROLLOUT_STEPS,
-                               horizon=self.cfg.horizon, shared_dice=True, guard=True)
+                position_of[i] = batch.positions()
+                batch.add(st, cands[i], self.cfg.worlds)
+        table: Dict[int, np.ndarray] = {}
+        if batch.rows():
+            values = self._playouts(batch)
+            pos = np.asarray(batch.row_position())
+            world = np.asarray(batch.row_world())
+            cand = np.asarray(batch.row_candidate())
+            for i, p in position_of.items():
+                n_w = batch.worlds_used(p)
+                m = np.full((len(cands[i]), n_w), np.nan)
+                sel = pos == p
+                m[cand[sel], world[sel]] = values[sel]
+                table[i] = m
         picks: List[int] = []
         self.last_stats = []
         for i in range(len(states)):
             raw = cands[i][0] if cands[i] else int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf)))
-            c = priced.get(i)
-            values = c.values if c is not None else None
+            values = table.get(i)
             if values is None or values.shape[1] == 0:
                 picks.append(raw)
                 self.last_stats.append({"candidates": cands[i], "worlds": 0})
