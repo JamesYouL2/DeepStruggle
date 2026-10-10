@@ -89,11 +89,11 @@ similar positions; the CE learns their average, and the targets, built from the 
 it (0.53): **a feedback loop**. Stopped. Two cells replace it:
 
 * **R31** -- 32 evaluations, CE 0.1, 200M, against the plain 6,400–6,600M leg (running).
-* **A frozen teacher** -- the targets from search on a *held* network (the plateau SWA or the
-  heads soup), re-frozen from the student every ~100M only if the student pulls ahead. Standard
-  distillation practice, and the direct break of the loop: the target cannot follow the student.
-  It also makes T3's gate well-defined, since the teacher's value no longer moves with the student.
-  Same cost as R31.
+* **A frozen teacher** -- the targets from search on a *held* network (the heads soup), re-frozen
+  from the student every ~100M only if the student pulls ahead. Standard distillation practice,
+  and the direct break of the loop: the target cannot follow the student. It also makes T3's gate
+  well-defined, since the teacher's value no longer moves with the student. Same cost as R31.
+  **Built** (`--search-teacher-checkpoint`), queued at R31's settings so the pair is one factor.
 
 **Caps: T depends on no cap.** Every cap gradient other than the plain tanh drifts the network:
 straight-through (A10) fast, a symmetric 0.1 leak (A11) slowly, an upward-only leak (A12) too,
@@ -313,6 +313,10 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   6,400–6,600M leg (running).
 * `E7-A8-R1-S44@6400M+R30` -- the logit-gap loss (gap 7, coef 1e-4) + the trap scenario (running):
   stable at 6,440M; the trap probe at 6,450M decides whether it is the saturation remedy.
-* **T1 with a frozen teacher** -- proposed; the next cell if R31 also loops.
+* **T1 with a frozen teacher** -- built (`--search-teacher-checkpoint <ckpt>`: the search CE's
+  searcher runs a held network, with the observation-feature and action-view checks of
+  `--teacher-checkpoint`; works with `--search-gumbel-k`). Queued for the next free slot: from
+  6,400M with the heads soup as the teacher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the
+  two cells differ only in whose network searches. Launches when R30's trap answer frees a slot.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
