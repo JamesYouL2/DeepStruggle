@@ -322,6 +322,10 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
 * `E7-A8-R1-S44@6400M+R30` -- the logit-gap loss (gap 7, coef 1e-4) + the trap scenario: stable;
   **trap probe at 6,450M: USSR suicides 152 of 188 (81%) against 89–91% uncapped**, about 3 SE
   lower -- a saturated move is starting to move under the gap loss, slowly. Running on.
+* `E7-A8-R1-S44@6400M+R33` -- the gap penalty at **1e-3** (10× R30) + the trap scenario: **USSR
+  suicides 72% at 6,600M against the plain leg's 87%, the first behaviour change in any variant**;
+  the coup's lead on the trap positions 9 nats against 19 plain; stable, entropy 0.83. The gap loss
+  is the saturation remedy; its own strength cost at 1e-3 is the next read.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
@@ -335,6 +339,15 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   re-freeze signal is the teacher's margin over R32 shrinking relative to its margin over the plain
   network**, which sets the cadence P32 guessed at ~100M. (2) If R32 is level or better on strength,
   a k = 4 @64 cell at the same CE, to measure how much of the 0.22 → 0.46 entropy rise is
-  target-averaging noise -- the only cost left in the recipe.
+  target-averaging noise -- the only cost left in the recipe. **Early read, 6,410–6,480M SWA:
+  the first teacher result that buys strength.** Against the plain leg's same window 55.0% ± 1.1
+  (US 50.6, USSR 59.5), about +35 Elo from 80M steps; against the heads soup as a common opponent
+  R32 48.4% (US 44.8, USSR 51.9) against the plain window's 42.6% (38.9, 46.3) -- +5.9 / +5.6 per
+  seat. At 6,487M: KL(target ‖ π) 0.33 and falling, policy entropy 0.48, KL to π_ref 0.0065, pool
+  win rate 0.681. **The student is already level with or near the soup it learns from**, so the
+  teacher's-margin read decides what comes next: the natural continuation is to **re-freeze the
+  teacher from the student's own SWA** (not a snapshot -- the SWA is the stable, ~+45 Elo object),
+  or from a soup that includes R32, so the teacher stays ahead -- expert iteration with a held
+  teacher, the cadence set by the margin read rather than by steps.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
