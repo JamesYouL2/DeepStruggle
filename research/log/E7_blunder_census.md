@@ -115,3 +115,7 @@ gh workflow run bank_playouts.yml --ref exp/blunder-census -f stage=validate \
 
 Rows validated before `333c802` carry the old labels: recompute them from each row's `pos` with
 `classify_legal_actions` and `bank_playouts.verdict_of` (min_z 2, min_gap 0.05) before the report.
+
+**Follow-up (2026-10-10).** The estimated rows at 10+ points were re-paid from a fresh seed by two
+judges at 512 pairs: 37 of 487 survive both, and they are kept as the
+[blunder bank](E7_blunder_bank.md).
