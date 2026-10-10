@@ -388,5 +388,20 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   new soup rates above both its parents, the re-freeze takes the slot R34 frees** -- the teacher is
   that soup if it rates above both, otherwise R32's SWA. **If neither, T2 takes the slot.** If the
   loop's second iteration gains little, T2 becomes the lever rather than the follow-up.
+  **Reads in, and the literal rule was wrong (ts-main, 2026-10-11).** The soup searched (k8@256)
+  beats R32's raw 6,600M 55.6% ± 1.1 against 68.0% over the plain leg's raw -- a margin shrink of
+  ~8 SE, which the rule reads as "re-freeze". The R32-SWA + heads-soup soup rates 1522 against its
+  parents' 1529 and 1521 (R32 SWA vs the heads soup 50.7%): not above both, so not a teacher, and
+  a negative worth keeping -- souping a distilled student with its teacher gains nothing, the two
+  are already close in function space. **But re-freezing to R32's SWA would weaken the teacher:**
+  the teacher is used *searched*, search adds ~nothing on R32 (51.2% against itself) while the
+  soup searched still beats R32 raw 55.6%, so R32-searched ≈ R32 raw ≈ soup raw, and all three sit
+  below the soup searched. The margin condition was necessary and not sufficient. **The corrected
+  rule: re-freeze to X only if X searched at the training setting (k = 4 @32) beats the current
+  teacher searched at the same setting** -- one tournament, and it subsumes the margin read. So:
+  R32 continues unchanged on the soup (leg 2, to 6,800M), and **T2 alone takes R34's slot**
+  (`E7-A8-R1-S44@6400M+R35`: β 0.5, the soup as searcher at k = 4 @32, no CE; `search_value_bias`
+  logged overall and per seat). If T2 repairs the critic, R32 + T2 is the student worth
+  re-freezing to.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
