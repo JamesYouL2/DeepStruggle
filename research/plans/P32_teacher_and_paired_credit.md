@@ -273,4 +273,18 @@ after, `run_codes.py --run` on the name, readouts at 40M marks.
 
 ## Runs
 
-(none yet)
+Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
+
+* `E7-A8-R1-S44@6400M+A9-R28` -- tanh cap + the Cuban Missile Crisis trap scenario; **stopped at
+  6,460M**, no change at 50M (154 of 172 suicides): the tanh cap does not let a saturated logit
+  learn. Closes A9 for T1.
+* `E7-A8-R1-S44@6400M+A10-R28` -- straight-through cap + the trap scenario, 6,400 → 6,800M
+  (running): the sanity check that a saturated move can be unlearned under A10. Its answer at
+  ~6,600M frees the slot for T1.
+* `E7-A8-R1-S44@6400M+A10` -- straight-through cap only, 6,400 → 6,800M (running): **T1's
+  control**, and the cap's own cost against the plain 6,400–6,800M leg.
+* **T1 on A10 from 6,400M** -- queued for A10-R28's slot; read against `+A10` by the search gap
+  and head to head.
+* The attacker's side of 4a (which Aldrich Ames discard / Five Year Plan options trap the
+  opponent, whether the attacker picks one, and its critic on the chosen against the trapping
+  option) is not yet measured; ts-main adds it to `P32_cpu_checks.md` if time allows.
