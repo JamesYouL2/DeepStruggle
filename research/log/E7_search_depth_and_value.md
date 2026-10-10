@@ -179,6 +179,14 @@ network, by more than on the bank's model, and in both seats (against Gumbel@256
 66.6% as US and 61.0% as USSR). The longer horizon is better; the leaderboard's Gumbel k8 @256 on this
 soup (57.9% against its network) is reproduced here (58.2%).
 
+**Re-played on the ported code** (2026-10-10, local, one GPU, ten parts of 50 pairs,
+`tools/tournament.py --part`): the rollout root at its defaults (`rollout:<soup>`, 4:16:4:z2) against
+Gumbel@256 on the soup, 500 games a side -- **61.2% +- 1.5** (612-377-11; 60.0% as US, 62.4% as USSR),
++83 Elo. The CI figure (63.7%, +97) is 1.2 SE away. The port changed the defaults, the observation
+call, the suicide probe's settling path and the statistics' code, so its picks are not identical to
+the measured code's; this is the number that stands for the code in the repository
+(`data/reports/rollout_root_port_confirm/`).
+
 ## 5. Distilling the rollout root (2026-10-10): the same failure as Gumbel's
 
 Would training on the rollout root fail too? One offline round, the gchoice
@@ -274,7 +282,7 @@ workflows run here (the bank's positions are read from the fork's release, `rele
 then the rollout root was given the measured player as its defaults, reads the network in its own
 observation feature set, refuses an unfinished rollout instead of valuing it where it stands, and
 takes its suicide probe, action-round key and paired statistics from `ai/eval/paired_playouts.py`;
-section 4's soup pairing is to be re-played on the ported code before the number is relied on.
+section 4's soup pairing was re-played on the ported code (61.2% +- 1.5 against Gumbel@256).
 
 ```bash
 # 1 and 3: searchers on the bank (reproducibility + paired playouts), and a merged report
