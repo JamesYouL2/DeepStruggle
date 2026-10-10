@@ -112,6 +112,7 @@ class LadderNet(ColdWarNetV2):
                  obs_features: int = 0,
                  logit_cap: float = 0.0,
                  logit_cap_grad: str = "tanh",
+                 logit_cap_leak: float = 0.0,
                  token_layers: int = 0,
                  token_dim: int = 0,
                  **kwargs: Any) -> None:
@@ -423,6 +424,12 @@ class LadderNet(ColdWarNetV2):
         if logit_cap_grad not in ("tanh", "straight"):
             raise ValueError(f"logit_cap_grad must be 'tanh' or 'straight', not {logit_cap_grad!r}")
         self.logit_cap_grad = str(logit_cap_grad)
+        # A middle way: the tanh's own gradient plus `leak` times the raw one (out = capped +
+        # leak * (z - z.detach())), so a saturated move gets ~leak of the full softmax gradient
+        # while the tanh still damps sharpening. The straight-through cap removed that damping and
+        # the policy sharpened fast (entropy 0.31 -> 0.22, KL per update 0.1-0.2 within 15M,
+        # E7-A8-R1-S44@6400M+A10). Forward, and so play, is unchanged.
+        self.logit_cap_leak = float(logit_cap_leak)
         if self.logit_cap_value > 0.0:
             self.register_buffer("logit_cap", torch.tensor(self.logit_cap_value, dtype=torch.float32))
         self.card_aux = bool(card_aux)
@@ -615,6 +622,7 @@ class LadderNet(ColdWarNetV2):
             obs_features=self.obs_feature_bits,
             **({"logit_cap": self.logit_cap_value} if self.logit_cap_value > 0.0 else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
+            **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
         )
 
 
@@ -639,6 +647,8 @@ class LadderNet(ColdWarNetV2):
         capped = top + c * torch.tanh((z - top) / c)
         if self.logit_cap_grad == "straight":
             capped = z + (capped - z).detach()
+        elif self.logit_cap_leak > 0.0:
+            capped = capped + self.logit_cap_leak * (z - z.detach())
         return capped.to(logits.dtype)
 
     def _policy_logits(self, h: torch.Tensor,

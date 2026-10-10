@@ -120,6 +120,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         **({"logit_cap": float(args.ladder_logit_cap)} if getattr(args, "ladder_logit_cap", 0.0) else {}),
         **({"logit_cap_grad": str(args.ladder_logit_cap_grad)}
            if getattr(args, "ladder_logit_cap", 0.0) and getattr(args, "ladder_logit_cap_grad", "tanh") != "tanh" else {}),
+        **({"logit_cap_leak": float(args.ladder_logit_cap_leak)}
+           if getattr(args, "ladder_logit_cap", 0.0) and getattr(args, "ladder_logit_cap_leak", 0.0) else {}),
     )
 
 
@@ -228,6 +230,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="How the gradient passes the logit cap: through the tanh (default), or "
                           "straight-through as if uncapped -- the tanh's derivative is ~0.001 at a "
                           "saturated move, so it barely learns. Play is identical either way.")
+    lad.add_argument("--ladder-logit-cap-leak", type=float, default=0.0,
+                     help="With the tanh cap gradient: add this times the raw gradient (forward unchanged), "
+                          "so a saturated move learns at ~this share of the full gradient. 0 (default): off.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,

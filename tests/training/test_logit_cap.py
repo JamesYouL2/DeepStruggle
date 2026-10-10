@@ -77,3 +77,21 @@ def test_a_straight_through_cap_plays_the_same_and_passes_the_raw_gradient() -> 
     assert abs(grads[0]) < 1e-5 and abs(grads[1] + p_inf) < 1e-6
     assert ladder_config_from_state_dict(nets[1].state_dict()) is not None
     assert nets[1].ladder_config()["logit_cap_grad"] == "straight"
+
+
+def test_a_leaky_cap_plays_the_same_and_passes_a_share_of_the_raw_gradient() -> None:
+    torch.manual_seed(0)
+    tanh, leaky = (create_ladder_net("cpu", **M2D, logit_cap=7.0, logit_cap_leak=l).eval() for l in (0.0, 0.1))
+    z = torch.tensor([[34.0, 6.0, -2.6]])
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    out = []
+    for net in (tanh, leaky):
+        zz = z.clone().requires_grad_(True)
+        o = net._cap_logits(zz, mask)
+        torch.log_softmax(o, -1)[0, 0].backward()
+        assert zz.grad is not None
+        out.append((o.detach(), zz.grad[0, 1].item()))
+    assert torch.allclose(out[0][0], out[1][0])
+    p_inf = float(torch.softmax(out[0][0], -1)[0, 1])
+    assert abs(out[1][1] - (out[0][1] - 0.1 * p_inf)) < 1e-6        # tanh's own plus 0.1 x raw
+    assert leaky.ladder_config()["logit_cap_leak"] == 0.1
