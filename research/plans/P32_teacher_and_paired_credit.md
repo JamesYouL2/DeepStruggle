@@ -353,7 +353,14 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   so it shapes the top candidates inside the 7-nat band, while the penalty acts only beyond it.
   Read at matched windows against both parents and the plain leg, greedy and T = 1: additivity
   (sum against max of the two gains) is the result; watch the pool win rate and the advantage
-  mean, since rollouts and the pool are sampled at T = 1 from a broader policy.
+  mean, since rollouts and the pool are sampled at T = 1 from a broader policy. Queued as
+  `E7-A8-R1-S44@6400M+R36`, launching when R32's leg 2 exits (~07:00).
+* **Side result from R34: the gap loss alone does not teach the Cuba trap** -- 142 of 164
+  follow-ups still suicide at 6,800M (87%, the plain leg's level). The defence needed the bounded
+  gaps *and* the scenario together (R33, 59%): natural play reaches the trap in ~9% of games, too
+  rarely to teach it. This is P31's division of labour measured directly -- the cap makes a
+  saturated decision *learnable*, the seeded state supplies the *samples* -- and it means the
+  scenario list stays a live instrument for rare chains rather than a scaffold the cap retires.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
