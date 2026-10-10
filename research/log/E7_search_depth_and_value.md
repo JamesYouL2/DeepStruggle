@@ -269,7 +269,12 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
   then moved from a per-row state fetch to the observation's decision-type slots: the same picks, and
   no measurable time (A/B alternated twice: 106 / 98 s against 104 / 97 s), so those crossings were
   never where the time went -- the remaining cost is the network forwards and the Python around the
-  runner per ply. On the leaderboard it is the `rollout` kind,
+  runner per ply. **Then moved into the engine's bindings** (`bindings/rollout_batch.hpp`, the same
+  C++ for the Python module and the browser's WebAssembly engine, held row-for-row identical by the
+  parity test): the worlds now come from the C++ determinizer on SplitMix64 rather than Python's
+  `random`, so the picks differ again from the runs above; correctness is held by the tests and the
+  strength and speed of this build are **not yet re-measured** (a training run had the GPU). On the
+  leaderboard it is the `rollout` kind,
   `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)`, registered
   and not yet played.
 * **Offline distillation rounds and value-head fine-tuning for search are measured null here**; online
