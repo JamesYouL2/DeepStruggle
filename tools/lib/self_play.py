@@ -4,7 +4,7 @@ import hashlib
 import os
 import sys
 import time
-from typing import Optional, Union, List, Tuple, Any, Dict, cast
+from typing import Optional, Union, List, Sequence, Tuple, Any, Dict, cast
 import numpy as np
 import torch
 
@@ -60,6 +60,8 @@ def generate_self_play_replay(
     trace_top_k: int = TRACE_TOP_K,
     trace_p_floor: float = TRACE_P_FLOOR,
     trace_critic_every: str = "step",
+    prefix: Optional[Sequence[int]] = None,
+    stop_after_turn: Optional[int] = None,
 ) -> Tuple[ReplayLogDict, str]:
     """Simulates a complete self-play game between neural policies and saves standardized .tslog.json replay.
 
@@ -73,6 +75,11 @@ def generate_self_play_replay(
     reusing the pass the move already needed. `trace_critic_every` is "step" (a gap-free value
     curve, including the steps the settle policy played), "decision" (only nodes the policy chose,
     half the forwards) or "off". `trace=False` reproduces the untraced file byte for byte.
+
+    `prefix` forces the first decisions -- the flat actions a source would be asked for, in order,
+    forced single-option steps excluded -- and the policy plays on from there: the same seed and
+    prefix rebuild a game exactly, and a different last entry branches it. `stop_after_turn` ends
+    the replay when that turn is over (an excerpt; the result then names no winner).
 
     `trace_top_k=0` lists **every** legal action's probability, which is the default: the
     workbench labels each card, mode button and country with its own number, so a truncated
@@ -171,6 +178,7 @@ def generate_self_play_replay(
         """
 
         def __init__(self) -> None:
+            self.cursor = 0
             self.last_desc = ""
             self.last_policy: Optional[ReplayPolicyDict] = None
 
@@ -182,6 +190,8 @@ def generate_self_play_replay(
 
             forced_idx = (scripted_setup_index(st, acting_side(st), opening, setup_cursor)
                           if opening else None)
+            prefixed = prefix is not None and self.cursor < len(prefix)
+            self.cursor += 1
             self.last_policy = None
             if forced_idx is not None:
                 action_idx = forced_idx
@@ -201,6 +211,19 @@ def generate_self_play_replay(
                         active_model, obs_t, mask_t, temperature=temperature,
                         deterministic=False, state=st, top_k=trace_top_k,
                         p_floor=trace_p_floor)
+                    if prefixed:
+                        # The prefix's move replaces the sample; the belief recorded is still the
+                        # policy's own, read for the move actually played.
+                        assert prefix is not None
+                        action_idx = int(prefix[self.cursor - 1])
+                        self.last_policy["source"] = "prefix"
+                        self.last_policy["chosen_idx"] = action_idx
+                        self.last_policy["p_chosen"] = next(
+                            (float(c.get("p", 0.0)) for c in self.last_policy.get("top", [])
+                             if int(c.get("idx", -1)) == action_idx), 0.0)
+                elif prefixed:
+                    assert prefix is not None
+                    action_idx = int(prefix[self.cursor - 1])
                 else:
                     with torch.no_grad():
                         if hasattr(active_model, "sample_action"):
@@ -295,19 +318,25 @@ def generate_self_play_replay(
         recorder=_record,
         snapshot=lambda st: cast(GameStateDict, ts.state_to_dict(st)),
         max_steps=max_steps,
+        stop=(None if stop_after_turn is None
+              else lambda st: int(st.turn) > int(stop_after_turn)),
     )
     outcome = loop.run()
     step_index = outcome.steps
 
-    term_util = ts.Engine.get_terminal_utility(state)
-    winner = "US" if term_util > 0 else ("USSR" if term_util < 0 else "DRAW")
+    if ts.Engine.is_terminal(state):
+        term_util = ts.Engine.get_terminal_utility(state)
+        winner = "US" if term_util > 0 else ("USSR" if term_util < 0 else "DRAW")
+        reason = classify_game_ending_reason(state)
+    else:
+        winner, reason = "NONE", f"excerpt: stopped at the end of turn {int(state.turn) - 1}"
     margin = int(state.victory_points)
-    reason = classify_game_ending_reason(state)
+    end_turn = int(state.turn) if ts.Engine.is_terminal(state) else int(state.turn) - 1
 
     replay_logger.set_result(
         winner=winner,
         margin=margin,
-        end_turn=int(state.turn),
+        end_turn=end_turn,
         reason=reason,
     )
 

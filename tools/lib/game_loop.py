@@ -114,7 +114,8 @@ class GameLoop:
                  snapshot: Optional[Callable[[ts.GameState], Any]] = None,
                  drain_chance: bool = True,
                  max_steps: int = 4000,
-                 keep_records: bool = False) -> None:
+                 keep_records: bool = False,
+                 stop: Optional[Callable[[ts.GameState], bool]] = None) -> None:
         self.state = state
         self.sources = sources
         self.settle = settle
@@ -123,6 +124,9 @@ class GameLoop:
         self.drain_chance = drain_chance
         self.max_steps = max_steps
         self.keep_records = keep_records
+        #: Ends the loop early, before asking for the next decision, once it returns True -- an
+        #: excerpt (a replay that stops at the end of a turn) rather than a whole game.
+        self.stop = stop
 
     # -- settling -------------------------------------------------------------------------
 
@@ -190,6 +194,8 @@ class GameLoop:
         self._settle(result)
 
         while not ts.Engine.is_terminal(self.state):
+            if self.stop is not None and self.stop(self.state):
+                break
             if result.steps >= self.max_steps:
                 result.hit_step_cap = True
                 break
