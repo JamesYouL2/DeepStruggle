@@ -324,8 +324,18 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   lower -- a saturated move is starting to move under the gap loss, slowly. Running on.
 * `E7-A8-R1-S44@6400M+R33` -- the gap penalty at **1e-3** (10× R30) + the trap scenario: **USSR
   suicides 72% at 6,600M against the plain leg's 87%, the first behaviour change in any variant**;
-  the coup's lead on the trap positions 9 nats against 19 plain; stable, entropy 0.83. The gap loss
-  is the saturation remedy; its own strength cost at 1e-3 is the next read.
+  the coup's lead on the trap positions 9 nats against 19 plain; stable, entropy 0.83. **Done, and
+  the trap is learned** (`research/log/E7_saturated_policy_and_caps.md`): USSR suicides at
+  6,450–6,800M 84, 87, 72, 65, **59%** against the plain leg's 83–89%. **Not by declining the coup**
+  (R33 declines 4 of 214, the plain leg 11 of 158) **but by rebuilding Cuba**: R33 coups and pays
+  in 75 of 214 follow-ups against 12 of 158, putting 2+ influence into Cuba between the US's crisis
+  headline and the follow-up; the US wins ~66% of the combo games against it against ~82% against
+  the plain leg. A bounded logit gap makes a saturated decision learnable, and the network found
+  the cheapest defence -- not the one the scenario was written around. The gap loss is the
+  saturation remedy.
+* `E7-A8-R1-S44@6400M+R34` -- the gap penalty 1e-3 alone, no scenario, 6,400 → 6,800M against the
+  plain leg (running; sampled entropy ~0.84): **the cost read** that decides whether the gap loss
+  goes into the recipe.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
