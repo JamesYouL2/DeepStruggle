@@ -360,6 +360,19 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   teacher's-margin read decides what comes next: the natural continuation is to **re-freeze the
   teacher from the student's own SWA** (not a snapshot -- the SWA is the stable, ~+45 Elo object),
   or from a soup that includes R32, so the teacher stays ahead -- expert iteration with a held
-  teacher, the cadence set by the margin read rather than by steps.
+  teacher, the cadence set by the margin read rather than by steps. **6,600M (field of 11, greedy,
+  1,000 games a side): the gain is growing.** R32's 6,520–6,600M SWA rates 1555 and the heads soup
+  1550; the plain leg's same windows 1508 and 1502. Per seat over the plain leg, mean over seven
+  common opponents, US / USSR: +4.6 / +5.7 at 6,480M, **+7.9 / +7.4 at 6,600M**, every opponent
+  positive in both windows; head to head 55.0% → 56.7%. One run's SWA now plays level with the
+  three-run soup *raw*. R32 continues unchanged to 6,800M (leg 2, same name) to see whether it
+  climbs past its teacher; the search gap at 6,600M is running. **Next slot (R34 frees it at
+  ~6,800M): the re-freeze, before T2** -- gated on the teacher's-margin read, not the raw rating:
+  the teacher is the soup *searched* (~+60 Elo above the raw soup), so R32 being level with the
+  raw soup does not mean it has caught the teacher; re-freeze when the soup-searched margin over
+  R32 has shrunk clearly relative to its margin over the plain leg. Teacher candidate: R32's own
+  SWA, or the SWA-made soup of R32's SWA with the heads soup if that rates above both (same lineage,
+  same basin -- one tournament decides, and it also says whether R32 is a soup ingredient). T2
+  alone after; if the loop's second iteration gains little, T2 becomes the lever.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
