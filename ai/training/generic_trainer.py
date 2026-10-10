@@ -1682,6 +1682,8 @@ def train_pipeline(
     forced_opening: Optional[str] = None,
     compile_update: str = "off",
     z_loss_coef: float = 0.0,
+    logit_gap_coef: float = 0.0,
+    logit_gap: float = 7.0,
     setup_block_lambda: bool = False,
     block_lambda: str = "off",
     inject_setup_only: bool = False,
@@ -1991,6 +1993,8 @@ def train_pipeline(
         "aux_card_batch": int(aux_card_batch),
         "compile_update": str(compile_update),
         "z_loss_coef": float(z_loss_coef),
+        "logit_gap_coef": float(logit_gap_coef),
+        "logit_gap": float(logit_gap),
         "setup_block_lambda": bool(setup_block_lambda),
         "block_lambda": str(block_lambda),
         "inject_setup_only": bool(inject_setup_only),
@@ -2278,6 +2282,8 @@ def train_pipeline(
         aux_card_batch=aux_card_batch,
         compile_update=compile_update,
         z_loss_coef=z_loss_coef,
+        logit_gap_coef=logit_gap_coef,
+        logit_gap=logit_gap,
         setup_block_lambda=setup_block_lambda,
         block_lambda=block_lambda,
         cuda_graphs=cuda_graphs,
@@ -2508,6 +2514,9 @@ def train_pipeline(
     if z_loss_coef > 0.0:
         print(f"[z-loss] coef {z_loss_coef:g} on the policy logits' log-normaliser (--z-loss-coef)",
               flush=True)
+    if logit_gap_coef > 0.0:
+        print(f"[logit gap] coef {logit_gap_coef:g} on legal logits more than {logit_gap:g} below the "
+              f"top (--logit-gap-coef / --logit-gap)", flush=True)
     if compile_update != "off":
         print(f"[P26] the update's forwards run under torch.compile ({compile_update}); the "
               f"rollout stays eager with CUDA graphs (--compile-update)", flush=True)
@@ -2697,6 +2706,9 @@ def train_pipeline(
         active_aux_losses.append("defcon_risk_loss")
     if injector is not None:
         active_aux_losses.append("inject_loss")
+    if logit_gap_coef > 0.0:
+        active_aux_losses.append("logit_gap_loss")
+        active_aux_losses.append("logit_gap_frac")
     if teacher_coef > 0.0:
         active_aux_losses.append("teacher_kl")
         active_aux_losses.append("teacher_rows")

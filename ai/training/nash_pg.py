@@ -372,6 +372,8 @@ class BaseNashPGTrainer:
         cuda_graphs: bool = True,
         compile_update: str = "off",
         z_loss_coef: float = 0.0,
+        logit_gap_coef: float = 0.0,   # gap penalty: coef * mean relu(top - z - gap)^2 over legal moves
+        logit_gap: float = 7.0,
         setup_block_lambda: bool = False,
         block_lambda: str = "off",
         device: torch.device | str = "cuda",
@@ -786,6 +788,17 @@ class BaseNashPGTrainer:
         if z_loss_coef < 0.0:
             raise ValueError(f"z_loss_coef must be >= 0, got {z_loss_coef}")
         self.z_loss_coef = float(z_loss_coef)
+        # A penalty on how far a legal move's logit falls below the top legal move, beyond
+        # `logit_gap` (owner, 2026-10-09). A real loss term: its gradient is what it does. A
+        # saturated softmax -- a losing coup led its alternatives by 28 nats, P = 1 in float32 --
+        # gives policy gradient nothing to work with (it scales with 1 - P); every logit cap tried
+        # either kept that (the tanh's own gradient vanishes there) or drifted the network (any
+        # gradient past the cap is a signal with no effect on play, and it reaches the trunk).
+        # Bounded gaps keep every move learnable at ~e^-gap.
+        if logit_gap_coef < 0.0:
+            raise ValueError(f"logit_gap_coef must be >= 0, got {logit_gap_coef}")
+        self.logit_gap_coef = float(logit_gap_coef)
+        self.logit_gap = float(logit_gap)
         self._compiled_nets: Dict[int, nn.Module] = {}
         #: --wolf-seat-weight. Each seat's PPO surrogate is scaled by `wolf_seat_weights`, driven by
         #: an exponential average of the USSR's win share in pure self-play games (both seats the
@@ -2097,6 +2110,7 @@ class NashPGTrainer(BaseNashPGTrainer):
         val_loss_t, kl_t, entropy_t, clip_frac_t, risk_loss_t = _z(), _z(), _z(), _z(), _z()
         logratio_max_t, old_lp_min_t, ratio_negadv_max_t = _z(-1e30), _z(1e30), _z()
         lse_sum_t, lse_absmax_t, z_loss_t = _z(), _z(), _z()
+        gap_loss_t, gap_frac_t = _z(), _z()
 
         # pi_ref's log-probabilities over the whole buffer, once. pi_ref is frozen for the whole
         # update (it is refreshed after train_step, in train_iteration) and always in eval mode,
@@ -2364,6 +2378,19 @@ class NashPGTrainer(BaseNashPGTrainer):
                     z_loss = self.z_loss_coef * (lse * lse).mean()
                     policy_loss = policy_loss + z_loss
                     z_loss_t += z_loss.detach()
+                if self.logit_gap_coef > 0.0:
+                    _legal = b_mask.bool()
+                    _z_f = cur_logits.float()
+                    _top = _z_f.masked_fill(~_legal, float("-inf")).amax(dim=-1, keepdim=True)
+                    _top = torch.where(torch.isfinite(_top), _top, torch.zeros_like(_top))
+                    _excess = torch.relu((_top - _z_f) - self.logit_gap) * _legal.to(_z_f.dtype)
+                    _n_legal = _legal.sum(dim=-1).clamp(min=1).to(_z_f.dtype)
+                    _gap_loss = ((_excess * _excess).sum(dim=-1) / _n_legal).mean()
+                    policy_loss = policy_loss + self.logit_gap_coef * _gap_loss
+                    with torch.no_grad():
+                        gap_loss_t += _gap_loss.detach().double()
+                        gap_frac_t += ((_excess > 0).sum().double()
+                                       / _legal.sum().clamp(min=1).double())
                 with torch.no_grad():
                     lse_sum_t += lse.mean().double()
                     lse_absmax_t = torch.maximum(lse_absmax_t, lse.abs().max().double())
@@ -2460,6 +2487,9 @@ class NashPGTrainer(BaseNashPGTrainer):
             "logit_lse_mean": lse_sum_accum / max(1, num_updates),
             "logit_lse_absmax": lse_absmax_accum,
             "z_loss": z_loss_accum / max(1, num_updates),
+            # The gap penalty (before its coefficient) and the share of legal moves beyond the gap.
+            "logit_gap_loss": float(gap_loss_t) / max(1, num_updates),
+            "logit_gap_frac": float(gap_frac_t) / max(1, num_updates),
             "val_loss": val_loss_accum / max(1, num_updates),
             "kl_div": kl_accum / max(1, num_updates),
             # 3l: per-seat approximate KL from the rollout policy (mean over minibatches), and

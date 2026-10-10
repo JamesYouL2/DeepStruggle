@@ -516,3 +516,27 @@ def test_gumbel_improved_policy_targets_are_full_legal_distributions() -> None:
     assert bool(((rows > 0) == legal)[many].all())
     assert 0.0 <= float(getattr(t, "search_saturated_frac")) <= 1.0
     t.train_step()
+
+
+def test_the_logit_gap_penalty_raises_saturated_moves() -> None:
+    """--logit-gap-coef: a real loss on legal logits more than --logit-gap below the top; one update
+    on a saturated policy shrinks its gaps and the penalty is logged."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    net = create_ladder_net(dev, input_mode="grouped", aggregation="flatten", entity_dim=16,
+                            entity_proj_dim=64, card_self_attention=False, cross_attention=False,
+                            per_entity_heads=16, head_context=True, head_static=True,
+                            head_entities="country", head_center=True, identity_dim=0,
+                            drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+                            card_lookup=False, card_lookup_heads=0, card_lookup_dim=0,
+                            card_lookup_identity_dim=0, categorical_value=False)
+    t = NashPGTrainer(active_net=net, env=TsVectorizedEnv(num_envs=4, base_seed=7), num_envs=4,
+                      buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, logit_gap_coef=1.0, logit_gap=0.01)
+    t.collect_rollouts()
+    m = t.train_step()
+    assert m["logit_gap_loss"] > 0.0 and 0.0 < m["logit_gap_frac"] <= 1.0

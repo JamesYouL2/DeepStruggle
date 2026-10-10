@@ -88,6 +88,7 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
     ("aux_ownership", 0.0, ()),
     ("ladder_logit_cap", 0.0, ("ladder_logit_cap_grad", "ladder_logit_cap_leak",
                                      "ladder_logit_cap_leak_up")),
+    ("logit_gap_coef", 0.0, ("logit_gap",)),
 )
 
 _RUN_DIR_RE = re.compile(r"^(?P<name>[^_]+)_(?P<ts>\d{8}_\d{6})(?P<void>_VOID)?$")

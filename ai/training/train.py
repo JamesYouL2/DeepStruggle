@@ -744,6 +744,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "learned, so rate the result with tools/tournament.py --opening or an "
                              "opening:<name>: spec prefix.")
     parser.add_argument("--setup-entropy-max-coef", type=float, default=1.0)
+    parser.add_argument("--logit-gap-coef", type=float, default=0.0,
+                        help="Penalty coef * mean over legal moves of relu(top - logit - --logit-gap)^2 "
+                             "(owner 2026-10-09): keeps a saturated policy learnable. 0 (default): off.")
+    parser.add_argument("--logit-gap", type=float, default=7.0,
+                        help="The logit gap below the top legal move that --logit-gap-coef starts at.")
     parser.add_argument("--z-loss-coef", type=float, default=0.0,
                         help="z-loss: coef * mean(logsumexp(policy logits)^2) in the update (PaLM uses "
                              "1e-4). Bounds the logits' level, which the softmax leaves free and which "
@@ -1056,6 +1061,8 @@ def main():
             ema_weights=args.ema_weights,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,
+            logit_gap_coef=args.logit_gap_coef,
+            logit_gap=args.logit_gap,
             cuda_graphs=not args.no_cuda_graphs,
             blunder_window=not args.no_blunder_window,
             gamma=args.gamma,
