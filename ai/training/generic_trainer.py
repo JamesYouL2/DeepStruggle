@@ -2731,7 +2731,7 @@ def train_pipeline(
         active_aux_losses.append("teacher_rows")
     if search_value_beta > 0.0:
         active_aux_losses.extend(["search_value_rows", "search_value_vs_return", "search_value_vs_critic",
-                                  "search_value_bias"])
+                                  "search_value_bias", "search_value_bias_us", "search_value_bias_ussr"])
     if search_ce_coef > 0.0:
         # P15-X4b. The CE term's magnitude and its share of the raw gradient. Registering them
         # here rather than unconditionally keeps them off every run that has no searcher, and

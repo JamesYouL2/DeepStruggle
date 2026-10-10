@@ -1731,6 +1731,8 @@ class BaseNashPGTrainer:
                 metrics["search_value_vs_return"] = float(getattr(self, "search_value_vs_return", 0.0))
                 metrics["search_value_vs_critic"] = float(getattr(self, "search_value_vs_critic", 0.0))
                 metrics["search_value_bias"] = float(getattr(self, "search_value_bias", 0.0))
+                metrics["search_value_bias_us"] = float(getattr(self, "search_value_bias_us", 0.0))
+                metrics["search_value_bias_ussr"] = float(getattr(self, "search_value_bias_ussr", 0.0))
             metrics["search_dropped_visit_frac"] = float(
                 getattr(self, "search_dropped_visit_frac", 0.0))
             metrics["search_dropped_row_frac"] = float(
@@ -1863,6 +1865,12 @@ class BaseNashPGTrainer:
         # Signed: a frozen teacher's search value is its value under its own improved policy, which
         # can sit uniformly above the student's return -- an optimism only the searched rows carry.
         self.search_value_bias = float((sv - ret).mean())
+        # Per seat: the US critic is the suspect one (search on R32 scores 47% as US against its
+        # own greedy policy), so an optimism would show there first.
+        seat = self.buffer.players[sel]
+        for name, side in (("us", 1), ("ussr", -1)):
+            m = seat == side
+            setattr(self, f"search_value_bias_{name}", float((sv - ret)[m].mean()) if bool(m.any()) else 0.0)
         self.search_value_vs_critic = float((sv - self.buffer.values_win[sel]).abs().mean())
         b = self.search_value_beta
         self.buffer.returns_win[sel] = (1.0 - b) * ret + b * sv

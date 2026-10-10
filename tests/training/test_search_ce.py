@@ -605,6 +605,7 @@ def test_search_values_move_only_the_value_target_at_searched_rows() -> None:
     assert torch.allclose(t.buffer.returns_win[sel], t.buffer.search_v[sel])
     assert bool((t.buffer.search_v[sel].abs() <= 1.0 + 1e-5).all())
     assert metrics["search_value_rows"] == float(sel.sum())
+    assert "search_value_bias_us" in metrics and "search_value_bias_ussr" in metrics
     # Unsearched rows keep the lambda-return; the advantages ignore the search value.
     ref, _ = rollout(0.5)
     assert torch.equal(ref.buffer.has_search_v, t.buffer.has_search_v)
