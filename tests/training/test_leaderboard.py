@@ -14,8 +14,9 @@ import pytest
 import tools.publish_hf as publish
 from tools.lib import leaderboard as lb
 from tools.lib.player_agent import search_spec_config
-from tools.lib.player_spec import (Bot, Gumbel, Policy, PlayerSpecError, Search, load_spec,
+from tools.lib.player_spec import (Bot, Gumbel, Policy, PlayerSpecError, Rollout, Search, load_spec,
                                    parse_player_id, player_id, spec_from_dict, spec_to_dict)
+from ai.search.rollout_root import rollout_spec_config
 from tools.leaderboard_play import plan_pairs
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -28,6 +29,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
     ("E7-A4-R1-S44@4800M", Policy(), "E7-A4-R1-S44@4800M"),
     ("E7-A4-R1-S44@4800M", Policy(0.5), "E7-A4-R1-S44@4800M~policy(temperature=0.5)"),
     ("N@1M", Gumbel(), "N@1M~gumbel(sims=256,k=8,fpu=0.2)"),
+    ("N@1M", Rollout(), "N@1M~rollout(k=4,worlds=16,horizon=4,rule=z2)"),
+    ("N@1M", Rollout(k=3, worlds=32, horizon=2, rule="kl0.05"), "N@1M~rollout(k=3,worlds=32,horizon=2,rule=kl0.05)"),
     ("N@1M", Search(sims=128, determinize=True),
      "N@1M~search(sims=128,determinize=true,node_filter=all,subsample=1,backend=cpp,fpu=0)"),
     (None, Bot("heuristic"), "HeuristicBot"),
@@ -71,6 +74,19 @@ def test_load_spec_plays_the_spec_it_names(spec) -> None:
         assert cfg.node_filter == ("all" if spec.node_filter == "all" else "card_playmode")
         assert cfg.subsample == spec.subsample
         assert cfg.backend == spec.backend
+
+
+@pytest.mark.parametrize("spec", [Rollout(), Rollout(k=3, worlds=32, horizon=0, rule="argmax")])
+def test_a_rollout_spec_plays_the_spec_it_names(spec) -> None:
+    path, cfg, _ = rollout_spec_config(load_spec(spec, "x.pt"))
+    assert path == "x.pt"
+    assert (cfg.k, cfg.worlds, cfg.horizon, cfg.rule) == (spec.k, spec.worlds, spec.horizon, spec.rule)
+
+
+@pytest.mark.parametrize("bad", ["N~rollout(rule=best)", "N~rollout(worlds=0)", "N~rollout(horizon=-1)"])
+def test_a_bad_rollout_spec_is_refused(bad: str) -> None:
+    with pytest.raises(PlayerSpecError):
+        parse_player_id(bad)
 
 
 def test_a_policy_pins_its_own_temperature() -> None:

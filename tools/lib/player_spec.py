@@ -1,15 +1,16 @@
 """What a player is: a network plus the way it is run.
 
 The same weights make many players -- greedy, sampled at a temperature, under PUCT search, under a
-Gumbel root at some budget -- and each is a different strength. The agent strings `load_agent`
-takes (`temp:0.5:<ckpt>`, `gumbel:<ckpt>:256:8`, `search:<ckpt>:128:determinize:all::cpp:0`)
-say this positionally, with the defaults in code, so the same string can come to mean a different
-player when a default moves. Here each way of running a network is a typed spec with named fields,
-and a player's id spells it out:
+Gumbel root at some budget, under a rollout root -- and each is a different strength. The agent
+strings `load_agent` takes (`temp:0.5:<ckpt>`, `gumbel:<ckpt>:256:8`, `rollout:<ckpt>:4:16:4:z2`,
+`search:<ckpt>:128:determinize:all::cpp:0`) say this positionally, with the defaults in code, so the
+same string can come to mean a different player when a default moves. Here each way of running a
+network is a typed spec with named fields, and a player's id spells it out:
 
     E7-A4-R1-S44@4800M                                   greedy policy (the plain network name)
     E7-A4-R1-S44@4800M~policy(temperature=0.5)           sampled
     E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)      Gumbel root search
+    E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)   rollout root
     E7-A8-R1-S44@6800M~search(sims=128,determinize=true,node_filter=all,subsample=1,backend=cpp,fpu=0)
     HeuristicBot                                         a rule-based bot, no network
 
@@ -47,6 +48,19 @@ class Gumbel:
 
 
 @dataclass(frozen=True)
+class Rollout:
+    """A rollout root (ai/search/rollout_root.py): the `k` most probable moves, each played out by
+    the network in `worlds` sampled worlds through `horizon` action-round boundaries, the critic at
+    the leaf, then `rule` -- `argmax`, `z<x>` (the best only on an x-SE paired lead over the
+    network's move) or `kl<t>`."""
+
+    k: int = 4
+    worlds: int = 16
+    horizon: int = 4
+    rule: str = "z2"
+
+
+@dataclass(frozen=True)
 class Search:
     """Batched PUCT search (ai/search/batched_mcts.py). `node_filter` is "all" or "card"
     (SELECT_CARD / SELECT_PLAY_MODE only); `subsample` is the fraction of those searched."""
@@ -66,15 +80,18 @@ class Bot:
     name: str = "heuristic"
 
 
-Inference = Union[Policy, Gumbel, Search, Bot]
+Inference = Union[Policy, Gumbel, Rollout, Search, Bot]
 
-KINDS: Final[Dict[str, type]] = {"policy": Policy, "gumbel": Gumbel, "search": Search, "bot": Bot}
+KINDS: Final[Dict[str, type]] = {"policy": Policy, "gumbel": Gumbel, "rollout": Rollout,
+                                 "search": Search, "bot": Bot}
 _KIND_OF: Final[Dict[type, str]] = {cls: kind for kind, cls in KINDS.items()}
 #: A bot's player id, and the load_agent spec it plays as.
 BOTS: Final[Dict[str, Tuple[str, str]]] = {"heuristic": ("HeuristicBot", "heuristic"),
                                            "random": ("RandomBot", "random")}
 _NODE_FILTERS: Final = ("all", "card")
 _BACKENDS: Final = ("cpp", "python")
+#: ai.search.rollout_root.parse_rule's grammar, without importing it (torch-free here).
+_RULE_RE = re.compile(r"^(argmax|z(\d+(\.\d+)?)?|kl(\d+(\.\d+)?)?)$")
 _ID_RE = re.compile(r"^(?P<network>[^~]+?)(?:~(?P<kind>[a-z]+)(?:\((?P<args>[^()]*)\))?)?$")
 
 
@@ -100,8 +117,15 @@ def _check(spec: Inference) -> None:
         raise PlayerSpecError(f"temperature must be >= 0, got {spec.temperature}")
     if isinstance(spec, (Gumbel, Search)) and spec.sims < 1:
         raise PlayerSpecError(f"sims must be >= 1, got {spec.sims}")
-    if isinstance(spec, Gumbel) and spec.k < 1:
+    if isinstance(spec, (Gumbel, Rollout)) and spec.k < 1:
         raise PlayerSpecError(f"k must be >= 1, got {spec.k}")
+    if isinstance(spec, Rollout):
+        if spec.worlds < 1:
+            raise PlayerSpecError(f"worlds must be >= 1, got {spec.worlds}")
+        if spec.horizon < 0:
+            raise PlayerSpecError(f"horizon must be >= 0, got {spec.horizon}")
+        if not _RULE_RE.match(spec.rule):
+            raise PlayerSpecError(f"rule must be argmax, z<x> or kl<t>, got {spec.rule!r}")
     if isinstance(spec, Search):
         if spec.node_filter not in _NODE_FILTERS:
             raise PlayerSpecError(f"node_filter must be one of {_NODE_FILTERS}, got {spec.node_filter!r}")
@@ -224,5 +248,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str]) -> str:
         return f"temp:{_fmt(spec.temperature)}:{checkpoint}"
     if isinstance(spec, Gumbel):
         return f"gumbel:{checkpoint}:{spec.sims}:{spec.k}:{_fmt(spec.fpu)}"
+    if isinstance(spec, Rollout):
+        return f"rollout:{checkpoint}:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}"
     return (f"search:{checkpoint}:{spec.sims}:{'determinize' if spec.determinize else 'none'}:"
             f"{spec.node_filter}:{_fmt(spec.subsample)}:{spec.backend}:{_fmt(spec.fpu)}")

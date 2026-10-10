@@ -71,7 +71,7 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
-const KIND_LABEL: Record<string, string> = { policy: "", gumbel: "Gumbel", search: "PUCT", bot: "bot" };
+const KIND_LABEL: Record<string, string> = { policy: "", gumbel: "Gumbel", rollout: "rollout", search: "PUCT", bot: "bot" };
 
 class LeaderboardPage {
   private epoch = "";

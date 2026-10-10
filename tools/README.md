@@ -684,6 +684,7 @@ tournaments. The leaderboard is one scale per engine epoch, kept as records in `
 **A player is a network plus an inference spec.** The id spells the spec: the bare network name is
 its greedy policy; anything else is `<network>~<kind>(<field>=<value>,...)` with every field
 named, e.g. `E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)` or
+`...~rollout(k=4,worlds=16,horizon=4,rule=z2)` (the rollout root, section 7c) or
 `...~search(sims=128,determinize=true,node_filter=all,subsample=1,backend=cpp,fpu=0)` or
 `...~policy(temperature=0.5)`; bots are `HeuristicBot` / `RandomBot`. A search id names its
 defaults too, so it never changes meaning when a default does.
@@ -1084,7 +1085,10 @@ independent draws of the hidden cards and the dice. `rollout:<ckpt>:k:worlds:hor
 critic at the leaf, then `argmax`, `z<x>` (the best only if its paired lead over the network's move is
 x standard errors) or `kl<t>` (one mirror-descent step). `rollout:<ckpt>:4:16:4:z2` is the measured
 player and the default: an omitted field takes its value, so `rollout:<ckpt>` is that player. The
-network is read in its own observation feature set. `name:<label>:<spec>` names an entrant in reports.
+network is read in its own observation feature set, and the playouts are `ai/search/turn_pricing.py`'s
+batched runner (its `horizon`, `shared_dice` and `guard` switches). On the leaderboard it is the
+`rollout` kind, `<network>~rollout(k=4,worlds=16,horizon=4,rule=z2)` (section 2b).
+`name:<label>:<spec>` names an entrant in reports.
 
 **`tools/search_reliability.py`** -- searchers on the search bank: `search` (every position, each
 searcher, `--seeds` independent streams), `playouts` (each position's network move and every pick in
