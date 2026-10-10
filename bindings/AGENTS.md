@@ -37,9 +37,26 @@ This directory contains the Python native extension module (`ts_engine`) built w
   New game, raw-bytes undo snapshots, display/save JSON, loading a save (refused unless it
   round-trips), stepping a MicroAction with the workbench's forced-die drain (all or nothing),
   masks in both action views, flat-action decode, observations, names, debug setters, the action
-  layout and the engine fingerprint baked in at build.
+  layout and the engine fingerprint baked in at build; and the rollout root's playouts
+  (`ts_rollout_*`, `ts_determinize`) over the position held, one batch at a time.
 - [`selftest.hpp`](selftest.hpp): one whole-game digest (full save, both observations, the mask,
   every position) compiled into both builds; `tests/web/test_wasm_engine.py` compares the numbers.
+- [`rollout_batch.hpp`](rollout_batch.hpp) / [`rollout_batch.cpp`](rollout_batch.cpp) (2026-10-10):
+  **the rollout root's playouts, written once for both builds.** `ts::rollout::determinize` is the
+  C++ port of `ai/search/dmcts.determinize` (the opponent's unknown hand and the draw deck
+  reshuffled from a SplitMix64 state, every count and every seen card kept, an unrevealed opposing
+  headline forgotten); `RolloutBatch` holds the worlds of one or more decisions -- each candidate
+  move in each sampled world, one dice stream per world with `shared_dice` -- and plays them
+  greedily to a horizon of action-round boundaries with the DEFCON-2 suicide guard, marking terminal
+  rows with their result and rows at the horizon as leaves. The network stays outside: the caller
+  loops `fill_live` -> logits -> `step` until `all_done`, then `fill_leaves` -> critic ->
+  `set_leaf_values`, then reads `values`. Python: `ts.RolloutBatch` and `ts.determinize`, which
+  `ai/search/rollout_root.py` drives with torch; the browser: the `ts_rollout_*` and
+  `ts_determinize` exports of the WebAssembly module, the same C++. Held bit-identical across the
+  two builds by `tests/web/test_wasm_engine.py` (rows, worlds, observations ply by ply, values) and
+  covered on its own by `tests/bindings/test_rollout_batch.py`. Serial for now: the loop over rows
+  is a plain `for`, so the WebAssembly build compiles it unchanged; the `gomp_parallel_for` pass is
+  a later, measured change.
   - Save format: `GameState.to_save_dict()` / `state_from_save_dict()`, tagged `ts_save_v2`. Named
     fields, not a byte blob, so a save written by one build opens in another: an unknown key is
     ignored and a missing one keeps its default. It restores the board, the tracks, the card

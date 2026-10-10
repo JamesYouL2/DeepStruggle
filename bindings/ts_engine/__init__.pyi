@@ -832,6 +832,74 @@ def selftest_digest(games: int) -> tuple[int, int]:
     (digest, steps) over `games` whole games (bindings/selftest.hpp). The WebAssembly build exports the same function, so equal numbers mean the two engines play the same games, position, observation and legal mask alike.
     """
 
+def determinize(state: GameState, me: Player, seed: int) -> GameState:
+    """
+    A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck -- reshuffled between those two places from SplitMix64 state `seed`, every count kept, every seen card left; an unrevealed opposing headline is forgotten. The C++ port of ai.search.dmcts.determinize that the rollout root uses in both builds.
+    """
+
+class RolloutBatch:
+    """
+    The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries, and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).
+    """
+
+    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0) -> None: ...
+
+    def add(self, base: GameState, candidates: Sequence[int], worlds: int) -> int:
+        """
+        One decision: `base` with the mover's flat `candidates` (all legal there), in `worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept.
+        """
+
+    def positions(self) -> int: ...
+
+    def mover(self, position: int) -> Player: ...
+
+    def worlds_used(self, position: int) -> int: ...
+
+    def rows(self) -> int: ...
+
+    def live(self) -> int: ...
+
+    def all_done(self) -> bool: ...
+
+    def obs_width(self) -> int: ...
+
+    def refused(self) -> int: ...
+
+    def fill_live(self) -> tuple:
+        """
+        (observations, masks) of the live rows, each row from its acting side, in the order step() expects.
+        """
+
+    def step(self, logits: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)]) -> None:
+        """
+        Advance the rows the last fill_live listed by the masked argmax of each logits row.
+        """
+
+    def fill_leaves(self) -> tuple:
+        """
+        (observations, masks) of the rows at their horizon and not yet valued, each from the MOVER's side, in the order set_leaf_values() expects.
+        """
+
+    def set_leaf_values(self, values: Annotated[NDArray[numpy.float32], dict(shape=(None,), order='C', device='cpu', writable=False)]) -> None: ...
+
+    def values(self) -> Annotated[NDArray[numpy.float32], dict(shape=(None,))]:
+        """Every row's value from its mover's side; NaN while live or unvalued."""
+
+    def row_position(self) -> list[int]: ...
+
+    def row_world(self) -> list[int]: ...
+
+    def row_candidate(self) -> list[int]: ...
+
+    def row_done(self) -> list[bool]: ...
+
+    def row_terminal(self) -> list[bool]: ...
+
+    def row_crossed(self) -> list[int]: ...
+
+    def row_state(self, row: int) -> GameState:
+        """A copy of the row's position, for tests."""
+
 def game_ending_reason(state: GameState) -> str:
     """
     Why a finished game ended: '20 VP', 'Europe Control', 'DEFCON 1 (own decision)', 'DEFCON 1 (opponent decision)', 'final scoring' or 'wargames'. Shared with the browser workbench's engine; tools/lib/tournament_evaluator delegates to it.

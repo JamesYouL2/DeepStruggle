@@ -7,6 +7,13 @@ target_include_directories(ts_state_json PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CM
 target_link_libraries(ts_state_json PUBLIC ts_engine_core)
 set_target_properties(ts_state_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# The rollout root's playouts -- the worlds, the greedy playouts to a horizon, the leaves -- written
+# once for both bindings, so the Python searcher and the browser's play the same worlds.
+add_library(ts_rollout_batch STATIC rollout_batch.cpp)
+target_include_directories(ts_rollout_batch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
+target_link_libraries(ts_rollout_batch PUBLIC ts_engine_core)
+set_target_properties(ts_rollout_batch PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # ---- the browser build (emcmake; see tools/scripts/build_web.sh) ----------------------------
 if(EMSCRIPTEN)
     # The engine fingerprint (tools/lib/engine_fingerprint.py) of the sources being built, baked
@@ -16,7 +23,7 @@ if(EMSCRIPTEN)
     set(TS_WASM_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/web/ui/public/engine" CACHE PATH "wasm output")
 
     add_executable(ts_engine_wasm wasm/ts_engine_wasm.cpp)
-    target_link_libraries(ts_engine_wasm PRIVATE ts_state_json ts_engine_core)
+    target_link_libraries(ts_engine_wasm PRIVATE ts_state_json ts_rollout_batch ts_engine_core)
     target_compile_definitions(ts_engine_wasm PRIVATE TS_ENGINE_FINGERPRINT="${TS_ENGINE_FINGERPRINT}")
     set(TS_WASM_EXPORTS
         _ts_fingerprint _ts_obs_size _ts_action_size _ts_action_layout_json _ts_last_error
@@ -24,7 +31,14 @@ if(EMSCRIPTEN)
         _ts_new_game _ts_state_size _ts_state_ptr _ts_display_json _ts_save_json _ts_load_save_json
         _ts_is_terminal _ts_terminal_utility _ts_ending_reason _ts_decision_player _ts_decision_type
         _ts_step _ts_mask _ts_decode_flat _ts_is_merged_influence_action _ts_observation
-        _ts_set_country _ts_set_defcon _ts_set_vp _ts_selftest _malloc _free)
+        _ts_set_country _ts_set_defcon _ts_set_vp _ts_selftest
+        _ts_determinize
+        _ts_rollout_reset _ts_rollout_add _ts_rollout_rows _ts_rollout_live _ts_rollout_all_done
+        _ts_rollout_obs_width _ts_rollout_refused _ts_rollout_fill_live _ts_rollout_buf_obs
+        _ts_rollout_buf_masks _ts_rollout_step _ts_rollout_fill_leaves _ts_rollout_set_leaf_values
+        _ts_rollout_values _ts_rollout_row_position _ts_rollout_row_world _ts_rollout_row_candidate
+        _ts_rollout_row_done _ts_rollout_row_terminal _ts_rollout_worlds_used
+        _malloc _free)
     list(JOIN TS_WASM_EXPORTS "," TS_WASM_EXPORTS_CSV)
     target_link_options(ts_engine_wasm PRIVATE
         -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node -sALLOW_MEMORY_GROWTH=1
@@ -55,7 +69,7 @@ endif()
 if(nanobind_FOUND)
     nanobind_add_module(ts_engine ts_bindings.cpp)
     target_include_directories(ts_engine PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
-    target_link_libraries(ts_engine PRIVATE ts_engine_core ts_state_json)
+    target_link_libraries(ts_engine PRIVATE ts_engine_core ts_state_json ts_rollout_batch)
     # GCC's OpenMP runtime, linked by exact file rather than `-fopenmp`: the batch runner calls
     # GOMP_parallel itself (see the comment above gomp_parallel_for in ts_bindings.cpp), so under
     # any compiler the process shares torch's libgomp and its one thread pool. The runtime file

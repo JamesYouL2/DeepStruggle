@@ -7,10 +7,14 @@
 // cannot disagree about a position, and a position saved in one opens in the other.
 //
 // Strings returned here live until the next call that returns one; the JS wrapper copies them.
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <vector>
 
+#include "rollout_batch.hpp"
 #include "selftest.hpp"
 #include "state_json.hpp"
 #include "ts/action_mask.hpp"
@@ -228,6 +232,123 @@ TS_API int ts_set_vp(int v) {
     if (v < -20 || v > 20) { g_error = "VP must be -20..20"; return 0; }
     g_state.victory_points = static_cast<int8_t>(v);
     return 1;
+}
+
+// ---- the rollout root's playouts (bindings/rollout_batch.hpp, the same C++ as Python's) --------
+//
+// One batch at a time. The page: ts_rollout_reset, ts_rollout_add on the position it holds (its
+// candidates, its worlds), then until ts_rollout_all_done: ts_rollout_fill_live -> read the
+// observation and mask buffers -> the network -> ts_rollout_step(logits); then
+// ts_rollout_fill_leaves -> the critic -> ts_rollout_set_leaf_values; then ts_rollout_values and
+// the row tables to average each candidate over its worlds.
+
+namespace {
+std::unique_ptr<ts::rollout::RolloutBatch> g_rollout;
+std::vector<float> g_ro_obs;
+std::vector<uint8_t> g_ro_masks;
+std::vector<float> g_ro_values;
+std::vector<uint16_t> g_ro_cands;
+}  // namespace
+
+// Redeal the cards `player` cannot see in the position held, from SplitMix64 state `seed`.
+TS_API void ts_determinize(int player, uint32_t seed_lo, uint32_t seed_hi) {
+    uint64_t rng = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
+    ts::rollout::determinize(g_state, player_from_int(player), rng);
+}
+
+TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t features,
+                            uint32_t seed_lo, uint32_t seed_hi) {
+    if (horizon < 0) { g_error = "horizon must be >= 0"; return 0; }
+    if (features & ~ts::obs_features::ALL) { g_error = "unknown obs_features bit"; return 0; }
+    const uint64_t seed = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
+    g_rollout = std::make_unique<ts::rollout::RolloutBatch>(
+        ts::rollout::Config{horizon, shared_dice != 0, guard != 0, features}, seed);
+    return 1;
+}
+
+// The position held, with `k` flat candidates at `candidates`, in `worlds` worlds. Rows added.
+TS_API int ts_rollout_add(const int32_t* candidates, int k, int worlds) {
+    if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
+    g_ro_cands.clear();
+    for (int i = 0; i < k; ++i) {
+        if (candidates[i] < 0 || candidates[i] >= static_cast<int32_t>(ts::FLAT_ACTION_SPACE_SIZE)) {
+            g_error = "a candidate is outside the flat action space";
+            return 0;
+        }
+        g_ro_cands.push_back(static_cast<uint16_t>(candidates[i]));
+    }
+    const size_t n = g_rollout->add(g_state, g_ro_cands.data(), g_ro_cands.size(),
+                                    static_cast<size_t>(worlds < 0 ? 0 : worlds));
+    if (n == 0 && g_rollout->last_error()[0]) g_error = g_rollout->last_error();
+    return static_cast<int>(n);
+}
+
+TS_API int ts_rollout_rows() { return g_rollout ? static_cast<int>(g_rollout->rows()) : 0; }
+TS_API int ts_rollout_live() { return g_rollout ? static_cast<int>(g_rollout->live()) : 0; }
+TS_API int ts_rollout_all_done() { return !g_rollout || g_rollout->all_done() ? 1 : 0; }
+TS_API int ts_rollout_obs_width() { return g_rollout ? static_cast<int>(g_rollout->obs_width()) : 0; }
+TS_API int ts_rollout_refused() { return g_rollout ? static_cast<int>(g_rollout->refused()) : 0; }
+TS_API int ts_rollout_worlds_used(int position) {
+    if (!g_rollout || position < 0 || static_cast<size_t>(position) >= g_rollout->positions()) return 0;
+    return static_cast<int>(g_rollout->worlds_used(static_cast<size_t>(position)));
+}
+
+// The live rows' observations and masks into the buffers below; returns the count.
+TS_API int ts_rollout_fill_live() {
+    if (!g_rollout) return 0;
+    const size_t n = g_rollout->live();
+    g_ro_obs.assign(std::max<size_t>(1, n * g_rollout->obs_width()), 0.0f);
+    g_ro_masks.assign(std::max<size_t>(1, n * ts::FLAT_ACTION_SPACE_SIZE), 0);
+    return static_cast<int>(g_rollout->fill_live(g_ro_obs.data(), g_ro_masks.data()));
+}
+TS_API const float* ts_rollout_buf_obs() { return g_ro_obs.data(); }
+TS_API const uint8_t* ts_rollout_buf_masks() { return g_ro_masks.data(); }
+
+// `logits`: count x FLAT_ACTION_SPACE_SIZE floats for the rows the last fill_live listed.
+TS_API int ts_rollout_step(const float* logits) {
+    if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
+    g_rollout->step(logits);
+    return 1;
+}
+
+// The rows at their horizon and not yet valued, from the mover's side, into the same buffers.
+TS_API int ts_rollout_fill_leaves() {
+    if (!g_rollout) return 0;
+    size_t n = 0;
+    for (size_t r = 0; r < g_rollout->rows(); ++r) {
+        const auto& row = g_rollout->row(r);
+        n += (row.done && !row.terminal && !row.refused && !row.leaf_valued) ? 1 : 0;
+    }
+    g_ro_obs.assign(std::max<size_t>(1, n * g_rollout->obs_width()), 0.0f);
+    g_ro_masks.assign(std::max<size_t>(1, n * ts::FLAT_ACTION_SPACE_SIZE), 0);
+    return static_cast<int>(g_rollout->fill_leaves(g_ro_obs.data(), g_ro_masks.data()));
+}
+TS_API int ts_rollout_set_leaf_values(const float* values) {
+    if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
+    g_rollout->set_leaf_values(values);
+    return 1;
+}
+
+// Every row's value from its mover's side (NaN while live or unvalued), rows() floats.
+TS_API const float* ts_rollout_values() {
+    g_ro_values.assign(std::max<size_t>(1, g_rollout ? g_rollout->rows() : 0), 0.0f);
+    if (g_rollout) g_rollout->values(g_ro_values.data());
+    return g_ro_values.data();
+}
+TS_API int ts_rollout_row_position(int r) {
+    return (g_rollout && r >= 0 && static_cast<size_t>(r) < g_rollout->rows()) ? static_cast<int>(g_rollout->row(r).position) : -1;
+}
+TS_API int ts_rollout_row_world(int r) {
+    return (g_rollout && r >= 0 && static_cast<size_t>(r) < g_rollout->rows()) ? g_rollout->row(r).world : -1;
+}
+TS_API int ts_rollout_row_candidate(int r) {
+    return (g_rollout && r >= 0 && static_cast<size_t>(r) < g_rollout->rows()) ? g_rollout->row(r).candidate : -1;
+}
+TS_API int ts_rollout_row_done(int r) {
+    return (g_rollout && r >= 0 && static_cast<size_t>(r) < g_rollout->rows()) ? (g_rollout->row(r).done ? 1 : 0) : -1;
+}
+TS_API int ts_rollout_row_terminal(int r) {
+    return (g_rollout && r >= 0 && static_cast<size_t>(r) < g_rollout->rows()) ? (g_rollout->row(r).terminal ? 1 : 0) : -1;
 }
 
 // ---- parity -----------------------------------------------------------------------------------

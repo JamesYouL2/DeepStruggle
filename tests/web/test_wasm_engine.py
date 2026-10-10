@@ -92,3 +92,62 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
     assert wasm["digest"] == h.hexdigest(), "the page's engine and Python diverged along this game"
     if ts.Engine.is_terminal(state):
         assert wasm["ending"] == ts.game_ending_reason(state)
+
+
+@pytest.mark.parametrize("seed,plies,horizon", [(21, 70, 2), (34, 150, 1), (47, 40, 0)])
+def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int,
+                                                                 tmp_path) -> None:
+    """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
+    critic: the same rows, the same worlds, the same observations ply by ply, the same values."""
+    state = ts.GameState()
+    ts.Engine.init_game(state, seed)
+    drain_chance(state)
+    rng = random.Random(seed)
+    actions: List[List[int]] = []
+    while not ts.Engine.is_terminal(state) and len(actions) < plies:
+        legal = [int(i) for i in np.nonzero(ts.get_flat_action_mask(state, False))[0]]
+        ma = ts.decode_flat_action(state, rng.choice(legal))
+        actions.append([int(ma.decision_type), int(ma.primary_id), int(ma.secondary_id), int(ma.flags)])
+        ts.Engine.step(state, ma)
+        drain_chance(state)
+    assert not ts.Engine.is_terminal(state)
+    k, worlds, batch_seed = 3, 4, 987654321
+    mask = np.asarray(ts.get_flat_action_mask(state, False))
+    cands = [int(a) for a in np.flatnonzero(mask)[:k]]
+    act = int(mask.shape[0])
+
+    batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed)
+    rows = batch.add(state, cands, worlds)
+    h = hashlib.sha256()
+    plies_run = 0
+    a_idx = np.arange(act, dtype=np.int64)
+    while not batch.all_done():
+        obs, masks = batch.fill_live()
+        h.update(np.ascontiguousarray(obs, dtype=np.float32).tobytes())
+        h.update(np.ascontiguousarray(masks, dtype=np.uint8).tobytes())
+        row = (((a_idx * 2654435761) % 4294967296 + plies_run * 40503 + 7) % 1000) / 1000.0
+        lg = np.ascontiguousarray(np.tile(row.astype(np.float32), (obs.shape[0], 1)))
+        batch.step(lg)
+        plies_run += 1
+        assert plies_run < 2000
+    lobs, _lm = batch.fill_leaves()
+    h.update(np.ascontiguousarray(lobs, dtype=np.float32).tobytes())
+    leaves = int(lobs.shape[0])
+    batch.set_leaf_values(np.asarray([((j * 31) % 17) / 17 - 0.5 for j in range(leaves)], dtype=np.float32))
+    native = {
+        "candidates": cands, "rows": rows, "worlds_used": batch.worlds_used(0), "plies": plies_run,
+        "leaves": leaves, "refused": batch.refused(), "digest": h.hexdigest(),
+        "values": [float(v) for v in np.asarray(batch.values(), dtype=np.float32)],
+        "table": [[p, w, c, int(d), int(t)] for p, w, c, d, t in zip(
+            batch.row_position(), batch.row_world(), batch.row_candidate(), batch.row_done(), batch.row_terminal())],
+    }
+    path = tmp_path / "rollout.json"
+    path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
+                                "horizon": horizon, "batch_seed": batch_seed}))
+    wasm = _node("rollout", str(path))
+    assert "error" not in wasm, wasm.get("error")
+    for key in ("candidates", "rows", "worlds_used", "plies", "leaves", "refused", "table"):
+        assert wasm[key] == native[key], key
+    assert wasm["digest"] == native["digest"], "the two builds' playouts diverged"
+    assert np.array_equal(np.asarray(wasm["values"], dtype=np.float32), np.asarray(native["values"], dtype=np.float32))
+    assert rows > 0 and native["refused"] == 0

@@ -107,6 +107,7 @@ graph TD
 │   ├── gomp_parallel.hpp       # gomp_parallel_for: the one OpenMP pool, shared with torch
 │   ├── state_json.{hpp,cpp}    # display state + save as JSON, shared with the WebAssembly build
 │   ├── selftest.hpp            # whole-game digest compiled into both builds (parity check)
+│   ├── rollout_batch.{hpp,cpp} # the rollout root's worlds and playouts, shared with the WebAssembly build
 │   ├── wasm/ts_engine_wasm.cpp # the engine's C API for the browser (Emscripten, build_web.sh)
 │   ├── ts_engine/              # GENERATED stub package (__init__.pyi + one file per submodule)
 │   ├── ts_engine.pyi.pattern   # Hand-written overrides the stub generator cannot introspect

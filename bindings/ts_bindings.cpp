@@ -28,6 +28,7 @@
 #include "state_json.hpp"
 #include "selftest.hpp"
 #include "batched_search.hpp"
+#include "rollout_batch.hpp"
 #include <nanobind/stl/pair.h>
 
 #include "gomp_parallel.hpp"  // gomp_parallel_for: the one OpenMP pool, shared with torch
@@ -664,6 +665,116 @@ NB_MODULE(ts_engine, m) {
           "(digest, steps) over `games` whole games (bindings/selftest.hpp). The WebAssembly "
           "build exports the same function, so equal numbers mean the two engines play the same "
           "games, position, observation and legal mask alike.");
+
+    // ---- the rollout root's playouts (bindings/rollout_batch.hpp, shared with the browser) ----
+    m.def("determinize", [](const ts::GameState& s, ts::Player me, uint64_t seed) {
+              ts::GameState out = s;
+              uint64_t rng = seed;
+              ts::rollout::determinize(out, me, rng);
+              return out;
+          }, nb::arg("state"), nb::arg("me"), nb::arg("seed"),
+          "A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck "
+          "-- reshuffled between those two places from SplitMix64 state `seed`, every count kept, "
+          "every seen card left; an unrevealed opposing headline is forgotten. The C++ port of "
+          "ai.search.dmcts.determinize that the rollout root uses in both builds.");
+    {
+        using RB = ts::rollout::RolloutBatch;
+        auto arrays = [](size_t n, size_t width) {
+            size_t so[2] = { n, width }, sm[2] = { n, ts::FLAT_ACTION_SPACE_SIZE };
+            float* obs = new float[std::max<size_t>(1, n * width)];
+            uint8_t* masks = new uint8_t[std::max<size_t>(1, n * ts::FLAT_ACTION_SPACE_SIZE)];
+            nb::capsule own_o(obs, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+            nb::capsule own_m(masks, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+            return std::make_tuple(obs, masks,
+                                   nb::ndarray<nb::numpy, float, nb::ndim<2>>(obs, 2, so, own_o),
+                                   nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(masks, 2, sm, own_m));
+        };
+        nb::class_<RB>(m, "RolloutBatch",
+            "The rollout root's playouts for one or more decisions: the sampled worlds of each "
+            "candidate move, their greedy playouts to a horizon of action-round boundaries, and the "
+            "leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), "
+            "until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). "
+            "Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).")
+            .def("__init__", [](RB* self, int horizon, bool shared_dice, bool guard, uint32_t features,
+                                uint64_t seed) {
+                     if (horizon < 0) throw std::invalid_argument("horizon must be >= 0");
+                     if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
+                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features}, seed);
+                 }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
+                 nb::arg("features") = 0u, nb::arg("seed") = 0ull)
+            .def("add", [](RB& self, const ts::GameState& base, const std::vector<int>& candidates, size_t worlds) {
+                     std::vector<uint16_t> c;
+                     for (int a : candidates) {
+                         if (a < 0 || a >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE))
+                             throw std::invalid_argument("a candidate is outside the flat action space");
+                         c.push_back(static_cast<uint16_t>(a));
+                     }
+                     const size_t n = self.add(base, c.data(), c.size(), worlds);
+                     if (n == 0 && self.last_error()[0]) throw std::invalid_argument(self.last_error());
+                     return n;
+                 }, nb::arg("base"), nb::arg("candidates"), nb::arg("worlds"),
+                 "One decision: `base` with the mover's flat `candidates` (all legal there), in "
+                 "`worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept.")
+            .def("positions", &RB::positions)
+            .def("mover", [](const RB& self, size_t p) {
+                     if (p >= self.positions()) throw std::out_of_range("position");
+                     return self.mover(p);
+                 }, nb::arg("position"))
+            .def("worlds_used", [](const RB& self, size_t p) {
+                     if (p >= self.positions()) throw std::out_of_range("position");
+                     return self.worlds_used(p);
+                 }, nb::arg("position"))
+            .def("rows", &RB::rows)
+            .def("live", &RB::live)
+            .def("all_done", &RB::all_done)
+            .def("obs_width", &RB::obs_width)
+            .def("refused", &RB::refused)
+            .def("fill_live", [arrays](RB& self) {
+                     auto [obs, masks, o, mk] = arrays(self.live(), self.obs_width());
+                     self.fill_live(obs, masks);
+                     return nb::make_tuple(o, mk);
+                 }, "(observations, masks) of the live rows, each row from its acting side, in the "
+                    "order step() expects.")
+            .def("step", [](RB& self, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> logits) {
+                     if (logits.shape(0) != self.listed() || logits.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
+                         throw std::invalid_argument("step: logits must be (rows of the last fill_live, action space)");
+                     self.step(logits.data());
+                 }, nb::arg("logits"),
+                 "Advance the rows the last fill_live listed by the masked argmax of each logits row.")
+            .def("fill_leaves", [arrays](RB& self) {
+                     size_t n = 0;
+                     for (size_t r = 0; r < self.rows(); ++r) {
+                         const auto& row = self.row(r);
+                         n += (row.done && !row.terminal && !row.refused && !row.leaf_valued) ? 1 : 0;
+                     }
+                     auto [obs, masks, o, mk] = arrays(n, self.obs_width());
+                     self.fill_leaves(obs, masks);
+                     return nb::make_tuple(o, mk);
+                 }, "(observations, masks) of the rows at their horizon and not yet valued, each from "
+                    "the MOVER's side, in the order set_leaf_values() expects.")
+            .def("set_leaf_values", [](RB& self, nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> v) {
+                     if (v.shape(0) != self.leaves_listed())
+                         throw std::invalid_argument("set_leaf_values: one value per row of the last fill_leaves");
+                     self.set_leaf_values(v.data());
+                 }, nb::arg("values"))
+            .def("values", [](const RB& self) {
+                     size_t shape[1] = { self.rows() };
+                     float* data = new float[std::max<size_t>(1, self.rows())];
+                     self.values(data);
+                     nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+                     return nb::ndarray<nb::numpy, float, nb::ndim<1>>(data, 1, shape, owner);
+                 }, "Every row's value from its mover's side; NaN while live or unvalued.")
+            .def("row_position", [](const RB& self) { std::vector<int> v; for (size_t r = 0; r < self.rows(); ++r) v.push_back(static_cast<int>(self.row(r).position)); return v; })
+            .def("row_world", [](const RB& self) { std::vector<int> v; for (size_t r = 0; r < self.rows(); ++r) v.push_back(self.row(r).world); return v; })
+            .def("row_candidate", [](const RB& self) { std::vector<int> v; for (size_t r = 0; r < self.rows(); ++r) v.push_back(self.row(r).candidate); return v; })
+            .def("row_done", [](const RB& self) { std::vector<bool> v; for (size_t r = 0; r < self.rows(); ++r) v.push_back(self.row(r).done); return v; })
+            .def("row_terminal", [](const RB& self) { std::vector<bool> v; for (size_t r = 0; r < self.rows(); ++r) v.push_back(self.row(r).terminal); return v; })
+            .def("row_crossed", [](const RB& self) { std::vector<int> v; for (size_t r = 0; r < self.rows(); ++r) v.push_back(self.row(r).crossed); return v; })
+            .def("row_state", [](const RB& self, size_t r) -> ts::GameState {
+                     if (r >= self.rows()) throw std::out_of_range("row");
+                     return self.row(r).state;
+                 }, nb::arg("row"), "A copy of the row's position, for tests.");
+    }
     m.def("game_ending_reason", [](const ts::GameState& s) { return std::string(ts::state_json::ending_reason(s)); },
           nb::arg("state"),
           "Why a finished game ended: '20 VP', 'Europe Control', 'DEFCON 1 (own decision)', "
