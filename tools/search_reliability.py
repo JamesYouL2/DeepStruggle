@@ -78,15 +78,42 @@ def _sha256(path: str) -> str:
 
 
 def parse_spec(text: str) -> Tuple[str, str]:
-    """NAME=SIMS:K:FPU:FILTER:WORLDS (a Gumbel root: the fields after a gumbel: spec's checkpoint)
-    or NAME=rollout:K:WORLDS:HORIZON:RULE (ai/search/rollout_root.py) -> (name, fields)."""
+    """NAME=SIMS:K:FPU:FILTER:WORLDS (a Gumbel root: the fields after a gumbel: spec's checkpoint),
+    NAME=rollout:K:WORLDS:HORIZON:RULE (ai/search/rollout_root.py) or NAME=raw (the network's own
+    greedy move), each optionally prefixed @2: to run on --model2 -> (name, fields)."""
     name, _, fields = text.partition("=")
-    ok = (len(fields.split(":")) == 5 and not fields.startswith("rollout:")) or \
-        (fields.startswith("rollout:") and len(fields.split(":")) == 5)
+    body = fields[3:] if fields.startswith("@2:") else fields
+    ok = body == "raw" or (len(body.split(":")) == 5 and not body.startswith("rollout:")) or \
+        (body.startswith("rollout:") and len(body.split(":")) == 5)
     if not name or not ok:
         raise argparse.ArgumentTypeError(
-            f"--spec must be NAME=SIMS:K:FPU:FILTER:WORLDS or NAME=rollout:K:WORLDS:HORIZON:RULE, not {text!r}")
+            f"--spec must be NAME=[@2:]SIMS:K:FPU:FILTER:WORLDS, NAME=[@2:]rollout:K:WORLDS:HORIZON:RULE "
+            f"or NAME=[@2:]raw, not {text!r}")
     return name, fields
+
+
+class RawPicker:
+    """The network's own greedy move, as a searcher with one evaluation per position."""
+
+    def __init__(self, net: Any) -> None:
+        self.net = net
+        self.rows = 0
+
+    def reseed(self, seed: int) -> None:
+        pass
+
+    def choose(self, states: Sequence[Any]) -> List[int]:
+        import torch
+        import ts_engine as ts
+        from ai.search.pimcts import acting_player
+        from bindings.action_encoder import ActionEncoder
+        obs = np.stack([np.asarray(ts.extract_observation(s, acting_player(s)), dtype=np.float32) for s in states])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
+        with torch.no_grad():
+            lg, _v, _ = self.net(torch.from_numpy(obs), torch.from_numpy(masks))
+        z = np.where(masks.astype(bool), lg.float().numpy(), -np.inf)
+        self.rows = len(states)
+        return [int(a) for a in z.argmax(axis=1)]
 
 
 def chunk_seed(spec: str, seed: int, ids: Sequence[str]) -> int:
@@ -96,7 +123,7 @@ def chunk_seed(spec: str, seed: int, ids: Sequence[str]) -> int:
 
 
 def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, part: str,
-           chunk: int, out: str) -> int:
+           chunk: int, out: str, model2: Optional[str] = None) -> int:
     import torch
     from ai.search.batched_mcts import BatchedMCTS
     from tools.lib.corpus_driver import state_from_token
@@ -104,17 +131,29 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
     from bindings.action_encoder import ActionEncoder
 
     rows = _part(list(_read([bank])), part)
-    net = NeuralAgent.from_checkpoint(model, device="cpu").model.eval()
+    nets = {1: NeuralAgent.from_checkpoint(model, device="cpu").model.eval()}
+    paths = {1: model}
+    if model2:
+        nets[2] = NeuralAgent.from_checkpoint(model2, device="cpu").model.eval()
+        paths[2] = model2
     torch.set_grad_enabled(False)
     from ai.search.rollout_root import RolloutRoot, rollout_spec_config
     searchers: Dict[str, Tuple[Any, str]] = {}
     for name, fields in specs:
-        if fields.startswith("rollout:"):
-            _path, rcfg, label = rollout_spec_config(f"rollout:{model}:{fields[len('rollout:'):]}")
-            searchers[name] = (RolloutRoot(net, rcfg), label)
+        which = 2 if fields.startswith("@2:") else 1
+        body = fields[3:] if which == 2 else fields
+        if which not in nets:
+            raise ValueError(f"{name} runs on --model2, which was not given")
+        net, mpath = nets[which], paths[which]
+        tag = "" if which == 1 else "@2:"
+        if body == "raw":
+            searchers[name] = (RawPicker(net), f"{tag}raw")
+        elif body.startswith("rollout:"):
+            _path, rcfg, label = rollout_spec_config(f"rollout:{mpath}:{body[len('rollout:'):]}")
+            searchers[name] = (RolloutRoot(net, rcfg), tag + label)
         else:
-            _path, cfg, label = search_spec_config(f"gumbel:{model}:{fields}")
-            searchers[name] = (BatchedMCTS(net, device="cpu", config=cfg), label)
+            _path, cfg, label = search_spec_config(f"gumbel:{mpath}:{body}")
+            searchers[name] = (BatchedMCTS(net, device="cpu", config=cfg), tag + label)
     res = {str(r["id"]): {"id": r["id"], "raw": int(r["raw"]), "picks": {n: [] for n, _ in specs},
                           "evals": {n: [] for n, _ in specs}} for r in rows}
     secs = {n: 0.0 for n, _ in specs}
@@ -128,7 +167,7 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
                 states = [state_from_token(r["pos"]) for r in batch]
                 mcts.reseed(chunk_seed(name, s, ids))
                 t = time.time()
-                if isinstance(mcts, RolloutRoot):
+                if isinstance(mcts, (RolloutRoot, RawPicker)):
                     picks = mcts.choose(states)
                     evals = [mcts.rows / len(batch)] * len(batch)     # rows, shared by the batch
                 else:
@@ -144,7 +183,9 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
               file=sys.stderr, flush=True)
     _write(out, list(res.values()))
     meta = {"stage": "search", "bank": os.path.basename(bank), "model": os.path.basename(model),
-            "model_sha256": _sha256(model), "specs": {n: f for n, f in specs},
+            "model_sha256": _sha256(model),
+            "model2": os.path.basename(model2) if model2 else None,
+            "model2_sha256": _sha256(model2) if model2 else None, "specs": {n: f for n, f in specs},
             "labels": {n: searchers[n][1] for n, _ in specs}, "seeds": seeds, "part": part,
             "positions": len(rows), "search_seconds": secs, "wall_s": round(time.time() - t0, 1)}
     with open(out + ".meta.json", "w", encoding="utf-8") as f:
@@ -162,7 +203,10 @@ def playouts(bank: str, search_paths: Sequence[str], model: str, pairs: int, see
     from ai.eval.paired_playouts import compare, paired_diff
     from tools.lib.corpus_driver import load_policy, state_from_token
 
-    picks = {str(r["id"]): r for r in _read(search_paths)}
+    picks: Dict[str, Dict[str, Any]] = {}
+    for r in _read(search_paths):            # several search files: their searchers side by side
+        cur = picks.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "picks": {}})
+        cur["picks"].update(r["picks"])
     rows = [r for r in _part(list(_read([bank])), part) if str(r["id"]) in picks]
     logits_fn, _ = load_policy(model)
 
@@ -205,7 +249,8 @@ def _wmean(xs: Sequence[float], ws: Sequence[float]) -> Tuple[float, float]:
 
 
 def summarize(bank_rows: Dict[str, Dict[str, Any]], search_rows: Dict[str, Dict[str, Any]],
-              play_rows: Dict[str, Dict[str, Any]], names: Sequence[str]) -> Dict[str, Any]:
+              play_rows: Dict[str, Dict[str, Any]], names: Sequence[str],
+              decisions_per_game: Optional[float] = None) -> Dict[str, Any]:
     """Every figure the report prints, per searcher (see the module docstring)."""
     out: Dict[str, Any] = {}
     common = [i for i in search_rows if i in play_rows and i in bank_rows]
@@ -242,12 +287,15 @@ def summarize(bank_rows: Dict[str, Dict[str, Any]], search_rows: Dict[str, Dict[
                 prec_conf.append(float(m > 2 * se))
                 prec_harm.append(float(m < -2 * se))
         gm, gse = _wmean(gains, gw)
+        # Per game: the mean gain per decision times a game's decisions -- read from the bank's own
+        # metadata when it records them, else the search bank's sampling (1 in 8 of 1,500 games).
+        scale = decisions_per_game if decisions_per_game else sum(gw) * PER_GAME
         out[n] = {"positions": len(common),
                   "departure_rate": _wmean(dep_rate, gw)[0],
                   "reproducibility": rep_num / rep_den if rep_den else float("nan"),
                   "same_move": same_num / same_den if same_den else float("nan"),
                   "gain_per_decision": gm, "gain_per_decision_se": gse,
-                  "gain_per_game": gm * sum(gw) * PER_GAME, "gain_per_game_se": gse * sum(gw) * PER_GAME,
+                  "gain_per_game": gm * scale, "gain_per_game_se": gse * scale,
                   "gain_per_departure": _wmean(dep_gain, dep_w)[0],
                   "precision_positive": _wmean(prec_pos, dep_w)[0],
                   "confirmed_better": _wmean(prec_conf, dep_w)[0],
@@ -258,8 +306,9 @@ def summarize(bank_rows: Dict[str, Dict[str, Any]], search_rows: Dict[str, Dict[
         d = [gain_by[n][i] - gain_by[base][i] for i in common]
         m, se = _wmean(d, [w_of[i] for i in common])
         sw = sum(w_of[i] for i in common)
-        out[n]["vs_first_per_game"] = m * sw * PER_GAME
-        out[n]["vs_first_per_game_se"] = se * sw * PER_GAME
+        scale = decisions_per_game if decisions_per_game else sw * PER_GAME
+        out[n]["vs_first_per_game"] = m * scale
+        out[n]["vs_first_per_game_se"] = se * scale
     return out
 
 
@@ -294,7 +343,10 @@ def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], ou
         names += [n for n in m["specs"] if n not in names]
     if not names:
         names = sorted(next(iter(search_rows.values()))["picks"])
-    res = summarize(bank_rows, search_rows, play_rows, names)
+    dpg = None
+    if os.path.exists(bank + ".meta.json"):
+        dpg = json.load(open(bank + ".meta.json")).get("decisions_per_game")
+    res = summarize(bank_rows, search_rows, play_rows, names, dpg)
     secs = {n: sum(m["search_seconds"].get(n, 0.0) for m in metas) for n in names} if metas else {}
     nsearch = {n: sum(m["positions"] * m["seeds"] for m in metas if n in m["specs"]) for n in names} if metas else {}
     evals = {n: float(np.mean([e for r in search_rows.values() for e in r["evals"][n]])) for n in names}
@@ -340,6 +392,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     s = sub.add_parser("search")
     s.add_argument("--bank", required=True)
     s.add_argument("--model", required=True)
+    s.add_argument("--model2", default=None, help="a second checkpoint, for @2: specs")
     s.add_argument("--spec", type=parse_spec, action="append", required=True)
     s.add_argument("--seeds", type=int, default=4)
     s.add_argument("--part", default="1/1")
@@ -360,7 +413,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "search":
-        return search(a.bank, a.model, a.spec, a.seeds, a.part, a.chunk, a.out)
+        return search(a.bank, a.model, a.spec, a.seeds, a.part, a.chunk, a.out, a.model2)
     if a.cmd == "playouts":
         return playouts(a.bank, a.search, a.model, a.pairs, a.seed, a.part, a.out)
     return report(a.bank, a.search, a.playouts, a.out)
