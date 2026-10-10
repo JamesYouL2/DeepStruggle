@@ -397,7 +397,18 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   (6,720–6,800M), 1550 and 1546; the heads soup 1542; the plain leg's windows 1494–1501. R32's last
   SWA against the soup 51.7%; per seat over the plain leg +7.1 / +8.4, every common opponent
   positive; head to head over the plain leg by window 55.0 → 56.7 → 57.6 → **59.0%**. The per-seat
-  gain levels at ~+8 while the head to head keeps rising. **The search gap at 6,600M** (Gumbel k8@256 on each network against
+  gain levels at ~+8 while the head to head keeps rising. **E7 leaderboard, six main players,
+  1,000 games a side:** soup + Gumbel k8@256 1669; **R32 SWA 1645**; R32 SWA + Gumbel k8@256
+  1634; heads soup (main) 1628; R32 raw 6,800M 1626; R34 SWA 1613; plain SWA (main) 1585. So
+  R32's SWA is the strongest *no-search* model, and **search now hurts R32 by ~11 Elo** (1645 →
+  1634; the searched soup beats the searched R32 54.0%), consistent with search scoring 47% on it
+  as US: **R32's critic is worse than its prior at the leaves.** Two consequences. The product
+  split is now explicit -- the best no-search player is R32's SWA, the best overall is still the
+  searched soup. And **T2 is on the loop's critical path, not a follow-up**: by the corrected
+  rule a re-freeze candidate must beat the teacher *searched*, and a student whose search hurts it
+  cannot qualify however it rates raw -- the next teacher has to carry a repaired critic, which is
+  what R32 + T2 (or R36 + T2) is for. Queued: the soup at Gumbel k = 4 @32, the teacher actually
+  used, against the main players and R32's SWA, pinning how much of its margin was absorbed. **The search gap at 6,600M** (Gumbel k8@256 on each network against
   the same network raw, 1,000 games a side): **on R32 51.2% ± 1.1** (as US 47.0, as USSR 55.4);
   on the plain leg 62.6% (61.4 / 63.9). A shrink of ~7 SE, past the 3-SE promotion bar: **T1 passes
   the plan's rule on both halves** (gap shrunk, head to head above the plain leg). Caveat: Gumbel's
