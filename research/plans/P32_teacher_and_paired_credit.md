@@ -95,6 +95,12 @@ it (0.53): **a feedback loop**. Stopped. Two cells replace it:
   well-defined, since the teacher's value no longer moves with the student. Same cost as R31.
   **Built** (`--search-teacher-checkpoint`), queued at R31's settings so the pair is one factor.
 
+**The loop's instrument.** KL(target ‖ current policy) = `search_ce` − `search_target_entropy`,
+both logged per iteration. On the stopped R29 it read 0.19 at the start (0.359 − 0.173) and rose
+to ~0.48 (1.01 − 0.53) while the policy flattened: the targets chasing the student. Reported per
+snapshot for R31 and the frozen-teacher cell; rising → the loop, flat or falling → a teacher the
+student can close on. Entropy alone cannot tell those apart.
+
 **Caps: T depends on no cap.** Every cap gradient other than the plain tanh drifts the network:
 straight-through (A10) fast, a symmetric 0.1 leak (A11) slowly, an upward-only leak (A12) too,
 even weighted to spare the top move -- a gradient with no effect on play still reaches the shared
