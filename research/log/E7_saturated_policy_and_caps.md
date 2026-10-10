@@ -39,8 +39,10 @@ the means to pay, per follow-up (the plain leg: 89% at 6,450M, 83% at 6,500M, 87
   head to head; **sampled at T = 1, a loss** (36.6%), the broader policy's mass on bad moves. Bounded
   gaps keep the alternatives in play during training, and the argmax is better for it.
   On the trap R34 is the plain leg: 142 of 164 follow-ups suicide (87%) at 6,800M. The defence needed
-  both halves -- the gaps bounded *and* the trap shown (R33, 59%); natural play reaches the trap ~9% of
-  games and too rarely to teach it.
+  both halves -- the gaps bounded *and* the trap shown (R33, 59%). The combo is available in ~9% of
+  games, but only a scripted US plays it; the network's own US never does, so self-play almost never
+  reaches the trap. Seeding stays a live mechanism for rare chains once exploration is fixed: the gap
+  bound makes the decision learnable, the seeded state supplies the samples, and neither does it alone.
 * **The scenario produced a defence nobody wrote down.** It asked "will the USSR stop couping";
   the network answered with an earlier, cheaper move -- rebuild Cuba so the coup pays. The first
   forced scenario to do so, which is what "show the state, let training decide" was meant to allow.
