@@ -35,6 +35,9 @@ the means to pay, per follow-up (the plain leg: 89% at 6,450M, 83% at 6,500M, 87
   the alternative's probability rises from ~0 to ~1e-4, and within 400M the network learns a defence
   it never found uncapped. The cost: the sampled policy's entropy 0.28 → 0.83 -- what it does to
   strength is E7-A8-R1-S44@6400M+R34 (the penalty without the scenario).
+* **The scenario produced a defence nobody wrote down.** It asked "will the USSR stop couping";
+  the network answered with an earlier, cheaper move -- rebuild Cuba so the coup pays. The first
+  forced scenario to do so, which is what "show the state, let training decide" was meant to allow.
 * The same saturation shows wherever the network has decided: 25% of the searched decisions in the
   search-target arms had max p > 1 − 1e-6 at the start (`search_saturated_frac`).
 
