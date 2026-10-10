@@ -122,6 +122,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
            if getattr(args, "ladder_logit_cap", 0.0) and getattr(args, "ladder_logit_cap_grad", "tanh") != "tanh" else {}),
         **({"logit_cap_leak": float(args.ladder_logit_cap_leak)}
            if getattr(args, "ladder_logit_cap", 0.0) and getattr(args, "ladder_logit_cap_leak", 0.0) else {}),
+        **({"logit_cap_leak_up": float(args.ladder_logit_cap_leak_up)}
+           if getattr(args, "ladder_logit_cap", 0.0) and getattr(args, "ladder_logit_cap_leak_up", 0.0) else {}),
     )
 
 
@@ -233,6 +235,10 @@ def build_parser() -> argparse.ArgumentParser:
     lad.add_argument("--ladder-logit-cap-leak", type=float, default=0.0,
                      help="With the tanh cap gradient: add this times the raw gradient (forward unchanged), "
                           "so a saturated move learns at ~this share of the full gradient. 0 (default): off.")
+    lad.add_argument("--ladder-logit-cap-leak-up", type=float, default=0.0,
+                     help="With the tanh cap gradient: add this times the raw gradient only where it "
+                          "raises a logit -- a saturated move can be pulled back, never pushed further "
+                          "down (an unsatisfiable push that drifts the network). 0 (default): off.")
     lad.add_argument("--ladder-token-dim", type=int, default=128,
                      help="Token width for --ladder-token-layers (default 128).")
     lad.add_argument("--ladder-head-center", action=argparse.BooleanOptionalAction, default=None,

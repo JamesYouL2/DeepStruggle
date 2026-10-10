@@ -95,3 +95,23 @@ def test_a_leaky_cap_plays_the_same_and_passes_a_share_of_the_raw_gradient() -> 
     p_inf = float(torch.softmax(out[0][0], -1)[0, 1])
     assert abs(out[1][1] - (out[0][1] - 0.1 * p_inf)) < 1e-6        # tanh's own plus 0.1 x raw
     assert leaky.ladder_config()["logit_cap_leak"] == 0.1
+
+
+def test_an_upward_leak_raises_saturated_moves_and_never_pushes_them_down() -> None:
+    """--ladder-logit-cap-leak-up: the raw gradient only where descent would raise a logit."""
+    torch.manual_seed(0)
+    tanh, up = (create_ladder_net("cpu", **M2D, logit_cap=7.0, logit_cap_leak_up=l).eval() for l in (0.0, 1.0))
+    z = torch.tensor([[34.0, 6.0, -2.6]])
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    for sign in (1.0, -1.0):          # loss = -sign * log P(coup): sign 1 rewards the coup, -1 punishes it
+        g = []
+        for net in (tanh, up):
+            zz = z.clone().requires_grad_(True)
+            (-sign * torch.log_softmax(net._cap_logits(zz, mask), -1)[0, 0]).backward()
+            assert zz.grad is not None
+            g.append(zz.grad[0, 1].item())
+        if sign > 0:                  # rewarding the coup would lower influence: blocked, tanh's only
+            assert abs(g[1] - g[0]) < 1e-9
+        else:                         # punishing the coup raises influence: the full softmax gradient
+            assert g[1] < g[0] - 5e-4
+    assert up.ladder_config()["logit_cap_leak_up"] == 1.0

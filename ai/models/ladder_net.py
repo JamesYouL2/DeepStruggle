@@ -73,6 +73,20 @@ AGGREGATIONS: Tuple[str, ...] = ("flatten", "pool")
 HEAD_ENTITIES: Tuple[str, ...] = ("both", "country", "card")
 
 
+class _LeakUp(torch.autograd.Function):
+    """Adds zero going forward; going back, `leak` times the incoming gradient where it is negative
+    -- where gradient descent would RAISE the logit -- and nothing where it would lower it."""
+
+    @staticmethod
+    def forward(ctx: Any, z: torch.Tensor, leak: float) -> torch.Tensor:   # type: ignore[override]
+        ctx.leak = float(leak)
+        return torch.zeros_like(z)
+
+    @staticmethod
+    def backward(ctx: Any, grad: torch.Tensor) -> Tuple[torch.Tensor, None]:   # type: ignore[override]
+        return ctx.leak * grad.clamp(max=0.0), None
+
+
 class LadderNet(ColdWarNetV2):
     """A P21 rung. All structural axes are explicit; see the module docstring."""
 
@@ -113,6 +127,7 @@ class LadderNet(ColdWarNetV2):
                  logit_cap: float = 0.0,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
+                 logit_cap_leak_up: float = 0.0,
                  token_layers: int = 0,
                  token_dim: int = 0,
                  **kwargs: Any) -> None:
@@ -430,6 +445,13 @@ class LadderNet(ColdWarNetV2):
         # the policy sharpened fast (entropy 0.31 -> 0.22, KL per update 0.1-0.2 within 15M,
         # E7-A8-R1-S44@6400M+A10). Forward, and so play, is unchanged.
         self.logit_cap_leak = float(logit_cap_leak)
+        # The leak only where it raises a logit (the incoming gradient negative). A capped policy
+        # cannot push a bad move below the floor (~e^-c), so a gradient pushing saturated moves
+        # DOWN never stops; leaked into the trunk it drifts the whole network -- the symmetric
+        # leak did (A11: entropy 0.37 -> 0.28, KL to pi_ref 0.008 -> 0.046 in 40M). Pushes UP are
+        # satisfiable -- a raised move enters the cap's band and the ordinary softmax takes over --
+        # and they are the ones a trap needs: a losing coup's negative advantage raises the rest.
+        self.logit_cap_leak_up = float(logit_cap_leak_up)
         if self.logit_cap_value > 0.0:
             self.register_buffer("logit_cap", torch.tensor(self.logit_cap_value, dtype=torch.float32))
         self.card_aux = bool(card_aux)
@@ -623,6 +645,7 @@ class LadderNet(ColdWarNetV2):
             **({"logit_cap": self.logit_cap_value} if self.logit_cap_value > 0.0 else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
+            **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
         )
 
 
@@ -649,6 +672,8 @@ class LadderNet(ColdWarNetV2):
             capped = z + (capped - z).detach()
         elif self.logit_cap_leak > 0.0:
             capped = capped + self.logit_cap_leak * (z - z.detach())
+        if self.logit_cap_grad != "straight" and self.logit_cap_leak_up > 0.0:
+            capped = capped + _LeakUp.apply(z, self.logit_cap_leak_up)
         return capped.to(logits.dtype)
 
     def _policy_logits(self, h: torch.Tensor,
