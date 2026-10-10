@@ -100,6 +100,26 @@ no seat-specific effect. Report and checks: `data/reports/gchoice_distill/380070
   on this network; the census's one recurring blunder (the last influence placement of turn 10) wants
   an exact solver, not training.
 
+## Addendum (2026-10-10): the consensus arm -- denoised targets do not help either
+
+The one form "What this does not rule out" named: a departure only where the @64 root, searched on
+its own streams, picks the same move as @256 (`consensus:256:64`; 24,986 of the 89,793 departures).
+Same targets (`targets_from=38007091505`), same trainer, run `38015306195`, with a retrained
+departures@256 and the no-signal control in the same field (3,000 games a side per pairing, greedy):
+
+| arm | against the base | against the control | held out: argmax now the choice | agreements changed | entropy |
+|:---|---:|---:|---:|---:|---:|
+| consensus@256x64 | 49.5% ± 0.65 | **50.0%** | 5.5% | 1.0% | 0.327 |
+| departures@256 (retrained) | 49.5% | 49.6% | -- | -- | -- |
+| own (control) | 49.7% | -- | -- | -- | 0.316 |
+
+Level with the control: the consensus subset moves the policy less and costs less, and gains
+nothing. Agreement between two searches does not make a departure learnable or useful here --
+two k=16 @1,024 roots reproduce each other's departure only ~47% of the time on the search bank,
+so agreement between two noisier roots selects little signal. The distillation thread is closed;
+the follow-up is the search itself (fork branch `exp/chance-search`: averaging the root over more
+draws of the hidden cards and the dice).
+
 ## Replicate
 
 ```bash
