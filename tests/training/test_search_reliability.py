@@ -77,3 +77,12 @@ def test_runs_merge_by_position(tmp_path) -> None:
     bad = w("p3.jsonl.gz", [{"id": "a", "pairs": 4, "score": {"1": 0.45, "3": 0.3}, "diff_vs_raw": {"3": [-0.1, 0.01]}}])
     with pytest.raises(ValueError):
         report(bank, [s1, s2], [p1, bad], out)
+
+
+def test_specs_on_a_second_network_and_the_raw_move() -> None:
+    assert parse_spec("r=@2:raw") == ("r", "@2:raw")
+    assert parse_spec("g=@2:256:8:0.2:all:1") == ("g", "@2:256:8:0.2:all:1")
+    assert parse_spec("x=@2:rollout:4:16:4:z2") == ("x", "@2:rollout:4:16:4:z2")
+    assert parse_spec("n=raw") == ("n", "raw")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_spec("bad=@2:256:8")
