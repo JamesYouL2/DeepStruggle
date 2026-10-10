@@ -91,6 +91,8 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
                                      "ladder_logit_cap_leak_up")),
     ("logit_gap_coef", 0.0, ("logit_gap",)),
 )
+#: A second switch that keeps a gate open: the searcher also runs for its values alone (P32 T2).
+_GATE_ALSO: Dict[str, Tuple[str, Any]] = {"search_ce_coef": ("search_value_beta", 0.0)}
 
 _RUN_DIR_RE = re.compile(r"^(?P<name>[^_]+)_(?P<ts>\d{8}_\d{6})(?P<void>_VOID)?$")
 _RESUME_STEP_RE = re.compile(r"resume(?:_paused)?_(\d+)steps\.pt$")
@@ -257,7 +259,8 @@ def _run_of(checkpoint: str) -> Optional[str]:
 def recipe_sig(r: Run, overrides: Dict[str, Any]) -> Dict[str, Any]:
     sig = {k: v for k, v in r.flags.items() if category(k) == "R"}
     for switch, off, gated in _GATED:
-        if _off(sig.get(switch), off):
+        also = _GATE_ALSO.get(switch)
+        if _off(sig.get(switch), off) and (also is None or _off(sig.get(also[0]), also[1])):
             for g in gated:
                 sig.pop(g, None)
     if sig.get("opponent_checkpoints") == []:

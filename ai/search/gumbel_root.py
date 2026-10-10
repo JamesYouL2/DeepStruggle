@@ -25,8 +25,8 @@ there would show the decider the opponent's real hand.
 
 Unlike Gumbel MuZero, each phase searches a candidate's position afresh rather than growing one
 tree (visits and values pooled across phases), so the batched C++ search does the work unchanged.
-Only how a move is chosen in play; the paper's improved-policy training target is not implemented
-(research/log/E7_gumbel_headroom.md).
+`improved_policies` gives the paper's improved-policy training target (P32 T1) and, with it, each
+position's search value (T2).
 
 This module takes the searcher it drives from its caller rather than importing it: BatchedMCTS
 builds the root, and importing it back would make the two modules a cycle.
@@ -55,10 +55,11 @@ _US = int(ts.Player.US)
 C_VISIT, C_SCALE = 50.0, 0.1
 
 
-def sigma_completed(logits: Dict[int, float], value_mover: float, n: Dict[int, float],
-                    q: Dict[int, float]) -> Dict[int, float]:
-    """sigma(completed Q) per legal move: unvisited moves take the mixed value, Q is rescaled to
-    [0, 1] over the legal moves, then scaled by (c_visit + max visits) * c_scale (mctx)."""
+def completed_q(logits: Dict[int, float], value_mover: float, n: Dict[int, float],
+                q: Dict[int, float]) -> Dict[int, float]:
+    """The completed Q per legal move, from the mover's side: a visited move's mean value, an
+    unvisited one the mixed value -- the network's value blended with the prior-weighted mean Q of
+    the visited moves, weighted by the visit total (mctx)."""
     acts = list(logits)
     top = max(logits.values())
     z = {a: math.exp(logits[a] - top) for a in acts}
@@ -73,7 +74,15 @@ def sigma_completed(logits: Dict[int, float], value_mover: float, n: Dict[int, f
         v_mix = (value_mover + total * mean_q) / (1.0 + total)
     else:
         v_mix = value_mover
-    cq = {a: (q[a] if n.get(a, 0.0) > 0 else v_mix) for a in acts}
+    return {a: (q[a] if n.get(a, 0.0) > 0 else v_mix) for a in acts}
+
+
+def sigma_completed(logits: Dict[int, float], value_mover: float, n: Dict[int, float],
+                    q: Dict[int, float]) -> Dict[int, float]:
+    """sigma(completed Q) per legal move: unvisited moves take the mixed value, Q is rescaled to
+    [0, 1] over the legal moves, then scaled by (c_visit + max visits) * c_scale (mctx)."""
+    acts = list(logits)
+    cq = completed_q(logits, value_mover, n, q)
     lo, hi = min(cq.values()), max(cq.values())
     scale = (hi - lo) if hi - lo > 1e-8 else 1.0
     max_n = max((n.get(a, 0.0) for a in acts), default=0.0)
@@ -103,6 +112,8 @@ class GumbelRoot:
     def __init__(self, mcts: "BatchedMCTS", sub: "BatchedMCTS") -> None:
         self.mcts = mcts
         self.sub = sub
+        self.last_saturated_frac = 0.0
+        self.last_values = np.zeros(0, dtype=np.float64)
 
     def _network(self, states: Sequence[ts.GameState]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Logits, legal masks and the mover's value at the real positions."""
@@ -130,6 +141,9 @@ class GumbelRoot:
         ~15 at 256 evaluations), hence the logit cap it is meant to run with."""
         logits, _g, _alive, n, w, v = self._halve(states)
         out: List[Tuple[List[int], np.ndarray]] = []
+        #: P32 T2: each position's search value from the mover's side, the improved policy's
+        #: expectation of the completed Q (NaN where nothing was legal), read by the trainer.
+        self.last_values = np.full(len(logits), np.nan, dtype=np.float64)
         for i in range(len(logits)):
             acts = list(logits[i])
             if not acts:
@@ -139,7 +153,10 @@ class GumbelRoot:
             sig = sigma_completed(logits[i], float(v[i]), n[i], q)
             z = np.array([logits[i][a] + sig[a] for a in acts], dtype=np.float64)
             z = np.exp(z - z.max())
-            out.append((acts, z / z.sum()))
+            pi = z / z.sum()
+            cq = completed_q(logits[i], float(v[i]), n[i], q)
+            self.last_values[i] = float(sum(p * cq[a] for p, a in zip(pi, acts)))
+            out.append((acts, pi))
         return out
 
     def _halve(self, states: Sequence[ts.GameState]) -> Tuple[

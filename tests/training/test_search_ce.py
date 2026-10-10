@@ -566,3 +566,47 @@ def test_a_frozen_search_teacher_is_what_the_searcher_runs() -> None:
     assert not any(p.requires_grad for p in teacher.parameters())
     t.collect_rollouts()
     assert int((t.buffer.has_search > 0.5).sum()) > 0
+
+
+def test_search_values_move_only_the_value_target_at_searched_rows() -> None:
+    """P32 T2: --search-value-beta blends the root's search value into v_win's target where a
+    decision was searched, after GAE -- the advantages stay the control's -- and runs the searcher
+    with the CE term off."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
+               card_self_attention=False, cross_attention=False, per_entity_heads=16,
+               head_context=True, head_static=True, head_entities="country", head_center=True,
+               identity_dim=0, drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+               card_lookup=False, card_lookup_heads=0, card_lookup_dim=0, card_lookup_identity_dim=0,
+               categorical_value=False)
+    dev = torch.device("cpu")
+    with pytest.raises(ValueError, match="Gumbel"):
+        torch.manual_seed(0)
+        NashPGTrainer(active_net=create_ladder_net(dev, **cfg), env=TsVectorizedEnv(num_envs=2, base_seed=7),
+                      num_envs=2, buffer_size=4, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_value_beta=0.5)
+
+    def rollout(beta: float):
+        torch.manual_seed(0)
+        t = NashPGTrainer(active_net=create_ladder_net(dev, **cfg), env=TsVectorizedEnv(num_envs=4, base_seed=7),
+                          num_envs=4, buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500,
+                          cuda_graphs=False, device=dev, search_sims=8, search_subsample=1.0,
+                          search_node_filter="all", search_gumbel_k=4, search_value_beta=beta)
+        return t, t.collect_rollouts()
+
+    t, metrics = rollout(1.0)
+    assert t._searcher is not None
+    sel = t.buffer.has_search_v > 0.5
+    assert int(sel.sum()) > 0 and int((t.buffer.has_search > 0.5).sum()) > 0
+    # beta = 1: the target IS the search value, a win-probability-scale number.
+    assert torch.allclose(t.buffer.returns_win[sel], t.buffer.search_v[sel])
+    assert bool((t.buffer.search_v[sel].abs() <= 1.0 + 1e-5).all())
+    assert metrics["search_value_rows"] == float(sel.sum())
+    # Unsearched rows keep the lambda-return; the advantages ignore the search value.
+    ref, _ = rollout(0.5)
+    assert torch.equal(ref.buffer.has_search_v, t.buffer.has_search_v)
+    assert torch.allclose(ref.buffer.advantages, t.buffer.advantages)
+    assert torch.allclose(ref.buffer.returns_win[~sel], t.buffer.returns_win[~sel])

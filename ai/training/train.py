@@ -809,6 +809,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "policy is beyond sigma's reach.")
     parser.add_argument("--search-prior-temperature", type=float, default=1.0,
                         help="P32 T1: the Gumbel root's logits are divided by this (1 = the paper's rule).")
+    parser.add_argument("--search-value-beta", type=float, default=0.0,
+                        help="P32 T2: at a searched decision, v_win's target becomes (1 - beta) * the "
+                             "lambda-return + beta * the search value (the improved policy's expected "
+                             "completed Q at the Gumbel root). Needs --search-gumbel-k > 0; runs the "
+                             "searcher with --search-ce-coef 0 too. The advantages are untouched. 0 = off.")
     parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
                         help="P32: search with this FROZEN network for the search CE targets, instead of the "
                              "network being trained -- whose targets follow it as it changes. Same "
@@ -967,6 +972,7 @@ def main():
             search_gumbel_k=args.search_gumbel_k,
             search_prior_temperature=args.search_prior_temperature,
             search_teacher_checkpoint=args.search_teacher_checkpoint,
+            search_value_beta=args.search_value_beta,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,

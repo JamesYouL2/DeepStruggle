@@ -288,6 +288,7 @@ class BaseNashPGTrainer:
         search_gumbel_k: int = 0,      # P32 T1: >0 targets the Gumbel root's improved policy
         search_prior_temperature: float = 1.0,
         search_teacher_net: Optional[nn.Module] = None,   # P32: a FROZEN network to search with
+        search_value_beta: float = 0.0,   # P32 T2: the share of the search value in v_win's target
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
         teacher_coef: float = 0.0,
         teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
@@ -386,7 +387,10 @@ class BaseNashPGTrainer:
         # `_apply_views`. The searcher builds E4 masks for its targets, so the two are not
         # combined until it learns the other view -- refused here rather than mis-targeted.
         self.merged_influence = bool(merged_influence)
-        if self.merged_influence and search_ce_coef > 0.0:
+        if search_value_beta > 0.0 and search_gumbel_k <= 0:
+            raise ValueError("search values into the critic (T2) need the Gumbel root: "
+                             "--search-gumbel-k > 0")
+        if self.merged_influence and (search_ce_coef > 0.0 or search_value_beta > 0.0):
             raise ValueError("--merged-influence with search CE is not supported: the searcher's "
                              "targets are built in the E4 view (P23)")
 
@@ -418,8 +422,12 @@ class BaseNashPGTrainer:
             self.teacher_net = teacher_net.to(self.device).eval()
             for _p in self.teacher_net.parameters():
                 _p.requires_grad_(False)
+        # P32 T2: the target for v_win at a searched decision is (1 - beta) * the lambda-return +
+        # beta * the search value -- the improved policy's expected completed Q at the root. The
+        # policy loss and the advantages are untouched, so it cannot flatten the policy.
+        self.search_value_beta = float(search_value_beta)
         self._searcher = None
-        if self.search_ce_coef > 0.0:
+        if self.search_ce_coef > 0.0 or self.search_value_beta > 0.0:
             from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
             # The network the searcher runs: the one being trained, or a frozen teacher. Searching
             # with the learner closes a loop -- targets built from the network follow it as it
@@ -1654,6 +1662,8 @@ class BaseNashPGTrainer:
             same_perspective_bootstrap=self.same_perspective_bootstrap,
             per_player_gae=self.per_player_gae,
         )
+        if self.search_value_beta > 0.0:
+            self._mix_search_values()
 
         # Freeze the entropy probe pool from the first rollout only.
         if not self.entropy_probe.is_filled:
@@ -1716,6 +1726,10 @@ class BaseNashPGTrainer:
         # the targets, and it being large would mean the determinization has drifted far from
         # the real position.
         if self._searcher is not None:
+            if self.search_value_beta > 0.0:
+                metrics["search_value_rows"] = float(getattr(self, "search_value_rows", 0))
+                metrics["search_value_vs_return"] = float(getattr(self, "search_value_vs_return", 0.0))
+                metrics["search_value_vs_critic"] = float(getattr(self, "search_value_vs_critic", 0.0))
             metrics["search_dropped_visit_frac"] = float(
                 getattr(self, "search_dropped_visit_frac", 0.0))
             metrics["search_dropped_row_frac"] = float(
@@ -1834,6 +1848,21 @@ class BaseNashPGTrainer:
             forced += 1
         self.setup_forced_actions = getattr(self, "setup_forced_actions", 0) + forced
 
+    def _mix_search_values(self) -> None:
+        """P32 T2: blend the search value into v_win's target at the searched decisions, after
+        GAE so the advantages -- and the policy loss -- are the control's. Logs how far the search
+        value sits from the lambda-return it partly replaces, and from the critic's own estimate."""
+        sel = self.buffer.has_search_v > 0.5
+        n = int(sel.sum())
+        self.search_value_rows = n
+        if n == 0:
+            return
+        sv, ret = self.buffer.search_v[sel], self.buffer.returns_win[sel]
+        self.search_value_vs_return = float((sv - ret).abs().mean())
+        self.search_value_vs_critic = float((sv - self.buffer.values_win[sel]).abs().mean())
+        b = self.search_value_beta
+        self.buffer.returns_win[sel] = (1.0 - b) * ret + b * sv
+
     def _queue_search_targets(self, step: int) -> None:
         """Note the decisions this configuration searches at buffer row `step`, for
         `_flush_search_targets` to answer when the rollout ends.
@@ -1882,12 +1911,14 @@ class BaseNashPGTrainer:
         # Every row is rewritten each rollout: a row left alone would keep last rollout's target.
         self.buffer.search_pi.zero_()
         self.buffer.has_search.zero_()
+        self.buffer.has_search_v.zero_()
         if not queue:
             return
         was_training = self.active_net.training
         self.active_net.eval()
         try:
             res: List[Tuple[List[int], Any]] = []
+            root_values: List[float] = []
             sat_n = 0.0
             for s0 in range(0, len(queue), SEARCH_CHUNK):
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
@@ -1895,6 +1926,7 @@ class BaseNashPGTrainer:
                     res.extend(self._searcher.improved_policies(chunk))
                     root = getattr(self._searcher, "_gumbel", None)
                     sat_n += float(getattr(root, "last_saturated_frac", 0.0)) * len(chunk)
+                    root_values.extend(float(x) for x in getattr(root, "last_values", []))
                 else:
                     res.extend(self._searcher.run(chunk))
             self.search_saturated_frac = sat_n / max(1, len(queue))
@@ -1935,6 +1967,15 @@ class BaseNashPGTrainer:
                 vals.append(float(p))
             flag_t.append(t)
             flag_e.append(i)
+        if self.search_value_beta > 0.0 and len(root_values) == len(queue):
+            sv = [(t, i, x) for (t, i, _st), x in zip(queue, root_values) if _np.isfinite(x)]
+            if sv:
+                dev = self.buffer.search_v.device
+                ti = torch.tensor([a for a, _b, _c in sv], device=dev)
+                ei = torch.tensor([b for _a, b, _c in sv], device=dev)
+                self.buffer.search_v[ti, ei] = torch.tensor([c for _a, _b, c in sv],
+                                                            dtype=self.buffer.search_v.dtype, device=dev)
+                self.buffer.has_search_v[ti, ei] = 1.0
         if vals:
             dev = self.buffer.search_pi.device
             self.buffer.search_pi[torch.tensor(t_idx, device=dev), torch.tensor(e_idx, device=dev),

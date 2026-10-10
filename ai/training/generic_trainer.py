@@ -1616,6 +1616,7 @@ def train_pipeline(
     search_gumbel_k: int = 0,
     search_prior_temperature: float = 1.0,
     search_teacher_checkpoint: Optional[str] = None,
+    search_value_beta: float = 0.0,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -1881,6 +1882,7 @@ def train_pipeline(
         "search_gumbel_k": int(search_gumbel_k),
         "search_prior_temperature": float(search_prior_temperature),
         "search_teacher_checkpoint": search_teacher_checkpoint,
+        "search_value_beta": float(search_value_beta),
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2233,6 +2235,7 @@ def train_pipeline(
         search_gumbel_k=search_gumbel_k,
         search_prior_temperature=search_prior_temperature,
         search_teacher_net=search_teacher_net,
+        search_value_beta=search_value_beta,
         teacher_net=teacher_net,
         teacher_coef=teacher_coef,
         teacher_seat={"us": 1, "ussr": -1, "both": 0}[teacher_seat],
@@ -2726,6 +2729,8 @@ def train_pipeline(
     if teacher_coef > 0.0:
         active_aux_losses.append("teacher_kl")
         active_aux_losses.append("teacher_rows")
+    if search_value_beta > 0.0:
+        active_aux_losses.extend(["search_value_rows", "search_value_vs_return", "search_value_vs_critic"])
     if search_ce_coef > 0.0:
         # P15-X4b. The CE term's magnitude and its share of the raw gradient. Registering them
         # here rather than unconditionally keeps them off every run that has no searcher, and

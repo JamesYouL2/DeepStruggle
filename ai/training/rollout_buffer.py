@@ -102,6 +102,10 @@ class RolloutBuffer:
                                      dtype=torch.float32, device=self.device)
         self.has_search = torch.zeros((buffer_size, num_envs), dtype=torch.float32,
                                       device=self.device)
+        #: P32 T2: the search value (mover's side) where a decision was searched, and its flag.
+        self.search_v = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=self.device)
+        self.has_search_v = torch.zeros((buffer_size, num_envs), dtype=torch.float32,
+                                        device=self.device)
         self.returns_win = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=self.device)
         self.returns_vp = torch.zeros((buffer_size, num_envs), dtype=torch.float32, device=self.device)
         # Auxiliary target for the DEFCON-risk head: 1 where the acting player is about to
