@@ -41,6 +41,17 @@ def test_the_gate_reads_the_roots_own_margin_in_win_probability() -> None:
     assert target(unvisited, "gated", "256", 0.0)["a"] == [5, 7]
 
 
+def test_consensus_keeps_a_departure_only_where_the_other_budget_picks_the_same_move() -> None:
+    both = _rec()
+    both["g"]["64"] = {"c": 7, "n": {}, "q": {}}
+    other = _rec()
+    other["g"]["64"] = {"c": 5, "n": {}, "q": {}}
+    assert target(both, "consensus", "256", 0.0, "64") == {"a": [7], "v": [1.0]}
+    assert target(other, "consensus", "256", 0.0, "64") == {"a": [5, 7], "v": [0.8, 0.2]}
+    with pytest.raises(ValueError):
+        target(both, "consensus", "256", 0.0)
+
+
 @pytest.fixture(scope="module")
 def targets(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, str]:
     d = tmp_path_factory.mktemp("gchoice")

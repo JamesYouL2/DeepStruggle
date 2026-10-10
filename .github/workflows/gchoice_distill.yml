@@ -52,7 +52,7 @@ on:
         description: "The acting network's sampling temperature while the targets are generated"
         default: "0.2"
       arms:
-        description: "form:budget[:min_margin] per arm (tools/gchoice_targets.py arm)"
+        description: "form:budget[:extra] per arm (tools/gchoice_targets.py arm); extra is the min margin for gated, the budget to agree with for consensus"
         default: "departures:256 departures:64 gated:256:0.04 own:256"
       epochs:
         default: "2"
@@ -111,9 +111,12 @@ jobs:
           for spec in os.environ["ARMS"].split():
               f = spec.split(":")
               form, budget = f[0], f[1]
-              margin = f[2] if len(f) > 2 else ""
-              name = f"gc-{form}{budget}" + (f"-m{margin}" if form == "gated" else "")
-              arms.append({"form": form, "budget": budget, "margin": margin or "0.04", "name": name})
+              extra = f[2] if len(f) > 2 else ""
+              name = f"gc-{form}{budget}" + (f"-m{extra}" if form == "gated" else "") \
+                  + (f"x{extra}" if form == "consensus" else "")
+              flags = (f"--min-margin {extra or '0.04'}" if form == "gated" else
+                       f"--agree-with {extra}" if form == "consensus" else "")
+              arms.append({"form": form, "budget": budget, "flags": flags, "name": name})
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"parts={json.dumps(list(range(1, r + 1)))}\n")
               out.write(f"play_parts={json.dumps(list(range(1, pr + 1)))}\n")
@@ -228,7 +231,7 @@ jobs:
           name="${{ matrix.arm.name }}"
           tools/scripts/check_engine_fresh.sh && python tools/gchoice_targets.py arm \
             --input $(find targets -name 'targets-*.jsonl.gz' | sort) --form "${{ matrix.arm.form }}" \
-            --budget "${{ matrix.arm.budget }}" --min-margin "${{ matrix.arm.margin }}" \
+            --budget "${{ matrix.arm.budget }}" ${{ matrix.arm.flags }} \
             --out work/arm.jsonl.gz | tee "out/$name.arm.json"
           python tools/train.py --mode distill --warmup-checkpoint work/base.pt \
             --distill-dataset work/arm.jsonl.gz --distill-epochs "$EPOCHS" --distill-lr "$LR" \
