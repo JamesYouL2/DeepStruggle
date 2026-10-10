@@ -809,6 +809,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "policy is beyond sigma's reach.")
     parser.add_argument("--search-prior-temperature", type=float, default=1.0,
                         help="P32 T1: the Gumbel root's logits are divided by this (1 = the paper's rule).")
+    parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
+                        help="P32: search with this FROZEN network for the search CE targets, instead of the "
+                             "network being trained -- whose targets follow it as it changes. Same "
+                             "observation features and action view as the learner.")
     parser.add_argument("--teacher-checkpoint", type=str, default=None,
                         help="P32: a frozen checkpoint whose policy is distilled, with "
                              "--teacher-coef, on the learner's own decisions in --teacher-seat "
@@ -962,6 +966,7 @@ def main():
             search_node_filter=args.search_node_filter,
             search_gumbel_k=args.search_gumbel_k,
             search_prior_temperature=args.search_prior_temperature,
+            search_teacher_checkpoint=args.search_teacher_checkpoint,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,

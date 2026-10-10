@@ -540,3 +540,29 @@ def test_the_logit_gap_penalty_raises_saturated_moves() -> None:
     t.collect_rollouts()
     m = t.train_step()
     assert m["logit_gap_loss"] > 0.0 and 0.0 < m["logit_gap_frac"] <= 1.0
+
+
+def test_a_frozen_search_teacher_is_what_the_searcher_runs() -> None:
+    """--search-teacher-checkpoint: the targets come from a frozen network, not the learner."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
+               card_self_attention=False, cross_attention=False, per_entity_heads=16,
+               head_context=True, head_static=True, head_entities="country", head_center=True,
+               identity_dim=0, drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+               card_lookup=False, card_lookup_heads=0, card_lookup_dim=0, card_lookup_identity_dim=0,
+               categorical_value=False)
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    learner, teacher = create_ladder_net(dev, **cfg), create_ladder_net(dev, **cfg)
+    t = NashPGTrainer(active_net=learner, env=TsVectorizedEnv(num_envs=4, base_seed=7), num_envs=4,
+                      buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_ce_coef=0.5, search_sims=8, search_subsample=1.0,
+                      search_node_filter="all", search_gumbel_k=4, search_teacher_net=teacher)
+    searcher = t._searcher
+    assert searcher is not None and getattr(searcher, "model") is teacher
+    assert not any(p.requires_grad for p in teacher.parameters())
+    t.collect_rollouts()
+    assert int((t.buffer.has_search > 0.5).sum()) > 0

@@ -287,6 +287,7 @@ class BaseNashPGTrainer:
         search_node_filter: str = "card_playmode",
         search_gumbel_k: int = 0,      # P32 T1: >0 targets the Gumbel root's improved policy
         search_prior_temperature: float = 1.0,
+        search_teacher_net: Optional[nn.Module] = None,   # P32: a FROZEN network to search with
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
         teacher_coef: float = 0.0,
         teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
@@ -420,8 +421,16 @@ class BaseNashPGTrainer:
         self._searcher = None
         if self.search_ce_coef > 0.0:
             from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
+            # The network the searcher runs: the one being trained, or a frozen teacher. Searching
+            # with the learner closes a loop -- targets built from the network follow it as it
+            # changes (R29: target entropy 0.17 -> 0.53 behind the policy's 0.21 -> 0.93); a frozen
+            # teacher's targets hold still, which is what standard distillation relies on.
+            if search_teacher_net is not None:
+                search_teacher_net = search_teacher_net.to(self.device).eval()
+                for _p in search_teacher_net.parameters():
+                    _p.requires_grad_(False)
             self._searcher = BatchedMCTS(
-                active_net, device=self.device,
+                search_teacher_net if search_teacher_net is not None else active_net, device=self.device,
                 config=BatchedMCTSConfig(
                     simulations=search_sims, temperature=0.0, auto_advance=True,
                     advance_root=False, determinize=True,

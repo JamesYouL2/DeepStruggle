@@ -1615,6 +1615,7 @@ def train_pipeline(
     search_node_filter: str = "card_playmode",
     search_gumbel_k: int = 0,
     search_prior_temperature: float = 1.0,
+    search_teacher_checkpoint: Optional[str] = None,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -1879,6 +1880,7 @@ def train_pipeline(
         "search_node_filter": search_node_filter,
         "search_gumbel_k": int(search_gumbel_k),
         "search_prior_temperature": float(search_prior_temperature),
+        "search_teacher_checkpoint": search_teacher_checkpoint,
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2170,6 +2172,17 @@ def train_pipeline(
         curriculum_switch_at = float("inf")
         curriculum_switched = False
 
+    # P32: a frozen network for the search targets, under the same view checks as the teacher below.
+    search_teacher_net: Optional[nn.Module] = None
+    if search_teacher_checkpoint:
+        search_teacher_net = NeuralAgent.from_checkpoint(search_teacher_checkpoint, device=dev).model
+        check_obs_width(search_teacher_net)
+        if model_obs_features(search_teacher_net) != model_obs_features(model):
+            raise ValueError(f"search teacher {search_teacher_checkpoint} reads other observation features")
+        if checkpoint_merged_influence(search_teacher_checkpoint) != bool(merged_influence):
+            raise ValueError(f"search teacher {search_teacher_checkpoint} acts in another action view")
+        print(f"[search teacher] the search targets come from frozen {search_teacher_checkpoint}", flush=True)
+
     # P32: a frozen teacher to distil in one seat. It must read the same observation and act in
     # the same action view, or its log-probabilities would be over different inputs and slots.
     teacher_net: Optional[nn.Module] = None
@@ -2219,6 +2232,7 @@ def train_pipeline(
         search_node_filter=search_node_filter,
         search_gumbel_k=search_gumbel_k,
         search_prior_temperature=search_prior_temperature,
+        search_teacher_net=search_teacher_net,
         teacher_net=teacher_net,
         teacher_coef=teacher_coef,
         teacher_seat={"us": 1, "ussr": -1, "both": 0}[teacher_seat],
