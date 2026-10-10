@@ -56,7 +56,7 @@ teacher that works shrinks it, and it reads long before strength can.
 | arm | change | why |
 |:---|:---|:---|
 | **T1 Gumbel improved-policy targets** | the CE target is the Gumbel root's improved policy, π′ ∝ π·exp(σ(completed Q)) over its candidates with the untouched tail renormalised (`ai/search/gumbel_root.py` has the root; the target export is built). **As first specified (k = 4 @16, CE 0.5) it fails** -- see *The T1 loop* below; the live cells are R31 (32 evaluations, CE 0.1) and a **frozen teacher** | the premise "sharp, so no entropy injection" holds only when the search noise is small against the policy's top-two gap (median ~5 nats); at 2–6 evaluations per candidate it is not, and a target built from the network being trained follows the student |
-| **T2 search values into the critic** | the root's search value (PUCT or Gumbel, the same searched decisions) mixed into the value target, `(1−β)·λ-return + β·V_search`, β 0.5 first; policy loss unchanged | it cannot flatten the policy; it attacks the critic that bounds search's own leaves and every playout read in B4′; it is how the AlphaZero family's value head learns. Read: critic sign agreement with playouts (the E5-15 instrument), then strength |
+| **T2 search values into the critic** | the root's search value mixed into the value target, `(1−β)·λ-return + β·V_search`, β 0.5 first; policy loss unchanged. **Built** (`--search-value-beta`, `6370f5a`): at searched rows `v_win`'s target becomes (1−β)·λ-return + β·Σπ′·completed Q, blended *after* GAE so the advantages are untouched; the searcher runs with the CE off; `search_value_vs_return` and `_vs_critic` logged. Planned as the next slot after R32's read: frozen soup teacher, k = 4 @32, β 0.5, subsample 1/8, **alone** (cleaner than on top of T1). Caution: with a frozen teacher Σπ′·completed Q is the teacher's value under its own improved policy -- above the student's λ-return early in the leg -- so if `search_value_vs_return` is uniformly positive the searched 1/8 of rows carry an optimism the rest do not; the fix is to blend the *difference* from the student's root value, not the level | it cannot flatten the policy; it attacks the critic that bounds search's own leaves and every playout read in B4′; it is how the AlphaZero family's value head learns. Read: critic sign agreement with playouts (the E5-15 instrument) and the opening familiarity bias (−12.9 against +0.5), then the search gap, then strength |
 | **T3 teach only where the teacher knows better** | the CE term weighted by the root's value improvement over the policy's choice (or KataGo's policy-surprise weight), zero where the search agrees; `POINT_NODE` only when the gap is large | removes the flat-target noise at 84-way nodes without naming a node type |
 | **T4 R18 with an entropy target** | R18's recipe plus a dual-variable entropy target held at the plateau's 0.30 | separates "the targets are informative but broad" from "the targets are noise": if T4 gains where R18 did not, the information was there |
 
@@ -335,7 +335,9 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   saturation remedy.
 * `E7-A8-R1-S44@6400M+R34` -- the gap penalty 1e-3 alone, no scenario, 6,400 → 6,800M against the
   plain leg (running; sampled entropy ~0.84): **the cost read** that decides whether the gap loss
-  goes into the recipe.
+  goes into the recipe -- both a greedy field at matched windows and a T = 1 head to head, to tell
+  the loss's own cost from the broader rollout policy it induces; if only T = 1 costs, the next
+  cell is 3e-4.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
