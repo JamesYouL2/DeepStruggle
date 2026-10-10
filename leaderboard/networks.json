@@ -43,7 +43,7 @@
     "sha256": "1d4f65f040684610e5ae9bd47ff06bb35b51e25be4233ec16f66c3d61fa725b8",
     "description": "P32 T1 with a frozen teacher (recipe R32): search CE 0.1 toward the frozen heads soup's Gumbel improved policy (k=4, 32 evaluations, every node type, 1 in 8), 6,400 -> 6,800M; SWA of its last 80M. Above the heads soup in the arm's field (1552 vs 1542, 51.7% head to head), +7.1/+8.4 per seat over the plain leg",
     "old_names": [],
-    "hf": null,
+    "hf": "E7-A8-R1-S44@6400M+R32_20261010_005623/swa_6720-6800M.pt",
     "report": null
   },
   "E7-A8-R1-S44@6400M+R32@6800M": {
@@ -51,7 +51,7 @@
     "sha256": "684d623e8d1352c246c841176ec786fef1c9cf10cf15aea571167ae916d828ea",
     "description": "P32 T1 with a frozen teacher (recipe R32), the raw 6,800M snapshot",
     "old_names": [],
-    "hf": null,
+    "hf": "E7-A8-R1-S44@6400M+R32_20261010_005623/snapshot_6800015360steps.pt",
     "report": null
   },
   "E7-A8-R1-S44@6400M+R34@6720..6800M": {
@@ -59,7 +59,7 @@
     "sha256": "be81eae0d822f3abb161e8df5501f318a2f0e11e354ae0663acf33f7fa0ba3e1",
     "description": "The logit-gap penalty at 1e-3, gap 7 (recipe R34), 6,400 -> 6,800M; SWA of its last 80M. Greedy +7.6/+2.1 per seat over the plain leg, 55.5% head to head; loses at T=1 (36.6%)",
     "old_names": [],
-    "hf": null,
+    "hf": "E7-A8-R1-S44@6400M+R34_20261010_031009/swa_6720-6800M.pt",
     "report": null
   },
   "E7-A8-R1-S44@6720..6800M": {
