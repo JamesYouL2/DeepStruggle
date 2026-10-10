@@ -1069,6 +1069,20 @@ self-play:
 .venv/bin/python tools/scripts/placement_census.py --compare human_pl.json NEWEST=newest_pl.json
 ```
 
+`ops_census.py` counts every Ops target -- influence points, coups and realignment rolls -- the same
+way, and also asks a checkpoint at each human target's own position (`onhuman`): its probability
+for every country there, so a country's gap is measured on equal positions, with standard errors
+clustered by game (`research/log/E7_ops_by_country.md`):
+
+```bash
+.venv/bin/python tools/scripts/ops_census.py human --out human_ops.jsonl.gz
+.venv/bin/python tools/scripts/ops_census.py selfplay --checkpoint newest.pt --games 4096 --out newest_ops.json.gz
+.venv/bin/python tools/scripts/ops_census.py onhuman --human human_ops.jsonl.gz --checkpoint newest.pt \
+    --out newest_onhuman.json.gz
+.venv/bin/python tools/scripts/ops_census.py report --human human_ops.jsonl.gz \
+    --selfplay NEWEST=newest_ops.json.gz --onhuman NEWEST=newest_onhuman.json.gz --out ops.md
+```
+
 ---
 
 ## 7c. Search Experiments: Searchers on the Bank, the Rollout Root, Distillation Rounds
