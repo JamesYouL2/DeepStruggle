@@ -202,9 +202,16 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
 * **A stronger, cleaner teacher does not help, because the teacher was never the bottleneck.** The
   rollout root's departures go to moves the network gives 0.07 (Gumbel's: 0.15) -- further from what
   it expresses -- and they are the products of four action rounds of consequences that a forward
-  pass does not compute. Every teacher tried (visit counts, Gumbel's pick, gated, consensus, and now
-  rollouts) meets the same wall: the network cannot represent search's corrections at the positions
-  where search makes them, and pushing it there costs more than it gains.
+  pass does not compute. In one offline round from the saturated soup, every teacher tried (visit
+  counts, Gumbel's pick, gated, consensus, and now rollouts) meets the same wall: the network does not
+  fit search's corrections at the positions where search makes them, and pushing it there in one
+  step costs more than it gains.
+* **Online is a different regime.** R32 ([P32](../plans/P32_teacher_and_paired_credit.md) T1) -- the
+  frozen soup's Gumbel improved policy (k=4 @32) as a CE term of 0.1 at 1 in 8 decisions, inside RL
+  from 6,400M -- gains where these rounds did not: its 6,720-6,800M SWA is above the heads soup
+  (51.7%) and Gumbel adds little on it (51.2% against itself at 6,600M). A small, soft, continual
+  pull on the network's own positions, kept honest by the RL term, is not a one-shot hard push; the
+  offline null is about the second.
 
 ## Reading: where the limits are, and where to go
 
@@ -220,9 +227,10 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
 3. **Determinized tree search is the limit of today's search.** Gumbel/PUCT in sampled worlds gains
    +85-90 Elo at 256 evaluations and loses ground beyond it. Honest rollouts over many worlds with a
    cautious rule gain twice as much.
-4. **Search does not distil** ([`E7_gchoice_distill.md`](E7_gchoice_distill.md) and section 5): the policy moves
-   toward search's picks without fitting them and broadens; Gumbel's picks (generic, gated,
-   consensus) and the rollout root's (one-hot or a soft KL step) are all level or worse.
+4. **Search does not distil in one offline round** ([`E7_gchoice_distill.md`](E7_gchoice_distill.md) and
+   section 5): the policy moves toward search's picks without fitting them and broadens; Gumbel's
+   picks (generic, gated, consensus) and the rollout root's (one-hot or a soft KL step) are all level
+   or worse. Online improved-policy targets inside RL (R32) are the form that gains.
 
 **Where to go.**
 
@@ -231,12 +239,15 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
   offline judge: worlds, horizon, k, the z threshold, and the KL rule at a larger t.
 * **Make it fast.** Its rollouts step the engine one Python call per state; batched C++ rollouts
   (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time.
-* **Do not spend GPU on search-target training or on value-head fine-tuning for search** -- both are
-  measured null here.
-* **Search does not compound into the network here** -- not Gumbel's picks, not the rollout root's
-  (section 5). The gain is banked by searching at play time; improving the network itself goes
-  through RL and representation (the A8 heads are the precedent: Wargames was fixed by giving the
-  policy a card-conditioned readout, not by showing it the move).
+* **Offline distillation rounds and value-head fine-tuning for search are measured null here**; online
+  improved-policy targets (R32) are the training route that gains. Whether R32 has absorbed what the
+  rollout root adds, or only what Gumbel adds, is the next question -- the rollout root searched on R32
+  against Gumbel on R32 answers it.
+* **One offline round does not compound search into the network** -- not Gumbel's picks, not the
+  rollout root's (section 5). Until a training route absorbs the rollout root's gain, it is banked by
+  searching at play time; besides R32's online targets, the network itself improves through RL and
+  representation (the A8 heads are the precedent: Wargames was fixed by giving the policy a
+  card-conditioned readout, not by showing it the move).
 * **Longer horizons next:** 4 boundaries beat 2 by +35 on the soup; 6-8 (or to the turn's end) is the
   obvious next point, with the time cost measured.
 

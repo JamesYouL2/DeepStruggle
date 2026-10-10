@@ -14,8 +14,10 @@ departures the distilled network plays Gumbel's choice at 14% of held-out depart
 and loses to the base **49.1% ± 0.65** (−6 Elo), exactly as it loses to the no-signal control. The
 @64 targets are worse (48.6%), the margin-gated ones in between (49.5%). The pre-registered bar --
 +1.5 points over both the base and the control -- lies outside the 95% interval. **Distilling search's
-choices, generically or filtered by the root's own margin, is not a way to bank search's gain on this
-network.**
+choices in one offline round, generically or filtered by the root's own margin, is not a way to bank
+search's gain on this network.** Online it is another matter: R32
+([P32](../plans/P32_teacher_and_paired_credit.md) T1), the soup's Gumbel improved policy as a small CE
+term inside RL, gains -- its SWA is above the heads soup.
 
 ## Method
 
@@ -94,8 +96,9 @@ no seat-specific effect. Report and checks: `data/reports/gchoice_distill/380070
 * **What this does not rule out.** A denoised target -- a departure only where independent searches
   agree, or one confirmed by paired playouts -- is a different and much smaller set, and this run's
   targets can be reused for it (`targets_from=38007091505`) without searching again. Nor does it say
-  anything about value-target training. It does say that the generic forms, offline and online, are
-  exhausted on this network.
+  anything about value-target training. It says the one-shot offline forms are exhausted on this
+  network; online, visit-count targets were null (E7-93/94-45, R18) and Gumbel improved-policy targets
+  gain (R32).
 * **So the gain of search is best banked by searching.** Gumbel k=8 @256 is +55-65 Elo at play time
   on this network; the census's one recurring blunder (the last influence placement of turn 10) wants
   an exact solver, not training.
