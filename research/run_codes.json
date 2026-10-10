@@ -740,6 +740,19 @@
     "logit_gap_coef": 0.001,
     "block_lambda": "off"
    }
+  },
+  "R35": {
+   "description": "P32 T2: R1 plus search values into the critic -- at 1 in 8 decisions (every node type) the frozen heads soup's Gumbel root (k=4, 32 evaluations) gives a search value, and v_win's target is 0.5 * the lambda-return + 0.5 * it; no search CE",
+   "first": "E7-A8-R1-S44@6400M+R35_20261010_050831",
+   "flags": {
+    "search_node_filter": "all",
+    "search_gumbel_k": 4,
+    "search_teacher_checkpoint": "/workspace/data/checkpoints/_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt",
+    "search_value_beta": 0.5,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -871,7 +884,8 @@
   "E7-A8-R1-S44@6400M+R31_20261010_004648": "E7-A8-R1-S44@6400M+R31",
   "E7-A8-R1-S44@6400M+R32_20261010_005623": "E7-A8-R1-S44@6400M+R32",
   "E7-A8-R1-S44@6400M+R33_20261010_011133": "E7-A8-R1-S44@6400M+R33",
-  "E7-A8-R1-S44@6400M+R34_20261010_031009": "E7-A8-R1-S44@6400M+R34"
+  "E7-A8-R1-S44@6400M+R34_20261010_031009": "E7-A8-R1-S44@6400M+R34",
+  "E7-A8-R1-S44@6400M+R35_20261010_050831": "E7-A8-R1-S44@6400M+R35"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
