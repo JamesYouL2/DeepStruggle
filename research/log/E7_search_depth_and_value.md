@@ -157,8 +157,23 @@ network rows per decision (3.6x Gumbel@256) and ~8x its CPU time in this Python 
 * **The offline judge is not enough on its own.** It ranked the rollout root first, correctly, but
   Gumbel@1,024 above Gumbel@256, wrongly. Search variants are ranked by games.
 
-**On the frontier network** (the heads soup, CI `38042458244`, running): the network, Gumbel@256 and
-the rollout root at 4 and at 2 boundaries (16 worlds), 500 games a side.
+**On the frontier network** -- the heads soup `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt`, used as
+published (CI `38042458244`; the provenance's "rebuilt with" line is the workflow's template echo, the
+.pt was taken as it is); the rollout root at 4 and at 2 boundaries, 16 worlds; 500 games a side:
+
+| pairing | score | Elo |
+|:---|---:|---:|
+| Gumbel@256 against the soup | 58.2% +- 1.6 | +57 |
+| **rollout root, 4 boundaries, against the soup** | **70.2% +- 1.5** | **+148** |
+| rollout root, 2 boundaries, against the soup | 64.1% +- 1.5 | +101 |
+| **rollout root, 4 boundaries, against Gumbel@256** | **63.7% +- 1.5** | **+97** |
+| rollout root, 2 boundaries, against Gumbel@256 | 57.6% +- 1.6 | +53 |
+| 4 boundaries against 2 | 55.1% +- 1.6 | +35 |
+
+Field Elo (soup 1,423): Gumbel@256 1,477, rollout H2 1,530, rollout H4 1,570. It holds on the best
+network, by more than on the bank's model, and in both seats (against Gumbel@256 the H4 root scores
+66.6% as US and 61.0% as USSR). The longer horizon is better; the leaderboard's Gumbel k8 @256 on this
+soup (57.9% against its network) is reproduced here (58.2%).
 
 ## Reading: where the limits are, and where to go
 
@@ -181,15 +196,16 @@ the rollout root at 4 and at 2 boundaries (16 worlds), 500 games a side.
 **Where to go.**
 
 * **Deploy the rollout root as the strongest player** -- the leaderboard's searcher and the
-  workbench's -- once the frontier run confirms it on the heads soup. Tune it by games, not by the
+  workbench's: confirmed on the heads soup (+97 Elo over Gumbel@256 there). Tune it by games, not by the
   offline judge: worlds, horizon, k, the z threshold, and the KL rule at a larger t.
 * **Make it fast.** Its rollouts step the engine one Python call per state; batched C++ rollouts
   (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time.
 * **Do not spend GPU on search-target training or on value-head fine-tuning for search** -- both are
   measured null here.
 * **A training idea that follows from this, untested:** the rollout root's cautious departures are a
-  different teacher from Gumbel's noisy ones; if any distillation is retried, it is this one, and
-  only after the rollout root is confirmed on the frontier network.
+  different teacher from Gumbel's noisy ones; if any distillation is retried, it is this one.
+* **Longer horizons next:** 4 boundaries beat 2 by +35 on the soup; 6-8 (or to the turn's end) is the
+  obvious next point, with the time cost measured.
 
 ## Replicate
 
