@@ -67,7 +67,7 @@ class Nested:
 
 
 def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: int, seed: int,
-          chunk: int = 2048, max_plies: int = 1500, lookahead: int = 0, look_worlds: int = 4,
+          chunk: int = 16384, max_plies: int = 1500, lookahead: int = 0, look_worlds: int = 4,
           look_cap: int = 12, nested: Optional[List[Nested]] = None, nested_p: float = 0.0) -> None:
     """Fill each candidate's `values`: every option over `worlds` worlds, to the end of the turn.
 
@@ -98,66 +98,95 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
         if feats:
             runner.set_obs_features([feats] * n, [feats] * n)
         start_turn = np.zeros(n, dtype=np.int64)
-        sides = []
-        for i, (ci, _oi, _w, st) in enumerate(part):
+        sides = np.zeros(n, dtype=np.int64)
+        off_policy = np.zeros(n, dtype=bool)
+        for i, (ci, oi, _w, st) in enumerate(part):
             runner.set_state(i, st)
             start_turn[i] = int(cands[ci].state.turn)
-            sides.append(decider(cands[ci].state))
+            sides[i] = int(decider(cands[ci].state))
+            off_policy[i] = cands[ci].options[oi] != cands[ci].taken
         runner.refresh_all()
         done = np.zeros(n, dtype=bool)
         value = np.zeros(n)
         look_left = np.full(n, lookahead, dtype=np.int64)
         branch_rng = random.Random(seed + 7 * lo + 1)
+        np_rng = np.random.default_rng(seed + 7 * lo + 2)
+        pos = np.full(n, -1, dtype=np.int64)
         for _ply in range(max_plies + 1):
             term = np.asarray(runner.get_terminals(), dtype=bool)
             turns = np.asarray(runner.get_turns(), dtype=np.int64)
             new = ~done & (term | (turns > start_turn))
-            if new.any():
+            new_term = new & term
+            new_turn = new & ~term
+            if new_term.any():
                 util = np.asarray(runner.get_terminal_utilities(), dtype=np.float64)
-                idx = np.flatnonzero(new)
-                rows = [int(i) for i in idx if not term[i]]
-                for i in idx:
-                    if term[i]:
-                        value[i] = util[i] if sides[i] == ts.Player.US else -util[i]
-                if rows:
-                    sts = [runner.get_state(i) for i in rows]
-                    obs = np.stack([np.asarray(ts.extract_observation_features(s, sides[i], feats),
-                                               dtype=np.float32) for s, i in zip(sts, rows)])
-                    masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8)
-                                      for s in sts])
-                    _lg, v = forward(model, obs, masks, device)
-                    value[rows] = v
+                value[new_term] = np.where(sides[new_term] == int(ts.Player.US), util[new_term], -util[new_term])
+            active = ~done & ~new
+            # Only rows still playing, and rows whose turn just ended (for their critic read), go
+            # through the network: a finished playout's observation is never copied to the device.
+            rows = np.flatnonzero(active | new_turn)
+            if rows.size == 0:
                 done |= new
+                break
+            dps = np.asarray(runner.get_decision_players(), dtype=np.int64)
+            obs_all = np.asarray(runner.get_observations(), dtype=np.float32)
+            masks_all = np.asarray(runner.get_action_masks())
+            # While most rows still play, the whole batch goes to the device and is indexed there (a
+            # host-side gather copied tens of MB per ply); once fewer than half do, only they are
+            # copied. The masked argmax runs on the device.
+            with torch.no_grad():
+                if rows.size * 2 > n:
+                    ridx = torch.from_numpy(rows).to(device)
+                    obs_t = torch.from_numpy(obs_all).to(device).index_select(0, ridx)
+                    mask_t = torch.from_numpy(masks_all).to(device).index_select(0, ridx)
+                else:                                 # fewer than half still playing: gather here
+                    obs_t = torch.from_numpy(obs_all[rows]).to(device)
+                    mask_t = torch.from_numpy(masks_all[rows]).to(device)
+                lg_t, v_t, _ = model(obs_t, mask_t)
+                arg_rows = lg_t.argmax(dim=-1).cpu().numpy()
+                v = v_t.float().reshape(-1).cpu().numpy()
+            pos[rows] = np.arange(rows.size)
+            # The critic's value at the turn's end, from the decider's side: the forward's own value
+            # where the decider is the side to act there, its own view extracted where it is not.
+            nt = np.flatnonzero(new_turn)
+            if nt.size:
+                same = dps[nt] == sides[nt]
+                value[nt[same]] = v[pos[nt[same]]]
+                other = nt[~same]
+                if other.size:
+                    sts = [runner.get_state(int(i)) for i in other]
+                    o = np.stack([np.asarray(ts.extract_observation_features(st, ts.Player(int(sides[i])), feats),
+                                             dtype=np.float32) for st, i in zip(sts, other)])
+                    m = np.stack([np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8) for st in sts])
+                    _lg2, v2 = forward(model, o, m, device)
+                    value[other] = v2
+            done |= new
             if done.all():
                 break
-            obs = np.asarray(runner.get_observations(), dtype=np.float32)
-            masks = np.asarray(runner.get_action_masks())
-            lg, _ = forward(model, obs, masks, device)
-            lg = np.where(masks > 0, lg, -np.inf)
-            acts = lg.argmax(axis=1)
-            acts[done] = masks[done].argmax(axis=1)     # finished rows: any legal move, ignored
+            acts = np.zeros(n, dtype=np.int64)       # finished rows: refused or not, ignored
+            act_rows = np.flatnonzero(active)
+            acts[act_rows] = arg_rows[pos[act_rows]]
             if lookahead > 0 or nested is not None:
-                dps = np.asarray(runner.get_decision_players(), dtype=np.int64)
+                mine = active & (turns == start_turn) & (dps == sides)
+                look_rows = mine & (look_left > 0)
+                nest_rows = (mine & off_policy & (np_rng.random(n) < nested_p)) if nested is not None \
+                    else np.zeros(n, dtype=bool)
                 subs: List[Candidate] = []
                 owners: List[int] = []
-                for i in range(n):
-                    if done[i] or turns[i] != start_turn[i] or dps[i] != int(sides[i]):
-                        continue
-                    ci, oi = part[i][0], part[i][1]
-                    off_policy = cands[ci].options[oi] != cands[ci].taken
-                    want_nest = nested is not None and off_policy and branch_rng.random() < nested_p
-                    if look_left[i] <= 0 and not want_nest:
-                        continue
+                for i in np.flatnonzero(look_rows | nest_rows):
+                    i = int(i)
                     st = runner.get_state(i)
                     if not priceable(st, look_cap):
                         continue
-                    legal = [int(a) for a in np.flatnonzero(masks[i])]
-                    if want_nest and nested is not None:
-                        z = lg[i][legal] - lg[i][legal].max()
+                    legal = [int(a) for a in np.flatnonzero(masks_all[i])]
+                    if nest_rows[i] and nested is not None:
+                        lg_i = lg_t[int(pos[i])].float().cpu().numpy()
+                        z = lg_i[legal] - lg_i[legal].max()
                         pz = np.exp(z) / np.exp(z).sum()
-                        nested.append(Nested(ci, oi, Candidate(game=-1, choice=-1, state=st.clone(), options=legal,
-                                                               probs=[float(x) for x in pz], taken=int(acts[i]))))
-                    if look_left[i] > 0:
+                        nested.append(Nested(part[i][0], part[i][1],
+                                             Candidate(game=-1, choice=-1, state=st.clone(), options=legal,
+                                                       probs=[float(x) for x in pz], taken=int(acts[i]))))
+                    if look_rows[i]:
                         subs.append(Candidate(game=-1, choice=-1, state=st, options=legal, probs=[],
                                               taken=int(acts[i])))
                         owners.append(i)
@@ -172,10 +201,10 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
                 raise RuntimeError("the engine refused a greedy playout action")
         else:
             raise RuntimeError(f"{int((~done).sum())} playouts still running after {max_plies} plies")
-        for (ci, oi, w, _st), v in zip(part, value):
+        for (ci, oi, w, _st), v_ in zip(part, value):
             vals = cands[ci].values
             assert vals is not None
-            vals[oi, w] = v
+            vals[oi, w] = v_
     for c in cands:                          # a world with any option missing is dropped whole
         assert c.values is not None
         c.values = c.values[:, ~np.isnan(c.values).any(axis=0)]

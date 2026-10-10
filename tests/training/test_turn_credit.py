@@ -46,3 +46,24 @@ def test_a_rollout_prices_and_the_update_trains() -> None:
     out = tc.update(t.active_net, t.optimizer, t.max_grad_norm)
     assert "tc_loss" in out and np.isfinite(out["tc_loss"])
     assert any(not torch.equal(a, b.detach()) for a, b in zip(before, t.active_net.parameters()))
+
+
+def test_worker_pricing_files_rows_one_rollout_late() -> None:
+    """--turn-credit-workers: the first flush only sends; the second files the first's rows."""
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    t = NashPGTrainer(active_net=create_ladder_net(dev, **CFG), env=TsVectorizedEnv(num_envs=4, base_seed=7),
+                      num_envs=4, buffer_size=16, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, turn_credit_coef=1.0, turn_credit_budget=4, turn_credit_worlds=4,
+                      turn_credit_workers=1)
+    tc = t.turn_credit
+    assert tc is not None
+    try:
+        t.collect_rollouts()
+        assert len(tc.ready) == 0 and tc._outstanding == 1
+        t.collect_rollouts()
+        assert tc.stats["tc_priced"] > 0 and len(tc.ready) > 0
+        for obs, mask, tgt, w in tc.ready:
+            assert abs(float(tgt.float().sum()) - 1.0) < 1e-2 and 0.0 <= w <= 1.0
+    finally:
+        tc.close()

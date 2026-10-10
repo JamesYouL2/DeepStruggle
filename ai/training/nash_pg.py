@@ -368,6 +368,7 @@ class BaseNashPGTrainer:
         turn_credit_steps: int = 4,
         turn_credit_batch: int = 512,
         turn_credit_buffer: int = 8192,
+        turn_credit_workers: int = 0,
         force_applicable_events: Sequence[str] = (),
         force_event_frac: float = 0.1,
         force_events_from: int = 0,
@@ -812,11 +813,14 @@ class BaseNashPGTrainer:
                 k_se=turn_credit_k, floor=turn_credit_floor, nested_p=turn_credit_nested_p,
                 nested_share=turn_credit_nested_share, narrow_share=turn_credit_narrow_share,
                 cap=turn_credit_cap, buffer=turn_credit_buffer, steps=turn_credit_steps,
-                batch=turn_credit_batch, obs_features=int(model_obs_features(self.active_net)))
+                batch=turn_credit_batch, obs_features=int(model_obs_features(self.active_net)),
+                workers=turn_credit_workers)
             print(f"[turn credit] coef {turn_credit_coef:g}: {turn_credit_budget} learner decisions per rollout "
                   f"(2-{turn_credit_cap} options) priced over {turn_credit_worlds} worlds to the turn's end, "
                   f"beta {turn_credit_beta:g}, nested p {turn_credit_nested_p:g}, {turn_credit_steps} x "
-                  f"{turn_credit_batch} CE steps per update", flush=True)
+                  f"{turn_credit_batch} CE steps per update"
+                  + (f", priced by {turn_credit_workers} worker process(es) beside the next rollout"
+                     if turn_credit_workers > 0 else ""), flush=True)
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager

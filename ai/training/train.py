@@ -675,6 +675,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P32 B4': rows per CE step.")
     parser.add_argument("--turn-credit-buffer", type=int, default=8192,
                         help="P32 B4': priced rows kept (FIFO).")
+    parser.add_argument("--turn-credit-workers", type=int, default=0,
+                        help="P32 B4': price in this many worker processes, each with its own copy of the network, "
+                             "beside the next rollout -- a rollout's rows arrive one iteration later. 0: price in the "
+                             "trainer after each rollout.")
     parser.add_argument("--force-applicable-events", nargs="+", default=None,
                         choices=["wargames", "arms_race", "one_small_step", "wargames_branch"],
                         help="Owner 2026-10-06: at the learner's play-mode decision for the listed card "
@@ -1084,6 +1088,7 @@ def main():
             turn_credit_steps=args.turn_credit_steps,
             turn_credit_batch=args.turn_credit_batch,
             turn_credit_buffer=args.turn_credit_buffer,
+            turn_credit_workers=args.turn_credit_workers,
             force_applicable_events=args.force_applicable_events,
             force_event_frac=args.force_event_frac,
             force_events_from=args.force_events_from,
