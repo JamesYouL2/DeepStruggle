@@ -55,7 +55,7 @@ teacher that works shrinks it, and it reads long before strength can.
 
 | arm | change | why |
 |:---|:---|:---|
-| **T1 Gumbel improved-policy targets** | the CE target is the Gumbel root's improved policy, π′ ∝ π·exp(σ(completed Q)) over its candidates with the untouched tail renormalised, k = 4 at 16–32 evaluations (`ai/search/gumbel_root.py` has the root; the target export is the build) | it is sharp (no entropy injection), defined for every action through completed Q, and the headroom log shows k=4 @16 plays PUCT @128 even -- a stronger teacher at an eighth of the cost, so the arm runs near the plain line's throughput rather than R18's 27k steps/s |
+| **T1 Gumbel improved-policy targets** | the CE target is the Gumbel root's improved policy, π′ ∝ π·exp(σ(completed Q)) over its candidates with the untouched tail renormalised (`ai/search/gumbel_root.py` has the root; the target export is built). **As first specified (k = 4 @16, CE 0.5) it fails** -- see *The T1 loop* below; the live cells are R31 (32 evaluations, CE 0.1) and a **frozen teacher** | the premise "sharp, so no entropy injection" holds only when the search noise is small against the policy's top-two gap (median ~5 nats); at 2–6 evaluations per candidate it is not, and a target built from the network being trained follows the student |
 | **T2 search values into the critic** | the root's search value (PUCT or Gumbel, the same searched decisions) mixed into the value target, `(1−β)·λ-return + β·V_search`, β 0.5 first; policy loss unchanged | it cannot flatten the policy; it attacks the critic that bounds search's own leaves and every playout read in B4′; it is how the AlphaZero family's value head learns. Read: critic sign agreement with playouts (the E5-15 instrument), then strength |
 | **T3 teach only where the teacher knows better** | the CE term weighted by the root's value improvement over the policy's choice (or KataGo's policy-surprise weight), zero where the search agrees; `POINT_NODE` only when the gap is large | removes the flat-target noise at 84-way nodes without naming a node type |
 | **T4 R18 with an entropy target** | R18's recipe plus a dual-variable entropy target held at the plateau's 0.30 | separates "the targets are informative but broad" from "the targets are noise": if T4 gains where R18 did not, the information was there |
@@ -80,14 +80,32 @@ showed no change at 50M (154 of 172 suicides) and was stopped at 6,460M. The sam
 would hit T1's CE (π′ − π) through the tanh. (Mean-centring was measured destructive too, KL
 0.65 at C = 7.)
 
-**T1 runs on the straight-through cap, A10** (`--ladder-logit-cap 7 --ladder-logit-cap-grad
-straight`): the capped logits forward, play identical to A9's, the raw gradient back as if
-uncapped. The sanity check is the trap scenario on it (`E7-A8-R1-S44@6400M+A10-R28`, running:
-does the USSR learn the trap now?), then an A10 cap-only control from 6,400M, then **T1 on A10
-from 6,400M against that control**. Every T arm reports **the share of searched decisions with
-max p > 1 − 1e-6** before and after, as the saturation instrument; a root prior temperature
-(`BatchedMCTSConfig.gumbel_prior_temperature`) is the fallback if the straight-through cap costs
-strength on its own.
+**The T1 loop (ts-main, 2026-10-10).** T1 as specified -- `E7-A8-R1-S44@6400M+R29`, uncapped,
+k = 4 @16, CE 0.5, all nodes 1 in 8 -- injected entropy *worse* than R18: policy entropy 0.21 →
+0.93 within 13M, pool win rate 0.658 → 0.643, the CE 70–80% of the gradient. The targets start
+sharp (entropy 0.17 against the policy's 0.21), but at 2–6 evaluations per candidate the search
+noise -- σ scaled by (50 + n)·0.1 at n ≈ 6 is a few nats -- moves the target's argmax between
+similar positions; the CE learns their average, and the targets, built from the network, follow
+it (0.53): **a feedback loop**. Stopped. Two cells replace it:
+
+* **R31** -- 32 evaluations, CE 0.1, 200M, against the plain 6,400–6,600M leg (running).
+* **A frozen teacher** -- the targets from search on a *held* network (the plateau SWA or the
+  heads soup), re-frozen from the student every ~100M only if the student pulls ahead. Standard
+  distillation practice, and the direct break of the loop: the target cannot follow the student.
+  It also makes T3's gate well-defined, since the teacher's value no longer moves with the student.
+  Same cost as R31.
+
+**Caps: T depends on no cap.** Every cap gradient other than the plain tanh drifts the network:
+straight-through (A10) fast, a symmetric 0.1 leak (A11) slowly, an upward-only leak (A12) too,
+even weighted to spare the top move -- a gradient with no effect on play still reaches the shared
+trunk, and at an 84-way placement node ~80 saturated moves each leak ~p·A. The plain tanh cap
+(A9) is stable (entropy 0.41, KL ~0.01, pool 0.66–0.67 over 70M) but cannot learn a saturated
+move. **The saturation remedy is a loss term instead:** `--logit-gap-coef C --logit-gap G`,
+C · mean over legal moves of relu(top − z − G)² (~390 per row on the 6,400M policy).
+`E7-A8-R1-S44@6400M+R30` (gap 7, coef 1e-4, plus the trap scenario) is stable so far -- entropy
+0.21 → 0.54 and levelling, KL ~0.01, pool win rate flat at 0.657, penalty 401 → 36 -- and its trap
+probe at 6,450M says whether a saturated move becomes learnable under it. Every T arm still
+reports **the share of searched decisions with max p > 1 − 1e-6** before and after.
 
 **Decision.** Promote an arm iff its search gap shrinks by > 3 SE over the leg *and* it beats the
 plateau SWA head to head with the three-reference mean not lower; adopt on the seed-43 replicate
@@ -286,12 +304,15 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
 * `E7-A8-R1-S44@6400M+A9-R28` -- tanh cap + the Cuban Missile Crisis trap scenario; **stopped at
   6,460M**, no change at 50M (154 of 172 suicides): the tanh cap does not let a saturated logit
   learn. Closes A9 for T1.
-* `E7-A8-R1-S44@6400M+A10-R28` -- straight-through cap + the trap scenario, 6,400 → 6,800M
-  (running): the sanity check that a saturated move can be unlearned under A10. Its answer at
-  ~6,600M frees the slot for T1.
-* `E7-A8-R1-S44@6400M+A10` -- straight-through cap only, 6,400 → 6,800M (running): **T1's
-  control**, and the cap's own cost against the plain 6,400–6,800M leg.
-* **T1 on A10 from 6,400M** -- queued for A10-R28's slot; read against `+A10` by the search gap
-  and head to head.
+* `E7-A8-R1-S44@6400M+A10-R28`, `+A10`, `+A11`, `+A12` -- the straight-through, symmetric-leak
+  and upward-leak caps: **every cap gradient but the plain tanh drifts the network**; the A10
+  trap check never got a clean read. Caps are off the plan for T.
+* `E7-A8-R1-S44@6400M+R29` -- T1 as specified (uncapped, k = 4 @16, CE 0.5): **stopped**, entropy
+  0.21 → 0.93 in 13M, the target-follows-student loop.
+* `E7-A8-R1-S44@6400M+R31` -- T1's second cell, 32 evaluations, CE 0.1, 200M against the plain
+  6,400–6,600M leg (running).
+* `E7-A8-R1-S44@6400M+R30` -- the logit-gap loss (gap 7, coef 1e-4) + the trap scenario (running):
+  stable at 6,440M; the trap probe at 6,450M decides whether it is the saturation remedy.
+* **T1 with a frozen teacher** -- proposed; the next cell if R31 also loops.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
