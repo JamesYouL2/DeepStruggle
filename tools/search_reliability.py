@@ -78,10 +78,14 @@ def _sha256(path: str) -> str:
 
 
 def parse_spec(text: str) -> Tuple[str, str]:
-    """NAME=SIMS:K:FPU:FILTER:WORLDS -> (name, the fields after a gumbel: spec's checkpoint)."""
+    """NAME=SIMS:K:FPU:FILTER:WORLDS (a Gumbel root: the fields after a gumbel: spec's checkpoint)
+    or NAME=rollout:K:WORLDS:HORIZON:RULE (ai/search/rollout_root.py) -> (name, fields)."""
     name, _, fields = text.partition("=")
-    if not name or len(fields.split(":")) != 5:
-        raise argparse.ArgumentTypeError(f"--spec must be NAME=SIMS:K:FPU:FILTER:WORLDS, not {text!r}")
+    ok = (len(fields.split(":")) == 5 and not fields.startswith("rollout:")) or \
+        (fields.startswith("rollout:") and len(fields.split(":")) == 5)
+    if not name or not ok:
+        raise argparse.ArgumentTypeError(
+            f"--spec must be NAME=SIMS:K:FPU:FILTER:WORLDS or NAME=rollout:K:WORLDS:HORIZON:RULE, not {text!r}")
     return name, fields
 
 
@@ -102,10 +106,15 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
     rows = _part(list(_read([bank])), part)
     net = NeuralAgent.from_checkpoint(model, device="cpu").model.eval()
     torch.set_grad_enabled(False)
-    searchers = {}
+    from ai.search.rollout_root import RolloutRoot, rollout_spec_config
+    searchers: Dict[str, Tuple[Any, str]] = {}
     for name, fields in specs:
-        _path, cfg, label = search_spec_config(f"gumbel:{model}:{fields}")
-        searchers[name] = (BatchedMCTS(net, device="cpu", config=cfg), label)
+        if fields.startswith("rollout:"):
+            _path, rcfg, label = rollout_spec_config(f"rollout:{model}:{fields[len('rollout:'):]}")
+            searchers[name] = (RolloutRoot(net, rcfg), label)
+        else:
+            _path, cfg, label = search_spec_config(f"gumbel:{model}:{fields}")
+            searchers[name] = (BatchedMCTS(net, device="cpu", config=cfg), label)
     res = {str(r["id"]): {"id": r["id"], "raw": int(r["raw"]), "picks": {n: [] for n, _ in specs},
                           "evals": {n: [] for n, _ in specs}} for r in rows}
     secs = {n: 0.0 for n, _ in specs}
@@ -119,14 +128,18 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
                 states = [state_from_token(r["pos"]) for r in batch]
                 mcts.reseed(chunk_seed(name, s, ids))
                 t = time.time()
-                picks = mcts.best_actions(states)
+                if isinstance(mcts, RolloutRoot):
+                    picks = mcts.choose(states)
+                    evals = [mcts.rows / len(batch)] * len(batch)     # rows, shared by the batch
+                else:
+                    picks = mcts.best_actions(states)
+                    evals = [float(sum(gs["n"].values())) for gs in mcts.gumbel_stats]
                 secs[name] += time.time() - t
-                stats = mcts.gumbel_stats
-                for r, st, a, gs in zip(batch, states, picks, stats):
+                for r, a, e in zip(batch, picks, evals):
                     if not ActionEncoder.get_legal_mask(state_from_token(r["pos"]))[int(a)]:
                         raise RuntimeError(f"{name} picked an illegal move at {r['id']}")
                     res[str(r["id"])]["picks"][name].append(int(a))
-                    res[str(r["id"])]["evals"][name].append(float(sum(gs["n"].values())))
+                    res[str(r["id"])]["evals"][name].append(e)
         print(f"  {min(lo + chunk, len(rows))}/{len(rows)} positions | {time.time() - t0:.0f}s",
               file=sys.stderr, flush=True)
     _write(out, list(res.values()))
@@ -252,13 +265,35 @@ def summarize(bank_rows: Dict[str, Dict[str, Any]], search_rows: Dict[str, Dict[
 
 def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], out: str) -> int:
     bank_rows = {str(r["id"]): r for r in _read([bank])}
-    search_rows = {str(r["id"]): r for r in _read(search_paths)}
-    play_rows = {str(r["id"]): r for r in _read(play_paths)}
+    # Several runs merge by position: their searchers side by side, their playouts' moves pooled.
+    # Valid because a position's pairs depend only on its id and the playout seed, so the raw move
+    # scores the same in every run that shares the seed (checked below).
+    search_rows: Dict[str, Dict[str, Any]] = {}
+    for r in _read(search_paths):
+        cur = search_rows.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "picks": {}, "evals": {}})
+        cur["picks"].update(r["picks"])
+        cur["evals"].update(r["evals"])
+    play_rows: Dict[str, Dict[str, Any]] = {}
+    for r in _read(play_paths):
+        cur = play_rows.get(str(r["id"]))
+        if cur is None:
+            play_rows[str(r["id"])] = {"id": r["id"], "pairs": r["pairs"], "score": dict(r["score"]),
+                                       "diff_vs_raw": dict(r["diff_vs_raw"])}
+            continue
+        raw = str(search_rows[str(r["id"])]["raw"]) if str(r["id"]) in search_rows else None
+        if raw is not None and abs(cur["score"][raw] - r["score"][raw]) > 1e-9:
+            raise ValueError(f"{r['id']}: the raw move scored differently across runs -- not the same games")
+        cur["score"].update(r["score"])
+        cur["diff_vs_raw"].update(r["diff_vs_raw"])
     metas = [json.load(open(p + ".meta.json")) for p in search_paths if os.path.exists(p + ".meta.json")]
-    names = list(metas[0]["specs"]) if metas else sorted(next(iter(search_rows.values()))["picks"])
+    names: List[str] = []
+    for m in metas:
+        names += [n for n in m["specs"] if n not in names]
+    if not names:
+        names = sorted(next(iter(search_rows.values()))["picks"])
     res = summarize(bank_rows, search_rows, play_rows, names)
-    secs = {n: sum(m["search_seconds"][n] for m in metas) for n in names} if metas else {}
-    nsearch = {n: sum(m["positions"] * m["seeds"] for m in metas) for n in names} if metas else {}
+    secs = {n: sum(m["search_seconds"].get(n, 0.0) for m in metas) for n in names} if metas else {}
+    nsearch = {n: sum(m["positions"] * m["seeds"] for m in metas if n in m["specs"]) for n in names} if metas else {}
     evals = {n: float(np.mean([e for r in search_rows.values() for e in r["evals"][n]])) for n in names}
     for n in names:
         res[n]["evals_per_search"] = evals[n]
@@ -266,9 +301,10 @@ def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], ou
     lines = ["# Gumbel roots on the search bank: reproducibility and playout gain", ""]
     if metas:
         m0 = metas[0]
+        labels = {n: l for m in metas for n, l in m["labels"].items()}
         lines += [f"* model `{m0['model']}` (sha256 `{m0['model_sha256'][:12]}…`), {m0['seeds']} seeds per "
-                  f"searcher, {sum(m['positions'] for m in metas)} positions; specs "
-                  + ", ".join(f"`{n}` = {m0['labels'][n]}" for n in names), ""]
+                  f"searcher, {len(search_rows)} positions; specs "
+                  + ", ".join(f"`{n}` = {labels[n]}" for n in names), ""]
     pr = next(iter(play_rows.values()))
     lines += [f"Paired raw-network continuations, {pr['pairs']} pairs per move; every figure population-"
               "weighted by the bank's inclusion weights. Gain is the pick's playout score minus raw's, "

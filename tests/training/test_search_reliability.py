@@ -48,3 +48,32 @@ def test_specs_and_seeds() -> None:
         parse_spec("w16=256:8")
     assert chunk_seed("w1", 0, ["a"]) != chunk_seed("w1", 1, ["a"]) != chunk_seed("w16", 0, ["a"])
     assert 0 <= chunk_seed("w1", 0, ["a", "b"]) < 2 ** 32
+
+
+def test_runs_merge_by_position(tmp_path) -> None:
+    """Two runs' searchers side by side; their playouts' moves pooled; a raw move scored differently
+    across runs is refused."""
+    import gzip
+    import json
+    from tools.search_reliability import report
+
+    def w(name: str, rows: list) -> str:
+        p = str(tmp_path / name)
+        with gzip.open(p, "wt") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        return p
+
+    bank = w("bank.jsonl.gz", [_bank("a", 1.0, 1.0)])
+    s1 = w("s1.jsonl.gz", [{"id": "a", "raw": 1, "picks": {"x": [2, 2]}, "evals": {"x": [256, 256]}}])
+    s2 = w("s2.jsonl.gz", [{"id": "a", "raw": 1, "picks": {"y": [3, 3]}, "evals": {"y": [900, 900]}}])
+    p1 = w("p1.jsonl.gz", [{"id": "a", "pairs": 4, "score": {"1": 0.4, "2": 0.5}, "diff_vs_raw": {"2": [0.1, 0.01]}}])
+    p2 = w("p2.jsonl.gz", [{"id": "a", "pairs": 4, "score": {"1": 0.4, "3": 0.3}, "diff_vs_raw": {"3": [-0.1, 0.01]}}])
+    out = str(tmp_path / "r.md")
+    assert report(bank, [s1, s2], [p1, p2], out) == 0
+    res = json.load(open(str(tmp_path / "r.json")))
+    assert res["x"]["gain_per_decision"] == pytest.approx(0.1)
+    assert res["y"]["gain_per_decision"] == pytest.approx(-0.1)
+    bad = w("p3.jsonl.gz", [{"id": "a", "pairs": 4, "score": {"1": 0.45, "3": 0.3}, "diff_vs_raw": {"3": [-0.1, 0.01]}}])
+    with pytest.raises(ValueError):
+        report(bank, [s1, s2], [p1, bad], out)

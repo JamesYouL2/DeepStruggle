@@ -566,6 +566,13 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "forced_opening", name)
         setattr(agent, "name", f"{agent.name}+{name}")
         return agent
+    if s.lower().startswith("rollout:"):
+        # rollout:<checkpoint>[:k[:worlds[:horizon[:rule]]]] -- the network's top k moves played
+        # out in sampled worlds, a cautious choice (ai/search/rollout_root.py).
+        from ai.search.rollout_root import RolloutRootAgent, rollout_spec_config
+        path, rcfg, label = rollout_spec_config(s)
+        base = NeuralAgent.from_checkpoint(path, device=device)
+        return RolloutRootAgent(base.model, label, rcfg, device=resolve_device(device))
     if s.lower().startswith(("search:", "gumbel:")):
         path, cfg, label = search_spec_config(s)
         base = NeuralAgent.from_checkpoint(path, device=device)
