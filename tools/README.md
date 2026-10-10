@@ -1211,7 +1211,10 @@ network (`bank_playouts.yml stage=confirm`, once per judge), and `build` writes 
 judge confirms -- `ai/eval/banks/blunders_E7.jsonl`, one row per position with its `pos=` token,
 the network's move, the better move and each judge's cost. `score` puts any checkpoint or
 `load_agent` searcher on the bank: the blunder repeated, the better move found, or another move,
-paid out against the blunder with `--judge` and `--pairs`.
+paid out against the blunder with `--judge` and `--pairs`. `confirm --continue-with SIMS:K` pays out with a
+Gumbel root of the judge on both sides. `prove` solves exactly the rows whose game ends in the
+current turn: every later choice is enumerated and dice are averaged, the blunder is held to its
+best case and the better move to its worst, over worlds with the mover's unseen cards redealt.
 
 ```bash
 .venv/bin/python tools/scripts/blunder_bank.py select --validation validation.jsonl.gz \
