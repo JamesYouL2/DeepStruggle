@@ -11,7 +11,7 @@ import torch
 import ts_engine as ts
 from ai.eval.paired_playouts import ar_key, decider
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-from ai.search.turn_pricing import Candidate, ar_key_from_obs, price
+from ai.search.turn_pricing import Candidate, ar_key_from_obs, ar_keys_from_obs, guard_rows, price
 from bindings.action_encoder import ActionEncoder
 
 
@@ -49,26 +49,40 @@ def _candidates(k: int = 3, n: int = 8) -> List[Candidate]:
     return out
 
 
-def test_the_key_read_from_the_observation_is_the_states_key() -> None:
-    # Across many plies of random play, every live row's observation decodes to ar_key(state),
-    # from either side's view: the slot indices (global 7, 8, 9) are held here.
+def test_the_key_and_the_guard_read_from_the_observation_match_the_state() -> None:
+    # Across many plies of random play, every live row's observation decodes to ar_key(state) from
+    # either side's view, and the guard's row filter equals the state's DEFCON and decision: the
+    # slot indices (global 1, 7, 8, 9, the decision-type and op-mode one-hots) are held here.
     runner = _runner_positions(n=24, plies=0)
     rng = np.random.default_rng(5)
     checked = 0
+    guarded_seen = False
     for _ in range(400):
         masks = np.asarray(runner.get_action_masks())
         term = np.asarray(runner.get_terminals(), dtype=bool)
         obs = np.asarray(runner.get_observations(), dtype=np.float32)
         turns = runner.get_turns()
         dps = runner.get_decision_players()
-        for i in np.flatnonzero(~term):
+        live = np.flatnonzero(~term)
+        keys = ar_keys_from_obs(obs[live], np.asarray(turns)[live], np.asarray(dps)[live])
+        probe = guard_rows(obs[live])
+        for j, i in enumerate(live):
             st = runner.get_state(int(i))
             assert int(dps[i]) == int(decider(st))
             assert ar_key_from_obs(obs[i], int(turns[i]), int(dps[i])) == ar_key(st)
+            assert tuple(int(x) for x in keys[j]) == ar_key(st)
+            ctx = st.ctx()
+            dt = int(ctx.decision_type)
+            want = int(st.defcon) <= 2 and (
+                dt in (int(ts.DecisionType.SELECT_PLAY_MODE), int(ts.DecisionType.CHOOSE_BRANCH))
+                or (dt == int(ts.DecisionType.POINT_NODE) and ctx.op_mode == ts.OpMode.COUP))
+            assert bool(probe[j]) == want
             checked += 1
+            guarded_seen = guarded_seen or want
         acts = [int(rng.choice(np.flatnonzero(m))) if m.any() else 0 for m in masks]
         runner.step_flat_all(acts, True)
     assert checked > 1000
+    assert guarded_seen, "random play never reached a guarded decision at DEFCON 2"
 
 
 def test_horizon_zero_reads_the_critic_at_the_position_after_the_move() -> None:

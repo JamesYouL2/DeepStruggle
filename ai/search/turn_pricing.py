@@ -31,7 +31,15 @@ from bindings.ts_env import model_obs_features
 _UINT64 = 1 << 64
 #: The base observation's 100 global floats start here (84 x 26 board, 110 x 14 card; v2.3).
 _GLOBALS = int(ts.OBS_SIZE) - 100
-#: Decisions at which one move can end the game against its own player at DEFCON 2.
+#: Global slots read back from a batch runner's observations, so a playout never copies a state out
+#: per row per ply (engine/src/observation.cpp, ctx_slots in engine/include/ts/game_state.hpp).
+_G_DEFCON, _G_ACTION_ROUND, _G_PHASING_IS_ME, _G_PHASE = 1, 7, 8, 9
+_G_DECISION_TYPE = 72            # one-hot over DecisionType, 8 slots
+_G_OP_MODE = 80                  # one-hot INFLUENCE, COUP, REALIGN
+#: Decisions at which one move can end the game against its own player at DEFCON 2: a card's play
+#: mode, an event branch, and a coup's target. An Influence or realignment point cannot, so a
+#: POINT_NODE counts only in the COUP op mode -- the same picks as guarding every POINT_NODE, since
+#: `loses_now` is false at the others, at a fraction of the probes.
 GUARDED = frozenset({int(ts.DecisionType.SELECT_PLAY_MODE), int(ts.DecisionType.CHOOSE_BRANCH),
                      int(ts.DecisionType.POINT_NODE)})
 
@@ -43,8 +51,31 @@ def ar_key_from_obs(row: np.ndarray, turn: int, decision_player: int) -> Tuple[i
     `tests/training/test_turn_pricing.py` holds it to `ar_key` of the state."""
     g = row[_GLOBALS:]
     other = int(ts.Player.USSR) if decision_player == int(ts.Player.US) else int(ts.Player.US)
-    return (int(turn), int(round(float(g[7]) * 8.0)),
-            decision_player if g[8] > 0 else other, int(round(float(g[9]) * 6.0)))
+    return (int(turn), int(round(float(g[_G_ACTION_ROUND]) * 8.0)),
+            decision_player if g[_G_PHASING_IS_ME] > 0 else other, int(round(float(g[_G_PHASE]) * 6.0)))
+
+
+def ar_keys_from_obs(obs: np.ndarray, turns: np.ndarray, dps: np.ndarray) -> np.ndarray:
+    """`ar_key_from_obs` for every row at once: an (n, 4) int array."""
+    g = obs[:, _GLOBALS:]
+    us, ussr = int(ts.Player.US), int(ts.Player.USSR)
+    other = np.where(dps == us, ussr, us)
+    return np.stack([turns.astype(np.int64), np.rint(g[:, _G_ACTION_ROUND] * 8.0).astype(np.int64),
+                     np.where(g[:, _G_PHASING_IS_ME] > 0, dps, other).astype(np.int64),
+                     np.rint(g[:, _G_PHASE] * 6.0).astype(np.int64)], axis=1)
+
+
+def guard_rows(obs: np.ndarray) -> np.ndarray:
+    """The rows whose greedy move the DEFCON-2 suicide guard must probe, from their observations:
+    DEFCON at 2 or below (slot 1, /5) and a guarded decision -- a play mode, an event branch, or a
+    coup's target (POINT_NODE in the COUP op mode). Held to the states by a test."""
+    g = obs[:, _GLOBALS:]
+    low = np.rint(g[:, _G_DEFCON] * 5.0) <= 2
+    play_mode = g[:, _G_DECISION_TYPE + int(ts.DecisionType.SELECT_PLAY_MODE)] > 0.5
+    branch = g[:, _G_DECISION_TYPE + int(ts.DecisionType.CHOOSE_BRANCH)] > 0.5
+    coup_target = (g[:, _G_DECISION_TYPE + int(ts.DecisionType.POINT_NODE)] > 0.5) & \
+                  (g[:, _G_OP_MODE + int(ts.OpMode.COUP)] > 0.5)
+    return low & (play_mode | branch | coup_target)
 
 
 @dataclass
@@ -133,13 +164,13 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
         start_turn = np.zeros(n, dtype=np.int64)
         sides = np.zeros(n, dtype=np.int64)
         off_policy = np.zeros(n, dtype=bool)
-        keys: List[Tuple[int, int, int, int]] = []
+        keys = np.zeros((n, 4), dtype=np.int64)
         for i, (ci, oi, _w, st) in enumerate(part):
             runner.set_state(i, st)
             start_turn[i] = int(cands[ci].state.turn)
             sides[i] = int(decider(cands[ci].state))
             off_policy[i] = cands[ci].options[oi] != cands[ci].taken
-            keys.append(ar_key(st))
+            keys[i] = ar_key(st)
         crossed = np.zeros(n, dtype=np.int64)
         runner.refresh_all()
         done = np.zeros(n, dtype=bool)
@@ -211,16 +242,15 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
             act_rows = np.flatnonzero(active)
             acts[act_rows] = arg_rows[pos[act_rows]]
             if guard:
-                # DEFCON is global slot 1 (/5); only rows at 2 or below fetch their state.
-                low = act_rows[np.round(obs_all[act_rows, _GLOBALS + 1] * 5.0) <= 2]
+                # Only a row at DEFCON 2 at a guarded decision, read from its observation, copies
+                # its state out for the probe; more than half a game is played at DEFCON 2.
+                probe = act_rows[guard_rows(obs_all[act_rows])]
                 top = None
-                for i in low:
+                for i in probe:
                     i = int(i)
-                    st = runner.get_state(i)
-                    if int(st.ctx().decision_type) not in GUARDED:
-                        continue
                     if top is None:
                         top = lg_t.topk(min(4, int(lg_t.shape[-1])), dim=-1).indices.cpu().numpy()
+                    st = runner.get_state(i)
                     who = ts.Player(int(dps[i]))
                     for alt in top[int(pos[i])]:
                         alt = int(alt)
@@ -267,12 +297,10 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
                     obs_live = np.asarray(runner.get_observations(), dtype=np.float32)
                     turns_live = np.asarray(runner.get_turns(), dtype=np.int64)
                     dps_live = np.asarray(runner.get_decision_players(), dtype=np.int64)
-                    for i in live:
-                        i = int(i)
-                        now = ar_key_from_obs(obs_live[i], int(turns_live[i]), int(dps_live[i]))
-                        if now != keys[i]:
-                            keys[i] = now
-                            crossed[i] += 1
+                    now = ar_keys_from_obs(obs_live[live], turns_live[live], dps_live[live])
+                    moved = (now != keys[live]).any(axis=1)
+                    keys[live[moved]] = now[moved]
+                    crossed[live[moved]] += 1
         else:
             raise RuntimeError(f"{int((~done).sum())} playouts still running after {max_plies} plies")
         for (ci, oi, w, _st), v_ in zip(part, value):
