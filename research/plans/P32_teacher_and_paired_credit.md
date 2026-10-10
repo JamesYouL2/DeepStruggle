@@ -226,6 +226,14 @@ behaviour, not the critic's estimate. What remains of §4 is 4c: whether the *ch
 trap (the attacker's discard and Five Year Plan timing; the defender's keep-or-return) get their
 credit, which B4′'s leak log answers by decision type.
 
+**The attacker's side, measured the same day (ts-main, `P32_cpu_checks.md`): the attacker's
+critic sees the trap too, so §4 closes.** Over 6,000 games at temperature 1 there were 436
+Aldrich Ames discards at DEFCON 2, of which only 8 offered a discard that traps the US; the USSR
+took a trapping discard in all 8 (trapping options were 73% of the choices), and its critic
+values the trapping discards +0.948 against +0.759 for the others (+0.19). Small sample, same
+direction as the defender's side. No §4 fix arm is justified; the entering choices are already
+priced, and the forced-exit trap stays only as a bank that B4′'s leak log can confirm against.
+
 ## 5. Replication and the human loop
 
 * **A seed-43 heads run from scratch** (A8, R1, S43), with P30 C2 (the card-event target, the one
@@ -285,6 +293,5 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   control**, and the cap's own cost against the plain 6,400–6,800M leg.
 * **T1 on A10 from 6,400M** -- queued for A10-R28's slot; read against `+A10` by the search gap
   and head to head.
-* The attacker's side of 4a (which Aldrich Ames discard / Five Year Plan options trap the
-  opponent, whether the attacker picks one, and its critic on the chosen against the trapping
-  option) is not yet measured; ts-main adds it to `P32_cpu_checks.md` if time allows.
+* The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
+  discards taken; +0.948 against +0.759). §4 is closed.
