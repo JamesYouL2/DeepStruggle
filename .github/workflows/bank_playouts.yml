@@ -16,13 +16,20 @@
 #     -f release=blunder-input-<date> -f model=_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt \
 #     -f pairs=64 -f runners=20
 #   gh run download <run-id> -n bank-playouts-<run-id> -D data/reports/blunder_census/validation
+#
+# and the blunder bank's confirmation (tools/scripts/blunder_bank.py confirm), once per judge, on a
+# shortlist made by `blunder_bank.py select` from the census's validation:
+#
+#   gh release create blunder-shortlist-<date> shortlist.jsonl.gz --prerelease --title "blunder bank shortlist"
+#   gh workflow run bank_playouts.yml --ref main -f stage=confirm -f release=blunder-shortlist-<date> \
+#     -f model=_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt -f pairs=512 -f runners=20
 name: bank-playouts
 
 on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "bank_playouts.py stage: run (the disagreement bank) or validate (blunder census)"
+        description: "run (the disagreement bank), validate (blunder census) or confirm (blunder bank, tools/scripts/blunder_bank.py)"
         default: "run"
       release:
         description: "Release whose asset(s) *.jsonl.gz hold the positions"
@@ -87,12 +94,15 @@ jobs:
       - name: ${{ env.STAGE }} (part ${{ matrix.part }})
         run: |
           mkdir -p out
+          tool=bank_playouts.py
           case "$STAGE" in
             run) model_flag=(--onnx "data/checkpoints/hf/$(basename "$MODEL")") ;;
             validate) model_flag=(--model "data/checkpoints/hf/$(basename "$MODEL")") ;;
+            confirm) tool=blunder_bank.py; model_flag=(--model "data/checkpoints/hf/$(basename "$MODEL")") ;;
             *) echo "unknown stage: $STAGE" >&2; exit 1 ;;
           esac
-          python tools/scripts/bank_playouts.py "$STAGE" --input input/*.jsonl.gz \
+          sha256sum "data/checkpoints/hf/$(basename "$MODEL")"
+          python "tools/scripts/$tool" "$STAGE" --input input/*.jsonl.gz \
             "${model_flag[@]}" --pairs "$PAIRS" \
             --part "${{ matrix.part }}/$RUNNERS" --out "out/playouts-${{ matrix.part }}.jsonl.gz" $ARGS
       - uses: actions/upload-artifact@v4

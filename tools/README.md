@@ -1202,6 +1202,28 @@ export PYTHONPATH=.:build/release
     --validation validation.jsonl.gz --escalation escalation.jsonl.gz --out report.md
 ```
 
+**The blunder bank (`tools/scripts/blunder_bank.py`).** The census's estimated regret is chosen and
+measured on the same 32 pairs, and its control clears the bar almost as often as its candidates.
+The bank keeps only what survives a second measurement: `select` shortlists the validation rows
+whose best alternative leads the network's move by `--min-gap` at `--min-z` (that alternative is
+fixed there), `confirm` pays every shortlisted move out again from a fresh seed with one judge
+network (`bank_playouts.yml stage=confirm`, once per judge), and `build` writes the rows every
+judge confirms -- `ai/eval/banks/blunders_E7.jsonl`, one row per position with its `pos=` token,
+the network's move, the better move and each judge's cost. `score` puts any checkpoint or
+`load_agent` searcher on the bank: the blunder repeated, the better move found, or another move,
+paid out against the blunder with `--judge` and `--pairs`.
+
+```bash
+.venv/bin/python tools/scripts/blunder_bank.py select --validation validation.jsonl.gz \
+    --min-gap 0.1 --min-z 2 --out shortlist.jsonl.gz
+.venv/bin/python tools/scripts/blunder_bank.py confirm --input shortlist.jsonl.gz --model soup.pt \
+    --pairs 512 --part 1/20 --out confirm-soup-1.jsonl.gz
+.venv/bin/python tools/scripts/blunder_bank.py build --confirm 'soup=soup/*.jsonl.gz' 'r32=r32/*.jsonl.gz' \
+    --min-gap 0.1 --min-z 3 --out ai/eval/banks/blunders_E7.jsonl --md blunders.md
+.venv/bin/python tools/scripts/blunder_bank.py score --bank ai/eval/banks/blunders_E7.jsonl \
+    --player soup=soup.pt g256=gumbel:soup.pt:256:8 --judge soup.pt --pairs 128 --out score.md
+```
+
 ---
 
 ## 8. Shared Helpers Library (`tools/lib/`)
