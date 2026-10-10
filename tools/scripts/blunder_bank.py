@@ -49,11 +49,11 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tupl
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.paired_playouts import compare, paired_diff
+from ai.eval.paired_playouts import compare, pair_start, paired_diff
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import load_policy, require_e4_view, rules_json, state_from_token
 from tools.lib.player_agent import BatchSelector, Reseedable, load_agent, resolve_device
-from tools.scripts.bank_playouts import _sha256, position_seed
+from tools.scripts.bank_playouts import _sha256, position_seed, searched_continuation
 from tools.scripts.blunder_census import mover_of
 from tools.scripts.disagreement_bank import _name
 
@@ -136,32 +136,48 @@ def greedy_fn(model: str) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
     return act
 
 
-def confirm(inputs: Sequence[str], model: str, pairs: int, seed: int, part: str, out: str) -> int:
-    """Every measured move of this part's rows, paired out by `model`'s greedy play. Each row's
-    pairs are seeded from its id and `--seed` alone, so a row's result does not depend on its part."""
+def _move(x: Any) -> int:
+    """A move as a shortlist row holds it (an action) or a bank row does ({"action", "name"})."""
+    return int(x["action"]) if isinstance(x, dict) else int(x)
+
+
+def confirm(inputs: Sequence[str], model: str, pairs: int, seed: int, part: str, out: str,
+            continue_with: Optional[str] = None) -> int:
+    """Every measured move of this part's rows, paired out by `model`'s greedy play -- or, with
+    `continue_with` (SIMS:K), by a Gumbel root of `model` playing both sides. Each row's pairs (and
+    the searcher's stream) are seeded from its id and `--seed` alone, so a row's result does not
+    depend on its part. Takes shortlist rows or bank rows."""
     k, n = (int(x) for x in part.split("/"))
     rows = [r for i, r in enumerate(sorted(_read(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
     act = greedy_fn(model)
     sha = _sha256(model)
+    cont: Any = None
+    cont_label = "greedy"
+    if continue_with:
+        cont, cont_label = searched_continuation(model, continue_with)
+    batch = 1 if cont is not None else BATCH
     res: List[Dict[str, Any]] = []
     t0 = time.time()
-    for lo in range(0, len(rows), BATCH):
-        chunk = rows[lo:lo + BATCH]
+    for lo in range(0, len(rows), batch):
+        chunk = rows[lo:lo + batch]
         positions = [(state_from_token(r["pos"]), [int(a) for a in r["moves"]]) for r in chunk]
-        scores = compare(positions, act, pairs, [position_seed(str(r["id"]), seed) for r in chunk])
+        if cont is not None:
+            cont.reseed(position_seed(str(chunk[0]["id"]), seed + 2_000_003) % (1 << 31))
+        scores = compare(positions, act, pairs, [position_seed(str(r["id"]), seed) for r in chunk],
+                         select=cont.select_actions_batch if cont is not None else None)
         for r, sc in zip(chunk, scores):
-            net = int(r["network"])
+            net = _move(r["network"])
             diffs = {a: paired_diff(sc[a], sc[net]) for a in sc if a != net}
-            m, se = diffs[int(r["better"])]
+            m, se = diffs[_move(r["better"])]
             res.append(dict(r, judge={"model": os.path.basename(model), "model_sha256": sha},
-                            pairs=pairs, seed=seed,
+                            pairs=pairs, seed=seed, cont=cont_label,
                             score={str(a): round(sum(v) / len(v), 4) for a, v in sc.items()},
                             diff_vs_network={str(a): [round(x, 4), round(y, 4)] for a, (x, y) in diffs.items()},
                             cost=[round(m, 4), round(se, 4)]))
         print(f"  {len(res)}/{len(rows)} rows, {time.time() - t0:.0f}s", file=sys.stderr)
     _write(out, res)
     json.dump({"part": part, "rows": len(res), "seconds": round(time.time() - t0, 1), "pairs": pairs,
-               "seed": seed, "model": os.path.basename(model), "model_sha256": sha},
+               "seed": seed, "cont": cont_label, "model": os.path.basename(model), "model_sha256": sha},
               open(out + ".meta.json", "w"))
     return 0
 
@@ -184,7 +200,7 @@ def confirmed(rows: Dict[str, Dict[str, Dict[str, Any]]], min_gap: float, min_z:
 def bank_row(rid: str, by_judge: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     first = next(iter(by_judge.values()))
     st = state_from_token(first["pos"])
-    net, better = int(first["network"]), int(first["better"])
+    net, better = _move(first["network"]), _move(first["better"])
     return {
         "schema": SCHEMA, "id": rid, "pos": first["pos"],
         "side": first["side"], "turn": first["turn"], "ar": first["ar"], "phase": first["phase"],
@@ -324,6 +340,95 @@ def score(bank_path: str, players: Sequence[str], judge: Optional[str], pairs: i
     return 0
 
 
+class Unprovable(Exception):
+    """The rest of the game cannot be enumerated: a new turn (a new deal) or the node budget."""
+
+
+def exact_value(st: ts.GameState, mover: ts.Player, turn: int, budget: List[int], opponent: str) -> float:
+    """The mover's exact score (1 win, 0.5 draw, 0 loss) to the end of a game that ends in this turn:
+    the maximum over the mover's moves, the average over the six faces of each die, and over the
+    opponent's moves the minimum (`opponent="min"`, its best reply) or the maximum ("max", its most
+    helpful one -- the bound a blunder is held to). A new turn or an exhausted node budget raises
+    `Unprovable`."""
+    if ts.Engine.is_terminal(st):
+        u = float(ts.Engine.get_terminal_utility(st))
+        if u == 0:
+            return 0.5
+        return 1.0 if (u > 0) == (mover == ts.Player.US) else 0.0
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise Unprovable("node budget")
+    if int(st.turn) != turn:
+        raise Unprovable("a new turn")
+    ctx = st.ctx()
+    if ctx.decision_player == ts.Player.NONE and ctx.decision_type == ts.DecisionType.ROLL_DIE:
+        total = 0.0
+        for face in range(1, 7):
+            child = st.clone()
+            ts.Engine.step(child, ts.MicroAction(ts.DecisionType.ROLL_DIE, face, 0, 0))
+            total += exact_value(child, mover, turn, budget, opponent)
+        return total / 6
+    legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
+    if legal.size == 0:
+        # between decisions (a phase or round transition): advance, then read the next node
+        nxt = st.clone()
+        if ts.Engine.auto_advance_step(nxt) == 0:
+            raise Unprovable("no legal move and nothing to advance")
+        return exact_value(nxt, mover, turn, budget, opponent)
+    maximise = mover_of(st) == mover or opponent == "max"
+    best = 0.0 if maximise else 1.0
+    for a in legal:
+        child = st.clone()
+        ts.Engine.step_flat(child, int(a))
+        v = exact_value(child, mover, turn, budget, opponent)
+        best = max(best, v) if maximise else min(best, v)
+        if best == (1.0 if maximise else 0.0):
+            break
+    return best
+
+
+def prove(bank_path: str, deals: int, budget: int, seed: int, out: str) -> int:
+    """Each bank row solved to the end of the game where the game ends in this turn, in the position
+    as recorded and in `deals` worlds with the mover's unseen cards redealt
+    (`paired_playouts.pair_start`). The blunder is held to its best case (every later choice, the
+    opponent's too, made for the mover) and the better move to its worst (the opponent's replies
+    against the mover). A row is proved where, in every world, the better move's worst case is at
+    least the blunder's best case, and above it in at least one."""
+    bank = list(_read([bank_path]))
+    res: List[Dict[str, Any]] = []
+    for r in bank:
+        st0 = state_from_token(r["pos"])
+        who = mover_of(st0)
+        worlds = [st0] + [pair_start(st0, k, position_seed(str(r["id"]), seed)) for k in range(deals)]
+        vals: Dict[str, List[Optional[float]]] = {"network_best_case": [], "better_worst_case": []}
+        why = ""
+        for w in worlds:
+            for role, key, opp in (("network", "network_best_case", "max"), ("better", "better_worst_case", "min")):
+                child = w.clone()
+                ts.Engine.step_flat(child, int(r[role]["action"]))
+                try:
+                    vals[key].append(exact_value(child, who, int(w.turn), [budget], opp))
+                except Unprovable as e:
+                    vals[key].append(None)
+                    why = why or str(e)
+        nets = [v for v in vals["network_best_case"] if v is not None]
+        bets = [v for v in vals["better_worst_case"] if v is not None]
+        ok = len(nets) == len(bets) == len(worlds)
+        proved = ok and all(b >= n for n, b in zip(nets, bets)) and any(b > n for n, b in zip(nets, bets))
+        gap = round(sum(b - n for n, b in zip(nets, bets)) / len(worlds), 4) if ok else None
+        res.append({"id": r["id"], "side": r["side"], "turn": r["turn"], "ar": r["ar"],
+                    "decision_type": r["decision_type"], "card_name": r.get("card_name", ""),
+                    "network": r["network"]["name"], "better": r["better"]["name"], "exact": vals,
+                    "proved": proved, "mean_exact_gap": gap, "unprovable": "" if ok else why})
+        print(f"{r['side']} T{r['turn']} AR{r['ar']} {r['decision_type']}: "
+              + ((("PROVED" if proved else "solved, not proved") + f" gap {gap}") if ok else f"unprovable ({why})"),
+              file=sys.stderr)
+    json.dump(res, open(out, "w"), indent=1)
+    print(f"{sum(x['proved'] for x in res)} of {len(res)} proved; "
+          f"{sum(1 for x in res if not x['unprovable'] and not x['proved'])} solved and not proved", file=sys.stderr)
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -338,6 +443,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     c.add_argument("--pairs", type=int, default=512)
     c.add_argument("--seed", type=int, default=7, help="a seed the census did not use (it used 0 and 1)")
     c.add_argument("--part", default="1/1")
+    c.add_argument("--continue-with", default=None, metavar="SIMS:K",
+                   help="continuations played by a Gumbel root of the judge on both sides (default: its greedy play)")
     c.add_argument("--out", required=True)
     b = sub.add_parser("build", help="the bank: rows confirmed under every judge")
     b.add_argument("--confirm", nargs="+", required=True, metavar="NAME=GLOB")
@@ -352,11 +459,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     g.add_argument("--pairs", type=int, default=0)
     g.add_argument("--seed", type=int, default=11)
     g.add_argument("--out", required=True)
+    v = sub.add_parser("prove", help="exact values where the rest of the game is the mover's alone")
+    v.add_argument("--bank", required=True)
+    v.add_argument("--deals", type=int, default=8, help="worlds with the mover's unseen cards redealt")
+    v.add_argument("--budget", type=int, default=200_000, help="nodes per move per world")
+    v.add_argument("--seed", type=int, default=13)
+    v.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.cmd == "prove":
+        return prove(a.bank, a.deals, a.budget, a.seed, a.out)
     if a.cmd == "select":
         return select(a.validation, a.min_gap, a.min_z, a.out)
     if a.cmd == "confirm":
-        return confirm(a.input, a.model, a.pairs, a.seed, a.part, a.out)
+        return confirm(a.input, a.model, a.pairs, a.seed, a.part, a.out, a.continue_with)
     if a.cmd == "build":
         return build(a.confirm, a.min_gap, a.min_z, a.out, a.md)
     return score(a.bank, a.player, a.judge, a.pairs, a.seed, a.out)
