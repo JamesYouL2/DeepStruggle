@@ -5,7 +5,7 @@
 and every attempt to train that gain into the network has come out level or worse: visit-count
 search targets as a fine-tune (E7-93/94-45), the target-forms probe (no form at 32-64 simulations
 better than the prior), playout policy gradient, and R18 from the plateau (level in 310M, entropy
-0.30 -> 0.5). The search-disagreement bank ([its note on the fork](https://github.com/JamesYouL2/DeepStruggle/blob/exp/search-bank/research/log/E7_search_disagreement_bank.md)) recommended the one form
+0.30 -> 0.5). The search-disagreement bank ([its note on the fork](https://github.com/JamesYouL2/DeepStruggle/blob/exp/search-bank/research/log/E7_search_disagreement_bank.md), an external record: the bank was built on the fork and is not in this repository) recommended the one form
 not yet trained: distil Gumbel's own pick, only where it departs from the network. Does the network
 absorb it, and is it then stronger?
 

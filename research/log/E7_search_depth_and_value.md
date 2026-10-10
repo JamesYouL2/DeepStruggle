@@ -4,7 +4,9 @@
 measurements on one shared footing -- the search-disagreement bank's 2,300 raw-play positions of
 `E7line_swa_4720-4800M` with their population weights ([the bank's note on the fork](https://github.com/JamesYouL2/DeepStruggle/blob/exp/search-bank/research/log/E7_search_disagreement_bank.md); its
 positions are fork release `search-bank-playouts-20261007`) -- then games. All runs were made on the
-fork's CI (JamesYouL2/DeepStruggle); the run ids below are its.
+fork's CI (JamesYouL2/DeepStruggle); the run ids below are its. **External records:** the bank, its
+note and the CI runs live on the fork, not in this repository; the links are to it, and this note is
+the record here.
 
 1. **Chance or depth?** Gumbel@256's departures from the network reproduce across seeds only 49% of
    the time. Is that noise from sampling the hidden cards and the dice (one draw per halving phase;
@@ -236,13 +238,27 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
 
 * **Deploy the rollout root as the strongest player** -- the leaderboard's searcher and the
   workbench's: confirmed on the heads soup (+97 Elo over Gumbel@256 there). Tune it by games, not by the
-  offline judge: worlds, horizon, k, the z threshold, and the KL rule at a larger t.
+  offline judge: worlds, horizon, k, the z threshold, and the KL rule at a larger t. Neither place can
+  take it yet: the leaderboard's player grammar (`tools/lib/player_spec.py`) knows policy, gumbel,
+  search and bot kinds, so a `rollout` kind with an id grammar comes first, and the workbench has no
+  searcher at all. Until then the +97 is a tournament number, not a rating on the E7 scale.
 * **Make it fast.** Its rollouts step the engine one Python call per state; batched C++ rollouts
-  (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time.
+  (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time. P32 B4''s
+  `ai/search/turn_pricing.py` is that batched playout -- every option over paired worlds on the
+  runner, the critic read from the decider's side at the stop -- and needs only a stop counted in
+  action-round boundaries and shared dice across a world's options to host the root; the port is
+  queued behind its merge.
 * **Offline distillation rounds and value-head fine-tuning for search are measured null here**; online
   improved-policy targets (R32) are the training route that gains. Whether R32 has absorbed what the
   rollout root adds, or only what Gumbel adds, is the next question -- the rollout root searched on R32
-  against Gumbel on R32 answers it.
+  against Gumbel on R32 answers it. The other online form under test is P32 B4'
+  ([`../plans/P32_teacher_and_paired_credit.md`](../plans/P32_teacher_and_paired_credit.md)), R37
+  (`E7-A8-R1-S44@6400M+R37`, [`../runs.md`](../runs.md)): every option of a *small* decision priced
+  over paired worlds to the turn's end, on the rollout's own positions, toward max(pi, 1e-3) exp(10 Q)
+  with an evidence weight in place of a gate. Section 5's soft arm at tau 0.1 is the same temperature
+  as its beta 10 and did not move; what B4' changes is the option set (all of them, with a floor that
+  keeps a saturated option reachable, where the soft arm could only reweight the top 4) and the regime
+  (online, continual). Judge it by P32's rule, target spots moving by more than 3 SE, not by this note.
 * **One offline round does not compound search into the network** -- not Gumbel's picks, not the
   rollout root's (section 5). Until a training route absorbs the rollout root's gain, it is banked by
   searching at play time; besides R32's online targets, the network itself improves through RL and
@@ -254,7 +270,11 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
 ## Replicate
 
 The runs above were made on the fork, branch `exp/chance-search`; with this change the same
-workflows run here (the bank's positions are read from the fork's release, `release_repo`).
+workflows run here (the bank's positions are read from the fork's release, `release_repo`). Since
+then the rollout root was given the measured player as its defaults, reads the network in its own
+observation feature set, refuses an unfinished rollout instead of valuing it where it stands, and
+takes its suicide probe, action-round key and paired statistics from `ai/eval/paired_playouts.py`;
+section 4's soup pairing is to be re-played on the ported code before the number is relied on.
 
 ```bash
 # 1 and 3: searchers on the bank (reproducibility + paired playouts), and a merged report
