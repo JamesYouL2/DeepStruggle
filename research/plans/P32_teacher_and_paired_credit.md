@@ -357,10 +357,13 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   `E7-A8-R1-S44@6400M+R36`, launching when R32's leg 2 exits (~07:00).
 * **Side result from R34: the gap loss alone does not teach the Cuba trap** -- 142 of 164
   follow-ups still suicide at 6,800M (87%, the plain leg's level). The defence needed the bounded
-  gaps *and* the scenario together (R33, 59%): natural play reaches the trap in ~9% of games, too
-  rarely to teach it. This is P31's division of labour measured directly -- the cap makes a
-  saturated decision *learnable*, the seeded state supplies the *samples* -- and it means the
-  scenario list stays a live instrument for rare chains rather than a scaffold the cap retires.
+  gaps *and* the scenario together (R33, 59%). The ~9% first quoted is how often the combo is
+  *available* against a scripted US; **the network's own US never plays it, so self-play's natural
+  reach of the trap is ~0.** This is P31's division of labour measured directly -- the cap makes a
+  saturated decision *learnable*, the seeded state supplies the *samples* -- and the conclusion is
+  the strong form: **anything self-play does not reach needs seeding, whatever the exploration
+  fix.** The scenario list stays a live instrument for unreached chains, not a scaffold the cap
+  retires.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
