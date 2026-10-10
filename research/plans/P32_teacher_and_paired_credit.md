@@ -366,7 +366,16 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   common opponents, US / USSR: +4.6 / +5.7 at 6,480M, **+7.9 / +7.4 at 6,600M**, every opponent
   positive in both windows; head to head 55.0% → 56.7%. One run's SWA now plays level with the
   three-run soup *raw*. R32 continues unchanged to 6,800M (leg 2, same name) to see whether it
-  climbs past its teacher; the search gap at 6,600M is running. **Next slot (R34 frees it at
+  climbs past its teacher. **The search gap at 6,600M** (Gumbel k8@256 on each network against
+  the same network raw, 1,000 games a side): **on R32 51.2% ± 1.1** (as US 47.0, as USSR 55.4);
+  on the plain leg 62.6% (61.4 / 63.9). A shrink of ~7 SE, past the 3-SE promotion bar: **T1 passes
+  the plan's rule on both halves** (gap shrunk, head to head above the plain leg). Caveat: Gumbel's
+  Q comes from R32's own critic, which T1 left untrained toward the search, so "the policy absorbed
+  its search" and "a sharper prior leaves the old critic little to correct" read the same here;
+  the teacher-margin read (the soup searched, against R32 raw and against plain raw) separates
+  them -- if R32 absorbed the search, the soup's margin over it shrinks too. Either way the US
+  figure (search *below* 50% on R32 as US) says the critic is now what bounds the next search
+  gain, which is T2's case, after the re-freeze. **Next slot (R34 frees it at
   ~6,800M): the re-freeze, before T2** -- gated on the teacher's-margin read, not the raw rating:
   the teacher is the soup *searched*, so R32 being level with the raw soup does not mean it has
   caught the teacher. **Correction (ts-main): the teacher actually in use is the soup at k = 4 @32,
