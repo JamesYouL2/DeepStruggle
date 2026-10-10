@@ -175,6 +175,35 @@ network, by more than on the bank's model, and in both seats (against Gumbel@256
 66.6% as US and 61.0% as USSR). The longer horizon is better; the leaderboard's Gumbel k8 @256 on this
 soup (57.9% against its network) is reproduced here (58.2%).
 
+## 5. Distilling the rollout root (2026-10-10): the same failure as Gumbel's
+
+The owner's question: would training on the rollout root fail too? One offline round, the gchoice
+pipeline with the rollout root as the teacher (`generate_search_targets.py --target rollout`, k = 4, 32
+worlds, 4 boundaries, z2) on the heads soup's own self-play (CI `38061318714`: 20 x 50 games, a quarter
+of decisions, temperature 0.2; 121,262 positions, the teacher departing at 19,990 = 16.5%). Arms on the
+same positions, 2 epochs at lr 1e-4: a one-hot on the teacher's pick where it departs; a **soft** step,
+pi(a) exp((Q(a) - Q(argmax)) / tau), at tau 0.05 and 0.1 (Q the mover's rollout value in [-1, 1]); the
+network's own policy (control). Pre-registered: an arm beats the base and the control by 1.5 points,
+with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy blow-up.
+
+| arm | held out: teacher's departures now played (961) | agreements changed (4,832) | entropy (base 0.306) | vs base | vs control |
+|:---|---:|---:|---:|---:|---:|
+| departures (one-hot) | **10.0%** | **10.7%** | **0.458** | **48.1% +- 0.65** | 48.7% |
+| soft, tau 0.05 | 0.8% | 0.8% | 0.308 | 50.2% | 50.4% |
+| soft, tau 0.1 | 0.5% | 0.5% | 0.306 | 50.3% | 50.2% |
+| own (control) | 0.2% | 0.6% | 0.306 | 49.4% | -- |
+
+* **Fails by the rule.** The one-hot arm learns 1 in 10 of the teacher's departures (Gumbel's: 1 in 7),
+  about 14% even on its own training positions, disturbs three times as many agreements as Gumbel's
+  did (10.7% against 3.8%), broadens more (+0.15 against +0.10) and loses 13 Elo. The soft arms barely
+  move (p(choice) 0.069 -> 0.072) and are level.
+* **A stronger, cleaner teacher does not help, because the teacher was never the bottleneck.** The
+  rollout root's departures go to moves the network gives 0.07 (Gumbel's: 0.15) -- further from what
+  it expresses -- and they are the products of four action rounds of consequences that a forward
+  pass does not compute. Every teacher tried (visit counts, Gumbel's pick, gated, consensus, and now
+  rollouts) meets the same wall: the network cannot represent search's corrections at the positions
+  where search makes them, and pushing it there costs more than it gains.
+
 ## Reading: where the limits are, and where to go
 
 **Where the limits are.**
@@ -189,9 +218,9 @@ soup (57.9% against its network) is reproduced here (58.2%).
 3. **Determinized tree search is the limit of today's search.** Gumbel/PUCT in sampled worlds gains
    +85-90 Elo at 256 evaluations and loses ground beyond it. Honest rollouts over many worlds with a
    cautious rule gain twice as much.
-4. **Search does not distil** (`E7_gchoice_distill.md` on the fork): the policy moves toward search's
-   picks without fitting them and broadens; generic, gated and consensus targets are all level or
-   worse.
+4. **Search does not distil** (`E7_gchoice_distill.md` on the fork, and section 5): the policy moves
+   toward search's picks without fitting them and broadens; Gumbel's picks (generic, gated,
+   consensus) and the rollout root's (one-hot or a soft KL step) are all level or worse.
 
 **Where to go.**
 
@@ -202,8 +231,10 @@ soup (57.9% against its network) is reproduced here (58.2%).
   (`VectorizedBatchRunner` already steps many states) would cut most of its 8x time.
 * **Do not spend GPU on search-target training or on value-head fine-tuning for search** -- both are
   measured null here.
-* **A training idea that follows from this, untested:** the rollout root's cautious departures are a
-  different teacher from Gumbel's noisy ones; if any distillation is retried, it is this one.
+* **Search does not compound into the network here** -- not Gumbel's picks, not the rollout root's
+  (section 5). The gain is banked by searching at play time; improving the network itself goes
+  through RL and representation (the A8 heads are the precedent: Wargames was fixed by giving the
+  policy a card-conditioned readout, not by showing it the move).
 * **Longer horizons next:** 4 boundaries beat 2 by +35 on the soup; 6-8 (or to the turn's end) is the
   obvious next point, with the time cost measured.
 
