@@ -22,7 +22,7 @@ the means to pay, per follow-up (the plain leg: 89% at 6,450M, 83% at 6,500M, 87
 | `+A11` | **symmetric leak**: the tanh's gradient plus 0.1 × the raw one | drifts, slowly: entropy 0.37 → 0.28, KL 0.008 → 0.046, pool 0.658 → 0.638 in 40M |
 | `+A12` / `+A12-R28` | **upward-only leak**, the raw gradient only where it raises a logit (unweighted first, which double-pushed rewarded top moves and collapsed entropy to 0.07 -- voided; then weighted by tanh² of the deficit to spare the top move) | drifts: entropy 0.32 → 0.15, KL up to 0.13, pool 0.66 → 0.61 in 20M |
 | `+R30` | **a real loss**: 1e-4 × the mean over legal moves of relu(top − logit − 7)² | stable (entropy 0.21 → 0.55, KL ~0.008, pool 0.663; the penalty 401 → 21) but **the trap does not move**: 81% then 89% at 6,450 / 6,500M; the coup still leads by 13.6 nats (13.3 plain) |
-| `+R33` | the same at 1e-3 | running |
+| `+R33` | the same at 1e-3 | stable (entropy 0.28 → 0.83 and level, KL ~0.005, pool win rate ~0.65); **the trap is learned**: suicides 84, 87, 72, 65, **59%** at 6,450–6,800M (plain 83–89%). Not by declining the coup (4 of 214, plain 11 of 158) but by **rebuilding Cuba**: the USSR coups and pays in 75 of 214 follow-ups against 12 of 158 -- 2+ Influence back into Cuba before the US's follow-up, so the payment is automatic. The coup's lead on the trap positions halves (22.9 → 9.7 nats against 15.3–22.9 plain) |
 
 ## What this says
 
@@ -30,9 +30,11 @@ the means to pay, per follow-up (the plain leg: 89% at 6,450M, 83% at 6,500M, 87
   symmetric or one-sided -- is a signal with no effect on play, and it reaches the shared trunk; at an
   84-way placement node ~80 saturated moves each leak ~p·A, together comparable to the true gradient.
   Only the tanh's own gradient is consistent, and it vanishes exactly where the trap needs it.
-* **A loss on the gaps is consistent and stable** -- but averaged over every row, the rare positions
-  where saturation matters barely register; a policy-wide entropy floor is a blunt tool for a rare
-  trap.
+* **A loss on the gaps is consistent and stable, and at 1e-3 it makes the trap learnable.** At 1e-4,
+  averaged over every row, the trap's rows barely registered; at 1e-3 the gaps fall to ~7-10 nats,
+  the alternative's probability rises from ~0 to ~1e-4, and within 400M the network learns a defence
+  it never found uncapped. The cost: the sampled policy's entropy 0.28 → 0.83 -- what it does to
+  strength is E7-A8-R1-S44@6400M+R34 (the penalty without the scenario).
 * The same saturation shows wherever the network has decided: 25% of the searched decisions in the
   search-target arms had max p > 1 − 1e-6 at the start (`search_saturated_frac`).
 

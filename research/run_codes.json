@@ -730,6 +730,16 @@
     "logit_gap_coef": 0.001,
     "block_lambda": "off"
    }
+  },
+  "R34": {
+   "description": "R1 plus the logit-gap penalty at 1e-3 (gap 7)",
+   "first": "E7-A8-R1-S44@6400M+R34_20261010_031009",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "logit_gap_coef": 0.001,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -860,7 +870,8 @@
   "E7-A8-R1-S44@6400M+R30_20261010_003955": "E7-A8-R1-S44@6400M+R30",
   "E7-A8-R1-S44@6400M+R31_20261010_004648": "E7-A8-R1-S44@6400M+R31",
   "E7-A8-R1-S44@6400M+R32_20261010_005623": "E7-A8-R1-S44@6400M+R32",
-  "E7-A8-R1-S44@6400M+R33_20261010_011133": "E7-A8-R1-S44@6400M+R33"
+  "E7-A8-R1-S44@6400M+R33_20261010_011133": "E7-A8-R1-S44@6400M+R33",
+  "E7-A8-R1-S44@6400M+R34_20261010_031009": "E7-A8-R1-S44@6400M+R34"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
