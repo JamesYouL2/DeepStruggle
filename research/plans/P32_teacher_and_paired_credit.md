@@ -337,7 +337,23 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   plain leg (running; sampled entropy ~0.84): **the cost read** that decides whether the gap loss
   goes into the recipe -- both a greedy field at matched windows and a T = 1 head to head, to tell
   the loss's own cost from the broader rollout policy it induces; if only T = 1 costs, the next
-  cell is 3e-4.
+  cell is 3e-4. **Done -- and it splits exactly along that axis, the other way from the worry.**
+  Greedy field (1,000 games a side): R34's 6,720–6,800M SWA rates 1546 against the plain leg's
+  1508 (heads soup 1550); per seat over the plain leg, US / USSR, +2.2 / −1.2 → +6.1 / +1.8 →
+  **+7.6 / +2.1** at 6,480 / 6,640 / 6,800M, head to head 52.2 → 54.4 → **55.5%**. **T = 1 head
+  to head, the same pair: 36.6%** (US 38.8, USSR 34.4). The gap penalty is not a cost to the
+  argmax -- it improves it, and the gain grows with the window; what breaks is the *sampled*
+  policy, because the mass it keeps on bad moves gets played. Reading: bounded gaps keep
+  alternatives explored in self-play, a quiet exploration bonus. **The gap loss passes the
+  per-seat rule and goes into the recipe**; the product is greedy, so the T = 1 cost is a
+  training-data question (weaker rollouts and a weaker pool), not a product one.
+* **R32 + R34 from the 6,400M root** (frozen-soup T1 targets + the gap penalty 1e-3) -- the next
+  slot, when R32's leg 2 ends at ~6,800M, with R35 (T2) in the other. No interference expected:
+  the CE's gradient (π′ − π) is ~0 on deep-tail moves where both teacher and student have no mass,
+  so it shapes the top candidates inside the 7-nat band, while the penalty acts only beyond it.
+  Read at matched windows against both parents and the plain leg, greedy and T = 1: additivity
+  (sum against max of the two gains) is the result; watch the pool win rate and the advantage
+  mean, since rollouts and the pool are sampled at T = 1 from a broader policy.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
