@@ -261,7 +261,15 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
   at 500 games a side the ported root scores **60.5% +- 1.5** (605-380-15; 60.4% as US,
   60.6% as USSR), +80 Elo -- the number that stands for the code in the repository
   (`data/reports/rollout_root_port_confirm/batched_port/`); 1,000 games took 11 minutes on one GPU in ten parts
-  against 32 for the per-state code. On the leaderboard it is the `rollout` kind,
+  against 32 for the per-state code. **The fork's own code on the same harness, same deals:** 61.2%
+  (612-377-11), move for move the games of the first port (0 of 1,000 outcomes differ), and paired
+  game by game against the batched port +0.5 +- 2.0 points -- level. So the CI's 63.7% for the
+  original is that harness's draw of deals (other seeds and shards, 20 CPU runners), not strength the
+  ports lost (`data/reports/rollout_root_port_confirm/README.md`). The suicide guard's row filter was
+  then moved from a per-row state fetch to the observation's decision-type slots: the same picks, and
+  no measurable time (A/B alternated twice: 106 / 98 s against 104 / 97 s), so those crossings were
+  never where the time went -- the remaining cost is the network forwards and the Python around the
+  runner per ply. On the leaderboard it is the `rollout` kind,
   `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)`, registered
   and not yet played.
 * **Offline distillation rounds and value-head fine-tuning for search are measured null here**; online
