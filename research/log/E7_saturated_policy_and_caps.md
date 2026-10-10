@@ -34,7 +34,10 @@ the means to pay, per follow-up (the plain leg: 89% at 6,450M, 83% at 6,500M, 87
   averaged over every row, the trap's rows barely registered; at 1e-3 the gaps fall to ~7-10 nats,
   the alternative's probability rises from ~0 to ~1e-4, and within 400M the network learns a defence
   it never found uncapped. The cost: the sampled policy's entropy 0.28 → 0.83 -- what it does to
-  strength is E7-A8-R1-S44@6400M+R34 (the penalty without the scenario).
+  strength is E7-A8-R1-S44@6400M+R34 (the penalty without the scenario): **greedy, a gain** -- the
+  6,720–6,800M SWA 1546 against the plain leg's 1508 (heads soup 1550), +7.6 / +2.1 per seat, 55.5%
+  head to head; **sampled at T = 1, a loss** (36.6%), the broader policy's mass on bad moves. Bounded
+  gaps keep the alternatives in play during training, and the argmax is better for it.
 * **The scenario produced a defence nobody wrote down.** It asked "will the USSR stop couping";
   the network answered with an earlier, cheaper move -- rebuild Cuba so the coup pays. The first
   forced scenario to do so, which is what "show the state, let training decide" was meant to allow.
