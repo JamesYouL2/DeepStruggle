@@ -393,17 +393,20 @@ def prove(bank_path: str, deals: int, budget: int, seed: int, out: str) -> int:
     (`paired_playouts.pair_start`). The blunder is held to its best case (every later choice, the
     opponent's too, made for the mover) and the better move to its worst (the opponent's replies
     against the mover). A row is proved where, in every world, the better move's worst case is at
-    least the blunder's best case, and above it in at least one."""
+    least the blunder's best case, and above it in at least one; proved against the best reply where
+    the same holds with the blunder too answered by the opponent's best reply in that world."""
     bank = list(_read([bank_path]))
     res: List[Dict[str, Any]] = []
     for r in bank:
         st0 = state_from_token(r["pos"])
         who = mover_of(st0)
         worlds = [st0] + [pair_start(st0, k, position_seed(str(r["id"]), seed)) for k in range(deals)]
-        vals: Dict[str, List[Optional[float]]] = {"network_best_case": [], "better_worst_case": []}
+        vals: Dict[str, List[Optional[float]]] = {"network_best_case": [], "network_vs_best_reply": [],
+                                                   "better_worst_case": []}
         why = ""
         for w in worlds:
-            for role, key, opp in (("network", "network_best_case", "max"), ("better", "better_worst_case", "min")):
+            for role, key, opp in (("network", "network_best_case", "max"), ("network", "network_vs_best_reply", "min"),
+                                   ("better", "better_worst_case", "min")):
                 child = w.clone()
                 ts.Engine.step_flat(child, int(r[role]["action"]))
                 try:
@@ -412,20 +415,29 @@ def prove(bank_path: str, deals: int, budget: int, seed: int, out: str) -> int:
                     vals[key].append(None)
                     why = why or str(e)
         nets = [v for v in vals["network_best_case"] if v is not None]
+        replies = [v for v in vals["network_vs_best_reply"] if v is not None]
         bets = [v for v in vals["better_worst_case"] if v is not None]
-        ok = len(nets) == len(bets) == len(worlds)
-        proved = ok and all(b >= n for n, b in zip(nets, bets)) and any(b > n for n, b in zip(nets, bets))
-        gap = round(sum(b - n for n, b in zip(nets, bets)) / len(worlds), 4) if ok else None
+        ok = len(nets) == len(replies) == len(bets) == len(worlds)
+
+        def dominates(xs: List[float]) -> bool:
+            return all(b >= x for x, b in zip(xs, bets)) and any(b > x for x, b in zip(xs, bets))
+        proved = ok and dominates(nets)
+        # the weaker claim: the blunder loses to the opponent's correct reply in that world
+        proved_vs_reply = ok and dominates(replies)
+        gap = round(sum(b - x for x, b in zip(replies, bets)) / len(worlds), 4) if ok else None
         res.append({"id": r["id"], "side": r["side"], "turn": r["turn"], "ar": r["ar"],
                     "decision_type": r["decision_type"], "card_name": r.get("card_name", ""),
                     "network": r["network"]["name"], "better": r["better"]["name"], "exact": vals,
-                    "proved": proved, "mean_exact_gap": gap, "unprovable": "" if ok else why})
+                    "proved": proved, "proved_vs_best_reply": proved_vs_reply, "mean_exact_gap": gap,
+                    "unprovable": "" if ok else why})
+        verdict = ("PROVED" if proved else "PROVED against the best reply" if proved_vs_reply else "solved, not proved")
         print(f"{r['side']} T{r['turn']} AR{r['ar']} {r['decision_type']}: "
-              + ((("PROVED" if proved else "solved, not proved") + f" gap {gap}") if ok else f"unprovable ({why})"),
-              file=sys.stderr)
+              + (f"{verdict} gap {gap}" if ok else f"unprovable ({why})"), file=sys.stderr)
     json.dump(res, open(out, "w"), indent=1)
-    print(f"{sum(x['proved'] for x in res)} of {len(res)} proved; "
-          f"{sum(1 for x in res if not x['unprovable'] and not x['proved'])} solved and not proved", file=sys.stderr)
+    print(f"{sum(x['proved'] for x in res)} of {len(res)} proved whatever the opponent does; "
+          f"{sum(x['proved_vs_best_reply'] for x in res)} against its best reply; "
+          f"{sum(1 for x in res if not x['unprovable'] and not x['proved_vs_best_reply'])} solved and not proved",
+          file=sys.stderr)
     return 0
 
 

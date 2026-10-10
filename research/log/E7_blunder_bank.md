@@ -8,6 +8,21 @@ fresh paired measurement by two judge networks puts the heads soup's greedy move
 the mover's score below a fixed alternative, at 3+ standard errors under both. 20 of them cost
 20+ points.
 
+* **Are they really mistakes? 20 hold up under every check, 7 probably do, 10 do not.**
+  * **6 are proved exactly.** Each is a turn-10 last-round decision, enumerated to the end of the
+    game with dice averaged, in nine worlds with the mover's unseen cards redealt. Five hold whatever
+    the opponent does, and one against the opponent's best reply.
+  * **14 more hold with search on both sides of the continuation** (Gumbel@256, 96 fresh pairs).
+  * **7 stay positive at 2+ SE** with search but drop below 3 SE or 10 points.
+  * **9 vanish with search** (cost ≈ 0). These were mistakes only given the network's own greedy
+    follow-up.
+  * **1 is exactly not a mistake.** The US placing in Nigeria rather than India at turn 10 still
+    wins in every world with correct play afterward. The playouts lose there because the network,
+    and Gumbel@256, then botch the remaining points of the same play. The error at that position is
+    real but sits in the follow-up, not in the move recorded.
+
+  Each row's `verdict` in the bank file records which of these it is. See
+  [Verification](#verification).
 * **The census's estimated regret was mostly selection.** The 487 rows the
   [census](E7_blunder_census.md) measured at 10+ points (z ≥ 2, 32 pairs) averaged 21.8 points
   when selected. Re-paid from a fresh seed at 512 pairs, they average 3.8 points (soup judge) and
@@ -71,14 +86,69 @@ Tool `tools/scripts/blunder_bank.py` (`select`, `confirm`, `build`, `score`; `to
 The 37 positions with each judge's cost and a workbench link: [bank](E7_blunder_bank/bank.md);
 the score table as written: [score](E7_blunder_bank/score.md).
 
+## Verification
+
+Three independent checks, all on the 37 rows as built:
+
+* **Exact (`blunder_bank.py prove`).** Where the game ends in the current turn, everything after the
+  move is enumerated. The mover takes its best move, each die is averaged over its six faces, and
+  the opponent's moves are treated two ways: helping the mover, the best case a blunder is held
+  to, and replying against the mover, the worst case the better move is held to. This is done in
+  the recorded position and in 8 worlds with the mover's unseen cards redealt
+  (`paired_playouts.pair_start`).
+  * A row is **proved** if the better move's worst case is never below the blunder's best case and
+    is above it in some world.
+  * It is **proved against the best reply** if the same holds with the blunder too answered by
+    the opponent's best reply.
+
+  Results:
+  * 7 rows are solvable, all at turn 10, action round 7: 5 proved, 1 proved against the best
+    reply, 1 shown not to be a mistake (Nigeria/India above).
+  * 12 rows need a new turn (a new deal), and 18 exceed the 400,000-node budget, mostly turn-10
+    rows with the opponent still to move.
+  * The redeals matter: in the Poland/Angola row, the blunder wins in 1 world of 9 and the better
+    move in all 9.
+* **Searched continuations (`confirm --continue-with 256:8`).** The heads soup's Gumbel k=8 @256
+  plays both sides of every continuation, 96 pairs, seed 23 (fork CI run `38091099918`, pooled
+  locally from its 20 parts). The mean cost of the 37 falls from 27.9 points (greedy soup judge) to
+  23.7. 21 hold at 10+ points and z ≥ 3, 7 are positive at z ≥ 2, 9 are not resolved, and none
+  reverses.
+* **The verdicts combined** (`verdict` in `ai/eval/banks/blunders_E7.jsonl`):
+
+| verdict | rows | what it means |
+|:---|---:|:---|
+| `proved` | 5 | exact, whatever the opponent does |
+| `proved-vs-best-reply` | 1 | exact, against the opponent's best reply |
+| `holds-under-search` | 14 | 10+ points at z ≥ 3 under the soup, R32 and the searched continuation |
+| `likely` | 7 | positive at z ≥ 2 under the searched continuation |
+| `continuation-dependent` | 9 | the cost is gone when the follow-up searches |
+| `move-not-a-mistake` | 1 | exact: the move keeps the win; the follow-up loses it |
+
+The searched continuation also scores the Nigeria row at 47 ± 1 points. Paired playouts measure
+a move *together with* the continuation policy's play after it, so only the exact check separates
+the two. Rows whose cost survives search are robust to the greedy follow-up, not proof that the
+move itself is the error.
+
+**What survives.** The 20 rows that hold are of two kinds:
+* the last placements and play choices of turn 10, which are arithmetic;
+* card choices: game-winning events declined (Wargames at turn 9; Iran-Iraq War at turn 10's last
+  round), headlines (Europe Scoring at turn 3, Red Scare/Purge at turn 8, Brush War at turn 10,
+  Latin American Debt Crisis at turn 10), a scoring card played in the wrong round (Africa before
+  Middle East at turn 6, Kitchen Debates over Africa Scoring at turn 10), and which card to spend
+  in a round, opponent cards included.
+
+No mid-game influence placement survives. The one in the bank (Decolonization's point, Haiti
+against Cuba, turn 6) is continuation-dependent.
+
 ## What this does not say
 
 * **It is not a rate.** The shortlist came from 200 greedy games of one network through a screen
   (forced-loss labels and a Gumbel @32 disagreement) and a 32-pair estimate. Missed blunders
   are not counted, so 37 is a floor on 200 games, not an estimate of a population.
-* **The cost is judged by greedy continuations.** A move whose value lies in a follow-up the
-  judges do not play is undervalued. Two judges that are near relatives of each other do not
-  remove that. A blunder here is confirmed against what these networks would go on to do.
+* **The cost is judged by continuations.** A move whose value lies in a follow-up the judges do
+  not play is undervalued. Two greedy judges that are near relatives and one searched one reduce
+  that but do not remove it. Outside the six exact rows, a blunder here is confirmed against what
+  these networks, and their search, would go on to do.
 * **The better move is the best one measured, not the best one.** "Other" moves are paid out
   only against the blunder, so they can beat the bank's better move.
 
