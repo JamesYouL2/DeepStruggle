@@ -44,7 +44,7 @@
     "description": "P32 T1 with a frozen teacher (recipe R32): search CE 0.1 toward the frozen heads soup's Gumbel improved policy (k=4, 32 evaluations, every node type, 1 in 8), 6,400 -> 6,800M; SWA of its last 80M. Above the heads soup in the arm's field (1552 vs 1542, 51.7% head to head), +7.1/+8.4 per seat over the plain leg",
     "old_names": [],
     "hf": "E7-A8-R1-S44@6400M+R32_20261010_005623/swa_6720-6800M.pt",
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+R32_6720..6800M.md"
   },
   "E7-A8-R1-S44@6400M+R32@6800M": {
     "file": "checkpoints/E7-A8-R1-S44@6400M+R32_20261010_005623/snapshot_6800015360steps.pt",
