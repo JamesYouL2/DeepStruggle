@@ -353,8 +353,9 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   so it shapes the top candidates inside the 7-nat band, while the penalty acts only beyond it.
   Read at matched windows against both parents and the plain leg, greedy and T = 1: additivity
   (sum against max of the two gains) is the result; watch the pool win rate and the advantage
-  mean, since rollouts and the pool are sampled at T = 1 from a broader policy. Queued as
-  `E7-A8-R1-S44@6400M+R36`, launching when R32's leg 2 exits (~07:00).
+  mean, since rollouts and the pool are sampled at T = 1 from a broader policy. Launched as
+  `E7-A8-R1-S44@6400M+R36` at 06:54: the banner checks out, the diff against R32 is only the gap
+  coefficient; first iteration entropy 0.70, search_ce 0.77. End-of-run evaluations queued.
 * **Side result from R34: the gap loss alone does not teach the Cuba trap** -- 142 of 164
   follow-ups still suicide at 6,800M (87%, the plain leg's level). The defence needed the bounded
   gaps *and* the scenario together (R33, 59%). The ~9% first quoted is how often the combo is
@@ -391,8 +392,12 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   1550; the plain leg's same windows 1508 and 1502. Per seat over the plain leg, mean over seven
   common opponents, US / USSR: +4.6 / +5.7 at 6,480M, **+7.9 / +7.4 at 6,600M**, every opponent
   positive in both windows; head to head 55.0% → 56.7%. One run's SWA now plays level with the
-  three-run soup *raw*. R32 continues unchanged to 6,800M (leg 2, same name) to see whether it
-  climbs past its teacher. **The search gap at 6,600M** (Gumbel k8@256 on each network against
+  three-run soup *raw*. R32 continued unchanged to 6,800M (leg 2, same name). **6,800M, greedy
+  field of 15: one T1 run's SWA now sits above the three-run soup.** R32's SWAs rate 1552
+  (6,720–6,800M), 1550 and 1546; the heads soup 1542; the plain leg's windows 1494–1501. R32's last
+  SWA against the soup 51.7%; per seat over the plain leg +7.1 / +8.4, every common opponent
+  positive; head to head over the plain leg by window 55.0 → 56.7 → 57.6 → **59.0%**. The per-seat
+  gain levels at ~+8 while the head to head keeps rising. **The search gap at 6,600M** (Gumbel k8@256 on each network against
   the same network raw, 1,000 games a side): **on R32 51.2% ± 1.1** (as US 47.0, as USSR 55.4);
   on the plain leg 62.6% (61.4 / 63.9). A shrink of ~7 SE, past the 3-SE promotion bar: **T1 passes
   the plan's rule on both halves** (gap shrunk, head to head above the plain leg). Caveat: Gumbel's
