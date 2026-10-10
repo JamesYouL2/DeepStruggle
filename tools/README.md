@@ -1083,7 +1083,8 @@ independent draws of the hidden cards and the dice. `rollout:<ckpt>:k:worlds:hor
 `worlds` sampled worlds and played out by the network through `horizon` action-round boundaries, the
 critic at the leaf, then `argmax`, `z<x>` (the best only if its paired lead over the network's move is
 x standard errors) or `kl<t>` (one mirror-descent step). `rollout:<ckpt>:4:16:4:z2` is the measured
-player. `name:<label>:<spec>` names an entrant in reports.
+player and the default: an omitted field takes its value, so `rollout:<ckpt>` is that player. The
+network is read in its own observation feature set. `name:<label>:<spec>` names an entrant in reports.
 
 **`tools/search_reliability.py`** -- searchers on the search bank: `search` (every position, each
 searcher, `--seeds` independent streams), `playouts` (each position's network move and every pick in

@@ -53,6 +53,7 @@ import torch
 import ts_engine as ts
 
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
+from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from tools.lib.data_root import data_path
 from tools.lib.player_agent import NeuralAgent
 
@@ -161,7 +162,6 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
         if target == "gchoice" else []
     rollout_teacher: Any = None
     if target == "rollout":
-        from ai.search.rollout_root import RolloutConfig, RolloutRoot
         rk, rw, rh, rrule = rollout_spec.split(":")
         rollout_teacher = RolloutRoot(model, RolloutConfig(k=int(rk), worlds=int(rw), horizon=int(rh),
                                                            rule=rrule), device=device)
