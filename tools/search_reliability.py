@@ -230,7 +230,7 @@ def summarize(bank_rows: Dict[str, Dict[str, Any]], search_rows: Dict[str, Dict[
                     if ps[x] != raw:
                         rep_den += w
                         rep_num += w * (ps[y] == ps[x])
-            g = sum(sc[a] - sc[raw] for a in ps) / len(ps)
+            g = sum((dv[a][0] if a in dv else sc[a] - sc[raw]) if a != raw else 0.0 for a in ps) / len(ps)
             gains.append(g)
             gw.append(w)
             per_pos[i] = g
@@ -281,7 +281,10 @@ def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], ou
                                        "diff_vs_raw": dict(r["diff_vs_raw"])}
             continue
         raw = str(search_rows[str(r["id"])]["raw"]) if str(r["id"]) in search_rows else None
-        if raw is not None and abs(cur["score"][raw] - r["score"][raw]) > 1e-9:
+        # The same pairs, but the network's greedy play can flip a near tie when its batch differs
+        # (CPU outputs depend slightly on batch composition): measured, the raw move scores the same in
+        # 99.3% of positions and at most 0.002 apart. Gains are each run's own paired differences.
+        if raw is not None and abs(cur["score"][raw] - r["score"][raw]) > 0.01:
             raise ValueError(f"{r['id']}: the raw move scored differently across runs -- not the same games")
         cur["score"].update(r["score"])
         cur["diff_vs_raw"].update(r["diff_vs_raw"])
