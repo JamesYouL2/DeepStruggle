@@ -25,6 +25,10 @@ record also carries `gchoice` -- the network's argmax and distribution, and per 
 `tools/gchoice_targets.py` can rewrite the target (another budget, a margin gate, the network's
 own policy everywhere) without searching again. Decisions with one legal move are not searched.
 
+**`--target rollout`** is the same with the rollout root as the teacher (`--rollout-spec
+k:worlds:horizon:rule`): its pick where it departs from the network's move, recorded under the
+budget name "rollout" with each candidate's mean rollout value and paired lead.
+
 The searcher's configuration and the commit that produced it go in a sidecar `<output>.meta.json`
 rather than a header line, because every line of the dataset itself has to stay a game.
 
@@ -114,11 +118,32 @@ def gchoice_record(raw: int, pi: np.ndarray, budgets: List[int], choices: List[i
     return (own if first == int(raw) else one_hot), rec
 
 
+def rollout_record(pi: np.ndarray, pick: int, stats: Dict[str, Any],
+                   value: float) -> Tuple[Dict[str, List[float]], Dict[str, Any]]:
+    """`search_pi` and the record beside it for a rollout-root teacher (ai/search/rollout_root.py),
+    in the gchoice record's shape under the budget name "rollout" -- the root's pick as `c`, each
+    candidate's mean rollout value for the mover as `q` -- plus each candidate's paired lead over
+    the network's move (`lead`: mean, standard error) and the worlds used."""
+    keep = np.flatnonzero(pi >= PI_FLOOR)
+    own: Dict[str, List[float]] = {"a": [int(a) for a in keep], "v": [round(float(pi[a]), 5) for a in keep]}
+    cands = [int(a) for a in stats.get("candidates", [])]
+    raw = cands[0] if cands else int(np.argmax(pi))
+    q = {str(a): round(float(v), 5) for a, v in stats.get("q", {}).items()}
+    rec: Dict[str, Any] = {"raw": raw, "pi": own, "value": round(float(value), 4),
+                           "g": {"rollout": {"c": int(pick), "n": {str(a): float(stats.get("worlds", 0))
+                                                                    for a in cands}, "q": q}},
+                           "lead": {str(a): [round(float(x), 5) for x in v]
+                                    for a, v in stats.get("lead", {}).items()},
+                           "worlds": int(stats.get("worlds", 0))}
+    one_hot: Dict[str, List[float]] = {"a": [int(pick)], "v": [1.0]}
+    return (own if int(pick) == raw else one_hot), rec
+
+
 def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
              node_filter: str, temperature: float, output_path: str, device_str: str,
              max_steps: int = 4000, target: str = "visits", gumbel_sims: Optional[List[int]] = None,
              gumbel_k: int = 8, fpu: float = 0.2, subsample: float = 1.0,
-             seed_offset: int = 0) -> int:
+             seed_offset: int = 0, rollout_spec: str = "4:32:4:z2") -> int:
     device = torch.device(device_str if torch.cuda.is_available() else "cpu")
     agent = NeuralAgent.from_checkpoint(checkpoint, device=device)
     model = agent.model
@@ -134,6 +159,13 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
     budgets = list(gumbel_sims or [256])
     teachers = gumbel_teachers(model, device, budgets, gumbel_k, fpu, seed_offset + 2) \
         if target == "gchoice" else []
+    rollout_teacher: Any = None
+    if target == "rollout":
+        from ai.search.rollout_root import RolloutConfig, RolloutRoot
+        rk, rw, rh, rrule = rollout_spec.split(":")
+        rollout_teacher = RolloutRoot(model, RolloutConfig(k=int(rk), worlds=int(rw), horizon=int(rh),
+                                                           rule=rrule), device=device)
+        rollout_teacher.reseed((seed_offset + 3) % (1 << 32))
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     meta: Dict[str, Any] = {
@@ -143,7 +175,9 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
                       "advance_root": False, "subsample": subsample} if target == "visits" else
                      {"target": "gchoice", "gumbel_sims": budgets, "gumbel_k": gumbel_k,
                       "fpu_reduction": fpu, "determinize": True, "node_filter": node_filter,
-                      "subsample": subsample, "search_pi_from": budgets[0]}),
+                      "subsample": subsample, "search_pi_from": budgets[0]} if target == "gchoice" else
+                     {"target": "rollout", "rollout_spec": rollout_spec, "node_filter": node_filter,
+                      "subsample": subsample, "search_pi_from": "rollout"}),
         "checkpoint_sha256": _sha256(checkpoint),
         "seed_offset": seed_offset,
         "acting_policy": "raw (search never acts)",
@@ -196,7 +230,7 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
                              and searcher.should_search(runner.get_state(i))]
                 targets: Dict[int, Dict[str, List[float]]] = {}
                 gchoice: Dict[int, Dict[str, Any]] = {}
-                if to_search and target == "gchoice":
+                if to_search and target in ("gchoice", "rollout"):
                     states = [runner.get_state(i).clone() for i in to_search]
                     with torch.no_grad():
                         lg, val, _ = cast(Any, model)(
@@ -207,11 +241,20 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
                     per_budget = []
                     for t in teachers:
                         per_budget.append((t.best_actions(states), list(t.gumbel_stats)))
+                    r_picks: List[int] = []
+                    r_stats: List[Dict[str, Any]] = []
+                    if rollout_teacher is not None:
+                        r_picks = rollout_teacher.choose(states)
+                        r_stats = list(rollout_teacher.last_stats)
                     for row, i in enumerate(to_search):
                         legal = masks_all[i].astype(bool)
                         z = np.where(legal, lg_np[row], -np.inf)
                         pi = np.exp(z - z.max())
                         pi /= pi.sum()
+                        if rollout_teacher is not None:
+                            targets[i], gchoice[i] = rollout_record(pi, r_picks[row], r_stats[row],
+                                                                    float(val_np[row]))
+                            continue
                         targets[i], gchoice[i] = gchoice_record(
                             int(np.argmax(z)), pi, budgets, [pb[0][row] for pb in per_budget],
                             [pb[1][row] for pb in per_budget], float(val_np[row]))
@@ -286,7 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "the targets cover more than one line of play")
     ap.add_argument("--output-path", default=None)
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--target", default="visits", choices=["visits", "gchoice"],
+    ap.add_argument("--target", default="visits", choices=["visits", "gchoice", "rollout"],
                     help="visits: PUCT visit counts (P15-X4a). gchoice: a one-hot on a noise-free "
                          "Gumbel root's choice where it departs from the network's argmax, the "
                          "network's own distribution where it agrees (see the module docstring)")
@@ -294,6 +337,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="gchoice: the Gumbel root's evaluation budgets, each searched at the same "
                          "positions; search_pi follows the first")
     ap.add_argument("--gumbel-k", type=int, default=8, help="gchoice: candidates per root")
+    ap.add_argument("--rollout-spec", default="4:32:4:z2",
+                    help="rollout: the rollout root's k:worlds:horizon:rule (ai/search/rollout_root.py); "
+                         "records under the budget name 'rollout' in the gchoice record's shape")
     ap.add_argument("--fpu", type=float, default=0.2,
                     help="gchoice: first-play urgency reduction (the gumbel: spec's default)")
     ap.add_argument("--subsample", type=float, default=1.0,
@@ -310,7 +356,7 @@ def main() -> int:
     return generate(a.checkpoint, a.total_games, a.batch_size, a.sims, a.node_filter,
                     a.temperature, out, a.device, target=a.target, gumbel_sims=a.gumbel_sims,
                     gumbel_k=a.gumbel_k, fpu=a.fpu, subsample=a.subsample,
-                    seed_offset=a.seed_offset)
+                    seed_offset=a.seed_offset, rollout_spec=a.rollout_spec)
 
 
 if __name__ == "__main__":

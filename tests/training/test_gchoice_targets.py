@@ -91,7 +91,7 @@ def test_arms_share_the_positions_and_the_own_arm_carries_no_departure(targets: 
     rows = {}
     for form in ("departures", "own"):
         out = str(Path(targets["dir"]) / f"{form}.jsonl.gz")
-        meta = arm([targets["targets"]], form, 8, 0.0, out)
+        meta = arm([targets["targets"]], form, "8", 0.0, out)
         assert meta["searched"] == n_searched
         assert all("gchoice" not in a for a in _records(out))
         rows[form] = [a["search_pi"] for a in _records(out) if "search_pi" in a]
@@ -107,8 +107,40 @@ def test_the_check_replays_every_searched_position_and_sees_no_move_against_itse
         targets: Dict[str, str]) -> None:
     n_searched = sum("gchoice" in a for a in _records(targets["targets"]))
     assert sum(1 for _ in replay([targets["targets"]])) == n_searched
-    res = check([targets["targets"]], targets["ckpt"], targets["ckpt"], 8)
+    res = check([targets["targets"]], targets["ckpt"], targets["ckpt"], "8")
     assert res["positions"] == n_searched
     assert res["agreements"]["changed"] in (0.0,) or res["agreements"]["n"] == 0
     assert res["departures"]["n"] == 0 or res["departures"]["moved"] == 0.0
     assert res["base_argmax_is_recorded"] == pytest.approx(1.0)
+
+
+def test_the_soft_step_moves_mass_toward_higher_values_in_proportion() -> None:
+    rec = {"raw": 5, "pi": {"a": [5, 7, 9], "v": [0.7, 0.2, 0.1]}, "value": 0.0,
+           "g": {"rollout": {"c": 7, "n": {}, "q": {"5": 0.0, "7": 0.1}}}}
+    t = target(rec, "soft", "rollout", 0.0, None, 0.1)
+    p = dict(zip(t["a"], t["v"]))
+    assert abs(sum(p.values()) - 1.0) < 1e-5
+    # 7 gains a factor e over its prior; 9 (no value) keeps its prior weight relative to raw.
+    assert p[7] / p[5] == pytest.approx(0.2 / 0.7 * 2.718281828, rel=1e-3)
+    assert p[9] / p[5] == pytest.approx(0.1 / 0.7, rel=1e-3)
+    no_q = {"raw": 5, "pi": rec["pi"], "value": 0.0, "g": {"rollout": {"c": 5, "n": {}, "q": {}}}}
+    assert target(no_q, "soft", "rollout", 0.0, None, 0.1) == {"a": [5, 7, 9], "v": [0.7, 0.2, 0.1]}
+
+
+def test_the_rollout_teacher_records_its_pick_values_and_leads(tmp_path: Path) -> None:
+    torch.manual_seed(0)
+    ckpt = str(tmp_path / "m.pt")
+    torch.save(create_coldwar_net_v2("cpu").state_dict(), ckpt)
+    out = str(tmp_path / "rollout.jsonl.gz")
+    assert generate(ckpt, total_games=1, batch_size=1, sims=8, node_filter="all", temperature=1.0,
+                    output_path=out, device_str="cpu", target="rollout", subsample=0.1,
+                    seed_offset=990_000_000, rollout_spec="2:2:1:z2") == 0
+    recs = [a for a in _records(out) if "gchoice" in a]
+    assert recs
+    for a in recs:
+        g = a["gchoice"]
+        c = g["g"]["rollout"]["c"]
+        assert g["raw"] in [int(x) for x in g["g"]["rollout"]["q"]] or g["worlds"] == 0
+        assert (a["search_pi"] == {"a": [c], "v": [1.0]}) == (c != g["raw"])
+    meta = json.load(open(out + ".meta.json"))
+    assert meta["searcher"]["target"] == "rollout"

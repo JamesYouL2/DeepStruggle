@@ -18,6 +18,10 @@ checkpoint on held-out games: did it move where the search departs, and nowhere 
 * `consensus` -- as `departures`, but only where the root at `--agree-with`, another recorded
   budget searched on its own random streams, departs to the same move: a departure that survives
   two independent searches rather than one root's resolution of a near tie.
+* `soft` -- one KL-regularised step from the network's policy toward the teacher's values, where it
+  recorded values for its candidates: pi'(a) proportional to pi(a) exp((Q(a) - Q(argmax)) / tau),
+  Q the mover's value in [-1, 1], the other moves keeping pi(a) -- a nudge in proportion to the
+  evidence rather than a flip to the teacher's pick (`--tau`).
 * `own` -- the network's own distribution at every searched position: no signal, the same
   optimiser steps. Its distance from the base is the fine-tune's drift, the floor every other
   arm is read against.
@@ -48,7 +52,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-FORMS = ("departures", "gated", "consensus", "own")
+FORMS = ("departures", "gated", "consensus", "soft", "own")
 
 #: Margin bins (win probability) the check splits departures by.
 MARGIN_BINS: Tuple[Tuple[float, float], ...] = ((-1.0, 0.0), (0.0, 0.02), (0.02, 0.04),
@@ -65,11 +69,31 @@ def margin(rec: Dict[str, Any], budget: str) -> Optional[float]:
     return (float(qc) - float(qr)) / 2.0
 
 
+def soft_target(rec: Dict[str, Any], budget: str, tau: float) -> Dict[str, List[float]]:
+    """pi'(a) proportional to pi(a) exp((Q(a) - Q(argmax)) / tau) over the moves with a value, pi(a)
+    elsewhere (`soft`)."""
+    own = rec["pi"]
+    q = {int(a): float(v) for a, v in rec["g"][budget]["q"].items() if v is not None}
+    raw = int(rec["raw"])
+    if raw not in q or len(q) < 2:
+        return {"a": list(own["a"]), "v": list(own["v"])}
+    p = {int(a): float(v) for a, v in zip(own["a"], own["v"])}
+    for a in q:
+        p.setdefault(a, 1e-4)
+    w = {a: pv * (math.exp((q[a] - q[raw]) / tau) if a in q else 1.0) for a, pv in p.items()}
+    tot = sum(w.values())
+    acts = sorted(w)
+    out: Dict[str, List[float]] = {"a": [a for a in acts], "v": [round(w[a] / tot, 6) for a in acts]}
+    return out
+
+
 def target(rec: Dict[str, Any], form: str, budget: str, min_margin: float,
-           agree_with: Optional[str] = None) -> Dict[str, List[float]]:
+           agree_with: Optional[str] = None, tau: float = 0.1) -> Dict[str, List[float]]:
     """One searched record's `search_pi` under `form`."""
     if form not in FORMS:
         raise ValueError(f"unknown form {form!r}")
+    if form == "soft":
+        return soft_target(rec, budget, tau)
     own = rec["pi"]
     c = int(rec["g"][budget]["c"])
     if form == "own" or c == int(rec["raw"]):
@@ -102,8 +126,8 @@ def _source_meta(paths: Sequence[str]) -> List[Dict[str, Any]]:
     return out
 
 
-def arm(inputs: Sequence[str], form: str, budget: int, min_margin: float, out: str,
-        agree_with: Optional[int] = None) -> Dict[str, Any]:
+def arm(inputs: Sequence[str], form: str, budget: str, min_margin: float, out: str,
+        agree_with: Optional[str] = None, tau: float = 0.1) -> Dict[str, Any]:
     """Rewrite every searched record of `inputs` under `form` into one dataset at `out`, with a
     sidecar naming the arm and its sources (the trainer prints the searcher from it)."""
     b = str(budget)
@@ -120,7 +144,7 @@ def arm(inputs: Sequence[str], form: str, budget: int, min_margin: float, out: s
                 counts["searched"] += 1
                 counts["departures"] += int(int(rec["g"][b]["c"]) != int(rec["raw"]))
                 a["search_pi"] = target(rec, form, b, min_margin,
-                                        None if agree_with is None else str(agree_with))
+                                        None if agree_with is None else str(agree_with), tau)
                 counts["targeted"] += int(len(a["search_pi"]["a"]) == 1
                                           and a["search_pi"]["a"][0] != int(rec["raw"]))
             f.write(json.dumps(game) + "\n")
@@ -128,6 +152,7 @@ def arm(inputs: Sequence[str], form: str, budget: int, min_margin: float, out: s
     meta = {"purpose": "gchoice expert-iteration arm (tools/gchoice_targets.py)",
             "form": form, "budget": budget, "min_margin": min_margin if form == "gated" else None,
             "agree_with": agree_with if form == "consensus" else None,
+            "tau": tau if form == "soft" else None,
             "searcher": srcs[0].get("searcher") if srcs else None,
             "checkpoint_sha256": srcs[0].get("checkpoint_sha256") if srcs else None,
             "commit": srcs[0].get("commit") if srcs else None,
@@ -177,7 +202,7 @@ def _entropy(p: np.ndarray) -> np.ndarray:
     return -(np.where(p > 0, p * np.log(np.where(p > 0, p, 1.0)), 0.0)).sum(axis=1)
 
 
-def check(inputs: Sequence[str], base: str, model: str, budget: int,
+def check(inputs: Sequence[str], base: str, model: str, budget: str,
           batch: int = 512) -> Dict[str, Any]:
     """Where did `model` move against `base` on the held-out searched positions?"""
     from tools.lib.player_agent import NeuralAgent
@@ -267,22 +292,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     a = sub.add_parser("arm", help="rewrite the searched records' targets into one arm's dataset")
     a.add_argument("--input", nargs="+", required=True)
     a.add_argument("--form", choices=FORMS, required=True)
-    a.add_argument("--budget", type=int, default=256)
+    a.add_argument("--budget", default="256", help="the recorded budget to read: a Gumbel budget or 'rollout'")
     a.add_argument("--min-margin", type=float, default=0.04,
                    help="gated: the root's Q(choice) - Q(argmax), in win probability")
-    a.add_argument("--agree-with", type=int, default=None,
+    a.add_argument("--tau", type=float, default=0.1, help="soft: the step's temperature, in [-1, 1] value units")
+    a.add_argument("--agree-with", default=None,
                    help="consensus: the other recorded budget whose choice must be the same")
     a.add_argument("--out", required=True)
     c = sub.add_parser("check", help="where a fine-tuned checkpoint moved, on held-out games")
     c.add_argument("--input", nargs="+", required=True)
     c.add_argument("--base", required=True)
     c.add_argument("--model", required=True)
-    c.add_argument("--budget", type=int, default=256)
+    c.add_argument("--budget", default="256")
     c.add_argument("--out", required=True, help="JSON; a Markdown table goes beside it (.md)")
     args = ap.parse_args(argv)
     if args.cmd == "arm":
         print(json.dumps(arm(args.input, args.form, args.budget, args.min_margin, args.out,
-                             args.agree_with), indent=1))
+                             args.agree_with, args.tau), indent=1))
         return 0
     res = check(args.input, args.base, args.model, args.budget)
     with open(args.out, "w", encoding="utf-8") as f:
