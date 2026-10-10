@@ -649,6 +649,32 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P31 1c: games played per option; the option's value is their mean result.")
     parser.add_argument("--mode-cf-from", type=int, default=0,
                         help="P31 1c: no decision is priced before this many total env steps.")
+    parser.add_argument("--turn-credit-coef", type=float, default=0.0,
+                        help="P32 B4': weight of the turn-credit cross-entropy. Sampled learner decisions with 2..--turn-credit-cap options are priced at each rollout's end -- every option over --turn-credit-worlds worlds (a shared redeal of the hidden cards, independent dice), the current network greedy on both sides to the end of the turn, valued by its critic there or the result -- and trained toward pi' ∝ max(pi, floor) * exp(beta * Q), weighted by evidence (ai/training/turn_credit.py). 0 is off.")
+    parser.add_argument("--turn-credit-budget", type=int, default=64,
+                        help="P32 B4': decisions priced per rollout (nested ones included).")
+    parser.add_argument("--turn-credit-worlds", type=int, default=16,
+                        help="P32 B4': worlds per priced decision.")
+    parser.add_argument("--turn-credit-beta", type=float, default=10.0,
+                        help="P32 B4': nats per unit of turn-end value in the target.")
+    parser.add_argument("--turn-credit-k", type=float, default=9.0,
+                        help="P32 B4': a row's weight is d^2 / (d^2 + k * se^2) -- half weight at z = sqrt(k).")
+    parser.add_argument("--turn-credit-floor", type=float, default=1e-3,
+                        help="P32 B4': the policy probability floor in the target, so a saturated option stays reachable.")
+    parser.add_argument("--turn-credit-nested-p", type=float, default=0.0,
+                        help="P32 B4': share of the decider's small decisions met in the branches of options the policy does not prefer that are queued for pricing too (a pair learned from its end). 0 is off.")
+    parser.add_argument("--turn-credit-nested-share", type=float, default=0.33,
+                        help="P32 B4': at most this share of the budget for nested decisions.")
+    parser.add_argument("--turn-credit-narrow-share", type=float, default=0.5,
+                        help="P32 B4': share of the budget for narrow spots (max p > 0.9, some option below 0.02).")
+    parser.add_argument("--turn-credit-cap", type=int, default=12,
+                        help="P32 B4': the largest option set priced.")
+    parser.add_argument("--turn-credit-steps", type=int, default=4,
+                        help="P32 B4': CE optimiser steps after each PPO update.")
+    parser.add_argument("--turn-credit-batch", type=int, default=512,
+                        help="P32 B4': rows per CE step.")
+    parser.add_argument("--turn-credit-buffer", type=int, default=8192,
+                        help="P32 B4': priced rows kept (FIFO).")
     parser.add_argument("--force-applicable-events", nargs="+", default=None,
                         choices=["wargames", "arms_race", "one_small_step", "wargames_branch"],
                         help="Owner 2026-10-06: at the learner's play-mode decision for the listed card "
@@ -1045,6 +1071,19 @@ def main():
             mode_cf_subsample=args.mode_cf_subsample,
             mode_cf_playouts=args.mode_cf_playouts,
             mode_cf_from=args.mode_cf_from,
+            turn_credit_coef=args.turn_credit_coef,
+            turn_credit_budget=args.turn_credit_budget,
+            turn_credit_worlds=args.turn_credit_worlds,
+            turn_credit_beta=args.turn_credit_beta,
+            turn_credit_k=args.turn_credit_k,
+            turn_credit_floor=args.turn_credit_floor,
+            turn_credit_nested_p=args.turn_credit_nested_p,
+            turn_credit_nested_share=args.turn_credit_nested_share,
+            turn_credit_narrow_share=args.turn_credit_narrow_share,
+            turn_credit_cap=args.turn_credit_cap,
+            turn_credit_steps=args.turn_credit_steps,
+            turn_credit_batch=args.turn_credit_batch,
+            turn_credit_buffer=args.turn_credit_buffer,
             force_applicable_events=args.force_applicable_events,
             force_event_frac=args.force_event_frac,
             force_events_from=args.force_events_from,

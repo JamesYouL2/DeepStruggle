@@ -35,6 +35,7 @@ from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E
                               ApplicableEventForcer, ScenarioSeeder, apply_floor, floor_eps,
                               floor_rows, play_mode_rows)
 from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
+from .turn_credit import TurnCredit  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -354,6 +355,19 @@ class BaseNashPGTrainer:
         mode_cf_subsample: int = 16,
         mode_cf_playouts: int = 1,
         mode_cf_from: int = 0,
+        turn_credit_coef: float = 0.0,     # P32 B4': CE toward turn-end priced targets. 0 = off
+        turn_credit_budget: int = 64,
+        turn_credit_worlds: int = 16,
+        turn_credit_beta: float = 10.0,
+        turn_credit_k: float = 9.0,
+        turn_credit_floor: float = 1e-3,
+        turn_credit_nested_p: float = 0.0,
+        turn_credit_nested_share: float = 0.33,
+        turn_credit_narrow_share: float = 0.5,
+        turn_credit_cap: int = 12,
+        turn_credit_steps: int = 4,
+        turn_credit_batch: int = 512,
+        turn_credit_buffer: int = 8192,
         force_applicable_events: Sequence[str] = (),
         force_event_frac: float = 0.1,
         force_events_from: int = 0,
@@ -786,6 +800,23 @@ class BaseNashPGTrainer:
             print(f"[mode cf] coef {self.mode_cf_coef:g}: every option of 1 in {int(mode_cf_subsample)} "
                   f"learner floor decisions played out ({int(mode_cf_playouts)} game(s) each), "
                   f"from {self.mode_cf_from:,} steps", flush=True)
+        # P32 B4' (ai/training/turn_credit.py): sampled learner decisions priced to the end of the
+        # turn at each rollout's end; their improved targets trained on after each PPO update.
+        self.turn_credit: Optional[TurnCredit] = None
+        if turn_credit_coef > 0.0:
+            if self.merged_influence:
+                raise ValueError("--turn-credit-coef with --merged-influence is not supported: the "
+                                 "pricing steps E4 actions")
+            self.turn_credit = TurnCredit(
+                turn_credit_coef, budget=turn_credit_budget, worlds=turn_credit_worlds, beta=turn_credit_beta,
+                k_se=turn_credit_k, floor=turn_credit_floor, nested_p=turn_credit_nested_p,
+                nested_share=turn_credit_nested_share, narrow_share=turn_credit_narrow_share,
+                cap=turn_credit_cap, buffer=turn_credit_buffer, steps=turn_credit_steps,
+                batch=turn_credit_batch, obs_features=int(model_obs_features(self.active_net)))
+            print(f"[turn credit] coef {turn_credit_coef:g}: {turn_credit_budget} learner decisions per rollout "
+                  f"(2-{turn_credit_cap} options) priced over {turn_credit_worlds} worlds to the turn's end, "
+                  f"beta {turn_credit_beta:g}, nested p {turn_credit_nested_p:g}, {turn_credit_steps} x "
+                  f"{turn_credit_batch} CE steps per update", flush=True)
         #: P26: torch.compile for the update's forwards only (the learner's per-minibatch pass and
         #: the pi_ref log-probs). The rollout keeps its CUDA graphs of the eager network, so dynamo
         #: never runs inside a rollout; parameters are shared, so checkpoints are the eager
@@ -1501,6 +1532,10 @@ class BaseNashPGTrainer:
                 if _pick.size:
                     self.mode_cf.enqueue(self.buffer.step, _pick, self.env.runner,
                                          np.asarray(self._masks_np), actions_np, _dp)
+            if self.turn_credit is not None:
+                # B4': cloned before the step, like the search and mode-cf queues.
+                self.turn_credit.record(self.env.runner, np.asarray(self._masks_np),
+                                        np.asarray(learner_np, dtype=bool))
             if self.setup_mc_credit:
                 self._setup_mc_record(obs_t, masks_t, actions_t, log_probs_t, v_win_t,
                                       np.asarray(learner_np, dtype=bool), _dp)
@@ -1641,6 +1676,11 @@ class BaseNashPGTrainer:
         self._flush_search_targets()
         if self.mode_cf is not None:
             self._flush_mode_cf()
+        if self.turn_credit is not None:
+            _was = self.active_net.training
+            self.active_net.eval()
+            self.turn_credit.flush(self.active_net, self.device)
+            self.active_net.train(_was)
 
         # Evaluate last state for GAE bootstrapping
         last_obs_t = torch.from_numpy(self._obs_np).float().to(self.device)
@@ -2042,6 +2082,8 @@ class BaseNashPGTrainer:
             combined.update(self._card_aux_update())
         if self.aux_opp_legality > 0.0:
             combined.update(self._opp_legal_update())
+        if self.turn_credit is not None:
+            combined.update(self.turn_credit.update(self.active_net, self.optimizer, self.max_grad_norm))
 
         # Fixed-probe entropy: evaluated on the frozen pool every N iterations, so it is
         # directly comparable across the run unlike the on-policy "entropy" above.
