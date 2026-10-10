@@ -407,8 +407,14 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   searched soup. And **T2 is on the loop's critical path, not a follow-up**: by the corrected
   rule a re-freeze candidate must beat the teacher *searched*, and a student whose search hurts it
   cannot qualify however it rates raw -- the next teacher has to carry a repaired critic, which is
-  what R32 + T2 (or R36 + T2) is for. Queued: the soup at Gumbel k = 4 @32, the teacher actually
-  used, against the main players and R32's SWA, pinning how much of its margin was absorbed. **The search gap at 6,600M** (Gumbel k8@256 on each network against
+  what R32 + T2 (or R36 + T2) is for. **The teacher read: the soup at Gumbel k = 4 @32 rates 1662** -- +34 over the raw soup, only
+  7 below k8@256 (1669) -- and beats R32's SWA head to head 52.4% (as US 51.1, as USSR 53.7). So
+  **R32 absorbed about half of the teacher's margin** (raw soup 1628 → R32 1645 → teacher 1662);
+  the teacher is not exhausted, and neither R32's continuation on the same teacher nor R36's
+  longer run needs a new one yet. (This also corrects the "+25–35" estimate: k = 4 @32 is +34,
+  nearly all of the k8@256 gain.) The loop's order is therefore: keep distilling from the soup
+  while its margin over the student is positive; T2 repairs the critic in parallel; re-freeze
+  only when a candidate beats the soup *searched*. **The search gap at 6,600M** (Gumbel k8@256 on each network against
   the same network raw, 1,000 games a side): **on R32 51.2% ± 1.1** (as US 47.0, as USSR 55.4);
   on the plain leg 62.6% (61.4 / 63.9). A shrink of ~7 SE, past the 3-SE promotion bar: **T1 passes
   the plan's rule on both halves** (gap shrunk, head to head above the plain leg). Caveat: Gumbel's
