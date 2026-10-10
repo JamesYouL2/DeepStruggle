@@ -428,6 +428,15 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   R32 continues unchanged on the soup (leg 2, to 6,800M), and **T2 alone takes R34's slot**
   (`E7-A8-R1-S44@6400M+R35`: β 0.5, the soup as searcher at k = 4 @32, no CE; `search_value_bias`
   logged overall and per seat). If T2 repairs the critic, R32 + T2 is the student worth
-  re-freezing to.
+  re-freezing to. **R35 at 6,480M: level.** SWA 6,410–6,480M against the plain leg's window
+  49.2–49.0% (US 49.6, USSR 48.9); against the heads soup 43.0% where the plain window scores 42.6%
+  (US −2.8, USSR +3.6) -- R32 was +5.9 / +5.6 at this window. Training healthy: entropy 0.29 level,
+  search value vs critic 0.07 and flat, signed bias −0.009 (US +0.001, USSR −0.019): **no
+  optimism**, so the level-vs-difference worry does not arise at β 0.5. The critic has not visibly
+  moved toward the search value yet; at β 0.5 on 1/8 of rows that may be slow. Reads queued: the
+  field at 6,640 and 6,800M, and **the search gap at 6,800M, which is T2's real test** -- a better
+  leaf evaluator should make R35's *own* search gain *more* than the plain leg's 62.6%, the
+  opposite sign from T1's read -- plus the critic's sign agreement with playouts and the opening
+  familiarity bias (−12.9 against +0.5), the two critic defects T2 was aimed at.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
