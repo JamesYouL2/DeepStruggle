@@ -368,11 +368,16 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   three-run soup *raw*. R32 continues unchanged to 6,800M (leg 2, same name) to see whether it
   climbs past its teacher; the search gap at 6,600M is running. **Next slot (R34 frees it at
   ~6,800M): the re-freeze, before T2** -- gated on the teacher's-margin read, not the raw rating:
-  the teacher is the soup *searched* (~+60 Elo above the raw soup), so R32 being level with the
-  raw soup does not mean it has caught the teacher; re-freeze when the soup-searched margin over
-  R32 has shrunk clearly relative to its margin over the plain leg. Teacher candidate: R32's own
-  SWA, or the SWA-made soup of R32's SWA with the heads soup if that rates above both (same lineage,
-  same basin -- one tournament decides, and it also says whether R32 is a soup ingredient). T2
-  alone after; if the loop's second iteration gains little, T2 becomes the lever.
+  the teacher is the soup *searched*, so R32 being level with the raw soup does not mean it has
+  caught the teacher. **Correction (ts-main): the teacher actually in use is the soup at k = 4 @32,
+  about +25–35 Elo above the raw soup, not the k8@256 figure (~+60), which overstates it**; both
+  margins are read. **Decision rule, queued (`r32_refreeze.sh`, right after the search gap):**
+  the soup-searched margin over R32's raw 6,600M against its margin over the plain leg's (1,000
+  games a side each), then the equal-weight SWA-made soup of R32's 6,520–6,600M SWA with the heads
+  soup rated in a five-model greedy field beside R32's SWA, the heads soup, the plain leg's window
+  and the A4 soup. **If the margin over R32 has shrunk clearly relative to the plain leg's, or the
+  new soup rates above both its parents, the re-freeze takes the slot R34 frees** -- the teacher is
+  that soup if it rates above both, otherwise R32's SWA. **If neither, T2 takes the slot.** If the
+  loop's second iteration gains little, T2 becomes the lever rather than the follow-up.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
