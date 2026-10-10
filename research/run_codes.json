@@ -664,6 +664,33 @@
     "seed_frac": 1.0,
     "block_lambda": "off"
    }
+  },
+  "R29": {
+   "description": "P32 T1: R1 plus search CE 0.5 toward the Gumbel root's improved policy (k=4, 16 evaluations, every node type, 1 in 8 decisions)",
+   "first": "E7-A8-R1-S44@6400M+R29_20261010_003613",
+   "flags": {
+    "search_ce_coef": 0.5,
+    "search_sims": 16,
+    "search_node_filter": "all",
+    "search_gumbel_k": 4,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off"
+   }
+  },
+  "R30": {
+   "description": "R28 (the trap scenario) plus the logit-gap penalty: 1e-4 x mean relu(top - logit - 7)^2 over legal moves",
+   "first": "E7-A8-R1-S44@6400M+R30_20261010_003955",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "seed_scenarios": [
+     "cmc_combo"
+    ],
+    "seed_frac": 1.0,
+    "logit_gap_coef": 0.0001,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -789,7 +816,9 @@
   "E7-A8-R1-S44@6400M+A11_20261010_000454": "E7-A8-R1-S44@6400M+A11",
   "E7-A8-R1-S44@6400M+A11-R28_20261010_001545": "E7-A8-R1-S44@6400M+A11-R28",
   "E7-A8-R1-S44@6400M+A12_20261010_002921": "E7-A8-R1-S44@6400M+A12",
-  "E7-A8-R1-S44@6400M+A12-R28_20261010_002941": "E7-A8-R1-S44@6400M+A12-R28"
+  "E7-A8-R1-S44@6400M+A12-R28_20261010_002941": "E7-A8-R1-S44@6400M+A12-R28",
+  "E7-A8-R1-S44@6400M+R29_20261010_003613": "E7-A8-R1-S44@6400M+R29",
+  "E7-A8-R1-S44@6400M+R30_20261010_003955": "E7-A8-R1-S44@6400M+R30"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
