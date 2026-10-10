@@ -38,3 +38,8 @@ def test_every_judge_must_confirm_and_the_bank_is_ordered_by_the_smaller_cost() 
     # c: the second judge sees 5 points; d: the second judge never measured it
     assert confirmed(rows, 0.1, 3.0) == ["b", "a"]
     assert confirmed(rows, 0.1, 4.0) == ["b"]                          # a: 0.15 / 0.04 is z 3.75
+
+
+def test_a_bank_row_and_a_shortlist_row_name_their_moves_alike() -> None:
+    from tools.scripts.blunder_bank import _move
+    assert _move(142) == 142 and _move({"action": 142, "name": "x"}) == 142
