@@ -50,7 +50,8 @@ def targets(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, str]:
     out = str(d / "targets.jsonl.gz")
     assert generate(ckpt, total_games=1, batch_size=1, sims=8, node_filter="all",
                     temperature=1.0, output_path=out, device_str="cpu", target="gchoice",
-                    gumbel_sims=[8, 4], gumbel_k=2, subsample=0.2, seed_offset=3) == 0
+                    gumbel_sims=[8, 4], gumbel_k=2, subsample=0.2,
+                    seed_offset=990_000_000) == 0   # the workflow's held-out offset
     return {"ckpt": ckpt, "targets": out, "dir": str(d)}
 
 

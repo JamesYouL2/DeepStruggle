@@ -92,7 +92,7 @@ def gumbel_teachers(model: Any, device: torch.device, budgets: List[int], k: int
                                 advance_root=False, determinize=True, node_filter="all",
                                 gumbel_k=k, gumbel_scale=0.0, fpu_reduction=fpu)
         t = BatchedMCTS(model, device=device, config=cfg)
-        t.reseed(seed * 7919 + j)
+        t.reseed((seed * 7919 + j) % (1 << 32))     # numpy's RandomState takes 32 bits
         out.append(t)
     return out
 
@@ -130,7 +130,7 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
                             subsample=subsample)
     searcher = BatchedMCTS(model, device=device, config=cfg)
     if seed_offset:
-        searcher.reseed(seed_offset + 1)
+        searcher.reseed((seed_offset + 1) % (1 << 32))
     budgets = list(gumbel_sims or [256])
     teachers = gumbel_teachers(model, device, budgets, gumbel_k, fpu, seed_offset + 2) \
         if target == "gchoice" else []
