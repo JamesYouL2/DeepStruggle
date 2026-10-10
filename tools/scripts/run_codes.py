@@ -79,6 +79,7 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
                                        "force_event_credit")),
     ("seed_scenarios", None, ("seed_frac", "seed_scenarios_from")),
     ("search_ce_coef", 0.0, ("search_sims", "search_subsample", "search_node_filter")),
+    ("teacher_coef", 0.0, ("teacher_checkpoint", "teacher_seat")),
     ("mode_cf_coef", 0.0, ("mode_cf_subsample", "mode_cf_playouts", "mode_cf_from")),
     ("aux_opp_legality", 0.0, ("aux_opp_legality_frac", "aux_opp_legality_min_batch")),
     ("league_dirs", None, ("league_frac", "league_pool_size")),

@@ -69,6 +69,18 @@ def latest_resume(run_dir: str, min_steps: int = 0) -> Optional[str]:
     return os.path.join(run_dir, max(found)[1]) if found else None
 
 
+def exploiter_run_name(template: str, generation: int, reset_steps: int) -> str:
+    """The run name of one exploiter generation.
+
+    A template with a `{step}` field names the generation by where it branches from the main
+    agent, in the run-name grammar (`<main>@{step}M+R3` -> `<main>@6410M+R3`), as
+    `research/run_codes.json` maps the old generations; one without is the old scheme's
+    `<template>-<generation>`."""
+    if "{step}" in template:
+        return template.format(step=round(reset_steps / 1e6))
+    return f"{template}-{generation}"
+
+
 def _event(league_dir: str, kind: str, **kw: Any) -> None:
     rec = {"t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": kind, **kw}
     with open(os.path.join(league_dir, "events.jsonl"), "a", encoding="utf-8") as f:
@@ -161,7 +173,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--main-steps", type=int, required=True)
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--exploiter-name", required=True,
-                    help="Generation g runs as <name>-<g>.")
+                    help="Generation g runs as <name>-<g>; a name with a {step} field (e.g. "
+                         "'<main-name>@{step}M+R3') runs each generation under the step it "
+                         "branches from instead.")
     ap.add_argument("--exploiter-start-steps", type=int, default=0,
                     help="With --exploiter-reset main-latest: the first generation waits until the main "
                          "agent has a tagged resume state at least this far on.")
@@ -200,9 +214,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     # launched, and the driver then died while the main agent trained on alone.
     if a.first_generation < 1:
         raise SystemExit("--first-generation must be at least 1")
-    for n in (a.main_name, f"{a.exploiter_name}-{a.first_generation}"):
+    # A {step} template is checked at a step past any branch point it can follow.
+    for n in (a.main_name, exploiter_run_name(a.exploiter_name, a.first_generation, 10**15)):
         if not is_run_name(n):
-            raise SystemExit(f"run name {n!r} is not <engine>-<attempt>-<seed>; tools/train.py would refuse it")
+            raise SystemExit(f"run name {n!r} is not a run name; tools/train.py would refuse it")
     os.makedirs(a.league_dir, exist_ok=True)
     os.makedirs(a.log_dir, exist_ok=True)
     common = shlex.split(a.train_args)
@@ -266,7 +281,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         m_reset = re.search(r"(\d+)steps", os.path.basename(reset_file))
         assert m_reset is not None
         reset_steps = int(m_reset.group(1))
-        name = f"{a.exploiter_name}-{gen}"
+        name = exploiter_run_name(a.exploiter_name, gen, reset_steps)
         gen_target = os.path.join(main_dir, f"snapshot_{_snapshots(main_dir)[-1]}steps.pt")
         pool = (["--opponent-checkpoints", gen_target] if a.exploiter_target == "frozen" else
                 ["--league-dirs", main_dir, "--league-pool-size", str(a.exploiter_league_size)])

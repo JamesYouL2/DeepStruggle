@@ -141,6 +141,21 @@ def test_the_gumbel_spec_plays_the_measured_configuration(tmp_path: Path) -> Non
     assert (cfg.simulations, cfg.gumbel_k, cfg.fpu_reduction, label) == (64, 4, 0.2, "gumbel64-k4")
     _, cfg, label = search_spec_config(f"gumbel:{path}:64:4:0")
     assert (cfg.fpu_reduction, label) == (0.0, "gumbel64-k4-fpu0")
+    # Searching only card and play-mode decisions, the agent's own policy elsewhere.
+    _, cfg, label = search_spec_config(f"gumbel:{path}:256:8:0.2:card")
+    assert (cfg.node_filter, cfg.gumbel_k, label) == ("card_playmode", 8, "gumbel256-k8-card")
+
+
+def test_a_card_only_gumbel_agent_plays_its_own_policy_off_card_decisions() -> None:
+    """At a decision the filter skips, the move is the network's greedy pick, not a searched one."""
+    agent = BatchedMCTSAgent(_model(), device="cpu", featurise_capacity=256,
+                             config=BatchedMCTSConfig(simulations=16, temperature=0.0,
+                                                      determinize=True, node_filter="card_playmode",
+                                                      gumbel_k=4, gumbel_scale=0.0))
+    states = _states(24)
+    skipped = [st for st in states if not agent.mcts.should_search(st)]
+    assert skipped, "the fixture has no non-card decision to check"
+    assert agent.select_actions_batch(skipped) == agent._policy_actions(skipped)
 
 
 def test_the_search_spec_takes_first_play_urgency_last(tmp_path: Path) -> None:

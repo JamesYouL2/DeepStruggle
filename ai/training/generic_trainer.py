@@ -26,7 +26,8 @@ import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create_like
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
-from bindings.ts_env import OBS_LAYOUT_NAME, TsVectorizedEnv
+from bindings.ts_env import (OBS_LAYOUT_NAME, TsVectorizedEnv, check_obs_width,
+                             model_obs_features)
 from ai.training.rollout_buffer import RolloutBuffer
 from ai.training.run_name import is_run_name
 from ai.training.schedule import WeightEMA, scheduled_lr
@@ -1609,6 +1610,9 @@ def train_pipeline(
     search_sims: int = 32,
     search_subsample: float = 0.125,
     search_node_filter: str = "card_playmode",
+    teacher_checkpoint: Optional[str] = None,
+    teacher_coef: float = 0.0,
+    teacher_seat: str = "us",
     opponent_pfsp: bool = False,
     opponent_pfsp_weighting: str = "var",
     opponent_pfsp_uniform_mix: float = 0.25,
@@ -1866,6 +1870,9 @@ def train_pipeline(
         "search_sims": int(search_sims),
         "search_subsample": float(search_subsample),
         "search_node_filter": search_node_filter,
+        "teacher_checkpoint": teacher_checkpoint,
+        "teacher_coef": float(teacher_coef),
+        "teacher_seat": teacher_seat,
         "opponent_pfsp": bool(opponent_pfsp),
         "opponent_pfsp_weighting": opponent_pfsp_weighting,
         "opponent_pfsp_uniform_mix": float(opponent_pfsp_uniform_mix),
@@ -2152,6 +2159,24 @@ def train_pipeline(
         curriculum_switch_at = float("inf")
         curriculum_switched = False
 
+    # P32: a frozen teacher to distil in one seat. It must read the same observation and act in
+    # the same action view, or its log-probabilities would be over different inputs and slots.
+    teacher_net: Optional[nn.Module] = None
+    if teacher_coef > 0.0:
+        if not teacher_checkpoint:
+            raise ValueError("--teacher-coef needs --teacher-checkpoint")
+        teacher_net = NeuralAgent.from_checkpoint(teacher_checkpoint, device=dev).model
+        check_obs_width(teacher_net)
+        if model_obs_features(teacher_net) != model_obs_features(model):
+            raise ValueError(f"teacher {teacher_checkpoint} reads observation features "
+                             f"{model_obs_features(teacher_net):#x}, the learner "
+                             f"{model_obs_features(model):#x}")
+        if checkpoint_merged_influence(teacher_checkpoint) != bool(merged_influence):
+            raise ValueError(f"teacher {teacher_checkpoint} acts in another action view than "
+                             f"the learner (merged influence {bool(merged_influence)})")
+        print(f"[teacher] distilling {teacher_checkpoint} on the {teacher_seat} seat's own "
+              f"decisions, coef {teacher_coef}", flush=True)
+
     # 4. Instantiate the NashPG trainer
     trainer = NashPGTrainer(
         active_net=model,
@@ -2181,6 +2206,9 @@ def train_pipeline(
         search_sims=search_sims,
         search_subsample=search_subsample,
         search_node_filter=search_node_filter,
+        teacher_net=teacher_net,
+        teacher_coef=teacher_coef,
+        teacher_seat={"us": 1, "ussr": -1, "both": 0}[teacher_seat],
         priority_alpha=priority_alpha,
         defcon_coef=defcon_coef,
         temperature_schedule=True,
@@ -2660,6 +2688,9 @@ def train_pipeline(
         active_aux_losses.append("defcon_risk_loss")
     if injector is not None:
         active_aux_losses.append("inject_loss")
+    if teacher_coef > 0.0:
+        active_aux_losses.append("teacher_kl")
+        active_aux_losses.append("teacher_rows")
     if search_ce_coef > 0.0:
         # P15-X4b. The CE term's magnitude and its share of the raw gradient. Registering them
         # here rather than unconditionally keeps them off every run that has no searcher, and

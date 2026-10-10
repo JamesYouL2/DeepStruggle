@@ -772,6 +772,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-node-filter", type=str, default="card_playmode",
                         choices=["card_playmode", "all"],
                         help="Which decisions are eligible.")
+    parser.add_argument("--teacher-checkpoint", type=str, default=None,
+                        help="P32: a frozen checkpoint whose policy is distilled, with "
+                             "--teacher-coef, on the learner's own decisions in --teacher-seat "
+                             "(e.g. a seat-locked exploiter that plays that seat better). Same "
+                             "observation features and action view as the learner.")
+    parser.add_argument("--teacher-coef", type=float, default=0.0,
+                        help="Weight of KL(teacher || policy) in the policy loss. 0 = off.")
+    parser.add_argument("--teacher-seat", type=str, default="us", choices=["us", "ussr", "both"],
+                        help="The seat whose decisions are distilled.")
     parser.add_argument("--rollout-temps", type=float, nargs=4, default=[1.0, 1.0, 1.0, 1.0],
                         metavar=("T1", "T2", "T3", "T4"),
                         help="The four per-environment rollout sampling temperatures. Default "
@@ -914,6 +923,9 @@ def main():
             search_sims=args.search_sims,
             search_subsample=args.search_subsample,
             search_node_filter=args.search_node_filter,
+            teacher_checkpoint=args.teacher_checkpoint,
+            teacher_coef=args.teacher_coef,
+            teacher_seat=args.teacher_seat,
             opponent_pfsp=args.opponent_pfsp,
             opponent_pfsp_weighting=args.opponent_pfsp_weighting,
             opponent_pfsp_uniform_mix=args.opponent_pfsp_uniform_mix,

@@ -5,6 +5,10 @@ import numpy as np
 import ts_engine as ts
 
 
+#: ts::Region order (engine/include/ts/types.hpp), the order of the REGION_OFFSET slots.
+REGION_NAMES = ("Europe", "Asia", "Middle East", "Africa", "Central America", "South America")
+
+
 class ActionEncoder:
     """Encodes and decodes between discrete flat action index [0..211] and ts.MicroAction.
 
@@ -112,5 +116,15 @@ class ActionEncoder:
         if action_idx < ActionEncoder.CONFIRM_DONE_INDEX:
             branch_id = action_idx - ActionEncoder.BRANCH_OFFSET
             return f"Branch #{branch_id}"
+
+        if ActionEncoder.DEFCON_VALUE_OFFSET <= action_idx < ActionEncoder.REGION_OFFSET:
+            # Summit / How I Learned to Stop Worrying: set DEFCON to 1..5.
+            return f"SetDEFCON {action_idx - ActionEncoder.DEFCON_VALUE_OFFSET + 1}"
+
+        if action_idx < ActionEncoder.FLAT_ACTION_SIZE:
+            # Chernobyl's region, in ts::Region order.
+            region_id = action_idx - ActionEncoder.REGION_OFFSET
+            name = REGION_NAMES[region_id] if region_id < len(REGION_NAMES) else "?"
+            return f"Region #{region_id} ({name})"
 
         return f"UnknownAction #{action_idx}"

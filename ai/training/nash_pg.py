@@ -182,6 +182,21 @@ def wolf_sample_weights(players: torch.Tensor, w_us: float, w_ussr: float) -> to
     return torch.where(players == 1, ones * w_us, torch.where(players == -1, ones * w_ussr, ones))
 
 
+def teacher_kl(cur_log_p: torch.Tensor, teacher_log_p: torch.Tensor, rows: torch.Tensor
+               ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """KL(teacher || policy) per row, averaged over the selected `rows`, and the row count.
+
+    Both log-probabilities come from logits masked with the same legal set (fill -1e9), so a
+    masked action has teacher probability exactly 0 and adds nothing; nothing here is clamped.
+    No host sync: with no row selected the mean is 0.
+    """
+    t_p = teacher_log_p.exp()
+    kl_row = (t_p * (teacher_log_p - cur_log_p)).sum(dim=-1)
+    w = rows.to(kl_row.dtype)
+    n = w.sum()
+    return (kl_row * w).sum() / n.clamp(min=1.0), n
+
+
 class FixedEntropyProbe:
     """A frozen pool of (observation, action-mask) pairs for drift-free entropy tracking.
 
@@ -270,6 +285,9 @@ class BaseNashPGTrainer:
         search_sims: int = 32,
         search_subsample: float = 0.125,
         search_node_filter: str = "card_playmode",
+        teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
+        teacher_coef: float = 0.0,
+        teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
         ent_coef: float = 0.01,        # Entropy exploration coefficient
         vf_coef: float = 0.5,          # Value loss coefficient
         vp_coef: float = 0.05,         # Auxiliary VP loss weight
@@ -383,6 +401,18 @@ class BaseNashPGTrainer:
         # from the raw policy, so the state distribution is identical to the baseline's and the
         # arm stays one factor. Acting on the search policy is a different experiment.
         self.search_ce_coef = float(search_ce_coef)
+        # P32: distil a frozen teacher's policy on the learner's own decisions in one seat -- a
+        # seat-locked exploiter that plays that seat better than this network does. KL(teacher
+        # || policy) beside the RL loss; rollouts and everything else are unchanged.
+        self.teacher_coef = float(teacher_coef)
+        self.teacher_seat = int(teacher_seat)
+        self.teacher_net: Optional[nn.Module] = None
+        if self.teacher_coef > 0.0:
+            if teacher_net is None:
+                raise ValueError("teacher_coef > 0 needs a teacher_net")
+            self.teacher_net = teacher_net.to(self.device).eval()
+            for _p in self.teacher_net.parameters():
+                _p.requires_grad_(False)
         self._searcher = None
         if self.search_ce_coef > 0.0:
             from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
@@ -2065,6 +2095,16 @@ class NashPGTrainer(BaseNashPGTrainer):
                                                  _all_masks[i:i + self.batch_size])[0], dim=-1)
                 for i in range(0, _n_all, self.batch_size)])
 
+        teacher_log_p_all: Optional[torch.Tensor] = None
+        if self.teacher_net is not None:
+            _teach_fwd = self._update_net(self.teacher_net)
+            with torch.no_grad():
+                teacher_log_p_all = torch.cat([
+                    F.log_softmax(_teach_fwd(_all_obs[i:i + self.batch_size],
+                                             _all_masks[i:i + self.batch_size])[0], dim=-1)
+                    for i in range(0, _n_all, self.batch_size)])
+        teacher_kl_t, teacher_rows_t = _z(), _z()
+
         for _ in range(self.num_epochs):
             for (b_obs, b_mask, b_act, b_old_lp, b_adv, b_ret_win, b_ret_vp,
                  b_defcon_risk, b_learner, b_search_pi, b_has_search,
@@ -2282,6 +2322,15 @@ class NashPGTrainer(BaseNashPGTrainer):
                     ent_loss = ent_loss + setup_c * (cur_entropy * _setup_f).sum() / _own_n
                 policy_loss = (ppo_loss + self.eta * kl_term - ent_loss
                                + self.search_ce_coef * search_ce)
+                if teacher_log_p_all is not None:
+                    _t_rows = b_learner > 0.5
+                    if self.teacher_seat != 0:
+                        _t_rows = _t_rows & (b_players == self.teacher_seat)
+                    _t_kl, _t_n = teacher_kl(cur_log_p, teacher_log_p_all.index_select(0, b_idx),
+                                             _t_rows)
+                    policy_loss = policy_loss + self.teacher_coef * _t_kl
+                    teacher_kl_t += _t_kl.detach().double()
+                    teacher_rows_t += _t_n.detach().double()
                 if self._cf_has is not None and self._cf_adv is not None and self.mode_cf_coef > 0.0:
                     # P31 1c: the all-options term, -c * sum_a pi(a) * (Q(a) - Q(taken)), on the
                     # minibatch's priced rows only (no host sync: an empty selection adds zero).
@@ -2404,6 +2453,10 @@ class NashPGTrainer(BaseNashPGTrainer):
             "clip_frac": clip_frac_accum / max(1, num_updates),
             # 0.0 when search CE is off, so the key is always present and a run without it is
             # still distinguishable from a run whose term silently produced nothing.
+            # P32: the mean per-minibatch KL(teacher || policy) on the distilled seat's own
+            # decisions, and those decisions per minibatch; 0.0 without a teacher.
+            "teacher_kl": float(teacher_kl_t) / max(1, num_updates),
+            "teacher_rows": float(teacher_rows_t) / max(1, num_updates),
             "search_ce": search_ce_accum / max(1, search_rows_accum),
             "search_ce_grad_frac": search_ce_frac_accum / max(1, search_rows_accum),
             # The numerator and denominator of that ratio, and how many minibatches carried a

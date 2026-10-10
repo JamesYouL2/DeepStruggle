@@ -102,7 +102,10 @@ which is a soup of the alternatives:
 
 The grammar's one parser is `ai/training/run_name.py` (`parse_run_name`, `parse_label`,
 `is_run_name`); `tools/train.py --run-name`, the league driver and `tools/lib/checkpoint_id.py`
-use it, and a snapshot's label (`E7-A4-R1-S44@4390M+S45@4800M`) parses back to its run.
+use it, and a snapshot's label (`E7-A4-R1-S44@4390M+S45@4800M`) parses back to its run. A league
+exploiter generation is a branch of the main agent at its reset state: pass the league driver
+`--exploiter-name '<main>@{step}M+R3'` and each generation runs as `<main>@6410M+R3`,
+`<main>@6460M+R3`, ...
 
 ### Launching a run
 

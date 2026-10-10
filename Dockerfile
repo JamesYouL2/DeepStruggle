@@ -1,8 +1,9 @@
 FROM nvidia/cuda:13.3.1-cudnn-runtime-ubuntu26.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
-    libxdamage1 libasound2t64 libcups2t64
+        python3 python3-pip python3-venv curl git \
+        build-essential clang libclang-rt-dev cmake nodejs npm zsh xz-utils libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
+        libxdamage1 libasound2t64 libcups2t64
 
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code

@@ -13,9 +13,13 @@ One pass of greedy self-play per checkpoint feeds every section:
 4. **OPEC and Alliance for Progress** -- how often the owner plays the event by the VP it would
    score at that moment (0-2 / 3-4 / 5+), per card choice and per holding.
 5. **Soviets Shoot Down KAL-007** -- the US's choices holding it, split by South Korea's control.
-6. **UN Intervention** -- the opponent card each side plays with it.
-7. **Space race** -- the cards each side sends there most.
-8. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
+6. **Chernobyl** -- when each side plays it (headline / action round / mode), the region the US
+   designates, whether the US then places its Ops influence in that region more than usual, and
+   US Europe Control wins in games where Chernobyl closed Europe -- only when the US plays the
+   event in more than 1% of its plays of the card; otherwise the section says so and stops.
+7. **UN Intervention** -- the opponent card each side plays with it.
+8. **Space race** -- the cards each side sends there most.
+9. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
    same logic (one count per holding where the owner could have played the event).
 
     PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
@@ -48,6 +52,7 @@ from tools.scripts.star_wars_play import _tag_retrievals, retrieval_table
 
 US, USSR = int(ts.Player.US), int(ts.Player.USSR)
 SPACE = ActionEncoder.PLAY_MODE_OFFSET + 1
+NODE = ActionEncoder.NODE_OFFSET
 CARDS = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
 ID = {c["name"]: i for i, c in CARDS.items()}
 STAR_WARS = ID["Star Wars"]
@@ -60,7 +65,16 @@ UN_INTERVENTION = ID["UN Intervention"]
 ORTEGA = ID["Ortega Elected in Nicaragua"]
 WARSAW_PACT = ID["Warsaw Pact Formed"]
 RED_SCARE = ID["Red Scare/Purge"]
+CHERNOBYL = ID["Chernobyl"]
+#: The engine's `Region` order, which is also Chernobyl's designation (`primary_id`).
+REGIONS = ["Europe", "Asia", "Middle East", "Africa", "Central America", "South America"]
 _MAP = {c["name"]: c for c in json.load(open("rules/map.json"))["countries"]}
+COUNTRY_REGION = {int(c["id"]): REGIONS.index(c["region"]) for c in _MAP.values()}
+LATE_WAR = 8
+#: The Chernobyl section analyses a checkpoint only when the US plays the event in more than this
+#: share of its plays of the card.
+CHERNOBYL_EVENT_MIN = 0.01
+OP_INFLUENCE = int(ts.OpMode.INFLUENCE)
 SOUTH_KOREA = int(_MAP["South Korea"]["id"])
 CUBA = int(_MAP["Cuba"]["id"])
 #: The engine's lists (`trigger_opec`, `trigger_alliance_for_progress`): 1 VP per country controlled.
@@ -443,6 +457,54 @@ class PlayModes:
         pass
 
 
+def _chernobyl_region(st: ts.GameState) -> int:
+    """The region under Chernobyl now (`REGIONS` index), or -1."""
+    if not st.has_flag(ts.EffectBits.CHERNOBYL_ACTIVE):
+        return -1
+    return int((int(st.persistent_effects) & int(ts.EffectBits.CHERNOBYL_REGION_MASK))
+               >> int(ts.EffectBits.CHERNOBYL_REGION_SHIFT))
+
+
+class ChernobylEffect:
+    """Chernobyl's event -- the US designates a region, where the USSR may not place influence with
+    Ops for the rest of the turn: the region, who played the card (whichever way the event fired)
+    and when. And every US influence placement with Ops in the Late War, counted by turn, the
+    region under Chernobyl at that moment (-1: none) and the region placed in -- the question being
+    whether the US favours the region it has closed to the USSR."""
+
+    def __init__(self, merged: bool) -> None:
+        self.merged = merged
+        self.regions: List[Dict[str, Any]] = []
+        #: game -> "turn|chernobyl region|placed region" -> US influence points placed with Ops
+        self.placements: Dict[int, Dict[str, int]] = {}
+
+    def see(self, g: int, st: ts.GameState, a: int) -> None:
+        ctx = st.ctx()
+        if int(ctx.resolving_card) == CHERNOBYL and ctx.decision_type == ts.DecisionType.CHOOSE_BRANCH:
+            headline = st.current_phase == ts.Phase.HEADLINE
+            self.regions.append({"game": g, "turn": int(st.turn), "ar": 0 if headline else int(st.action_round),
+                                 "by": _played_by(st, CHERNOBYL),
+                                 "region": int(ts.decode_flat_action(st, a).primary_id)})
+            return
+        if (ctx.decision_player != ts.Player.US or int(ctx.resolving_card) != 0 or int(st.turn) < LATE_WAR
+                or st.current_phase != ts.Phase.ACTION_ROUND):
+            return
+        if ctx.decision_type == ts.DecisionType.POINT_NODE and int(ctx.op_mode) == OP_INFLUENCE:
+            cid = int(ts.decode_flat_action(st, a).primary_id)
+        elif (self.merged and NODE <= a < NODE + 84 and ts.ActionMask.is_merged_influence_action(st, a)):
+            cid = a - NODE   # E4.1: the op choice "Ops for influence, first point at <country>"
+        else:
+            return
+        if not 0 <= cid < 84:
+            return
+        key = f"{int(st.turn)}|{_chernobyl_region(st)}|{COUNTRY_REGION[cid]}"
+        game = self.placements.setdefault(g, {})
+        game[key] = game.get(key, 0) + 1
+
+    def done(self, g: int) -> None:
+        pass
+
+
 def _controlled(st: ts.GameState, countries: Sequence[int], side: Any) -> int:
     return sum(1 for c in countries if ts.Scoring.is_controlled_by(st, c, side))
 
@@ -465,8 +527,11 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
     kal_ussr = OpponentCardPlay(KAL_007, ts.Player.USSR,
                                 {"sk_us": lambda st: ts.Scoring.is_controlled_by(st, SOUTH_KOREA, ts.Player.US)})
     ortega, warsaw, kal_after = OrtegaResponse(), WarsawPact(), KalAftermath()
+    chern_us, chern_ussr = OpponentCardPlay(CHERNOBYL, ts.Player.US), OpponentCardPlay(CHERNOBYL, ts.Player.USSR)
+    chern = ChernobylEffect(merged)
     endings: List[Dict[str, Any]] = []
-    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw, kal_after)
+    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw,
+                 kal_after, chern_us, chern_ussr, chern)
     for b0 in range(0, games, batch):
         n = min(batch, games - b0)
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
@@ -505,6 +570,9 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
                 ortega.see(g, st, a)
                 warsaw.see(g, st, a)
                 kal_after.see(g, st, a)
+                chern_us.see(g, st, a)
+                chern_ussr.see(g, st, a)
+                chern.see(g, st, a)
             obs, masks, _, dones, info = env.step(actions)
             _collect_endings(info, done, b0, endings)
             for i, d in enumerate(dones):
@@ -524,7 +592,9 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space},
             "setups": setup.records, "endings": endings,
             "ortega_us": ortega_us.plays, "ortega_response": ortega.responses, "kal_ussr": kal_ussr.plays,
-            "warsaw_pact": warsaw.choices, "kal_aftermath": kal_after.plays}
+            "warsaw_pact": warsaw.choices, "kal_aftermath": kal_after.plays,
+            "chernobyl": {"us_plays": chern_us.plays, "ussr_plays": chern_ussr.plays, "regions": chern.regions,
+                          "us_placements": chern.placements}}
 
 
 def _collect_endings(info: Dict[str, Any], done: List[bool], b0: int, out: List[Dict[str, Any]]) -> None:
@@ -951,6 +1021,129 @@ def warsaw_section(choices: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+def _ar_name(ar: int) -> str:
+    return "headline" if ar == 0 else f"AR{ar}"
+
+
+def _ar_table(plays: Sequence[Dict[str, Any]]) -> List[str]:
+    n = len(plays)
+    counts = collections.Counter(int(p["ar"]) for p in plays)
+    return ["| when | plays | share |", "|:---|---:|---:|"] + [
+        f"| {_ar_name(ar)} | {k:,} | {_pct(k, n)} |" for ar, k in sorted(counts.items())]
+
+
+def chernobyl_section(c: Dict[str, Any], endings: Sequence[Dict[str, Any]]) -> str:
+    out = ["## Chernobyl", "",
+           "Chernobyl (US, 3 Ops, Late War): the US designates a region, and for the rest of the turn the USSR "
+           "may not place influence there with Ops (coups and realignments stay allowed)."]
+    if not c:
+        return "\n".join(out + ["", "Not recorded for this report (records from before the section)."])
+    us, ussr, regions = c["us_plays"], c["ussr_plays"], c["regions"]
+    # Only a checkpoint whose US actually plays the event gets the analysis: below 1% of its plays the
+    # region and placement statistics describe the USSR's triggers, not a US decision.
+    us_events = sum(p["mode"] in ("headline", "event first") for p in us)
+    if not us or us_events / len(us) <= CHERNOBYL_EVENT_MIN:
+        share = f"{100 * us_events / len(us):.1f}%" if us else "0% (the US never played it)"
+        return "\n".join(out + ["", f"Chernobyl played for event only {share}, no further analysis."])
+    # 1. The US playing it from its own hand.
+    mode_us = {"headline": "headline", "event first": "event in a round", "Ops first": "Ops", "space race": "space race"}
+    n = len(us)
+    out += ["", f"### Played by the US ({n:,} plays)", ""]
+    if n:
+        cnt = collections.Counter(p["mode"] for p in us)
+        out += ["| how | plays | share |", "|:---|---:|---:|"] + [
+            f"| {name} | {cnt[m]:,} | {_pct(cnt[m], n)} |" for m, name in mode_us.items() if cnt[m]]
+        ev = [p for p in us if p["mode"] in ("headline", "event first")]
+        out += ["", f"The event -- {_pct(len(ev), n)} of the US's plays ({len(ev):,}) -- by when it was played:", ""]
+        out += _ar_table(ev) if ev else ["(none)"]
+    # 2. The USSR playing it so that the US event fires.
+    n = len(ussr)
+    out += ["", f"### Played by the USSR ({n:,} plays)", "",
+            "The USSR's plays of the card fire the US event unless they go to the space race."]
+    if n:
+        cnt = collections.Counter(p["mode"] for p in ussr)
+        out += ["", "| how | plays | share |", "|:---|---:|---:|"] + [
+            f"| {m} | {cnt[m]:,} | {_pct(cnt[m], n)} |" for m in ("headline", "event first", "Ops first", "space race")
+            if cnt[m]]
+        fired = [p for p in ussr if p["mode"] != "space race"]
+        out += ["", f"The event fired ({len(fired):,} plays), by when:", ""]
+        out += _ar_table(fired) if fired else ["(none)"]
+    # 3. The region the US designates, by whose play fired the event.
+    out += ["", f"### The region designated ({len(regions):,} events)", ""]
+    if regions:
+        by = {w: collections.Counter(r["region"] for r in regions if r["by"] == w) for w in ("US", "USSR")}
+        tot = {w: sum(by[w].values()) for w in by}
+        allc = collections.Counter(r["region"] for r in regions)
+        out += ["Split by whose play fired the event: the card played by that side, or another card that fired it "
+                "(a US Star Wars taking it from the discard pile, a USSR Five Year Plan discarding it).", "",
+                "| region | fired during a US play | fired during a USSR play | all |", "|:---|---:|---:|---:|"]
+        for i in sorted(allc, key=lambda i: -allc[i]):
+            out.append(f"| {REGIONS[i]} | {by['US'][i]:,} ({_pct(by['US'][i], tot['US'])}) | "
+                       f"{by['USSR'][i]:,} ({_pct(by['USSR'][i], tot['USSR'])}) | {allc[i]:,} ({_pct(allc[i], len(regions))}) |")
+    # 4. Where the US places influence with Ops while a region is closed to the USSR.
+    # (chernobyl region, placed region) -> points: every game, and the games with a Chernobyl on region r
+    pl: Dict[Tuple[int, int], int] = collections.Counter()
+    same: Dict[int, Dict[Tuple[int, int], int]] = {r: collections.Counter() for r in range(6)}
+    designated: Dict[int, set] = collections.defaultdict(set)
+    for rec in regions:
+        designated[int(rec["game"])].add(int(rec["region"]))
+    for g, keys in c["us_placements"].items():
+        for key, k in keys.items():
+            _, ch, placed = (int(x) for x in key.split("|"))
+            pl[(ch, placed)] += k
+            for r in designated.get(int(g), ()):
+                same[r][(ch, placed)] += k
+    n_free = sum(pl[(-1, x)] for x in range(6))
+    out += ["", "### Does the US place influence in the region it closed?", "",
+            "Every influence point the US places with Ops in the Late War (turns 8-10, any card; an event's own "
+            "placements are not counted). For each region: the share of the US's points that go into it while it "
+            "is under Chernobyl, against two baselines with no Chernobyl in play -- every game's Late War, and, "
+            "closer, the Late War turns of the same games (those where Chernobyl closed that region at some point), "
+            "since the US may close a region because it is already contesting it.", "",
+            "| region | US points while it is under Chernobyl | of them into it | no Chernobyl, all games | "
+            "no Chernobyl, the same games | difference from the same games |",
+            "|:---|---:|---:|---:|---:|---:|"]
+    for r in range(6):
+        under = sum(pl[(r, x)] for x in range(6))
+        if under == 0:
+            continue
+        sm = sum(same[r][(-1, x)] for x in range(6))
+        a, b = pl[(r, r)] / under, pl[(-1, r)] / max(n_free, 1)
+        cs = same[r][(-1, r)] / sm if sm else float("nan")
+        out.append(f"| {REGIONS[r]} | {under:,} | {pl[(r, r)]:,} ({100 * a:.1f}%) | {100 * b:.1f}% of {n_free:,} | "
+                   + (f"{100 * cs:.1f}% of {sm:,} | {100 * (a - cs):+.1f} pt |" if sm else "— | — |"))
+    # 5. Europe Control wins against a Chernobyl on Europe.
+    end = {int(e["game"]): e for e in endings}
+    first: Dict[int, Dict[str, Any]] = {}
+    for r in regions:
+        g = int(r["game"])
+        prev = first.get(g)
+        rank = 0 if r["region"] == 0 and r["by"] == "US" else 1 if r["region"] == 0 else 2
+        if prev is None or rank < prev["rank"]:
+            first[g] = {**r, "rank": rank}
+    groups = [("Chernobyl on Europe, from the US's own play", lambda g: g in first and first[g]["rank"] == 0),
+              ("Chernobyl on Europe, from the USSR's play", lambda g: g in first and first[g]["rank"] == 1),
+              ("Chernobyl on another region", lambda g: g in first and first[g]["rank"] == 2),
+              ("no Chernobyl event, the game reached the Late War",
+               lambda g: g not in first and end[g]["turn"] >= LATE_WAR)]
+    out += ["", "### Europe Control wins and Chernobyl on Europe", "",
+            "Games by what Chernobyl did in them (a game with several events counts under the first group it "
+            "fits), and how often the US won by controlling Europe -- in that game, and in the turn of the event, "
+            "while the USSR could not place influence in Europe.", "",
+            "| games | count | US wins | US wins by Europe Control | of them in the event's turn |",
+            "|:---|---:|---:|---:|---:|"]
+    for name, pred in groups:
+        gs = [g for g in end if pred(g)]
+        if not gs:
+            continue
+        wins = [g for g in gs if end[g]["winner"] == "US"]
+        euro = [g for g in wins if end[g]["reason"] == "europe_control"]
+        in_turn = [g for g in euro if g in first and int(end[g]["turn"]) == int(first[g]["turn"])]
+        out.append(f"| {name} | {len(gs):,} | {_pct(len(wins), len(gs))} | {len(euro):,} ({_pct(len(euro), len(gs))}) | "
+                   + (f"{len(in_turn):,}" if gs and gs[0] in first else "—") + " |")
+    return "\n".join(out)
+
+
 def _pick_table(recs: Sequence[Dict[str, Any]], top: int = 15) -> str:
     n = len(recs)
     if n == 0:
@@ -1074,6 +1267,40 @@ def _label(path: str) -> Tuple[str, str, str]:
     return short, step, stem
 
 
+#: Where `report` puts the table of contents, built once the sections below it are written.
+CONTENTS = "<!-- contents -->"
+
+
+def _slug(heading: str, seen: Dict[str, int]) -> str:
+    """GitHub's anchor for a heading: lower case, punctuation dropped, each space a hyphen; a heading
+    repeated anywhere in the file (an earlier "US" subsection) gets -1, -2, ..."""
+    base = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+    n = seen.get(base, 0)
+    seen[base] = n + 1
+    return base if n == 0 else f"{base}-{n}"
+
+
+def _with_contents(text: str) -> str:
+    """Replace the `CONTENTS` marker with links to the `##` sections after it, each with its `###`
+    subsections. Every heading of the file is slugged in order, so repeated names number as GitHub
+    numbers them."""
+    seen: Dict[str, int] = {}
+    entries: List[str] = []
+    after = False
+    for line in text.split("\n"):
+        if line == CONTENTS:
+            after = True
+            continue
+        m = re.match(r"(#{1,6}) (.+)$", line)
+        if not m:
+            continue
+        slug = _slug(m.group(2), seen)
+        if after and len(m.group(1)) in (2, 3):
+            indent = "" if len(m.group(1)) == 2 else "  "
+            entries.append(f"{indent}* [{m.group(2).strip()}](#{slug})")
+    return text.replace(CONTENTS, "**Contents**\n\n" + "\n".join(entries), 1)
+
+
 def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
            label: Optional[str] = None, note: Optional[str] = None) -> str:
     short, step, _ = _label(path)
@@ -1096,10 +1323,7 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     out += [f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}",
             f"* **Games:** {d['games']:,} greedy self-play games of the checkpoint against itself, seed "
             f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games.", "",
-            "Sections: How games end · Opening setups · Star Wars · Five Year Plan played by the USSR · Aldrich Ames "
-            "Remix played by the US · Ortega Elected in Nicaragua played by the US · OPEC and Alliance for Progress · "
-            "Soviets Shoot Down KAL-007 (both sides) · Red Scare/Purge · Warsaw Pact Formed · UN Intervention · Space "
-            "race · and, last, Events vs Ops for every card.", "",
+            CONTENTS, "",
             endings_section(d.get("endings", [])), "",
             setup_section(d.get("setups", [])), "",
             star_wars_section(d["star_wars"]), "",
@@ -1128,10 +1352,11 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
                                                          d.get("endings", [])), "",
             red_scare_section(holdings, d["star_wars"]["retrievals"]), "",
             warsaw_section(d.get("warsaw_pact", [])), "",
+            chernobyl_section(d.get("chernobyl", {}), d.get("endings", [])), "",
             un_section(d["un_intervention"]), "",
             space_section(d["play_modes"]), "",
             "## Events vs Ops, every card", "", census_table(holdings, d["games"])]
-    return "\n".join(out) + "\n"
+    return _with_contents("\n".join(out)) + "\n"
 
 
 def write_index() -> None:

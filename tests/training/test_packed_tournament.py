@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+import pytest
 import torch
 
 from ai.models.ladder_net import create_ladder_net
 from tools.lib.batch_tournament import BatchMatchRunner
 from tools.lib.player_agent import HeuristicAgent, NeuralAgent
+from tools.tournament import _load_entrants
 
 KEYS = ("a_wins", "b_wins", "draws", "a_wins_as_us", "a_losses_as_us", "a_wins_as_ussr",
         "a_losses_as_ussr", "avg_turn", "avg_ply", "avg_vp_margin_a", "causes_all")
@@ -67,3 +69,12 @@ def test_the_pack_schedule_covers_every_pairing_once_with_few_agents_per_pack() 
         for p in packs:
             agents = {x for pr in p for x in pr}
             assert len(agents) <= 2 * g or len(p) <= pack
+
+
+def test_self_play_enters_one_checkpoint_twice_under_attributable_names() -> None:
+    """--self-play duplicates the one model; the distinct-names rule refused it until its second
+    copy was named `<name>#self`. Two different specs with one name are still refused."""
+    agents, _ = _load_entrants(["heuristic", "heuristic"], torch.device("cpu"), None)
+    assert [a.name for a in agents] == [agents[0].name, f"{agents[0].name}#self"]
+    with pytest.raises(ValueError, match="distinct names"):
+        _load_entrants(["heuristic", "HeuristicBot"], torch.device("cpu"), None)
