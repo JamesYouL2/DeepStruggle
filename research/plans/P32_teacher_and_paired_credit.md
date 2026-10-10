@@ -329,6 +329,12 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   entropy 0.22 → 0.46 and levelling (R31: 0.71); pool win rate 0.658 → 0.667 (R31 ~0.66); KL to
   π_ref ~0.01; saturated searched decisions 0.27 → 0.17. Entropy still rises -- search noise varies
   the target between similar positions, so the average is broader -- but it has stopped. Runs to
-  6,600M, then the search gap and head to head against the plain leg.
+  6,600M, then the search gap and head to head against the plain leg. **Arranged for the end-of-run
+  read:** (1) the teacher's margin -- Gumbel k=8 @256 searched by the frozen soup against R32's raw
+  6,600M and against the plain leg's raw 6,600M, beside each network's self-search gap; **the
+  re-freeze signal is the teacher's margin over R32 shrinking relative to its margin over the plain
+  network**, which sets the cadence P32 guessed at ~100M. (2) If R32 is level or better on strength,
+  a k = 4 @64 cell at the same CE, to measure how much of the 0.22 → 0.46 entropy rise is
+  target-averaging noise -- the only cost left in the recipe.
 * The attacker's side of 4a -- measured: the attacker's critic sees the trap (8 of 8 trapping
   discards taken; +0.948 against +0.759). §4 is closed.
