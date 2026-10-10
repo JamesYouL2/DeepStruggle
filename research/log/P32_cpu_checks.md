@@ -27,6 +27,14 @@ for the US. The critic is the decider's own `v_win`.
   handed over by Lone Gunman / Ortega / CIA Created at DEFCON 2 (the Cuban Missile Crisis probe
   found the same policy, saturated at the coup) are one candidate.
 
+**The attacker's side** (`trap_attacker`, 6,000 games at temperature 1): at every Aldrich Ames
+Remix discard at DEFCON 2 -- the USSR picks one of the US's cards -- each option is applied and the US
+tested for the trap. Of 436 such discards only **8** offered a trapping option; the USSR took one in
+**all 8** (trapping options were 73% of the choices there), and its critic values the trapping
+discards **+0.948** against **+0.759** for the rest (+0.19). A small sample, but the attacker's
+critic sees the trap as the defender's does: with both sides seeing it, section 4 of P32 closes, and
+what remains of it is the policy's use of what the critic knows (4c, inside B4').
+
 ## 2. Wargames at a lead of 6: taking the draw is right
 
 Positions from 12,000 self-play games at temperature 1 where the Wargames branch is reached at
