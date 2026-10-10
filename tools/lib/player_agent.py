@@ -554,6 +554,13 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "temperature", float(t_str))
         setattr(agent, "name", f"{agent.name}@T{float(t_str):g}")
         return agent
+    if s.lower().startswith("name:"):
+        # name:<label>:<rest-of-spec> -- the entrant's name in reports, for two entrants whose specs
+        # would otherwise share one (two searchers of the same configuration over two checkpoints).
+        _, label, rest = s.split(":", 2)
+        agent = load_agent(rest, device=device)
+        setattr(agent, "name", label)
+        return agent
     if s.lower().startswith("opening:"):
         # opening:<name>:<rest-of-spec> -- this agent's setup is the named opening from
         # tools/lib/openings.py instead of its own placements, for checkpoints trained with

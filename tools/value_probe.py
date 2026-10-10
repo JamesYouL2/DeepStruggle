@@ -139,10 +139,12 @@ def label(model: str, games: int, rate: float, k: int, pairs: int, part: str, se
 # --- fit ----------------------------------------------------------------------------------------
 
 def child_features(model: Any, feats: int, pos: str, moves: Sequence[int], worlds: int,
-                   seed: int) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+                   seed: int, perspective: str = "acting") -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
     """Per move: the trunk features h of its child in `worlds` redealt worlds (the mover's unseen
-    cards and the dice drawn afresh, as the paired playouts draw them), and the sign that turns a
-    value for the child's acting player into one for the mover."""
+    cards and the dice drawn afresh, as the paired playouts draw them), and the sign that turns the
+    value for the observing player into one for the mover. `perspective` "acting" observes the child
+    as the player to act there (what a search's leaf reads: after a headline choice that is the
+    opponent, who cannot see it), "mover" as the player who chose (who can)."""
     import torch
     import ts_engine as ts
     from ai.eval.paired_playouts import apply_move, decider, pair_start
@@ -158,7 +160,7 @@ def child_features(model: Any, feats: int, pos: str, moves: Sequence[int], world
             ch = apply_move(base, int(a))
             if ts.Engine.is_terminal(ch):
                 continue
-            who = acting_player(ch)
+            who = acting_player(ch) if perspective == "acting" else mover
             rows.append(np.asarray(ts.extract_observation_features(ch, who, feats), dtype=np.float32))
             keys.append(int(a))
             signs.append(1.0 if who == mover else -1.0)
@@ -189,8 +191,73 @@ def sibling_accuracy(pred: Dict[str, Dict[int, float]], truth: Dict[str, Dict[in
     return (hit / n if n else float("nan")), n
 
 
+def _groups(net: Any, feats: int, rows: Sequence[Dict[str, Any]], worlds: int, seed: int,
+            perspective: str) -> Tuple[Any, Any, Any, Any, List[int]]:
+    """Per (position, world): the children of the position's moves (the network's own move first),
+    as features H (G x K x d), signs S and the mover-value labels L (G x K), a mask M, and each
+    group's position index. A child that ends the game is left out (masked)."""
+    import torch
+    K = max(len(r["moves"]) for r in rows)
+    width = 0
+    Hs, Ss, Ls, Ms, P = [], [], [], [], []
+    for pi, r in enumerate(rows):
+        cf = child_features(net, feats, r["pos"], r["moves"], worlds, position_seed(r["id"], seed), perspective)
+        n_w = max((len(v[1]) for v in cf.values()), default=0)
+        if cf and not width:
+            width = int(next(iter(cf.values()))[0].shape[1])
+        for w in range(n_w):
+            h = np.zeros((K, width), dtype=np.float32)
+            sg = np.zeros(K, dtype=np.float32)
+            lab = np.zeros(K, dtype=np.float32)
+            m = np.zeros(K, dtype=np.float32)
+            for j, a in enumerate(r["moves"]):
+                if a not in cf or len(cf[a][1]) <= w:
+                    continue
+                h[j] = cf[a][0][w]
+                sg[j] = cf[a][1][w]
+                lab[j] = 2.0 * float(r["score"][str(a)]) - 1.0
+                m[j] = 1.0
+            if m[0] == 0:
+                continue                                  # the network's own move is the reference
+            Hs.append(h); Ss.append(sg); Ls.append(lab); Ms.append(m); P.append(pi)
+    return (torch.from_numpy(np.stack(Hs)), torch.from_numpy(np.stack(Ss)), torch.from_numpy(np.stack(Ls)),
+            torch.from_numpy(np.stack(Ms)), P)
+
+
+def _ranking(pred: np.ndarray, rows: Sequence[Dict[str, Any]], P: List[int]) -> Dict[str, float]:
+    """Held-out ranking of each move against the network's own: predicted differences (averaged over
+    worlds) against the labels' paired differences -- accuracy on the pairs the labels separate
+    (> 2 SE and > 1 point), and the correlation over every pair, also disattenuated by the labels'
+    own reliability."""
+    by_pos: Dict[int, List[np.ndarray]] = {}
+    for g, pi in enumerate(P):
+        by_pos.setdefault(pi, []).append(pred[g])
+    hit = n = 0
+    xs, ys, ses = [], [], []
+    for pi, preds in by_pos.items():
+        r = rows[pi]
+        mean = np.nanmean(np.stack(preds), axis=0)
+        for j, a in enumerate(r["moves"][1:], start=1):
+            if str(a) not in r["diff_vs_raw"] or not np.isfinite(mean[j]):
+                continue
+            m, se = r["diff_vs_raw"][str(a)]
+            d = float(mean[j] - mean[0])
+            xs.append(d); ys.append(2.0 * m); ses.append(2.0 * se)
+            if abs(m) > 2 * se and abs(m) > 0.01:
+                n += 1
+                hit += int((d > 0) == (m > 0))
+    x, y = np.asarray(xs), np.asarray(ys)
+    corr = float(np.corrcoef(x, y)[0, 1]) if len(x) > 2 else float("nan")
+    rel = 1.0 - float(np.mean(np.asarray(ses) ** 2)) / float(np.var(y)) if len(y) > 2 else float("nan")
+    return {"accuracy": hit / n if n else float("nan"), "clear_pairs": n, "pairs": len(x),
+            "corr": corr, "label_reliability": rel,
+            "corr_disattenuated": corr / math.sqrt(rel) if rel > 0 else float("nan")}
+
+
 def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, worlds: int,
-        test_worlds: int, epochs: int, out: str, seed: int = 0, test_limit: int = 0) -> int:
+        test_worlds: int, epochs: int, out: str, seed: int = 0, test_limit: int = 0,
+        perspective: str = "acting", holdout: float = 0.2, pair_weight: float = 10.0) -> int:
+    import copy
     import torch
     import torch.nn as nn
     from tools.lib.player_agent import NeuralAgent
@@ -201,28 +268,30 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
     feats = int(model_obs_features(net))
     head = getattr(net, "val_win_head")
 
-    # Training set: every labelled child, each world its own example with the position's label.
-    lab = list(_read(labels))
+    lab = [r for r in _read(labels) if len(r["moves"]) >= 2]
     rng = random.Random(seed)
     rng.shuffle(lab)
+    n_test = int(len(lab) * holdout)
+    test_rows, train_rows = lab[:n_test], lab[n_test:]
     t0 = time.time()
-    X, Y, S, G = [], [], [], []           # features, mover-value target, sign, group (position)
-    for gi, r in enumerate(lab):
-        cf = child_features(net, feats, r["pos"], r["moves"], worlds, position_seed(r["id"], 11))
-        for a, (h, sg) in cf.items():
-            y = 2.0 * float(r["score"][str(a)]) - 1.0          # mover's value in [-1, 1]
-            for hi, si in zip(h, sg):
-                X.append(hi)
-                Y.append(y)
-                S.append(si)
-                G.append((gi, a))
-    X_t = torch.from_numpy(np.stack(X))
-    Y_t = torch.tensor(Y)
-    S_t = torch.tensor(S)
-    print(f"{len(lab)} labelled positions, {len(X)} child examples, features in {time.time() - t0:.0f}s",
-          file=sys.stderr)
+    with torch.no_grad():
+        Htr, Str, Ltr, Mtr, Ptr = _groups(net, feats, train_rows, worlds, 11, perspective)
+        Hte, Ste, Lte, Mte, Pte = _groups(net, feats, test_rows, worlds, 11, perspective)
+    print(f"{len(train_rows)} train / {len(test_rows)} held-out positions; {len(Ptr)} / {len(Pte)} "
+          f"groups; features in {time.time() - t0:.0f}s", file=sys.stderr)
 
-    # Test set: the bank's positions, every move its 2,048-pair playouts scored.
+    def mover_values(fn: Any, H: Any, S: Any, M: Any) -> Any:
+        g, k, d = H.shape
+        v = fn(H.reshape(g * k, d)).reshape(g, k) * S
+        return torch.where(M > 0, v, torch.full_like(v, float("nan")))
+
+    def heldout(fn: Any) -> Dict[str, float]:
+        with torch.no_grad():
+            pred = mover_values(fn, Hte, Ste, Mte).numpy()
+        return _ranking(pred, test_rows, Pte)
+
+    # The bank: adversarial for any critic-like judge (its positions are where critic-driven search
+    # disagreed with the network), reported second.
     bank_rows = {str(r["id"]): r for r in _read([bank])}
     truth: Dict[str, Dict[int, Tuple[float, float]]] = {}
     test_moves: Dict[str, List[int]] = {}
@@ -248,89 +317,139 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
         truth[pid] = d
         if test_limit and len(truth) >= test_limit:
             break
-    t1 = time.time()
-    test_feats = {pid: child_features(net, feats, bank_rows[pid]["pos"], test_moves[pid], test_worlds,
-                                      position_seed(pid, 13)) for pid in truth}
-    print(f"{len(truth)} test positions, features in {time.time() - t1:.0f}s", file=sys.stderr)
+    bank_feats = {pid: child_features(net, feats, bank_rows[pid]["pos"], test_moves[pid], test_worlds,
+                                      position_seed(pid, 13), perspective) for pid in truth}
 
-    def predict(fn: Any) -> Dict[str, Dict[int, float]]:
+    def on_bank(fn: Any) -> float:
         out_: Dict[str, Dict[int, float]] = {}
         with torch.no_grad():
-            for pid, cf in test_feats.items():
+            for pid, cf in bank_feats.items():
                 out_[pid] = {a: float((fn(torch.from_numpy(h)).reshape(-1) * torch.from_numpy(sg)).mean())
                              for a, (h, sg) in cf.items()}
-        return out_
+        return sibling_accuracy(out_, truth, raw)[0]
 
-    results: Dict[str, Any] = {}
-    acc, n = sibling_accuracy(predict(head), truth, raw)
-    results["critic (untouched)"] = {"accuracy": acc, "pairs": n}
+    results: Dict[str, Dict[str, float]] = {}
+    results["critic (untouched)"] = {**heldout(head), "bank": on_bank(head)}
 
-    def train(module: nn.Module, name: str, lr: float) -> None:
+    def train(module: nn.Module, name: str, lr: float, w_abs: float, w_pair: float,
+              keep: Optional[List[int]] = None) -> Dict[str, float]:
         opt = torch.optim.Adam(module.parameters(), lr=lr)
-        idx = np.arange(len(X))
+        idx_all = np.arange(len(Ptr)) if keep is None else np.asarray(keep)
         for ep in range(epochs):
+            idx = idx_all.copy()
             np.random.default_rng(seed + ep).shuffle(idx)
-            for lo in range(0, len(idx), 1024):
-                b = torch.from_numpy(idx[lo:lo + 1024])
-                pred = module(X_t[b]).reshape(-1) * S_t[b]     # the mover's value
-                loss = ((pred - Y_t[b]) ** 2).mean()
+            for lo in range(0, len(idx), 512):
+                b = torch.from_numpy(idx[lo:lo + 512])
+                H, S, L, M = Htr[b], Str[b], Ltr[b], Mtr[b]
+                g, k, dd = H.shape
+                v = module(H.reshape(g * k, dd)).reshape(g, k) * S
+                l_abs = (((v - L) ** 2) * M).sum() / M.sum()
+                dv, dl = v[:, 1:] - v[:, :1], L[:, 1:] - L[:, :1]
+                mm = M[:, 1:] * M[:, :1]
+                l_pair = (((dv - dl) ** 2) * mm).sum() / mm.sum().clamp(min=1.0)
+                loss = w_abs * l_abs + w_pair * l_pair
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
-            a_, n_ = sibling_accuracy(predict(module), truth, raw)
-            print(f"  {name} epoch {ep + 1}: mse {float(loss):.4f}  test sibling accuracy {a_:.1%} ({n_})",
-                  file=sys.stderr, flush=True)
-        a_, n_ = sibling_accuracy(predict(module), truth, raw)
-        results[name] = {"accuracy": a_, "pairs": n_}
+            r_ = heldout(module)
+            print(f"  {name} epoch {ep + 1}: held-out accuracy {r_['accuracy']:.1%} ({r_['clear_pairs']}), "
+                  f"corr {r_['corr']:+.3f}", file=sys.stderr, flush=True)
+        return heldout(module)
 
-    import copy
+    def mlp() -> nn.Module:
+        return nn.Sequential(nn.Linear(Htr.shape[2], 256), nn.GELU(), nn.Linear(256, 1), nn.Tanh())
+
     tuned = copy.deepcopy(head)
     for p_ in tuned.parameters():
         p_.requires_grad_(True)
-    train(tuned, "critic head fine-tuned on rollout labels", 3e-4)
-    width = X_t.shape[1]
-    mlp = nn.Sequential(nn.Linear(width, 256), nn.GELU(), nn.Linear(256, 1), nn.Tanh())
-    train(mlp, "fresh MLP head on frozen h", 1e-3)
-
-    # Learning curve for the fresh head: does accuracy still rise with labels?
+    results["critic head fine-tuned (abs + pair)"] = {
+        **train(tuned, "tuned", 3e-4, 1.0, pair_weight), "bank": on_bank(tuned)}
+    m1 = mlp()
+    results["fresh MLP on frozen h (abs + pair)"] = {**train(m1, "mlp", 1e-3, 1.0, pair_weight), "bank": on_bank(m1)}
+    m2 = mlp()
+    results["fresh MLP on frozen h (pair only)"] = {**train(m2, "mlp-pair", 1e-3, 0.0, 1.0), "bank": on_bank(m2)}
     curve = {}
     for frac in (0.25, 0.5):
-        keep = {g for g in range(int(len(lab) * frac))}
-        sel = [i for i, (gi, _a) in enumerate(G) if gi in keep]
-        Xs, Ys, Ss = X_t[sel], Y_t[sel], S_t[sel]
-        m2 = nn.Sequential(nn.Linear(width, 256), nn.GELU(), nn.Linear(256, 1), nn.Tanh())
-        opt = torch.optim.Adam(m2.parameters(), lr=1e-3)
-        idx = np.arange(len(sel))
-        for ep in range(epochs):
-            np.random.default_rng(seed + ep).shuffle(idx)
-            for lo in range(0, len(idx), 1024):
-                b = torch.from_numpy(idx[lo:lo + 1024])
-                loss = ((m2(Xs[b]).reshape(-1) * Ss[b] - Ys[b]) ** 2).mean()
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-        curve[f"{int(frac * len(lab))} positions"] = sibling_accuracy(predict(m2), truth, raw)[0]
-    curve[f"{len(lab)} positions"] = results["fresh MLP head on frozen h"]["accuracy"]
-    results["learning curve (fresh MLP)"] = curve
+        keep_pos = set(range(int(len(train_rows) * frac)))
+        keep = [g for g, pi in enumerate(Ptr) if pi in keep_pos]
+        curve[f"{len(keep_pos)} positions"] = train(mlp(), f"curve{frac}", 1e-3, 1.0, pair_weight, keep)["accuracy"]
+    curve[f"{len(train_rows)} positions"] = results["fresh MLP on frozen h (abs + pair)"]["accuracy"]
 
     lines = ["# Value probe: can the frozen trunk rank sibling moves better than the critic?", "",
-             f"* model `{os.path.basename(model_path)}`; {len(lab)} labelled training positions "
-             f"({len(X)} child examples, {worlds} worlds each); test: {len(truth)} search-bank positions "
-             f"against their 2,048-pair playouts ({test_worlds} worlds per child).",
-             "* accuracy = share of sibling pairs the playouts separate by > 2 SE and > 1 point on "
-             "which the head ranks the two the same way.", "",
-             "| value | sibling accuracy | pairs |", "|:---|---:|---:|"]
+             f"* model `{os.path.basename(model_path)}`; {len(lab)} rollout-labelled positions of fresh "
+             f"self-play (network's top {max(len(r['moves']) for r in lab)} moves, "
+             f"{lab[0]['pairs']} paired continuations each), {len(train_rows)} to train, {len(test_rows)} held "
+             f"out; children observed from the {perspective} player's side, {worlds} worlds each.",
+             "* held-out accuracy: pairs (a move against the network's own) the labels separate by > 2 SE "
+             "and > 1 point, ranked the same way; corr: predicted against labelled difference over every "
+             "pair, and disattenuated by the labels' reliability.",
+             "* bank: the search bank's 2,048-pair pairs -- adversarial for critic-like judges (chosen where "
+             "critic-driven search disagreed with the network).", "",
+             "| value | held-out accuracy | clear pairs | corr | corr disattenuated | bank accuracy |",
+             "|:---|---:|---:|---:|---:|---:|"]
     for k_, v in results.items():
-        if "accuracy" in v:
-            lines.append(f"| {k_} | {v['accuracy']:.1%} | {v['pairs']} |")
-    lines += ["", "Learning curve: " + ", ".join(f"{k_} {v:.1%}" for k_, v in curve.items()), ""]
+        lines.append(f"| {k_} | {v['accuracy']:.1%} | {v['clear_pairs']} | {v['corr']:+.3f} | "
+                     f"{v['corr_disattenuated']:+.3f} | {v['bank']:.1%} |")
+    rel = results["critic (untouched)"]["label_reliability"]
+    lines += ["", f"Label reliability (paired differences): {rel:.2f}.",
+              "Learning curve (fresh MLP, abs + pair): " + ", ".join(f"{k_} {v:.1%}" for k_, v in curve.items()), ""]
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     with open(os.path.splitext(out)[0] + ".json", "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=1)
-    torch.save({"mlp": mlp.state_dict(), "tuned_head": tuned.state_dict()},
-               os.path.splitext(out)[0] + ".heads.pt")
+        json.dump({"results": results, "curve": curve}, f, indent=1)
+    torch.save({"tuned_head": tuned.state_dict(), "mlp": m1.state_dict()}, os.path.splitext(out)[0] + ".heads.pt")
     print("\n".join(lines))
+    return 0
+
+
+def tune(model_path: str, labels: Sequence[str], worlds: int, epochs: int, pair_weight: float,
+         out: str, seed: int = 0) -> int:
+    """The critic head fine-tuned on every labelled position (absolute + paired-difference loss, the
+    form `fit` validated on held-out positions), written as a full checkpoint: the base network with
+    only `val_win_head` replaced, so its policy is untouched and a search over it differs only in
+    the values it reads."""
+    import copy
+    import torch
+    from tools.lib.player_agent import NeuralAgent
+    from bindings.ts_env import model_obs_features
+
+    torch.manual_seed(seed)
+    net = NeuralAgent.from_checkpoint(model_path, device="cpu").model.eval()
+    feats = int(model_obs_features(net))
+    rows = [r for r in _read(labels) if len(r["moves"]) >= 2]
+    with torch.no_grad():
+        H, S, L, M, _P = _groups(net, feats, rows, worlds, 11, "acting")
+    if net.val_win_head is None:
+        raise ValueError(f"{model_path} has no scalar win head to tune")
+    head = copy.deepcopy(net.val_win_head)
+    for p_ in head.parameters():
+        p_.requires_grad_(True)
+    opt = torch.optim.Adam(head.parameters(), lr=3e-4)
+    for ep in range(epochs):
+        idx = np.arange(len(H))
+        np.random.default_rng(seed + ep).shuffle(idx)
+        for lo in range(0, len(idx), 512):
+            b = torch.from_numpy(idx[lo:lo + 512])
+            g, k, d = H[b].shape
+            v = head(H[b].reshape(g * k, d)).reshape(g, k) * S[b]
+            l_abs = (((v - L[b]) ** 2) * M[b]).sum() / M[b].sum()
+            mm = M[b][:, 1:] * M[b][:, :1]
+            l_pair = ((((v[:, 1:] - v[:, :1]) - (L[b][:, 1:] - L[b][:, :1])) ** 2) * mm).sum() / mm.sum().clamp(min=1.0)
+            loss = l_abs + pair_weight * l_pair
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        print(f"  epoch {ep + 1}: loss {float(loss):.4f}", file=sys.stderr, flush=True)
+    sd = torch.load(model_path, map_location="cpu", weights_only=False)
+    sd = sd.get("model_state_dict", sd) if isinstance(sd, dict) else sd
+    for k, v in head.state_dict().items():
+        sd[f"val_win_head.{k}"] = v.detach().clone()
+    torch.save(sd, out)
+    with open(out + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump({"base": os.path.basename(model_path), "base_sha256": _sha256(model_path),
+                   "positions": len(rows), "groups": len(H), "worlds": worlds, "epochs": epochs,
+                   "pair_weight": pair_weight, "replaced": "val_win_head"}, f, indent=1)
+    print(f"wrote {out} ({len(rows)} positions, {len(H)} groups)", file=sys.stderr)
     return 0
 
 
@@ -357,12 +476,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ft.add_argument("--test-worlds", type=int, default=16)
     ft.add_argument("--epochs", type=int, default=8)
     ft.add_argument("--test-limit", type=int, default=0, help="first N bank positions only (smoke runs)")
+    ft.add_argument("--perspective", choices=["acting", "mover"], default="acting")
+    ft.add_argument("--holdout", type=float, default=0.2)
+    ft.add_argument("--pair-weight", type=float, default=10.0)
     ft.add_argument("--out", required=True)
+    tu = sub.add_parser("tune")
+    tu.add_argument("--model", required=True)
+    tu.add_argument("--labels", nargs="+", required=True)
+    tu.add_argument("--worlds", type=int, default=4)
+    tu.add_argument("--epochs", type=int, default=8)
+    tu.add_argument("--pair-weight", type=float, default=10.0)
+    tu.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.cmd == "tune":
+        return tune(a.model, a.labels, a.worlds, a.epochs, a.pair_weight, a.out)
     if a.cmd == "label":
         return label(a.model, a.games, a.rate, a.k, a.pairs, a.part, a.seed, a.temperature, a.out)
     return fit(a.model, a.labels, a.bank, a.bank_playouts, a.worlds, a.test_worlds, a.epochs, a.out,
-               test_limit=a.test_limit)
+               test_limit=a.test_limit, perspective=a.perspective, holdout=a.holdout,
+               pair_weight=a.pair_weight)
 
 
 if __name__ == "__main__":
