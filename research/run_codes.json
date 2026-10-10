@@ -272,7 +272,7 @@
    }
   },
   "A12": {
-   "description": "A9 with an upward-only cap leak (--ladder-logit-cap-leak-up 1.0): the tanh's own gradient plus the raw one only where it raises a logit",
+   "description": "A9 with an upward-only cap leak (--ladder-logit-cap-leak-up 1.0): the tanh's own gradient plus the raw one where it raises a logit, weighted by tanh^2 of the deficit (from commit b5d0bf2; the unweighted first version's two runs are voided)",
    "first": "E7-A8-R1-S44@6400M+A12_20261010_001921",
    "flags": {
     "arch": "ladder",
@@ -788,7 +788,8 @@
   "E7-A8-R1-S44@6400M+A10_20261009_235907": "E7-A8-R1-S44@6400M+A10",
   "E7-A8-R1-S44@6400M+A11_20261010_000454": "E7-A8-R1-S44@6400M+A11",
   "E7-A8-R1-S44@6400M+A11-R28_20261010_001545": "E7-A8-R1-S44@6400M+A11-R28",
-  "E7-A8-R1-S44@6400M+A12_20261010_001921": "E7-A8-R1-S44@6400M+A12"
+  "E7-A8-R1-S44@6400M+A12_20261010_002921": "E7-A8-R1-S44@6400M+A12",
+  "E7-A8-R1-S44@6400M+A12-R28_20261010_002941": "E7-A8-R1-S44@6400M+A12-R28"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
