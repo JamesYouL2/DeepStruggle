@@ -75,16 +75,22 @@ HEAD_ENTITIES: Tuple[str, ...] = ("both", "country", "card")
 
 class _LeakUp(torch.autograd.Function):
     """Adds zero going forward; going back, `leak` times the incoming gradient where it is negative
-    -- where gradient descent would RAISE the logit -- and nothing where it would lower it."""
+    -- where gradient descent would RAISE the logit -- weighted by how saturated the move is
+    (`weight`, tanh^2 of its scaled deficit: 0 at the top move, ~1 deep in the cap), and nothing
+    where it would lower it. Unweighted, the top move took the leak too -- every well-rewarded top
+    move pushed up twice as hard, the gaps widened until every alternative sat at the floor, and
+    entropy fell 0.26 -> 0.07 in 25M (E7-A8-R1-S44@6400M+A12)."""
 
     @staticmethod
-    def forward(ctx: Any, z: torch.Tensor, leak: float) -> torch.Tensor:   # type: ignore[override]
+    def forward(ctx: Any, z: torch.Tensor, weight: torch.Tensor, leak: float) -> torch.Tensor:   # type: ignore[override]
         ctx.leak = float(leak)
+        ctx.save_for_backward(weight)
         return torch.zeros_like(z)
 
     @staticmethod
-    def backward(ctx: Any, grad: torch.Tensor) -> Tuple[torch.Tensor, None]:   # type: ignore[override]
-        return ctx.leak * grad.clamp(max=0.0), None
+    def backward(ctx: Any, grad: torch.Tensor) -> Tuple[torch.Tensor, None, None]:   # type: ignore[override]
+        (weight,) = ctx.saved_tensors
+        return ctx.leak * weight * grad.clamp(max=0.0), None, None
 
 
 class LadderNet(ColdWarNetV2):
@@ -673,7 +679,8 @@ class LadderNet(ColdWarNetV2):
         elif self.logit_cap_leak > 0.0:
             capped = capped + self.logit_cap_leak * (z - z.detach())
         if self.logit_cap_grad != "straight" and self.logit_cap_leak_up > 0.0:
-            capped = capped + _LeakUp.apply(z, self.logit_cap_leak_up)
+            weight = torch.tanh(((z - top) / c).detach()) ** 2
+            capped = capped + _LeakUp.apply(z, weight, self.logit_cap_leak_up)
         return capped.to(logits.dtype)
 
     def _policy_logits(self, h: torch.Tensor,

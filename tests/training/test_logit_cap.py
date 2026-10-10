@@ -115,3 +115,19 @@ def test_an_upward_leak_raises_saturated_moves_and_never_pushes_them_down() -> N
         else:                         # punishing the coup raises influence: the full softmax gradient
             assert g[1] < g[0] - 5e-4
     assert up.ladder_config()["logit_cap_leak_up"] == 1.0
+
+
+def test_the_upward_leak_spares_the_top_move() -> None:
+    """The leak is weighted by tanh^2 of the deficit: the top move gets only the tanh's gradient --
+    unweighted, rewarded top moves were pushed up twice as hard and the policy collapsed."""
+    torch.manual_seed(0)
+    tanh, up = (create_ladder_net("cpu", **M2D, logit_cap=7.0, logit_cap_leak_up=l).eval() for l in (0.0, 1.0))
+    z = torch.tensor([[34.0, 6.0, -2.6]])
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    g = []
+    for net in (tanh, up):
+        zz = z.clone().requires_grad_(True)
+        (-torch.log_softmax(net._cap_logits(zz, mask), -1)[0, 0]).backward()   # reward the top move
+        assert zz.grad is not None
+        g.append(zz.grad[0, 0].item())
+    assert abs(g[1] - g[0]) < 1e-9
