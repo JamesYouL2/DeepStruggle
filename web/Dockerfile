@@ -40,7 +40,7 @@ FROM ${EMSDK_IMAGE} AS wasm
 # Root here only makes the user and its source directory; the toolchain is the image's. The uid is
 # the system's pick: it owns nothing outside this stage. (WORKDIR creates a directory as root even
 # after USER, so the directory is made and handed over here.)
-RUN useradd --create-home build && mkdir /src && chown build:build /src
+RUN useradd --create-home build && mkdir -p /src && chown -R build:build /src
 USER build
 # Emscripten's cache of system libraries lives in the SDK directory, which is root's: give the
 # build user its own (the first build fills it, a minute or so).
@@ -82,7 +82,7 @@ ARG ENGINE_MARCH=
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential clang cmake \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --create-home build && mkdir /src && chown build:build /src
+ && useradd --create-home build && mkdir -p /src && chown -R build:build /src
 USER build
 ENV PATH=/home/build/venv/bin:$PATH
 # nanobind is a build-time dependency only; CMake finds it through the interpreter.
