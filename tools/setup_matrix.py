@@ -274,8 +274,9 @@ def describe(opening: str) -> str:
 def _pp(x: float, se: Optional[float] = None, signed: bool = False) -> str:
     if math.isnan(x):
         return "—"
-    s = f"{100 * x:+.1f}" if signed else f"{100 * x:.1f}"
-    return s + (f" ± {100 * se:.1f}" if se is not None and not math.isnan(se) else "")
+    nd = 2 if se is not None and not math.isnan(se) and 100 * se < 0.5 else 1   # two decimals once they mean something
+    s = f"{100 * x:+.{nd}f}" if signed else f"{100 * x:.{nd}f}"
+    return s + (f" ± {100 * se:.{nd}f}" if se is not None and not math.isnan(se) else "")
 
 
 def report(plan: Plan, games: Sequence[Mapping[str, object]], bootstrap: int = 1000, seed: int = 0) -> Tuple[str, MatrixData]:
@@ -289,11 +290,11 @@ def report(plan: Plan, games: Sequence[Mapping[str, object]], bootstrap: int = 1
 
     # The bootstrap resamples deals, which keeps every cell's games of one deal together.
     all_seeds = sorted({s for per in scores.values() for s in per})
+    md = per_deal(scores, len(us), len(ussr))
     rng = np.random.default_rng(seed)
     bx, by, bv = np.zeros((bootstrap, len(us))), np.zeros((bootstrap, len(ussr))), np.zeros(bootstrap)
     for b in range(bootstrap):
-        pick = list(rng.choice(all_seeds, size=len(all_seeds), replace=True))
-        mb, _ = matrix_from(scores, len(us), len(ussr), pick)
+        mb = md[rng.integers(0, len(md), size=len(md))].mean(axis=0).reshape(len(us), len(ussr))
         bx[b], by[b], bv[b] = solve_zero_sum(mb)
 
     lines = [f"# Setup matrix: {len(us)} US × {len(ussr)} USSR setups",
@@ -310,7 +311,6 @@ def report(plan: Plan, games: Sequence[Mapping[str, object]], bootstrap: int = 1
         s = f"S{k} | `{ussr[k]}`: {describe(ussr[k])}" if k < len(ussr) else " | "
         lines.append(f"| {u} | {s} |")
 
-    md = per_deal(scores, len(us), len(ussr))
     t2, dof, p_joint = joint_test(md)
     margins: Dict[str, Comparison] = {}
     for i in range(1, len(us)):

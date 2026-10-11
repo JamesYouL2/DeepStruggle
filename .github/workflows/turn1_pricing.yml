@@ -1,0 +1,200 @@
+# Turn 1, priced option by option (tools/turn1_pricing.py), split over runners:
+#
+#   build    downloads the checkpoint.
+#   price    N runners, every N-th game: greedy self-play to the end of turn 1, every option of each
+#            turn-1 decision played over `worlds` worlds to the turn's end and valued by the critic.
+#   bank     the clearest departures from the network's move.
+#   confirm  N runners: each departure replayed to the end of the game (paired, no critic).
+#   report   by kind of decision, headlines by card, and the departures with both verdicts.
+#
+#   gh workflow run turn1_pricing.yml --ref main -f games=500 -f worlds=96
+#   gh workflow run turn1_pricing.yml --ref main -f opening=us_wg3_fr3_it2+ussr_pol4_aus
+name: turn1-pricing
+
+on:
+  # The push trigger only registers the workflow from this branch; every job is skipped on it.
+  push:
+    branches: [exp/setup-matrix]
+    paths: [.github/workflows/turn1_pricing.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "A torch checkpoint (.pt) in hf_repo; the default is R32's SWA"
+        default: "E7-A8-R1-S44@6400M+R32_20261010_005623/swa_6720-6800M.pt"
+      opening:
+        description: "A forced opening (tools/lib/openings.py, 'us_x+ussr_y'); empty: the network's own setup"
+        default: ""
+      games:
+        default: "500"
+      worlds:
+        default: "96"
+      seed:
+        default: "120000"
+      bank_top:
+        default: "60"
+      pairs:
+        description: "Full-game pairs per confirmed departure"
+        default: "512"
+      runners:
+        default: "20"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  MODEL: ${{ inputs.model }}
+  OPENING: ${{ inputs.opening }}
+  GAMES: ${{ inputs.games }}
+  WORLDS: ${{ inputs.worlds }}
+  SEED: ${{ inputs.seed }}
+  BANK_TOP: ${{ inputs.bank_top }}
+  PAIRS: ${{ inputs.pairs }}
+  RUNNERS: ${{ inputs.runners }}
+  HF_REPO: ${{ inputs.hf_repo }}
+  OMP_NUM_THREADS: "4"
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+      - name: Checkpoint
+        run: |
+          mkdir -p models
+          curl -sSfL --retry 3 -o models/base.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum models/base.pt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turn1-model-${{ github.run_id }}
+          path: models/
+          retention-days: 30
+
+  price:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.build.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: turn1-model-${{ github.run_id }}
+          path: models
+      - name: Price part ${{ matrix.part }}
+        run: |
+          mkdir -p rows
+          tools/scripts/check_engine_fresh.sh && python tools/turn1_pricing.py run --model models/base.pt \
+            --games "$GAMES" --seed "$SEED" --worlds "$WORLDS" --opening "$OPENING" \
+            --part "${{ matrix.part }}/$RUNNERS" --out "rows/rows-${{ matrix.part }}.jsonl.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turn1-rows-${{ github.run_id }}-${{ matrix.part }}
+          path: rows/
+          if-no-files-found: error
+
+  bank:
+    needs: [build, price]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: turn1-rows-${{ github.run_id }}-*
+          path: rows
+          merge-multiple: true
+      - name: Bank
+        run: |
+          mkdir -p bank
+          python tools/turn1_pricing.py bank --rows rows/*.jsonl.gz --top "$BANK_TOP" --out bank/bank.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turn1-bank-${{ github.run_id }}
+          path: bank/
+
+  confirm:
+    needs: [build, bank]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.build.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: turn1-model-${{ github.run_id }}
+          path: models
+      - uses: actions/download-artifact@v4
+        with:
+          name: turn1-bank-${{ github.run_id }}
+          path: bank
+      - name: Confirm part ${{ matrix.part }}
+        run: |
+          mkdir -p conf
+          tools/scripts/check_engine_fresh.sh && python tools/turn1_pricing.py confirm --bank bank/bank.jsonl \
+            --model models/base.pt --pairs "$PAIRS" --part "${{ matrix.part }}/$RUNNERS" \
+            --out "conf/conf-${{ matrix.part }}.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turn1-conf-${{ github.run_id }}-${{ matrix.part }}
+          path: conf/
+          if-no-files-found: error
+
+  report:
+    needs: [build, price, bank, confirm]
+    if: always() && needs.bank.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: turn1-rows-${{ github.run_id }}-*
+          path: report/rows
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: turn1-bank-${{ github.run_id }}
+          path: report
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: turn1-conf-${{ github.run_id }}-*
+          path: report/conf
+          merge-multiple: true
+      - name: Report
+        run: |
+          python tools/turn1_pricing.py report --rows report/rows/*.jsonl.gz --bank report/bank.jsonl \
+            --confirm report/conf/*.jsonl --label "$(basename "$MODEL")${OPENING:+ from $OPENING}" \
+            --out report/report.md > /dev/null
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL"
+            echo "opening: ${OPENING:-the network's own}"
+            echo "games: $GAMES (seeds $SEED+)  worlds: $WORLDS  bank: $BANK_TOP  pairs: $PAIRS  runners: $RUNNERS"
+          } > report/provenance.txt
+          { echo '```'; cat report/provenance.txt; echo '```'; cat report/report.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turn1-pricing-${{ github.run_id }}
+          path: report/
+          retention-days: 90

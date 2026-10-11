@@ -1167,6 +1167,26 @@ The value of a setup here is its value *to the continuation*: a setup the networ
 from is played by a policy that has not seen its positions, so a human setup that loses under the
 greedy network is not evidence against it until a searched continuation agrees.
 
+## 7e. Turn 1, Priced Option by Option (`tools/turn1_pricing.py`)
+
+Greedy self-play games of one network to the end of turn 1, from its own setup or a forced opening
+(`--opening us_x+ussr_y`). At every turn-1 decision with a small option set, and at the first point
+of every influence placement and realignment, every legal option is played over `--worlds` worlds to
+the end of the turn and valued by the critic there (`ai/search/turn_pricing.py`). The report gives,
+by kind of decision and side, how often the network's move is the priced best and the gain of
+switching: an upper bound (the best's lead on all worlds) and an honest estimate (the best chosen on
+half the worlds, measured on the other half); headlines by card; and the clearest departures, which
+`confirm` replays to the end of the game with `ai.eval.paired_playouts.compare` (no critic).
+Workflow `turn1_pricing.yml` runs pricing and confirmation over CI runners.
+
+```bash
+export PYTHONPATH=.:build/release
+.venv/bin/python tools/turn1_pricing.py run --model <ckpt.pt> --games 20 --worlds 32 --out rows.jsonl.gz
+.venv/bin/python tools/turn1_pricing.py bank --rows rows.jsonl.gz --top 20 --out bank.jsonl
+.venv/bin/python tools/turn1_pricing.py confirm --bank bank.jsonl --model <ckpt.pt> --pairs 256 --out conf.jsonl
+.venv/bin/python tools/turn1_pricing.py report --rows rows.jsonl.gz --bank bank.jsonl --confirm conf.jsonl --out report.md
+```
+
 ---
 
 ## 8. Shared Helpers Library (`tools/lib/`)
