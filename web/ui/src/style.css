@@ -744,13 +744,8 @@ body {
   gap: 10px;
   margin-left: auto;
 }
-/* Too narrow for one line: the tracks take a line of their own above the controls. */
-@media (max-width: 1400px) {
-  .game-bar .global-tracks {
-    flex-basis: 100%;
-    justify-content: flex-start;
-  }
-}
+/* The badge shares the tracks' line while it fits (the bar wraps, so it drops below only when the
+   tracks alone fill the width). */
 
 /* The play-mode question (index.html #mode-dialog, main.ts askMode). */
 .mode-dialog-content { max-width: 520px; }
