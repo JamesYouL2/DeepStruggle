@@ -8,7 +8,7 @@
 # gets a build container's user account and the runtime's, never uid 0 anywhere.
 #
 #     docker build -f web/Dockerfile -t deepstruggle-web .
-#     docker run -d --name deepstruggle -p 127.0.0.1:8000:8000 \
+#     docker run -d --rm --name deepstruggle -p 127.0.0.1:8000:8000 \
 #         --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
 #         -v "$PWD/data/checkpoints:/data/checkpoints:ro" \
 #         -v deepstruggle-replays:/data/replays -v deepstruggle-onnx:/data/onnx_cache \

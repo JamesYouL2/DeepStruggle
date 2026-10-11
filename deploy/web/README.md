@@ -36,14 +36,14 @@ a build container's user account and the runtime's `app` user, never uid 0 in an
 
 ```bash
 docker build -f web/Dockerfile -t deepstruggle-web .
-docker run -d --name deepstruggle -p 127.0.0.1:8000:8000 \
+docker run -d --rm --name deepstruggle -p 127.0.0.1:8000:8000 \
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
   -v "$PWD/data/checkpoints:/data/checkpoints:ro" \
   -v deepstruggle-replays:/data/replays -v deepstruggle-onnx:/data/onnx_cache \
   deepstruggle-web
 ```
 
-The run line adds what the image cannot enforce for the host: the root filesystem read-only (the
+`--rm` removes the container when it stops, so the next `docker run` can take the name again; without it a stopped container keeps `deepstruggle` until `docker rm deepstruggle` (or `docker start deepstruggle` to resume it). Nothing of value lives in the container -- the exports and replays are in the volumes. The run line also adds what the image cannot enforce for the host: the root filesystem read-only (the
 server writes only under `/data`), no capabilities, no privilege escalation, and the port
 published on the host's loopback only -- there is no authentication. Pass
 `--build-arg UID=$(id -u) --build-arg GID=$(id -g)` so the exports and replays the server writes
