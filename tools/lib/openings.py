@@ -82,6 +82,12 @@ US_WG3_FR3_IT2: Sequence[Tuple[int, int]] = (
     (WEST_GERMANY, 3), (FRANCE, 2), (ITALY, 2), (FRANCE, 1), (IRAN, 1))
 USSR_E7: Sequence[Tuple[int, int]] = ((POLAND, 3), (HUNGARY, 2), (AUSTRIA, 1))
 USSR_POLAND5: Sequence[Tuple[int, int]] = ((EAST_GERMANY, 1), (POLAND, 5))
+#: The R34 soup's greedy setups (E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M, 300 fresh
+#: deals): the USSR Yugoslavia 3, Poland 3 on every deal; the US West Germany 4, France 2, Italy 2,
+#: Iran 1 on 70% (WG4/Fr3/It2 15%, WG3/Fr3/It2/Ir1 14%). Which two points are the bonus does not
+#: change the board.
+US_R34: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (FRANCE, 2), (ITALY, 1), (ITALY, 1), (IRAN, 1))
+USSR_R34: Sequence[Tuple[int, int]] = ((YUGOSLAVIA, 3), (POLAND, 3))
 
 #: A name maps to a script per side. A side with no script sets up for itself -- one-sided
 #: openings exist for evaluation (the other side replying as the agent would); training's
@@ -102,6 +108,8 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "us_wg3_fr3_it2": {"US": expand(US_WG3_FR3_IT2)},
     "us_wg4_it3_ir2": {"US": expand(US_OPENING)},
     "ussr_e7": {"USSR": expand(USSR_E7)},
+    "us_r34": {"US": expand(US_R34)},
+    "ussr_r34": {"USSR": expand(USSR_R34)},
     "ussr_pol4_aus": {"USSR": expand(USSR_OPENING_AUSTRIA)},
     "ussr_pol4_yug": {"USSR": expand(USSR_OPENING)},
     "ussr_pol5": {"USSR": expand(USSR_POLAND5)},

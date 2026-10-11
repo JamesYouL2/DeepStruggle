@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import ts_engine as ts
-from tools.lib.openings import (EAST_GERMANY, FRANCE, HUNGARY, IRAN, ITALY, POLAND, WEST_GERMANY,
+from tools.lib.openings import (EAST_GERMANY, FRANCE, HUNGARY, IRAN, ITALY, POLAND, WEST_GERMANY, YUGOSLAVIA,
                                 opening_scripts, play_scripted_setup)
 from tools.setup_matrix import (DEFAULT_US, DEFAULT_USSR, Plan, _cross_fit_rule, _ols, _wald, deal_hands, describe,
                                 make_plan, report, solve_zero_sum)
@@ -208,3 +208,14 @@ def test_the_sparse_rule_finds_a_planted_card_out_of_fold() -> None:
     assert gain.mean() > 0.015
     gain0, _, _, used0 = _cross_fit_rule(h.astype(np.float64), rng.normal(0, 0.5, size=(len(h), 1)), fold, bar=3.4)
     assert all(len(u) <= 1 for u in used0) and abs(gain0.mean()) < 0.01
+
+
+@pytest.mark.parametrize("opening", ["us_r34+ussr_r34", "us_r34+ussr_e7", "us_e7+ussr_r34"])
+def test_the_r34_setups_are_legal_and_place_what_they_say(opening: str) -> None:
+    st = play_scripted_setup(_fresh(), opening)
+    assert st.current_phase != ts.Phase.SETUP
+    if opening.startswith("us_r34"):
+        assert _inf(st, WEST_GERMANY)[0] == 4 and _inf(st, FRANCE)[0] == 2 and _inf(st, ITALY)[0] == 2
+        assert _inf(st, IRAN)[0] == 2         # the fixed point and a bonus point
+    if opening.endswith("ussr_r34"):
+        assert _inf(st, POLAND)[1] == 3 and _inf(st, YUGOSLAVIA)[1] == 3
