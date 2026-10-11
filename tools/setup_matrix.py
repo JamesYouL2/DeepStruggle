@@ -83,6 +83,12 @@ class Equilibrium(TypedDict):
     ussr_support_freq: List[float]
 
 
+class JointTest(TypedDict):
+    t2: float
+    contrasts: int
+    p: float
+
+
 class Plan(TypedDict):
     us: List[str]
     ussr: List[str]
@@ -99,6 +105,8 @@ class MatrixData(TypedDict):
     deals: int
     equilibrium: Equilibrium
     comparisons: Dict[str, Comparison]
+    joint_test: JointTest
+    margins: Dict[str, Comparison]      # each setup averaged over the other side's, minus the reference
 
 
 # --- plan -----------------------------------------------------------------------------------
@@ -226,6 +234,33 @@ def paired(scores: Dict[Tuple[int, int], Dict[int, List[float]]], a: Tuple[int, 
     return float(d.mean()), float(d.std(ddof=1) / math.sqrt(len(d))), len(common)
 
 
+def per_deal(scores: Dict[Tuple[int, int], Dict[int, List[float]]], n_us: int, n_ussr: int) -> FloatArray:
+    """deals x cells: each cell's US score on each deal that every cell played (an odd matrix's
+    last cell, played twice a deal, contributes its mean)."""
+    cells = [(i, j) for i in range(n_us) for j in range(n_ussr)]
+    common = set.intersection(*(set(scores.get(c, {})) for c in cells))
+    return np.array([[float(np.mean(scores[c][s])) for c in cells] for s in sorted(common)])
+
+
+def joint_test(m: FloatArray) -> Tuple[float, int, float]:
+    """Do the cells differ at all? Hotelling's T² that every cell's mean equals the first's, from
+    the deals x cells matrix (blocked by deal); returns (T², contrasts, p). The p is T² against
+    chi-square with that many degrees of freedom by the Wilson-Hilferty approximation, which at
+    thousands of deals matches the exact F test to the second decimal."""
+    k = m.shape[1] - 1
+    d = m[:, 1:] - m[:, :1]
+    dm = d.mean(axis=0)
+    t2 = float(len(d) * dm @ np.linalg.solve(np.cov(d, rowvar=False).reshape(k, k), dm))
+    z = ((t2 / k) ** (1 / 3) - (1 - 2 / (9 * k))) / math.sqrt(2 / (9 * k))
+    return t2, k, 0.5 * math.erfc(z / math.sqrt(2))
+
+
+def contrast(m: FloatArray, weights: FloatArray) -> Tuple[float, float]:
+    """A weighted sum of cells (weights shaped like the matrix), per deal: its mean and standard error."""
+    x = m @ weights.reshape(-1)
+    return float(x.mean()), float(x.std(ddof=1) / math.sqrt(len(x)))
+
+
 def describe(opening: str) -> str:
     """A one-sided opening as the influence it adds, in country names ("West Germany 4, Italy 4, Iran 1")."""
     from tools.lib.openings import opening_scripts
@@ -274,6 +309,28 @@ def report(plan: Plan, games: Sequence[Mapping[str, object]], bootstrap: int = 1
         u = f"U{k} | `{us[k]}`: {describe(us[k])}" if k < len(us) else " | "
         s = f"S{k} | `{ussr[k]}`: {describe(ussr[k])}" if k < len(ussr) else " | "
         lines.append(f"| {u} | {s} |")
+
+    md = per_deal(scores, len(us), len(ussr))
+    t2, dof, p_joint = joint_test(md)
+    margins: Dict[str, Comparison] = {}
+    for i in range(1, len(us)):
+        w = np.zeros((len(us), len(ussr)))
+        w[i, :], w[0, :] = 1 / len(ussr), -1 / len(ussr)
+        dd, se = contrast(md, w)
+        margins[f"U{i}-U0"] = {"diff": dd, "se": se, "deals": len(md)}
+    for j in range(1, len(ussr)):
+        w = np.zeros((len(us), len(ussr)))
+        w[:, 0], w[:, j] = 1 / len(us), -1 / len(us)          # USSR points: US(S0) - US(Sj)
+        dd, se = contrast(md, w)
+        margins[f"S{j}-S0"] = {"diff": dd, "se": se, "deals": len(md)}
+
+    lines += ["", "## Do the setups matter at all?", "",
+              f"* **Joint test** that all {len(us) * len(ussr)} cells are equal, blocked by deal: "
+              f"Hotelling T² = {t2:.1f} on {dof} contrasts, p = {p_joint:.3f}. Read the single "
+              "comparisons below against it: with this many of them, a few at 2 SE are expected by chance.",
+              "* **Each setup averaged over the other side's setups**, against the networks' own (paired by deal):"]
+    lines += [f"  * {k} ({'US' if k.startswith('U') else 'USSR'} points): {_pp(c['diff'], c['se'], signed=True)}"
+              for k, c in margins.items()]
 
     lines += ["", "## The matrix (US score)", "",
               "| US \\ USSR | " + " | ".join(f"S{j}" for j in range(len(ussr))) + " | mean |",
@@ -326,6 +383,8 @@ def report(plan: Plan, games: Sequence[Mapping[str, object]], bootstrap: int = 1
                         "us_support_freq": (bx > 0.01).mean(axis=0).tolist(),
                         "ussr_support_freq": (by > 0.01).mean(axis=0).tolist()},
         "comparisons": comparisons,
+        "joint_test": {"t2": t2, "contrasts": dof, "p": p_joint},
+        "margins": margins,
     }
     return "\n".join(lines) + "\n", data
 

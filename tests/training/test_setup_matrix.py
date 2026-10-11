@@ -148,3 +148,13 @@ def test_the_plan_round_trips_through_json(tmp_path) -> None:
     assert main(["plan", "--base", "models/base.pt", "--out", str(out)]) == 0
     plan = json.loads(out.read_text())
     assert len(plan["cells"]) == 16 and len(plan["matchups"]) == 8 and len(plan["entrants"]) == 16
+
+
+def test_the_joint_test_separates_equal_cells_from_a_real_effect() -> None:
+    plan = make_plan(list(DEFAULT_US[:2]), list(DEFAULT_USSR[:2]), "models/base.pt")
+    _, flat = report(plan, _games(plan, np.full((2, 2), 0.5), 3000, seed=5), bootstrap=5)
+    assert flat["joint_test"]["p"] > 0.01
+    _, real = report(plan, _games(plan, np.array([[0.5, 0.5], [0.56, 0.56]]), 3000, seed=5), bootstrap=5)
+    assert real["joint_test"]["p"] < 1e-3
+    assert real["margins"]["U1-U0"]["diff"] == pytest.approx(0.06, abs=0.02)
+    assert abs(real["margins"]["S1-S0"]["diff"]) < 0.02
