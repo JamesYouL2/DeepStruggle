@@ -170,6 +170,23 @@ chains: Nuclear Subs still needs the state shown first (P31 1b, the exploitation
 environment), and the Subs coup needs an effect-conditioned coup-target correction before any credit
 can land on it -- queued behind T and B4′ as **B6**.
 
+**Result (ts-main, overnight 2026-10-10/11): as built, B4′ does not scale, and does not move the
+leaks.** `ai/training/turn_credit.py`, branches from the heads run's 6,400M state, greedy reads:
+R37 (64 priced decisions per rollout) +1.7 / +1.9 per seat, 52.1% head to head; R38 (256 per
+rollout, priced by four worker processes beside the rollout) +0.3 / +2.0, 50.0%, and 49.1%
+against R37 -- more pricing bought nothing. Neither moved the leak rate (2.7–2.8%), the USSR's
+Cuba defence (87–91% suicides) or US Nuclear Subs use (never evented). So the credit never
+reached the spots it was aimed at. The read that separates "the idea is wrong" from "this build
+is wrong" was already in the logged series: `tc_clear_frac`, the share of priced decisions whose
+best option beats the policy's expectation by ≥ 3 SE, **sits at 14% at the start, middle and end
+of both arms**, with the mean gain (0.033–0.035), the row weight (~0.24) and the CE loss (~0.06)
+flat too. **So the turn-end pricing finds spots throughout, and the term never reduces them: the
+fault is the term's reach, not the measurement.** It gets 4 × 512 CE steps per iteration at
+coefficient 1 beside the full PPO update, and each row is seen about once (R38 less). **B4′ is
+parked, not closed**; if retried, the cell is the term's strength -- more CE steps per iteration,
+or a higher coefficient, watching entropy and KL -- not more pricing. The gap loss has meanwhile
+become the live route to the rare-spot cards.
+
 ## Checks (CPU) -- done 2026-10-10 by ts-main, `research/log/P32_cpu_checks.md` on `hand-knowledge-tracking`
 
 1. **The US opening on the heads line.** Locked at France +6, Italy +2, Iran +1 in 98.9% of
@@ -289,7 +306,9 @@ after, `run_codes.py --run` on the name, readouts at 40M marks.
   three-reference mean not lower; adopt on the seed-43 replicate. All level → the teacher question
   closes; the product is the searched soup.
 * B4′: promote iff ≥ 2 of its target spots move by > 3 SE on direct counts with strength not worse;
-  the leak log's top entries are reported whether or not it is promoted.
+  the leak log's top entries are reported whether or not it is promoted. **Outcome: no spot
+  moved, strength inside branch spread (R37 / R38); the pricing finds spots (`tc_clear_frac` 14%
+  throughout) and the term does not reduce them -- parked; a retry is a term-strength cell.**
 * Checks, resolved: 1 → no arm (+0.5 ± 1.5; the critic's −12.9 goes to T2's reads); 2 → no leak
   (the draw is right); 3 → B5's trigger does not fire (the region choice holds); 4a → 4b not
   triggered (the critic sees the trap).
@@ -365,6 +384,14 @@ Launched and read by ts-main; this ledger mirrors [`../runs.md`](../runs.md).
   the strong form: **anything self-play does not reach needs seeding, whatever the exploration
   fix.** The scenario list stays a live instrument for unreached chains, not a scaffold the cap
   retires.
+* **The gap loss replicates on seeds 45 and 46** (`+R34-S45`, `+R34-S46`): per seat over the plain
+  leg +7.6 / +2.1, +5.6 / +2.0, +5.6 / +4.7 -- three seeds, one direction, the USSR seat the weaker
+  gain. **The SWA-made soup of the three R34 branches at 6,720–6,800M**, built exactly as the heads
+  soup was: leaderboard **1644** against the heads soup's 1628, level with R32's SWA (1645); head
+  to head against the heads soup 52.6% (US 50.7, USSR 54.5). **The strongest purely trained model**
+  -- the owner prefers pure arms souped later -- and the gap loss is a replicated result. All
+  three R34 branches continue unchanged to 7,200M, to see whether the recipe climbs past the plain
+  plateau; the soup is remade at 7,120–7,200M.
 * `E7-A8-R1-S44@6400M+R32` -- **T1 with a frozen teacher** (`--search-teacher-checkpoint`, the
   heads soup as the searcher, Gumbel k = 4 @32, CE 0.1 -- R31's settings, so the pair differs only
   in whose network searches). **First 10M: the loop is broken.** KL(target ‖ policy) 0.81 → 0.39 and
