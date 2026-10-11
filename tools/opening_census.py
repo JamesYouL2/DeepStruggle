@@ -244,6 +244,51 @@ def card_section(games: Sequence[GameRecord], card: str, side: str) -> List[str]
     return lines
 
 
+USSR_HAND = (4, 5)          # int(CardLocation.HAND_USSR_UNKNOWN), HAND_USSR_KNOWN
+
+
+def _fires(ps: Sequence[Play], i: int, side: str) -> bool:
+    """Whether the card chosen at plays[i] is played so that its (opponent's) event fires: not to
+    Space, not inside UN Intervention, not a headline."""
+    p = ps[i]
+    if p["kind"] == "headline" or p["resolving"] == "UN Intervention":
+        return False
+    m = next((q for q in ps[i + 1:i + 4] if q["side"] == side and q["kind"] == "event or Ops"), None)
+    return m is None or m["taken"] != "SPACE"
+
+
+def order_section(games: Sequence[GameRecord], card: str, side: str = "USSR", min_n: int = 60) -> List[str]:
+    """In turns where `side` fires `card`'s event while holding card X at the turn's start: the share
+    where X was played earlier that turn. A card the side waits for stands out from the rest."""
+    names = {c: _card_name(c) for c in range(1, 111)}
+    before: collections.Counter = collections.Counter()
+    seen: collections.Counter = collections.Counter()
+    for g in games:
+        ps = g["plays"]
+        starts = {}
+        for sn in g["snaps"]:
+            starts.setdefault(sn["turn"], sn)
+        for i, p in enumerate(ps):
+            if not (p["side"] == side and p["kind"] == "card to play" and p["taken"] == card and _fires(ps, i, side)):
+                continue
+            sn = starts.get(p["turn"])
+            if sn is None:
+                continue
+            played = [q["taken"] for q in ps[:i] if q["side"] == side and q["turn"] == p["turn"] and q["kind"] in ("headline", "card to play")]
+            for c in range(1, 111):
+                if names[c] == card or sn["loc"][c - 1] not in USSR_HAND:
+                    continue
+                seen[names[c]] += 1
+                before[names[c]] += names[c] in played
+    tot_b, tot_n = sum(before.values()), sum(seen.values())
+    rows = sorted(((before[c] / n, c, n) for c, n in seen.items() if n >= min_n), reverse=True)
+    lines = [f"**{side} fires {card}'s event while holding card X at the turn's start: X already played that turn** "
+             f"(every card held: {_pct(tot_b, tot_n)} of {tot_n:,})", "",
+             "| card held | turns | played before it |", "|:---|---:|---:|"]
+    lines += [f"| {c} | {n:,} | {100 * b:.0f}% |" for b, c, n in rows]
+    return lines
+
+
 def report(groups: Sequence[Tuple[str, Sequence[GameRecord]]]) -> List[str]:
     lines = ["# Opening census", "", "## East Germany and Poland", ""]
     for label, games in groups:
@@ -254,6 +299,8 @@ def report(groups: Sequence[Tuple[str, Sequence[GameRecord]]]) -> List[str]:
         for side in ("USSR", "US"):
             for card in ("East European Unrest", "Independent Reds"):
                 lines += card_section(games, card, side) + [""]
+        for card in ("East European Unrest", "Independent Reds"):
+            lines += order_section(games, card) + [""]
     return lines
 
 
