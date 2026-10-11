@@ -36,7 +36,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, TypedDict
 
-from tools.lib.player_spec import (Inference, PlayerSpecError, kind_of, player_id, spec_from_dict)
+from tools.lib.player_spec import (Inference, PlayerSpecError, Policy, kind_of, player_id, spec_from_dict)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LEADERBOARD_DIR = ROOT / "leaderboard"
@@ -64,6 +64,9 @@ class Player(TypedDict):
     network: Optional[str]
     inference: Dict[str, object]
     description: str
+    #: A report on this player's own play -- for a search, of the search, not of its network. A
+    #: greedy policy that has none shows its network's report, which is of greedy play.
+    report: Optional[str]
 
 
 class Epoch(TypedDict):
@@ -229,9 +232,11 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             errs.append(f"{where}: hf must be a path inside {HF_REPO}, or null")
     for pid, pl in board.players.items():
         where = f"players.json[{pid}]"
-        if set(pl) != {"network", "inference", "description"}:
-            errs.append(f"{where}: fields must be ['description', 'inference', 'network'], got {sorted(pl)}")
+        if set(pl) != {"network", "inference", "description", "report"}:
+            errs.append(f"{where}: fields must be ['description', 'inference', 'network', 'report'], got {sorted(pl)}")
             continue
+        if pl["report"] is not None and not (repo_root / pl["report"]).is_file():
+            errs.append(f"{where}: report {pl['report']} does not exist")
         try:
             spec = spec_from_dict(pl["inference"])
             canon = player_id(pl["network"], spec)
@@ -536,6 +541,23 @@ def view(board: Board, fit: EpochFit, *, main_only: bool = False,
 # ---- the page's data --------------------------------------------------------------------------
 
 
+#: The temperature at or below which a policy plays its argmax (the tournament's greedy cut-off).
+GREEDY_TEMPERATURE = 0.05
+
+
+def player_report(board: Board, pid: str) -> Optional[str]:
+    """The report the page links for a player: its own; else, for the greedy policy only, its
+    network's -- a behaviour report of the network's greedy play, which says nothing about how the
+    network plays under a search or sampled, so those players have none until one is written."""
+    pl = board.players[pid]
+    if pl["report"] is not None:
+        return pl["report"]
+    spec = spec_from_dict(pl["inference"])
+    if pl["network"] is None or not (isinstance(spec, Policy) and spec.temperature <= GREEDY_TEMPERATURE):
+        return None
+    return board.networks[pl["network"]]["report"]
+
+
 def site_data(board: Board, commit: Optional[str] = None) -> Dict[str, object]:
     """Everything the leaderboard page shows, fitted: `leaderboard.json`, built by CI from the
     records rather than committed."""
@@ -574,7 +596,7 @@ def site_data(board: Board, commit: Optional[str] = None) -> Dict[str, object]:
         spec = spec_from_dict(pl["inference"])
         players[pid] = {"network": pl["network"], "lineage": lineage(pl["network"]),
                         "kind": kind_of(spec), "inference": pl["inference"],
-                        "description": pl["description"]}
+                        "description": pl["description"], "report": player_report(board, pid)}
     return {"schema": 1, "commit": commit, "hf_repo": HF_REPO, "github": GITHUB_REPO,
             "networks": board.networks, "players": players, "epochs": epochs}
 

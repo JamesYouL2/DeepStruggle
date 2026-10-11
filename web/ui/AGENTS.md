@@ -39,6 +39,7 @@ web/ui/
 │   ├── style.css               # Theme tokens, dark mode palette, animations, layout styles
 │   ├── leaderboard_page.ts     # The leaderboard: views (main / + lineages / all) filter one fit,
 │   │                           # head-to-head on click, links to reports, weights and the workbench
+│   │                           # (a player's own report; a search never shows its network's greedy one)
 │   └── types.ts                # TypeScript interface mirrors of engine GameState and MicroAction
 ├── public/engine/              # ts_engine.mjs + .wasm, not committed (tools/scripts/build_web.sh)
 ├── public/leaderboard.json     # fitted from leaderboard/ by build_web.sh (tools/leaderboard.py fit), not committed

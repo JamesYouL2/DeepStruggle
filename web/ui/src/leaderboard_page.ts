@@ -25,6 +25,9 @@ interface Player {
   kind: string;
   inference: Record<string, unknown>;
   description: string;
+  /** The report on this player's play (tools/lib/leaderboard.py player_report): its own, or for the
+   * greedy policy its network's; null for a search or a sampled policy that has none of its own. */
+  report: string | null;
 }
 
 interface Rating {
@@ -126,9 +129,12 @@ class LeaderboardPage {
     const net = pl?.network ? this.data.networks[pl.network] : undefined;
     if (!net) return "";
     const out: string[] = [];
-    if (net.report) {
-      out.push(`<a href="https://github.com/${esc(this.data.github)}/blob/${esc(this.data.commit ?? "main")}/${esc(net.report)}"
-        title="Behaviour report of the network's greedy play">report</a>`);
+    // The player's report, never simply its network's: a network's report is of its greedy play,
+    // and says nothing about the same weights under a search.
+    if (pl.report) {
+      const what = pl.report === net.report ? "Behaviour report of the network's greedy play" : "Report on this player's play";
+      out.push(`<a href="https://github.com/${esc(this.data.github)}/blob/${esc(this.data.commit ?? "main")}/${esc(pl.report)}"
+        title="${what}">report</a>`);
     }
     if (net.hf) {
       const onnx = net.hf.replace(/\.pt$/, ".onnx");

@@ -5,7 +5,7 @@
     PYTHONPATH=. python tools/leaderboard.py show [--epoch E7] [--main-only] [--lineage E7-A8-R1-S44 ...]
     PYTHONPATH=. python tools/leaderboard.py fit --output web/ui/public/leaderboard.json
     PYTHONPATH=. python tools/leaderboard.py add-network <name> <file> --description ... [--old-name ...] [--report ...] [--hf ...]
-    PYTHONPATH=. python tools/leaderboard.py add-player <player-id> --description ...
+    PYTHONPATH=. python tools/leaderboard.py add-player <player-id> --description ... [--report ...] [--replace]
 
 Games are played, and recorded, by `tools/leaderboard_play.py`. The records are in `leaderboard/`
 and the fit is `tools/lib/leaderboard.py`; this CLI needs neither torch nor the engine, so CI runs
@@ -120,11 +120,21 @@ def cmd_add_player(a: argparse.Namespace) -> int:
     board = _checked_board()
     network, spec = parse_player_id(a.player)
     pid = player_id(network, spec)
-    if pid in board.players:
-        raise LeaderboardError(f"player {pid!r} is already registered")
+    old = board.players.get(pid)
+    if old is not None and not a.replace:
+        raise LeaderboardError(f"player {pid!r} is already registered (--replace to overwrite)")
     if network is not None and network not in board.networks:
         raise LeaderboardError(f"network {network!r} is not registered (add-network first)")
-    board.players[pid] = {"network": network, "inference": spec_to_dict(spec), "description": a.description}
+    if a.report and not (ROOT / a.report).is_file():
+        raise LeaderboardError(f"report {a.report} does not exist")
+    # Replacing keeps what is not given again: attaching a report must not wipe the description.
+    description = a.description if a.description is not None else (old["description"] if old else "")
+    report = a.report if a.report is not None else (old["report"] if old else None)
+    board.players[pid] = {"network": network, "inference": spec_to_dict(spec), "description": description,
+                          "report": report}
+    problems = validate(board)
+    if problems:
+        raise LeaderboardError("\n".join(problems))
     save_registry(board)
     print(f"leaderboard: player {pid}")
     return 0
@@ -155,7 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_add_network)
     p = sub.add_parser("add-player", help="register a player: a network and how it is run")
     p.add_argument("player", help="a player id, e.g. E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)")
-    p.add_argument("--description", default="")
+    p.add_argument("--description", default=None)
+    p.add_argument("--report", default=None,
+                   help="a report on this player's play, a path in the repository -- for a search, of the "
+                        "search; a greedy policy without one links its network's report")
+    p.add_argument("--replace", action="store_true", help="update a registered player (unset fields are kept)")
     p.set_defaults(fn=cmd_add_player)
     return ap
 

@@ -677,7 +677,7 @@ tournaments. The leaderboard is one scale per engine epoch, kept as records in `
 | file | holds |
 |:---|:---|
 | `networks.json` | each network: file (relative to `data/`), sha256, `hf` path once published, behaviour `report`, description, `old_names` |
-| `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`) |
+| `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`), description, its own `report` (or null) |
 | `epochs.json` | each engine epoch: accepted engine fingerprints, the main players, the anchor and its rating |
 | `matches/<epoch>.jsonl` | one line per pairing played: both seats' w/l/d, base seed, engine, commit -- append-only, union-merged |
 
@@ -700,6 +700,7 @@ player no pairing connects to the main players is listed as unrated.
 PYTHONPATH=. python tools/leaderboard.py add-network E7-A8-R1-S44@6800M \
   data/checkpoints/E7-A8-R1-S44_20261007_162257/snapshot_6800015360steps.pt --description "..."
 PYTHONPATH=. python tools/leaderboard.py add-player 'E7-A8-R1-S44@6800M~gumbel(sims=256,k=8)'
+#   --report <path>   a report on this player's own play; --replace updates a registered player
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/leaderboard_play.py \
   --epoch E7 --players 'E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)' --games-per-side 1000
 #   --opponents A B ...   other opponents; --round-robin  every pairing among --players
@@ -717,9 +718,12 @@ new epoch unless a recorded pairing replays identically, in which case its finge
 
 **The page.** `tools/scripts/build_web.sh` runs `tools/leaderboard.py fit` into
 `web/ui/public/leaderboard.json` (git-ignored; stdlib only, so CI needs no torch) and builds
-`leaderboard.html` beside the workbench. Each row links the network's behaviour report on GitHub,
-its weights on Hugging Face and the workbench with that network loaded; a click shows the
-head-to-head results; the view is kept in the link.
+`leaderboard.html` beside the workbench. Each row links the player's report on GitHub, its weights
+on Hugging Face and the workbench with that network loaded; a click shows the head-to-head results;
+the view is kept in the link. The report is the player's own (`players.json`), and only the greedy
+policy falls back to its network's: a network's behaviour report is of its greedy play, so a search
+or a sampled policy of the same weights shows no report until one of its own is registered
+(`add-player <id> --replace --report <path>`; `tools/lib/leaderboard.py` `player_report`).
 
 ## 2c. Publishing to Hugging Face (`tools/publish_hf.py`)
 

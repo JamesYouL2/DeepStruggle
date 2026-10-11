@@ -7,7 +7,7 @@ import math
 import pathlib
 import subprocess
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, cast
 
 import pytest
 
@@ -103,7 +103,7 @@ def _board(tmp_path: pathlib.Path, mains: List[str], others: List[str]) -> lb.Bo
     networks = {f"{p}@1M": {"file": f"{p}.pt", "sha256": "0" * 64, "description": "", "old_names": [],
                             "hf": None, "report": None} for p in mains + others}
     players = {f"{p}@1M": {"network": f"{p}@1M", "inference": {"kind": "policy", "temperature": 0.0},
-                           "description": ""} for p in mains + others}
+                           "description": "", "report": None} for p in mains + others}
     epochs = {"T": {"description": "", "engines": [ENGINE], "anchor": f"{mains[0]}@1M",
                     "anchor_elo": 1500.0, "main": [f"{p}@1M" for p in mains]}}
     (tmp_path / "matches").mkdir(exist_ok=True)
@@ -207,9 +207,32 @@ def test_a_line_merged_in_twice_and_an_edited_record_are_caught(tmp_path: pathli
 
 def test_a_non_canonical_player_id_is_caught(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B"], [])
-    board.players["A@1M~gumbel"] = {"network": "A@1M", "description": "",
+    board.players["A@1M~gumbel"] = {"network": "A@1M", "description": "", "report": None,
                                     "inference": spec_to_dict(Gumbel())}  # type: ignore[assignment]
     assert any("canonical id" in e for e in lb.validate(board))
+
+
+def test_a_search_player_never_links_its_networks_greedy_report(tmp_path: pathlib.Path) -> None:
+    """A network's report is of its greedy play: the greedy player links it, a search or a sampled
+    policy of the same weights does not -- only a report of its own, once there is one."""
+    board = _board(tmp_path, ["A"], [])
+    board.networks["A@1M"]["report"] = "README.md"
+    search = player_id("A@1M", Gumbel())
+    board.players[search] = {"network": "A@1M", "inference": spec_to_dict(Gumbel()), "description": "",
+                             "report": None}
+    sampled = player_id("A@1M", Policy(temperature=0.5))
+    board.players[sampled] = {"network": "A@1M", "inference": spec_to_dict(Policy(temperature=0.5)),
+                              "description": "", "report": None}
+    assert lb.validate(board) == []
+    assert lb.player_report(board, "A@1M") == "README.md"
+    assert lb.player_report(board, search) is None and lb.player_report(board, sampled) is None
+    board.players[search]["report"] = "AGENTS.md"
+    assert lb.player_report(board, search) == "AGENTS.md"
+    # The page's data carries the same link.
+    players = cast(Dict[str, Dict[str, object]], lb.site_data(board)["players"])
+    assert players[search]["report"] == "AGENTS.md" and players["A@1M"]["report"] == "README.md"
+    board.players[search]["report"] = "no/such/report.md"
+    assert any("does not exist" in e for e in lb.validate(board))
 
 
 def test_site_data_aggregates_a_pair_from_the_first_players_side(tmp_path: pathlib.Path) -> None:
