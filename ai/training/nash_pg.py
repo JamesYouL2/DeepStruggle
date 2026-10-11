@@ -37,6 +37,7 @@ from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E
 from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .turn_credit import TurnCredit  # noqa: E402
 from ai.search.rollout_root import RolloutConfig, RolloutTeacher  # noqa: E402
+from .search_workers import SearchWorkers  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -294,6 +295,7 @@ class BaseNashPGTrainer:
         search_rollout_horizon: int = 0,  # > 0: the search-CE targets come from a rollout root
         search_rollout_k: int = 4,
         search_rollout_worlds: int = 16,
+        search_workers: int = 0,          # > 0: the rollout-root targets priced by worker processes
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
         teacher_coef: float = 0.0,
         teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
@@ -409,6 +411,9 @@ class BaseNashPGTrainer:
         if search_rollout_horizon > 0 and (search_gumbel_k > 0 or search_ce_coef <= 0.0 or search_value_beta > 0.0):
             raise ValueError("rollout-root targets (--search-rollout-horizon) replace the Gumbel root: they need "
                              "--search-ce-coef > 0 and neither --search-gumbel-k nor --search-value-beta")
+        if search_workers > 0 and (search_rollout_horizon <= 0 or search_teacher_net is None):
+            raise ValueError("--search-workers prices rollout-root targets of a frozen teacher: it needs "
+                             "--search-rollout-horizon > 0 and --search-teacher-checkpoint")
         if search_value_beta > 0.0 and search_gumbel_k <= 0:
             raise ValueError("search values into the critic (T2) need the Gumbel root: "
                              "--search-gumbel-k > 0")
@@ -488,6 +493,16 @@ class BaseNashPGTrainer:
                      if search_gumbel_k > 0 else ", visit-count targets"), flush=True)
         self.search_gumbel_k = int(search_gumbel_k)
         self.search_rollout_horizon = int(search_rollout_horizon)
+        #: With workers, the queued decisions are streamed to them during the rollout and collected
+        #: at its end, so the targets land on this rollout's rows as before (ai/training/search_workers.py).
+        self._search_pool: Optional[SearchWorkers] = None
+        if search_workers > 0:
+            self._search_pool = SearchWorkers(
+                int(search_workers), search_teacher_net,
+                RolloutConfig(k=int(search_rollout_k), worlds=int(search_rollout_worlds),
+                              horizon=int(search_rollout_horizon), rule="z2"), self.device)
+            print(f"[X4b] the rollout-root targets are priced by {search_workers} worker processes "
+                  f"beside the rollout", flush=True)
         self.search_saturated_frac = 0.0
         #: (buffer step, env, cloned state) of every decision to search this rollout; searched in
         #: one batch by `_flush_search_targets` when the rollout ends.
@@ -1365,6 +1380,8 @@ class BaseNashPGTrainer:
     def collect_rollouts(self) -> Dict[str, Any]:
         """Collects on-policy rollouts across all parallel environments."""
         t0 = time.time()
+        if self._search_pool is not None:
+            self._search_pool.begin()
         self.active_net.eval()
         if self._graphs is not None:
             self._graphs.begin_rollout()
@@ -1964,6 +1981,8 @@ class BaseNashPGTrainer:
             st = self.env.runner.get_state(i)
             if not ts.Engine.is_terminal(st) and self._searcher.should_search(st):
                 self._search_queue.append((step, i, st.clone()))
+        if self._search_pool is not None:
+            self._search_pool.feed(self._search_queue)
 
     def _flush_search_targets(self) -> None:
         """Search every queued decision in one batch and write the visit distributions into the
@@ -1995,7 +2014,11 @@ class BaseNashPGTrainer:
             res: List[Tuple[List[int], Any]] = []
             root_values: List[float] = []
             sat_n = 0.0
-            for s0 in range(0, len(queue), SEARCH_CHUNK):
+            if self._search_pool is not None:
+                self._search_pool.feed(queue, final=True)
+                got = self._search_pool.collect()
+                res = [got.get(j, ([], _np.zeros(0))) for j in range(len(queue))]
+            for s0 in range(0, len(queue) if self._search_pool is None else 0, SEARCH_CHUNK):
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
                 if self.search_gumbel_k > 0 or self.search_rollout_horizon > 0:
                     res.extend(self._searcher.improved_policies(chunk))

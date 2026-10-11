@@ -850,6 +850,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Rollout-root search targets: candidates (the teacher's most probable moves).")
     parser.add_argument("--search-rollout-worlds", type=int, default=16,
                         help='Rollout-root search targets: worlds per candidate.')
+    parser.add_argument("--search-workers", type=int, default=0,
+                        help="Rollout-root search targets: price them in this many worker processes, each with its own "
+                             "copy of the frozen teacher, streamed the queued decisions during the rollout and collected "
+                             "at its end -- the targets land on the same rows as without workers. 0: the trainer prices them.")
     parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
                         help="P32: search with this FROZEN network for the search CE targets, instead of the "
                              "network being trained -- whose targets follow it as it changes. Same "
@@ -1012,6 +1016,7 @@ def main():
             search_rollout_horizon=args.search_rollout_horizon,
             search_rollout_k=args.search_rollout_k,
             search_rollout_worlds=args.search_rollout_worlds,
+            search_workers=args.search_workers,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,
