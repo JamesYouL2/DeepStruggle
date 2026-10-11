@@ -55,7 +55,10 @@ def option_label(name: str) -> str:
 class AR1(TypedDict):
     card: str
     mode: str                 # EVENT / INFLUENCE / COUP / REALIGN / SPACE, or SCORING / FORCED (no choice)
-    target: str               # coup target or first influence point, "" if none
+    ops: str                  # what the round's Operations did: COUP / INFLUENCE / REALIGN, "" if none --
+                              # an event played first (an opponent's card) still has its Ops after it
+    coup: str                 # the coup target, "" if no coup
+    target: str               # coup target, first influence point or first realignment, "" if none
     spread: Dict[str, int]    # the side's influence added by the round, by country
 
 
@@ -112,15 +115,16 @@ def games_from_rows(rows: Sequence[Row]) -> List[Game]:
             card = option_label(c["names"][c["taken"]])
             # no event-or-Ops decision: a scoring card, or a card with only one way to play it
             mode = option_label(mode_r["names"][mode_r["taken"]]) if mode_r else ("SCORING" if "Scoring" in card else "FORCED")
-            tgt = ""
-            for r in rs:
-                if c["choice"] < r["choice"] < nxt["choice"] and r["side"] == side and r["kind"] in ("coup target", "influence (first point)", "realignment (first roll)"):
-                    tgt = option_label(r["names"][r["taken"]])
-                    break
+            inside = [r for r in rs if c["choice"] < r["choice"] < nxt["choice"] and r["side"] == side]
+            ops = mode if mode in ("COUP", "INFLUENCE", "REALIGN") else next(
+                (option_label(r["names"][r["taken"]]) for r in inside if r["kind"] == "Ops mode"), "")
+            coup = next((option_label(r["names"][r["taken"]]) for r in inside if r["kind"] == "coup target"), "")
+            tgt = next((option_label(r["names"][r["taken"]]) for r in inside
+                        if r["kind"] in ("coup target", "influence (first point)", "realignment (first roll)")), "")
             who = ts.Player.US if side == "US" else ts.Player.USSR
             before, after = _influence(state_from_token(c["pos"]), who), _influence(state_from_token(nxt["pos"]), who)
             spread = {countries[int(k)]: int(after[k] - before[k]) for k in np.flatnonzero(after != before)}
-            return {"card": card, "mode": mode, "target": tgt, "spread": spread}
+            return {"card": card, "mode": mode, "ops": ops, "coup": coup, "target": tgt, "spread": spread}
 
         us_c, ussr2 = first("US", 1, "card to play"), first("USSR", 2, "card to play")
         out.append({"seed": seed, "opening": opening,
@@ -158,11 +162,12 @@ def headline_table(games: Sequence[Game], side: str, top: int) -> List[str]:
 
 
 def _action(a: AR1) -> str:
-    return f"{a['card']} → {a['mode'] or '?'}" + (f" {a['target']}" if a["target"] else "")
+    then = f", then {a['ops']}" if a["ops"] and a["ops"] != a["mode"] else ""
+    return f"{a['card']} → {a['mode']}{then}" + (f" {a['target']}" if a["target"] else "")
 
 
 def _is_iran_coup(a: Optional[AR1]) -> bool:
-    return a is not None and a["mode"] == "COUP" and a["target"] == "Iran"
+    return a is not None and a["coup"] == "Iran"
 
 
 def lift_table(games: Sequence[Game], outcome: Callable[[Game], bool],
@@ -232,20 +237,22 @@ def census(games: Sequence[Game], top: int) -> List[str]:
     lines += ["", "### US", ""] + headline_table(games, "US", top)
 
     ussr = [g for g in games if g["ussr_ar1"] is not None]
-    modes = collections.Counter((g["ussr_ar1"]["mode"], g["ussr_ar1"]["target"] if g["ussr_ar1"]["mode"] == "COUP" else "")
-                                for g in ussr if g["ussr_ar1"])
+    modes = collections.Counter((a["mode"], a["ops"] if a["ops"] != a["mode"] else "", a["coup"])
+                                for a in (g["ussr_ar1"] for g in ussr) if a is not None)
     iran = sum(_is_iran_coup(g["ussr_ar1"]) for g in ussr)
     lines += ["", "## The USSR's AR1", "",
               f"Coup in Iran: **{_pct(iran, len(ussr))}** ± {_se_pct(iran, len(ussr)):.1f} of {len(ussr):,} games.", "",
-              "### By mode and coup target", "", "| mode | target | share |", "|:---|:---|---:|"]
-    for (m, t), k in modes.most_common(top):
-        lines.append(f"| {m} | {t} | {_pct(k, len(ussr))} |")
+              "### By how the card is played", "",
+              "*Then* is what the Operations did after an event played first (an opponent's card).", "",
+              "| played as | then | coup target | share |", "|:---|:---|:---|---:|"]
+    for (m, o, t), k in modes.most_common(top):
+        lines.append(f"| {m} | {o} | {t} | {_pct(k, len(ussr))} |")
     not_iran = [g for g in ussr if not _is_iran_coup(g["ussr_ar1"])]
     lines += ["", f"### When it is not the Iran coup ({len(not_iran):,} games): what instead", "",
               "| action (card → mode, coup target or first point) | share of these |", "|:---|---:|"]
     for a, k in collections.Counter(_action(g["ussr_ar1"]) for g in not_iran if g["ussr_ar1"]).most_common(top):
         lines.append(f"| {a} | {_pct(k, len(not_iran))} |")
-    infl = [g for g in not_iran if g["ussr_ar1"] and g["ussr_ar1"]["mode"] == "INFLUENCE"]
+    infl = [g for g in not_iran if g["ussr_ar1"] and g["ussr_ar1"]["ops"] == "INFLUENCE"]
     if infl:
         lines += ["", "Its influence spreads, when it places:", "", "| spread | share |", "|:---|---:|"]
         for s, k in collections.Counter(spread_label(g["ussr_ar1"]["spread"]) for g in infl if g["ussr_ar1"]).most_common(top):
@@ -260,10 +267,12 @@ def census(games: Sequence[Game], top: int) -> List[str]:
                         [(f"USSR plays {c}", _ussr_plays(c)) for c in ussr_cards], top)
 
     us = [g for g in games if g["us_ar1"] is not None]
-    lines += ["", "## The US's AR1", "", "### By mode", "", "| mode | share |", "|:---|---:|"]
-    for m, k in collections.Counter(g["us_ar1"]["mode"] for g in us if g["us_ar1"]).most_common(top):
-        lines.append(f"| {m} | {_pct(k, len(us))} |")
-    placed = [g for g in us if g["us_ar1"] and g["us_ar1"]["mode"] == "INFLUENCE"]
+    lines += ["", "## The US's AR1", "", "### By how the card is played", "",
+              "| played as | then | coup target | share |", "|:---|:---|:---|---:|"]
+    for (m, o, t), k in collections.Counter((a["mode"], a["ops"] if a["ops"] != a["mode"] else "", a["coup"])
+                                            for a in (g["us_ar1"] for g in us) if a is not None).most_common(top):
+        lines.append(f"| {m} | {o} | {t} | {_pct(k, len(us))} |")
+    placed = [g for g in us if g["us_ar1"] and g["us_ar1"]["ops"] == "INFLUENCE"]
     lines += ["", f"### Influence: whole spreads ({len(placed):,} games)", "", "| spread | share |", "|:---|---:|"]
     for s, k in collections.Counter(spread_label(g["us_ar1"]["spread"]) for g in placed if g["us_ar1"]).most_common(top):
         lines.append(f"| {s} | {_pct(k, len(placed))} |")

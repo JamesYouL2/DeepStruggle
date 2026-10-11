@@ -42,7 +42,7 @@ def test_games_from_rows_match_the_positions() -> None:
         assert g["us_headline"] in g["us_hand"] and g["ussr_headline"] in g["ussr_hand"]
         a = g["us_ar1"]
         assert a is not None and a["card"]
-        if a["mode"] == "INFLUENCE":
+        if a["ops"] == "INFLUENCE":
             assert sum(a["spread"].values()) > 0 and a["target"] in a["spread"]
     # the US's AR1 spread is the board change between its card choice and the USSR's AR2
     g = games[0]
