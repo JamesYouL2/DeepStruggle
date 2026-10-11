@@ -24,6 +24,32 @@ PYTHONPATH=.:build/release .venv/bin/python tools/export_onnx.py \
 which verifies the export against torch and records what the page checks (action view, observation
 width, engine fingerprint) inside the file.
 
+## Docker from this checkout, with nothing from the repository run as root
+
+`web/Dockerfile` builds the same image from the **local checkout** (the build context is the
+repository root; `web/Dockerfile.dockerignore` keeps `data/`, build directories, virtualenvs and
+`node_modules` out of it), and it is written so that no repository file is ever executed as root:
+root only installs distro packages and creates a user, before any source is copied in; the
+WebAssembly build, the page's `npm ci` and `npm run build`, the clang build of the native engine,
+`pip`, every script under `tools/` and the server run as unprivileged users. A hostile commit gets
+a build container's user account and the runtime's `app` user, never uid 0 in any stage.
+
+```bash
+docker build -f web/Dockerfile -t deepstruggle-web .
+docker run -d --name deepstruggle -p 127.0.0.1:8000:8000 \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+  -v "$PWD/data/checkpoints:/data/checkpoints:ro" \
+  -v deepstruggle-replays:/data/replays -v deepstruggle-onnx:/data/onnx_cache \
+  deepstruggle-web
+```
+
+The run line adds what the image cannot enforce for the host: the root filesystem read-only (the
+server writes only under `/data`), no capabilities, no privilege escalation, and the port
+published on the host's loopback only -- there is no authentication. Pass
+`--build-arg UID=$(id -u) --build-arg GID=$(id -g)` so the exports and replays the server writes
+under `/data` belong to you; `--build-arg ENGINE_MARCH=native` when the image runs where it was
+built. The runtime settings below apply unchanged.
+
 ## Docker -- with this machine's checkpoints
 
 `Dockerfile` builds the page, its WebAssembly engine and the local files server **from the GitHub

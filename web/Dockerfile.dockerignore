@@ -1,0 +1,37 @@
+# The build context of web/Dockerfile is the repository root (BuildKit reads this file because it
+# sits next to that Dockerfile). Keep out what the image must not carry and what would make the
+# context gigabytes: the data tree, build directories, virtualenvs, node_modules, the reference
+# engine submodule, and the research record.
+.git
+.github
+.claude
+.venv
+venv
+data
+build*
+web/ui/node_modules
+web/ui/dist
+web/ui/public/engine
+web/ui/public/leaderboard.json
+node_modules
+dist
+external
+research
+docs
+tests
+datasets
+scratch
+.pytest_cache
+.mypy_cache
+.hypothesis
+.system_generated
+**/__pycache__
+**/*.py[cod]
+**/*.so
+**/*.a
+**/*.o
+*.log
+*.swp
+.vscode
+.idea
+.obsidian
