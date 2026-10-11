@@ -247,3 +247,49 @@ recorded decision.
   is played for Ops 46-53% of the time, headlined 31-39%, and evented in an action round 3-4%.
   Independent Reds is played for Ops 60% of the time, headlined 19%, used to coup 17%, and almost
   never evented in an action round.
+
+## 8. Turns 1-3 after Yugoslavia 3: is the USSR waiting for its repair cards, and does it overprotect East Germany and Poland later?
+
+**Run.** `tools/opening_census.py`, workflow `opening_census.yml`, run 38177973193. R34 plays both
+sides from 4222 against each USSR setup, 10,000 games a setup on the same deals, to the end of
+turn 3. [Report](E7_setup_matrix/opening_census_r34_turns1-3.md),
+[delay script](E7_setup_matrix/opening_census_delay.py).
+
+**East Germany and Poland: no overprotection.** The USSR adds a little more there than from the
+human setups, but ends turn 3 with less, not more:
+
+| | East Germany, end of turn 1 / 2 / 3 | Poland, end of turn 1 / 2 / 3 | net USSR influence added to both, turns 1-3 |
+|:---|:---|:---|---:|
+| Yugoslavia 3, Poland 3 | 3.47 / 3.92 / 4.12 | 3.18 / 3.52 / 3.73 | 2.20 |
+| Pol4/EG+1/Aus1 | 4.35 / 4.67 / 4.78 | 4.01 / 4.19 / 4.28 | 1.67 |
+| Pol4/EG+1/Yug1 | 4.35 / 4.68 / 4.82 | 4.01 / 4.20 / 4.29 | 1.70 |
+
+* **What Yugoslavia 3 costs later.** The setup leaves the two countries 2 points short of the
+  human setups. The USSR buys back about 0.5 of that by the end of turn 3; the rest stays saved.
+* **Control.** East Germany or Poland is out of USSR control at a turn's end in 2-3% of games
+  (about 0% from the human setups).
+
+**East European Unrest: played late, not after particular cards.** The USSR plays it at AR4-6 of
+each turn (fired 56% of the time, spaced 32%, dumped with UN Intervention 12%). In a turn where
+it fires the event, Comecon and Warsaw Pact have usually been played already (93%), but so have
+the other early Operations cards: Red Scare 100%, UN Intervention 98%, Nuclear Test Ban 96%,
+NATO 94% (the average over all cards is 64%).
+
+Holding a strong Operations card delays it:
+
+| USSR holds at the turn's start | East European Unrest fires that turn | kept | mean AR when it fires |
+|:---|---:|---:|---:|
+| Comecon / lacks | 29% / 37% | 42% / 35% | 4.8 / 4.4 |
+| Warsaw Pact Formed / lacks | 29% / 37% | 41% / 36% | 4.7 / 4.4 |
+| Nuclear Test Ban (control) / lacks | 28% / 37% | 43% / 35% | 4.7 / 4.4 |
+| Romanian Abdication / lacks | 33% / 36% | 38% / 36% | 4.2 / 4.5 |
+| Truman Doctrine / lacks | 35% / 36% | 37% / 37% | 4.3 / 4.4 |
+
+The control repairs nothing and shows the same delay, so this is not waiting for repair cards.
+East European Unrest is the card the USSR plays last, and any good Operations card goes ahead of
+it. Independent Reds shows the same, weaker.
+
+**The US.** It headlines East European Unrest in 32% of the games where it plays it and events it
+in an action round 2%; it never events Independent Reds in an action round. Headlining East
+European Unrest priced −1.5 ± 0.3 against the network's headline (section 5), so headlining it
+more does not pay against this USSR.
