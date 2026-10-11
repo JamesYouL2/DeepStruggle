@@ -173,7 +173,8 @@ The network's move is the priced best at:
 * **The critic at the turn's end is unbiased on the departures that were replayed** (ratio 1.01
   and 0.85). It has not been checked on the typical decision, where the gaps are a fraction of a
   point.
-* **The setups are scored over all deals.** A hand-dependent choice was not measured.
+* **The setups are scored over all deals.** A hand-dependent choice is measured in
+  [E7_setup_by_hand.md](E7_setup_by_hand.md): on R32 it pays +0.3, on the R34 soup nothing.
 
 ## Next
 
