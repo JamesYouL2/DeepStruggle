@@ -20,6 +20,7 @@ from bindings.ts_env import model_obs_features
 from tools.lib.player_agent import (BatchActor, BatchSelector, HeuristicAgent, NeuralAgent,
                                     PlayerAgent, RandomAgent, load_agent, resolve_device)
 from ai.game_length import ply as game_ply
+from ai.search.turn_pricing import Candidate, price, priceable
 from tools.lib.tournament_evaluator import classify_game_ending_reason
 
 
@@ -111,6 +112,46 @@ def apply_headline_rule(card: int, indices: npt.NDArray[np.int64], masks: npt.ND
             actions[i] = slot
 
 
+def apply_pricing(agent: PlayerAgent, indices: npt.NDArray[np.int64], runner: "ts.VectorizedBatchRunner",
+                  actions: npt.NDArray[np.int32], dev: torch.device) -> None:
+    """`priced:<worlds>:<z>:` agents: at every small decision (`ai.search.turn_pricing.priceable`),
+    every option is priced to the end of the turn over <worlds> worlds by the agent's own network, and
+    the agent's move is replaced by the best option when that beats it by >= <z> standard errors of
+    the paired difference -- the B4' verdict played instead of trained on. One batch over all games
+    waiting on the agent. Counts are kept on the agent (`pricing_stats`) and printed at exit."""
+    worlds, z_min = getattr(agent, "pricing")
+    model = getattr(agent, "model")
+    stats: Dict[str, int] = getattr(agent, "pricing_stats")
+    cands: List[Candidate] = []
+    rows: List[int] = []
+    for idx in indices:
+        i = int(idx)
+        st = runner.get_state(i)
+        if not priceable(st, 12):
+            continue
+        legal = [int(a) for a in np.flatnonzero(ActionEncoder.get_legal_mask(st))]
+        cands.append(Candidate(game=-1, choice=-1, state=st, options=legal, probs=[], taken=int(actions[i])))
+        rows.append(i)
+    stats["decisions"] += len(indices)
+    if not cands:
+        return
+    price(model, dev, cands, int(worlds), int(np.random.randint(1, 1 << 30)))
+    for i, c in zip(rows, cands):
+        v = c.values
+        if v is None or v.shape[1] < 4 or c.taken not in c.options:
+            continue
+        stats["priced"] += 1
+        t = c.options.index(c.taken)
+        b = int(np.argmax(v.mean(axis=1)))
+        if b == t:
+            continue
+        d = v[b] - v[t]
+        se = float(d.std(ddof=1) / np.sqrt(len(d)))
+        if se > 0 and float(d.mean()) / se >= float(z_min):
+            actions[i] = c.options[b]
+            stats["switched"] += 1
+
+
 def _choose_actions(
     agent: PlayerAgent,
     indices: npt.NDArray[np.int64],
@@ -160,6 +201,8 @@ def _choose_actions(
     script = getattr(agent, "script", None)
     if script is not None:
         apply_script(str(script), indices, masks, runner, actions)
+    if getattr(agent, "pricing", None) is not None:
+        apply_pricing(agent, indices, runner, actions, dev)
 
 
 class ChoiceStats(TypedDict):

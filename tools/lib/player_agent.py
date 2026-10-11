@@ -2,6 +2,7 @@
 
 from typing import (Protocol, Optional, Dict, Any, List, Sequence, Tuple, Union, cast,
                     runtime_checkable)
+import atexit
 import os
 import numpy as np
 import onnxruntime as ort
@@ -562,6 +563,25 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         agent = load_agent(rest, device=device)
         setattr(agent, "script", script_name)
         setattr(agent, "name", f"{agent.name}+{script_name}")
+        return agent
+    if s.lower().startswith("priced:"):
+        # priced:<worlds>:<z>:<rest-of-spec> -- a network whose greedy move is replaced, at every small
+        # decision, by the option the turn-end pricing (ai/search/turn_pricing.py, B4''s measurement)
+        # finds better by >= <z> standard errors over <worlds> worlds. Read by the batch runner with
+        # getattr(agent, "pricing", None); exists to measure whether those verdicts are stronger play.
+        _, w_str, z_str, rest = s.split(":", 3)
+        agent = load_agent(rest, device=device)
+        if not isinstance(agent, NeuralAgent):
+            raise ValueError(f"priced: needs a network, not {rest!r}")
+        setattr(agent, "pricing", (int(w_str), float(z_str)))
+        stats = {"decisions": 0, "priced": 0, "switched": 0}
+        setattr(agent, "pricing_stats", stats)
+        name = f"{agent.name}+priced{int(w_str)}z{float(z_str):g}"
+        setattr(agent, "name", name)
+        atexit.register(lambda: print(f"[priced] {name}: {stats['decisions']} decisions, {stats['priced']} "
+                                      f"priced, {stats['switched']} switched "
+                                      f"({100 * stats['switched'] / max(1, stats['priced']):.1f}% of priced)",
+                                      flush=True))
         return agent
     if s.lower().startswith("headline:"):
         # headline:<card>:<rest-of-spec> -- a scripted rule over the agent: whenever it chooses its
