@@ -85,10 +85,20 @@ python_missing=0
 cached_src="$(cached CMAKE_HOME_DIRECTORY)"
 src_moved=0
 [[ -n "$cached_src" && "$(realpath -e -- "$cached_src" 2>/dev/null)" != "$(realpath -e -- "$ROOT")" ]] && src_moved=1
-if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_missing == 1 || $src_moved == 1 ) ]]; then
+# And the compiler it found: a clang that has since gone -- the userspace install's ~/.local/bin
+# wrapper, after clang came to be installed system-wide -- fails every reconfigure, while a fresh
+# configure finds the clang that is there now.
+cached_cxx="$(cached CMAKE_CXX_COMPILER)"
+compiler_missing=0
+[[ -n "$cached_cxx" && "$cached_cxx" == /* && ! -x "$cached_cxx" ]] && compiler_missing=1
+if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_missing == 1 || $src_moved == 1
+                                          || $compiler_missing == 1 ) ]]; then
     if [[ $src_moved == 1 ]]; then
         echo "check_engine_fresh: $BUILD_DIR was configured for $cached_src;" \
              "reconfiguring it for $ROOT" >&2
+    elif [[ $compiler_missing == 1 ]]; then
+        echo "check_engine_fresh: $BUILD_DIR names a compiler that does not exist here" \
+             "($cached_cxx); reconfiguring it with the clang found now" >&2
     elif [[ "$compiler_id" != *Clang* ]]; then
         echo "check_engine_fresh: $BUILD_DIR was configured with ${compiler_id:-an unknown compiler};" \
              "reconfiguring it with clang" >&2
@@ -102,7 +112,7 @@ if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_m
     else
         fresh_args+=("-DPython_EXECUTABLE=$cached_python")
     fi
-    for var in CMAKE_BUILD_TYPE CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS; do
+    for var in CMAKE_BUILD_TYPE CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS Python_INCLUDE_DIR; do
         value="$(cached "$var")"
         [[ -n "$value" ]] && fresh_args+=("-D$var=$value")
     done
