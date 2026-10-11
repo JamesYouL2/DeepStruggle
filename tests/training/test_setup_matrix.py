@@ -1,5 +1,5 @@
 """The setup matrix (tools/setup_matrix.py): combined openings, the plan's coverage, the solver,
-the report, and tools/tournament.py's --matchups."""
+the report, the hand analysis, and tools/tournament.py's --matchups."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ import pytest
 import ts_engine as ts
 from tools.lib.openings import (EAST_GERMANY, FRANCE, HUNGARY, IRAN, ITALY, POLAND, WEST_GERMANY,
                                 opening_scripts, play_scripted_setup)
-from tools.setup_matrix import DEFAULT_US, DEFAULT_USSR, Plan, describe, make_plan, report, solve_zero_sum
+from tools.setup_matrix import (DEFAULT_US, DEFAULT_USSR, Plan, _cross_fit_rule, _ols, _wald, deal_hands, describe,
+                                make_plan, report, solve_zero_sum)
 from tools.tournament import parse_matchups
 
 
@@ -158,3 +159,52 @@ def test_the_joint_test_separates_equal_cells_from_a_real_effect() -> None:
     assert real["joint_test"]["p"] < 1e-3
     assert real["margins"]["U1-U0"]["diff"] == pytest.approx(0.06, abs=0.02)
     assert abs(real["margins"]["S1-S0"]["diff"]) < 0.02
+
+
+def test_deal_hands_are_the_tournaments_deals() -> None:
+    seeds = [10000, 10001, 10002, 77]
+    us, ussr, ids = deal_hands(seeds, batch=3)
+    assert (us.sum(axis=1) == 8).all() and (ussr.sum(axis=1) == 8).all()
+    assert not (us & ussr).any()
+    assert 6 not in ids           # the China Card is not dealt
+    for k, s in enumerate(seeds):  # the tournament's own reset: reset_game(i, seed) in a batch
+        runner = ts.VectorizedBatchRunner(2, 1)
+        runner.reset_game(1, s)
+        runner.refresh_all()
+        st = runner.get_state(1)
+        held = {c for c in range(1, 111) if ts.in_hand_of(st.get_card_location(c), ts.Player.US)}
+        assert held == {ids[j] for j in np.flatnonzero(us[k])}
+
+
+def _fixed_size_hands(n: int, cards: int, size: int, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    h = np.zeros((n, cards), dtype=bool)
+    for i in range(n):
+        h[i, rng.choice(cards, size, replace=False)] = True
+    return h
+
+
+def test_the_hand_wald_test_survives_a_fixed_hand_size() -> None:
+    # Every hand holds exactly `size` cards, so the columns are collinear; at 100,000 deals numpy's
+    # default pinv cut-off kept that direction and the test collapsed to one degree of freedom.
+    h = _fixed_size_hands(100_000, 30, 8, seed=1)
+    rng = np.random.default_rng(2)
+    y = rng.choice([-1.0, -0.5, 0.0, 0.5, 1.0], size=len(h))
+    stat, dof, p = _wald(*_ols(h.astype(np.float64), y))
+    assert dof == 29 and p > 1e-3
+    stat2, _, p2 = _wald(*_ols(h.astype(np.float64), y + 0.05 * h[:, 3]))
+    assert p2 < 1e-6
+
+
+def test_the_sparse_rule_finds_a_planted_card_out_of_fold() -> None:
+    h = _fixed_size_hands(40_000, 30, 8, seed=3)
+    rng = np.random.default_rng(4)
+    # setup 1 is better by 0.1 unless the chooser holds card 5, where it is worse by 0.1
+    d = np.where(h[:, 5], -0.1, 0.1) + rng.normal(0, 0.5, size=len(h))
+    fold = np.arange(len(h)) % 2 == 0
+    gain, pick, fixed, used = _cross_fit_rule(h.astype(np.float64), d[:, None], fold, bar=3.4)
+    assert used == [[5], [5]]
+    assert (fixed == 1).all() and (pick == np.where(h[:, 5], 0, 1)).all()
+    assert gain.mean() > 0.015
+    gain0, _, _, used0 = _cross_fit_rule(h.astype(np.float64), rng.normal(0, 0.5, size=(len(h), 1)), fold, bar=3.4)
+    assert all(len(u) <= 1 for u in used0) and abs(gain0.mean()) < 0.01

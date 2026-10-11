@@ -389,6 +389,247 @@ def report(plan: Plan, games: Sequence[Mapping[str, object]], bootstrap: int = 1
     return "\n".join(lines) + "\n", data
 
 
+# --- hands: does the right setup depend on the deal? ----------------------------------------
+
+def deal_hands(seeds: Sequence[int], batch: int = 1024) -> Tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_], List[int]]:
+    """The turn-1 hands of every deal seed, as the tournament deals them (`reset_game(i, seed)`;
+    the deal comes before the setup): (US holds, USSR holds), deals x cards, and the card ids of
+    the columns (every card that is in some hand)."""
+    import ts_engine as ts
+
+    ids = list(range(1, 111))
+    us = np.zeros((len(seeds), len(ids)), dtype=bool)
+    ussr = np.zeros_like(us)
+    for lo in range(0, len(seeds), batch):
+        chunk = seeds[lo:lo + batch]
+        runner = ts.VectorizedBatchRunner(len(chunk), int(chunk[0]))
+        for i, s in enumerate(chunk):
+            runner.reset_game(i, int(s))
+        runner.refresh_all()
+        for i in range(len(chunk)):
+            st = runner.get_state(i)
+            if st.current_phase != ts.Phase.SETUP:
+                raise RuntimeError(f"seed {chunk[i]}: a fresh game is not in SETUP")
+            for k, c in enumerate(ids):
+                loc = st.get_card_location(c)
+                us[lo + i, k] = ts.in_hand_of(loc, ts.Player.US)
+                ussr[lo + i, k] = ts.in_hand_of(loc, ts.Player.USSR)
+    used = np.flatnonzero(us.any(axis=0) | ussr.any(axis=0))
+    return us[:, used], ussr[:, used], [ids[k] for k in used]
+
+
+def _ols(x: FloatArray, y: FloatArray) -> Tuple[FloatArray, FloatArray]:
+    """Least squares of y on [1, x] (x centred, min-norm, so a hand's fixed size does not make it
+    singular -- the cut-off drops that one direction; numpy's default kept it at 1e-12 and blew up the covariance): (coefficients of x, their heteroskedasticity-robust covariance, HC0)."""
+    xc = x - x.mean(axis=0)
+    a = np.column_stack([np.ones(len(y)), xc])
+    pinv = np.linalg.pinv(a, rcond=1e-10)
+    beta = pinv @ y
+    r = y - a @ beta
+    cov = (pinv * r ** 2) @ pinv.T
+    return beta[1:], cov[1:, 1:]
+
+
+def _wald(beta: FloatArray, cov: FloatArray) -> Tuple[float, int, float]:
+    """Wald test that every coefficient is zero, on the rank of their covariance."""
+    w, v = np.linalg.eigh(cov)
+    keep = w > w.max() * 1e-9
+    z = (v[:, keep].T @ beta) / np.sqrt(w[keep])
+    stat, k = float(z @ z), int(keep.sum())
+    zz = ((stat / k) ** (1 / 3) - (1 - 2 / (9 * k))) / math.sqrt(2 / (9 * k))
+    return stat, k, 0.5 * math.erfc(zz / math.sqrt(2))
+
+
+class CardEffect(TypedDict):
+    card: int
+    name: str
+    held: float          # share of deals where the side holds it
+    diff: float          # mean contrast when held minus when not
+    se: float
+
+
+class HandRule(TypedDict):
+    contrast: str
+    kind: str            # "all cards" or "sparse" (the cards past the bar on the fitting half)
+    cards: List[List[int]]   # the cards each fold's fit used (sparse only)
+    deals: int
+    switched: float      # share of deals where the rule leaves the best fixed setup
+    gain: float          # rule minus the best fixed setup, out of fold
+    se: float
+    gain_vs_reference: float
+    se_vs_reference: float
+
+
+class HandTest(TypedDict):
+    contrast: str
+    mean: float
+    se: float
+    wald: float
+    dof: int
+    p: float
+    own: List[CardEffect]
+    opponent: List[CardEffect]
+
+
+class HandsData(TypedDict):
+    deals: int
+    tests: List[HandTest]
+    rules: List[HandRule]
+
+
+def _card_effects(held: npt.NDArray[np.bool_], d: FloatArray, ids: Sequence[int],
+                  names: Mapping[int, str]) -> List[CardEffect]:
+    out: List[CardEffect] = []
+    for k, c in enumerate(ids):
+        h = held[:, k]
+        if h.sum() < 2 or (~h).sum() < 2:
+            continue
+        a, b = d[h], d[~h]
+        out.append({"card": c, "name": names.get(c, str(c)), "held": float(h.mean()),
+                    "diff": float(a.mean() - b.mean()),
+                    "se": float(math.sqrt(a.var(ddof=1) / len(a) + b.var(ddof=1) / len(b)))})
+    return out
+
+
+def _cross_fit_rule(feats: FloatArray, contrasts: FloatArray, fold: npt.NDArray[np.bool_],
+                    bar: Optional[float] = None) -> Tuple[FloatArray, npt.NDArray[np.int64], npt.NDArray[np.int64], List[List[int]]]:
+    """A hand-conditioned choice among k setups, cross-fitted over two folds. `contrasts` is deals
+    x (k-1): each setup minus the reference, in the chooser's points. On each fold, a least-squares
+    fit from the other fold predicts every contrast and the rule takes the best (the reference
+    scoring 0); the fixed choice is the other fold's best mean. Returns (per-deal rule value minus
+    the fixed choice's, the rule's choice, the fixed choice, the columns each fold used), out of
+    fold everywhere. With `bar`, a fold's fit uses only the columns whose held-minus-not z on the
+    fitting half reaches it for some contrast -- the selection is part of the fit, so the other
+    half still scores it honestly."""
+    n, k1 = contrasts.shape
+    used: List[List[int]] = []
+    full = np.column_stack([np.zeros(n), contrasts])
+    gain, choice, fixed = np.zeros(n), np.zeros(n, dtype=np.int64), np.zeros(n, dtype=np.int64)
+    for test in (fold, ~fold):
+        train = ~test
+        cols = np.arange(feats.shape[1])
+        if bar is not None:
+            ft, ct = feats[train] > 0.5, contrasts[train]
+            z = np.zeros((len(cols), k1))
+            for c in cols:
+                h = ft[:, c]
+                if 2 <= h.sum() <= len(h) - 2:
+                    a1, b1 = ct[h], ct[~h]
+                    z[c] = (a1.mean(axis=0) - b1.mean(axis=0)) / np.sqrt(a1.var(axis=0, ddof=1) / len(a1) + b1.var(axis=0, ddof=1) / len(b1))
+            cols = np.flatnonzero((np.abs(z) >= bar).any(axis=1))
+        used.append([int(c) for c in cols])
+        xc_mean = feats[train][:, cols].mean(axis=0)
+        a = np.column_stack([np.ones(int(train.sum())), feats[train][:, cols] - xc_mean])
+        beta = np.linalg.pinv(a, rcond=1e-10) @ contrasts[train]                      # (1 + cards) x (k-1)
+        pred = np.column_stack([np.ones(int(test.sum())), feats[test][:, cols] - xc_mean]) @ beta
+        pick = np.argmax(np.column_stack([np.zeros(int(test.sum())), pred]), axis=1)
+        best = int(np.argmax(np.concatenate([[0.0], contrasts[train].mean(axis=0)])))
+        rows = np.flatnonzero(test)
+        choice[rows], fixed[rows] = pick, best
+        gain[rows] = full[rows, pick] - full[rows, best]
+    return gain, choice, fixed, used
+
+
+def hands_report(plan: Plan, games: Sequence[Mapping[str, object]], top: int = 8) -> Tuple[str, HandsData]:
+    """Whether a setup's value depends on the hand, from a matrix's games and the deals' hands.
+
+    The USSR sets up first, seeing only its own hand; the US second, seeing its hand and the
+    USSR's setup. So the US contrast is taken against each USSR setup, the USSR's averaged over the
+    US setups (the US's answer is the US's), and a usable rule conditions on the chooser's own hand
+    only. The opponent's hand is reported beside it, to explain, not to choose with."""
+    us, ussr = plan["us"], plan["ussr"]
+    scores = cell_scores(plan, games)
+    cells = [(i, j) for i in range(len(us)) for j in range(len(ussr))]
+    seeds = sorted(set.intersection(*(set(scores.get(c, {})) for c in cells)))
+    md = per_deal(scores, len(us), len(ussr)).reshape(len(seeds), len(us), len(ussr))
+    us_h, ussr_h, ids = deal_hands(seeds)
+    names = {int(c["id"]): str(c["name"]) for c in json.load(open(os.path.join(os.path.dirname(_MAP_PATH), "cards.json")))}
+    # Two folds by seed, interleaved in blocks so neither half is one end of the seed range.
+    fold = (np.asarray(seeds) // 7) % 2 == 0
+
+    tests: List[HandTest] = []
+    rules: List[HandRule] = []
+
+    def one(label: str, d: FloatArray, own: npt.NDArray[np.bool_], opp: npt.NDArray[np.bool_]) -> None:
+        beta, cov = _ols(own.astype(np.float64), d)
+        stat, dof, p = _wald(beta, cov)
+        tests.append({"contrast": label, "mean": float(d.mean()), "se": float(d.std(ddof=1) / math.sqrt(len(d))),
+                      "wald": stat, "dof": dof, "p": p,
+                      "own": _card_effects(own, d, ids, names), "opponent": _card_effects(opp, d, ids, names)})
+
+    bar = 3.0 if len(ids) < 20 else 3.4      # two-sided 5% over ~35-70 tests (Bonferroni)
+
+    def rule(label: str, contrasts: FloatArray, own: npt.NDArray[np.bool_]) -> None:
+        for sparse in (False, True):
+            g, pick, fixed, used = _cross_fit_rule(own.astype(np.float64), contrasts, fold, bar if sparse else None)
+            full = np.column_stack([np.zeros(len(g)), contrasts])
+            vs_ref = full[np.arange(len(g)), pick]
+            rules.append({"contrast": label, "kind": "sparse" if sparse else "all cards",
+                          "cards": [[ids[c] for c in u] for u in used] if sparse else [],
+                          "deals": len(g), "switched": float((pick != fixed).mean()),
+                          "gain": float(g.mean()), "se": float(g.std(ddof=1) / math.sqrt(len(g))),
+                          "gain_vs_reference": float(vs_ref.mean()),
+                          "se_vs_reference": float(vs_ref.std(ddof=1) / math.sqrt(len(g)))})
+
+    for j in range(len(ussr)):
+        cs = np.column_stack([md[:, i, j] - md[:, 0, j] for i in range(1, len(us))])
+        for i in range(1, len(us)):
+            one(f"U{i}-U0 vs S{j} (US points, US hand)", cs[:, i - 1], us_h, ussr_h)
+        rule(f"US setup vs S{j}", cs, us_h)
+    usr = np.column_stack([(md[:, :, 0] - md[:, :, j]).mean(axis=1) for j in range(1, len(ussr))])
+    for j in range(1, len(ussr)):
+        one(f"S{j}-S0 over the US setups (USSR points, USSR hand)", usr[:, j - 1], ussr_h, us_h)
+    rule("USSR setup over the US setups", usr, ussr_h)
+
+    lines = [f"# Setup matrix by hand: {len(us)} US × {len(ussr)} USSR setups", "",
+             f"Player after the setup: `{plan['player']}`. {len(seeds):,} deals, each played in every cell; "
+             "every number is a paired difference of setups on the same deal, in points of the "
+             "chooser's score (percent of a game); ± is one standard error.", "",
+             "The USSR sets up first with only its own hand to go on, the US second with its hand and "
+             "the USSR's setup. **Own hand** is what the chooser can condition on; **opponent's hand** "
+             "is shown to explain an effect, not to choose with.", "",
+             "Setups: " + "; ".join(f"U{i} `{u}` ({describe(u)})" for i, u in enumerate(us)) + "; "
+             + "; ".join(f"S{j} `{s}` ({describe(s)})" for j, s in enumerate(ussr)) + ".", "",
+             "## Does the hand matter at all?", "",
+             "A least-squares fit of each contrast on which cards the chooser holds; the Wald test is "
+             "that no card moves it (robust covariance).", "",
+             "| contrast | mean | Wald | dof | p |", "|:---|---:|---:|---:|---:|"]
+    for t in tests:
+        lines.append(f"| {t['contrast']} | {_pp(t['mean'], t['se'], signed=True)} | {t['wald']:.1f} | {t['dof']} | {t['p']:.3g} |")
+
+    lines += ["", "## A hand-conditioned setup, out of fold", "",
+              "The rule is a fit made on half the deals and applied to the other half (both ways), "
+              "compared with the best fixed setup of the half it was fitted on. **All cards** fits "
+              f"every card; **sparse** only the cards whose effect reaches |z| ≥ {bar} on the fitting "
+              "half (chosen there, so the other half still scores it honestly). A gain within noise "
+              "means the hand does not tell this continuation which setup to play.", "",
+              "| choice | rule | cards (per half) | departs from the fixed setup | rule − best fixed | rule − reference |",
+              "|:---|:---|:---|---:|---:|---:|"]
+    for r in rules:
+        cards_txt = " / ".join(", ".join(names.get(c, str(c)) for c in u) or "none" for u in r["cards"]) or "—"
+        lines.append(f"| {r['contrast']} | {r['kind']} | {cards_txt} | {100 * r['switched']:.1f}% | "
+                     f"{_pp(r['gain'], r['se'], signed=True)} | {_pp(r['gain_vs_reference'], r['se_vs_reference'], signed=True)} |")
+
+    n_cards, bonf = len(ids), bar
+    lines += ["", "## Cards", "",
+              f"Each card: the contrast on deals where the side holds it minus where it does not. "
+              f"{n_cards} cards per table, so |z| ≥ {bonf} is the bar for one of them not being chance "
+              "(Bonferroni at 5%); the largest by |z| are shown.", ""]
+    for t in tests:
+        for who in ("own", "opponent"):
+            effects = t["own"] if who == "own" else t["opponent"]
+            eff = sorted(effects, key=lambda e: -abs(e["diff"]) / e["se"])[:top]
+            lines += [f"### {t['contrast']}: {'own' if who == 'own' else 'opponent'}'s hand", "",
+                      "| card | held | held − not | z |", "|:---|---:|---:|---:|"]
+            for e in eff:
+                z = e["diff"] / e["se"]
+                mark = " **" if abs(z) >= bonf else ""
+                lines.append(f"| {e['name']}{mark} | {100 * e['held']:.0f}% | {_pp(e['diff'], e['se'], signed=True)} | {z:+.1f} |")
+            lines.append("")
+    data: HandsData = {"deals": len(seeds), "tests": tests, "rules": rules}
+    return "\n".join(lines), data
+
+
 # --- CLI ------------------------------------------------------------------------------------
 
 def _load_plan(path: str) -> Plan:
@@ -415,6 +656,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--bootstrap", type=int, default=1000)
     r.add_argument("--out", required=True, help="Markdown report")
     r.add_argument("--json", default=None)
+    h = sub.add_parser("hands", help="whether the right setup depends on the hand: the contrasts by the deals' hands")
+    h.add_argument("--plan", required=True)
+    h.add_argument("--games", required=True, help="tools/tournament.py --log-games output (.jsonl or .jsonl.gz)")
+    h.add_argument("--top", type=int, default=8, help="cards shown per table")
+    h.add_argument("--out", required=True, help="Markdown report")
+    h.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
     if args.cmd == "plan":
@@ -431,8 +678,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(" ".join(f"{i + 1}-{j + 1}" for i, j in plan["matchups"]))
         return 0
     plan = _load_plan(args.plan)
-    with open(args.games) as f:
+    import gzip
+    with (gzip.open(args.games, "rt") if args.games.endswith(".gz") else open(args.games)) as f:
         games = [json.loads(line) for line in f if line.strip()]
+    if args.cmd == "hands":
+        htext, hdata = hands_report(plan, games, top=args.top)
+        with open(args.out, "w") as f:
+            f.write(htext)
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(hdata, f, indent=1)
+        print(htext)
+        return 0
     text, data = report(plan, games, bootstrap=args.bootstrap)
     with open(args.out, "w") as f:
         f.write(text)
