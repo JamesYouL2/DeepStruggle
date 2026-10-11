@@ -189,7 +189,7 @@ jobs:
           {
             echo "commit: $GITHUB_SHA"
             echo "model: $HF_REPO $MODEL"
-            echo "opening: ${OPENING:-the network's own}"
+            echo "opening: ${OPENING:-none (the network sets up)}"
             echo "games: $GAMES (seeds $SEED+)  worlds: $WORLDS  bank: $BANK_TOP  pairs: $PAIRS  runners: $RUNNERS"
           } > report/provenance.txt
           { echo '```'; cat report/provenance.txt; echo '```'; cat report/report.md; } >> "$GITHUB_STEP_SUMMARY"
