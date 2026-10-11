@@ -181,11 +181,13 @@ is wrong" was already in the logged series: `tc_clear_frac`, the share of priced
 best option beats the policy's expectation by ≥ 3 SE, **sits at 14% at the start, middle and end
 of both arms**, with the mean gain (0.033–0.035), the row weight (~0.24) and the CE loss (~0.06)
 flat too. **So the turn-end pricing finds spots throughout, and the term never reduces them: the
-fault is the term's reach, not the measurement.** It gets 4 × 512 CE steps per iteration at
-coefficient 1 beside the full PPO update, and each row is seen about once (R38 less). **B4′ is
-parked, not closed**; if retried, the cell is the term's strength -- more CE steps per iteration,
-or a higher coefficient, watching entropy and KL -- not more pricing. The gap loss has meanwhile
-become the live route to the rare-spot cards.
+fault is the term's reach, not the measurement.** Reuse is not what is missing: priced rows wait
+in an 8,192-row FIFO (`--turn-credit-buffer`) and each update samples 4 × 512 from it, so a row is
+trained on about 32 times in R37 and about 8 in R38 -- and R38, with four times the rows at a
+quarter of the reuse, did no better. What the term lacks is **weight against the PPO update**.
+**B4′ is parked, not closed**; if retried, the cell is the coefficient or the CE steps per
+iteration, watched on entropy and KL -- not more pricing and not more reuse. The gap loss has
+meanwhile become the live route to the rare-spot cards.
 
 ## Checks (CPU) -- done 2026-10-10 by ts-main, `research/log/P32_cpu_checks.md` on `hand-knowledge-tracking`
 
