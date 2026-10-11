@@ -36,10 +36,12 @@ import numpy as np
 import torch
 import ts_engine as ts
 
+from ai.eval.paired_playouts import decider
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import require_e4_view, state_from_token
 from tools.lib.player_agent import BatchSelector, load_agent
-from tools.scripts.disagreement_bank import _name, mover_of, row_id
+from tools.lib.position_bank import move_name
+from tools.scripts.disagreement_bank import row_id
 
 BANK = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "ai", "eval", "banks",
                                     "disagreement_verdicts.jsonl"))
@@ -86,7 +88,7 @@ def load(path: str = BANK) -> List[Dict[str, Any]]:
 def legal_names(st: ts.GameState) -> Dict[str, int]:
     """Every legal move at the position by its reader's name."""
     mask = np.asarray(ActionEncoder.get_legal_mask(st))
-    return {_name(st, int(a)): int(a) for a in np.flatnonzero(mask)}
+    return {move_name(st, int(a)): int(a) for a in np.flatnonzero(mask)}
 
 
 def score(agent_spec: str, path: str, by: Sequence[str], out: Optional[str]) -> int:
@@ -100,10 +102,10 @@ def score(agent_spec: str, path: str, by: Sequence[str], out: Optional[str]) -> 
     if isinstance(agent, BatchSelector):
         picks = [int(a) for a in agent.select_actions_batch(states)]
     else:
-        picks = [int(agent.select_action(st, mover_of(st), temperature=0.0)) for st in states]
+        picks = [int(agent.select_action(st, decider(st), temperature=0.0)) for st in states]
     results: List[Dict[str, Any]] = []
     for r, st, a in zip(rows, states, picks):
-        move = _name(st, a)
+        move = move_name(st, a)
         results.append({"id": r["id"], "move": move, "mark": r["marks"].get(move, "unmarked"),
                         **{k: r[k] for k in ("kind", "pattern", "side", "confidence")}})
     if out:

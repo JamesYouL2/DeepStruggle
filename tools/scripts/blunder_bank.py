@@ -48,46 +48,28 @@ from __future__ import annotations
 
 import argparse
 import glob
-import gzip
 import hashlib
 import json
 import os
 import sys
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.paired_playouts import compare, pair_start, paired_diff
+from ai.eval.paired_playouts import compare, decider, pair_start, paired_diff
 from bindings.action_encoder import ActionEncoder
-from tools.lib.corpus_driver import load_policy, require_e4_view, rules_json, state_from_token
+from tools.lib.corpus_driver import load_policy, require_e4_view, state_from_token
+from tools.lib.hidden_draws import ManyDraws, step_outcomes
+from tools.lib.jsonl import read_jsonl, sha256_file, write_jsonl
 from tools.lib.player_agent import BatchSelector, Reseedable, load_agent, resolve_device
-from tools.scripts.bank_playouts import _sha256, position_seed, searched_continuation
-from tools.scripts.blunder_census import mover_of
-from tools.scripts.disagreement_bank import _name
+from tools.lib.position_bank import CARD_NAMES, move_name, position_seed, searched_continuation
 
 SCHEMA = 1
 WORKBENCH = "https://mihaild.github.io/DeepStruggle"
 #: positions per paired-playout batch in `confirm` and `score`
 BATCH = 8
-CARD_NAMES = {int(c["id"]): str(c["name"]) for c in rules_json("cards.json")}
-
-
-def _read(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
-    for p in paths:
-        opener = gzip.open if p.endswith(".gz") else open
-        with opener(p, "rt") as f:
-            for line in f:
-                if line.strip():
-                    yield json.loads(line)
-
-
-def _write(path: str, rows: Sequence[Dict[str, Any]]) -> None:
-    opener = gzip.open if path.endswith(".gz") else open
-    with opener(path, "wt") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
 
 
 def leading_alternative(row: Dict[str, Any]) -> Optional[Tuple[int, float, float]]:
@@ -108,14 +90,31 @@ def shortlisted(row: Dict[str, Any], min_gap: float, min_z: float) -> bool:
     return m >= min_gap and se > 0 and m / se >= min_z
 
 
+def search_sims(row: Dict[str, Any]) -> int:
+    """The simulations of the search that validated a row (`search.spec`, "gumbel:SIMS:K")."""
+    parts = str(row.get("search", {}).get("spec", "")).split(":")
+    return int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+
+
+def strongest(rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """One row per id: the one validated at the most simulations (an escalation replaces the
+    validation it re-measured), the first given between equals."""
+    best: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        rid = str(r["id"])
+        if rid not in best or search_sims(r) > search_sims(best[rid]):
+            best[rid] = r
+    return best
+
+
 def select(validation: Sequence[str], min_gap: float, min_z: float, out: str) -> int:
-    """The census rows to confirm, each with its network move and the alternative fixed now."""
+    """The census rows to confirm, each with its network move and the alternative fixed now. Given
+    the census's validation and its escalation together, a row is judged on its escalated
+    measurement (`strongest`)."""
     rows: List[Dict[str, Any]] = []
-    seen = set()
-    for r in _read(validation):
-        if r["id"] in seen or not shortlisted(r, min_gap, min_z):
+    for r in strongest(list(read_jsonl(validation))).values():
+        if not shortlisted(r, min_gap, min_z):
             continue
-        seen.add(r["id"])
         lead = leading_alternative(r)
         assert lead is not None
         better, m, se = lead
@@ -133,7 +132,7 @@ def select(validation: Sequence[str], min_gap: float, min_z: float, out: str) ->
                       "search_choice": r["search"]["choice"]},
         })
     rows.sort(key=lambda x: -x["first"]["cost"])
-    _write(out, rows)
+    write_jsonl(out, rows)
     print(f"{len(rows)} rows shortlisted at {min_gap} points and z >= {min_z}", file=sys.stderr)
     return 0
 
@@ -158,9 +157,9 @@ def confirm(inputs: Sequence[str], model: str, pairs: int, seed: int, part: str,
     the searcher's stream) are seeded from its id and `--seed` alone, so a row's result does not
     depend on its part. Takes shortlist rows or bank rows."""
     k, n = (int(x) for x in part.split("/"))
-    rows = [r for i, r in enumerate(sorted(_read(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
+    rows = [r for i, r in enumerate(sorted(read_jsonl(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
     act = greedy_fn(model)
-    sha = _sha256(model)
+    sha = sha256_file(model)
     cont: Any = None
     cont_label = "greedy"
     if continue_with:
@@ -185,7 +184,7 @@ def confirm(inputs: Sequence[str], model: str, pairs: int, seed: int, part: str,
                             diff_vs_network={str(a): [round(x, 4), round(y, 4)] for a, (x, y) in diffs.items()},
                             cost=[round(m, 4), round(se, 4)]))
         print(f"  {len(res)}/{len(rows)} rows, {time.time() - t0:.0f}s", file=sys.stderr)
-    _write(out, res)
+    write_jsonl(out, res)
     json.dump({"part": part, "rows": len(res), "seconds": round(time.time() - t0, 1), "pairs": pairs,
                "seed": seed, "cont": cont_label, "model": os.path.basename(model), "model_sha256": sha},
               open(out + ".meta.json", "w"))
@@ -216,13 +215,13 @@ def bank_row(rid: str, by_judge: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         "side": first["side"], "turn": first["turn"], "ar": first["ar"], "phase": first["phase"],
         "decision_type": first["decision_type"], "defcon": first["defcon"], "vp": first["vp"],
         "card": first["card"], "card_name": CARD_NAMES.get(int(first["card"]), ""),
-        "network": {"action": net, "name": _name(st, net)},
-        "better": {"action": better, "name": _name(st, better)},
+        "network": {"action": net, "name": move_name(st, net)},
+        "better": {"action": better, "name": move_name(st, better)},
         "cost": {j: {"cost": r["cost"][0], "se": r["cost"][1], "pairs": r["pairs"], "seed": r["seed"],
                      "model": r["judge"]["model"], "model_sha256": r["judge"]["model_sha256"]}
                  for j, r in by_judge.items()},
         "score": {j: r["score"] for j, r in by_judge.items()},
-        "moves": first["moves"], "names": {str(a): _name(st, int(a)) for a in first["moves"]},
+        "moves": first["moves"], "names": {str(a): move_name(st, int(a)) for a in first["moves"]},
         "source": first["source"], "first": first["first"],
     }
 
@@ -252,11 +251,11 @@ def build(sets: Sequence[str], min_gap: float, min_z: float, out: str, md: Optio
         paths = sorted(glob.glob(pattern))
         if not paths:
             raise SystemExit(f"no files match {pattern}")
-        rows[name] = {r["id"]: r for r in _read(paths)}
+        rows[name] = {r["id"]: r for r in read_jsonl(paths)}
     judges = list(rows)
     keep = confirmed(rows, min_gap, min_z)
     bank = [bank_row(rid, {j: rows[j][rid] for j in judges}) for rid in keep]
-    _write(out, bank)
+    write_jsonl(out, bank)
     shortlist = len(set.intersection(*(set(v) for v in rows.values())))
     print(f"{len(bank)} of {shortlist} shortlisted rows confirmed under {', '.join(judges)}", file=sys.stderr)
     if md:
@@ -287,7 +286,7 @@ class Picker:
 
     def pick(self, st: ts.GameState, seed: int) -> int:
         if self.logits is not None:
-            obs = np.asarray(ts.extract_observation_features(st, mover_of(st), self.features), dtype=np.float32)
+            obs = np.asarray(ts.extract_observation_features(st, decider(st), self.features), dtype=np.float32)
             mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
             return int(np.asarray(self.logits(obs[None], mask[None]))[0].argmax())
         assert self.agent is not None
@@ -298,7 +297,7 @@ class Picker:
 
 def score(bank_path: str, players: Sequence[str], judge: Optional[str], pairs: int, seed: int,
           out: str) -> int:
-    bank = list(_read([bank_path]))
+    bank = list(read_jsonl([bank_path]))
     act = greedy_fn(judge) if judge and pairs > 0 else None
     judge_name = os.path.basename(judge) if judge else ""
     result: Dict[str, Any] = {"bank": bank_path, "rows": len(bank), "judge": judge, "pairs": pairs, "players": {}}
@@ -321,7 +320,7 @@ def score(bank_path: str, players: Sequence[str], judge: Optional[str], pairs: i
             a = picker.pick(st, position_seed(str(r["id"]), seed))
             kind = ("repeated" if a == r["network"]["action"] else
                     "better" if a == r["better"]["action"] else "other")
-            per.append({"id": r["id"], "pick": a, "name": _name(st, a), "kind": kind})
+            per.append({"id": r["id"], "pick": a, "name": move_name(st, a), "kind": kind})
         others = [(p, r) for p, r in zip(per, bank) if p["kind"] == "other"]
         if act is not None and others:
             for lo in range(0, len(others), BATCH):
@@ -356,10 +355,11 @@ class Unprovable(Exception):
 
 def exact_value(st: ts.GameState, mover: ts.Player, turn: int, budget: List[int], opponent: str) -> float:
     """The mover's exact score (1 win, 0.5 draw, 0 loss) to the end of a game that ends in this turn:
-    the maximum over the mover's moves, the average over the six faces of each die, and over the
-    opponent's moves the minimum (`opponent="min"`, its best reply) or the maximum ("max", its most
-    helpful one -- the bound a blunder is held to). A new turn or an exhausted node budget raises
-    `Unprovable`."""
+    the maximum over the mover's moves, the average over the six faces of each die and over the
+    cards a step draws (`tools/lib/hidden_draws.py`), and over the opponent's moves the minimum
+    (`opponent="min"`, its best reply) or the maximum ("max", its most helpful one -- the bound a
+    blunder is held to). A new turn, an exhausted node budget or a step that draws more than once
+    raises `Unprovable`."""
     if ts.Engine.is_terminal(st):
         u = float(ts.Engine.get_terminal_utility(st))
         if u == 0:
@@ -371,30 +371,56 @@ def exact_value(st: ts.GameState, mover: ts.Player, turn: int, budget: List[int]
     if int(st.turn) != turn:
         raise Unprovable("a new turn")
     ctx = st.ctx()
+
+    def value_of(step: Callable[[ts.GameState], None]) -> float:
+        # a step's outcomes: one, or the equally likely results of a card it draws
+        outs = outcomes(st, step)
+        return sum(exact_value(c, mover, turn, budget, opponent) for c in outs) / len(outs)
+
     if ctx.decision_player == ts.Player.NONE and ctx.decision_type == ts.DecisionType.ROLL_DIE:
-        total = 0.0
-        for face in range(1, 7):
-            child = st.clone()
-            ts.Engine.step(child, ts.MicroAction(ts.DecisionType.ROLL_DIE, face, 0, 0))
-            total += exact_value(child, mover, turn, budget, opponent)
-        return total / 6
+        return sum(value_of(_face(face)) for face in range(1, 7)) / 6
     legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
     if legal.size == 0:
-        # between decisions (a phase or round transition): advance, then read the next node
-        nxt = st.clone()
-        if ts.Engine.auto_advance_step(nxt) == 0:
-            raise Unprovable("no legal move and nothing to advance")
-        return exact_value(nxt, mover, turn, budget, opponent)
-    maximise = mover_of(st) == mover or opponent == "max"
+        return value_of(_advance(st, turn))
+    maximise = decider(st) == mover or opponent == "max"
     best = 0.0 if maximise else 1.0
     for a in legal:
-        child = st.clone()
-        ts.Engine.step_flat(child, int(a))
-        v = exact_value(child, mover, turn, budget, opponent)
+        v = value_of(_flat(int(a)))
         best = max(best, v) if maximise else min(best, v)
         if best == (1.0 if maximise else 0.0):
             break
     return best
+
+
+def outcomes(st: ts.GameState, step: Callable[[ts.GameState], None]) -> List[ts.GameState]:
+    """`hidden_draws.step_outcomes`, with a step that draws more than once reported as
+    unprovable rather than taken at the draw the world's generator happens to make."""
+    try:
+        return step_outcomes(st, step)
+    except ManyDraws as e:
+        raise Unprovable(str(e)) from e
+
+
+def _flat(a: int) -> Callable[[ts.GameState], None]:
+    return lambda c: ts.Engine.step_flat(c, a)
+
+
+def _face(face: int) -> Callable[[ts.GameState], None]:
+    return lambda c: ts.Engine.step(c, ts.MicroAction(ts.DecisionType.ROLL_DIE, face, 0, 0))
+
+
+def _advance(st: ts.GameState, turn: int) -> Callable[[ts.GameState], None]:
+    """Between decisions (a phase or round transition): the step that advances to the next
+    node, after checking it is one -- a new turn deals cards, which no search enumerates."""
+    nxt = st.clone()
+    if ts.Engine.auto_advance_step(nxt) == 0:
+        raise Unprovable("no legal move and nothing to advance")
+    if int(nxt.turn) != turn:
+        raise Unprovable("a new turn")
+
+    def step(c: ts.GameState) -> None:
+        ts.Engine.auto_advance_step(c)
+    return step
 
 
 def reaches(st: ts.GameState, mover: ts.Player, turn: int, want: str, budget: List[int],
@@ -417,32 +443,29 @@ def reaches(st: ts.GameState, mover: ts.Player, turn: int, want: str, budget: Li
     if budget[0] < 0:
         raise Unprovable("node budget")
     ctx = st.ctx()
-    children: List[ts.GameState] = []
+    # chance -- a die, or a card a step draws: "win" needs every outcome, "any" one
+    chance = want == "win"
+    steps: List[Callable[[ts.GameState], None]]
     if ctx.decision_player == ts.Player.NONE and ctx.decision_type == ts.DecisionType.ROLL_DIE:
-        # a die: "win" needs every face, "any" one
-        every = want == "win"
-        for face in range(1, 7):
-            child = st.clone()
-            ts.Engine.step(child, ts.MicroAction(ts.DecisionType.ROLL_DIE, face, 0, 0))
-            children.append(child)
+        steps = [_face(face) for face in range(1, 7)]
+        every = chance
     else:
         legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
         if legal.size == 0:
-            nxt = st.clone()
-            if ts.Engine.auto_advance_step(nxt) == 0:
-                raise Unprovable("no legal move and nothing to advance")
-            children.append(nxt)
+            steps = [_advance(st, turn)]
             every = True
         else:
             # the mover needs one move that gets there; against the opponent, every reply must
-            every = mover_of(st) != mover
-            for a in legal:
-                child = st.clone()
-                ts.Engine.step_flat(child, int(a))
-                children.append(child)
+            steps = [_flat(int(a)) for a in legal]
+            every = decider(st) != mover
+
+    def holds(step: Callable[[ts.GameState], None]) -> bool:
+        results = (reaches(c, mover, turn, want, budget, memo) for c in outcomes(st, step))
+        return all(results) if chance else any(results)
+
     res = every
-    for child in children:
-        if reaches(child, mover, turn, want, budget, memo) != every:
+    for step in steps:
+        if holds(step) != every:
             res = not every
             break
     memo[key] = res
@@ -460,6 +483,25 @@ def outcome(st: ts.GameState, mover: ts.Player, turn: int, budget: int, after: b
         return "open" if reaches(st, mover, turn, "any", [budget], {}) else "loss"
     except Unprovable:
         return None
+
+
+def outcome_after(st: ts.GameState, action: int, mover: ts.Player, turn: int, budget: int) -> Optional[str]:
+    """`outcome` after `action` is played -- over every card the move itself may draw: "win" or
+    "loss" where every draw is, "open" otherwise, None where a draw was not enumerated."""
+    try:
+        kinds = {outcome(c, mover, turn, budget) for c in outcomes(st, _flat(action))}
+    except Unprovable:
+        return None
+    if None in kinds:
+        return None
+    return str(kinds.pop()) if len(kinds) == 1 else "open"
+
+
+def value_after(st: ts.GameState, action: int, mover: ts.Player, turn: int, budget: int,
+                opponent: str) -> float:
+    """`exact_value` after `action` is played, averaged over the cards the move itself may draw."""
+    outs = outcomes(st, _flat(action))
+    return sum(exact_value(c, mover, turn, [budget], opponent) for c in outs) / len(outs)
 
 
 def settled(network: Optional[str], position: Optional[str]) -> Optional[str]:
@@ -496,18 +538,16 @@ def prove(inputs: Sequence[str], deals: int, budget: int, seed: int, part: str, 
     or the position is lost whatever the mover plays (`settled`, `decided`).
     This part's share of the rows (`--part k/N`, for CI runners), one JSON row each."""
     k, n = (int(x) for x in part.split("/"))
-    bank = [r for i, r in enumerate(sorted(_read(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
+    bank = [r for i, r in enumerate(sorted(read_jsonl(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
     res: List[Dict[str, Any]] = []
     t0 = time.time()
     for r in bank:
         st0 = state_from_token(r["pos"])
-        who = mover_of(st0)
+        who = decider(st0)
         worlds = [st0] + [pair_start(st0, k, position_seed(str(r["id"]), seed)) for k in range(deals)]
         outcomes: Dict[str, List[Optional[str]]] = {"network": [], "position": [], "settled": []}
         for w in worlds:
-            child = w.clone()
-            ts.Engine.step_flat(child, int(r["network"]["action"]))
-            net = outcome(child, who, int(w.turn), budget)
+            net = outcome_after(w, int(r["network"]["action"]), who, int(w.turn), budget)
             # the position is searched only where the move loses: otherwise it is not lost
             pos = outcome(w, who, int(w.turn), budget, after=False) if net == "loss" else None
             outcomes["network"].append(net)
@@ -520,10 +560,8 @@ def prove(inputs: Sequence[str], deals: int, budget: int, seed: int, part: str, 
         for w in worlds:
             for role, key, opp in (("network", "network_best_case", "max"), ("network", "network_vs_best_reply", "min"),
                                    ("better", "better_worst_case", "min")):
-                child = w.clone()
-                ts.Engine.step_flat(child, int(r[role]["action"]))
                 try:
-                    vals[key].append(exact_value(child, who, int(w.turn), [budget], opp))
+                    vals[key].append(value_after(w, int(r[role]["action"]), who, int(w.turn), budget, opp))
                 except Unprovable as e:
                     vals[key].append(None)
                     why = why or str(e)
@@ -547,7 +585,7 @@ def prove(inputs: Sequence[str], deals: int, budget: int, seed: int, part: str, 
         print(f"{r['side']} T{r['turn']} AR{r['ar']} {r['decision_type']}: "
               + (f"{verdict} gap {gap}" if ok else f"unprovable ({why})")
               + (f"; decided ({verdict_decided} whatever is played)" if verdict_decided else ""), file=sys.stderr)
-    _write(out, res)
+    write_jsonl(out, res)
     json.dump({"part": part, "rows": len(res), "seconds": round(time.time() - t0, 1), "deals": deals,
                "budget": budget, "seed": seed}, open(out + ".meta.json", "w"))
     print(f"{sum(x['proved'] for x in res)} of {len(res)} proved whatever the opponent does; "
@@ -562,8 +600,8 @@ def settle(bank_path: str, proofs: Sequence[str], out: str) -> int:
     or the position is lost whatever the mover plays, the move decides nothing, and the cost the
     playouts give it belongs to a later move or to the opponent's failure to finish the game. Every
     remaining row keeps its `prove` outcome in `exact.decided` ("")."""
-    bank = list(_read([bank_path]))
-    proof = {str(p["id"]): p for p in _read(sorted({f for g in proofs for f in glob.glob(g)}))}
+    bank = list(read_jsonl([bank_path]))
+    proof = {str(p["id"]): p for p in read_jsonl(sorted({f for g in proofs for f in glob.glob(g)}))}
     missing = [str(r["id"]) for r in bank if str(r["id"]) not in proof]
     if missing:
         raise SystemExit(f"no prove row for {len(missing)} bank rows (a part missing?): {missing[:5]}")
@@ -575,7 +613,7 @@ def settle(bank_path: str, proofs: Sequence[str], out: str) -> int:
                   f"{p['decided']} whatever is played", file=sys.stderr)
             continue
         kept.append(dict(r, exact=dict(r.get("exact", {}), decided="")))
-    _write(out, kept)
+    write_jsonl(out, kept)
     print(f"{len(kept)} of {len(bank)} rows kept", file=sys.stderr)
     return 0
 

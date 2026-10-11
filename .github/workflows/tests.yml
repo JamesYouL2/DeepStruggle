@@ -54,7 +54,7 @@ jobs:
       matrix:
         group:
           - name: core
-            paths: tests/bindings tests/engine_logic tests/docs
+            paths: tests/bindings tests/engine_logic tests/docs tests/lint
           - name: training
             paths: tests/training
     name: python (${{ matrix.group.name }})

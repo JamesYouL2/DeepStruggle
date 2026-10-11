@@ -40,22 +40,22 @@ paired differences between the three moves with their standard errors.
 from __future__ import annotations
 
 import argparse
-import gzip
-import hashlib
 import json
 import os
 import re
 import sys
 import time
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from ai.eval.paired_playouts import compare, paired_diff
 from ai.eval.safety import classify_legal_actions
 from tools.lib.corpus_driver import load_policy, require_e4_view, state_from_token
-from tools.lib.player_agent import OnnxAgent, load_agent, resolve_device
-from tools.scripts.disagreement_bank import _name, row_id
+from tools.lib.jsonl import read_jsonl, sha256_file, write_jsonl
+from tools.lib.player_agent import OnnxAgent
+from tools.lib.position_bank import exact_mistake, move_name, position_seed, searched_continuation
+from tools.scripts.disagreement_bank import row_id
 
 WHO = ("human", "network", "search")
 #: A validation row's verdicts. The two `exact-` ones are the engine's own labels, not an
@@ -63,17 +63,6 @@ WHO = ("human", "network", "search")
 VERDICTS = ("exact-missed-win", "exact-forced-loss", "confirmed-regret", "refuted", "unresolved")
 
 
-def _read(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
-    for p in paths:
-        with gzip.open(p, "rt") as f:
-            for line in f:
-                yield json.loads(line)
-
-
-def _write(path: str, rows: Sequence[Dict[str, Any]]) -> None:
-    with gzip.open(path, "wt") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
 
 
 def value_gap(c: Dict[str, Any]) -> Optional[float]:
@@ -86,50 +75,29 @@ def value_gap(c: Dict[str, Any]) -> Optional[float]:
 
 def select(clarity: Sequence[str], banks: Sequence[str], top: int, out: str, min_gap: float = 0.0) -> int:
     if min_gap > 0:
-        cl = [c for c in _read(clarity) if (value_gap(c) or 0.0) >= min_gap]
+        cl = [c for c in read_jsonl(clarity) if (value_gap(c) or 0.0) >= min_gap]
         cl.sort(key=lambda c: -(value_gap(c) or 0.0))
         cl = cl[:top]
     else:
-        cl = sorted((c for c in _read(clarity) if c.get("z") is not None), key=lambda c: -c["z"])[:top]
+        cl = sorted((c for c in read_jsonl(clarity) if c.get("z") is not None), key=lambda c: -c["z"])[:top]
     want = {c["id"]: c for c in cl}
     pos: Dict[str, str] = {}
-    for r in _read(banks):
+    for r in read_jsonl(banks):
         rid = row_id(r)
         if rid in want and rid not in pos:
             pos[rid] = r["pos"]
     rows = [{"id": c["id"], "pos": pos[c["id"]], "a": c["a"]} for c in cl if c["id"] in pos]
-    _write(out, rows)
+    write_jsonl(out, rows)
     print(f"{len(rows)} positions selected", file=sys.stderr)
     return 0
 
 
-def position_seed(rid: str, seed: int) -> int:
-    """A position's seed: its row id (16 hex digits) mixed with the run's seed, kept below 2**63."""
-    return (int(rid, 16) ^ (seed * 0x9E3779B97F4A7C15)) & 0x7FFF_FFFF_FFFF_FFFF
 
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def searched_continuation(model: str, sims_k: str) -> Tuple[Any, str]:
-    """`--continue-with SIMS:K`: a Gumbel root of the model playing both sides of the playouts,
-    and the spec as a row records it. The caller reseeds the agent per position, so one
-    position's play does not depend on which positions preceded it."""
-    sims, k = (int(x) for x in sims_k.split(":"))
-    spec = f"gumbel:{model}:{sims}:{k}"
-    agent = load_agent(spec, device=resolve_device("cuda"))
-    require_e4_view(spec, agent)
-    return agent, f"gumbel:{sims}:{k}"
 
 
 def run(inp: Sequence[str], onnx: str, pairs: int, part: str, seed: int, out: str) -> int:
     k, n = (int(x) for x in part.split("/"))
-    rows = [r for i, r in enumerate(_read(inp)) if i % n == k - 1]
+    rows = [r for i, r in enumerate(read_jsonl(inp)) if i % n == k - 1]
     agent = OnnxAgent(onnx)
     require_e4_view(onnx, agent)
 
@@ -151,7 +119,7 @@ def run(inp: Sequence[str], onnx: str, pairs: int, part: str, seed: int, out: st
         best = max(set(a.values()), key=lambda m: sum(sc[m]))
         res.append({"id": r["id"], "pairs": pairs, "score": mean, "diff": diffs,
                     "best": [w for w in WHO if a[w] == best]})
-    _write(out, res)
+    write_jsonl(out, res)
     print(f"{len(res)} positions, {pairs} pairs, in {time.time() - t0:.0f}s", file=sys.stderr)
     return 0
 
@@ -164,10 +132,9 @@ def verdict_of(greedy: int, diff: Tuple[float, float], labels: Dict[int, str],
     the best alternative's lead on greedy: confirmed at `min_gap` score points and `min_z`
     standard errors, refuted when the continuations rank greedy `min_z` standard errors ahead,
     and unresolved where they cannot tell."""
-    if any(l == "win" for l in labels.values()) and labels.get(greedy) != "win":
-        return "exact-missed-win"
-    if labels.get(greedy) == "loss" and any(l != "loss" for l in labels.values()):
-        return "exact-forced-loss"
+    exact = exact_mistake(greedy, labels)
+    if exact is not None:
+        return exact
     m, se = diff
     if se and se > 0:
         if m >= min_gap and m / se >= min_z:
@@ -201,9 +168,9 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
     are what measures the screening's misses). Every seed of a row comes from its id and `--seed`,
     so the row's verdict does not depend on the part it fell in."""
     k, n = (int(x) for x in part.split("/"))
-    rows = sorted(_read(inputs), key=lambda r: str(r["id"]))
+    rows = sorted(read_jsonl(inputs), key=lambda r: str(r["id"]))
     if escalate_from:
-        rows = escalation_shortlist(rows, list(_read([escalate_from])), escalate_cap)
+        rows = escalation_shortlist(rows, list(read_jsonl([escalate_from])), escalate_cap)
     rows = [r for i, r in enumerate(rows) if i % n == k - 1]
     searcher, search_label = searched_continuation(model, f"{search_sims}:{search_k}")
     cont: Optional[Any] = None
@@ -217,6 +184,7 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
 
     res: List[Dict[str, Any]] = []
     t0 = time.time()
+    sha = sha256_file(model)
     for ri, r in enumerate(rows):
         st = state_from_token(r["pos"])
         runs: List[Dict[str, Any]] = []
@@ -254,12 +222,12 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
         labels = classify_legal_actions(st)
         res.append({
             "schema": 1, "id": r["id"], "control": bool(r.get("control", False)),
-            "model": os.path.basename(model), "model_sha256": _sha256(model),
+            "model": os.path.basename(model), "model_sha256": sha,
             "game": r["game"], "decision": r["decision"], "side": r["side"],
             "turn": r["turn"], "ar": r["ar"], "phase": r["phase"],
             "decision_type": r["decision_type"], "defcon": r["defcon"], "vp": r["vp"],
             "card": r["card"], "moves": moves,
-            "names": {str(a): _name(st, a) for a in sorted(set(moves.values()))},
+            "names": {str(a): move_name(st, a) for a in sorted(set(moves.values()))},
             "search": {"spec": search_label, "runs": runs, "choice": choice},
             "pairs": pairs, "cont": cont_label,
             "seeds": {"continuation": position_seed(str(r["id"]), seed),
@@ -270,19 +238,17 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
             "best": best,
             "exact": {"labels": {str(a): l for a, l in labels.items()},
                       "greedy": labels.get(greedy),
-                      "missed_win": any(l == "win" for l in labels.values())
-                      and labels.get(greedy) != "win",
-                      "forced_loss": labels.get(greedy) == "loss"
-                      and any(l != "loss" for l in labels.values())},
+                      "missed_win": exact_mistake(greedy, labels) == "exact-missed-win",
+                      "forced_loss": exact_mistake(greedy, labels) == "exact-forced-loss"},
             "verdict": verdict_of(greedy, (m, se), labels, min_z, min_gap),
             "pos": r["pos"],
         })
         print(f"[{ri + 1}/{len(rows)}] {r['id']}: {res[-1]['verdict']} in {time.time() - t0:.0f}s",
               file=sys.stderr, flush=True)
-    _write(out, res)
+    write_jsonl(out, res)
     json.dump({"schema": 1, "stage": "validate",
                "budget": "escalation" if escalate_from else "validation",
-               "model": os.path.basename(model), "model_sha256": _sha256(model),
+               "model": os.path.basename(model), "model_sha256": sha,
                "search_sims": search_sims, "search_k": search_k, "search_seeds": search_seeds,
                "pairs": pairs, "cont": cont_label, "seed": seed, "part": part,
                "min_z": min_z, "min_gap": min_gap, "rows": len(res),
@@ -294,7 +260,7 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
 def pool(parts: Sequence[str], out: str, expect: int = 0) -> int:
     """Merge the parts (`playouts-<k>.jsonl.gz`); with `expect`, name the parts that are missing in
     `<out>.parts.json`, so a pool over a run with a failed runner says which share it lacks."""
-    _write(out, list(_read(parts)))
+    write_jsonl(out, list(read_jsonl(parts)))
     found = sorted(int(m.group(1)) for m in (re.search(r"playouts-(\d+)\.jsonl\.gz$", os.path.basename(p))
                                              for p in parts) if m)
     missing = [k for k in range(1, expect + 1) if k not in found]

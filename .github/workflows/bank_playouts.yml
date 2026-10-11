@@ -24,9 +24,12 @@
 #   gh workflow run bank_playouts.yml --ref main -f stage=confirm -f release=blunder-shortlist-<date> \
 #     -f model=_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt -f pairs=512 -f runners=20
 #
-# and its exact check (tools/scripts/blunder_bank.py prove), which needs no model and no pairs:
+# and its exact check (tools/scripts/blunder_bank.py prove), which needs no model and no pairs,
+# on the bank itself (a plain .jsonl asset is fine):
 #
-#   gh workflow run bank_playouts.yml --ref main -f stage=prove -f release=blunder-bank-37-<date> \
+#   gh release create blunder-bank-<date> ai/eval/banks/blunders_E7.jsonl --prerelease --title "blunder bank"
+#
+#   gh workflow run bank_playouts.yml --ref main -f stage=prove -f release=blunder-bank-<date> \
 #     -f runners=20 -f args="--budget 2000000"
 name: bank-playouts
 
@@ -37,7 +40,7 @@ on:
         description: "run (the disagreement bank), validate (blunder census), confirm or prove (blunder bank, tools/scripts/blunder_bank.py)"
         default: "run"
       release:
-        description: "Release whose asset(s) *.jsonl.gz hold the positions"
+        description: "Release whose asset(s) *.jsonl or *.jsonl.gz hold the positions (the committed bank is plain)"
         required: true
       model:
         description: "Model in the Hugging Face repo: the .onnx that plays the playouts (stage run), or the .pt whose search validates the positions (stage validate)"
@@ -93,7 +96,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern '*.jsonl.gz' --dir input
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern '*.jsonl' --pattern '*.jsonl.gz' --dir input
           [ "$STAGE" = prove ] && exit 0
           mkdir -p data/checkpoints/hf
           curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
@@ -110,7 +113,7 @@ jobs:
             *) echo "unknown stage: $STAGE" >&2; exit 1 ;;
           esac
           [ "$STAGE" = prove ] || sha256sum "$weights"
-          python "tools/scripts/$tool" "$STAGE" --input input/*.jsonl.gz \
+          python "tools/scripts/$tool" "$STAGE" --input input/*.jsonl* \
             "${model_flag[@]}" \
             --part "${{ matrix.part }}/$RUNNERS" --out "out/playouts-${{ matrix.part }}.jsonl.gz" $ARGS
       - uses: actions/upload-artifact@v4

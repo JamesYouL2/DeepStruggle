@@ -1161,7 +1161,9 @@ triggering position is saved to `candidates.jsonl.gz` with its exact state (`pos
 moves and their safety labels, the game's seed and decision index and the model's identity
 (name + sha256); a random sample of the rest (`--control-rate`, `control.jsonl.gz`) stands in for
 the positions the screening never looked at, so its misses are measured rather than assumed. Each
-game appends to a `games.jsonl` ledger, so a run resumes (`--resume`) and splits (`--part k/N`).
+game appends to a `games.jsonl` ledger, so a run resumes (`--resume`) and splits (`--part k/N`);
+the ledger's first line records the run (model, seed, search, control rate), a resume of another
+run is refused, and a start without the ledger empties the row files first.
 Start with `benchmark` (20 games) and choose the full size from its projection -- stage 2 is the
 expensive part, and it is the one that bounds the experiment.
 
@@ -1219,20 +1221,26 @@ export PYTHONPATH=.:build/release
 measured on the same 32 pairs, and its control clears the bar almost as often as its candidates.
 The bank keeps only what survives a second measurement: `select` shortlists the validation rows
 whose best alternative leads the network's move by `--min-gap` at `--min-z` (that alternative is
-fixed there), `confirm` pays every shortlisted move out again from a fresh seed with one judge
+fixed there; given the validation and its escalation together, a row is read at the most
+simulations), `confirm` pays every shortlisted move out again from a fresh seed with one judge
 network (`bank_playouts.yml stage=confirm`, once per judge), and `build` writes the rows every
 judge confirms -- `ai/eval/banks/blunders_E7.jsonl`, one row per position with its `pos=` token,
 the network's move, the better move and each judge's cost. `score` puts any checkpoint or
 `load_agent` searcher on the bank: the blunder repeated, the better move found, or another move,
 paid out against the blunder with `--judge` and `--pairs`. `confirm --continue-with SIMS:K` pays out with a
 Gumbel root of the judge on both sides. `prove` solves exactly the rows whose game ends in the
-current turn: every later choice is enumerated and dice are averaged, the blunder is held to its
-best case and the better move to its worst, over worlds with the mover's unseen cards redealt.
+current turn: every later choice is enumerated, dice are averaged over their faces and a card a
+step draws (Five Year Plan, Grain Sales, Terrorism) over the cards it can draw -- the engine's
+PRNG is inverted so the step is made to draw each one (`tools/lib/hidden_draws.py`); a step
+that draws twice (Terrorism under the hostage crisis, Our Man in Tehran) is unprovable rather
+than sampled -- the blunder is held to its best case and the better move to its worst, over
+worlds with the mover's unseen cards redealt.
 It also asks, by a yes/no search that reaches further, whether the row is **decided whatever is
 played**: the move played wins whatever follows, or the position before it is lost whatever the
 mover plays, in every world. Playouts charge such a move for the follow-up's mistake or for the
 opponent failing to finish a won game, so `settle` drops those rows from the bank
-(`bank_playouts.yml stage=prove`, one row per runner).
+(`bank_playouts.yml stage=prove`, one row per runner; the release asset may be the plain
+`.jsonl` bank itself).
 
 ```bash
 .venv/bin/python tools/scripts/blunder_bank.py select --validation validation.jsonl.gz \
@@ -1265,3 +1273,6 @@ Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/checkpoint_utils.py`: architecture detection and checkpoint discovery utilities.
 - `tools/lib/corpus_paths.py`: where the ts-replayer corpus lives, and content-based deduplication.
 - `tools/lib/corpus_driver.py`: feeds a policy's self-play or the converted human corpus, one decision at a time, to any tracker; the workbench's `pos=` tokens; the E4-view check the bank tools share.
+- `tools/lib/jsonl.py`: JSON-lines rows, plain or gzipped by suffix, and a file's SHA-256 -- the one reader and writer of every bank file.
+- `tools/lib/position_bank.py`: what the bank tools share: a position's seed, a move's name, the engine's exact verdict on a move (`exact_mistake`), the searched continuation of `--continue-with`.
+- `tools/lib/hidden_draws.py`: the outcomes of a step that draws a card from the engine's PRNG without a decision node, enumerated exactly by inverting SplitMix64 (`step_outcomes`); the blunder bank's `prove` averages over them.

@@ -44,11 +44,13 @@ import onnxruntime as ort
 import torch
 import ts_engine as ts
 
+from ai.eval.paired_playouts import decider
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import (feed_corpus_game, load_policy, position_token, read_corpus_game,
                                      require_e4_view, rules_json)
 from tools.lib.corpus_paths import distinct_corpus_files
 from tools.lib.player_agent import load_agent
+from tools.lib.position_bank import move_name
 
 KINDS = ("headline", "card", "mode")
 PATTERNS = ("human-alone", "network-alone", "search-alone", "all-differ")
@@ -69,11 +71,6 @@ def kind_of(st: ts.GameState) -> Optional[str]:
     if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE:
         return "mode"
     return None
-
-
-def mover_of(st: ts.GameState) -> ts.Player:
-    ctx = st.ctx()
-    return ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player
 
 
 def pattern(h: int, n: int, s: int) -> Optional[str]:
@@ -109,16 +106,6 @@ def _softmax(logits: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return p / p.sum()
 
 
-def _name(st: ts.GameState, a: int) -> str:
-    """A move as a reader says it: the card, or EVENT / SPACE / OPS (influence, coup, realign)."""
-    off = int(ActionEncoder.PLAY_MODE_OFFSET)
-    if a < off:
-        cid = int(ts.decode_flat_action(st, a).primary_id)
-        return str(_CARDS.get(cid, {}).get("name", f"card {cid}"))
-    mode = a - off
-    return {0: "event", 1: "space", 2: "Ops: influence", 3: "Ops: coup", 4: "Ops: realign"}.get(
-        mode, ActionEncoder.get_action_name(st, a))
-
 
 def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[str],
          chunk: int, on_game: Optional[Any] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, int]]]:
@@ -141,7 +128,7 @@ def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[
         first = len(rows)
         counts: Dict[str, Dict[str, int]] = {k: {"decisions": 0, **{p: 0 for p in PATTERNS}} for k in kinds}
         states = [s for s, _, _ in col.seen]
-        obs = np.stack([np.asarray(ts.extract_observation_features(s, mover_of(s), features), dtype=np.float32)
+        obs = np.stack([np.asarray(ts.extract_observation_features(s, decider(s), features), dtype=np.float32)
                         for s in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         logits = net_fn(obs, masks)
@@ -165,10 +152,10 @@ def scan(paths: Sequence[str], net_spec: str, search_spec: str, kinds: Sequence[
             card = int(ctx.pending_op_card) if kind == "mode" else 0
             rows.append({
                 "game": replay_id, "kind": kind, "pattern": pat,
-                "side": "US" if mover_of(st) == ts.Player.US else "USSR",
+                "side": "US" if decider(st) == ts.Player.US else "USSR",
                 "turn": int(st.turn), "ar": int(st.action_round), "defcon": int(st.defcon),
                 "vp": int(st.victory_points), "card": str(_CARDS[card]["name"]) if card else "",
-                "human": _name(st, human), "network": _name(st, n_act), "search": _name(st, s_act),
+                "human": move_name(st, human), "network": move_name(st, n_act), "search": move_name(st, s_act),
                 "p_human": round(float(p[human]), 4), "p_network": round(float(p[n_act]), 4),
                 "p_search": round(float(p[s_act]), 4),
                 "v_win": None if v_win is None else round(float(v_win[i]), 4),

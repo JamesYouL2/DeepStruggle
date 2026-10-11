@@ -45,7 +45,6 @@ saved positions (a different budget, a different continuation) without ever rege
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import os
@@ -57,24 +56,21 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import ts_engine as ts
 
+from ai.eval.paired_playouts import decider
 from ai.eval.safety import (DEFCON_DEGRADING_CARDS, OLYMPIC_GAMES, OPPONENT_COUP_CARDS,
                             classify_legal_actions)
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import (load_policy, position_token, require_e4_view, selfplay,
                                      state_from_token)
-from tools.lib.player_agent import load_agent
-from tools.scripts.disagreement_bank import _name
+from tools.lib.jsonl import append_jsonl, read_jsonl, sha256_file
+from tools.lib.player_agent import load_agent, resolve_device
+from tools.lib.position_bank import exact_mistake, move_name
 
 SCHEMA = 1
 #: the cheap search of stage 1 (research/log/E7_gumbel_headroom.md calls k=4 at 16-64 evaluations
 #: the budget that keeps most of the search's strength)
 SCREEN_SEARCH = (32, 4)
 TRIGGERS = ("forced-loss", "missed-forced-win", "g32-disagrees")
-
-
-def mover_of(st: ts.GameState) -> ts.Player:
-    ctx = st.ctx()
-    return ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player
 
 
 def decision_card(st: ts.GameState) -> int:
@@ -98,9 +94,10 @@ def triggers(greedy: int, g32: int, labels: Dict[int, str]) -> List[str]:
     `missed-forced-win`: a legal move wins on the spot and greedy's does not. `g32-disagrees`:
     a 32-simulation Gumbel root plays something else."""
     out: List[str] = []
-    if labels.get(greedy) == "loss" and any(l != "loss" for l in labels.values()):
+    exact = exact_mistake(greedy, labels)
+    if exact == "exact-forced-loss":
         out.append("forced-loss")
-    if any(l == "win" for l in labels.values()) and labels.get(greedy) != "win":
+    if exact == "exact-missed-win":
         out.append("missed-forced-win")
     if g32 != greedy:
         out.append("g32-disagrees")
@@ -193,7 +190,7 @@ def annotate(kept: Sequence[Tuple[int, ts.GameState, int]], logits_fn: Any, feat
     if not kept:
         return [], []
     states = [s for _, s, _ in kept]
-    obs = np.stack([np.asarray(ts.extract_observation_features(s, mover_of(s), features),
+    obs = np.stack([np.asarray(ts.extract_observation_features(s, decider(s), features),
                                dtype=np.float32) for s in states])
     masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
     logits = np.asarray(logits_fn(obs, masks), dtype=np.float64)
@@ -206,14 +203,14 @@ def annotate(kept: Sequence[Tuple[int, ts.GameState, int]], logits_fn: Any, feat
         legal = legal_actions(st)
         probs = [(a, float(np.exp(logits[i, a] - logits[i, legal].max()))) for a in legal]
         greedy = max(legal, key=lambda a: logits[i, a])
-        labels = classify_legal_actions(st, mover_of(st))
+        labels = classify_legal_actions(st, decider(st))
         trig = triggers(greedy, g32, labels)
         ctx = st.ctx()
         pos = position_token(st)
         row: Dict[str, Any] = {
             "schema": SCHEMA, "id": row_id(pos),
             "model": model, "model_sha256": model_sha256, "game": dict(game), "decision": dec,
-            "side": "US" if mover_of(st) == ts.Player.US else "USSR",
+            "side": "US" if decider(st) == ts.Player.US else "USSR",
             "turn": int(st.turn), "ar": int(st.action_round),
             "phase": str(st.current_phase).split(".")[-1],
             "decision_type": str(ctx.decision_type).split(".")[-1],
@@ -222,7 +219,7 @@ def annotate(kept: Sequence[Tuple[int, ts.GameState, int]], logits_fn: Any, feat
             "safety": {"labels": {str(a): labels.get(a, "normal") for a in legal},
                        "safe": safe_alternative(labels, greedy, probs)},
             "triggers": trig,
-            "names": {str(a): _name(st, a) for a in sorted({greedy, g32} | {a for a, l in labels.items()
+            "names": {str(a): move_name(st, a) for a in sorted({greedy, g32} | {a for a, l in labels.items()
                                                                         if l in ("win", "loss")})},
             "pos": pos,
         }
@@ -244,23 +241,39 @@ def screen(model: str, out_dir: str, games: int, part: str, seed: int, temperatu
     cand_path = os.path.join(out_dir, "candidates.jsonl.gz")
     ctrl_path = os.path.join(out_dir, "control.jsonl.gz")
     ledger = os.path.join(out_dir, "games.jsonl")
+    meta = {"schema": SCHEMA, "stage": "screen", "model": os.path.basename(model),
+            "model_sha256": sha256_file(model), "seed": seed, "games": games, "part": part,
+            "temperature": temperature, "search": f"gumbel:{search_sims}:{search_k}",
+            "control_rate": control_rate}
+    # The ledger's first line records what makes game g the same game; a resume continues only
+    # the same run (more games or another part is fine: game g is played from seed + g either
+    # way), and a fresh start empties the row files, which only ever grow.
+    run = {k: meta[k] for k in ("model_sha256", "seed", "temperature", "search", "control_rate")}
     done: Dict[int, Dict[str, Any]] = {}
     if resume and os.path.exists(ledger):
-        for line in open(ledger):
-            g = json.loads(line)
+        lines = [json.loads(line) for line in open(ledger) if line.strip()]
+        if not lines or "run" not in lines[0]:
+            raise SystemExit(f"{ledger} has no run header (it predates one): start over in an empty --out-dir")
+        differs = {k: (lines[0]["run"].get(k), v) for k, v in run.items() if lines[0]["run"].get(k) != v}
+        if differs:
+            raise SystemExit(f"{ledger} was made by another run; it differs in " + ", ".join(
+                f"{k} ({was!r} there, {now!r} now)" for k, (was, now) in differs.items()))
+        for g in lines[1:]:
             done[int(g["game"])] = g["counts"]
     elif os.path.exists(ledger):
-        raise SystemExit(f"{ledger} exists: pass --resume to continue it, or remove it")
+        raise SystemExit(f"{ledger} exists: pass --resume to continue it, or start over in an empty --out-dir")
+    else:
+        for path in (cand_path, ctrl_path):
+            if os.path.exists(path):
+                os.unlink(path)
+        with open(ledger, "w") as f:
+            f.write(json.dumps({"run": run}) + "\n")
     todo = [g for g in mine if g not in done]
     t0 = time.time()
     logits_fn, features = load_policy(model)
     spec = f"gumbel:{model}:{search_sims}:{search_k}"
-    search = load_agent(spec, device="cuda" if _cuda() else "cpu")
+    search = load_agent(spec, device=resolve_device("cuda"))
     require_e4_view(spec, search)
-    meta = {"schema": SCHEMA, "stage": "screen", "model": os.path.basename(model),
-            "model_sha256": _sha256(model), "seed": seed, "games": games, "part": part,
-            "temperature": temperature, "search": f"gumbel:{search_sims}:{search_k}",
-            "control_rate": control_rate}
     for gi, g in enumerate(todo):
         tracker = selfplay(logits_fn, features, 1, seed + g, 1, temperature,
                            DecisionLog)[0]
@@ -269,8 +282,8 @@ def screen(model: str, out_dir: str, games: int, part: str, seed: int, temperatu
         cands, ctrl = annotate(tracker.kept, logits_fn, features, search, control_rate,
                                random.Random(seed * 1_000_003 + g), chunk,
                                meta["model"], meta["model_sha256"], {"seed": seed + g, "index": g})
-        _append(cand_path, cands)
-        _append(ctrl_path, ctrl)
+        append_jsonl(cand_path, cands)
+        append_jsonl(ctrl_path, ctrl)
         counts: Dict[str, Any] = {"decisions": len(tracker.kept), "candidates": len(cands),
                                   "control": len(ctrl),
                                   "triggers": {t: sum(1 for r in cands if t in r["triggers"])
@@ -317,33 +330,8 @@ def benchmark(model: str, out_dir: str, games: int, project: int, seed: int,
 # ---------------------------------------------------------------------------------------------
 
 
-def _read(paths: Sequence[str]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for p in paths:
-        with gzip.open(p, "rt") as f:
-            for line in f:
-                rows.append(json.loads(line))
-    return rows
 
 
-def _append(path: str, rows: Sequence[Dict[str, Any]]) -> None:
-    with gzip.open(path, "at") as f:
-        for r in rows:
-            f.write(json.dumps(r, separators=(",", ":")) + "\n")
-
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _cuda() -> bool:
-    import torch
-
-    return bool(torch.cuda.is_available())
 
 
 def metrics(screened: Sequence[Dict[str, Any]], control: Sequence[Dict[str, Any]],
@@ -517,10 +505,10 @@ def render(census: Dict[str, Any], worst: Sequence[Tuple[str, int, List[Dict[str
 def report(screen_paths: Sequence[str], control_paths: Sequence[str], summary_paths: Sequence[str],
            validation_paths: Sequence[str], escalation_paths: Sequence[str], out: str,
            top: int) -> int:
-    screened = _read(screen_paths)
-    control = _read(control_paths)
-    validation = _read(validation_paths)
-    escalation = _read(escalation_paths)
+    screened = list(read_jsonl(screen_paths))
+    control = list(read_jsonl(control_paths))
+    validation = list(read_jsonl(validation_paths))
+    escalation = list(read_jsonl(escalation_paths))
     decisions: Optional[int] = None
     runtime: Dict[str, str] = {}
     trigger_counts: Dict[str, int] = {}

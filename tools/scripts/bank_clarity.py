@@ -40,10 +40,12 @@ import ts_engine as ts
 
 from ai.search.batched_mcts import BatchedMCTS, settle
 from ai.search.dmcts import determinize
+from ai.eval.paired_playouts import decider
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import require_e4_view, state_from_token
 from tools.lib.player_agent import load_agent
-from tools.scripts.disagreement_bank import _name, mover_of, row_id
+from tools.lib.position_bank import move_name
+from tools.scripts.disagreement_bank import row_id
 
 WHO = ("human", "network", "search")
 _UINT64 = 1 << 64
@@ -51,7 +53,7 @@ _UINT64 = 1 << 64
 
 def move_index(st: ts.GameState, name: str) -> int:
     """The legal move a bank row names (names are unique among a decision's legal moves)."""
-    hits = [int(a) for a in np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st))) if _name(st, int(a)) == name]
+    hits = [int(a) for a in np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st))) if move_name(st, int(a)) == name]
     if len(hits) != 1:
         raise ValueError(f"{name!r} names {len(hits)} legal moves here")
     return hits[0]
@@ -78,7 +80,7 @@ def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[
     jobs: List[Tuple[int, int, ts.GameState]] = []
     for i, (st, ms) in enumerate(zip(states, moves)):
         for _ in range(worlds):
-            world = determinize(st.clone(), mover_of(st), rng)
+            world = determinize(st.clone(), decider(st), rng)
             world.rng_state = rng.getrandbits(64) % _UINT64
             for a in ms:
                 child = world.clone()
@@ -96,7 +98,7 @@ def value_moves(mcts: Any, states: Sequence[ts.GameState], moves: Sequence[List[
             v_us = float(r.value_us)
         else:
             v_us = (float(r.value_us) + float(sum(r.w))) / (1.0 + float(sum(r.n)))
-        vals[i][a].append(v_us if mover_of(states[i]) == ts.Player.US else -v_us)
+        vals[i][a].append(v_us if decider(states[i]) == ts.Player.US else -v_us)
     out: List[Dict[int, Tuple[float, float]]] = []
     for v in vals:
         d: Dict[int, Tuple[float, float]] = {}
@@ -160,7 +162,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             strong_is = [w for w in WHO if d[w] == s_act] or ["other"]
             out.append({
                 "id": r["id"], "pattern": r["pattern"], "kind": r["kind"],
-                "a": d, "strong": _name(st, s_act), "strong_is": strong_is,
+                "a": d, "strong": move_name(st, s_act), "strong_is": strong_is,
                 "q": {w: [round(val[d[w]][0], 4), round(val[d[w]][1], 4)] for w in WHO if d[w] in val},
                 "best": [w for w in WHO if d[w] == best_a], "z": round(z, 2) if z == z and z != math.inf else None,
                 "strong_agrees": s_act == best_a,

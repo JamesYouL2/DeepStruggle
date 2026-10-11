@@ -19,7 +19,8 @@ import ts_engine as ts
 from ai.eval.paired_playouts import ar_key, decider, play_safe
 from tools.lib.corpus_driver import require_e4_view, state_from_token
 from tools.lib.game_step import drain_chance
-from tools.scripts.bank_playouts import pool, position_seed
+from tools.lib.position_bank import position_seed
+from tools.scripts.bank_playouts import pool
 from tools.scripts.bank_verdicts import load, legal_names
 from tools.scripts.disagreement_bank import KINDS, PATTERNS, kind_of, row_id, win_probability
 

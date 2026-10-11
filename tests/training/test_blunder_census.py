@@ -15,12 +15,13 @@ import pytest
 import torch
 import ts_engine as ts
 
+from ai.eval.paired_playouts import decider
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import state_from_token
 from tools.scripts.bank_playouts import (escalation_shortlist, main as bank_main, verdict_of)
 from tools.scripts.blunder_census import (DecisionLog, TRIGGERS, legal_actions, main, metrics,
-                                          mover_of, root_cause, rescued_by_search, row_id,
+                                          root_cause, rescued_by_search, row_id,
                                           safe_alternative, triggers)
 
 
@@ -132,17 +133,34 @@ def test_screen_writes_replayable_rows_and_resumes(tmp_path: Path) -> None:
         assert r["model_sha256"] == summary["model_sha256"]
         assert r["game"]["seed"] == summary["seed"] + r["game"]["index"]
         assert r["decision"] >= 1 and r["pos"]
-        assert mover_of(st) == (ts.Player.US if r["side"] == "US" else ts.Player.USSR)
+        assert decider(st) == (ts.Player.US if r["side"] == "US" else ts.Player.USSR)
         assert int(st.defcon) == r["defcon"] and int(st.turn) == r["turn"]
         assert set(r["legal"]) <= set(range(ActionEncoder.FLAT_ACTION_SIZE))
     # a resume finishes the remaining games and refuses to start over
     assert main(["screen", "--model", _checkpoint(tmp_path), "--games", "3", "--search-sims", "8",
                  "--search-k", "2", "--control-rate", "0.5", "--out-dir", out_dir, "--resume"]) == 0
     ledger = [json.loads(line) for line in open(f"{out_dir}/games.jsonl")]
-    assert sorted(g["game"] for g in ledger) == [0, 1, 2]
+    assert "run" in ledger[0] and ledger[0]["run"]["seed"] == 0
+    assert sorted(g["game"] for g in ledger[1:]) == [0, 1, 2]
     with pytest.raises(SystemExit):
         main(["screen", "--model", _checkpoint(tmp_path), "--games", "3", "--search-sims", "8",
               "--search-k", "2", "--out-dir", out_dir])
+    # a resume of another run (here: another seed) is refused rather than mixed in
+    with pytest.raises(SystemExit, match="seed"):
+        main(["screen", "--model", _checkpoint(tmp_path), "--games", "3", "--search-sims", "8",
+              "--search-k", "2", "--control-rate", "0.5", "--out-dir", out_dir, "--resume", "--seed", "1"])
+
+
+def test_screen_starts_over_with_empty_row_files(tmp_path: Path) -> None:
+    """The row files only grow, so a fresh start (no ledger) empties them: a run after the ledger
+    was removed used to append a second copy of every row."""
+    out_dir = _screen(tmp_path, games=1)
+    before = _rows(f"{out_dir}/candidates.jsonl.gz")
+    assert before
+    (Path(out_dir) / "games.jsonl").unlink()
+    _screen(tmp_path, games=1)
+    after = _rows(f"{out_dir}/candidates.jsonl.gz")
+    assert [r["id"] for r in after] == [r["id"] for r in before]
 
 
 # -- stage 2: validation rows and the report ----------------------------------------------------

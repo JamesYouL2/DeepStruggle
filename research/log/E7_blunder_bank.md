@@ -107,6 +107,12 @@ took 2 of them out:
     is above it in some world.
   * It is **proved against the best reply** if the same holds with the blunder too answered by
     the opponent's best reply.
+  * **Caveat (2026-10-11).** These proofs were run before `prove` enumerated the cards a step
+    draws without a decision node (Five Year Plan, Grain Sales, Terrorism, Our Man in Tehran;
+    `tools/lib/hidden_draws.py`). Where such a card was left in a hand of a world, the proof
+    took the one draw that world's generator made and treated it as certain. The verdicts below
+    stand as computed; a re-run of `prove` (stage=prove) now averages a single draw and reports
+    a double one as unprovable, and is what should replace them.
 
   Results:
   * 7 rows are solvable, all at turn 10, action round 7: 5 proved, 1 proved against the best

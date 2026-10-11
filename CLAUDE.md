@@ -98,6 +98,7 @@ plays the native engine's games.
 | `ai/`, `bot/`, `tools/` | the above + `tests/training` |
 | `web/**` | **also** `tests/web`, after `tools/scripts/build_web.sh` (below) |
 | `research/**` | `tests/docs` (fast, no build needed) — every relative link must resolve |
+| any `.py` | **also** `tests/lint` (fast, no build needed) — no new import inside a function or class; the per-file baseline only goes down |
 
 ### The ts-replayer corpus
 
@@ -135,12 +136,13 @@ tools/scripts/check_engine_fresh.sh
 ./build/release/engine/ts_fuzz --steps 5000000 --seed 42
 
 # 2. Backend Python — everything except the web UI. The default suite for backend work.
-PYTHONPATH=. .venv/bin/python -m pytest -q -n auto tests/bindings tests/engine_logic tests/replayer tests/training tests/docs
+PYTHONPATH=. .venv/bin/python -m pytest -q -n auto tests/bindings tests/engine_logic tests/replayer tests/training tests/docs tests/lint
 
 #    Narrower loops while iterating:
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/bindings tests/engine_logic
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/replayer
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/training
+PYTHONPATH=. .venv/bin/python -m pytest -q tests/lint          # imports at module top (a ratchet: tests/lint/nested_imports_baseline.json)
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/engine_logic/test_all_110_cards.py::TestName::test_case
 
 # 3. Web/UI — for changes under web/ AND to engine/ or bindings/ (the page runs the engine as
