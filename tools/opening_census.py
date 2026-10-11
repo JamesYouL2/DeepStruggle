@@ -95,8 +95,8 @@ def _card_name(card: int) -> str:
 class _Source:
     """Greedy, with the opening's setup forced; records plays and a snapshot per action round."""
 
-    def __init__(self, model: Any, device: torch.device, opening: str) -> None:
-        self.model, self.device, self.opening = model, device, opening
+    def __init__(self, model: Any, device: torch.device, opening: str, agent: Any = None) -> None:
+        self.model, self.device, self.opening, self.agent = model, device, opening, agent
         self.feats = model_obs_features(model)
         self.cursor = {"US": 0, "USSR": 0}
         self.plays: List[Play] = []
@@ -114,11 +114,14 @@ class _Source:
                 self.key = key
                 self.snaps.append(snap(st))
         mover = decider(st)
-        mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
-        obs = np.asarray(ts.extract_observation_features(st, mover, self.feats), dtype=np.float32)
-        lg, _ = forward(self.model, obs[None], mask[None], self.device)
-        legal = np.flatnonzero(mask)
-        act = int(legal[np.argmax(lg[0][legal])])
+        if self.agent is not None:
+            act = int(self.agent.select_action(st))
+        else:
+            mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+            obs = np.asarray(ts.extract_observation_features(st, mover, self.feats), dtype=np.float32)
+            lg, _ = forward(self.model, obs[None], mask[None], self.device)
+            legal = np.flatnonzero(mask)
+            act = int(legal[np.argmax(lg[0][legal])])
         if st.current_phase != ts.Phase.SETUP:
             kind = kind_of(st)
             if kind in RECORDED_KINDS:
@@ -133,10 +136,12 @@ class _Source:
         return ts.ActionMask.decode_flat_action(st, act)
 
 
-def play_game(model: Any, device: torch.device, seed: int, opening: str, turns: int) -> GameRecord:
+def play_game(model: Any, device: torch.device, seed: int, opening: str, turns: int, agent: Any = None) -> GameRecord:
     st = ts.GameState()
     ts.Engine.init_game(st, int(seed))
-    src = _Source(model, device, opening)
+    if agent is not None and hasattr(agent, "reseed"):
+        agent.reseed(int(seed))
+    src = _Source(model, device, opening, agent)
     loop = GameLoop(st, {ts.Player.US: src, ts.Player.USSR: src}, settle=SettlePolicy.RECORD_FORCED,
                     stop=lambda s: int(s.turn) > turns)
     loop.run()
@@ -309,7 +314,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="play games and record them")
     r.add_argument("--model", required=True)
-    r.add_argument("--opening", required=True, help="a two-sided opening, 'us_x+ussr_y'")
+    r.add_argument("--opening", default="", help="a two-sided opening, 'us_x+ussr_y'; empty or 'own': the player sets up")
+    r.add_argument("--player", default="", help="a load_agent spec ({BASE} = --model) that plays instead of the "
+                   "greedy network, e.g. 'rollout:{BASE}:4:16:4:z2'")
     r.add_argument("--games", type=int, default=1000)
     r.add_argument("--seed", type=int, default=200_000)
     r.add_argument("--turns", type=int, default=3)
@@ -321,14 +328,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--out", required=True)
     args = ap.parse_args(argv)
     if args.cmd == "run":
+        if args.opening == "own":
+            args.opening = ""
         device = torch.device("cpu")
         model = _load_network(args.model, device)
+        agent = None
+        if args.player:
+            from tools.lib.player_agent import load_agent
+            agent = load_agent(args.player.replace("{BASE}", args.model), device="cpu")
         k, n = _part(args.part)
         seeds = [args.seed + g for g in range(args.games) if g % n == k]
         t0 = time.time()
         with gzip.open(args.out, "wt") as f:
             for i, seed in enumerate(seeds):
-                f.write(json.dumps(play_game(model, device, seed, args.opening, args.turns)) + "\n")
+                rec = play_game(model, device, seed, args.opening, args.turns, agent)
+                rec["opening"] = args.opening or f"own setup ({args.player or 'greedy'})"
+                f.write(json.dumps(rec) + "\n")
                 if (i + 1) % 25 == 0 or i + 1 == len(seeds):
                     print(f"  game {i + 1}/{len(seeds)} {time.time() - t0:.0f}s", flush=True)
         return 0

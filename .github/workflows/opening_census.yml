@@ -14,8 +14,11 @@ on:
       model:
         description: "A torch checkpoint (.pt) in hf_repo"
         default: "_models/E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M.pt"
+      player:
+        description: "Who plays: empty for the greedy network, or a load_agent spec with {BASE}, e.g. rollout:{BASE}:4:16:4:z2"
+        default: ""
       openings:
-        description: "Two-sided openings (tools/lib/openings.py), space-separated; each plays the same seeds"
+        description: "Two-sided openings (tools/lib/openings.py), space-separated, or 'own' (the player sets up); each plays the same seeds"
         default: "us_r34+ussr_r34 us_r34+ussr_pol4_aus us_r34+ussr_pol4_yug"
       games:
         default: "10000"
@@ -37,6 +40,7 @@ env:
   TS_PYTHON: python
   MODEL: ${{ inputs.model }}
   OPENINGS: ${{ inputs.openings }}
+  PLAYER: ${{ inputs.player }}
   GAMES: ${{ inputs.games }}
   TURNS: ${{ inputs.turns }}
   SEED: ${{ inputs.seed }}
@@ -86,7 +90,7 @@ jobs:
           tools/scripts/check_engine_fresh.sh
           for o in $OPENINGS; do
             python tools/opening_census.py run --model models/base.pt --opening "$o" --games "$GAMES" \
-              --turns "$TURNS" --seed "$SEED" --part "${{ matrix.part }}/$RUNNERS" \
+              --turns "$TURNS" --seed "$SEED" --part "${{ matrix.part }}/$RUNNERS" --player "$PLAYER" \
               --out "games/${o//+/__}-${{ matrix.part }}.jsonl.gz"
           done
       - uses: actions/upload-artifact@v4
@@ -116,6 +120,7 @@ jobs:
           {
             echo "commit: $GITHUB_SHA"
             echo "model: $HF_REPO $MODEL"
+            echo "player: ${PLAYER:-greedy}"
             echo "openings: $OPENINGS"
             echo "games: $GAMES per opening (seeds $SEED+)  turns: $TURNS  runners: $RUNNERS"
           } > report/provenance.txt
