@@ -174,7 +174,7 @@ every world settles one of the two ways, and `blunder_bank.py settle` takes it o
   * Nigeria rather than India. This row was `move-not-a-mistake` above.
 * **The USSR's Mexico rather than France, turn 10, last round** (the owner: "USSR loses anyway,
   basically"). It is lost whatever the USSR plays in 8 of 9 worlds. The ninth does not settle
-  within the budget, so the row stays.
+  within 2,000,000 nodes, nor within 30,000,000 (fork CI run `38162849692`), so the row stays.
 * **No other row settles.** 12 need a new turn, and the other turn-10 rows run out of budget.
   That includes the turn-10 headline of Soviets Shoot Down KAL-007, which the owner calls a gamble
   that wins only if the US headlines Duck and Cover.
