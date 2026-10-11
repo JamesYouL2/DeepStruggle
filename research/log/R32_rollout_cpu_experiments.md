@@ -2,14 +2,15 @@
 
 **Question.** R32 (P32 T1: the frozen heads soup's Gumbel k = 4 @32 improved policy as a CE term of
 0.1 inside RL, 1 decision in 8, 6,400 → 6,800M) leaves Gumbel k = 8 @256 almost nothing to add:
-51.2% on itself ([P32](../plans/P32_teacher_and_paired_credit.md)). Two questions follow:
+51.2% on itself ([P32](../plans/P32_teacher_and_paired_credit.md)). Three questions follow:
 
 * **Experiment 1:** does the rollout root, the strongest searcher on the heads soup
   ([E7_search_depth_and_value](E7_search_depth_and_value.md)), still add on R32?
 * **Experiment 3:** did R32 take over the soup's search corrections, or only stop Gumbel finding
   new ones?
-
-The rollout horizon and compute sweep (Experiment 2 of the plan) waits on Experiment 1.
+* **Experiment 2** (run after Experiment 1 answered yes): which of the rollout root's horizon,
+  worlds and candidates buy its strength, and what does a cheap rollout root keep? See
+  [Experiment 2](#experiment-2-the-rollout-roots-horizon-worlds-and-candidates-on-r32).
 
 **Answer.**
 
@@ -40,6 +41,16 @@ The rollout horizon and compute sweep (Experiment 2 of the plan) waits on Experi
   same in paired playouts (+0.29 against +0.31 points per hundred decisions under the soup's
   continuations, +0.40 against +0.27 under R32's, all ± 0.2). Where Gumbel agrees and R32 still
   moves off the soup's choice, its moves average −0.2 to −0.4 (± 0.25), not significant.
+* **Experiment 2: the horizon has to reach 4 boundaries; worlds and candidates still pay past the
+  measured player.** On R32, Elo over the measured rollout root (4 candidates, 16 worlds, 4
+  boundaries), ± 1 SE, from 15 tournaments fitted jointly:
+  * **horizon** 1: **−170 ± 10**, about 70 Elo *below R32's own network*; 2: −35 ± 10; 8: +5 ± 10
+    at 1.8× the cost. The gain is spent by 4 boundaries.
+  * **worlds** 8: −26 ± 10; 32: **+22 ± 10**. Each doubling is worth ~+24 and has not stopped.
+  * **candidates** 2: −27 ± 10; 6: +14 ± 10.
+  * **The cheap end:** 8 worlds costs what Gumbel@256 costs per game on CI and beats it by
+    +75 ± 9. The strongest variants, 32 worlds (+123 over Gumbel@256) and k = 6 (+114), are each
+    the only change from the measured player; the two together are untested.
 
 **Reading.** Mihail's caveat on R32 was that "the policy absorbed its search" and "a sharper prior
 leaves its old critic little to correct" read the same in games. Experiment 3 leans to the
@@ -169,6 +180,93 @@ disagree (24.6% of decisions; there the rollout root's pick is ahead by +0.39 ±
 | Gumbel keeps the soup's move, the rollout root departs | 33% | **5%** / 87% | 10% / 67% |
 | both depart | 10% | 12% / 18% | 19% / 28% |
 
+## Experiment 2: the rollout root's horizon, worlds and candidates on R32
+
+**Design** (fixed before launch, in this report's first version). The base is R32, sha256
+`1d4f65f0…` on every runner. Each variant changes one setting of the measured player
+`rollout:<R32>:4:16:4:z2` (written `k:worlds:horizon` below). The settings tried are horizon 1
+and 2, worlds 8 and 32, and k = 2 and 6. A horizon of 8 was added as an exploratory arm: it was
+not in the plan. Every variant played two tournaments, greedy, both seats, `searcher_tournament.yml`
+at commit `f562fa2` (`pr/r32-search`), 20 runners:
+
+* **stage 1** against Gumbel@256 on R32, 500 games a side, with the measured player re-played as
+  a reference;
+* **stage 2** against the measured player, 300 games a side. The plan said 500; it was cut to
+  300 to fit 15 tournaments in one launch.
+
+**The fit.** Fifteen Elo differences over nine players, fitted by weighted least squares with
+Gumbel@256 at 0: χ² = 4.1 on 7 degrees of freedom, and every pairing within 1.3 SE of the fit.
+R32's raw network sits at Gumbel@256 − 1 ± 11 (Experiment 1), so the first fitted column is also
+Elo over R32 raw, to within that.
+
+| variant (k:worlds:horizon) | vs Gumbel@256 | vs the measured player | Elo over Gumbel@256 (fit) | Elo over the measured player (fit) | runner-min per game and seat | local time per decision |
+|:---|---:|---:|---:|---:|---:|---:|
+| horizon 1 (4:16:1) | 39.6% ± 1.5 | 28.3% ± 1.8 | −69 ± 9 | **−170 ± 10** | 0.04 | 0.19 |
+| horizon 2 (4:16:2) | 59.0% ± 1.6 | 45.4% ± 2.0 | +65 ± 9 | −35 ± 10 | 0.17 | 0.47 |
+| **measured player (4:16:4)** | 63.4% ± 1.5 | — | +100 ± 6 | 0 | 0.34 | 1 |
+| horizon 8 (4:16:8), exploratory | 65.3% ± 1.5 | 49.8% ± 2.0 | +106 ± 9 | +5 ± 10 | 0.62 | 1.93 |
+| worlds 8 (4:8:4) | 60.3% ± 1.5 | 46.8% ± 2.0 | +75 ± 9 | −26 ± 10 | 0.15 | 0.56 |
+| worlds 32 (4:32:4) | 67.0% ± 1.5 | 53.1% ± 2.0 | **+123 ± 9** | **+22 ± 10** | 0.61 | 2.1 |
+| k = 2 (2:16:4) | 60.1% ± 1.5 | 46.8% ± 2.0 | +74 ± 9 | −27 ± 10 | 0.19 | 0.56 |
+| k = 6 (6:16:4) | 67.5% ± 1.5 | 49.3% ± 2.0 | +114 ± 9 | +14 ± 10 | 0.41 | 1.34 |
+| *Gumbel@256* | — | *36.6% ± 1.5* | *0* | *−100 ± 6* | *0.15* | *0.12* |
+
+Runs, in table order. Stage 1: `38091198821`, `38091204886`, `38091192709`, `38091210632`,
+`38091216221`, `38091221675`, `38091226483`, `38091231959`. Stage 2: `38091236984`,
+`38091242559`, —, `38091248420`, `38091254185`, `38091259993`, `38091265649`, `38091271656`.
+
+How the cost columns were measured:
+
+* **Runner-minutes per game and seat** come from each run's play jobs, less 1.5 minutes of setup
+  per job, divided by its games. That gives the two entrants' costs summed. The fifteen runs
+  over-determine nine players' costs, which are solved by least squares.
+* Any per-game cost the two seats share is split between them, so the cheap players' figures are
+  upper bounds. The tournament ratio of Gumbel@256 to the measured player, 0.42, agrees with
+  Experiment 1's 2.2× per game.
+* **Local time per decision** is relative to the measured player's 154 ms, timed before launch on
+  one batch of positions. Measured that way, Gumbel@256 is much cheaper (0.12).
+
+**Horizon: it has to reach 4 action-round boundaries, and 8 adds nothing.**
+
+* **Horizon 1 plays below R32's own network**, by ~70 Elo. A boundary is a change of action
+  round, so the critic reads the position after little more than the move itself. That repeats
+  [E7_search_depth_and_value](E7_search_depth_and_value.md)'s finding that the critic cannot rank
+  siblings (horizon 0 was −170 points per game there).
+* Its losses are lopsided: 472 of its 600 losses against Gumbel@256 come at 20 VP, against 154 of
+  361 for the measured player, and its games end in turn 6.5 rather than 8.2.
+* **Horizon 2 is −35 ± 10**, the same gap the heads soup showed between 4 and 2 boundaries (+35,
+  run `38042458244`).
+* **Horizon 8 is +5 ± 10** at 1.8× the measured player's cost. The rollout root's depth gain is
+  spent by 4 boundaries, two action rounds a side. B4''s turn-end pricing (R37) reaches further
+  than that, and here the extra depth bought nothing at play time.
+
+**Worlds: still rising at 32.**
+
+* 8 worlds is −26 ± 10, 32 worlds +22 ± 10: about +24 Elo for each doubling, with no sign of
+  flattening.
+* This is the reverse of Gumbel in [E7_search_depth_and_value](E7_search_depth_and_value.md)
+  section 1. There, more worlds at a fixed budget made the tree shallower and weaker. Here the
+  depth is fixed and worlds are added on top, so they only shrink the noise in the paired
+  comparison between candidates.
+
+**Candidates: 6 edges past 4.**
+
+* k = 2 is −27 ± 10 and k = 6 +14 ± 10 (1.4 SE).
+* The search bank found the better move inside the network's top 4 for ~92% of its errors. The
+  extra +14 says the remaining few percent are worth something, but it is not resolved.
+
+**Cost against strength.**
+
+* **On the cheap end** (by CI runner-minutes per game), 8 worlds plays at Gumbel@256's cost and
+  beats it by +75 ± 9. Horizon 2 (+65) and k = 2 (+74) sit at about 1.2× that cost.
+* **On the strong end**, k = 6 (+114 at 0.41) and 32 worlds (+123 at 0.61) are the best
+  measured.
+* **Horizon 8 is dominated:** it costs as much as 32 worlds and is 17 Elo weaker.
+* **Horizon 1 is the cheapest and worse than no search.** The horizon is the one setting that
+  cannot be cut to save time.
+* The measured player was re-played against Gumbel@256 at 63.4% (+95). Experiment 1 gave 65.3%
+  (+110); the two are 15 ± 16 apart.
+
 ## Compute
 
 | run | what | runner-minutes |
@@ -179,6 +277,8 @@ disagree (24.6% of decisions; there the rollout root's pick is ahead by +0.39 ±
 | `38078074630` | 600 games, rollout root on both | 482 |
 | `38078080803` | Experiment 3: search 60, playouts 695 (2 judges × 256 pairs) | 758 |
 | R34's picks | local, 4,474 positions | < 1 |
+| `38091192709` … `38091231959` | Experiment 2 stage 1: 8,000 games against Gumbel@256 (play jobs) | 3,952 |
+| `38091236984` … `38091271656` | Experiment 2 stage 2: 4,200 games against the measured player (play jobs) | 2,975 |
 
 Per decision, batched over 224 positions on a 4-core runner: Gumbel@256 16 ms and 251 network
 rows; the rollout root 150 ms and ~945 rows (9× the time, 3.8× the rows). Per game in the
@@ -207,21 +307,43 @@ against 716 for 2,000, each with the same searcher on both sides. The runners ar
 * **The positions are the soup's.** R32's own positions could show other departures. The bank is
   population-weighted for the soup's play, not R32's.
 * **Rollout root against rollout root** is 600 games; +12 ± 14 does not order the two.
+* **Experiment 2 varies one setting at a time.** It says nothing about interactions, for example
+  whether 6 candidates need more worlds to be told apart. Stage 2 is 600 games a pairing, so a
+  ±10 Elo fit resolves the large steps (horizon 1 and 2, worlds 8 and 32, k = 2) but not k = 6
+  or horizon 8.
+* **Experiment 2's costs are tournament costs** on GitHub's 4-core runners, with each player's
+  share solved from games it played against others. A per-game overhead shared by both seats
+  inflates the cheap players' figures. Per decision, batched offline, Gumbel@256 is far cheaper
+  (0.12 of the measured player against 0.42 here), so "8 worlds at Gumbel@256's cost" holds for
+  play in this harness, not for every way of batching.
+* **All of Experiment 2 is on R32.** The horizon step from 2 to 4 matches the soup's (+35 both),
+  but the worlds and candidates curves were not measured on the soup.
 
 ## Next step
 
-**Experiment 2 (the rollout root's horizon and compute on R32) is now worth running.** The
-rollout root still gains +128 on R32, and it costs ~2–9× Gumbel@256. Fixed beforehand, on
-R32, against Gumbel@256 and the measured player, 500 games a side each:
-* horizon 1, 2 and 4 boundaries at 16 worlds;
-* 8 and 32 worlds at horizon 4;
-* k = 2 and 6;
-* runner-minutes per point of score.
+**What Experiment 2 settles.** A rollout root is only useful at a horizon of 4 boundaries or
+more, so the horizon is not where to save time. The settings to trade are worlds and
+candidates:
 
-That says what a cheap rollout teacher would keep. **The larger question is the teacher in
-T1.** Gumbel's targets moved R32 where Gumbel@256 gains and left the rollout root's gain alone.
-The next T1 teacher worth testing is the rollout root itself, or B4''s turn-end pricing (R37),
-which reaches the same depth. Experiment 3's tool measures either's adoption on the same bank.
+* **For play where time is cheap** (the leaderboard, workbench analysis): 32 worlds is the
+  strongest measured player, +123 over Gumbel@256 and +22 over the measured player.
+* **For play at Gumbel@256's cost:** 8 worlds, +75 over Gumbel@256.
+
+**Next to measure:**
+
+* **6 candidates with 32 worlds** (`6:32:4`) against 32 worlds alone and against the measured
+  player. Both settings still rise, and they may compound: more candidates need more worlds to
+  separate.
+* **64 worlds**, to find where that curve flattens.
+
+**The teacher in T1** is still the larger question. Gumbel's targets moved R32 where
+Gumbel@256 gains and left the rollout root's gain alone. Experiment 2 narrows the candidate
+teacher: the rollout root at horizon 4, with worlds set by the training budget. 8 worlds keeps
+three quarters of the measured player's lead over Gumbel@256 at 0.56 of its time per decision.
+Depth past 4 boundaries bought nothing at play time, which leaves B4''s turn-end pricing (R37)
+to justify itself on other grounds. Experiment 3's tool measures any teacher's adoption on the
+same bank. The rollout loop still steps one state per Python call; the batched-runner port
+queued behind `ai/search/turn_pricing.py` is what makes any of these affordable inside RL.
 
 ## Replicate
 
@@ -248,9 +370,20 @@ gh workflow run search_reliability.yml --ref exp/r32-search -f release=r32-trans
   -f specs="soup_g256=256:8:0.2:all:1 soup_roll=rollout:4:16:4:z2 r32_raw=@2:raw r32_g256=@2:256:8:0.2:all:1 r32_roll=@2:rollout:4:16:4:z2" \
   -f transfer_roles="teacher_search=soup_g256 teacher_rollout=soup_roll student_raw=r32_raw student_search=r32_g256 student_rollout=r32_roll"
 gh run download <run> -n search-reliability-<run>    # report/transfer.md, report-j1.md, report-j2.md
+
+# Experiment 2: each variant against Gumbel@256 (500 a side) and against the measured player (300)
+for v in h1=4:16:1 h2=4:16:2 h8=4:16:8 w8=4:8:4 w32=4:32:4 k2=2:16:4 k6=6:16:4; do
+  name=${v%%=*}; spec=${v#*=}
+  gh workflow run searcher_tournament.yml --ref pr/r32-search -f model="$R32" -f games_per_side=500 \
+    -f entrants="name:$name:rollout:{BASE}:$spec:z2 name:g256:gumbel:{BASE}:256:8"
+  gh workflow run searcher_tournament.yml --ref pr/r32-search -f model="$R32" -f games_per_side=300 \
+    -f entrants="name:$name:rollout:{BASE}:$spec:z2 name:h4ref:rollout:{BASE}:4:16:4:z2"
+done
+gh workflow run searcher_tournament.yml --ref pr/r32-search -f model="$R32" -f games_per_side=500 \
+  -f entrants="name:h4ref:rollout:{BASE}:4:16:4:z2 name:g256:gumbel:{BASE}:256:8"
 ```
 
-Artifacts: `searcher-tournament-<run>` for the four tournaments (each with `tournament.json`
+Artifacts: `searcher-tournament-<run>` for the nineteen tournaments (each with `tournament.json`
 and `provenance.txt` naming the sha256s), and `search-reliability-38078080803` (picks,
 playouts, both judges' reports and `transfer.json`). The R34 adoption figures are from
 `load_policy` greedy picks on the bank's positions, compared with the run's recorded picks.
