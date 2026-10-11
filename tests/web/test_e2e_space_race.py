@@ -77,11 +77,22 @@ def browser_context():
         yield browser
         browser.close()
 
+
+def _answer_mode_dialog(page) -> None:
+    """A fresh open asks how to play (#mode-dialog) over the live board; answer Developer, which
+    is what these tests assume, so clicks reach the widgets behind it."""
+    dialog = page.locator("#mode-dialog")
+    if dialog.count() and dialog.is_visible():
+        page.click("#mode-choice-dev")
+        page.wait_for_selector("#mode-dialog", state="hidden")
+
+
 def test_workbench_page_load_and_header_tracks(browser_context, server_url):
     page = browser_context.new_page(viewport={"width": 1440, "height": 900})
     page.goto(server_url)
     page.wait_for_selector("#space-race-widget", timeout=5000)
-    
+    _answer_mode_dialog(page)
+
     # Check title and top-bar tracks
     assert "Twilight Struggle" in page.title()
     assert page.locator(".top-bar").is_visible()
@@ -96,7 +107,8 @@ def test_space_race_header_widget_initial_state(browser_context, server_url):
     page = browser_context.new_page(viewport={"width": 1440, "height": 900})
     page.goto(server_url)
     page.wait_for_selector("#space-race-widget", timeout=5000)
-    
+    _answer_mode_dialog(page)
+
     widget = page.locator("#space-race-widget")
     assert widget.is_visible()
     
@@ -126,7 +138,8 @@ def test_space_race_modal_interaction_and_content(browser_context, server_url):
     page = browser_context.new_page(viewport={"width": 1440, "height": 900})
     page.goto(server_url)
     page.wait_for_selector("#space-race-widget", timeout=5000)
-    
+    _answer_mode_dialog(page)
+
     # Click header widget to open modal
     page.locator("#space-race-widget").click()
     page.wait_for_selector("#modal-container:not(.hidden)", timeout=3000)
@@ -183,7 +196,8 @@ def test_space_race_replay_state_synchronization(browser_context, server_url):
     page = browser_context.new_page(viewport={"width": 1440, "height": 900})
     page.goto(server_url)
     page.wait_for_selector("#rep-server-select", timeout=5000)
-    
+    _answer_mode_dialog(page)
+
     # Wait for replay dropdown options to populate
     page.wait_for_function('document.getElementById("rep-server-select").options.length > 1', timeout=5000)
     server_select = page.locator("#rep-server-select")

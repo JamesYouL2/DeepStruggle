@@ -153,12 +153,27 @@ def test_new_game_and_the_view_select_fit_a_laptop_screen(browser: Any, static_s
     page = browser.new_page(viewport={"width": 1366, "height": 768})
     page.goto(f"{static_site}/?model=off")
     page.wait_for_function("window.__wb && window.__wb.liveState && window.__wb.positionToken", timeout=30000)
-    for el in ("view-select", "btn-new-game", "btn-toggle-debug", "btn-toggle-replay"):
+    # A fresh open asks how to play, over the live board; the answer sets the view.
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.click("#mode-choice-us")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert page.evaluate("window.__wb.shown.view") == "US"
+    for el in ("view-select", "btn-new-game", "btn-toggle-debug", "btn-toggle-replay", "analysis-source-select",
+               "search-mode-select", "active-player-badge", "btn-undo-action"):
         box = page.locator(f"#{el}").bounding_box()
         assert box and box["width"] > 0 and box["x"] + box["width"] <= 1366, f"#{el} is off screen"
-    page.select_option("#view-select", "US")
     _play_until(page, "s.current_phase_name === 'HEADLINE'")
+    # New Game asks again; closing the question deals nothing.
     page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert page.evaluate("window.__wb.state.step_index") > 0
+    # Answering it deals a new game in the chosen mode.
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.click("#mode-choice-ussr")
     page.wait_for_function("window.__wb.state.step_index === 0")
-    assert page.evaluate("window.__wb.shown.view") == "US"   # a new game keeps the chosen view
+    assert page.evaluate("window.__wb.shown.view") == "USSR"
+    assert page.evaluate("document.getElementById('view-select').value") == "USSR"
     page.close()

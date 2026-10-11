@@ -402,7 +402,15 @@ The workbench serves four purposes, all in the page:
   side's P(victory) and expected VP, the side to move -- the only reading the value head is
   trained on -- highlighted and the other dimmed; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
   *Auto-play* (none / USSR / US) makes that side play by itself.
-* **Play one side against the model** -- the header's view select (*Play as US / USSR*, `view=` in
+* **The top of the page is three blocks**: the disclaimer; the technical bar -- the engine badge,
+  the play mode (Developer / Play as US / Play as USSR) with New Game, the model's source and its
+  search select, and the developer's tools (Debug Tools, Replay Mode, Leaderboard); and the game bar
+  -- the tracks, whose decision it is, and Cancel Action. A fresh open (a link naming no position,
+  replay or view) and every New Game first ask for the play mode in a dialog (`#mode-dialog`,
+  `main.ts askMode`) over the live board; Escape keeps the current mode, and on New Game deals
+  nothing. The search select has one driver today, the policy's argmax; the rollout root the
+  engine exports (`bindings/rollout_batch.hpp`) is listed and disabled until the page drives it.
+* **Play one side against the model** -- the play mode (*Play as US / USSR*, `view=` in
   the URL) hides what that side may not know: the other hand's unknown cards (shown face down and
   merged with the draw deck into one unseen pile), its deal lines in the log (the cards it plays
   or discards stay), its face-down headline, and the model's readout while it decides; the map

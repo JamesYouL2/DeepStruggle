@@ -104,7 +104,7 @@ body {
 .global-tracks {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 14px;
   flex: 1;
   justify-content: center;
 }
@@ -160,7 +160,7 @@ body {
   gap: 8px;
 }
 .vp-bar {
-  width: 160px;
+  width: 120px;
   height: 12px;
   background: #1E293B;
   border-radius: 6px;
@@ -626,14 +626,106 @@ body {
   gap: 12px;
   margin-left: auto;
 }
-/* Too narrow for one line: the brand and the session controls first, the tracks across a second
-   line -- not the tracks squeezed between them, which pushed the controls to a third. */
-@media (max-width: 1750px) {
-  .top-bar .global-tracks {
-    order: 3;
+/* The technical bar's groups: a small caption over each -- the engine, the play mode, the model
+   and its search, the developer's tools -- so the bar reads as settings, not as the position. */
+.tech-bar {
+  justify-content: flex-start;
+  gap: 6px 22px;
+}
+.tech-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 10px;
+  position: relative;
+}
+.tech-label {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.tech-dev { margin-left: auto; }
+/* The model's source controls, moved up from the analysis panel: one line, selects of a size. */
+.model-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.model-controls .analysis-select { flex: 0 1 170px; width: 170px; }
+.model-controls .analysis-snapshot { flex: 0 1 120px; width: 120px; }
+.model-controls .analysis-src { display: flex; gap: 6px; align-items: center; }
+.model-controls .analysis-model-info { margin: 0; max-width: 360px; }
+.search-mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.search-mode .analysis-select { flex: 0 0 auto; width: auto; }
+
+/* The game bar: the position's tracks across the middle, whose decision it is and the undo at
+   the right. */
+.game-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 6px 16px;
+  background: var(--bg-panel-solid);
+  border-bottom: 1px solid var(--border-color);
+}
+.game-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+/* Too narrow for one line: the tracks take a line of their own above the controls. */
+@media (max-width: 1400px) {
+  .game-bar .global-tracks {
     flex-basis: 100%;
+    justify-content: flex-start;
   }
 }
+
+/* The play-mode question (index.html #mode-dialog, main.ts askMode). */
+.mode-dialog-content { max-width: 520px; }
+.mode-dialog-body { gap: 10px; }
+.mode-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 14px;
+  text-align: left;
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.mode-choice:hover, .mode-choice:focus-visible { border-color: var(--border-highlight); outline: none; }
+.mode-choice-us:hover, .mode-choice-us:focus-visible { border-color: var(--us-blue); }
+.mode-choice-ussr:hover, .mode-choice-ussr:focus-visible { border-color: var(--ussr-red); }
+.mode-choice-title { font-weight: 800; font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; }
+.mode-choice-us .mode-choice-title { color: var(--us-blue-light); }
+.mode-choice-ussr .mode-choice-title { color: var(--ussr-red-light); }
+.mode-choice-text { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+.mode-dialog-note { font-size: 10px; color: var(--text-dim); margin: 2px 0 0; }
 
 /* The two badges one above the other, to leave the buttons the width. */
 .session-info {

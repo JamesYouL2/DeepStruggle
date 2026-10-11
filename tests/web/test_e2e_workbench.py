@@ -113,6 +113,16 @@ def browser() -> Iterator[Any]:
         b.close()
 
 
+def _answer_mode_dialog(page: Any, choice: str = "mode-choice-dev") -> None:
+    """A fresh open asks how to play (#mode-dialog) over the live board; answer it -- Developer by
+    default, what every test here assumes -- so later clicks reach the page. A link that names a
+    view, a position or a replay is not asked, and then there is nothing to answer."""
+    dialog = page.locator("#mode-dialog")
+    if dialog.count() and dialog.is_visible():
+        page.click(f"#{choice}")
+        page.wait_for_selector("#mode-dialog", state="hidden")
+
+
 def _open(browser: Any, url: str, setup: Optional[Callable[[Any], None]] = None, context: Any = None) -> Any:
     """A page in a fresh browser context -- or in `context`, to share its storage across pages."""
     page = context.new_page() if context else browser.new_page(viewport={"width": 1440, "height": 900})
@@ -123,6 +133,7 @@ def _open(browser: Any, url: str, setup: Optional[Callable[[Any], None]] = None,
         setup(page)   # e.g. routes, which must be in place before the page's first request
     page.goto(url)
     page.wait_for_function("window.__wb && window.__wb.liveState && window.__wb.positionToken", timeout=30000)
+    _answer_mode_dialog(page)
     return page
 
 

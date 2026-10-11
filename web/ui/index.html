@@ -16,40 +16,90 @@
       Twilight Struggle® is a registered trademark of GMT Games, LLC.
     </div>
 
-    <!-- Top Header & Global Status Bar -->
-    <header class="top-bar">
+    <!-- Technical block: the engine, the play mode, the model and its search, the developer's
+         tools. Nothing here is about the position; that is the game bar below. -->
+    <header class="top-bar tech-bar" id="tech-bar">
       <div class="brand">
         <span class="brand-title">TWILIGHT STRUGGLE</span>
         <span class="brand-badge">ENGINE WORKBENCH</span>
       </div>
 
+      <div class="tech-group" id="tech-engine">
+        <span class="tech-label">Engine</span>
+        <!-- The engine running in the page: its fingerprint, and a warning when the local
+             server's sources have moved on from the build the page loaded. -->
+        <span id="connection-status" class="status-badge">LOADING ENGINE…</span>
+      </div>
+
+      <div class="tech-group" id="tech-mode">
+        <span class="tech-label">Play mode</span>
+        <!-- Whose eyes the board is drawn for (game/view.ts): a player's view hides the other
+             side's hand, face-down headline and options; the model plays that side. The page asks
+             for it when it opens and when New Game is pressed (the mode dialog below). -->
+        <select id="view-select" class="view-select" title="Developer: everything. Play as US / USSR: the other side's private information is hidden and the model plays it.">
+          <option value="DEV">Developer</option>
+          <option value="US">Play as US</option>
+          <option value="USSR">Play as USSR</option>
+        </select>
+        <button id="btn-new-game" class="btn btn-secondary btn-sm" title="A new game with a fresh deal; asks for the play mode first">New Game</button>
+      </div>
+
+      <div class="tech-group tech-model" id="tech-model">
+        <span class="tech-label">Model</span>
+        <!-- Where the model comes from (analysis_view.ts binds these by id). Its readout -- the
+             policy over the open decision and the critic -- stays in the Model Analysis panel. -->
+        <div class="model-controls">
+          <select id="analysis-source-select" class="analysis-select analysis-source" title="Where the model comes from">
+            <option value="">— analysis off —</option>
+            <option value="local" id="analysis-source-local-option">Local checkpoints</option>
+            <option value="hf">Hugging Face</option>
+            <option value="file">.onnx file</option>
+          </select>
+          <div id="analysis-src-local" class="analysis-src hidden">
+            <select id="analysis-run-select" class="analysis-select" title="Training run"></select>
+            <select id="analysis-snapshot-select" class="analysis-select analysis-snapshot" title="Snapshot" disabled></select>
+          </div>
+          <div id="analysis-src-hf" class="analysis-src hidden">
+            <input id="analysis-hf-repo" class="analysis-select" placeholder="owner/repo" title="A public Hugging Face model repo holding .onnx exports (tools/export_onnx.py)">
+            <input id="analysis-hf-revision" class="analysis-select analysis-snapshot" value="main" title="Branch, tag or commit">
+            <button id="analysis-hf-list" class="btn btn-secondary btn-sm" title="List the repo's .onnx files">List</button>
+            <select id="analysis-hf-file" class="analysis-select" title="Model file"></select>
+            <button id="analysis-hf-clear" class="btn btn-secondary btn-sm" disabled>Clear cache</button>
+          </div>
+          <div id="analysis-src-file" class="analysis-src hidden">
+            <input id="analysis-file-input" type="file" accept=".onnx" class="analysis-file" title="An .onnx export (tools/export_onnx.py); you can also drop it anywhere on the page">
+          </div>
+          <!-- How the model chooses a move. Policy: its argmax, one forward. The rollout root
+               (bindings/rollout_batch.hpp, exported by this engine) has no driver in the page yet. -->
+          <label class="search-mode" title="How the model picks its move">
+            Search
+            <select id="search-mode-select" class="analysis-select" title="Policy: the model's most likely move, one forward. Rollout root: its top moves played out in sampled worlds -- the engine exports it, the page does not drive it yet.">
+              <option value="policy">Policy (greedy)</option>
+              <option value="rollout" disabled>Rollout root (not yet in the page)</option>
+            </select>
+          </label>
+          <div id="analysis-model-info" class="analysis-model-info hidden"></div>
+        </div>
+      </div>
+
+      <div class="tech-group tech-dev" id="tech-dev">
+        <span class="tech-label">Developer</span>
+        <button id="btn-toggle-debug" class="btn btn-secondary btn-sm">Debug Tools</button>
+        <button id="btn-toggle-replay" class="btn btn-primary btn-sm">Replay Mode</button>
+        <a id="link-leaderboard" class="btn btn-secondary btn-sm" href="leaderboard.html" title="Elo ratings of the published models">Leaderboard</a>
+      </div>
+    </header>
+
+    <!-- Game bar: the position -- the tracks, whose decision it is, and the undo. -->
+    <div class="game-bar" id="game-bar">
       <div class="global-tracks" id="global-tracks">
         <!-- Rendered by tracks_view.ts -->
       </div>
-
-      <div class="session-controls">
-        <div class="session-info">
-          <!-- The engine running in the page: its fingerprint, and a warning when the local
-               server's sources have moved on from the build the page loaded. -->
-          <span id="connection-status" class="status-badge">LOADING ENGINE…</span>
-          <span id="active-player-badge" class="player-badge ussr">USSR TURN</span>
-        </div>
-        <div class="header-buttons">
-          <button id="btn-undo-action" class="btn btn-warning btn-sm" title="Undo / Cancel Last Action (Ctrl+Z / Esc)">⟲ Cancel Action</button>
-          <!-- Whose eyes the board is drawn for (game/view.ts): a player's view hides the other
-               side's hand, face-down headline and options; the model plays that side. -->
-          <select id="view-select" class="view-select" title="Developer: everything. Play as US / USSR: the other side's private information is hidden and the model plays it.">
-            <option value="DEV">Developer view</option>
-            <option value="US">Play as US</option>
-            <option value="USSR">Play as USSR</option>
-          </select>
-          <button id="btn-new-game" class="btn btn-secondary btn-sm" title="A new game with a fresh deal, in the view selected">New Game</button>
-          <button id="btn-toggle-debug" class="btn btn-secondary btn-sm">Debug Tools</button>
-          <button id="btn-toggle-replay" class="btn btn-primary btn-sm">Replay Mode</button>
-          <a id="link-leaderboard" class="btn btn-secondary btn-sm" href="leaderboard.html" title="Elo ratings of the published models">Leaderboard</a>
-        </div>
+      <div class="game-controls">
+        <span id="active-player-badge" class="player-badge ussr">USSR TURN</span>
+        <button id="btn-undo-action" class="btn btn-warning btn-sm" title="Undo / Cancel Last Action (Ctrl+Z / Esc)">⟲ Cancel Action</button>
       </div>
-    </header>
+    </div>
 
     <!-- Main Central Grid -->
     <main class="main-content">
@@ -135,28 +185,8 @@
             <h3>MODEL ANALYSIS</h3>
             <span id="analysis-status" class="badge">off</span>
           </div>
+          <!-- The model itself is chosen in the technical bar (#tech-model); here is what it says. -->
           <div class="analysis-controls">
-            <select id="analysis-source-select" class="analysis-select analysis-source" title="Where the model comes from">
-              <option value="">— analysis off —</option>
-              <option value="local" id="analysis-source-local-option">Local checkpoints</option>
-              <option value="hf">Hugging Face</option>
-              <option value="file">.onnx file</option>
-            </select>
-            <div id="analysis-src-local" class="analysis-src hidden">
-              <select id="analysis-run-select" class="analysis-select" title="Training run"></select>
-              <select id="analysis-snapshot-select" class="analysis-select analysis-snapshot" title="Snapshot" disabled></select>
-            </div>
-            <div id="analysis-src-hf" class="analysis-src hidden">
-              <input id="analysis-hf-repo" class="analysis-select" placeholder="owner/repo" title="A public Hugging Face model repo holding .onnx exports (tools/export_onnx.py)">
-              <input id="analysis-hf-revision" class="analysis-select analysis-snapshot" value="main" title="Branch, tag or commit">
-              <button id="analysis-hf-list" class="btn btn-secondary btn-sm" title="List the repo's .onnx files">List</button>
-              <select id="analysis-hf-file" class="analysis-select" title="Model file"></select>
-              <button id="analysis-hf-clear" class="btn btn-secondary btn-sm" disabled>Clear cache</button>
-            </div>
-            <div id="analysis-src-file" class="analysis-src hidden">
-              <input id="analysis-file-input" type="file" accept=".onnx" class="analysis-file" title="An .onnx export (tools/export_onnx.py); you can also drop it anywhere on the page">
-            </div>
-            <div id="analysis-model-info" class="analysis-model-info hidden"></div>
             <button id="btn-play-favourite" class="btn btn-primary btn-sm" title="Play the model's most likely move (F)" disabled>★ Play favourite</button>
             <label class="analysis-autoplay" title="This side plays the model's favourite automatically; you play the other">
               Auto-play
@@ -192,6 +222,32 @@
         </div>
       </aside>
     </main>
+
+    <!-- The play-mode question, asked when the page opens on a fresh game and when New Game is
+         pressed (main.ts askMode). Escape keeps the current mode. -->
+    <div id="mode-dialog" class="modal-backdrop mode-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="mode-dialog-title">
+      <div class="modal-content mode-dialog-content">
+        <div class="modal-header">
+          <h2 id="mode-dialog-title">How do you want to play?</h2>
+          <button id="mode-dialog-close" class="btn-icon" title="Keep the current mode (Esc)">✕</button>
+        </div>
+        <div class="modal-body mode-dialog-body">
+          <button id="mode-choice-dev" class="mode-choice" data-mode="DEV">
+            <span class="mode-choice-title">Developer</span>
+            <span class="mode-choice-text">Both hands, every option, the debug tools and replays. You move both sides, or let the model play one.</span>
+          </button>
+          <button id="mode-choice-us" class="mode-choice mode-choice-us" data-mode="US">
+            <span class="mode-choice-title">Play as US</span>
+            <span class="mode-choice-text">The USSR's hand and headline stay hidden; the model plays the USSR.</span>
+          </button>
+          <button id="mode-choice-ussr" class="mode-choice mode-choice-ussr" data-mode="USSR">
+            <span class="mode-choice-title">Play as USSR</span>
+            <span class="mode-choice-text">The US's hand and headline stay hidden; the model plays the US.</span>
+          </button>
+          <p class="mode-dialog-note" id="mode-dialog-note"></p>
+        </div>
+      </div>
+    </div>
 
     <!-- Bottom Bar: Action Log & Replay Transport Controls with Resizer -->
     <div class="bottom-bar-resizer" id="bottom-resizer" title="Drag vertically to resize panel">

@@ -67,7 +67,15 @@ export class TSApp {
   private urlPosition: string | null = null;
   private urlModel: string | null = null;
   private urlAuto: AutoSide = "";
+  /** The link named a view: the page then does not ask for the play mode. */
+  private urlView = false;
   private autoPlayTimer: number | null = null;
+  /**
+   * How the model picks its move (#search-mode-select). "policy" is its argmax from one forward,
+   * the only driver in the page today; the rollout root the engine exports has none yet, so its
+   * option is disabled in the markup and this never takes that value.
+   */
+  private searchMode: "policy" | "rollout" = "policy";
 
   constructor() {
     this.parseQueryParams();
@@ -106,6 +114,7 @@ export class TSApp {
     this.actionHud.onRerender = () => this.redecorate();
 
     this.setupViewSelect();
+    this.setupSearchSelect();
     this.setupGlobalControls();
     this.setupBottomResizer();
     this.setupFileDrop();
@@ -152,6 +161,9 @@ export class TSApp {
     } else if (!this.isReplayMode) {
       this.loadDefaultModel();
     }
+    // A fresh open with nothing decided by the link: ask how to play. A link that names a
+    // position, a replay or a view has decided already.
+    if (!this.urlPosition && !this.isReplayMode && !this.urlView) this.askMode("open");
   }
 
   /**
@@ -198,7 +210,72 @@ export class TSApp {
     const auto = (params.get("auto") || "").toUpperCase();
     this.urlAuto = auto === "US" || auto === "USSR" ? auto : "";
     // A replay link shows everything; a player's view cannot watch one.
+    this.urlView = params.has("view");
     this.view = this.isReplayMode ? "DEV" : viewFromParam(params.get("view"));
+  }
+
+  /**
+   * The play-mode question (#mode-dialog): on a fresh open, and before every New Game. The game
+   * on the board stays live underneath, so a link, a test or an impatient player can go on without
+   * answering; Escape and the close button keep the current mode. On "new", the choice also deals
+   * the new game -- cancelling deals nothing.
+   */
+  private askMode(reason: "open" | "new") {
+    const dialog = document.getElementById("mode-dialog");
+    if (!dialog) return;
+    const note = document.getElementById("mode-dialog-note");
+    if (note) {
+      note.textContent = reason === "new"
+        ? "A fresh deal follows your choice. Close to keep the game on the board."
+        : "You can change this any time in the Play mode select above.";
+    }
+    dialog.classList.remove("hidden");
+    const choose = (mode: ViewMode | null) => {
+      dialog.classList.add("hidden");
+      for (const b of buttons) b.removeEventListener("click", onClick);
+      document.getElementById("mode-dialog-close")?.removeEventListener("click", onClose);
+      dialog.removeEventListener("click", onBackdrop);
+      window.removeEventListener("keydown", onKey);
+      if (mode === null) return;
+      if (reason === "new") this.newGame(mode);
+      else if (mode !== this.view) this.setView(mode);
+    };
+    const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>(".mode-choice"));
+    const onClick = (ev: Event) => {
+      const m = (ev.currentTarget as HTMLElement).getAttribute("data-mode") as ViewMode;
+      choose(m);
+    };
+    const onClose = () => choose(null);
+    const onBackdrop = (ev: Event) => { if (ev.target === dialog) choose(null); };
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") choose(null); };
+    for (const b of buttons) b.addEventListener("click", onClick);
+    document.getElementById("mode-dialog-close")?.addEventListener("click", onClose);
+    dialog.addEventListener("click", onBackdrop);
+    window.addEventListener("keydown", onKey);
+    const current = this.view === "US" ? "mode-choice-us" : this.view === "USSR" ? "mode-choice-ussr" : "mode-choice-dev";
+    const focus = document.getElementById(current) as HTMLButtonElement | null;
+    focus?.focus();
+  }
+
+  /** A fresh deal in `mode`. The link then names the new position. */
+  private newGame(mode: ViewMode) {
+    if (!this.session) return;
+    if (mode !== this.view) this.setView(mode, false);
+    this.session.newGame(Math.floor(Math.random() * 1_000_000));
+    if (this.isReplayMode) this.setReplayMode(false);
+    renderTracePanel([], 0);
+    this.refresh();
+  }
+
+  /** The search select (#search-mode-select): recorded; only "policy" has a driver today. */
+  private setupSearchSelect() {
+    const sel = document.getElementById("search-mode-select") as HTMLSelectElement | null;
+    if (!sel) return;
+    sel.value = this.searchMode;
+    sel.addEventListener("change", () => {
+      this.searchMode = sel.value === "rollout" ? "rollout" : "policy";
+      sel.value = this.searchMode;
+    });
   }
 
   /** The view selector: developer (everything) or one side against the model. */
@@ -859,13 +936,10 @@ export class TSApp {
     document.getElementById("btn-zoom-out")?.addEventListener("click", () => this.mapView.zoom(1.15));
     document.getElementById("btn-zoom-reset")?.addEventListener("click", () => this.mapView.resetView());
 
-    // New Game: a fresh seed, in the page. The link then names the new position.
+    // New Game: ask how to play, then a fresh seed in that mode (askMode -> newGame).
     document.getElementById("btn-new-game")?.addEventListener("click", () => {
       if (!this.session) return;
-      this.session.newGame(Math.floor(Math.random() * 1_000_000));
-      if (this.isReplayMode) this.setReplayMode(false);
-      renderTracePanel([], 0);
-      this.refresh();
+      this.askMode("new");
     });
 
     // Debug Tools button
