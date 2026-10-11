@@ -1,10 +1,13 @@
 """The blunder bank's selection and confirmation rules (tools/scripts/blunder_bank.py), on hand-built
 rows: the leading alternative is fixed before the confirmation, and a row enters the bank only if
-every judge confirms it."""
+every judge confirms it; a row decided whatever is played (`prove`) leaves it."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List
+
+import pytest
 
 from tools.scripts.blunder_bank import confirmed, leading_alternative, shortlisted
 
@@ -62,3 +65,21 @@ def test_a_row_is_decided_only_where_every_world_is_settled() -> None:
     assert decided(["win", "loss"]) == "either"
     assert decided(["loss", None]) == ""             # the move matters in a world, or it was not enumerated
     assert decided([]) == ""
+
+
+def test_settle_drops_the_decided_rows_and_refuses_a_missing_part(tmp_path: Path) -> None:
+    from tools.scripts.blunder_bank import _read, _write, settle
+
+    def row(rid: str) -> Dict[str, Any]:
+        return {"id": rid, "side": "US", "turn": 10, "ar": 7, "network": {"action": 1, "name": "x"},
+                "exact": {"proved": False}}
+    bank = tmp_path / "bank.jsonl"
+    _write(str(bank), [row("a"), row("b"), row("c")])
+    _write(str(tmp_path / "prove-1.jsonl.gz"), [{"id": "a", "decided": "win"}, {"id": "b", "decided": ""}])
+    _write(str(tmp_path / "prove-2.jsonl.gz"), [{"id": "c", "decided": "loss"}])
+    out = tmp_path / "out.jsonl"
+    assert settle(str(bank), [str(tmp_path / "prove-*.jsonl.gz")], str(out)) == 0
+    kept = list(_read([str(out)]))
+    assert [r["id"] for r in kept] == ["b"] and kept[0]["exact"] == {"proved": False, "decided": ""}
+    with pytest.raises(SystemExit):
+        settle(str(bank), [str(tmp_path / "prove-1.jsonl.gz")], str(out))

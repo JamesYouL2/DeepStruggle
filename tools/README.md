@@ -1224,6 +1224,11 @@ paid out against the blunder with `--judge` and `--pairs`. `confirm --continue-w
 Gumbel root of the judge on both sides. `prove` solves exactly the rows whose game ends in the
 current turn: every later choice is enumerated and dice are averaged, the blunder is held to its
 best case and the better move to its worst, over worlds with the mover's unseen cards redealt.
+It also asks, by a yes/no search that reaches further, whether the row is **decided whatever is
+played**: the move played wins whatever follows, or the position before it is lost whatever the
+mover plays, in every world. Playouts charge such a move for the follow-up's mistake or for the
+opponent failing to finish a won game, so `settle` drops those rows from the bank
+(`bank_playouts.yml stage=prove`, one row per runner).
 
 ```bash
 .venv/bin/python tools/scripts/blunder_bank.py select --validation validation.jsonl.gz \
@@ -1234,6 +1239,10 @@ best case and the better move to its worst, over worlds with the mover's unseen 
     --min-gap 0.1 --min-z 3 --out ai/eval/banks/blunders_E7.jsonl --md blunders.md
 .venv/bin/python tools/scripts/blunder_bank.py score --bank ai/eval/banks/blunders_E7.jsonl \
     --player soup=soup.pt g256=gumbel:soup.pt:256:8 --judge soup.pt --pairs 128 --out score.md
+.venv/bin/python tools/scripts/blunder_bank.py prove --input ai/eval/banks/blunders_E7.jsonl \
+    --budget 2000000 --part 1/37 --out prove-1.jsonl.gz
+.venv/bin/python tools/scripts/blunder_bank.py settle --bank ai/eval/banks/blunders_E7.jsonl \
+    --prove 'prove/*.jsonl.gz' --out ai/eval/banks/blunders_E7.jsonl
 ```
 
 ---

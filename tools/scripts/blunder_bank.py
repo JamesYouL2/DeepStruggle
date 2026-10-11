@@ -18,7 +18,12 @@ only what survives a second, independent measurement:
   readable table;
 * `score` -- each player's move on every bank position (a checkpoint's greedy move, or any
   `load_agent` searcher): the blunder repeated, the confirmed better move found, or another move,
-  which `--pairs` pays out against both with a judge network.
+  which `--pairs` pays out against both with a judge network;
+* `prove` -- where the game ends in the current turn, the rest of it enumerated exactly: whether the
+  blunder is proved, and whether the row is decided whatever is played (the move wins whatever
+  follows, or the position is already lost). Playouts charge such a move for a later mistake, or
+  for the opponent failing to finish a game it has won;
+* `settle` -- the bank without the rows `prove` finds decided.
 
 A bank row's cost is a paired difference in the mover's score (1 win, 0.5 draw, 0 loss), so 0.2 is
 twenty points of win probability.
@@ -33,6 +38,10 @@ twenty points of win probability.
         --out ai/eval/banks/blunders_E7.jsonl --md blunders_E7.md
     python tools/scripts/blunder_bank.py score --bank ai/eval/banks/blunders_E7.jsonl \\
         --player soup=soup.pt --player g256=gumbel:soup.pt:256:8 --judge soup.pt --pairs 128 --out score.md
+    python tools/scripts/blunder_bank.py prove --input ai/eval/banks/blunders_E7.jsonl \\
+        --budget 2000000 --part 1/37 --out prove-1.jsonl.gz
+    python tools/scripts/blunder_bank.py settle --bank ai/eval/banks/blunders_E7.jsonl \\
+        --prove prove-*.jsonl.gz --out ai/eval/banks/blunders_E7.jsonl
 """
 
 from __future__ import annotations
@@ -548,6 +557,29 @@ def prove(inputs: Sequence[str], deals: int, budget: int, seed: int, part: str, 
     return 0
 
 
+def settle(bank_path: str, proofs: Sequence[str], out: str) -> int:
+    """The bank without its decided rows (`prove`): where the move played wins whatever follows,
+    or the position is lost whatever the mover plays, the move decides nothing, and the cost the
+    playouts give it belongs to a later move or to the opponent's failure to finish the game. Every
+    remaining row keeps its `prove` outcome in `exact.decided` ("")."""
+    bank = list(_read([bank_path]))
+    proof = {str(p["id"]): p for p in _read(sorted({f for g in proofs for f in glob.glob(g)}))}
+    missing = [str(r["id"]) for r in bank if str(r["id"]) not in proof]
+    if missing:
+        raise SystemExit(f"no prove row for {len(missing)} bank rows (a part missing?): {missing[:5]}")
+    kept: List[Dict[str, Any]] = []
+    for r in bank:
+        p = proof[str(r["id"])]
+        if p["decided"]:
+            print(f"dropped {r['id']} {r['side']} T{r['turn']} AR{r['ar']} {r['network']['name']}: "
+                  f"{p['decided']} whatever is played", file=sys.stderr)
+            continue
+        kept.append(dict(r, exact=dict(r.get("exact", {}), decided="")))
+    _write(out, kept)
+    print(f"{len(kept)} of {len(bank)} rows kept", file=sys.stderr)
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -585,7 +617,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     v.add_argument("--seed", type=int, default=13)
     v.add_argument("--part", default="1/1")
     v.add_argument("--out", required=True, help="one JSON row per bank row (.jsonl or .jsonl.gz)")
+    t = sub.add_parser("settle", help="the bank without the rows prove finds decided whatever is played")
+    t.add_argument("--bank", required=True)
+    t.add_argument("--prove", nargs="+", required=True, help="prove's rows (every part)")
+    t.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.cmd == "settle":
+        return settle(a.bank, a.prove, a.out)
     if a.cmd == "prove":
         return prove(a.input, a.deals, a.budget, a.seed, a.part, a.out)
     if a.cmd == "select":

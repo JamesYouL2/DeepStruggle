@@ -1,60 +1,66 @@
-# The blunder bank (2026-10-10): 37 positions where the E7 network's own move costs 10+ points of a game, confirmed twice
+# The blunder bank (2026-10-10): 35 positions where the E7 network's own move costs 10+ points of a game, confirmed twice
 
 **Question (owner).** Where is the network clearly making a move that costs a large share of the
 game? Keep those positions, so any later network or searcher can be checked against them.
 
-**Answer.** The bank holds 37 positions (`ai/eval/banks/blunders_E7.jsonl`). In each one, a
+**Answer.** The bank holds 35 positions (`ai/eval/banks/blunders_E7.jsonl`). In each one, a
 fresh paired measurement by two judge networks puts the heads soup's greedy move 10+ points of
-the mover's score below a fixed alternative, at 3+ standard errors under both. 20 of them cost
-20+ points.
+the mover's score below a fixed alternative, at 3+ standard errors under both. 18 of them cost
+20+ points. It was built with 37. After the owner's review, 2 left it because the game was
+already won whatever was played there.
 
-* **Are they really mistakes? 20 hold up under every check, 7 probably do, 10 do not.**
+* **Are they really mistakes? 19 hold up under every check, 7 probably do, 9 do not.**
   * **6 are proved exactly.** Each is a turn-10 last-round decision, enumerated to the end of the
     game with dice averaged, in nine worlds with the mover's unseen cards redealt. Five hold whatever
     the opponent does, and one against the opponent's best reply.
-  * **14 more hold with search on both sides of the continuation** (Gumbel@256, 96 fresh pairs).
+  * **13 more hold with search on both sides of the continuation** (Gumbel@256, 96 fresh pairs).
   * **7 stay positive at 2+ SE** with search but drop below 3 SE or 10 points.
   * **9 vanish with search** (cost ≈ 0). These were mistakes only given the network's own greedy
     follow-up.
-  * **1 is exactly not a mistake.** The US placing in Nigeria rather than India at turn 10 still
-    wins in every world with correct play afterward. The playouts lose there because the network,
-    and Gumbel@256, then botch the remaining points of the same play. The error at that position is
-    real but sits in the follow-up, not in the move recorded.
+  * **2 were removed: the game is won whatever is played** (see
+    [Decided whatever is played](#decided-whatever-is-played)). Both are the US's last round of
+    turn 10 with Quagmire. In one, it places in Nigeria rather than India. In the other, it plays
+    the Ops for influence rather than realignment. Either way the US wins in every world with
+    correct play afterward. The playouts lose there because the network, and Gumbel@256, then
+    botch the rest of the round. The error is real, but it sits in the follow-up, not in the move
+    recorded.
 
   Each row's `verdict` in the bank file records which of these it is. See
   [Verification](#verification).
 * **The census's estimated regret was mostly selection.** The 487 rows the
   [census](E7_blunder_census.md) measured at 10+ points (z ≥ 2, 32 pairs) averaged 21.8 points
   when selected. Re-paid from a fresh seed at 512 pairs, they average 3.8 points (soup judge) and
-  2.9 (R32 judge), and 37 survive both. Of the census's 89 random-control rows on the shortlist,
-  2 survive.
-* **Where the bank's blunders are.** 24 of the 37 are in turn 10. 9 of those are influence
-  placements, 6 of them in the last action round before final scoring, as the census found. The
+  2.9 (R32 judge), and 37 survive both (35 after the review below). Of the census's 89
+  random-control rows on the shortlist, 2 survive.
+* **Where the bank's blunders are.** 22 of the 35 are in turn 10. 8 of those are influence
+  placements, 5 of them in the last action round before final scoring, as the census found. The
   rest are mostly card choices:
   * headlines (Europe Scoring at turn 3, Middle East Scoring at turn 9, Korean War at turn 3);
   * a scoring card played early or late;
   * the event not taken where it wins: Wargames for the event, Tear Down this Wall and
     Iran-Iraq War played for Ops at turn 10;
   * the China Card's timing, both spent and held at the wrong moment.
-* **Who repeats them.** Each player's move on the 37 positions. A move that is neither the
+* **Who repeats them.** Each player's move on the 35 positions. A move that is neither the
   blunder nor the better move is paid out against the blunder by the soup's continuations, 256
   pairs:
 
 | player | repeats the blunder | finds the better move | other move (its lead on the blunder) | points repeated |
 |:---|---:|---:|---:|---:|
-| heads soup, greedy | 37 | 0 | 0 | 10.3 |
-| R32's SWA, greedy | 25 | 7 | 5 (−0.17) | 7.2 |
-| heads soup, Gumbel k=8 @256 | 12 | 18 | 7 (+0.10) | 4.2 |
-| R32, Gumbel k=8 @256 | 5 | 23 | 9 (+0.15) | 1.3 |
-| heads soup, rollout root (`4:16:4:z2`) | 17 | 18 | 2 (+0.28) | 4.7 |
-| R32, rollout root | 9 | 23 | 5 (+0.17) | 1.9 |
+| heads soup, greedy | 35 | 0 | 0 | 9.1 |
+| R32's SWA, greedy | 24 | 7 | 4 (−0.10) | 6.5 |
+| heads soup, Gumbel k=8 @256 | 10 | 18 | 7 (+0.10) | 3.0 |
+| R32, Gumbel k=8 @256 | 4 | 23 | 8 (+0.12) | 0.6 |
+| heads soup, rollout root (`4:16:4:z2`) | 16 | 17 | 2 (+0.28) | 4.2 |
+| R32, rollout root | 9 | 22 | 4 (+0.10) | 1.9 |
 
-* R32 raw avoids a third of the soup's blunders, but its other moves there are worse still (−0.17
+  These are the same picks as on the 37 rows as built, with the 2 decided rows left out.
+
+* R32 raw avoids a third of the soup's blunders, but its other moves there are worse still (−0.10
   on the blunder). Under search it repeats the fewest.
-* **The rollout root repeats more than Gumbel here (17 against 12) though it is the stronger
+* **The rollout root repeats more than Gumbel here (16 against 10) though it is the stronger
   player** (+97 Elo over Gumbel@256 on the soup). Its `z2` rule keeps the network's move unless an
   alternative leads by two standard errors over its own 16 worlds.
-* **The bank favours Gumbel by construction.** 22 of the 37 better moves are the census's own
+* **The bank favours Gumbel by construction.** 22 of the 35 better moves are the census's own
   Gumbel@256 pick, because Gumbel nominated the alternatives the census paid out. Compare players
   other than Gumbel with each other; Gumbel's figure is an upper bound.
 
@@ -83,12 +89,13 @@ Tool `tools/scripts/blunder_bank.py` (`select`, `confirm`, `build`, `score`; `to
 * **Score.** Local, `check_engine_fresh` `6c036593…`. Searchers are reseeded per position from
   the row id, so a score does not depend on the order the bank is read in.
 
-The 37 positions with each judge's cost and a workbench link: [bank](E7_blunder_bank/bank.md);
+The 35 positions with each judge's cost and a workbench link: [bank](E7_blunder_bank/bank.md);
 the score table as written: [score](E7_blunder_bank/score.md).
 
 ## Verification
 
-Three independent checks, all on the 37 rows as built:
+Three independent checks, all on the 37 rows as built, then a fourth from the owner's review that
+took 2 of them out:
 
 * **Exact (`blunder_bank.py prove`).** Where the game ends in the current turn, everything after the
   move is enumerated. The mover takes its best move, each die is averaged over its six faces, and
@@ -113,23 +120,23 @@ Three independent checks, all on the 37 rows as built:
   locally from its 20 parts). The mean cost of the 37 falls from 27.9 points (greedy soup judge) to
   23.7. 21 hold at 10+ points and z ≥ 3, 7 are positive at z ≥ 2, 9 are not resolved, and none
   reverses.
-* **The verdicts combined** (`verdict` in `ai/eval/banks/blunders_E7.jsonl`):
+* **The verdicts combined** (`verdict` in `ai/eval/banks/blunders_E7.jsonl`, the 35 rows left):
 
 | verdict | rows | what it means |
 |:---|---:|:---|
 | `proved` | 5 | exact, whatever the opponent does |
 | `proved-vs-best-reply` | 1 | exact, against the opponent's best reply |
-| `holds-under-search` | 14 | 10+ points at z ≥ 3 under the soup, R32 and the searched continuation |
+| `holds-under-search` | 13 | 10+ points at z ≥ 3 under the soup, R32 and the searched continuation |
 | `likely` | 7 | positive at z ≥ 2 under the searched continuation |
 | `continuation-dependent` | 9 | the cost is gone when the follow-up searches |
-| `move-not-a-mistake` | 1 | exact: the move keeps the win; the follow-up loses it |
 
-The searched continuation also scores the Nigeria row at 47 ± 1 points. Paired playouts measure
+The 2 removed rows were `move-not-a-mistake` (Nigeria) and `holds-under-search` (Ops for
+influence). The searched continuation scores them at 47 ± 1 and 66 ± 5 points. Paired playouts measure
 a move *together with* the continuation policy's play after it, so only the exact check separates
 the two. Rows whose cost survives search are robust to the greedy follow-up, not proof that the
 move itself is the error.
 
-**What survives.** The 20 rows that hold are of two kinds:
+**What survives.** The 19 rows that hold are of two kinds:
 * the last placements and play choices of turn 10, which are arithmetic;
 * card choices: game-winning events declined (Wargames at turn 9; Iran-Iraq War at turn 10's last
   round), headlines (Europe Scoring at turn 3, Red Scare/Purge at turn 8, Brush War at turn 10,
@@ -140,11 +147,45 @@ move itself is the error.
 No mid-game influence placement survives. The one in the bank (Decolonization's point, Haiti
 against Cuba, turn 6) is continuation-dependent.
 
+### Decided whatever is played
+
+The owner reviewed every row (2026-10-11). The reviews that disagree with the bank are mostly at
+the end of a game whose result is already fixed. A paired playout charges a move for everything
+played after it:
+* Where the move played wins whatever follows, any cost it gets is a later mistake.
+* Where the position is lost whatever the mover plays, the better move's lead is only the opponent
+  failing to finish the game.
+
+Neither one is a blunder at that position. `prove` now asks both questions with a yes/no search,
+which reaches rows its exact values cannot:
+* The mover needs one move that works; every reply by the opponent, and for a sure win every face
+  of a die, must fail to stop it.
+* Placements made in different orders are merged into one position.
+
+The search runs in the recorded position and the 8 redealt worlds, 2,000,000 nodes per search,
+one row per runner (fork CI run `38160600604`, commit `c340cf6`). A row is **decided** where
+every world settles one of the two ways, and `blunder_bank.py settle` takes it out of the bank.
+
+* **2 are decided, both won whatever is played.** Both are the US's last round of turn 10, holding
+  Quagmire:
+  * Ops for influence rather than realignment. The owner wrote "Ops deterministically wins the
+    game". The influence play wins in all 9 worlds, while the realignment the bank called better
+    leaves one world open.
+  * Nigeria rather than India. This row was `move-not-a-mistake` above.
+* **The USSR's Mexico rather than France, turn 10, last round** (the owner: "USSR loses anyway,
+  basically"). It is lost whatever the USSR plays in 8 of 9 worlds. The ninth does not settle
+  within the budget, so the row stays.
+* **No other row settles.** 12 need a new turn, and the other turn-10 rows run out of budget.
+  That includes the turn-10 headline of Soviets Shoot Down KAL-007, which the owner calls a gamble
+  that wins only if the US headlines Duck and Cover.
+  * In the Solidarity row (the USSR, turn 10, last round), the move matters in at least 3 worlds:
+    the move loses, and the position before it does not.
+
 ## What this does not say
 
 * **It is not a rate.** The shortlist came from 200 greedy games of one network through a screen
   (forced-loss labels and a Gumbel @32 disagreement) and a 32-pair estimate. Missed blunders
-  are not counted, so 37 is a floor on 200 games, not an estimate of a population.
+  are not counted, so 35 is a floor on 200 games, not an estimate of a population.
 * **The cost is judged by continuations.** A move whose value lies in a follow-up the judges do
   not play is undervalued. Two greedy judges that are near relatives and one searched one reduce
   that but do not remove it. Outside the six exact rows, a blunder here is confirmed against what
@@ -161,5 +202,5 @@ python tools/scripts/blunder_bank.py score --bank ai/eval/banks/blunders_E7.json
 ```
 
 A few minutes on a laptop for a greedy player or Gumbel @256. A new network that repeats fewer
-of the 37 has not shown it is stronger: its other moves can be worse, as R32's are. Read the
+of the 35 has not shown it is stronger: its other moves can be worse, as R32's are. Read the
 "other" column with the count.
