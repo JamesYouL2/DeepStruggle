@@ -237,15 +237,24 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     # near-tie, so the values agree to a tolerance rather than exactly.
     assert max(abs(x - y) for x, y in zip(d["q"], s["q"])) < 0.05
 
-    # The favourite is now the search's pick, and Play favourite plays it.
+    # The favourite is now the search's pick, and Play favourite plays it. The next position's search
+    # is held at a gate, so it is still running when the select goes back to the policy -- the order
+    # a slow machine produces by itself, built here rather than left to timing.
+    page.evaluate("""() => { const r = window.__wb.runner, search = r.search.bind(r);
+        r.search = (...args) => search(...args).then(res => new Promise(done => { window.__release = () => done(res); })); }""")
     n = page.evaluate("window.__wb.state.step_index")
     page.click("#btn-play-favourite")
     page.wait_for_function(f"window.__wb.state.step_index > {n}")
+    page.wait_for_function("!!(window.__wb.liveAnalysis && window.__wb.liveAnalysis.search_pending) "
+                           "&& typeof window.__release === 'function'")
     # Back to the policy: the section goes, and the address no longer names a search.
     page.select_option("#search-mode-select", "policy")
     page.wait_for_function("!new URLSearchParams(location.search).has('search')")
     page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.policy && !window.__wb.liveAnalysis.search")
+    # The search asked for under the old setting answers now: it must not bring its section back.
+    page.evaluate("async () => { window.__release(); await new Promise(r => setTimeout(r, 0)); }")
     assert "ROLLOUT ROOT" not in page.inner_text("#analysis-body")
+    assert not page.evaluate("window.__wb.liveAnalysis.search")
     assert not page.errors
 
 
