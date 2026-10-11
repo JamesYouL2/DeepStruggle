@@ -611,3 +611,41 @@ def test_search_values_move_only_the_value_target_at_searched_rows() -> None:
     assert torch.equal(ref.buffer.has_search_v, t.buffer.has_search_v)
     assert torch.allclose(ref.buffer.advantages, t.buffer.advantages)
     assert torch.allclose(ref.buffer.returns_win[~sel], t.buffer.returns_win[~sel])
+
+
+def test_rollout_root_targets_come_from_the_frozen_teacher_over_every_legal_move() -> None:
+    """--search-rollout-horizon: the search-CE targets come from a rollout root run by the frozen
+    teacher -- a full distribution over each searched decision's legal moves -- and the option set
+    refuses the Gumbel root beside it."""
+    from ai.models.ladder_net import create_ladder_net
+    from ai.search.rollout_root import RolloutTeacher
+    from ai.training import NashPGTrainer
+    from bindings.ts_env import TsVectorizedEnv
+
+    cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
+               card_self_attention=False, cross_attention=False, per_entity_heads=16,
+               head_context=True, head_static=True, head_entities="country", head_center=True,
+               identity_dim=0, drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+               card_lookup=False, card_lookup_heads=0, card_lookup_dim=0, card_lookup_identity_dim=0,
+               categorical_value=False)
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    learner, teacher = create_ladder_net(dev, **cfg), create_ladder_net(dev, **cfg)
+    with pytest.raises(ValueError, match="rollout"):
+        NashPGTrainer(active_net=create_ladder_net(dev, **cfg), env=TsVectorizedEnv(num_envs=2, base_seed=7),
+                      num_envs=2, buffer_size=4, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_ce_coef=0.1, search_gumbel_k=4, search_rollout_horizon=1)
+    t = NashPGTrainer(active_net=learner, env=TsVectorizedEnv(num_envs=4, base_seed=7), num_envs=4,
+                      buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False, device=dev,
+                      search_ce_coef=0.1, search_subsample=1.0, search_node_filter="all",
+                      search_teacher_net=teacher, search_rollout_horizon=1, search_rollout_k=3,
+                      search_rollout_worlds=4)
+    assert isinstance(t._searcher, RolloutTeacher) and t._searcher.model is teacher
+    t.collect_rollouts()
+    rows = t.buffer.has_search > 0.5
+    assert int(rows.sum()) > 0
+    pi = t.buffer.search_pi[rows]
+    assert torch.allclose(pi.sum(dim=-1), torch.ones(pi.shape[0]), atol=1e-4)
+    legal = t.buffer.masks[rows].bool()
+    assert float((pi * (~legal).float()).abs().sum()) == 0.0
+    t.train_step()

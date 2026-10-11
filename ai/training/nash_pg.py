@@ -36,6 +36,7 @@ from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E
                               floor_rows, play_mode_rows)
 from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .turn_credit import TurnCredit  # noqa: E402
+from ai.search.rollout_root import RolloutConfig, RolloutTeacher  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -290,6 +291,9 @@ class BaseNashPGTrainer:
         search_prior_temperature: float = 1.0,
         search_teacher_net: Optional[nn.Module] = None,   # P32: a FROZEN network to search with
         search_value_beta: float = 0.0,   # P32 T2: the share of the search value in v_win's target
+        search_rollout_horizon: int = 0,  # > 0: the search-CE targets come from a rollout root
+        search_rollout_k: int = 4,
+        search_rollout_worlds: int = 16,
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
         teacher_coef: float = 0.0,
         teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
@@ -402,6 +406,9 @@ class BaseNashPGTrainer:
         # `_apply_views`. The searcher builds E4 masks for its targets, so the two are not
         # combined until it learns the other view -- refused here rather than mis-targeted.
         self.merged_influence = bool(merged_influence)
+        if search_rollout_horizon > 0 and (search_gumbel_k > 0 or search_ce_coef <= 0.0 or search_value_beta > 0.0):
+            raise ValueError("rollout-root targets (--search-rollout-horizon) replace the Gumbel root: they need "
+                             "--search-ce-coef > 0 and neither --search-gumbel-k nor --search-value-beta")
         if search_value_beta > 0.0 and search_gumbel_k <= 0:
             raise ValueError("search values into the critic (T2) need the Gumbel root: "
                              "--search-gumbel-k > 0")
@@ -441,7 +448,7 @@ class BaseNashPGTrainer:
         # beta * the search value -- the improved policy's expected completed Q at the root. The
         # policy loss and the advantages are untouched, so it cannot flatten the policy.
         self.search_value_beta = float(search_value_beta)
-        self._searcher = None
+        self._searcher: Optional[Any] = None   # BatchedMCTS (Gumbel / PUCT) or RolloutTeacher
         if self.search_ce_coef > 0.0 or self.search_value_beta > 0.0:
             from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
             # The network the searcher runs: the one being trained, or a frozen teacher. Searching
@@ -452,23 +459,35 @@ class BaseNashPGTrainer:
                 search_teacher_net = search_teacher_net.to(self.device).eval()
                 for _p in search_teacher_net.parameters():
                     _p.requires_grad_(False)
-            self._searcher = BatchedMCTS(
-                search_teacher_net if search_teacher_net is not None else active_net, device=self.device,
-                config=BatchedMCTSConfig(
-                    simulations=search_sims, temperature=0.0, auto_advance=True,
-                    advance_root=False, determinize=True,
-                    node_filter=search_node_filter, subsample=search_subsample,
-                    # P32 T1: the Gumbel root's improved policy as the target instead of visit
-                    # counts -- sharp where the search agrees, moved where its values differ.
-                    gumbel_k=int(search_gumbel_k), gumbel_scale=1.0,
-                    fpu_reduction=0.2 if search_gumbel_k > 0 else 0.0,
-                    gumbel_prior_temperature=float(search_prior_temperature)),
-                featurise_capacity=SEARCH_CHUNK)
+            if search_rollout_horizon > 0:
+                # The rollout root as the teacher's search (R32's mechanics, another searcher): its
+                # candidates' rollout values give the improved policy (ai/search/rollout_root.py).
+                self._searcher = RolloutTeacher(
+                    search_teacher_net if search_teacher_net is not None else active_net,
+                    RolloutConfig(k=int(search_rollout_k), worlds=int(search_rollout_worlds),
+                                  horizon=int(search_rollout_horizon), rule="z2"),
+                    device=self.device, subsample=search_subsample, node_filter=search_node_filter)
+            else:
+                self._searcher = BatchedMCTS(
+                    search_teacher_net if search_teacher_net is not None else active_net, device=self.device,
+                    config=BatchedMCTSConfig(
+                        simulations=search_sims, temperature=0.0, auto_advance=True,
+                        advance_root=False, determinize=True,
+                        node_filter=search_node_filter, subsample=search_subsample,
+                        # P32 T1: the Gumbel root's improved policy as the target instead of visit
+                        # counts -- sharp where the search agrees, moved where its values differ.
+                        gumbel_k=int(search_gumbel_k), gumbel_scale=1.0,
+                        fpu_reduction=0.2 if search_gumbel_k > 0 else 0.0,
+                        gumbel_prior_temperature=float(search_prior_temperature)),
+                    featurise_capacity=SEARCH_CHUNK)
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
                   f"{search_node_filter}, subsample {search_subsample}"
-                  + (f", Gumbel improved-policy targets k={search_gumbel_k}, root T={search_prior_temperature}"
+                  + (f", rollout-root targets k={search_rollout_k}, {search_rollout_worlds} worlds, horizon "
+                     f"{search_rollout_horizon}" if search_rollout_horizon > 0 else
+                     f", Gumbel improved-policy targets k={search_gumbel_k}, root T={search_prior_temperature}"
                      if search_gumbel_k > 0 else ", visit-count targets"), flush=True)
         self.search_gumbel_k = int(search_gumbel_k)
+        self.search_rollout_horizon = int(search_rollout_horizon)
         self.search_saturated_frac = 0.0
         #: (buffer step, env, cloned state) of every decision to search this rollout; searched in
         #: one batch by `_flush_search_targets` when the rollout ends.
@@ -1978,7 +1997,7 @@ class BaseNashPGTrainer:
             sat_n = 0.0
             for s0 in range(0, len(queue), SEARCH_CHUNK):
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
-                if self.search_gumbel_k > 0:
+                if self.search_gumbel_k > 0 or self.search_rollout_horizon > 0:
                     res.extend(self._searcher.improved_policies(chunk))
                     root = getattr(self._searcher, "_gumbel", None)
                     sat_n += float(getattr(root, "last_saturated_frac", 0.0)) * len(chunk)

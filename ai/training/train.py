@@ -844,6 +844,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "lambda-return + beta * the search value (the improved policy's expected "
                              "completed Q at the Gumbel root). Needs --search-gumbel-k > 0; runs the "
                              "searcher with --search-ce-coef 0 too. The advantages are untouched. 0 = off.")
+    parser.add_argument("--search-rollout-horizon", type=int, default=0,
+                        help="Rollout-root search targets: > 0 replaces the Gumbel root of the search-CE targets with a rollout root (ai/search/rollout_root.py) of this many action-round boundaries; the target is softmax(logit + sigma(completed Q)) with the candidates' rollout values. Needs --search-ce-coef > 0 and no --search-gumbel-k. 0 = off.")
+    parser.add_argument("--search-rollout-k", type=int, default=4,
+                        help="Rollout-root search targets: candidates (the teacher's most probable moves).")
+    parser.add_argument("--search-rollout-worlds", type=int, default=16,
+                        help='Rollout-root search targets: worlds per candidate.')
     parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
                         help="P32: search with this FROZEN network for the search CE targets, instead of the "
                              "network being trained -- whose targets follow it as it changes. Same "
@@ -1003,6 +1009,9 @@ def main():
             search_prior_temperature=args.search_prior_temperature,
             search_teacher_checkpoint=args.search_teacher_checkpoint,
             search_value_beta=args.search_value_beta,
+            search_rollout_horizon=args.search_rollout_horizon,
+            search_rollout_k=args.search_rollout_k,
+            search_rollout_worlds=args.search_rollout_worlds,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,

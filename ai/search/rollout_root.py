@@ -41,6 +41,7 @@ import numpy as np
 import torch
 
 import ts_engine as ts
+from ai.search.gumbel_root import sigma_completed
 from ai.search.pimcts import acting_player
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
@@ -159,6 +160,54 @@ class RolloutRoot:
                 "lead": {a: [float(m), float(se)] for a, m, se in zip(cands[i], d["lead"], d["lead_se"])},
             })
         return picks
+
+
+class RolloutTeacher:
+    """Training targets from a rollout root: R32's online improved-policy targets (P32 T1) with the
+    rollout root in place of the Gumbel root. At a searched decision the target over every legal move
+    is softmax(logit + sigma(completed Q)) -- the formula R32's Gumbel targets used
+    (`ai.search.gumbel_root.sigma_completed`) -- with Q each candidate's mean rollout value, n its
+    worlds, and the unsearched moves at the mixed value. The same interface as `BatchedMCTS`
+    (`should_search`, `improved_policies`), so the trainer's search-CE path takes either."""
+
+    def __init__(self, model: Any, config: RolloutConfig, device: Any = "cpu", subsample: float = 1.0,
+                 node_filter: str = "all", seed: int = 86420) -> None:
+        if node_filter not in ("all", "card_playmode"):
+            raise ValueError(f"unknown node_filter {node_filter!r}")
+        self.root = RolloutRoot(model, config, device=device)
+        self.subsample = float(subsample)
+        self.node_filter = node_filter
+        self._rng = random.Random(seed)
+        self.model = model
+        self.root.reseed(seed + 1)
+
+    def should_search(self, state: ts.GameState) -> bool:
+        if self.node_filter == "card_playmode" and int(state.ctx().decision_type) not in (
+                int(ts.DecisionType.SELECT_CARD), int(ts.DecisionType.SELECT_PLAY_MODE)):
+            return False
+        return self.subsample >= 1.0 or self._rng.random() < self.subsample
+
+    def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        states = list(states)
+        self.root.choose(states)                  # fills last_stats: candidates, worlds, Q
+        lg, masks, v = self.root._forward(states)
+        out: List[Tuple[List[int], np.ndarray]] = []
+        for i, st in enumerate(self.root.last_stats):
+            acts = [int(a) for a in np.flatnonzero(masks[i])]
+            if not acts:
+                out.append(([], np.zeros(0)))
+                continue
+            logits = {a: float(lg[i][a]) for a in acts}
+            if st["worlds"] > 0:
+                q = {int(a): float(x) for a, x in st["q"].items()}
+                n = {a: float(st["worlds"]) for a in q}
+                sig = sigma_completed(logits, float(v[i]), n, q)
+            else:                                   # nothing searched: the teacher's own policy
+                sig = {a: 0.0 for a in acts}
+            z = np.array([logits[a] + sig[a] for a in acts], dtype=np.float64)
+            z = np.exp(z - z.max())
+            out.append((acts, z / z.sum()))
+        return out
 
 
 class RolloutRootAgent:
