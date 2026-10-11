@@ -23,6 +23,7 @@ import {
   sourceLabel,
 } from "./analysis/model";
 import { cachedModelCount, clearModelCache } from "./analysis/model_cache";
+import { SearchResult } from "./analysis/rollout";
 
 export interface AnalysisChoice {
   idx: number;
@@ -45,6 +46,11 @@ export interface LiveAnalysis {
   critic?: CriticTrace;
   policy?: PolicyTrace;
   choices: AnalysisChoice[];
+  /** The search's decision at this position, when the search select asks for one (analysis/rollout.ts). */
+  search?: SearchResult;
+  /** The search is running, or failed with this reason. */
+  search_pending?: boolean;
+  search_error?: string;
 }
 
 /** Which side auto-play moves for; "" is off. */
@@ -275,9 +281,17 @@ export class AnalysisPanel {
     this.renderBody();
   }
 
-  /** The model's most likely action in the position now on screen, if there is one. */
+  /**
+   * The move the model would make in the position now on screen: the search's pick when the
+   * search select asked for one and it has answered, else the policy's argmax. Null with nothing
+   * to play -- and while a requested search is still running, so auto-play waits for it.
+   */
   public favourite(): number | null {
-    const idx = this.lastAnalysis?.policy?.argmax_idx;
+    const a = this.lastAnalysis;
+    if (!a) return null;
+    if (a.search) return a.search.pick;
+    if (a.search_pending) return null;
+    const idx = a.policy?.argmax_idx;
     return idx === undefined ? null : idx;
   }
 
@@ -501,6 +515,33 @@ export class AnalysisPanel {
       parts.push(valueSidesHtml(a.critic, decider, state?.is_terminal ? state : null));
     }
 
+    // The search's decision, above the policy it searched from.
+    if (a.search || a.search_pending || a.search_error) {
+      const s = a.search;
+      const spec = s ? `${s.spec.k} candidates · ${s.spec.worlds} worlds · ${s.spec.horizon} boundaries · ${s.spec.rule}` : "";
+      parts.push(`<div class="trace-section-label">ROLLOUT ROOT${spec ? ` <span class="analysis-info-dim">${esc(spec)}</span>` : ""}</div>`);
+      if (a.search_error) {
+        parts.push(`<div class="analysis-error">${esc(a.search_error)}</div>`);
+      } else if (!s) {
+        parts.push(`<div class="trace-empty">Searching…</div>`);
+      } else {
+        const name = (idx: number) => esc(a.choices.find(c => c.idx === idx)?.name ?? "#" + idx);
+        const rows = s.candidates.map((idx, i) => {
+          const picked = idx === s.pick;
+          const own = i === 0;
+          const lead = own ? "" : `${s.lead[i] >= 0 ? "+" : ""}${(s.lead[i] * 100).toFixed(1)} ± ${(s.lead_se[i] * 100).toFixed(1)}`;
+          return `
+            <div class="analysis-choice analysis-search-row${picked ? " favourite" : ""}" data-flat-idx="${idx}" title="${own ? "the network's own move" : "paired lead over the network's own move, in points of value, with its standard error"}">
+              <span class="analysis-choice-name">${picked ? "★ " : ""}${name(idx)}${own ? ` <span class="analysis-info-dim">(policy)</span>` : ""}</span>
+              <span class="analysis-search-q" title="mean value from the mover's side">${s.q[i] >= 0 ? "+" : ""}${s.q[i].toFixed(3)}</span>
+              <span class="analysis-search-lead">${lead}</span>
+            </div>`;
+        });
+        parts.push(`<div class="analysis-choices">${rows.join("")}</div>`);
+        parts.push(`<div class="trace-note trace-hint">${s.worlds} worlds · ${s.rows} network rows · ${s.ms} ms${s.pick === s.candidates[0] ? " · stays with the policy" : " · departs from the policy"}</div>`);
+      }
+    }
+
     const pol = a.policy;
     if (!pol || a.choices.length === 0) {
       parts.push(`<div class="trace-section-label">NEXT DECISION</div>`);
@@ -544,7 +585,7 @@ export class AnalysisPanel {
     if (!a || !a.policy || !state || a.choices.length === 0) return;
     const dType = state.decision_context?.decision_type;
     if (dType === undefined || a.decision_type !== dType) return;
-    const favIdx = a.policy.argmax_idx;
+    const favIdx = this.favourite() ?? a.policy.argmax_idx;
 
     type Cell = { p: number; fav: boolean; note?: string };
     const add = (m: Map<string | number, Cell>, k: string | number, p: number, fav: boolean, note?: string) => {

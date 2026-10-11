@@ -9,6 +9,7 @@
 // Strings returned here live until the next call that returns one; the JS wrapper copies them.
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -349,6 +350,51 @@ TS_API int ts_rollout_row_done(int r) {
 }
 TS_API int ts_rollout_row_terminal(int r) {
     return (g_rollout && r >= 0 && static_cast<size_t>(r) < g_rollout->rows()) ? (g_rollout->row(r).terminal ? 1 : 0) : -1;
+}
+
+// The `k` most probable legal moves by the root's logits (FLAT_ACTION_SPACE_SIZE floats) under
+// `mask`, best first, into `out` (k int32s); returns how many.
+TS_API int ts_rollout_candidates(const float* logits, const uint8_t* mask, int k, int32_t* out) {
+    if (k <= 0) return 0;
+    std::vector<uint16_t> c(static_cast<size_t>(k));
+    const size_t n = ts::rollout::top_candidates(logits, mask, static_cast<size_t>(k), c.data());
+    for (size_t i = 0; i < n; ++i) out[i] = c[i];
+    return static_cast<int>(n);
+}
+
+// One position's decision from the valued batch, as JSON: {"pick", "worlds", "q", "lead",
+// "lead_se"}; "" with ts_last_error() for an unknown rule or position.
+TS_API const char* ts_rollout_decide(int position, const int32_t* candidates, int k, const float* logits,
+                                     const uint8_t* mask, const char* rule_text) {
+    if (!g_rollout || position < 0 || static_cast<size_t>(position) >= g_rollout->positions()) {
+        g_error = "no such position in the rollout batch";
+        return "";
+    }
+    ts::rollout::Rule rule;
+    if (!ts::rollout::parse_rule(rule_text, rule)) { g_error = "unknown rule: argmax, z<x> or kl<t>"; return ""; }
+    std::vector<uint16_t> c;
+    for (int i = 0; i < k; ++i) {
+        if (candidates[i] < 0 || candidates[i] >= static_cast<int32_t>(ts::FLAT_ACTION_SPACE_SIZE)) {
+            g_error = "a candidate is outside the flat action space";
+            return "";
+        }
+        c.push_back(static_cast<uint16_t>(candidates[i]));
+    }
+    const ts::rollout::Decision d = ts::rollout::decide(*g_rollout, static_cast<size_t>(position), c.data(), c.size(),
+                                                        logits, mask, rule);
+    auto list = [](const std::vector<float>& v) {
+        std::string s = "[";
+        char buf[32];
+        for (size_t i = 0; i < v.size(); ++i) {
+            std::snprintf(buf, sizeof buf, "%.9g", static_cast<double>(v[i]));
+            s += (i ? "," : "");
+            s += buf;
+        }
+        return s + "]";
+    };
+    std::string out = "{\"pick\":" + std::to_string(d.pick) + ",\"worlds\":" + std::to_string(d.worlds)
+        + ",\"q\":" + list(d.q) + ",\"lead\":" + list(d.lead) + ",\"lead_se\":" + list(d.lead_se) + "}";
+    return keep(out);
 }
 
 // ---- parity -----------------------------------------------------------------------------------

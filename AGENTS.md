@@ -410,8 +410,13 @@ The workbench serves four purposes, all in the page:
   no model in the link the default Hugging Face model loads and is what the bar names. A fresh open (a link naming no position,
   replay or view) and every New Game first ask for the play mode in a dialog (`#mode-dialog`,
   `main.ts askMode`) over the live board; Escape keeps the current mode, and on New Game deals
-  nothing. The search select has one driver today, the policy's argmax; the rollout root the
-  engine exports (`bindings/rollout_batch.hpp`) is listed and disabled until the page drives it.
+  nothing. The search select is the policy's argmax or the **rollout root** (`search=rollout` in
+  the URL, `search=rollout:k:worlds:horizon:rule` for another spec): the engine's own batch
+  (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
+  `web/ui/src/analysis/rollout.ts` in a worker with its own engine and model
+  (`rollout_runner.ts`, inline where there are no workers). The panel shows each candidate's mean
+  value and paired lead and marks the pick; the favourite and auto-play take the pick, and wait
+  for it while the search runs. A model in the merged (E4.1) action view is refused for search.
 * **Play one side against the model** -- the play mode (*Play as US / USSR*, `view=` in
   the URL) hides what that side may not know: the other hand's unknown cards (shown face down and
   merged with the draw deck into one unseen pile), its deal lines in the log (the cards it plays

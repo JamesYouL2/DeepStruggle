@@ -25,14 +25,14 @@ The defaults are the measured player, `rollout:<ckpt>:4:16:4:z2`
 sampled worlds. A world where a candidate is illegal (The Cambridge Five can change the legal set)
 is dropped for every candidate of that position.
 
-Steps 2 and 3 are `ts.RolloutBatch` (bindings/rollout_batch.hpp): the worlds, the greedy playouts,
-the boundary count, the guard and the leaves are one C++ implementation compiled into this module
-and into the browser's engine, so the page's rollout root plays the very same worlds. This file
-keeps the root forward, the network calls per ply, and the choice rule.
+Everything but the network calls is C++ shared with the browser (bindings/rollout_batch.hpp):
+`ts.rollout_candidates` picks step 1 from the root's logits, `ts.RolloutBatch` is steps 2 and 3,
+and `ts.rollout_decide` is step 4 with the statistics it reports. This file is the loop that feeds
+the network's logits and values in -- the same loop web/ui/src/analysis/rollout.ts runs with
+onnxruntime -- so the two searchers cannot drift apart in anything but the network's arithmetic.
 """
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -41,7 +41,6 @@ import numpy as np
 import torch
 
 import ts_engine as ts
-from ai.eval.paired_playouts import paired_diff
 from ai.search.pimcts import acting_player
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
@@ -63,13 +62,9 @@ class RolloutConfig:
 
 
 def parse_rule(rule: str) -> Tuple[str, float]:
-    if rule == "argmax":
-        return "argmax", 0.0
-    if rule.startswith("z"):
-        return "z", float(rule[1:] or 2.0)
-    if rule.startswith("kl"):
-        return "kl", float(rule[2:] or 0.05)
-    raise ValueError(f"unknown rule {rule!r}: argmax, z<x> or kl<t>")
+    """(kind, parameter) of a rule -- argmax, z<x> or kl<t>; ValueError otherwise. The grammar is
+    the engine's (`ts.rollout_parse_rule`), so a spec means the same thing here and in the page."""
+    return ts.rollout_parse_rule(rule)
 
 
 class RolloutRoot:
@@ -111,8 +106,8 @@ class RolloutRoot:
         lg, v = self._net(obs, masks)
         return lg, masks, v
 
-    def _playouts(self, batch: Any) -> np.ndarray:
-        """Drive the batch to its leaves, read them with the critic, and return every row's value."""
+    def _playouts(self, batch: Any) -> None:
+        """Drive the batch to its leaves and read them with the critic."""
         for _ in range(_MAX_ROLLOUT_STEPS):
             if batch.all_done():
                 break
@@ -127,19 +122,13 @@ class RolloutRoot:
         if obs.shape[0]:
             _lg, v = self._net(np.ascontiguousarray(obs), np.ascontiguousarray(masks))
             batch.set_leaf_values(np.ascontiguousarray(v, dtype=np.float32))
-        values = np.asarray(batch.values(), dtype=np.float64)
-        if np.isnan(values).any():
-            raise RuntimeError("a playout row has no value")
-        return values
 
     def choose(self, states: Sequence[ts.GameState]) -> List[int]:
         states = list(states)
         self.rows = 0
         lg, masks, _ = self._forward(states)
-        cands: List[List[int]] = []
-        for i in range(len(states)):
-            z = np.where(masks[i].astype(bool), lg[i], -np.inf)
-            cands.append([int(a) for a in np.argsort(-z)[:self.cfg.k] if np.isfinite(z[a])])
+        lg = np.ascontiguousarray(lg, dtype=np.float32)
+        cands: List[List[int]] = [ts.rollout_candidates(lg[i], masks[i], self.cfg.k) for i in range(len(states))]
         batch = ts.RolloutBatch(horizon=self.cfg.horizon, shared_dice=True, guard=True,
                                 features=self.features, seed=self._rng.getrandbits(64))
         position_of: Dict[int, int] = {}
@@ -147,45 +136,28 @@ class RolloutRoot:
             if len(cands[i]) >= 2 and not ts.Engine.is_terminal(st):
                 position_of[i] = batch.positions()
                 batch.add(st, cands[i], self.cfg.worlds)
-        table: Dict[int, np.ndarray] = {}
         if batch.rows():
-            values = self._playouts(batch)
-            pos = np.asarray(batch.row_position())
-            world = np.asarray(batch.row_world())
-            cand = np.asarray(batch.row_candidate())
-            for i, p in position_of.items():
-                n_w = batch.worlds_used(p)
-                m = np.full((len(cands[i]), n_w), np.nan)
-                sel = pos == p
-                m[cand[sel], world[sel]] = values[sel]
-                table[i] = m
+            self._playouts(batch)
         picks: List[int] = []
         self.last_stats = []
         for i in range(len(states)):
             raw = cands[i][0] if cands[i] else int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf)))
-            values = table.get(i)
-            if values is None or values.shape[1] == 0:
+            p = position_of.get(i)
+            if p is None:
                 picks.append(raw)
                 self.last_stats.append({"candidates": cands[i], "worlds": 0})
                 continue
-            q = {a: float(values[j].mean()) for j, a in enumerate(cands[i])}
-            lead: Dict[int, Tuple[float, float]] = {}
-            for j, a in enumerate(cands[i]):
-                m, se = paired_diff(values[j], values[0])
-                lead[a] = (m, 0.0 if math.isnan(se) else se)
-            if self.rule == "argmax":
-                pick = max(cands[i], key=lambda a: q[a])
-            elif self.rule == "z":
-                best = max(cands[i], key=lambda a: q[a])
-                m, se = lead[best]
-                pick = best if best != raw and m > 0 and (se == 0.0 or m / se >= self.param) else raw
-            else:
-                z = lg[i] - np.max(lg[i][masks[i].astype(bool)])
-                logp = {a: float(z[a] - math.log(np.exp(z[masks[i].astype(bool)]).sum())) for a in cands[i]}
-                pick = max(cands[i], key=lambda a: logp[a] + q[a] / self.param)
-            picks.append(int(pick))
-            self.last_stats.append({"candidates": cands[i], "worlds": int(values.shape[1]), "q": q,
-                                    "lead": {a: list(v) for a, v in lead.items()}})
+            d = ts.rollout_decide(batch, p, cands[i], lg[i], masks[i], self.cfg.rule)
+            if d["worlds"] == 0:
+                picks.append(raw)
+                self.last_stats.append({"candidates": cands[i], "worlds": 0})
+                continue
+            picks.append(int(d["pick"]))
+            self.last_stats.append({
+                "candidates": cands[i], "worlds": int(d["worlds"]),
+                "q": {a: float(q) for a, q in zip(cands[i], d["q"])},
+                "lead": {a: [float(m), float(se)] for a, m, se in zip(cands[i], d["lead"], d["lead_se"])},
+            })
         return picks
 
 

@@ -50,13 +50,19 @@ This directory contains the Python native extension module (`ts_engine`) built w
   greedily to a horizon of action-round boundaries with the DEFCON-2 suicide guard, marking terminal
   rows with their result and rows at the horizon as leaves. The network stays outside: the caller
   loops `fill_live` -> logits -> `step` until `all_done`, then `fill_leaves` -> critic ->
-  `set_leaf_values`, then reads `values`. Python: `ts.RolloutBatch` and `ts.determinize`, which
-  `ai/search/rollout_root.py` drives with torch; the browser: the `ts_rollout_*` and
-  `ts_determinize` exports of the WebAssembly module, the same C++. Held bit-identical across the
-  two builds by `tests/web/test_wasm_engine.py` (rows, worlds, observations ply by ply, values) and
-  covered on its own by `tests/bindings/test_rollout_batch.py`. Serial for now: the loop over rows
-  is a plain `for`, so the WebAssembly build compiles it unchanged; the `gomp_parallel_for` pass is
-  a later, measured change.
+  `set_leaf_values`, then reads `values`. The root's choice is here too: `top_candidates` (the k
+  most probable legal moves from the root's logits), `parse_rule` (argmax / z<x> / kl<t>) and
+  `decide` (each candidate's mean value, its paired lead over the network's own move with the
+  standard error, and the pick under the rule). Python: `ts.RolloutBatch`, `ts.determinize`,
+  `ts.rollout_candidates`, `ts.rollout_decide` and `ts.rollout_parse_rule`, which
+  `ai/search/rollout_root.py` drives with torch and nothing else; the browser: the `ts_rollout_*`
+  and `ts_determinize` exports of the WebAssembly module, which `web/ui/src/analysis/rollout.ts`
+  drives with onnxruntime in a worker -- the same C++, so the two searchers differ only in the
+  network's arithmetic. Held bit-identical across the two builds by `tests/web/test_wasm_engine.py`
+  (rows, worlds, observations ply by ply, values, the decision under each rule), covered on its own
+  by `tests/bindings/test_rollout_batch.py`, and the page's loop against Python's on one position
+  by `tests/web/test_e2e_workbench.py`. Serial for now: the loop over rows is a plain `for`, so the
+  WebAssembly build compiles it unchanged; the `gomp_parallel_for` pass is a later, measured change.
   - Save format: `GameState.to_save_dict()` / `state_from_save_dict()`, tagged `ts_save_v2`. Named
     fields, not a byte blob, so a save written by one build opens in another: an unknown key is
     ignored and a missing one keeps its default. It restores the board, the tracks, the card

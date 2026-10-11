@@ -230,6 +230,8 @@ export class Model {
     private readonly session: ort.InferenceSession,
     /** The bytes came from the browser's model cache rather than the network. */
     readonly fromCache: boolean,
+    /** The file itself, kept so a worker can open its own session on the same model. */
+    readonly bytes: Uint8Array,
   ) {}
 
   /**
@@ -261,7 +263,14 @@ export class Model {
         + `this engine has ${obsSize} and ${actionSize}. It was trained on another layout and would misread every position.`);
     }
     const session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
-    return new Model(source, meta, session, fromCache);
+    return new Model(source, meta, session, fromCache, bytes);
+  }
+
+  /** The obs_features bits the network reads (ts.obs_features in the export; 0 for the base layout
+   *  and for exports made before the key existed). */
+  get obsFeatures(): number {
+    const v = Number(this.meta.raw["ts.obs_features"] ?? "0");
+    return Number.isFinite(v) ? v >>> 0 : 0;
   }
 
   static async fetch(source: ModelSource, obsSize: number, actionSize: number, fileBytes?: Uint8Array): Promise<Model> {

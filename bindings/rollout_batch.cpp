@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <string>
 
 #include "ts/action_mask.hpp"
 #include "ts/engine.hpp"
@@ -268,6 +270,123 @@ void RolloutBatch::values(float* out) const noexcept {
         const Row& r = rows_[i];
         out[i] = (r.terminal || r.leaf_valued) ? r.value : std::numeric_limits<float>::quiet_NaN();
     }
+}
+
+// ---- the root's choice ---------------------------------------------------------------------------
+
+bool parse_rule(const char* text, Rule& out) noexcept {
+    if (text == nullptr) return false;
+    const std::string s(text);
+    auto number = [](const std::string& t, float fallback, float& v) {
+        if (t.empty()) { v = fallback; return true; }
+        char* end = nullptr;
+        const double d = std::strtod(t.c_str(), &end);
+        if (end == t.c_str() || *end != '\0' || !(d > 0.0)) return false;
+        v = static_cast<float>(d);
+        return true;
+    };
+    if (s == "argmax") { out = Rule{Rule::ARGMAX, 0.0f}; return true; }
+    if (s.rfind("kl", 0) == 0) {
+        float v; if (!number(s.substr(2), 0.05f, v)) return false;
+        out = Rule{Rule::KL, v}; return true;
+    }
+    if (s.rfind("z", 0) == 0) {
+        float v; if (!number(s.substr(1), 2.0f, v)) return false;
+        out = Rule{Rule::Z, v}; return true;
+    }
+    return false;
+}
+
+size_t top_candidates(const float* logits, const uint8_t* mask, size_t k, uint16_t* out) noexcept {
+    size_t n = 0;
+    for (size_t pass = 0; pass < k; ++pass) {
+        int best = -1;
+        for (size_t a = 0; a < A; ++a) {
+            if (!mask[a]) continue;
+            bool taken = false;
+            for (size_t t = 0; t < n; ++t) taken = taken || out[t] == a;
+            if (taken) continue;
+            if (best < 0 || logits[a] > logits[best]) best = static_cast<int>(a);
+        }
+        if (best < 0) break;
+        out[n++] = static_cast<uint16_t>(best);
+    }
+    return n;
+}
+
+Decision decide(const RolloutBatch& batch, size_t position, const uint16_t* candidates, size_t k,
+                const float* logits, const uint8_t* mask, const Rule& rule) {
+    Decision d;
+    d.q.assign(k, 0.0f);
+    d.lead.assign(k, 0.0f);
+    d.lead_se.assign(k, 0.0f);
+    d.pick = k ? candidates[0] : 0;
+    if (k == 0) return d;
+    const size_t worlds = position < batch.positions() ? batch.worlds_used(position) : 0;
+    // The table: candidate x world, NaN where a row has no value.
+    std::vector<float> table(k * worlds, std::numeric_limits<float>::quiet_NaN());
+    for (size_t r = 0; r < batch.rows(); ++r) {
+        const Row& row = batch.row(r);
+        if (row.position != position || row.candidate >= k || row.world >= worlds) continue;
+        if (row.terminal || row.leaf_valued) table[row.candidate * worlds + row.world] = row.value;
+    }
+    // Worlds every candidate was valued in.
+    std::vector<size_t> ok;
+    for (size_t w = 0; w < worlds; ++w) {
+        bool all = true;
+        for (size_t c = 0; c < k; ++c) all = all && !std::isnan(table[c * worlds + w]);
+        if (all) ok.push_back(w);
+    }
+    d.worlds = ok.size();
+    if (ok.empty()) return d;
+    for (size_t c = 0; c < k; ++c) {
+        double sum = 0.0;
+        for (size_t w : ok) sum += table[c * worlds + w];
+        d.q[c] = static_cast<float>(sum / static_cast<double>(ok.size()));
+        double dsum = 0.0;
+        for (size_t w : ok) dsum += table[c * worlds + w] - table[w];
+        const double mean = dsum / static_cast<double>(ok.size());
+        double var = 0.0;
+        for (size_t w : ok) {
+            const double x = (table[c * worlds + w] - table[w]) - mean;
+            var += x * x;
+        }
+        d.lead[c] = static_cast<float>(mean);
+        d.lead_se[c] = ok.size() > 1
+            ? static_cast<float>(std::sqrt(var / static_cast<double>(ok.size() - 1) / static_cast<double>(ok.size())))
+            : 0.0f;
+    }
+    size_t best = 0;
+    for (size_t c = 1; c < k; ++c) if (d.q[c] > d.q[best]) best = c;
+    switch (rule.kind) {
+        case Rule::ARGMAX:
+            d.pick = candidates[best];
+            break;
+        case Rule::Z: {
+            const float m = d.lead[best], se = d.lead_se[best];
+            const bool clear = best != 0 && m > 0.0f && (se == 0.0f || m / se >= rule.param);
+            d.pick = clear ? candidates[best] : candidates[0];
+            break;
+        }
+        case Rule::KL: {
+            // log pi over the legal moves, from the root's logits.
+            float mx = -std::numeric_limits<float>::infinity();
+            for (size_t a = 0; a < A; ++a) if (mask[a]) mx = std::max(mx, logits[a]);
+            double z = 0.0;
+            for (size_t a = 0; a < A; ++a) if (mask[a]) z += std::exp(static_cast<double>(logits[a] - mx));
+            const double lz = std::log(z);
+            size_t arg = 0;
+            double score = -std::numeric_limits<double>::infinity();
+            for (size_t c = 0; c < k; ++c) {
+                const double logp = static_cast<double>(logits[candidates[c]] - mx) - lz;
+                const double s = logp + static_cast<double>(d.q[c]) / rule.param;
+                if (s > score) { score = s; arg = c; }
+            }
+            d.pick = candidates[arg];
+            break;
+        }
+    }
+    return d;
 }
 
 }  // namespace ts::rollout

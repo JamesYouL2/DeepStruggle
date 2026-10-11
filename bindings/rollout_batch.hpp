@@ -112,4 +112,36 @@ private:
                             uint16_t argmax) const noexcept;
 };
 
+// ---- the root's choice, shared by ai/search/rollout_root.py and the page -----------------------
+
+// `argmax`: the best mean value. `z<x>`: the best mean value only if its paired lead over the
+// network's own move (candidate 0) is at least x standard errors, else the network's move.
+// `kl<t>`: argmax of log pi(a) + Q(a) / t over the candidates, one mirror-descent step.
+struct Rule {
+    enum Kind : uint8_t { ARGMAX, Z, KL };
+    Kind kind = Z;
+    float param = 2.0f;
+};
+
+// "argmax", "z", "z2", "z1.5", "kl", "kl0.05" -> the rule; false for anything else.
+bool parse_rule(const char* text, Rule& out) noexcept;
+
+// The `k` most probable legal moves by `logits` (FLAT_ACTION_SPACE_SIZE floats) under `mask`,
+// best first, into `out`; returns how many (fewer than k where fewer are legal).
+size_t top_candidates(const float* logits, const uint8_t* mask, size_t k, uint16_t* out) noexcept;
+
+struct Decision {
+    uint16_t pick = 0;          // the flat action to play
+    size_t worlds = 0;          // worlds every candidate was valued in
+    std::vector<float> q;       // each candidate's mean value, from the mover's side
+    std::vector<float> lead;    // each candidate's paired lead over candidate 0 (0 for itself)
+    std::vector<float> lead_se; // its standard error (0 with fewer than two worlds)
+};
+
+// One position's decision from a batch whose rows are all valued: the candidates as added (the
+// network's own move first), the root's `logits` under `mask` (for the KL rule), the rule. A
+// position with no valued world picks candidate 0.
+Decision decide(const RolloutBatch& batch, size_t position, const uint16_t* candidates, size_t k,
+                const float* logits, const uint8_t* mask, const Rule& rule);
+
 }  // namespace ts::rollout

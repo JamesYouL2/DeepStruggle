@@ -900,6 +900,21 @@ class RolloutBatch:
     def row_state(self, row: int) -> GameState:
         """A copy of the row's position, for tests."""
 
+def rollout_parse_rule(rule: str) -> tuple[str, float]:
+    """
+    (kind, parameter) of a rollout rule -- argmax, z<x> or kl<t>; ValueError otherwise.
+    """
+
+def rollout_candidates(logits: Annotated[NDArray[numpy.float32], dict(shape=(None,), order='C', device='cpu', writable=False)], mask: Annotated[NDArray[numpy.uint8], dict(shape=(None,), order='C', device='cpu', writable=False)], k: int) -> list[int]:
+    """
+    The k most probable legal moves, best first (fewer where fewer are legal).
+    """
+
+def rollout_decide(batch: RolloutBatch, position: int, candidates: Sequence[int], logits: Annotated[NDArray[numpy.float32], dict(shape=(None,), order='C', device='cpu', writable=False)], mask: Annotated[NDArray[numpy.uint8], dict(shape=(None,), order='C', device='cpu', writable=False)], rule: str) -> dict:
+    """
+    One position's decision from a valued batch: {pick, worlds, q, lead, lead_se} -- each candidate's mean value from the mover's side, its paired lead over the network's own move (candidate 0) with the standard error, and the pick under `rule`.
+    """
+
 def game_ending_reason(state: GameState) -> str:
     """
     Why a finished game ended: '20 VP', 'Europe Control', 'DEFCON 1 (own decision)', 'DEFCON 1 (opponent decision)', 'final scoring' or 'wargames'. Shared with the browser workbench's engine; tools/lib/tournament_evaluator delegates to it.

@@ -774,6 +774,57 @@ NB_MODULE(ts_engine, m) {
                      if (r >= self.rows()) throw std::out_of_range("row");
                      return self.row(r).state;
                  }, nb::arg("row"), "A copy of the row's position, for tests.");
+
+        // The root's choice (bindings/rollout_batch.hpp), the same code the page runs.
+        auto rule_of = [](const std::string& text) {
+            ts::rollout::Rule rule;
+            if (!ts::rollout::parse_rule(text.c_str(), rule))
+                throw std::invalid_argument("unknown rule '" + text + "': argmax, z<x> or kl<t>");
+            return rule;
+        };
+        m.def("rollout_parse_rule", [rule_of](const std::string& text) {
+                  const ts::rollout::Rule r = rule_of(text);
+                  const char* kind = r.kind == ts::rollout::Rule::ARGMAX ? "argmax" : r.kind == ts::rollout::Rule::Z ? "z" : "kl";
+                  return std::make_pair(std::string(kind), r.param);
+              }, nb::arg("rule"), "(kind, parameter) of a rollout rule -- argmax, z<x> or kl<t>; ValueError otherwise.");
+        m.def("rollout_candidates",
+              [](nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> logits,
+                 nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> mask, size_t k) {
+                  if (logits.shape(0) != ts::FLAT_ACTION_SPACE_SIZE || mask.shape(0) != ts::FLAT_ACTION_SPACE_SIZE)
+                      throw std::invalid_argument("rollout_candidates: logits and mask are over the flat action space");
+                  std::vector<uint16_t> out(k);
+                  const size_t n = ts::rollout::top_candidates(logits.data(), mask.data(), k, out.data());
+                  return std::vector<int>(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(n));
+              }, nb::arg("logits"), nb::arg("mask"), nb::arg("k"),
+              "The k most probable legal moves, best first (fewer where fewer are legal).");
+        m.def("rollout_decide",
+              [rule_of](const RB& batch, size_t position, const std::vector<int>& candidates,
+                        nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> logits,
+                        nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> mask,
+                        const std::string& rule) {
+                  if (logits.shape(0) != ts::FLAT_ACTION_SPACE_SIZE || mask.shape(0) != ts::FLAT_ACTION_SPACE_SIZE)
+                      throw std::invalid_argument("rollout_decide: logits and mask are over the flat action space");
+                  if (position >= batch.positions()) throw std::out_of_range("position");
+                  std::vector<uint16_t> c;
+                  for (int a : candidates) {
+                      if (a < 0 || a >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE))
+                          throw std::invalid_argument("a candidate is outside the flat action space");
+                      c.push_back(static_cast<uint16_t>(a));
+                  }
+                  const ts::rollout::Decision d = ts::rollout::decide(batch, position, c.data(), c.size(),
+                                                                      logits.data(), mask.data(), rule_of(rule));
+                  nb::dict out;
+                  out["pick"] = static_cast<int>(d.pick);
+                  out["worlds"] = static_cast<int>(d.worlds);
+                  out["q"] = d.q;
+                  out["lead"] = d.lead;
+                  out["lead_se"] = d.lead_se;
+                  return out;
+              }, nb::arg("batch"), nb::arg("position"), nb::arg("candidates"), nb::arg("logits"), nb::arg("mask"),
+              nb::arg("rule"),
+              "One position's decision from a valued batch: {pick, worlds, q, lead, lead_se} -- each "
+              "candidate's mean value from the mover's side, its paired lead over the network's own move "
+              "(candidate 0) with the standard error, and the pick under `rule`.");
     }
     m.def("game_ending_reason", [](const ts::GameState& s) { return std::string(ts::state_json::ending_reason(s)); },
           nb::arg("state"),

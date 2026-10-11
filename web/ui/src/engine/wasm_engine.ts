@@ -137,6 +137,114 @@ export class WasmEngine {
     return this.M.HEAPF32.slice(p, p + this.obsSize);
   }
 
+  // ---- the rollout root's playouts (bindings/rollout_batch.hpp, the same C++ as Python's) ------
+  //
+  // One batch at a time, over the position held. The caller runs the network: rolloutFillLive ->
+  // logits -> rolloutStep until rolloutAllDone, then rolloutFillLeaves -> critic ->
+  // rolloutSetLeafValues, then rolloutDecide. Arrays are copies out of the module's memory.
+
+  /** Redeal the cards `player` cannot see in the position held (the determinizer). */
+  determinize(player: number, seed: number): void {
+    this.M._ts_determinize(player, seed >>> 0, Math.floor(seed / 4294967296) >>> 0);
+  }
+
+  /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed. */
+  rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true): void {
+    const ok = this.M._ts_rollout_reset(horizon, sharedDice ? 1 : 0, guard ? 1 : 0, features >>> 0,
+      seed >>> 0, Math.floor(seed / 4294967296) >>> 0);
+    if (!ok) throw new Error(this.lastError());
+  }
+
+  /** The `k` most probable legal moves by the root's logits under `mask`, best first. */
+  rolloutCandidates(logits: Float32Array, mask: Uint8Array, k: number): number[] {
+    const lg = this.M._malloc(4 * this.actionSize), mk = this.M._malloc(this.actionSize), out = this.M._malloc(4 * k);
+    try {
+      this.M.HEAPF32.set(logits, lg >> 2);
+      this.M.HEAPU8.set(mask, mk);
+      const n = this.M._ts_rollout_candidates(lg, mk, k, out);
+      return Array.from(this.M.HEAP32.subarray(out >> 2, (out >> 2) + n));
+    } finally {
+      this.M._free(lg); this.M._free(mk); this.M._free(out);
+    }
+  }
+
+  /** The position held as one decision of the batch, with `candidates`, in `worlds` worlds; rows added. */
+  rolloutAdd(candidates: number[], worlds: number): number {
+    const p = this.M._malloc(4 * Math.max(1, candidates.length));
+    try {
+      this.M.HEAP32.set(candidates, p >> 2);
+      const n = this.M._ts_rollout_add(p, candidates.length, worlds);
+      if (n === 0 && candidates.length >= 2) throw new Error(this.lastError() || "no rows");
+      return n;
+    } finally {
+      this.M._free(p);
+    }
+  }
+
+  rolloutAllDone(): boolean { return this.M._ts_rollout_all_done() !== 0; }
+  rolloutLive(): number { return this.M._ts_rollout_live(); }
+  rolloutRows(): number { return this.M._ts_rollout_rows(); }
+  rolloutRefused(): number { return this.M._ts_rollout_refused(); }
+  rolloutObsWidth(): number { return this.M._ts_rollout_obs_width(); }
+
+  /** The live rows' observations and masks, each row from its acting side. */
+  rolloutFillLive(): { rows: number; obs: Float32Array; masks: Uint8Array } {
+    const rows = this.M._ts_rollout_fill_live();
+    return { rows, ...this.rolloutBuffers(rows) };
+  }
+
+  /** Advance the rows the last fill listed by the masked argmax of each logits row (rows x actions). */
+  rolloutStep(logits: Float32Array, rows: number): void {
+    const p = this.M._malloc(4 * Math.max(1, rows * this.actionSize));
+    try {
+      this.M.HEAPF32.set(logits.subarray(0, rows * this.actionSize), p >> 2);
+      if (!this.M._ts_rollout_step(p)) throw new Error(this.lastError());
+    } finally {
+      this.M._free(p);
+    }
+  }
+
+  /** The rows at their horizon and not yet valued, from the MOVER's side. */
+  rolloutFillLeaves(): { rows: number; obs: Float32Array; masks: Uint8Array } {
+    const rows = this.M._ts_rollout_fill_leaves();
+    return { rows, ...this.rolloutBuffers(rows) };
+  }
+
+  rolloutSetLeafValues(values: Float32Array): void {
+    const p = this.M._malloc(4 * Math.max(1, values.length));
+    try {
+      this.M.HEAPF32.set(values, p >> 2);
+      if (!this.M._ts_rollout_set_leaf_values(p)) throw new Error(this.lastError());
+    } finally {
+      this.M._free(p);
+    }
+  }
+
+  /** The decision for position `position` of the batch under `rule` (argmax, z<x>, kl<t>). */
+  rolloutDecide(position: number, candidates: number[], logits: Float32Array, mask: Uint8Array, rule: string)
+      : { pick: number; worlds: number; q: number[]; lead: number[]; lead_se: number[] } {
+    const c = this.M._malloc(4 * Math.max(1, candidates.length));
+    const lg = this.M._malloc(4 * this.actionSize), mk = this.M._malloc(this.actionSize);
+    const r = this.M.stringToNewUTF8(rule);
+    try {
+      this.M.HEAP32.set(candidates, c >> 2);
+      this.M.HEAPF32.set(logits, lg >> 2);
+      this.M.HEAPU8.set(mask, mk);
+      const text = this.str(this.M._ts_rollout_decide(position, c, candidates.length, lg, mk, r));
+      if (!text) throw new Error(this.lastError());
+      return JSON.parse(text);
+    } finally {
+      this.M._free(c); this.M._free(lg); this.M._free(mk); this.M._free(r);
+    }
+  }
+
+  private rolloutBuffers(rows: number): { obs: Float32Array; masks: Uint8Array } {
+    const w = this.M._ts_rollout_obs_width();
+    const o = this.M._ts_rollout_buf_obs() >> 2;
+    const m = this.M._ts_rollout_buf_masks();
+    return { obs: this.M.HEAPF32.slice(o, o + rows * w), masks: this.M.HEAPU8.slice(m, m + rows * this.actionSize) };
+  }
+
   // ---- names and debug ------------------------------------------------------------------------
 
   cardName(id: number): string { return this.str(this.M._ts_card_name(id)); }

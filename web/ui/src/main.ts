@@ -21,6 +21,8 @@ import { GameSession } from "./game/session";
 import { decodePosition, encodePosition } from "./game/position";
 import { Model, sourceFromParam, sourceToParam } from "./analysis/model";
 import { analyze } from "./analysis/readout";
+import { DEFAULT_ROLLOUT, RolloutSpec, parseRolloutParam, rolloutParam } from "./analysis/rollout";
+import { RolloutRunner } from "./analysis/rollout_runner";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 import { lastTurnOf } from "./game/last_turn";
 
@@ -71,11 +73,13 @@ export class TSApp {
   private urlView = false;
   private autoPlayTimer: number | null = null;
   /**
-   * How the model picks its move (#search-mode-select). "policy" is its argmax from one forward,
-   * the only driver in the page today; the rollout root the engine exports has none yet, so its
-   * option is disabled in the markup and this never takes that value.
+   * How the model picks its move (#search-mode-select, `search=` in the URL): null is the policy's
+   * argmax from one forward; a spec is the rollout root (analysis/rollout.ts), run by `runner` --
+   * in a worker with its own engine and model where the browser has workers, else inline.
    */
-  private searchMode: "policy" | "rollout" = "policy";
+  private searchSpec: RolloutSpec | null = null;
+  private runner: RolloutRunner | null = null;
+  private searchRuns = 0;
 
   constructor() {
     this.parseQueryParams();
@@ -140,6 +144,7 @@ export class TSApp {
       return;
     }
     setActionSpace(this.engine.layout);
+    this.runner = new RolloutRunner(this.engine);
     this.session = new GameSession(this.engine);
     this.session.newGame(Math.floor(Math.random() * 1_000_000));
     if (this.urlPosition) {
@@ -212,6 +217,7 @@ export class TSApp {
     // A replay link shows everything; a player's view cannot watch one.
     this.urlView = params.has("view");
     this.view = this.isReplayMode ? "DEV" : viewFromParam(params.get("view"));
+    this.searchSpec = parseRolloutParam(params.get("search"));
   }
 
   /**
@@ -267,15 +273,56 @@ export class TSApp {
     this.refresh();
   }
 
-  /** The search select (#search-mode-select): recorded; only "policy" has a driver today. */
+  /**
+   * The search select (#search-mode-select): the policy's argmax, or the rollout root at the
+   * measured spec (another spec comes in through `search=rollout:k:worlds:horizon:rule` in the
+   * URL and is kept while the select says rollout). A change re-reads the position on screen.
+   */
   private setupSearchSelect() {
     const sel = document.getElementById("search-mode-select") as HTMLSelectElement | null;
     if (!sel) return;
-    sel.value = this.searchMode;
+    sel.value = this.searchSpec ? "rollout" : "policy";
     sel.addEventListener("change", () => {
-      this.searchMode = sel.value === "rollout" ? "rollout" : "policy";
-      sel.value = this.searchMode;
+      this.searchSpec = sel.value === "rollout" ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null;
+      this.syncUrl();
+      this.runAnalysis(this.version);
     });
+  }
+
+  /**
+   * The search's decision for the position the readout `a` describes, into `a` and the panel.
+   * Dropped if the board, the model or the search setting moved on meanwhile; a failure is shown
+   * in the panel and auto-play falls back to the policy.
+   */
+  private async runSearch(a: LiveAnalysis, version: number) {
+    const spec = this.searchSpec;
+    const model = this.model;
+    if (!spec || !model || !this.runner || !this.engine || !a.decision_player) return;
+    const run = ++this.searchRuns;
+    const key = this.modelKey;
+    a.search_pending = true;
+    if (!this.isReplayMode) this.analysisPanel.render(a, this.shown);
+    try {
+      const result = await this.runner.search(this.engine.snapshot(), model, key, spec, this.seedFor(version));
+      if (version !== this.version || key !== this.modelKey || run !== this.searchRuns) return;
+      a.search_pending = false;
+      a.search = result ?? undefined;
+    } catch (e) {
+      if (version !== this.version || key !== this.modelKey || run !== this.searchRuns) return;
+      a.search_pending = false;
+      a.search_error = e instanceof Error ? e.message : String(e);
+    }
+    if (!this.isReplayMode) {
+      this.analysisPanel.render(a, this.shown);
+      this.analysisPanel.decorate(this.shown);
+    }
+    this.maybeAutoPlay();
+  }
+
+  /** The search's seed for a position: from the game's step, so a reopened link searches alike. */
+  private seedFor(_version: number): number {
+    const step = this.liveState?.step_index ?? 0;
+    return ((step + 1) * 1_000_003) >>> 0;
   }
 
   /** The view selector: developer (everything) or one side against the model. */
@@ -341,6 +388,7 @@ export class TSApp {
     if (auto) params.set("auto", auto.toLowerCase()); else params.delete("auto");
     const view = viewToParam(this.view);
     if (view) params.set("view", view); else params.delete("view");
+    if (this.searchSpec) params.set("search", rolloutParam(this.searchSpec)); else params.delete("search");
     params.set("pos", this.positionToken);
     const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
     if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
@@ -385,6 +433,11 @@ export class TSApp {
         this.analysisPanel.render(a, this.shown);
         this.analysisPanel.decorate(this.shown);
       }
+      if (this.searchSpec && a.decision_player && !this.isReplayMode) {
+        // The search answers later and auto-play waits for it (favourite() is null meanwhile).
+        void this.runSearch(a, version);
+        return;
+      }
       this.maybeAutoPlay();
     } catch (e) {
       if (key === this.modelKey) this.analysisPanel.setError(`The model failed on this position: ${e}`);
@@ -398,6 +451,7 @@ export class TSApp {
     if (!pick) {
       this.model = null;
       this.modelKey = "";
+      this.runner?.setModel(null, "");
       this.analysisPanel.setOff();
       this.renderState();
       this.syncUrl();
@@ -409,6 +463,7 @@ export class TSApp {
       if (load !== this.modelLoads) return;   // another pick superseded this one
       this.model = m;
       this.modelKey = `m${load}`;
+      this.runner?.setModel(m, this.modelKey);
       const fp = m.meta.engineFingerprint;
       this.analysisPanel.setLoaded({
         key: this.modelKey,

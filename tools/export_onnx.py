@@ -40,6 +40,7 @@ import torch
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import model_obs_features
 from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.game_step import drain_chance
 from tools.lib.player_agent import NeuralAgent
@@ -107,6 +108,9 @@ def export(checkpoint: str, out: str, *, positions: int = 128) -> Dict[str, str]
         "ts.obs_size": str(int(ts.OBS_SIZE)),
         "ts.action_size": str(int(ActionEncoder.FLAT_ACTION_SIZE)),
         "ts.merged_influence": "true" if agent.merged_influence else "false",
+        # The obs_features bits the network reads (0: the base layout): the page's rollout root
+        # hands them to the engine's batch so its rows are the width this network expects.
+        "ts.obs_features": str(int(model_obs_features(agent.model))),
         "ts.label": agent.name,
         "ts.checkpoint": os.path.join(os.path.basename(os.path.dirname(os.path.abspath(checkpoint))),
                                       os.path.basename(checkpoint)),

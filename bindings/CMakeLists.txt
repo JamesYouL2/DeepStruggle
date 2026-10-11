@@ -38,6 +38,7 @@ if(EMSCRIPTEN)
         _ts_rollout_buf_masks _ts_rollout_step _ts_rollout_fill_leaves _ts_rollout_set_leaf_values
         _ts_rollout_values _ts_rollout_row_position _ts_rollout_row_world _ts_rollout_row_candidate
         _ts_rollout_row_done _ts_rollout_row_terminal _ts_rollout_worlds_used
+        _ts_rollout_candidates _ts_rollout_decide
         _malloc _free)
     list(JOIN TS_WASM_EXPORTS "," TS_WASM_EXPORTS_CSV)
     target_link_options(ts_engine_wasm PRIVATE

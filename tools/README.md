@@ -1085,10 +1085,13 @@ independent draws of the hidden cards and the dice. `rollout:<ckpt>:k:worlds:hor
 critic at the leaf, then `argmax`, `z<x>` (the best only if its paired lead over the network's move is
 x standard errors) or `kl<t>` (one mirror-descent step). `rollout:<ckpt>:4:16:4:z2` is the measured
 player and the default: an omitted field takes its value, so `rollout:<ckpt>` is that player. The
-network is read in its own observation feature set, and the worlds, playouts, boundary count and
-guard are `ts.RolloutBatch` (`bindings/rollout_batch.hpp`), the same C++ the browser's engine
-exports, with the C++ determinizer (`ts.determinize`, SplitMix64) rather than the Python one. On
-the leaderboard it is the `rollout` kind, `<network>~rollout(k=4,worlds=16,horizon=4,rule=z2)`
+network is read in its own observation feature set, and everything but the network calls --
+the candidates, the worlds, the playouts with their boundary count and guard, the leaves, the
+decision with its statistics -- is `ts.RolloutBatch`, `ts.rollout_candidates` and
+`ts.rollout_decide` (`bindings/rollout_batch.hpp`), the same C++ the browser's engine exports and
+the workbench's search select drives with onnxruntime (`search=rollout` in the page's address).
+The determinizer is the C++ one (`ts.determinize`, SplitMix64), not the Python one. On the
+leaderboard it is the `rollout` kind, `<network>~rollout(k=4,worlds=16,horizon=4,rule=z2)`
 (section 2b).
 `name:<label>:<spec>` names an entrant in reports.
 

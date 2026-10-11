@@ -187,3 +187,72 @@ def test_the_boundary_count_matches_ar_key_changes() -> None:
             continue
         assert b.row_crossed()[r] == 3
         assert ar_key(b.row_state(r)) != starts[r]
+
+
+def test_candidates_are_the_most_probable_legal_moves_best_first() -> None:
+    st = _position()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    rng = np.random.default_rng(3)
+    logits = rng.standard_normal(mask.shape[0]).astype(np.float32)
+    got = ts.rollout_candidates(logits, mask, 4)
+    legal = np.flatnonzero(mask)
+    want = [int(a) for a in legal[np.argsort(-logits[legal], kind="stable")][:4]]
+    assert got == want
+    assert ts.rollout_candidates(logits, mask, 1000) == [int(a) for a in legal[np.argsort(-logits[legal], kind="stable")]]
+
+
+def test_decide_reports_means_paired_leads_and_the_rule() -> None:
+    st = _position()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=0, seed=5)
+    b.add(st, cands, 4)
+    n_w = b.worlds_used(0)
+    # Leaf values by row, chosen so candidate 2 leads candidate 0 by exactly +0.2 in every world
+    # (no spread: a clear lead) and candidate 1 trails it.
+    rows = b.rows()
+    cand = b.row_candidate()
+    world = b.row_world()
+    values = np.zeros(rows, dtype=np.float32)
+    for r in range(rows):
+        values[r] = {0: 0.1, 1: -0.3, 2: 0.3}[cand[r]] + 0.01 * world[r]
+    lo, _ = b.fill_leaves()
+    # fill_leaves lists rows in row order; the same order values are built in.
+    assert lo.shape[0] == rows
+    b.set_leaf_values(values)
+    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    d = ts.rollout_decide(b, 0, cands, logits, mask, "z2")
+    assert d["worlds"] == n_w
+    assert np.allclose(d["q"], [0.1 + 0.01 * np.mean(range(n_w)), -0.3 + 0.01 * np.mean(range(n_w)), 0.3 + 0.01 * np.mean(range(n_w))], atol=1e-6)
+    assert np.allclose(d["lead"], [0.0, -0.4, 0.2], atol=1e-6)
+    assert np.allclose(d["lead_se"], [0.0, 0.0, 0.0], atol=1e-6)
+    assert d["pick"] == cands[2]                       # a clear lead departs from the policy
+    assert ts.rollout_decide(b, 0, cands, logits, mask, "argmax")["pick"] == cands[2]
+    # The KL rule at a tiny temperature is the argmax of Q; at a huge one, the policy's move.
+    assert ts.rollout_decide(b, 0, cands, logits, mask, "kl0.001")["pick"] == cands[2]
+    logits[cands[0]] = 5.0
+    assert ts.rollout_decide(b, 0, cands, logits, mask, "kl1000")["pick"] == cands[0]
+    with pytest.raises(ValueError):
+        ts.rollout_decide(b, 0, cands, logits, mask, "best")
+    assert ts.rollout_parse_rule("kl") == ("kl", pytest.approx(0.05))
+    assert ts.rollout_parse_rule("z") == ("z", 2.0)
+
+
+def test_decide_keeps_the_policys_move_without_a_clear_lead() -> None:
+    st = _position()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    cands = _legal(st)[:2]
+    b = ts.RolloutBatch(horizon=0, seed=6)
+    b.add(st, cands, 4)
+    cand = b.row_candidate()
+    world = b.row_world()
+    # Candidate 1 is better on average but noisily: +0.3 in two worlds, -0.25 in the other two.
+    values = np.asarray([0.0 if cand[r] == 0 else (0.3 if world[r] % 2 == 0 else -0.25) for r in range(b.rows())],
+                        dtype=np.float32)
+    b.fill_leaves()
+    b.set_leaf_values(values)
+    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    d = ts.rollout_decide(b, 0, cands, logits, mask, "z2")
+    assert d["lead"][1] == pytest.approx(0.025, abs=1e-6) and d["lead_se"][1] > 0.1
+    assert d["pick"] == cands[0]                                   # not two standard errors clear
+    assert ts.rollout_decide(b, 0, cands, logits, mask, "argmax")["pick"] == cands[1]

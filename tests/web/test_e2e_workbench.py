@@ -28,6 +28,7 @@ from playwright.sync_api import sync_playwright
 
 import ts_engine as ts
 from ai.eval.policy_readout import read_critic, read_policy
+from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import NeuralAgent
 from web.server.main import app
@@ -192,6 +193,59 @@ def test_the_page_reads_the_model_as_python_does(browser: Any, server: str, chec
         n = page.evaluate("window.__wb.state.step_index")
         page.click("#btn-play-favourite")
         page.wait_for_function(f"window.__wb.state.step_index > {n}")
+    assert not page.errors
+
+
+def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, server: str, checkpoint: Dict[str, str]) -> None:
+    """The search select's rollout root: the page's loop over the engine's batch (analysis/rollout.ts,
+    in a worker) against the same loop in Python with torch (ai/search/rollout_root.py), on the same
+    position, the same candidates, the same worlds and the same seed. The engine's part is identical
+    by construction; the networks differ only in onnxruntime's and torch's last bits."""
+    spec = "rollout:3:2:1:z2"
+    page = _open(browser, server + f"/?search={spec}")
+    _pick_local_model(page)
+    assert page.input_value("#search-mode-select") == "rollout"
+    page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.search", timeout=120000)
+    a = page.evaluate("window.__wb.liveAnalysis")
+    s = a["search"]
+    assert s["kind"] == "rollout" and s["spec"] == {"k": 3, "worlds": 2, "horizon": 1, "rule": "z2"}
+    assert s["pick"] in s["candidates"] and s["candidates"][0] == a["policy"]["argmax_idx"]
+    assert s["worlds"] == 2 and len(s["q"]) == len(s["candidates"]) == 3
+    assert parse_qs(page.url.split("?", 1)[1]).get("search") == [spec]
+    assert "ROLLOUT ROOT" in page.inner_text("#analysis-body")
+
+    # The same search in Python, from the same position with the same seed.
+    state = ts.state_from_save_json(page.evaluate("window.__wb.engine.saveJson()"))
+    seed = (page.evaluate("window.__wb.state.step_index") + 1) * 1_000_003
+    model = NeuralAgent.from_checkpoint(checkpoint["path"], device="cpu").model
+    root = RolloutRoot(model, RolloutConfig(k=3, worlds=2, horizon=1, rule="z2"))
+    root.reseed(0)
+    # RolloutRoot draws the batch's seed from its own stream; drive the batch directly instead.
+    p = state.ctx().decision_player
+    obs = np.asarray(ts.extract_observation(state, p), dtype=np.float32)[None]
+    mask = np.asarray(ActionEncoder.get_legal_mask(state), dtype=np.uint8)
+    with torch.no_grad():
+        logits = model(torch.from_numpy(obs), torch.from_numpy(mask[None]))[0].float().numpy()[0]
+    cands = ts.rollout_candidates(np.ascontiguousarray(logits), mask, 3)
+    assert cands == s["candidates"], "the page and Python rank the root's moves differently"
+    batch = ts.RolloutBatch(horizon=1, shared_dice=True, guard=True, features=0, seed=seed)
+    batch.add(state, cands, 2)
+    root._playouts(batch)
+    d = ts.rollout_decide(batch, 0, cands, np.ascontiguousarray(logits), mask, "z2")
+    assert d["worlds"] == s["worlds"]
+    # onnxruntime and torch differ in the last bits, and a playout's greedy move can flip on a
+    # near-tie, so the values agree to a tolerance rather than exactly.
+    assert max(abs(x - y) for x, y in zip(d["q"], s["q"])) < 0.05
+
+    # The favourite is now the search's pick, and Play favourite plays it.
+    n = page.evaluate("window.__wb.state.step_index")
+    page.click("#btn-play-favourite")
+    page.wait_for_function(f"window.__wb.state.step_index > {n}")
+    # Back to the policy: the section goes, and the address no longer names a search.
+    page.select_option("#search-mode-select", "policy")
+    page.wait_for_function("!new URLSearchParams(location.search).has('search')")
+    page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.policy && !window.__wb.liveAnalysis.search")
+    assert "ROLLOUT ROOT" not in page.inner_text("#analysis-body")
     assert not page.errors
 
 

@@ -70,8 +70,23 @@ if (mode === "rollout") {
     table.push([M._ts_rollout_row_position(r), M._ts_rollout_row_world(r), M._ts_rollout_row_candidate(r),
                 M._ts_rollout_row_done(r), M._ts_rollout_row_terminal(r)]);
   }
+  // The decision under each rule, from synthetic root logits: logit[a] = ((a * 7919) mod 97) / 97.
+  const rootPtr = M._malloc(4 * ACT), maskPtr = M._malloc(ACT);
+  const root = new Float32Array(M.HEAPF32.buffer, rootPtr, ACT);
+  for (let a = 0; a < ACT; a++) root[a] = ((a * 7919) % 97) / 97;
+  M.HEAPU8.set(mask, maskPtr);
+  const topPtr = M._malloc(4 * 3);
+  const nTop = M._ts_rollout_candidates(rootPtr, maskPtr, 3, topPtr);
+  const top = Array.from(M.HEAP32.subarray(topPtr >> 2, (topPtr >> 2) + nTop));
+  const decisions = {};
+  for (const rule of ["argmax", "z2", "kl0.05"]) {
+    const rulePtr = M.stringToNewUTF8(rule);
+    decisions[rule] = JSON.parse(M.UTF8ToString(M._ts_rollout_decide(0, candPtr, cands.length, rootPtr, maskPtr, rulePtr)));
+    M._free(rulePtr);
+  }
   console.log(JSON.stringify({ candidates: cands, rows, worlds_used: M._ts_rollout_worlds_used(0), plies, leaves,
-                               refused: M._ts_rollout_refused(), digest: hash.digest("hex"), values, table }));
+                               refused: M._ts_rollout_refused(), digest: hash.digest("hex"), values, table,
+                               top, decisions }));
   process.exit(0);
 }
 

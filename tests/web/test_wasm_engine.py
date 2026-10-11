@@ -144,10 +144,25 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
                                 "horizon": horizon, "batch_seed": batch_seed}))
+    # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
+    root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
+    top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)
+    decisions: Dict[str, Dict[str, Any]] = {}
+    for rule in ("argmax", "z2", "kl0.05"):
+        d = ts.rollout_decide(batch, 0, cands, root, np.ascontiguousarray(mask, dtype=np.uint8), rule)
+        decisions[rule] = {"pick": d["pick"], "worlds": d["worlds"], "q": [float(x) for x in d["q"]],
+                           "lead": [float(x) for x in d["lead"]], "lead_se": [float(x) for x in d["lead_se"]]}
     wasm = _node("rollout", str(path))
     assert "error" not in wasm, wasm.get("error")
     for key in ("candidates", "rows", "worlds_used", "plies", "leaves", "refused", "table"):
         assert wasm[key] == native[key], key
+    assert wasm["top"] == top
     assert wasm["digest"] == native["digest"], "the two builds' playouts diverged"
     assert np.array_equal(np.asarray(wasm["values"], dtype=np.float32), np.asarray(native["values"], dtype=np.float32))
+    for rule, want in decisions.items():
+        got = wasm["decisions"][rule]
+        assert (got["pick"], got["worlds"]) == (want["pick"], want["worlds"]), rule
+        for key in ("q", "lead", "lead_se"):
+            assert np.allclose(np.asarray(got[key], dtype=np.float32), np.asarray(want[key], dtype=np.float32),
+                               rtol=1e-6, atol=1e-7), (rule, key)
     assert rows > 0 and native["refused"] == 0
