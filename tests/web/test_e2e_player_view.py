@@ -158,7 +158,7 @@ def test_new_game_and_the_view_select_fit_a_laptop_screen(browser: Any, static_s
     page.click("#mode-choice-us")
     page.wait_for_selector("#mode-dialog", state="hidden")
     assert page.evaluate("window.__wb.shown.view") == "US"
-    for el in ("view-select", "btn-new-game", "btn-toggle-debug", "btn-toggle-replay", "analysis-source-select",
+    for el in ("view-select", "btn-new-game", "btn-toggle-debug", "btn-toggle-replay", "btn-model-choose",
                "search-mode-select", "active-player-badge", "btn-undo-action"):
         box = page.locator(f"#{el}").bounding_box()
         assert box and box["width"] > 0 and box["x"] + box["width"] <= 1366, f"#{el} is off screen"

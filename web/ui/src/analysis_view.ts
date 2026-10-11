@@ -132,6 +132,9 @@ export class AnalysisPanel {
   private body = el<HTMLElement>("analysis-body");
   private badge = el<HTMLElement>("analysis-status");
   private info = el<HTMLElement>("analysis-model-info");
+  /** The technical bar's one-line state of the model: off, loading, error -- or nothing, when
+   *  `info` names the loaded model beside it. */
+  private activeStatus = el<HTMLElement>("model-active-status");
 
   constructor(
     private onPick: (pick: ModelPick | null) => void,
@@ -440,12 +443,21 @@ export class AnalysisPanel {
     if (this.status === "ready" && this.loaded) {
       const l = this.loaded;
       this.info.innerHTML = `<b>${esc(l.label)}</b> <span class="analysis-info-dim">${l.merged ? "E4.1 view" : "E4 view"}${l.checkpoint ? ` · ${esc(l.checkpoint)}` : ""}${l.fromCache ? " · cached" : ""}</span>`
-        + (l.engineWarning ? `<div class="analysis-warning">${esc(l.engineWarning)}</div>` : "");
+        + (l.engineWarning ? `<span class="analysis-warning"> · ${esc(l.engineWarning)}</span>` : "");
       this.info.classList.remove("hidden");
-    } else {
-      this.info.innerHTML = "";
-      this.info.classList.add("hidden");
+      this.activeStatus.textContent = "";
+      this.activeStatus.className = "model-active-status hidden";
+      return;
     }
+    this.info.innerHTML = "";
+    this.info.classList.add("hidden");
+    const what = this.pending ? sourceLabel(this.pending) : this.loaded?.label ?? "";
+    const text = this.status === "loading" ? `loading ${what}…`
+      : this.status === "error" ? "model failed to load"
+      : "no model";
+    this.activeStatus.textContent = text;
+    this.activeStatus.className = `model-active-status ${this.status}`;
+    this.activeStatus.title = this.status === "error" ? this.error ?? "" : "";
   }
 
   private renderBody(state: GameState | null = null): void {

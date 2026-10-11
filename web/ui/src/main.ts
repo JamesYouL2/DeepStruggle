@@ -942,6 +942,26 @@ export class TSApp {
       this.askMode("new");
     });
 
+    // The model chooser: the source controls, dropped down from the technical bar by Change,
+    // closed by Change again, a click elsewhere, or Escape.
+    const chooser = document.getElementById("model-chooser");
+    const chooseBtn = document.getElementById("btn-model-choose");
+    if (chooser && chooseBtn) {
+      const setOpen = (open: boolean) => {
+        chooser.classList.toggle("hidden", !open);
+        chooseBtn.setAttribute("aria-expanded", String(open));
+        chooseBtn.textContent = open ? "Change ▴" : "Change ▾";
+      };
+      chooseBtn.addEventListener("click", () => setOpen(chooser.classList.contains("hidden")));
+      document.addEventListener("click", (e) => {
+        const t = e.target as Node;
+        if (!chooser.classList.contains("hidden") && !chooser.contains(t) && !chooseBtn.contains(t)) setOpen(false);
+      });
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !chooser.classList.contains("hidden")) setOpen(false);
+      });
+    }
+
     // Debug Tools button
     document.getElementById("btn-toggle-debug")?.addEventListener("click", () => {
       if (this.view !== "DEV") return;   // the inspector shows the full state

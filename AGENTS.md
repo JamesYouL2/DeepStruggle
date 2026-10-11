@@ -402,10 +402,12 @@ The workbench serves four purposes, all in the page:
   side's P(victory) and expected VP, the side to move -- the only reading the value head is
   trained on -- highlighted and the other dimmed; *★ Play favourite* (or `F`) plays its argmax in the model's own action view, and
   *Auto-play* (none / USSR / US) makes that side play by itself.
-* **The top of the page is three blocks**: the disclaimer; the technical bar -- the engine badge,
-  the play mode (Developer / Play as US / Play as USSR) with New Game, the model's source and its
-  search select, and the developer's tools (Debug Tools, Replay Mode, Leaderboard); and the game bar
-  -- the tracks, whose decision it is, and Cancel Action. A fresh open (a link naming no position,
+* **The top of the page is three blocks**: the disclaimer; the technical bar, one line -- the
+  engine badge, the play mode (Developer / Play as US / Play as USSR) with New Game, the active
+  model (its name once loaded, else its state) with *Change*, which drops the source controls down
+  (`#model-chooser`), and the search select, then the developer's tools (Cancel Action, Debug
+  Tools, Replay Mode, Leaderboard); and the game bar -- the tracks and whose decision it is. With
+  no model in the link the default Hugging Face model loads and is what the bar names. A fresh open (a link naming no position,
   replay or view) and every New Game first ask for the play mode in a dialog (`#mode-dialog`,
   `main.ts askMode`) over the live board; Escape keeps the current mode, and on New Game deals
   nothing. The search select has one driver today, the policy's argmax; the rollout root the

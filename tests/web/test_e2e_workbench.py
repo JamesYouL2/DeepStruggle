@@ -137,7 +137,16 @@ def _open(browser: Any, url: str, setup: Optional[Callable[[Any], None]] = None,
     return page
 
 
+def _open_model_chooser(page: Any) -> None:
+    """The model's source controls sit in a chooser the technical bar opens on demand
+    (#btn-model-choose -> #model-chooser); open it before driving them."""
+    if page.locator("#model-chooser.hidden").count():
+        page.click("#btn-model-choose")
+        page.wait_for_selector("#model-chooser:not(.hidden)")
+
+
 def _pick_local_model(page: Any) -> None:
+    _open_model_chooser(page)
     page.select_option("#analysis-source-select", "local")
     page.wait_for_function(f"[...document.querySelectorAll('#analysis-run-select option')].some(o => o.value === '{RUN}')")
     page.select_option("#analysis-run-select", RUN)
@@ -325,6 +334,7 @@ def test_a_dropped_onnx_file_is_a_model(browser: Any, server: str, checkpoint: D
     onnx_path = str(tmp_path / "dropped.onnx")
     export(checkpoint["path"], onnx_path, positions=16)
     page = _open(browser, server + "/")
+    _open_model_chooser(page)
     page.select_option("#analysis-source-select", "file")
     page.set_input_files("#analysis-file-input", onnx_path)
     page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
@@ -337,6 +347,7 @@ def test_a_file_that_is_not_an_export_is_refused_with_a_reason(browser: Any, ser
     bogus = tmp_path / "bogus.onnx"
     bogus.write_bytes(b"\x08\x07not really a model")
     page = _open(browser, server + "/")
+    _open_model_chooser(page)
     page.select_option("#analysis-source-select", "file")
     page.set_input_files("#analysis-file-input", str(bogus))
     page.wait_for_selector("#analysis-body .analysis-error", timeout=30000)
@@ -522,6 +533,7 @@ def test_a_downloaded_model_is_kept_for_the_next_visit(browser: Any, static_site
         # The bytes do not hash to what the repo claimed, so they are not kept under that name.
         assert page.evaluate("caches.open('ts-models-v1').then(c => c.keys()).then(k => k.length)") == 1
 
+        _open_model_chooser(page)
         page.click("#analysis-hf-clear")
         page.wait_for_function("document.getElementById('analysis-hf-clear').disabled")
         assert page.evaluate("caches.has('ts-models-v1')") is False
@@ -534,6 +546,7 @@ def test_turning_analysis_off_stays_off_in_the_link(browser: Any, static_site: s
     requests: List[str] = []
     page = _open(browser, static_site + "/", lambda p: _fake_hf_repo(p, onnx_bytes, requests))
     page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+    _open_model_chooser(page)
     page.select_option("#analysis-source-select", "")
     page.wait_for_function("new URLSearchParams(location.search).get('model') === 'off'")
     link = page.url

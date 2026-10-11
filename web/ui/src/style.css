@@ -626,53 +626,104 @@ body {
   gap: 12px;
   margin-left: auto;
 }
-/* The technical bar's groups: a small caption over each -- the engine, the play mode, the model
-   and its search, the developer's tools -- so the bar reads as settings, not as the position. */
+/* The technical bar: one line -- the engine, the play mode, the active model with its chooser and
+   search, the developer's tools -- each group with a small inline caption, so the bar reads as
+   settings, not as the position. The model group takes the width left over. */
 .tech-bar {
+  min-height: 40px;
+  flex-wrap: nowrap;
   justify-content: flex-start;
-  gap: 6px 22px;
+  gap: 12px;
+  padding: 3px 12px;
 }
+.tech-bar .btn, .tech-bar .view-select, .tech-bar .status-badge { white-space: nowrap; }
+#search-mode-select { width: 128px; }
+.tech-bar .brand { flex-shrink: 0; }
+.tech-bar .brand-title { font-size: 13px; letter-spacing: 1.2px; line-height: 1.1; }
+.tech-bar .brand-badge { font-size: 8px; }
 .tech-group {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 6px;
-  padding-top: 10px;
+  flex-shrink: 0;
   position: relative;
+  min-width: 0;
 }
 .tech-label {
-  position: absolute;
-  top: -2px;
-  left: 0;
   font-size: 9px;
   font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.8px;
+  white-space: nowrap;
 }
+.tech-model { flex: 1 1 auto; min-width: 0; }
 .tech-dev { margin-left: auto; }
-/* The model's source controls, moved up from the analysis panel: one line, selects of a size. */
+/* The active model, in one line: its state while there is none, its name once loaded, ellipsis
+   where the line runs out. */
+.model-active-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.model-active-status.loading { color: var(--warning); }
+.model-active-status.error { color: var(--danger); }
+.model-active-status.hidden { display: none; }
+.tech-model .analysis-model-info {
+  margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tech-model .analysis-model-info .analysis-warning { display: inline; }
+/* The chooser: the source controls, dropped below the bar (main.ts: Change toggles it). */
+.model-chooser {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: min(640px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: var(--bg-panel-solid);
+  border: 1px solid var(--border-highlight);
+  border-radius: 6px;
+  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.6);
+}
+.model-chooser.hidden { display: none; }
 .model-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
-.model-controls .analysis-select { flex: 0 1 170px; width: 170px; }
-.model-controls .analysis-snapshot { flex: 0 1 120px; width: 120px; }
-.model-controls .analysis-src { display: flex; gap: 6px; align-items: center; }
-.model-controls .analysis-model-info { margin: 0; max-width: 360px; }
+.model-controls .analysis-select { flex: 0 1 190px; width: 190px; }
+.model-controls .analysis-snapshot { flex: 0 1 130px; width: 130px; }
+.model-controls .analysis-src { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .search-mode {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
 }
 .search-mode .analysis-select { flex: 0 0 auto; width: auto; }
+/* Below 1500px the dev group's caption goes; below 1400px the other outer captions and the
+   brand's second line too, so the bar stays one line down to a laptop's width. */
+@media (max-width: 1500px) {
+  .tech-dev .tech-label { display: none; }
+}
+@media (max-width: 1400px) {
+  .tech-bar { gap: 8px; }
+  .tech-bar .brand-badge { display: none; }
+  .tech-dev .tech-label, #tech-engine .tech-label, #tech-mode .tech-label { display: none; }
+}
 
 /* The game bar: the position's tracks across the middle, whose decision it is and the undo at
    the right. */

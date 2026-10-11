@@ -25,9 +25,8 @@
       </div>
 
       <div class="tech-group" id="tech-engine">
-        <span class="tech-label">Engine</span>
         <!-- The engine running in the page: its fingerprint, and a warning when the local
-             server's sources have moved on from the build the page loaded. -->
+             server's sources have moved on from the build the page loaded. The badge names itself. -->
         <span id="connection-status" class="status-badge">LOADING ENGINE…</span>
       </div>
 
@@ -46,58 +45,65 @@
 
       <div class="tech-group tech-model" id="tech-model">
         <span class="tech-label">Model</span>
-        <!-- Where the model comes from (analysis_view.ts binds these by id). Its readout -- the
-             policy over the open decision and the critic -- stays in the Model Analysis panel. -->
-        <div class="model-controls">
-          <select id="analysis-source-select" class="analysis-select analysis-source" title="Where the model comes from">
-            <option value="">— analysis off —</option>
-            <option value="local" id="analysis-source-local-option">Local checkpoints</option>
-            <option value="hf">Hugging Face</option>
-            <option value="file">.onnx file</option>
+        <!-- The active model, in one line: analysis_view.ts writes its state here (off, loading,
+             error) and its name, view and checkpoint into #analysis-model-info once loaded. -->
+        <span id="model-active-status" class="model-active-status">no model</span>
+        <div id="analysis-model-info" class="analysis-model-info hidden"></div>
+        <button id="btn-model-choose" class="btn btn-secondary btn-sm" title="Choose another model: a local checkpoint, a Hugging Face repo or an .onnx file" aria-expanded="false" aria-controls="model-chooser">Change ▾</button>
+        <!-- How the model chooses a move. Policy: its argmax, one forward. The rollout root
+             (bindings/rollout_batch.hpp, exported by this engine) has no driver in the page yet. -->
+        <label class="search-mode" title="How the model picks its move">
+          Search
+          <select id="search-mode-select" class="analysis-select" title="Policy: the model's most likely move, one forward. Rollout root: its top moves played out in sampled worlds -- the engine exports it, the page does not drive it yet.">
+            <option value="policy">Policy (greedy)</option>
+            <option value="rollout" disabled>Rollout root (not yet in the page)</option>
           </select>
-          <div id="analysis-src-local" class="analysis-src hidden">
-            <select id="analysis-run-select" class="analysis-select" title="Training run"></select>
-            <select id="analysis-snapshot-select" class="analysis-select analysis-snapshot" title="Snapshot" disabled></select>
-          </div>
-          <div id="analysis-src-hf" class="analysis-src hidden">
-            <input id="analysis-hf-repo" class="analysis-select" placeholder="owner/repo" title="A public Hugging Face model repo holding .onnx exports (tools/export_onnx.py)">
-            <input id="analysis-hf-revision" class="analysis-select analysis-snapshot" value="main" title="Branch, tag or commit">
-            <button id="analysis-hf-list" class="btn btn-secondary btn-sm" title="List the repo's .onnx files">List</button>
-            <select id="analysis-hf-file" class="analysis-select" title="Model file"></select>
-            <button id="analysis-hf-clear" class="btn btn-secondary btn-sm" disabled>Clear cache</button>
-          </div>
-          <div id="analysis-src-file" class="analysis-src hidden">
-            <input id="analysis-file-input" type="file" accept=".onnx" class="analysis-file" title="An .onnx export (tools/export_onnx.py); you can also drop it anywhere on the page">
-          </div>
-          <!-- How the model chooses a move. Policy: its argmax, one forward. The rollout root
-               (bindings/rollout_batch.hpp, exported by this engine) has no driver in the page yet. -->
-          <label class="search-mode" title="How the model picks its move">
-            Search
-            <select id="search-mode-select" class="analysis-select" title="Policy: the model's most likely move, one forward. Rollout root: its top moves played out in sampled worlds -- the engine exports it, the page does not drive it yet.">
-              <option value="policy">Policy (greedy)</option>
-              <option value="rollout" disabled>Rollout root (not yet in the page)</option>
+        </label>
+        <!-- Where the model comes from (analysis_view.ts binds these by id), opened by Change.
+             The readout -- the policy over the open decision and the critic -- stays in the Model
+             Analysis panel. -->
+        <div id="model-chooser" class="model-chooser hidden">
+          <div class="model-controls">
+            <select id="analysis-source-select" class="analysis-select analysis-source" title="Where the model comes from">
+              <option value="">— analysis off —</option>
+              <option value="local" id="analysis-source-local-option">Local checkpoints</option>
+              <option value="hf">Hugging Face</option>
+              <option value="file">.onnx file</option>
             </select>
-          </label>
-          <div id="analysis-model-info" class="analysis-model-info hidden"></div>
+            <div id="analysis-src-local" class="analysis-src hidden">
+              <select id="analysis-run-select" class="analysis-select" title="Training run"></select>
+              <select id="analysis-snapshot-select" class="analysis-select analysis-snapshot" title="Snapshot" disabled></select>
+            </div>
+            <div id="analysis-src-hf" class="analysis-src hidden">
+              <input id="analysis-hf-repo" class="analysis-select" placeholder="owner/repo" title="A public Hugging Face model repo holding .onnx exports (tools/export_onnx.py)">
+              <input id="analysis-hf-revision" class="analysis-select analysis-snapshot" value="main" title="Branch, tag or commit">
+              <button id="analysis-hf-list" class="btn btn-secondary btn-sm" title="List the repo's .onnx files">List</button>
+              <select id="analysis-hf-file" class="analysis-select" title="Model file"></select>
+              <button id="analysis-hf-clear" class="btn btn-secondary btn-sm" disabled>Clear cache</button>
+            </div>
+            <div id="analysis-src-file" class="analysis-src hidden">
+              <input id="analysis-file-input" type="file" accept=".onnx" class="analysis-file" title="An .onnx export (tools/export_onnx.py); you can also drop it anywhere on the page">
+            </div>
+          </div>
         </div>
       </div>
 
       <div class="tech-group tech-dev" id="tech-dev">
-        <span class="tech-label">Developer</span>
+        <span class="tech-label">Dev</span>
+        <button id="btn-undo-action" class="btn btn-warning btn-sm" title="Undo / Cancel Last Action (Ctrl+Z / Esc)">⟲ Cancel Action</button>
         <button id="btn-toggle-debug" class="btn btn-secondary btn-sm">Debug Tools</button>
         <button id="btn-toggle-replay" class="btn btn-primary btn-sm">Replay Mode</button>
         <a id="link-leaderboard" class="btn btn-secondary btn-sm" href="leaderboard.html" title="Elo ratings of the published models">Leaderboard</a>
       </div>
     </header>
 
-    <!-- Game bar: the position -- the tracks, whose decision it is, and the undo. -->
+    <!-- Game bar: the position -- the tracks and whose decision it is. -->
     <div class="game-bar" id="game-bar">
       <div class="global-tracks" id="global-tracks">
         <!-- Rendered by tracks_view.ts -->
       </div>
       <div class="game-controls">
         <span id="active-player-badge" class="player-badge ussr">USSR TURN</span>
-        <button id="btn-undo-action" class="btn btn-warning btn-sm" title="Undo / Cancel Last Action (Ctrl+Z / Esc)">⟲ Cancel Action</button>
       </div>
     </div>
 
