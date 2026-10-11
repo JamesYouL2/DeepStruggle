@@ -1,0 +1,127 @@
+# The first turns from forced openings (tools/opening_census.py): greedy self-play of one network,
+# every card and play-mode choice and the board at each action round, then the report.
+#
+#   gh workflow run opening_census.yml --ref exp/setup-matrix -f openings="us_r34+ussr_r34 us_r34+ussr_pol4_aus"
+name: opening-census
+
+on:
+  # The push trigger only registers the workflow from this branch; every job is skipped on it.
+  push:
+    branches: [exp/setup-matrix]
+    paths: [.github/workflows/opening_census.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "A torch checkpoint (.pt) in hf_repo"
+        default: "_models/E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M.pt"
+      openings:
+        description: "Two-sided openings (tools/lib/openings.py), space-separated; each plays the same seeds"
+        default: "us_r34+ussr_r34 us_r34+ussr_pol4_aus us_r34+ussr_pol4_yug"
+      games:
+        default: "10000"
+      turns:
+        default: "3"
+      seed:
+        default: "200000"
+      runners:
+        default: "20"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  MODEL: ${{ inputs.model }}
+  OPENINGS: ${{ inputs.openings }}
+  GAMES: ${{ inputs.games }}
+  TURNS: ${{ inputs.turns }}
+  SEED: ${{ inputs.seed }}
+  RUNNERS: ${{ inputs.runners }}
+  HF_REPO: ${{ inputs.hf_repo }}
+  OMP_NUM_THREADS: "4"
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+      - name: Checkpoint
+        run: |
+          mkdir -p models
+          curl -sSfL --retry 3 -o models/base.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum models/base.pt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: census-model-${{ github.run_id }}
+          path: models/
+          retention-days: 30
+
+  play:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.build.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: census-model-${{ github.run_id }}
+          path: models
+      - name: Play part ${{ matrix.part }}
+        run: |
+          mkdir -p games
+          tools/scripts/check_engine_fresh.sh
+          for o in $OPENINGS; do
+            python tools/opening_census.py run --model models/base.pt --opening "$o" --games "$GAMES" \
+              --turns "$TURNS" --seed "$SEED" --part "${{ matrix.part }}/$RUNNERS" \
+              --out "games/${o//+/__}-${{ matrix.part }}.jsonl.gz"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: census-games-${{ github.run_id }}-${{ matrix.part }}
+          path: games/
+          if-no-files-found: error
+
+  report:
+    needs: [build, play]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: census-games-${{ github.run_id }}-*
+          path: report/games
+          merge-multiple: true
+      - name: Report
+        run: |
+          args=()
+          for o in $OPENINGS; do args+=(--games report/games/${o//+/__}-*.jsonl.gz); done
+          python tools/opening_census.py report "${args[@]}" --out report/report.md > /dev/null
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL"
+            echo "openings: $OPENINGS"
+            echo "games: $GAMES per opening (seeds $SEED+)  turns: $TURNS  runners: $RUNNERS"
+          } > report/provenance.txt
+          { echo '```'; cat report/provenance.txt; echo '```'; cat report/report.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opening-census-${{ github.run_id }}
+          path: report/
+          retention-days: 90
