@@ -284,6 +284,7 @@ export class TSApp {
     sel.value = this.searchSpec ? "rollout" : "policy";
     sel.addEventListener("change", () => {
       this.searchSpec = sel.value === "rollout" ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null;
+      this.searchRuns++;          // a search still running was asked for under the old setting
       this.syncUrl();
       this.runAnalysis(this.version);
     });
@@ -302,13 +303,19 @@ export class TSApp {
     const key = this.modelKey;
     a.search_pending = true;
     if (!this.isReplayMode) this.analysisPanel.render(a, this.shown);
+    // Still wanted only while `a` is the readout on screen and the setting is the one it searched
+    // for. The position alone is not enough: changing the search select re-reads the same position
+    // into a new readout without a search, and a stale answer landing after it used to draw its
+    // section back into the panel over the policy's.
+    const current = () => version === this.version && key === this.modelKey && run === this.searchRuns
+      && a === this.liveAnalysis && spec === this.searchSpec;
     try {
       const result = await this.runner.search(this.engine.snapshot(), model, key, spec, this.seedFor(version));
-      if (version !== this.version || key !== this.modelKey || run !== this.searchRuns) return;
+      if (!current()) return;
       a.search_pending = false;
       a.search = result ?? undefined;
     } catch (e) {
-      if (version !== this.version || key !== this.modelKey || run !== this.searchRuns) return;
+      if (!current()) return;
       a.search_pending = false;
       a.search_error = e instanceof Error ? e.message : String(e);
     }
