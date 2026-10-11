@@ -174,7 +174,19 @@ every world settles one of the two ways, and `blunder_bank.py settle` takes it o
   * Nigeria rather than India. This row was `move-not-a-mistake` above.
 * **The USSR's Mexico rather than France, turn 10, last round** (the owner: "USSR loses anyway,
   basically"). It is lost whatever the USSR plays in 8 of 9 worlds. The ninth does not settle
-  within 2,000,000 nodes, nor within 30,000,000 (fork CI run `38162849692`), so the row stays.
+  within 2,000,000 nodes, nor within 30,000,000 (fork CI run `38162849692`).
+  * That ninth world is the one the owner pointed to. **The US only loses if it holds Africa
+    Scoring**, and the ninth world deals it Africa Scoring and The Iron Lady.
+  * With Africa Scoring in the US hand, the US must play it in its last round. Solved exactly
+    under that rule, and it does not matter which other card the US holds:
+    * France, then Lebanon, wins for the USSR by 2 VP.
+    * Mexico, then Lebanon, loses by 2.
+    * 3 first points win and 48 draw, of 70.
+  * Without Africa Scoring, both moves lose. So France is never worse and wins in exactly the
+    worlds where the US holds Africa Scoring: 2 of the 13 cards the USSR has not seen, about 15%.
+    That is the cost the bank measured (14 ± 2 points, and 16 ± 4 with search).
+  * The row is a real blunder, and it stays. The yes/no search cannot settle that world because it
+    plays out every US alternative to Africa Scoring before seeing that each one loses.
 * **No other row settles.** 12 need a new turn, and the other turn-10 rows run out of budget.
   That includes the turn-10 headline of Soviets Shoot Down KAL-007, which the owner calls a gamble
   that wins only if the US headlines Duck and Cover.
