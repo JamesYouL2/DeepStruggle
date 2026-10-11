@@ -12,18 +12,19 @@
 <body>
   <div id="app">
     <div class="disclaimer-bar" id="disclaimer-bar" role="note">
-      Unofficial fan project, not affiliated with or endorsed by GMT Games.
-      Twilight Struggle® is a registered trademark of GMT Games, LLC.
+      <div class="brand">
+        <span class="brand-title">TWILIGHT STRUGGLE</span>
+        <span class="brand-badge">ENGINE WORKBENCH</span>
+      </div>
+      <span class="disclaimer-text">
+        Unofficial fan project, not affiliated with or endorsed by GMT Games.
+        Twilight Struggle® is a registered trademark of GMT Games, LLC.
+      </span>
     </div>
 
     <!-- Technical block: the engine, the play mode, the model and its search, the developer's
          tools. Nothing here is about the position; that is the game bar below. -->
     <header class="top-bar tech-bar" id="tech-bar">
-      <div class="brand">
-        <span class="brand-title">TWILIGHT STRUGGLE</span>
-        <span class="brand-badge">ENGINE WORKBENCH</span>
-      </div>
-
       <div class="tech-group" id="tech-engine">
         <!-- The engine running in the page: its fingerprint, and a warning when the local
              server's sources have moved on from the build the page loaded. The badge names itself. -->
@@ -49,7 +50,7 @@
              error) and its name, view and checkpoint into #analysis-model-info once loaded. -->
         <span id="model-active-status" class="model-active-status">no model</span>
         <div id="analysis-model-info" class="analysis-model-info hidden"></div>
-        <button id="btn-model-choose" class="btn btn-secondary btn-sm" title="Choose another model: a local checkpoint, a Hugging Face repo or an .onnx file" aria-expanded="false" aria-controls="model-chooser">Change ▾</button>
+        <button id="btn-model-choose" class="btn btn-secondary btn-sm model-choose" title="Choose another model: a local checkpoint, a Hugging Face repo or an .onnx file" aria-label="Choose a model" aria-expanded="false" aria-controls="model-chooser">▾</button>
         <!-- How the model chooses a move. Policy: its argmax, one forward. The rollout root
              (bindings/rollout_batch.hpp, exported by this engine) has no driver in the page yet. -->
         <label class="search-mode" title="How the model picks its move">

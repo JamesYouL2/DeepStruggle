@@ -950,7 +950,7 @@ export class TSApp {
       const setOpen = (open: boolean) => {
         chooser.classList.toggle("hidden", !open);
         chooseBtn.setAttribute("aria-expanded", String(open));
-        chooseBtn.textContent = open ? "Change ▴" : "Change ▾";
+        chooseBtn.textContent = open ? "▴" : "▾";
       };
       chooseBtn.addEventListener("click", () => setOpen(chooser.classList.contains("hidden")));
       document.addEventListener("click", (e) => {

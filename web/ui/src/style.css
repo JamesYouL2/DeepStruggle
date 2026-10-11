@@ -56,16 +56,23 @@ body {
 /* ==========================================================================
    TOP BAR & GLOBAL TRACKS
    ========================================================================== */
+/* The first block: the brand at the left, the disclaimer across the rest. */
 .disclaimer-bar {
   flex-shrink: 0;
-  padding: 3px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 3px 12px;
   font-size: 11px;
   line-height: 1.4;
-  text-align: center;
   color: var(--text-muted);
   background: var(--bg-panel-solid);
   border-bottom: 1px solid var(--border-color);
 }
+.disclaimer-bar .brand { flex-direction: row; align-items: baseline; gap: 8px; flex-shrink: 0; }
+.disclaimer-bar .brand-title { font-size: 13px; letter-spacing: 1.2px; }
+.disclaimer-bar .brand-badge { font-size: 8px; }
+.disclaimer-text { flex: 1; text-align: center; }
 
 /* At least 64px, taller only when the session controls have to drop to a line of their own: with
    a fixed height and no wrap they ran off the right edge below ~1,750px, New Game included. */
@@ -638,9 +645,8 @@ body {
 }
 .tech-bar .btn, .tech-bar .view-select, .tech-bar .status-badge { white-space: nowrap; }
 #search-mode-select { width: 128px; }
-.tech-bar .brand { flex-shrink: 0; }
-.tech-bar .brand-title { font-size: 13px; letter-spacing: 1.2px; line-height: 1.1; }
-.tech-bar .brand-badge { font-size: 8px; }
+/* The chooser's button: just the arrow, right after the model's name. */
+.model-choose { padding: 2px 7px; font-size: 11px; line-height: 1.2; }
 .tech-group {
   display: flex;
   align-items: center;
@@ -721,7 +727,6 @@ body {
 }
 @media (max-width: 1400px) {
   .tech-bar { gap: 8px; }
-  .tech-bar .brand-badge { display: none; }
   .tech-dev .tech-label, #tech-engine .tech-label, #tech-mode .tech-label { display: none; }
 }
 
