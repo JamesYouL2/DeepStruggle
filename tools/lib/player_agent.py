@@ -23,7 +23,7 @@ from ai.search.rollout_root import RolloutRootAgent, rollout_spec_config
 from bindings.ts_env import check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
-from tools.lib.openings import OPENINGS
+from tools.lib.openings import opening_scripts
 from tools.lib.player_spec import Gumbel, Search
 from tools.lib.p17_adapter import LegacyPolicyAdapter
 
@@ -591,8 +591,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # --forced-opening, whose setup was never learned. Read by the batch runner with
         # getattr(agent, "forced_opening", None), like temperature above.
         _, name, rest = s.split(":", 2)
-        if name not in OPENINGS:
-            raise ValueError(f"unknown opening {name!r}; known: {sorted(OPENINGS)}")
+        opening_scripts(name)                 # raises on an unknown name or overlapping sides
         agent = load_agent(rest, device=device)
         setattr(agent, "forced_opening", name)
         setattr(agent, "name", f"{agent.name}+{name}")

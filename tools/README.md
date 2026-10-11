@@ -666,6 +666,11 @@ tools/tournament.py --models heuristic_mcts <model.onnx> --games-per-side 200 --
 tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/pooled.json
 ```
 
+### F. Chosen pairings: `--matchups`
+`--matchups 1-2 3-4 ...` plays only those pairings, 1-based indices into `--models`, instead of
+the round robin -- with or without `--part`. The setup matrix (§7d) uses it to play one cell from
+each seat of a pairing.
+
 ---
 
 ## 2b. The Elo leaderboard (`tools/leaderboard.py`, `tools/leaderboard_play.py`)
@@ -1130,6 +1135,37 @@ export PYTHONPATH=.:build/release
 .venv/bin/python tools/gchoice_targets.py check --input heldout.jsonl.gz --base <ckpt.pt> \
     --model soft.pt --budget rollout --out check.json
 ```
+
+## 7d. The Setup Matrix (`tools/setup_matrix.py`)
+
+Every US setup against every USSR setup, the rest of the game played by one player, and the matrix
+game the cells define, solved. The E7 networks play one setup on every deal (US France 6, Italy 2,
+Iran 1; USSR Poland 3, Hungary 2, Austria 1); the default rows and columns are that setup and the
+three most common human setups of each side (`tools/lib/openings.py`, one-sided openings that an
+`opening:<us>+<ussr>:<spec>` entrant combines).
+
+* `plan` writes the entrants (both setups forced, the player after them) and the pairings: A =
+  (US a, USSR d) against B = (US c, USSR b) plays cell (a, b) with A as US and (c, d) with B as US,
+  so half as many pairings as cells. Game pair k of every pairing deals from the same seed and the
+  deal comes before the setup, so every cell is played on the same deals.
+* `report` reads the pooled game log: the matrix of US scores, each setup paired by deal against
+  the networks' own, and the equilibrium (exact support enumeration) with a bootstrap over deals.
+* Workflow `setup_matrix.yml` runs it over CI runners; `player` is `{BASE}` (greedy) or a searcher
+  spec such as `gumbel:{BASE}:256:8`.
+
+```bash
+export PYTHONPATH=.:build/release
+.venv/bin/python tools/setup_matrix.py plan --base <ckpt.pt> --out plan.json
+.venv/bin/python tools/tournament.py --models $(.venv/bin/python tools/setup_matrix.py args --plan plan.json models) \
+    --matchups $(.venv/bin/python tools/setup_matrix.py args --plan plan.json matchups) \
+    --games-per-side 500 --temperature 0 --device cpu --workers 0 --shard-pairs 50 \
+    --log-games games.jsonl --output-json tournament.json
+.venv/bin/python tools/setup_matrix.py report --plan plan.json --games games.jsonl --out matrix.md
+```
+
+The value of a setup here is its value *to the continuation*: a setup the network never trained
+from is played by a policy that has not seen its positions, so a human setup that loses under the
+greedy network is not evidence against it until a searched continuation agrees.
 
 ---
 

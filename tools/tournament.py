@@ -265,13 +265,7 @@ def run_massive_tournament(
     _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
     agents, worker_specs = _load_entrants(model_specs, dev, opening, entrant_names)
     model_names = [a.name for a in agents]
-    if matchups is None:
-        matchups = _round_robin(len(agents))
-    else:
-        matchups = [(int(i), int(j)) for i, j in matchups]
-        bad = [m for m in matchups if not 0 <= m[0] < m[1] < len(agents)]
-        if bad or len(set(matchups)) != len(matchups):
-            raise ValueError(f"matchups must be distinct index pairs i < j < {len(agents)}; got {bad or matchups}")
+    matchups = _matchups(matchups, len(agents))
     results: Dict[Pair, MatchupResult] = {}
     t_start = time.time()
 
@@ -324,6 +318,29 @@ def run_massive_tournament(
         output_report=output_report, output_json=output_json)
 
 
+def _matchups(matchups: Optional[Sequence[Pair]], n_agents: int) -> List[Pair]:
+    """The pairings to play: the round robin, or the given index pairs checked (distinct, i < j)."""
+    if matchups is None:
+        return _round_robin(n_agents)
+    out = [(int(i), int(j)) for i, j in matchups]
+    bad = [m for m in out if not 0 <= m[0] < m[1] < n_agents]
+    if bad or len(set(out)) != len(out):
+        raise ValueError(f"matchups must be distinct index pairs i < j < {n_agents}; got {bad or out}")
+    return out
+
+
+def parse_matchups(text: Sequence[str]) -> List[Pair]:
+    """`--matchups` values, "I-J" with 1-based indices into --models, as 0-based pairs (i < j)."""
+    out: List[Pair] = []
+    for tok in text:
+        a, sep, b = tok.partition("-")
+        if not sep or not a.isdigit() or not b.isdigit() or int(a) == int(b) or min(int(a), int(b)) < 1:
+            raise ValueError(f"--matchups takes I-J with distinct 1-based indices, got {tok!r}")
+        i, j = sorted((int(a) - 1, int(b) - 1))
+        out.append((i, j))
+    return out
+
+
 def play_tournament_part(
     model_specs: List[str],
     part: Part,
@@ -339,15 +356,17 @@ def play_tournament_part(
     opening: Optional[str] = None,
     workers: int = 1,
     shard_pairs: int = 10,
+    matchups: Optional[Sequence[Pair]] = None,
 ) -> PartConfig:
     """One machine's share of a tournament spread over several: part `index` of `count` of the
     shards `run_massive_tournament(workers=...)` would play, written raw to `output_part` with
-    their game logs. `pool_tournament_parts` turns a complete set of parts into the report."""
+    their game logs. `pool_tournament_parts` turns a complete set of parts into the report.
+    `matchups` plays only those pairings, as in `run_massive_tournament`."""
     dev = resolve_device(device)
     check_workers_device(workers, device)
     _banner(model_specs, games_per_side, dev, batch_chunk_size, workers, shard_pairs)
     agents, worker_specs = _load_entrants(model_specs, dev, opening)
-    matchups = _round_robin(len(agents))
+    matchups = _matchups(matchups, len(agents))
     t_start = time.time()
     index, count = part
     mine = select_part(plan_shards(matchups, games_per_side, shard_pairs), index, count)
@@ -637,6 +656,11 @@ def main():
                              "of its own placements. One agent alone: prefix its spec with "
                              "opening:<name>:. Needed to rate a checkpoint trained with "
                              "--forced-opening, whose setup was never learned.")
+    parser.add_argument("--matchups", nargs="+", default=None, metavar="I-J",
+                        help="Play only these pairings instead of the round robin: I-J with 1-based "
+                             "indices into --models (the setup matrix, tools/setup_matrix.py, plays "
+                             "one cell per seat of each). Not with --checkpoint-dir or "
+                             "--include-baselines, which change the list the indices point into.")
     parser.add_argument("--self-play", action="store_true", default=False, help="Evaluate model against itself")
     # Default ON. The function signature defaulted to True while this flag defaulted to
     # False and line 413 passes it through unconditionally, so every CLI run settled
@@ -688,6 +712,15 @@ def main():
         if "heuristic" not in models and "HeuristicBot" not in models:
             models.insert(1, "heuristic")
 
+    matchups: Optional[List[Pair]] = None
+    if args.matchups:
+        if args.checkpoint_dir or args.include_baselines:
+            parser.error("--matchups indexes --models as given; not with --checkpoint-dir or --include-baselines")
+        try:
+            matchups = _matchups(parse_matchups(args.matchups), len(models))
+        except ValueError as e:
+            parser.error(str(e))
+
     if (args.self_play or len(models) == 1) and len(models) == 1:
         models = [models[0], models[0]]
 
@@ -716,6 +749,7 @@ def main():
             opening=args.opening,
             workers=1 if workers is None else workers,
             shard_pairs=args.shard_pairs,
+            matchups=matchups,
         )
         return
 
@@ -736,6 +770,7 @@ def main():
         auto_advance=args.auto_advance,
         workers=workers,
         shard_pairs=args.shard_pairs,
+        matchups=matchups,
     )
 
 

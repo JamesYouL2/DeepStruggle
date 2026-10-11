@@ -1,0 +1,149 @@
+# The setup matrix (tools/setup_matrix.py): every US setup against every USSR setup, the rest of
+# the game played by one player, split over runners, then the matrix and its solved game.
+#
+#   build  downloads the checkpoint and writes the plan (entrants with both setups forced, and
+#          the pairings that play each cell from one seat).
+#   play   N runners, each every N-th shard of the pairings (tools/tournament.py --matchups --part).
+#   pool   the per-game log, the matrix, the paired comparisons and the equilibrium.
+#
+# `player` is the load_agent spec after the setup, {BASE} the checkpoint: "{BASE}" plays greedy,
+# "gumbel:{BASE}:256:8" or "rollout:{BASE}:4:16:4:z2" searches. Each pairing plays games_per_cell
+# deals from both seats, one cell per seat, and every cell is played on the same deals.
+#
+#   gh workflow run setup_matrix.yml --ref main -f games_per_cell=5000
+name: setup-matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "A torch checkpoint (.pt) in hf_repo; the default is R32's SWA, the strongest network on the E7 leaderboard"
+        default: "E7-A8-R1-S44@6400M+R32_20261010_005623/swa_6720-6800M.pt"
+      us_setups:
+        description: "US-only openings (tools/lib/openings.py); the first is the reference"
+        default: "us_e7 us_wg4_it4 us_wg3_fr3_it2 us_wg4_it3_ir2"
+      ussr_setups:
+        description: "USSR-only openings; the first is the reference"
+        default: "ussr_e7 ussr_pol4_aus ussr_pol4_yug ussr_pol5"
+      player:
+        default: "{BASE}"
+      games_per_cell:
+        default: "5000"
+      shard_pairs:
+        description: "Game pairs per shard: 50 batches a greedy network well; 1-4 for a searcher"
+        default: "50"
+      runners:
+        default: "20"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  MODEL: ${{ inputs.model }}
+  US_SETUPS: ${{ inputs.us_setups }}
+  USSR_SETUPS: ${{ inputs.ussr_setups }}
+  PLAYER: ${{ inputs.player }}
+  GAMES: ${{ inputs.games_per_cell }}
+  SHARD_PAIRS: ${{ inputs.shard_pairs }}
+  RUNNERS: ${{ inputs.runners }}
+  HF_REPO: ${{ inputs.hf_repo }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+      - name: Checkpoint and plan
+        run: |
+          mkdir -p models
+          curl -sSfL --retry 3 -o models/base.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum models/base.pt
+          python tools/setup_matrix.py plan --us $US_SETUPS --ussr $USSR_SETUPS \
+            --player "$PLAYER" --base models/base.pt --out models/plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-matrix-models-${{ github.run_id }}
+          path: models/
+          retention-days: 30
+
+  play:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.build.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup-matrix-models-${{ github.run_id }}
+          path: models
+      - name: Play part ${{ matrix.part }}
+        run: |
+          mkdir -p parts
+          tools/scripts/check_engine_fresh.sh && python tools/tournament.py \
+            --models $(python tools/setup_matrix.py args --plan models/plan.json models) \
+            --matchups $(python tools/setup_matrix.py args --plan models/plan.json matchups) \
+            --games-per-side "$GAMES" --device cpu --workers 0 --shard-pairs "$SHARD_PAIRS" --temperature 0 \
+            --part "${{ matrix.part }}/$RUNNERS" --output-part "parts/part-${{ matrix.part }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-matrix-play-${{ github.run_id }}-${{ matrix.part }}
+          path: parts/
+          if-no-files-found: error
+
+  pool:
+    needs: [build, play]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: setup-matrix-models-${{ github.run_id }}
+          path: models
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: setup-matrix-play-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Report
+        run: |
+          mkdir -p report
+          cp models/plan.json report/plan.json
+          python tools/tournament.py --pool-parts parts/part-*.json --log-games report/games.jsonl \
+            --output-report report/tournament.md --output-json report/tournament.json > /dev/null
+          python tools/setup_matrix.py report --plan report/plan.json --games report/games.jsonl \
+            --out report/matrix.md --json report/matrix.json > /dev/null
+          gzip report/games.jsonl
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL"
+            echo "sha256: $(sha256sum models/base.pt | cut -d' ' -f1)"
+            echo "player: $PLAYER"
+            echo "us: $US_SETUPS"
+            echo "ussr: $USSR_SETUPS"
+            echo "games per cell: $GAMES  shard pairs: $SHARD_PAIRS  temperature 0  runners: $RUNNERS"
+          } > report/provenance.txt
+          { echo '```'; cat report/provenance.txt; echo '```'; cat report/matrix.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-matrix-${{ github.run_id }}
+          path: report/
+          retention-days: 90
