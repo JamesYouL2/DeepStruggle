@@ -48,6 +48,18 @@ if [[ -n "$cached_src" && "$(realpath -e -- "$cached_src" 2>/dev/null)" != "$(re
     echo "build_web: $BUILD was configured for $cached_src; configuring it afresh for $ROOT" >&2
     FRESH=(--fresh)
 fi
+# Likewise a build directory whose Emscripten has gone -- an install that moved or was removed --
+# fails every reconfigure: the cache names its compiler, and CMakeFiles/<version>/CMakeSystem.cmake
+# includes its toolchain file (and keeps it after a failed reconfigure has rewritten the cache).
+# Afresh, emcmake's toolchain file names the Emscripten found now.
+cached_cxx="$(sed -n 's/^CMAKE_CXX_COMPILER:[A-Z]*=//p' "$BUILD/CMakeCache.txt" 2>/dev/null | head -n 1 || true)"
+system_toolchain="$(sed -n 's/^include("\(.*\)")$/\1/p' "$BUILD"/CMakeFiles/*/CMakeSystem.cmake 2>/dev/null | head -n 1 || true)"
+for gone in "$cached_cxx" "$system_toolchain"; do
+    if [[ ${#FRESH[@]} -eq 0 && "$gone" == /* && ! -e "$gone" ]]; then
+        echo "build_web: $BUILD names a toolchain file that does not exist here ($gone); configuring it afresh" >&2
+        FRESH=(--fresh)
+    fi
+done
 emcmake cmake ${FRESH[@]+"${FRESH[@]}"} -B "$BUILD" -S "$ROOT" -DCMAKE_BUILD_TYPE=Release \
     -DTS_ENGINE_FINGERPRINT="$FINGERPRINT" >/dev/null
 cmake --build "$BUILD" --target ts_engine_wasm -j "$(nproc)"
