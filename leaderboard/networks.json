@@ -30,6 +30,14 @@
     "hf": "E7-20-44_20261005_174535/snapshot_4800053248steps.pt",
     "report": "research/log/per_checkpoint/E7-A4-R1-S44_4800M.md"
   },
+  "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@6720..6800M": {
+    "file": "checkpoints/_models/E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@6720..6800M.pt",
+    "sha256": "75b7f8170346e4f1045f2eb9ac08a1cc1fa5b1be893fca25c3c7b65bc018b10c",
+    "description": "SWA-made soup of the logit-gap-penalty branches (recipe R34, gap 7, coef 1e-3) R34, R34-S45, R34-S46 from E7-A8-R1-S44@6400M, each SWA 6,720-6,800M -- made as the heads soup (S44,45,46) was from the plain recipe",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M": {
     "file": "checkpoints/_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt",
     "sha256": "91a43a8b089c5889ddd8e46ea24e4c9c0235e8ada70b76b0213b92d1849bcf1b",
