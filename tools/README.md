@@ -1146,6 +1146,111 @@ export PYTHONPATH=.:build/release
 
 ---
 
+## 7d. The Two-Stage Catastrophic-Blunder Census
+
+Where does a checkpoint throw a game away? `tools/scripts/blunder_census.py` screens self-play
+games of one checkpoint, and `bank_playouts.py validate` settles the shortlist -- two stages kept
+apart on purpose, so validation re-runs on saved positions (a different budget, a different
+continuation) without ever regenerating them.
+
+**Stage 1, `screen` (cheap, local).** Every decision with two or more legal moves of each greedy
+self-play game is screened two ways: the engine's own proof of an immediate catastrophe
+(`ai/eval/safety.classify_legal_actions`: a forced loss taken, or a forced win not taken), and
+disagreement between the greedy policy and a low-budget Gumbel root (`gumbel:<ckpt>:32:4`). A
+triggering position is saved to `candidates.jsonl.gz` with its exact state (`pos=` token), the
+moves and their safety labels, the game's seed and decision index and the model's identity
+(name + sha256); a random sample of the rest (`--control-rate`, `control.jsonl.gz`) stands in for
+the positions the screening never looked at, so its misses are measured rather than assumed. Each
+game appends to a `games.jsonl` ledger, so a run resumes (`--resume`) and splits (`--part k/N`).
+Start with `benchmark` (20 games) and choose the full size from its projection -- stage 2 is the
+expensive part, and it is the one that bounds the experiment.
+
+**Stage 2, `bank_playouts.py validate` (expensive, CI).** Each position is searched with Gumbel
+k=8 at 256 simulations over `--search-seeds` independent runs, and the moves that puts in play --
+greedy's, the cheap search's, the strong search's and a deterministic safe alternative -- are
+played out in paired continuations (`ai/eval/paired_playouts.py`, `--pairs` pairs whose redeals
+and dice all moves of a pair share). `--continue-with 256:8` plays the continuations with a
+Gumbel root instead of the model's greedy play. The row records each move's mean score, the
+paired differences on greedy with their standard errors, the search runs' picks and seeds, and a
+verdict that keeps **exact terminal mistakes** (the engine's labels: `exact-missed-win`,
+`exact-forced-loss`) apart from the **estimated strategic regret** the continuations settle
+(`confirmed-regret` at `--min-gap` points and `--min-z` standard errors, `refuted`, `unresolved`).
+The serious unresolved rows escalate to 1,024 simulations: a second `validate` with
+`--search-sims 1024 --seed 1 --escalate-from <first output> --escalate-cap N`, its output kept
+apart. Every seed of a row comes from its row id and `--seed`, so a row is position-local.
+
+`.github/workflows/bank_playouts.yml` runs `validate` over CI runners through the same sharding
+and pooling as the disagreement bank's playouts (`stage=validate`, the release carrying
+`candidates.jsonl.gz` and `control.jsonl.gz`, `model` the .pt whose search validates them); the
+input rows and the validation output are separate release assets / artifacts, so validation
+re-runs without regenerating positions.
+
+**`report`** merges the stages into the census report: candidate count and confirmation rate,
+confirmed catastrophic blunders per 1,000 decisions (candidates plus the control's confirmed
+mistakes at their weight, split into the engine-proven exact mistakes and the estimated class
+with the paired test's noise floor measured on the control), the share of confirmed mistakes the
+cheap screening found, the share
+rescued by 256-simulation search, the share unresolved even under the stronger search, the worst
+failures grouped by root cause (with each one's game seed and `pos=` token, openable in the
+workbench), and the runtime and runner-minutes of each stage.
+
+```bash
+export PYTHONPATH=.:build/release
+# 1. benchmark 20 games, then choose the full size from the projection
+.venv/bin/python tools/scripts/blunder_census.py benchmark --model newest.pt --games 20 \
+    --project 2000 --runners 20 --out-dir bench/
+# 2. stage 1: the positions
+.venv/bin/python tools/scripts/blunder_census.py screen --model newest.pt --games 200 \
+    --out-dir screen/
+# 3. stage 2: the shortlist (locally, or through bank_playouts.yml stage=validate)
+.venv/bin/python tools/scripts/bank_playouts.py validate --input screen/candidates.jsonl.gz \
+    screen/control.jsonl.gz --model newest.pt --pairs 64 --part 1/20 --out validation-1.jsonl.gz
+# 4. the escalation at 1,024 simulations (a different --seed from the 256 run)
+.venv/bin/python tools/scripts/bank_playouts.py validate --input screen/candidates.jsonl.gz \
+    screen/control.jsonl.gz --model newest.pt --pairs 64 --seed 1 --search-sims 1024 \
+    --escalate-from validation.jsonl.gz --escalate-cap 100 --out escalation.jsonl.gz
+# 5. the report
+.venv/bin/python tools/scripts/blunder_census.py report --screen screen/candidates.jsonl.gz \
+    --control screen/control.jsonl.gz --summary screen/summary.json \
+    --validation validation.jsonl.gz --escalation escalation.jsonl.gz --out report.md
+```
+
+**The blunder bank (`tools/scripts/blunder_bank.py`).** The census's estimated regret is chosen and
+measured on the same 32 pairs, and its control clears the bar almost as often as its candidates.
+The bank keeps only what survives a second measurement: `select` shortlists the validation rows
+whose best alternative leads the network's move by `--min-gap` at `--min-z` (that alternative is
+fixed there), `confirm` pays every shortlisted move out again from a fresh seed with one judge
+network (`bank_playouts.yml stage=confirm`, once per judge), and `build` writes the rows every
+judge confirms -- `ai/eval/banks/blunders_E7.jsonl`, one row per position with its `pos=` token,
+the network's move, the better move and each judge's cost. `score` puts any checkpoint or
+`load_agent` searcher on the bank: the blunder repeated, the better move found, or another move,
+paid out against the blunder with `--judge` and `--pairs`. `confirm --continue-with SIMS:K` pays out with a
+Gumbel root of the judge on both sides. `prove` solves exactly the rows whose game ends in the
+current turn: every later choice is enumerated and dice are averaged, the blunder is held to its
+best case and the better move to its worst, over worlds with the mover's unseen cards redealt.
+It also asks, by a yes/no search that reaches further, whether the row is **decided whatever is
+played**: the move played wins whatever follows, or the position before it is lost whatever the
+mover plays, in every world. Playouts charge such a move for the follow-up's mistake or for the
+opponent failing to finish a won game, so `settle` drops those rows from the bank
+(`bank_playouts.yml stage=prove`, one row per runner).
+
+```bash
+.venv/bin/python tools/scripts/blunder_bank.py select --validation validation.jsonl.gz \
+    --min-gap 0.1 --min-z 2 --out shortlist.jsonl.gz
+.venv/bin/python tools/scripts/blunder_bank.py confirm --input shortlist.jsonl.gz --model soup.pt \
+    --pairs 512 --part 1/20 --out confirm-soup-1.jsonl.gz
+.venv/bin/python tools/scripts/blunder_bank.py build --confirm 'soup=soup/*.jsonl.gz' 'r32=r32/*.jsonl.gz' \
+    --min-gap 0.1 --min-z 3 --out ai/eval/banks/blunders_E7.jsonl --md blunders.md
+.venv/bin/python tools/scripts/blunder_bank.py score --bank ai/eval/banks/blunders_E7.jsonl \
+    --player soup=soup.pt g256=gumbel:soup.pt:256:8 --judge soup.pt --pairs 128 --out score.md
+.venv/bin/python tools/scripts/blunder_bank.py prove --input ai/eval/banks/blunders_E7.jsonl \
+    --budget 2000000 --part 1/37 --out prove-1.jsonl.gz
+.venv/bin/python tools/scripts/blunder_bank.py settle --bank ai/eval/banks/blunders_E7.jsonl \
+    --prove 'prove/*.jsonl.gz' --out ai/eval/banks/blunders_E7.jsonl
+```
+
+---
+
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.
