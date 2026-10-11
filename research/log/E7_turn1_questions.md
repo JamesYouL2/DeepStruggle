@@ -201,3 +201,49 @@ gh workflow run turn1_pricing.yml --ref exp/setup-matrix -f model="$M" -f games=
   -f seed=200000 -f bank_top=1 -f pairs=8 [-f opening=us_r34+ussr_r34 | us_wg3_fr3_it2+ussr_r34]
 python tools/turn1_census.py --rows rows/*.jsonl.gz --out census.md --json games.json
 ```
+
+## 7. Yugoslavia 3: three European battlegrounds, domination, and East European Unrest / Independent Reds
+
+The owner's case against Yugoslavia 3 is that it turns on East European Unrest and Independent
+Reds. The case for it is that a controlled non-battleground saves two Ops toward Europe
+domination once the USSR has three battlegrounds.
+
+**Runs.** Three censuses on the same 10,000 deals, R34 playing its 4222 US setup and each USSR
+setup:
+* Yugoslavia 3, Poland 3: 38166082352;
+* Poland 4, East Germany +1, Austria 1: 38173675553;
+* Poland 4, East Germany +1, Yugoslavia 1: 38173682877.
+
+Script: [turn1_europe.py](E7_setup_matrix/turn1_europe.py). "At the end" means at turn 1's last
+recorded decision.
+
+| | Yugoslavia 3, Poland 3 | Pol4/EG+1/Yug1 | Pol4/EG+1/Aus1 |
+|:---|---:|---:|---:|
+| USSR controls 3+ European battlegrounds, at the end | 40.6% | 38.8% | 36.9% |
+| the same, at some point in turn 1 | 46.5% | 43.8% | 41.1% |
+| USSR has Europe domination (or control), at the end | **33.7%** | 19.5% | 13.1% |
+| the same, at some point in turn 1 | 66.0% | 23.5% | 15.1% |
+| USSR controls Yugoslavia, at the end | 76.1% | 24.5% | 11.1% |
+| Independent Reds' event fired on turn 1 | 9.4% | 10.6% | 11.0% |
+| US influence in Yugoslavia, at the end | 9.0% | 8.1% | 1.2% |
+
+* **The third battleground** is Italy about 80% of the time and France most of the rest.
+* **Domination.** The extra non-battleground is what Yugoslavia 3 buys. Domination at the end is
+  2.6 times as common as with Austria 1.
+* **Independent Reds.** It fires about as often under every setup (9-11%), and almost always into
+  Yugoslavia. Against Yugoslavia 3 it hands the US 3 influence there instead of 1.
+
+**How each side plays the two cards** (games where that side holds the card on turn 1, Yugoslavia
+3 setup; the human setups are within a few points):
+
+| | Space | event first | Ops first (the event fires) | dumped with UN Intervention | kept into turn 2 |
+|:---|---:|---:|---:|---:|---:|
+| USSR, East European Unrest | 34% | 9% | 7% | 12% | 39% |
+| USSR, Independent Reds | 28% | 11% | 11% | 5% | 45% |
+
+* **The USSR.** Under Yugoslavia 3 it keeps Independent Reds into turn 2 more often (45% against
+  32-35%) and fires it less (22% against 29-31%).
+* **The US.** It mostly plays these cards for Operations without the event. East European Unrest
+  is played for Ops 46-53% of the time, headlined 31-39%, and evented in an action round 3-4%.
+  Independent Reds is played for Ops 60% of the time, headlined 19%, used to coup 17%, and almost
+  never evented in an action round.
