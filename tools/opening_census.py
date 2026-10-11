@@ -4,11 +4,14 @@ choice, and the board at the start of every action round, for each game.
 Greedy self-play of one network (`tools.lib.game_loop.GameLoop`), the setup scripted by an
 opening (`tools/lib/openings.py`), stopped when turn `--turns` ends. A record per game:
 
-* `plays`: each card choice (headline or action round) and each event-or-Ops / Ops-mode choice,
-  with turn, action round, side, the card being resolved (UN Intervention, for a card picked
-  inside its event) and the option taken;
-* `snaps`: at the first decision of each action round (and once after the last turn), the US and
-  USSR influence of every country, the card locations, VP, DEFCON and both space tracks.
+* `plays`: each card choice (headline or action round), event-or-Ops / Ops-mode choice and point
+  choice (every influence point, coup target, realignment, event placement; `kind` as
+  `tools/turn1_pricing.kind_of` names it, "first point" or not), with turn, action round, side,
+  the card being resolved (UN Intervention, for a card picked inside its event) and the option
+  taken;
+* `snaps`: at the first decision of each side's half of each action round (and once after the
+  last turn), the US and USSR influence of every country, the card locations, VP, DEFCON and both
+  space tracks.
 
 Games of the same seed deal the same cards under every opening, so two runs on one seed range
 compare deal by deal.
@@ -46,7 +49,8 @@ from tools.turn1_census import option_label  # noqa: E402
 from tools.turn1_pricing import _load_network, _part, kind_of  # noqa: E402
 
 _ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-RECORDED_KINDS = ("headline", "card to play", "event or Ops", "Ops mode")
+RECORDED_KINDS = ("headline", "card to play", "event or Ops", "Ops mode", "coup target", "realignment (first roll)",
+                  "influence (first point)", "event placement (first point)", "other event choice")
 
 
 class Play(TypedDict):
@@ -63,6 +67,7 @@ class Snap(TypedDict):
     turn: int
     ar: int
     phase: str
+    phasing: str          # US / USSR: whose half of the action round
     us: List[int]         # influence by country id 0..83
     ussr: List[int]
     loc: List[int]        # int(CardLocation) of cards 1..110
@@ -81,6 +86,7 @@ class GameRecord(TypedDict):
 
 def snap(st: ts.GameState) -> Snap:
     return {"turn": int(st.turn), "ar": int(st.action_round), "phase": str(st.current_phase).replace("Phase.", ""),
+            "phasing": "US" if st.phasing_player == ts.Player.US else "USSR",
             "us": [int(st.get_country(c).us_influence) for c in range(84)],
             "ussr": [int(st.get_country(c).ussr_influence) for c in range(84)],
             "loc": [int(st.get_card_location(c)) for c in range(1, 111)],
@@ -101,7 +107,7 @@ class _Source:
         self.cursor = {"US": 0, "USSR": 0}
         self.plays: List[Play] = []
         self.snaps: List[Snap] = []
-        self.key: Optional[Tuple[int, int, str]] = None
+        self.key: Optional[Tuple[int, int, str, str]] = None
 
     def choose(self, st: ts.GameState, /) -> Optional[ts.MicroAction]:
         if self.opening:
@@ -109,7 +115,7 @@ class _Source:
             if idx is not None:
                 return ts.ActionMask.decode_flat_action(st, idx)
         if st.current_phase != ts.Phase.SETUP:
-            key = (int(st.turn), int(st.action_round), str(st.current_phase))
+            key = (int(st.turn), int(st.action_round), str(st.current_phase), str(st.phasing_player))
             if key != self.key:
                 self.key = key
                 self.snaps.append(snap(st))
