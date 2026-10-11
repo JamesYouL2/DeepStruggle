@@ -37,9 +37,10 @@ ARG GID=1000
 
 # -- the engine for the page (WebAssembly) -------------------------------------------------------
 FROM ${EMSDK_IMAGE} AS wasm
-# Root here only makes the user; the toolchain is the image's. Its uid is the system's pick: it
-# owns nothing outside this stage.
-RUN useradd --create-home build
+# Root here only makes the user and its source directory; the toolchain is the image's. The uid is
+# the system's pick: it owns nothing outside this stage. (WORKDIR creates a directory as root even
+# after USER, so the directory is made and handed over here.)
+RUN useradd --create-home build && mkdir /src && chown build:build /src
 USER build
 # Emscripten's cache of system libraries lives in the SDK directory, which is root's: give the
 # build user its own (the first build fills it, a minute or so).
@@ -56,7 +57,9 @@ RUN emcmake cmake -B build/wasm -S . -DCMAKE_BUILD_TYPE=Release \
 
 # -- web UI ---------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS ui
-# The node image ships an unprivileged `node` user; npm and the page's build run as it.
+# The node image ships an unprivileged `node` user; npm and the page's build run as it. Root only
+# makes the source directory over (WORKDIR would create it root-owned even after USER).
+RUN mkdir -p /src/web/ui && chown -R node:node /src
 USER node
 WORKDIR /src/web/ui
 COPY --chown=node:node web/ui/package.json web/ui/package-lock.json ./
@@ -79,7 +82,7 @@ ARG ENGINE_MARCH=
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential clang cmake \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --create-home build
+ && useradd --create-home build && mkdir /src && chown build:build /src
 USER build
 ENV PATH=/home/build/venv/bin:$PATH
 # nanobind is a build-time dependency only; CMake finds it through the interpreter.
