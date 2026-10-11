@@ -293,3 +293,56 @@ it. Independent Reds shows the same, weaker.
 in an action round 2%; it never events Independent Reds in an action round. Headlining East
 European Unrest priced −1.5 ± 0.3 against the network's headline (section 5), so headlining it
 more does not pay against this USSR.
+
+## 9. The rollout root on turn 1, and 3322 against 4222 again
+
+**Runs.** `tools/opening_census.py --player`, turn 1 only, on the same deals:
+* the R34 rollout root (`rollout:{BASE}:4:16:4:z2`), 2,000 games, run 38183448689;
+* R34 greedy, 10,000 games, run 38183455787.
+
+Both set up for themselves. [Comparison](E7_setup_matrix/turn1_rollout_vs_greedy.md),
+[script](E7_setup_matrix/turn1_compare_players.py).
+
+**The rollout root plays turn 1 almost as the network does:**
+
+| decision | same choice on the same deal |
+|:---|---:|
+| USSR setup (Yugoslavia 3, Poland 3: greedy 100%, rollout 99.5%) | 99% |
+| USSR headline | 94% |
+| US headline | 94% |
+| USSR AR1 (how played, coup target) | 85% |
+| US AR1 (how played, coup target) | 82% |
+| US setup | 79% |
+| US AR1 whole spread | 60% |
+
+* **The setup.** The search keeps Yugoslavia 3. It is the only setup the root ever plays except
+  for 0.5% of deals where it moves the last point.
+* **The USSR's AR1.** The mix is unchanged: Italy coups 43% against 45% for greedy, Iran coups 15%,
+  Red Scare 11%.
+* **The US setup.** The one place the search moves is away from West Germany 4:
+
+  | | greedy | rollout |
+  |:---|---:|---:|
+  | West Germany 4, France 2, Italy 2, Iran 1 (4222) | 71.7% | 55.8% |
+  | West Germany 3, France 3, Italy 2, Iran 1 (3322) | 15.7% | 21.2% |
+  | West Germany 4, France 3, Italy 2 | 12.7% | 10.9% |
+  | West Germany 3, France 2, Italy 2 and a bonus point in Greece, Canada or Italy | 0% | 10.3% |
+
+  The searched US puts only 3 in West Germany in 34% of deals against 16% for the network. Under
+  the z2 rule that is a lead of 2+ standard errors over 16 worlds for the move it switched to.
+* **The US's AR1.** It places in West Germany a little more (6.5% against 3.7%) and in Lebanon
+  more (6.3% against 3.6%).
+
+**3322 and the owner's mechanism** (fix West Germany or take Europe on AR1, while the USSR goes for
+Italy anyway). In R34's own play from 3322 (census 38166088993), after the US's AR1:
+* the US controls West Germany in only 36% of games (65% by turn 1's end, against 86% from 4222);
+* US Europe domination is 26% against 30% from 4222.
+
+[Script](E7_setup_matrix/turn1_us_europe.py). Priced, a first AR1 point in West Germany from 3322
+is −0.3 ± 0.1 against the network's pick, tied with Pakistan as the best alternative (run
+38182750099, 500 games × 96 worlds; [priced census](E7_setup_matrix/turn1_census_r34_3322_priced.md)).
+
+So in this network's hands 3322 is not a West Germany fix on AR1, and the matrix has 3322 and
+4222 tied (+0.08 ± 0.09). The search's shift toward West Germany 3 is the one sign on the side of
+3322. A full-game searched matrix is the test, but at ~75 s a rollout game it is too costly to
+resolve a point.
