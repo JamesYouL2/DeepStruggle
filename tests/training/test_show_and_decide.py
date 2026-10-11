@@ -12,6 +12,7 @@ import pytest
 import torch
 
 import ts_engine as ts
+from ai.eval.positions import PositionBuilder, step_to_play_mode
 from ai.models.ladder_net import create_ladder_net
 from ai.training import NashPGTrainer
 from ai.training.show_and_decide import (EVENT_SLOT, PLAY_MODE_LO, REGION_LO, SCENARIOS,
@@ -605,21 +606,27 @@ def test_the_floor_can_cover_event_choices_only() -> None:
 
 def test_environment_credit_stores_forced_events_as_the_environments() -> None:
     """--force-event-credit environment: the forced plays are learner 0 (no policy gradient), as
-    P31 1b; One Small Step is used because an untrained net reaches it often -- once the games are in
-    the Mid War, which takes ~15 rollouts of 64 steps (locally the first forced play came at the 15th;
-    a limit of 20 left too little margin, and CI's build of the same seeded play missed it)."""
-    t = _trainer(buffer=64, envs=32, force_applicable_events=["one_small_step"], force_event_frac=1.0,
+    P31 1b. Every env starts at the US's play-mode decision for One Small Step while behind in space,
+    so the first step forces the event in all of them -- a built position, not one random play has to
+    reach (that version waited on an untrained net to get into the Mid War, and CI's build missed it)."""
+    t = _trainer(buffer=4, envs=4, force_applicable_events=["one_small_step"], force_event_frac=1.0,
                  force_event_credit="environment")
     assert t.event_forcer is not None
-    for _ in range(60):
-        t.collect_rollouts()
-        if t.event_forcer.forced["one_small_step"] > 0:
-            break
-    assert t.event_forcer.forced["one_small_step"] > 0
+    st = step_to_play_mode(PositionBuilder(hand=[80, 26], side=ts.Player.US, turn=4, us_space=0,
+                                           ussr_space=2).build(), 80)
+    for i in range(4):
+        t.env.runner.set_state(i, st)
+    t.env.runner.refresh_all()
+    t._obs_np = np.array(t.env.runner.get_observations(), dtype=np.float32)
+    t._masks_np = np.array(t.env.runner.get_action_masks())
+    t.collect_rollouts()
+    assert t.event_forcer.forced["one_small_step"] == 4
     learner = t.buffer.learner.reshape(-1) > 0.5
     acts = t.buffer.actions.reshape(-1)
+    # the first step's four rows are the forced events, stored as the environment's
+    assert not bool((t.buffer.learner[0] > 0.5).any()) and bool(torch.all(t.buffer.actions[0] == EVENT_SLOT))
     # without a pool, learner = 0 marks exactly the forced plays: all of them the event at play mode
-    assert bool((~learner).any()) and torch.all(acts[~learner] == EVENT_SLOT)
+    assert torch.all(acts[~learner] == EVENT_SLOT)
     t.train_step()
 
 
