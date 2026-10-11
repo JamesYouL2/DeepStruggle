@@ -328,7 +328,7 @@ Both set up for themselves. [Comparison](E7_setup_matrix/turn1_rollout_vs_greedy
   | West Germany 4, France 3, Italy 2 | 12.7% | 10.9% |
   | West Germany 3, France 2, Italy 2 and a bonus point in Greece, Canada or Italy | 0% | 10.3% |
 
-  The searched US puts only 3 in West Germany in 34% of deals against 16% for the network. Under
+  The searched US puts only 3 in West Germany in about 32% of deals against 16% for the network. Under
   the z2 rule that is a lead of 2+ standard errors over 16 worlds for the move it switched to.
 * **The US's AR1.** It places in West Germany a little more (6.5% against 3.7%) and in Lebanon
   more (6.3% against 3.6%).
