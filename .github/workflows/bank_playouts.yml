@@ -23,13 +23,18 @@
 #   gh release create blunder-shortlist-<date> shortlist.jsonl.gz --prerelease --title "blunder bank shortlist"
 #   gh workflow run bank_playouts.yml --ref main -f stage=confirm -f release=blunder-shortlist-<date> \
 #     -f model=_models/E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt -f pairs=512 -f runners=20
+#
+# and its exact check (tools/scripts/blunder_bank.py prove), which needs no model and no pairs:
+#
+#   gh workflow run bank_playouts.yml --ref main -f stage=prove -f release=blunder-bank-37-<date> \
+#     -f runners=20 -f args="--budget 2000000"
 name: bank-playouts
 
 on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "run (the disagreement bank), validate (blunder census) or confirm (blunder bank, tools/scripts/blunder_bank.py)"
+        description: "run (the disagreement bank), validate (blunder census), confirm or prove (blunder bank, tools/scripts/blunder_bank.py)"
         default: "run"
       release:
         description: "Release whose asset(s) *.jsonl.gz hold the positions"
@@ -89,21 +94,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern '*.jsonl.gz' --dir input
+          [ "$STAGE" = prove ] && exit 0
           mkdir -p data/checkpoints/hf
           curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
       - name: ${{ env.STAGE }} (part ${{ matrix.part }})
         run: |
           mkdir -p out
           tool=bank_playouts.py
+          weights="data/checkpoints/hf/$(basename "$MODEL")"
           case "$STAGE" in
-            run) model_flag=(--onnx "data/checkpoints/hf/$(basename "$MODEL")") ;;
-            validate) model_flag=(--model "data/checkpoints/hf/$(basename "$MODEL")") ;;
-            confirm) tool=blunder_bank.py; model_flag=(--model "data/checkpoints/hf/$(basename "$MODEL")") ;;
+            run) model_flag=(--onnx "$weights" --pairs "$PAIRS") ;;
+            validate) model_flag=(--model "$weights" --pairs "$PAIRS") ;;
+            confirm) tool=blunder_bank.py; model_flag=(--model "$weights" --pairs "$PAIRS") ;;
+            prove) tool=blunder_bank.py; model_flag=() ;;
             *) echo "unknown stage: $STAGE" >&2; exit 1 ;;
           esac
-          sha256sum "data/checkpoints/hf/$(basename "$MODEL")"
+          [ "$STAGE" = prove ] || sha256sum "$weights"
           python "tools/scripts/$tool" "$STAGE" --input input/*.jsonl.gz \
-            "${model_flag[@]}" --pairs "$PAIRS" \
+            "${model_flag[@]}" \
             --part "${{ matrix.part }}/$RUNNERS" --out "out/playouts-${{ matrix.part }}.jsonl.gz" $ARGS
       - uses: actions/upload-artifact@v4
         with:

@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import glob
 import gzip
+import hashlib
 import json
 import os
 import sys
@@ -387,20 +388,123 @@ def exact_value(st: ts.GameState, mover: ts.Player, turn: int, budget: List[int]
     return best
 
 
-def prove(bank_path: str, deals: int, budget: int, seed: int, out: str) -> int:
+def reaches(st: ts.GameState, mover: ts.Player, turn: int, want: str, budget: List[int],
+            memo: Dict[bytes, bool]) -> bool:
+    """Whether the mover, playing its best, reaches `want` against the opponent's best reply in a game
+    that ends in this turn: "win" -- a win on every face of every die; "any" -- a draw or a win on
+    some face. A yes/no question cuts off at the first move that settles it, and `memo` (keyed by
+    the save, which leaves out the move history) merges the orders of one set of placements, so it
+    reaches rows `exact_value` cannot. A new turn or an exhausted node budget raises `Unprovable`."""
+    if ts.Engine.is_terminal(st):
+        u = float(ts.Engine.get_terminal_utility(st))
+        won = u != 0 and (u > 0) == (mover == ts.Player.US)
+        return won if want == "win" else (u == 0 or won)
+    if int(st.turn) != turn:
+        raise Unprovable("a new turn")
+    key = hashlib.blake2b(st.to_save_json().encode(), digest_size=16).digest()
+    if key in memo:
+        return memo[key]
+    budget[0] -= 1
+    if budget[0] < 0:
+        raise Unprovable("node budget")
+    ctx = st.ctx()
+    children: List[ts.GameState] = []
+    if ctx.decision_player == ts.Player.NONE and ctx.decision_type == ts.DecisionType.ROLL_DIE:
+        # a die: "win" needs every face, "any" one
+        every = want == "win"
+        for face in range(1, 7):
+            child = st.clone()
+            ts.Engine.step(child, ts.MicroAction(ts.DecisionType.ROLL_DIE, face, 0, 0))
+            children.append(child)
+    else:
+        legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
+        if legal.size == 0:
+            nxt = st.clone()
+            if ts.Engine.auto_advance_step(nxt) == 0:
+                raise Unprovable("no legal move and nothing to advance")
+            children.append(nxt)
+            every = True
+        else:
+            # the mover needs one move that gets there; against the opponent, every reply must
+            every = mover_of(st) != mover
+            for a in legal:
+                child = st.clone()
+                ts.Engine.step_flat(child, int(a))
+                children.append(child)
+    res = every
+    for child in children:
+        if reaches(child, mover, turn, want, budget, memo) != every:
+            res = not every
+            break
+    memo[key] = res
+    return res
+
+
+def outcome(st: ts.GameState, mover: ts.Player, turn: int, budget: int, after: bool = True) -> Optional[str]:
+    """"win" where the mover wins whatever the opponent and the dice do, "loss" where it loses
+    whatever it does against the opponent's best reply, "open" otherwise; None where the rest of
+    the game cannot be enumerated. With `after=False` the question is only whether the position
+    is lost (so "win" is never returned): the mover to move, every move it has tried."""
+    try:
+        if after and reaches(st, mover, turn, "win", [budget], {}):
+            return "win"
+        return "open" if reaches(st, mover, turn, "any", [budget], {}) else "loss"
+    except Unprovable:
+        return None
+
+
+def settled(network: Optional[str], position: Optional[str]) -> Optional[str]:
+    """One world's verdict on whether the move matters: "win" where the move played wins whatever
+    happens after it (a sure win is the best result there is, so whatever the playouts charge it is
+    a later mistake), "loss" where the position before it is lost whatever the mover plays (so the
+    better move's lead is the opponent failing to finish the game); None where the move can matter."""
+    if network == "win":
+        return "win"
+    return "loss" if position == "loss" else None
+
+
+def decided(worlds: Sequence[Optional[str]]) -> str:
+    """"win" or "loss" where every world is settled that way (`settled`) -- the row is then no
+    blunder, whatever its cost in playouts; "either" where the worlds split between the two; ""
+    where the move can matter in some world or a world was not enumerated."""
+    if not worlds or any(w is None for w in worlds):
+        return ""
+    kinds = set(worlds)
+    return str(kinds.pop()) if len(kinds) == 1 else "either"
+
+
+def prove(inputs: Sequence[str], deals: int, budget: int, seed: int, part: str, out: str) -> int:
     """Each bank row solved to the end of the game where the game ends in this turn, in the position
     as recorded and in `deals` worlds with the mover's unseen cards redealt
     (`paired_playouts.pair_start`). The blunder is held to its best case (every later choice, the
     opponent's too, made for the mover) and the better move to its worst (the opponent's replies
     against the mover). A row is proved where, in every world, the better move's worst case is at
     least the blunder's best case, and above it in at least one; proved against the best reply where
-    the same holds with the blunder too answered by the opponent's best reply in that world."""
-    bank = list(_read([bank_path]))
+    the same holds with the blunder too answered by the opponent's best reply in that world.
+
+    Separately, whether the move matters at all (`outcome`, a yes/no search, so it settles rows the
+    values cannot): a row is decided where, in every world, the move played wins whatever follows,
+    or the position is lost whatever the mover plays (`settled`, `decided`).
+    This part's share of the rows (`--part k/N`, for CI runners), one JSON row each."""
+    k, n = (int(x) for x in part.split("/"))
+    bank = [r for i, r in enumerate(sorted(_read(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
     res: List[Dict[str, Any]] = []
+    t0 = time.time()
     for r in bank:
         st0 = state_from_token(r["pos"])
         who = mover_of(st0)
         worlds = [st0] + [pair_start(st0, k, position_seed(str(r["id"]), seed)) for k in range(deals)]
+        outcomes: Dict[str, List[Optional[str]]] = {"network": [], "position": [], "settled": []}
+        for w in worlds:
+            child = w.clone()
+            ts.Engine.step_flat(child, int(r["network"]["action"]))
+            net = outcome(child, who, int(w.turn), budget)
+            # the position is searched only where the move loses: otherwise it is not lost
+            pos = outcome(w, who, int(w.turn), budget, after=False) if net == "loss" else None
+            outcomes["network"].append(net)
+            outcomes["position"].append(pos)
+            outcomes["settled"].append(settled(net, pos))
+        verdict_decided = decided(outcomes["settled"])
         vals: Dict[str, List[Optional[float]]] = {"network_best_case": [], "network_vs_best_reply": [],
                                                    "better_worst_case": []}
         why = ""
@@ -429,15 +533,18 @@ def prove(bank_path: str, deals: int, budget: int, seed: int, out: str) -> int:
                     "decision_type": r["decision_type"], "card_name": r.get("card_name", ""),
                     "network": r["network"]["name"], "better": r["better"]["name"], "exact": vals,
                     "proved": proved, "proved_vs_best_reply": proved_vs_reply, "mean_exact_gap": gap,
-                    "unprovable": "" if ok else why})
+                    "unprovable": "" if ok else why, "outcomes": outcomes, "decided": verdict_decided})
         verdict = ("PROVED" if proved else "PROVED against the best reply" if proved_vs_reply else "solved, not proved")
         print(f"{r['side']} T{r['turn']} AR{r['ar']} {r['decision_type']}: "
-              + (f"{verdict} gap {gap}" if ok else f"unprovable ({why})"), file=sys.stderr)
-    json.dump(res, open(out, "w"), indent=1)
+              + (f"{verdict} gap {gap}" if ok else f"unprovable ({why})")
+              + (f"; decided ({verdict_decided} whatever is played)" if verdict_decided else ""), file=sys.stderr)
+    _write(out, res)
+    json.dump({"part": part, "rows": len(res), "seconds": round(time.time() - t0, 1), "deals": deals,
+               "budget": budget, "seed": seed}, open(out + ".meta.json", "w"))
     print(f"{sum(x['proved'] for x in res)} of {len(res)} proved whatever the opponent does; "
           f"{sum(x['proved_vs_best_reply'] for x in res)} against its best reply; "
-          f"{sum(1 for x in res if not x['unprovable'] and not x['proved_vs_best_reply'])} solved and not proved",
-          file=sys.stderr)
+          f"{sum(1 for x in res if not x['unprovable'] and not x['proved_vs_best_reply'])} solved and not proved; "
+          f"{sum(1 for x in res if x['decided'])} decided whatever is played", file=sys.stderr)
     return 0
 
 
@@ -472,14 +579,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     g.add_argument("--seed", type=int, default=11)
     g.add_argument("--out", required=True)
     v = sub.add_parser("prove", help="exact values where the rest of the game is the mover's alone")
-    v.add_argument("--bank", required=True)
+    v.add_argument("--input", "--bank", nargs="+", required=True, dest="input")
     v.add_argument("--deals", type=int, default=8, help="worlds with the mover's unseen cards redealt")
     v.add_argument("--budget", type=int, default=200_000, help="nodes per move per world")
     v.add_argument("--seed", type=int, default=13)
-    v.add_argument("--out", required=True)
+    v.add_argument("--part", default="1/1")
+    v.add_argument("--out", required=True, help="one JSON row per bank row (.jsonl or .jsonl.gz)")
     a = ap.parse_args(argv)
     if a.cmd == "prove":
-        return prove(a.bank, a.deals, a.budget, a.seed, a.out)
+        return prove(a.input, a.deals, a.budget, a.seed, a.part, a.out)
     if a.cmd == "select":
         return select(a.validation, a.min_gap, a.min_z, a.out)
     if a.cmd == "confirm":
