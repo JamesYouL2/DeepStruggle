@@ -605,11 +605,13 @@ def test_the_floor_can_cover_event_choices_only() -> None:
 
 def test_environment_credit_stores_forced_events_as_the_environments() -> None:
     """--force-event-credit environment: the forced plays are learner 0 (no policy gradient), as
-    P31 1b; One Small Step is used because an untrained net reaches it often."""
+    P31 1b; One Small Step is used because an untrained net reaches it often -- once the games are in
+    the Mid War, which takes ~15 rollouts of 64 steps (locally the first forced play came at the 15th;
+    a limit of 20 left too little margin, and CI's build of the same seeded play missed it)."""
     t = _trainer(buffer=64, envs=32, force_applicable_events=["one_small_step"], force_event_frac=1.0,
                  force_event_credit="environment")
     assert t.event_forcer is not None
-    for _ in range(20):
+    for _ in range(60):
         t.collect_rollouts()
         if t.event_forcer.forced["one_small_step"] > 0:
             break
