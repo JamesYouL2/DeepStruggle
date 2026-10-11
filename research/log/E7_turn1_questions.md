@@ -242,7 +242,7 @@ recorded decision.
 | USSR, Independent Reds | 28% | 11% | 11% | 5% | 45% |
 
 * **The USSR.** Under Yugoslavia 3 it keeps Independent Reds into turn 2 more often (45% against
-  32-35%) and fires it less (22% against 29-31%).
+  32-35%) and fires it less (22% against 29-32%).
 * **The US.** It mostly plays these cards for Operations without the event. East European Unrest
   is played for Ops 46-53% of the time, headlined 31-39%, and evented in an action round 3-4%.
   Independent Reds is played for Ops 60% of the time, headlined 19%, used to coup 17%, and almost
