@@ -70,12 +70,36 @@
     "hf": "E7-A8-R1-S44@6400M+R32_20261010_005623/snapshot_6800015360steps.pt",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34-S45@7120..7200M": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34-S45_20261011_020403/swa_7120-7200M.pt",
+    "sha256": "e765a46ce66e0e12dd295d0b582aaf53b79b939078ac75d3ca14798fc1392607",
+    "description": "The logit-gap penalty (recipe R34, gap 7, coef 1e-3) branch R34-S45 from E7-A8-R1-S44@6400M, continued to 7,200M; SWA of its last 80M -- an ingredient of the R34 soup",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
+  "E7-A8-R1-S44@6400M+R34-S46@7120..7200M": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34-S46_20261011_020404/swa_7120-7200M.pt",
+    "sha256": "0a924bce913561b2829524a2ca45d6916e000b9b536b3519af52c4eb206be022",
+    "description": "The logit-gap penalty (recipe R34, gap 7, coef 1e-3) branch R34-S46 from E7-A8-R1-S44@6400M, continued to 7,200M; SWA of its last 80M -- an ingredient of the R34 soup",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R34@6720..6800M": {
     "file": "checkpoints/E7-A8-R1-S44@6400M+R34_20261010_031009/swa_6720-6800M.pt",
     "sha256": "be81eae0d822f3abb161e8df5501f318a2f0e11e354ae0663acf33f7fa0ba3e1",
     "description": "The logit-gap penalty at 1e-3, gap 7 (recipe R34), 6,400 -> 6,800M; SWA of its last 80M. Greedy +7.6/+2.1 per seat over the plain leg, 55.5% head to head; loses at T=1 (36.6%)",
     "old_names": [],
     "hf": "E7-A8-R1-S44@6400M+R34_20261010_031009/swa_6720-6800M.pt",
+    "report": null
+  },
+  "E7-A8-R1-S44@6400M+R34@7120..7200M": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34_20261010_031009/swa_7120-7200M.pt",
+    "sha256": "a6dd50499285d399b659b2891f27aee6e51e0ed80d6c10225f4578d4cc14cb79",
+    "description": "The logit-gap penalty (recipe R34, gap 7, coef 1e-3) branch R34 from E7-A8-R1-S44@6400M, continued to 7,200M; SWA of its last 80M -- an ingredient of the R34 soup",
+    "old_names": [],
+    "hf": null,
     "report": null
   },
   "E7-A8-R1-S44@6720..6800M": {
