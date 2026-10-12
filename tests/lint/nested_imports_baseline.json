@@ -110,7 +110,6 @@
  "tests/training/test_replay_trace.py": 4,
  "tests/training/test_run_dir_naming.py": 2,
  "tests/training/test_same_perspective_bootstrap.py": 1,
- "tests/training/test_search_ce.py": 36,
  "tests/training/test_search_reliability.py": 3,
  "tests/training/test_search_targets.py": 1,
  "tests/training/test_search_tiebreak.py": 2,

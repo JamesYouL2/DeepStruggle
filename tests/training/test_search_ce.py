@@ -13,13 +13,20 @@ break silently:
 
 from __future__ import annotations
 
+import inspect
 import math
 
 import numpy as np
 import pytest
 import torch
+import ts_engine as ts
 
+from ai.models.ladder_net import create_ladder_net
+from ai.search.rollout_root import RolloutTeacher
+from ai.training import generic_trainer, nash_pg
+from ai.training.nash_pg import BaseNashPGTrainer, NashPGTrainer, filter_search_visits
 from ai.training.rollout_buffer import RolloutBuffer
+from bindings.ts_env import TsVectorizedEnv
 
 OBS, ACT, N, T = 8, 12, 4, 6
 
@@ -145,9 +152,7 @@ def test_the_ce_metrics_are_registered_for_logging() -> None:
     trainer needs a GPU and an env, and the thing that broke was the registration, not the
     computation.
     """
-    import inspect
 
-    from ai.training import generic_trainer
 
     src = inspect.getsource(generic_trainer.train_pipeline)
     block = src[src.index("active_aux_losses: List[str] = []"):]
@@ -181,9 +186,7 @@ def test_the_ppo_ratio_cannot_overflow_to_nan() -> None:
     E3-32-30 died exactly this way at 53.7M steps, with every instrument healthy in the iteration
     before -- AUC 0.781, entropy 1.04, KL 0.126 -- so nothing in the metrics would have warned.
     """
-    import inspect
 
-    from ai.training.nash_pg import NashPGTrainer
 
     src = inspect.getsource(NashPGTrainer.train_step)
     line = next((l for l in src.splitlines() if "ratio = torch.exp(" in l), None)
@@ -200,9 +203,7 @@ def test_forced_setup_actions_are_stored_with_their_own_log_prob() -> None:
     the action actually taken. If the override were applied AFTER the gather, the buffer would hold
     the log-prob of a different action and every ratio involving a forced opening would be wrong.
     """
-    import inspect
 
-    from ai.training.nash_pg import BaseNashPGTrainer
 
     src = inspect.getsource(BaseNashPGTrainer.collect_rollouts)
     force = src.index("_force_setup_exploration")
@@ -227,11 +228,8 @@ def test_mass_outside_the_legal_mask_is_measured_not_inferred() -> None:
 
     This pins the arithmetic the diagnostic rests on, and that the metric is registered.
     """
-    import inspect
 
-    import torch
 
-    from ai.training import generic_trainer, nash_pg
 
     # 1. the arithmetic: mass e on a masked action costs e * 1e9 of CE
     logits = torch.zeros(1, 4)
@@ -286,11 +284,8 @@ def test_search_targets_are_filtered_by_the_real_mask() -> None:
 
     This pins the normalisation the filter must preserve, and that the source still applies it.
     """
-    import inspect
 
-    import numpy as np
 
-    from ai.training import nash_pg
 
     # the renormalisation: drop illegal visits, and what survives must still sum to 1
     acts = [3, 7, 11]
@@ -321,9 +316,7 @@ def test_filter_search_visits_drops_illegal_and_renormalises() -> None:
     reach the log reported search_dropped_visit_frac = 0.0 -- correct, and no evidence the filter
     works. These cases drive it on purpose.
     """
-    import numpy as np
 
-    from ai.training.nash_pg import filter_search_visits
 
     legal = np.array([1, 1, 1, 0, 1, 0], dtype=np.uint8)   # 3 and 5 illegal in the real state
     width = 6
@@ -369,11 +362,8 @@ def test_search_target_entropy_is_the_targets_own_entropy_and_is_logged() -> Non
     If target entropy stays put while the policy's climbs, the loop is dead. Nothing logged that
     number, so neither reading could be tested.
     """
-    import inspect
 
-    import torch
 
-    from ai.training import generic_trainer, nash_pg
 
     # the quantity: entropy of the TARGET, not of the policy
     one_hot = torch.zeros(1, 8)
@@ -406,9 +396,6 @@ def test_deferred_targets_land_on_the_rows_they_describe() -> None:
     """The searcher answers a whole rollout at its end, so every target must still be filed against
     the buffer row of the position it describes: its mass has to lie on that row's own legal
     mask, every flagged row must sum to one, and rows from an earlier rollout must not survive."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     torch.manual_seed(0)
     dev = torch.device("cpu")
@@ -444,7 +431,6 @@ class _IllegalTooTeacher:
         return True
 
     def run(self, states):
-        import ts_engine as ts
         out = []
         for st in states:
             mask = np.asarray(ts.get_flat_action_mask(st))
@@ -456,9 +442,6 @@ class _IllegalTooTeacher:
 def test_the_flush_drops_what_the_real_mask_forbids() -> None:
     """Behaviourally, through collect_rollouts: the illegal visits carry no target mass, the legal
     one carries all of it, and the rejection is measured (search_dropped_visit_frac = 3/4)."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     torch.manual_seed(0)
     dev = torch.device("cpu")
@@ -487,9 +470,6 @@ def test_the_flush_drops_what_the_real_mask_forbids() -> None:
 def test_gumbel_improved_policy_targets_are_full_legal_distributions() -> None:
     """P32 T1 (--search-gumbel-k): the target is the Gumbel root's improved policy over every legal
     move -- a distribution on the real mask, sharp where the search agrees -- not a visit count."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     torch.manual_seed(0)
     dev = torch.device("cpu")
@@ -521,9 +501,6 @@ def test_gumbel_improved_policy_targets_are_full_legal_distributions() -> None:
 def test_the_logit_gap_penalty_raises_saturated_moves() -> None:
     """--logit-gap-coef: a real loss on legal logits more than --logit-gap below the top; one update
     on a saturated policy shrinks its gaps and the penalty is logged."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     torch.manual_seed(0)
     dev = torch.device("cpu")
@@ -544,9 +521,6 @@ def test_the_logit_gap_penalty_raises_saturated_moves() -> None:
 
 def test_a_frozen_search_teacher_is_what_the_searcher_runs() -> None:
     """--search-teacher-checkpoint: the targets come from a frozen network, not the learner."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
                card_self_attention=False, cross_attention=False, per_entity_heads=16,
@@ -572,9 +546,6 @@ def test_search_values_move_only_the_value_target_at_searched_rows() -> None:
     """P32 T2: --search-value-beta blends the root's search value into v_win's target where a
     decision was searched, after GAE -- the advantages stay the control's -- and runs the searcher
     with the CE term off."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
                card_self_attention=False, cross_attention=False, per_entity_heads=16,
@@ -617,10 +588,6 @@ def test_rollout_root_targets_come_from_the_frozen_teacher_over_every_legal_move
     """--search-rollout-horizon: the search-CE targets come from a rollout root run by the frozen
     teacher -- a full distribution over each searched decision's legal moves -- and the option set
     refuses the Gumbel root beside it."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.search.rollout_root import RolloutTeacher
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
                card_self_attention=False, cross_attention=False, per_entity_heads=16,
