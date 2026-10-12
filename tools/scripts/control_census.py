@@ -41,7 +41,7 @@ import math
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -106,21 +106,41 @@ def row_id(pos: str) -> str:
     return hashlib.sha1(pos.encode()).hexdigest()[:16]
 
 
+def fidel_where(st: ts.GameState) -> str:
+    """Where Fidel is, as the US can know it: gone (removed), US hand, discard, ongoing, or unseen
+    (the deck or the USSR's hand)."""
+    loc = st.get_card_location(FIDEL)
+    if loc == ts.CardLocation.REMOVED_FROM_GAME:
+        return "gone"
+    if loc in (ts.CardLocation.HAND_US_KNOWN, ts.CardLocation.HAND_US_UNKNOWN):
+        return "US hand"
+    if loc == ts.CardLocation.DISCARD_PILE:
+        return "discard"
+    return "unseen"
+
+
 class BreakTracker:
     """Every Ops influence point of one game, and its break plays followed to the mover's next
-    action round and the end of the turn. `positions` keeps each point's position; `bank` keeps
-    each break play's position and move at its first point into the opponent's control."""
+    action round and the end of the turn; and the US's *Cuba plays*, a card's Ops with a point in
+    Cuba while Fidel is still to come, followed to Fidel's event. `positions` keeps each point's
+    position; `bank` keeps each play's position and move at its first point into the opponent's
+    control (or into Cuba)."""
 
     def __init__(self, positions: bool = False, bank: bool = False) -> None:
         self.positions, self.bank = positions, bank
         self.points: List[Dict[str, Any]] = []
         self.plays: List[Dict[str, Any]] = []
+        self.cuba: List[Dict[str, Any]] = []
         self._play: Optional[Dict[str, Any]] = None
         self._key: Optional[Tuple[int, int, int, int]] = None
         self._pending: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        self._cuba_key: Optional[Tuple[int, int, int, int]] = None
+        self._us_in_cuba = 0
+        self._fidel_gone = False
 
     def observe(self, st: ts.GameState, a: int) -> None:
         self._follow(st)
+        self._follow_fidel(st)
         if not ops_influence(st):
             return
         who = decider(st)
@@ -131,10 +151,23 @@ class BreakTracker:
         rec: Dict[str, Any] = {"s": int(who), "t": int(st.turn), "ar": int(st.action_round), "c": cid, "k": k}
         if cid == CUBA:
             rec["fidel"] = st.get_card_location(FIDEL) != ts.CardLocation.REMOVED_FROM_GAME
+        if who == ts.Player.US:
+            rec["fw"] = fidel_where(st)
         if self.positions:
             rec["pos"] = position_token(st)
         self.points.append(rec)
         key = ar_key(st)
+        if cid == CUBA and who == ts.Player.US and rec["fidel"]:
+            if self._cuba_key != key:
+                cp: Dict[str, Any] = {"s": int(who), "t": int(st.turn), "ar": int(st.action_round),
+                                      "card": int(st.ctx().pending_op_card), "fidel_at": fidel_where(st),
+                                      "us_before": int(st.get_country(CUBA).us_influence), "pts": 0,
+                                      "fired": None, "us_when_fired": None}
+                if self.bank:
+                    cp["pos"], cp["raw"] = position_token(st), int(a)
+                self.cuba.append(cp)
+                self._cuba_key = key
+            self.cuba[-1]["pts"] += 1
         play = self._play if self._key == key else None
         if k != OPEN:
             if play is None:
@@ -177,9 +210,19 @@ class BreakTracker:
                 still.append((e, play))
         self._pending = still
 
+    def _follow_fidel(self, st: ts.GameState) -> None:
+        """Fidel's event, the first time Fidel is seen removed: the turn, and the US's influence in
+        Cuba at the decision before, for every Cuba play still waiting for it."""
+        if not self._fidel_gone and st.get_card_location(FIDEL) == ts.CardLocation.REMOVED_FROM_GAME:
+            self._fidel_gone = True
+            for cp in self.cuba:
+                if cp["fired"] is None:
+                    cp["fired"], cp["us_when_fired"] = int(st.turn), self._us_in_cuba
+        self._us_in_cuba = int(st.get_country(CUBA).us_influence)
+
     def result(self) -> Dict[str, Any]:
         plays = [dict(p, countries=list(p["countries"].values())) for p in self.plays]
-        return {"points": self.points, "plays": plays}
+        return {"points": self.points, "plays": plays, "cuba": self.cuba}
 
 
 # --- the census stages ------------------------------------------------------------------------
@@ -187,7 +230,8 @@ class BreakTracker:
 def _human_game(path: str) -> Tuple[str, Dict[str, Any], str]:
     t = BreakTracker(positions=True)
     status = feed_corpus_game(path, t)
-    return os.path.basename(path), (t.result() if status != "skipped" else {"points": [], "plays": []}), status
+    empty: Dict[str, Any] = {"points": [], "plays": [], "cuba": []}
+    return os.path.basename(path), (t.result() if status != "skipped" else empty), status
 
 
 def _dump(path: str, obj: Dict[str, Any]) -> None:
@@ -203,25 +247,41 @@ def _load(path: str) -> Dict[str, Any]:
 def human(out: str, workers: int, limit: int) -> int:
     points: List[Dict[str, Any]] = []
     plays: List[Dict[str, Any]] = []
+    cuba: List[Dict[str, Any]] = []
     status: Dict[str, int] = collections.Counter()
     t0 = time.time()
     for game, res, st in sorted(corpus_map(_human_game, workers, limit), key=lambda x: x[0]):
         status[st] += 1
         points += [dict(r, g=game) for r in res["points"]]
         plays += [dict(p, g=game) for p in res["plays"]]
+        cuba += [dict(p, g=game, complete=st == "complete") for p in res["cuba"]]
     _dump(out, {"schema": SCHEMA, "source": "human", "games": dict(status), "seconds": round(time.time() - t0, 1),
-                "points": points, "plays": plays})
+                "points": points, "plays": plays, "cuba": cuba})
     print(f"{len(points):,} points, {len(plays):,} break plays, {dict(status)}", file=sys.stderr)
     return 0
 
 
-def run_selfplay(checkpoint: str, games: int, seed: int, batch: int, out: str, bank: str, bank_games: int) -> int:
+def _bank_row(p: Dict[str, Any], kind: str, g: int, pos: str, raw: int) -> Dict[str, Any]:
+    return dict(p, schema=SCHEMA, kind=kind, id=row_id(pos), pos=pos, raw=raw, g=g, side=SIDE[int(p["s"])])
+
+
+def _write_bank(path: str, rows: List[Dict[str, Any]], checkpoint: str, games: int, seed: int) -> None:
+    write_jsonl(path, rows)
+    json.dump({"schema": SCHEMA, "checkpoint": os.path.basename(checkpoint), "sha256": sha256_file(checkpoint),
+               "games": games, "seed": seed, "rows": len(rows)}, open(path + ".meta.json", "w"))
+
+
+def run_selfplay(checkpoint: str, games: int, seed: int, batch: int, out: str, bank: str, bank_games: int,
+                 cuba_bank: str = "", cuba_games: int = 0) -> int:
     fn, features = load_policy(checkpoint)
     t0 = time.time()
-    trackers = selfplay(fn, features, games, seed, batch, 0.0, lambda: BreakTracker(bank=bool(bank)))
+    keep = bool(bank or cuba_bank)
+    trackers = selfplay(fn, features, games, seed, batch, 0.0, lambda: BreakTracker(bank=keep))
     points: List[Dict[str, Any]] = []
     plays: List[Dict[str, Any]] = []
+    cuba: List[Dict[str, Any]] = []
     rows: List[Dict[str, Any]] = []
+    crows: List[Dict[str, Any]] = []
     for g, t in enumerate(trackers):
         res = t.result()
         points += [dict(r, g=g) for r in res["points"]]
@@ -229,17 +289,21 @@ def run_selfplay(checkpoint: str, games: int, seed: int, batch: int, out: str, b
             pos, raw = p.pop("pos", None), p.pop("raw", None)
             plays.append(dict(p, g=g))
             if bank and g < bank_games and pos is not None:
-                rows.append(dict(p, schema=SCHEMA, id=row_id(pos), pos=pos, raw=raw, g=g,
-                                 side=SIDE[int(p["s"])]))
+                rows.append(_bank_row(p, "break", g, pos, int(raw)))
+        for p in res["cuba"]:
+            pos, raw = p.pop("pos", None), p.pop("raw", None)
+            cuba.append(dict(p, g=g, complete=True))
+            if cuba_bank and g < cuba_games and pos is not None:
+                crows.append(_bank_row(p, "cuba", g, pos, int(raw)))
     _dump(out, {"schema": SCHEMA, "source": "selfplay", "checkpoint": os.path.basename(checkpoint),
                 "sha256": sha256_file(checkpoint), "games": games, "seed": seed, "seconds": round(time.time() - t0, 1),
-                "points": points, "plays": plays})
+                "points": points, "plays": plays, "cuba": cuba})
     if bank:
-        write_jsonl(bank, rows)
-        json.dump({"schema": SCHEMA, "checkpoint": os.path.basename(checkpoint), "sha256": sha256_file(checkpoint),
-                   "games": bank_games, "seed": seed, "rows": len(rows)}, open(bank + ".meta.json", "w"))
-    print(f"{len(points):,} points, {len(plays):,} break plays from {games:,} games "
-          f"({len(rows):,} bank rows) in {time.time() - t0:.0f}s", file=sys.stderr)
+        _write_bank(bank, rows, checkpoint, bank_games, seed)
+    if cuba_bank:
+        _write_bank(cuba_bank, crows, checkpoint, cuba_games, seed)
+    print(f"{len(points):,} points, {len(plays):,} break plays, {len(cuba):,} Cuba plays from {games:,} games "
+          f"({len(rows):,} + {len(crows):,} bank rows) in {time.time() - t0:.0f}s", file=sys.stderr)
     return 0
 
 
@@ -279,13 +343,24 @@ def onhuman(human_path: str, checkpoint: str, out: str, chunk: int) -> int:
 
 # --- the playouts -----------------------------------------------------------------------------
 
+#: a steered row: its mover, the action round it starts in, and the countries to avoid (None: every
+#: country the opponent controls at that point)
+Steer = Tuple[ts.Player, Tuple[int, int, int, int], Optional[FrozenSet[int]]]
+
+
+def avoid_of(row: Dict[str, Any]) -> Optional[FrozenSet[int]]:
+    """What a bank row's steered line keeps out of: opponent control for a break play, Cuba for a
+    Cuba play."""
+    return frozenset({CUBA}) if row.get("kind", "break") == "cuba" else None
+
+
 class NoBreak:
     """Steers chosen playout rows: until the action round they start in ends, the mover's Ops
-    influence points avoid every country the opponent controls, unless nothing else is legal.
-    `changed[i]` counts the decisions where it narrowed row i's mask, `forced[i]` those it could
-    not."""
+    influence points avoid every country the opponent controls (or the row's own set), unless
+    nothing else is legal. `changed[i]` counts the decisions where it narrowed row i's mask,
+    `forced[i]` those it could not."""
 
-    def __init__(self, rows: Dict[int, Tuple[ts.Player, Tuple[int, int, int, int]]]) -> None:
+    def __init__(self, rows: Dict[int, Steer]) -> None:
         self.rows = dict(rows)
         self.changed: Dict[int, int] = collections.Counter()
         self.forced: Dict[int, int] = collections.Counter()
@@ -294,13 +369,13 @@ class NoBreak:
         return i in self.rows
 
     def steer(self, i: int, st: ts.GameState, mask: np.ndarray) -> np.ndarray:
-        who, key = self.rows[i]
+        who, key, avoid = self.rows[i]
         if ar_key(st) != key:
             del self.rows[i]
             return mask
         if not ops_influence(st) or decider(st) != who:
             return mask
-        bad = [NODE + c for c in opponent_controlled(st, who) if mask[NODE + c]]
+        bad = [NODE + c for c in (opponent_controlled(st, who) if avoid is None else sorted(avoid)) if mask[NODE + c]]
         if not bad:
             return mask
         if len(bad) == int(np.count_nonzero(mask)):
@@ -318,7 +393,8 @@ class NoBreak:
 def nobreak_compare(rows: Sequence[Dict[str, Any]], act: Any, pairs: int, seed: int,
                     select: Any = None, chunk: int = 1536) -> List[Dict[str, Any]]:
     """Per row, the mover's score in each pair for its own move (`raw`) and for the same card's Ops
-    kept out of opponent control (`nobreak`); both lines of a pair share the redeal and the dice."""
+    kept out of opponent control, or out of Cuba for a Cuba row (`steered`); both lines of a pair
+    share the redeal and the dice."""
     out: List[Dict[str, Any]] = []
     per = 2 * pairs
     step = max(1, chunk // per)
@@ -327,7 +403,7 @@ def nobreak_compare(rows: Sequence[Dict[str, Any]], act: Any, pairs: int, seed: 
         starts: List[ts.GameState] = []
         movers: List[ts.Player] = []
         keys: List[Tuple[int, int, int, int]] = []
-        steered: Dict[int, Tuple[ts.Player, Tuple[int, int, int, int]]] = {}
+        steered: Dict[int, Steer] = {}
         for r in batch:
             st = state_from_token(r["pos"])
             who, key = decider(st), ar_key(st)
@@ -335,7 +411,7 @@ def nobreak_compare(rows: Sequence[Dict[str, Any]], act: Any, pairs: int, seed: 
             for k in range(pairs):
                 base = pair_start(st, k, s0)
                 starts.append(apply_move(base, int(r["raw"])))
-                steered[len(starts)] = (who, key)
+                steered[len(starts)] = (who, key, avoid_of(r))
                 starts.append(base)
                 movers += [who, who]
                 keys += [key, key]
@@ -345,7 +421,7 @@ def nobreak_compare(rows: Sequence[Dict[str, Any]], act: Any, pairs: int, seed: 
         for j, r in enumerate(batch):
             i0 = j * per
             out.append({"schema": SCHEMA, "id": r["id"], "pairs": pairs,
-                        "scores": {"raw": scores[i0:i0 + per:2], "nobreak": scores[i0 + 1:i0 + per:2]},
+                        "scores": {"raw": scores[i0:i0 + per:2], "steered": scores[i0 + 1:i0 + per:2]},
                         "changed": sum(watch.changed[i0 + 2 * k + 1] for k in range(pairs)) / pairs,
                         "forced": sum(watch.forced[i0 + 2 * k + 1] for k in range(pairs)) / pairs})
     return out
@@ -498,6 +574,11 @@ def country_table(rows: List[Tuple[str, Dict[str, Any]]], top: int) -> List[str]
     return out + [""]
 
 
+def steered_scores(p: Dict[str, Any]) -> List[float]:
+    """The steered line's scores (`nobreak` in the first run's output)."""
+    return p["scores"]["steered"] if "steered" in p["scores"] else p["scores"]["nobreak"]
+
+
 def holds_its_scoring(r: Dict[str, Any]) -> bool:
     c = int(r["b"]["countries"][0]["c"])
     return any(r["b"]["held"] >> i & 1 and in_area(c, area) for i, (_, area) in enumerate(SCORING_CARDS))
@@ -510,7 +591,7 @@ def playout_tables(bank: List[Dict[str, Any]], pl: List[Dict[str, Any]], games: 
         p = by.get(b["id"])
         if p is None:
             continue
-        d = [x - y for x, y in zip(p["scores"]["nobreak"], p["scores"]["raw"])]
+        d = [x - y for x, y in zip(steered_scores(p), p["scores"]["raw"])]
         m = sum(d) / len(d)
         v = sum((t - m) ** 2 for t in d) / (len(d) - 1) / len(d)
         retaken = any(e["retaken"] for e in b["countries"] if e["end"] in ("flipped", "broken"))
@@ -569,6 +650,81 @@ def playout_tables(bank: List[Dict[str, Any]], pl: List[Dict[str, Any]], games: 
     return out + [""]
 
 
+def fidel_table(srcs: List[Tuple[str, Dict[str, Any]]], onh: Optional[Dict[str, Any]],
+                hum: Dict[str, Any]) -> List[str]:
+    """US points into Cuba, turns 4-10, by where Fidel is (as the US can know it)."""
+    places = ("unseen", "discard", "US hand", "gone")
+    out = ["### US points into Cuba, turns 4-10, by where Fidel is", "",
+           "| Fidel | " + " | ".join(n for n, _ in srcs)
+           + (" | same positions: human | model's pick | model − human |" if onh else " |"),
+           "|:---|" + "---:|" * (len(srcs) + (3 if onh else 0))]
+    for w in places:
+        cells = []
+        for _, src in srcs:
+            num: Dict[Any, float] = collections.defaultdict(float)
+            den: Dict[Any, float] = collections.defaultdict(float)
+            for r in src["points"]:
+                if r["s"] == int(ts.Player.US) and r["t"] >= 4 and r.get("fw") == w:
+                    den[r["g"]] += 1
+                    num[r["g"]] += r["c"] == CUBA
+            cells.append(pct(*ratio_se(num, den)) + f" ({int(sum(den.values())):,})")
+        line = f"| {w} | " + " | ".join(cells) + " |"
+        if onh is not None:
+            idx = [i for i, r in enumerate(hum["points"]) if r["s"] == int(ts.Player.US) and r["t"] >= 4
+                   and r.get("fw") == w]
+            gs = [hum["points"][i]["g"] for i in idx]
+            hv = [float(hum["points"][i]["c"] == CUBA) for i in idx]
+            mv = [float(onh["rows"][i]["pick"] == CUBA) for i in idx]
+            line += (f" {pct(*clustered_mean(hv, gs))} | {pct(*clustered_mean(mv, gs))} |"
+                     f" {pct(*clustered_mean([m - h for m, h in zip(mv, hv)], gs))} |")
+        out.append(line)
+    return out + [""]
+
+
+def cuba_play_lines(srcs: List[Tuple[str, Dict[str, Any]]]) -> List[str]:
+    out = []
+    for name, src in srcs:
+        cp = [p for p in src.get("cuba", []) if p.get("complete")]
+        if not cp:
+            continue
+        fired = [p for p in cp if p["fired"] is not None]
+        wiped = [p for p in fired if (p["us_when_fired"] or 0) > 0]
+        by = collections.Counter(p["fidel_at"] for p in cp)
+        out.append(f"* {name} (complete games): {len(cp):,} Cuba plays ({', '.join(f'{k} {v}' for k, v in by.most_common())}); "
+                   f"Fidel fired later in {100 * len(fired) / len(cp):.0f}%, with US influence still in Cuba in "
+                   f"{100 * len(wiped) / len(cp):.0f}% (mean {np.mean([p['us_when_fired'] for p in wiped] or [0]):.1f} "
+                   "influence removed)")
+    return out
+
+
+def cuba_playout_lines(bank: List[Dict[str, Any]], pl: List[Dict[str, Any]], games: int) -> List[str]:
+    by = {r["id"]: r for r in pl}
+    rows = [(b, [x - y for x, y in zip(steered_scores(by[b["id"]]), by[b["id"]]["scores"]["raw"])])
+            for b in bank if b["id"] in by]
+    if not rows:
+        return []
+    out = [f"Paired playouts of {len(rows):,} US Cuba plays from {games:,} games, {by[rows[0][0]['id']]['pairs']} pairs "
+           "each: the same card's Ops kept out of Cuba minus the model's own play, points of win probability.", "",
+           "| group | plays | per game | mean gain a play | per game, points |", "|:---|---:|---:|---:|---:|"]
+
+    def line(label: str, sel: List[Tuple[Dict[str, Any], List[float]]]) -> str:
+        if not sel:
+            return f"| {label} | 0 | | | |"
+        g = np.array([sum(d) / len(d) for _, d in sel])
+        se = g.std(ddof=1) / math.sqrt(len(g)) if len(g) > 1 else math.nan
+        return (f"| {label} | {len(g)} | {len(g) / games:.2f} | {100 * g.mean():+.2f} ± {100 * se:.2f} |"
+                f" {100 * g.sum() / games:+.2f} ± {100 * se * len(g) / games:.2f} |")
+
+    out.append(line("all", rows))
+    for w in ("unseen", "discard", "US hand"):
+        out.append(line(f"Fidel {w}", [r for r in rows if r[0]["fidel_at"] == w]))
+    for name, lo, hi in ERAS:
+        out.append(line(name, [r for r in rows if lo <= r[0]["t"] <= hi]))
+    out.append(line("Fidel fired later in the game", [r for r in rows if r[0]["fired"] is not None]))
+    out.append(line("Fidel never fired", [r for r in rows if r[0]["fired"] is None]))
+    return out + [""]
+
+
 def report(a: argparse.Namespace) -> int:
     hum = _load(a.human)
     srcs: List[Tuple[str, Dict[str, Any]]] = [("humans", hum)]
@@ -595,14 +751,18 @@ def report(a: argparse.Namespace) -> int:
         pend = sum(1 for r in cu if r.get("fidel"))
         md.append(f"* {name}: {len(cu):,} of {n_pts:,} US points into Cuba ({100 * len(cu) / max(1, n_pts):.1f}%); "
                   f"{pend:,} of them with Fidel to come ({100 * pend / max(1, n_pts):.2f}% of US points)")
+    md += [""] + fidel_table(srcs, onh, hum)
+    md += ["### US Cuba plays while Fidel is to come: does Fidel fire, and wipe the US out", ""] + cuba_play_lines(srcs)
     md += ["", "### Break plays: what happens to the countries entered", ""] + play_table(srcs)
     md += ["### By country", ""] + country_table(srcs, a.top)
-    if a.bank and a.playouts:
-        bank = list(read_jsonl([a.bank]))
-        pl = list(read_jsonl(a.playouts))
-        games = int(json.load(open(a.bank + ".meta.json"))["games"]) if os.path.exists(a.bank + ".meta.json") \
-            else a.bank_games
-        md += ["## What a break costs", ""] + playout_tables(bank, pl, games)
+    pl = list(read_jsonl(a.playouts)) if a.playouts else []
+    for path in a.bank:
+        bank = list(read_jsonl([path]))
+        games = int(json.load(open(path + ".meta.json"))["games"])
+        if bank and bank[0].get("kind", "break") == "cuba":
+            md += ["## What a Cuba placement with Fidel to come costs", ""] + cuba_playout_lines(bank, pl, games)
+        else:
+            md += ["## What a break costs", ""] + playout_tables(bank, pl, games)
     open(a.out, "w").write("\n".join(md) + "\n")
     print(f"wrote {a.out}", file=sys.stderr)
     return 0
@@ -623,6 +783,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     s.add_argument("--out", required=True)
     s.add_argument("--bank", default="", help="also write the break plays of the first --bank-games games here")
     s.add_argument("--bank-games", type=int, default=400)
+    s.add_argument("--cuba-bank", default="", help="also write the US's Cuba plays with Fidel to come here")
+    s.add_argument("--cuba-games", type=int, default=2000)
     o = sub.add_parser("onhuman")
     o.add_argument("--human", required=True)
     o.add_argument("--checkpoint", required=True)
@@ -641,8 +803,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--human", required=True)
     r.add_argument("--selfplay", nargs="*", default=[], metavar="NAME=PATH")
     r.add_argument("--onhuman", default="", metavar="NAME=PATH")
-    r.add_argument("--bank", default="")
-    r.add_argument("--bank-games", type=int, default=400)
+    r.add_argument("--bank", nargs="*", default=[], help="playout banks (break or Cuba), each with its .meta.json")
     r.add_argument("--playouts", nargs="*", default=[])
     r.add_argument("--top", type=int, default=12)
     r.add_argument("--out", required=True)
@@ -650,7 +811,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if a.cmd == "human":
         return human(a.out, a.workers, a.limit)
     if a.cmd == "selfplay":
-        return run_selfplay(a.checkpoint, a.games, a.seed, a.batch, a.out, a.bank, a.bank_games)
+        return run_selfplay(a.checkpoint, a.games, a.seed, a.batch, a.out, a.bank, a.bank_games,
+                            a.cuba_bank, a.cuba_games)
     if a.cmd == "onhuman":
         return onhuman(a.human, a.checkpoint, a.out, a.chunk)
     if a.cmd == "playouts":
