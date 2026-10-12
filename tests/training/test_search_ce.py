@@ -622,9 +622,6 @@ def test_search_workers_answer_every_queued_decision_on_this_rollouts_rows() -> 
     """--search-workers: the rollout-root targets come back from worker processes before GAE, onto
     the rows they were queued against -- every queued decision answered, every target a distribution
     over its real legal moves -- and the workers need a frozen teacher."""
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
 
     cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
                card_self_attention=False, cross_attention=False, per_entity_heads=16,
