@@ -263,6 +263,17 @@ decision type, each searched three times with fresh seeds; `data/reports/rollout
 
 Noise costs strength at play time too: halving 16 → 8 worlds loses ~25 Elo and 8 → 4 another ~60, while doubling to 32 and 64 still adds ~+20 each, with diminishing returns. The search's gain is real per-position evidence that more samples sharpen -- the kind a network cannot amortise -- and 64 worlds is the strongest player measured (~+215 over raw).
 
+**Searched one move at a time** (`sparse:<frac>:rollout:...`: the rollout root at a random fraction of decisions, the network's greedy move elsewhere -- so every follow-up of a searched move is the network's own; R34's raw 7,200M snapshot against itself raw, 1,000 a side; `data/reports/rollout_sparse_*.json`):
+
+| searched fraction | wins | score | Elo over raw | proportional share of +177 |
+|---:|---:|---:|---:|---:|
+| 0.1 | 54.1% | 54.6% | +32 | +18 |
+| 0.25 | 58.1% | 58.8% | +62 | +44 |
+| 0.5 | 64.6% | 65.5% | +111 | +88 |
+| 1 | 73.0% | 73.5% | +177 | +177 |
+
+The gain is above proportional at small fractions (10% of moves searched already gives ~+32 of the +177): a searched move helps on its own, with the network following it up. The search's value does not depend on consecutive searched moves, so distilling single moves is the right target -- the failure is in learning them (noise, spread), not in their need for a searched follow-up.
+
 So a network must learn, from targets half of which are seed noise, corrections each worth a few points of win
 probability and scattered over every kind of decision -- a hard target for any amount of weight (R41) or teacher
 strength (R39). The next checks: targets from many more worlds (or averaged over seeds) so that only the stable
