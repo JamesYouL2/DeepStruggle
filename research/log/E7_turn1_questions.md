@@ -374,3 +374,18 @@ Each headline steers both sides' AR1 to what it just changed:
 games per headline, so a few points either way is noise), the pattern is the same. The only
 visible change is after De Gaulle: the USSR moves into France more often (59% against 51%), and
 the US answers with realignments (about 7% of its AR1s, against none from greedy).
+
+**Vietnam Revolts, then a US AR1 coup in Vietnam** ([script](E7_setup_matrix/turn1_vietnam_counter.py)).
+When the US coup takes Vietnam:
+
+| | greedy (137 games) | rollout root (32 games) |
+|:---|---:|---:|
+| the USSR coups Vietnam back in AR2 | 54% | 50% |
+| it coups it back later in turn 1 | 30% | 34% |
+| it never contests it in turn 1 | 16% | 16% |
+| Vietnam at turn 1's end: USSR / US / neither | 48% / 27% / 25% | 47% / 31% / 22% |
+
+The answer is almost always a counter-coup (98%), not influence.
+
+When the US coup only empties Vietnam (35 and 7 games), the USSR leaves it: 89% and 86% never
+touch it in turn 1.
