@@ -216,9 +216,33 @@ web/ui/
      Choosing a headline card is not a turn; a headline event is its owner's (the engine makes
      the resolving event's owner the phasing player). The developer's view marks nothing.
    - While the other side decides, the state carries `view_hidden_decision` and no legal actions:
-     the HUD says who is to move, the analysis panel withholds the model's readout (its policy
-     would read the hidden hand off the probabilities), auto-play is locked to the other side, and
-     `sendAction` / `sendFlatAction` refuse clicks for it (only auto-play moves for it).
+     the HUD says who is to move, auto-play is locked to the other side, and `sendAction` /
+     `sendFlatAction` refuse clicks for it (only auto-play moves for it).
+   - **Show analysis** (`#analysis-visible-toggle` in the technical bar, `setReadoutShown`;
+     `AnalysisPanel.readoutShown`): shows or hides the model's readout -- the critic's win
+     chances, the policy, the search -- its probability badges on the board, and *★ Play
+     favourite* / `F`. A change of view sets it to that view's default, on for Developer and off
+     for a player (they would be hints), and the toggle overrides it until the view changes
+     again. Whatever it says, a player's view never shows the readout of the other side's
+     decisions (`AnalysisPanel.hiddenSide`: its policy would read the hidden hand off the
+     probabilities). With the readout off, the panel says when the model is choosing, whether its
+     search is running, and -- since auto-play then falls back to the policy -- that it failed.
+     The model still reads every position: auto-play plays its favourite for its side.
+   - **What is searched.** With the rollout root on, a decision is searched only when auto-play
+     plays it or the readout shows it (`searchWanted`). A change of view, auto side, Show analysis
+     or search setting never re-reads the position: `ensureSearch` searches the readout on screen
+     if it now needs a search and has none, keeping one already made or running.
+     `RolloutRunner` runs one search at a time, the worker one message at a time (they share one
+     engine and one rollout batch), and a request still waiting when a newer one arrives is
+     superseded without running.
+   - **How the model plays a side.** The play-mode question (`#mode-dialog`, `askMode`) also asks
+     it (`#mode-opponent`): the rollout root, the strongest player, or the policy -- the search
+     select's two settings, set through `setSearch`. The rollout option describes the spec it
+     would keep (the one in force, else the measured one). A fresh open offers the rollout root
+     unless the link named `search=`; New Game offers the setting in force. Only *Play as US /
+     USSR* sets it, without a search of its own (the deal or the view reads the position once);
+     *Developer* leaves the search select alone, and cancelling sets nothing. While the question
+     is open the page's keyboard shortcuts are off, so its Escape does not also take back a move.
    - Debug Tools and Replay Mode are developer-only; loading or dropping a replay switches to the
      developer view. Limitation: the `pos=` link token is the full save, so a player view hides
      the other side from the page, not from someone who decodes the link.
@@ -260,7 +284,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
-| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen |
+| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen; the play-mode question sets the search for a side (rollout root by default) and leaves it alone for Developer, describes the spec it would keep, and its Escape takes back no move; Show analysis follows the view and the toggle; with a model, the player's own decisions show no readout, no badges and no favourite and are not searched until Show analysis is on, a change of view keeps the search already made, the question starts one search at a time (the runner supersedes a waiting request), a failed search is reported in a player's view, and a change of view drops a move armed for the old auto side |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |

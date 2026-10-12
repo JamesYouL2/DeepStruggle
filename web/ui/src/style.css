@@ -720,6 +720,19 @@ body {
   white-space: nowrap;
 }
 .search-mode .analysis-select { flex: 0 0 auto; width: auto; }
+.analysis-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.analysis-toggle input { margin: 0; cursor: pointer; }
 /* Below 1500px the dev group's caption goes; below 1400px the other outer captions and the
    brand's second line too, so the bar stays one line down to a laptop's width. */
 @media (max-width: 1500px) {
@@ -777,6 +790,19 @@ body {
 .mode-choice-ussr .mode-choice-title { color: var(--ussr-red-light); }
 .mode-choice-text { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .mode-dialog-note { font-size: 10px; color: var(--text-dim); margin: 2px 0 0; }
+.mode-opponent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+.mode-opponent legend { font-size: 11px; font-weight: 700; color: var(--text-muted); padding: 0 4px; }
+.mode-opponent-option { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.4; cursor: pointer; }
+.mode-opponent-option b { color: var(--text-main); }
+.mode-opponent-option input { margin-top: 2px; }
 
 /* The two badges one above the other, to leave the buttons the width. */
 .session-info {
