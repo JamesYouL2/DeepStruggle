@@ -1,6 +1,7 @@
 # The search disagreement bank (tools/search_bank.py), one stage at a time, split over runners and
-# pooled. The model is a published ONNX export, rebuilt as the torch checkpoint search needs on each
-# runner (tools/onnx_to_checkpoint.py refuses unless the rebuild reproduces the export).
+# pooled. The model is a published .pt checkpoint, or a published ONNX export rebuilt as the torch
+# checkpoint search needs on each runner (tools/onnx_to_checkpoint.py refuses unless the rebuild
+# reproduces the export).
 #
 #   gh workflow run search_bank.yml --ref exp/search-bank -f stage=annotate -f args="--games 1500"
 #   # later stages read the bank from a release asset of this repository:
@@ -13,7 +14,7 @@ on:
   # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
   # push run skips every job.
   push:
-    branches: [exp/search-bank]
+    branches: [exp/search-bank, exp/leak-r34]
     paths: [.github/workflows/search_bank.yml]
   workflow_dispatch:
     inputs:
@@ -27,7 +28,7 @@ on:
         description: "Release whose bank.jsonl.gz the stage reads as --bank (stages after annotate)"
         default: ""
       model:
-        description: ".onnx in the Hugging Face repo"
+        description: "Model in the Hugging Face repo: a .pt checkpoint, or an .onnx export rebuilt as one with the template"
         default: "E7line_swa_4720-4800M.onnx"
       template:
         description: ".pt in the repo with the export's architecture"
@@ -78,13 +79,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data/checkpoints/hf input
-          for f in "$MODEL" "$TEMPLATE"; do
+          files=("$MODEL")
+          case "$MODEL" in *.onnx) files+=("$TEMPLATE") ;; esac
+          for f in "${files[@]}"; do
             curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$f")" "https://huggingface.co/$HF_REPO/resolve/main/$f"
           done
           if [ -n "$RELEASE" ]; then
             gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern bank.jsonl.gz --dir input
           fi
       - name: Rebuild the checkpoint from the export
+        if: endsWith(env.MODEL, '.onnx')
         run: |
           onnx="data/checkpoints/hf/$(basename "$MODEL")"
           PYTHONPATH=.:build/release python tools/onnx_to_checkpoint.py --onnx "$onnx" \
@@ -92,7 +96,9 @@ jobs:
       - name: ${{ env.STAGE }} (part ${{ matrix.part }})
         run: |
           mkdir -p out
-          pt="data/checkpoints/hf/$(basename "${MODEL%.onnx}").pt"
+          pt="data/checkpoints/hf/$(basename "${MODEL%.onnx}")"
+          case "$pt" in *.pt) ;; *) pt="$pt.pt" ;; esac
+          sha256sum "$pt"
           bank=()
           if [ -n "$RELEASE" ]; then bank=(--bank input/bank.jsonl.gz); fi
           OMP_NUM_THREADS=4 PYTHONPATH=.:build/release python tools/search_bank.py "$STAGE" --model "$pt" \

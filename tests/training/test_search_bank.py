@@ -17,7 +17,7 @@ import ts_engine as ts
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
-from tools.scripts.event_play_census import load_policy, state_from_token
+from tools.lib.corpus_driver import load_policy, state_from_token
 from tools.search_bank import legal_actions, main, mover_of, parse_budgets, raw_rank, read_rows
 
 
