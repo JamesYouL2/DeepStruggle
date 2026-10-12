@@ -369,3 +369,8 @@ Each headline steers both sides' AR1 to what it just changed:
   Nasser, Thailand and Laos/Cambodia after Decolonization, and Italy after Socialist Governments.
 * **A Middle East or Asia headline tilts the USSR toward Iran.** Its Iran coup rate rises with
   Nasser (29%) and Decolonization (34%), against 15% overall.
+
+**Under the rollout root** (run 38183448689, the same 2,000 deals as the greedy run; 130-430
+games per headline, so a few points either way is noise), the pattern is the same. The only
+visible change is after De Gaulle: the USSR moves into France more often (59% against 51%), and
+the US answers with realignments (about 7% of its AR1s, against none from greedy).
