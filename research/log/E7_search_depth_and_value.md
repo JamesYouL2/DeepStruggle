@@ -224,6 +224,38 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
   pull on the network's own positions, kept honest by the RL term, is not a one-shot hard push; the
   offline null is about the second.
 
+## 6. Online distillation, and why it fails (2026-10-11/12)
+
+R32's online improved-policy targets with the rollout root as the teacher's search (`--search-rollout-horizon`,
+`ai/search/rollout_root.RolloutTeacher`; runs in [`../runs.md`](../runs.md)):
+
+| arm | teacher | result |
+|:---|:---|:---|
+| R39 | the R34 soup + rollout | +15.2 / +8.3 per seat over the plain leg, 60.7%; above the raw soup 53.2% -- but 33.4% against its teacher (~25 of the rollout's ~140 Elo absorbed), saturated by 7,200M (35.1%); with rollout on top level with the soup + rollout (47.8%) |
+| R40 | R34's own raw snapshot + rollout | 50.9% over R34, ~+10–20 Elo |
+| R41 | as R40, 4× the targets and 4× the CE weight | 51.0% over R34, 49.5% against R40 -- no more |
+
+R39's margin is the soup's raw strength; the rollout's part transfers at ~10–25 Elo whatever the budget.
+Played instead of distilled, it is ~140: rollout on R34's raw snapshot beats it 73.0%.
+
+**Why** (`rollout_consistency.py` on R34's raw 6,800M snapshot: 2,844 positions from 64 greedy games, every
+decision type, each searched three times with fresh seeds; `data/reports/rollout_consistency_R34_6800.txt`):
+
+* **Half the verdicts are noise at 16 worlds.** The root departs from the network's move at 15% of decisions, in
+  every run; but of one run's departures another run departs too in only 62–64% and picks the same move in 57–58%,
+  and only **188 of 432 departures are the same in all three runs**. The improved-policy targets agree on their top
+  move 78% of the time (total variation 0.20 on average, 0.03 at the median: most targets are nearly identical, a
+  minority swing).
+* **The gain is spread thin, not concentrated.** Departures fall at single Influence points 40%, card choices 37%,
+  play modes 19%; in every era, at every DEFCON, for both sides, over dozens of cards with none dominant; each worth
+  **+0.04 to +0.08** of value (2–4 points of win probability). There is no rule to learn -- the ~140 Elo is the sum of
+  many small, partly noisy corrections close to the network's own resolution.
+
+So a network must learn, from targets half of which are seed noise, corrections each worth a few points of win
+probability and scattered over every kind of decision -- a hard target for any amount of weight (R41) or teacher
+strength (R39). The next checks: targets from many more worlds (or averaged over seeds) so that only the stable
+departures teach, and an offline fit test on a fixed bank to separate capacity from optimisation.
+
 ## Reading: where the limits are, and where to go
 
 **Where the limits are.**
