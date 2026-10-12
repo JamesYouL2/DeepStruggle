@@ -819,6 +819,21 @@
     "logit_gap_coef": 0.001,
     "block_lambda": "off"
    }
+  },
+  "R41": {
+   "description": "R40 with 4x the rollout-root targets (1 in 64) and 4x the search-CE weight (0.4)",
+   "first": "E7-A8-R1-S44@6400M+R34@6790M+R41_20261012_072720",
+   "flags": {
+    "search_ce_coef": 0.4,
+    "search_subsample": 0.015625,
+    "search_node_filter": "all",
+    "search_teacher_checkpoint": "/workspace/data/checkpoints/E7-A8-R1-S44@6400M+R34_20261010_031009/snapshot_6800015360steps.pt",
+    "search_rollout_horizon": 4,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "logit_gap_coef": 0.001,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -958,7 +973,8 @@
   "E7-A8-R1-S44@6400M+R34-S45_20261011_020403": "E7-A8-R1-S44@6400M+R34-S45",
   "E7-A8-R1-S44@6400M+R34-S46_20261011_020404": "E7-A8-R1-S44@6400M+R34-S46",
   "E7-A8-R1-S44@6400M+R39_20261011_145632": "E7-A8-R1-S44@6400M+R39",
-  "E7-A8-R1-S44@6400M+R34@6790M+R40_20261012_015152": "E7-A8-R1-S44@6400M+R34@6790M+R40"
+  "E7-A8-R1-S44@6400M+R34@6790M+R40_20261012_015152": "E7-A8-R1-S44@6400M+R34@6790M+R40",
+  "E7-A8-R1-S44@6400M+R34@6790M+R41_20261012_072720": "E7-A8-R1-S44@6400M+R34@6790M+R41"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
