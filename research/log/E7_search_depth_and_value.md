@@ -233,7 +233,7 @@ R32's online improved-policy targets with the rollout root as the teacher's sear
 |:---|:---|:---|
 | R39 | the R34 soup + rollout | +15.2 / +8.3 per seat over the plain leg, 60.7%; above the raw soup 53.2% -- but 33.4% against its teacher (~25 of the rollout's ~140 Elo absorbed), saturated by 7,200M (35.1%); with rollout on top level with the soup + rollout (47.8%) |
 | R40 | R34's own raw snapshot + rollout | 50.9% over R34, ~+10–20 Elo |
-| R41 | as R40, 4× the targets and 4× the CE weight | 51.0% over R34, 49.5% against R40 -- no more |
+| R41 | as R40, 4× the targets and 4× the CE weight | 51.0% over R34, 49.5% against R40; against the teacher 37.6%, where R34 itself scores 37.0% -- nothing absorbed |
 
 R39's margin is the soup's raw strength; the rollout's part transfers at ~10–25 Elo whatever the budget.
 Played instead of distilled, it is ~140: rollout on R34's raw snapshot beats it 73.0%.
