@@ -346,3 +346,26 @@ So in this network's hands 3322 is not a West Germany fix on AR1, and the matrix
 4222 tied (+0.08 ± 0.09). The search's shift toward West Germany 3 is the one sign on the side of
 3322. A full-game searched matrix is the test, but at ~75 s a rollout game it is too costly to
 resolve a point.
+
+## 10. After each USSR headline
+
+R34 greedy with its own setups, 10,000 games (run 38183455787).
+[Full tables](E7_setup_matrix/turn1_after_ussr_headline.md).
+
+| USSR headline (share of games) | USSR AR1 | US AR1 |
+|:---|:---|:---|
+| Socialist Governments (20%) | influence 54%, mostly Italy 3 or Italy 2 (Italy has lost its US influence); Red Scare event 14%; Europe Scoring 13%; an Italy coup only 12% | influence 59% (Pakistan, Malaysia, Italy 33%); **coups Italy 35%** |
+| Suez Crisis (16%) | **Italy coup 63%**; Red Scare event 17%; Iran coup 13% | influence 84%, **France 60%** (repairing it), Pakistan 58%, Malaysia 49% |
+| De Gaulle Leads France (12%) | **influence in France 49%** (France 3, France 2, France 2 + Iraq or Afghanistan); Red Scare 20%; Italy coup 21%; Iran 8% | influence 80%, France 46% (contesting it), Pakistan 47%, Malaysia 43% |
+| Vietnam Revolts (9%) | Italy coup 48%; Iran coup 24% (mostly Duck and Cover); **Asia Scoring 19%** | influence 61%; **coups Vietnam 24%** |
+| Nasser (7%) | Italy coup 48%; **Iran coup 29%**; Red Scare 20% | influence 67% (Pakistan 57%); **coups Egypt 16%**, Iran 11% |
+| Decolonization (7%) | Italy coup 50%; **Iran coup 34%** (Duck and Cover 25%); Asia Scoring 12% | **coups Thailand 29%, Laos/Cambodia 10%**, Iran 11%; influence only 47% |
+
+Each headline steers both sides' AR1 to what it just changed:
+* **Influence follows the gap the event opened.** After Socialist Governments the USSR places in
+  Italy rather than couping it; after De Gaulle it moves into France; after Suez it coups Italy
+  and the US repairs France.
+* **The US coups the country the event took.** It coups Vietnam after Vietnam Revolts, Egypt after
+  Nasser, Thailand and Laos/Cambodia after Decolonization, and Italy after Socialist Governments.
+* **A Middle East or Asia headline tilts the USSR toward Iran.** Its Iran coup rate rises with
+  Nasser (29%) and Decolonization (34%), against 15% overall.
