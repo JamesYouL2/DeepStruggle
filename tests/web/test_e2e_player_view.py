@@ -4,8 +4,9 @@ A player's view (`?view=us|ussr`) draws every panel from `redactState` (web/ui/s
 never from the engine's full display state. These tests drive a game in the page -- both sides by
 the auto-play path, `sendFlatAction(i, 0, true)`, so no model is needed -- and check what the
 panels were handed (`__wb.shown`) and what the page actually says. With a model loaded, a player's
-view also shows none of its readout -- no win chances, no move probabilities, no search -- and
-searches only the model's own decisions.
+view shows none of its readout -- no win chances, no move probabilities, no search -- until Show
+analysis turns it on, never the readout of the model's own decisions, and searches only what
+auto-play plays or the readout shows.
 
 Needs web/ui/dist (tools/scripts/build_web.sh) and a Playwright Chromium.
 """
@@ -14,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from tests.web.test_e2e_workbench import (RUN, _open, _open_model_chooser, browser, checkpoint,  # noqa: F401 -- fixtures
+from tests.web.test_e2e_workbench import (RUN, SNAP, _open, _open_model_chooser, browser, checkpoint,  # noqa: F401 -- fixtures
                                           server, static_site)
 
 #: Play the first legal action for whoever is to move, until `stop(state)` holds.
@@ -162,16 +163,19 @@ def test_new_game_and_the_view_select_fit_a_laptop_screen(browser: Any, static_s
     page.wait_for_selector("#mode-dialog", state="hidden")
     assert page.evaluate("window.__wb.shown.view") == "US"
     for el in ("view-select", "btn-new-game", "btn-toggle-debug", "btn-toggle-replay", "btn-model-choose",
-               "search-mode-select", "active-player-badge", "btn-undo-action"):
+               "search-mode-select", "analysis-visible-toggle", "active-player-badge", "btn-undo-action"):
         box = page.locator(f"#{el}").bounding_box()
         assert box and box["width"] > 0 and box["x"] + box["width"] <= 1366, f"#{el} is off screen"
     _play_until(page, "s.current_phase_name === 'HEADLINE'")
-    # New Game asks again; closing the question deals nothing.
+    # New Game asks again; closing the question deals nothing -- and its Escape is not also the
+    # page's Escape, which takes back the last move.
+    n = page.evaluate("window.__wb.state.step_index")
+    assert n > 0
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
     page.keyboard.press("Escape")
     page.wait_for_selector("#mode-dialog", state="hidden")
-    assert page.evaluate("window.__wb.state.step_index") > 0
+    assert page.evaluate("window.__wb.state.step_index") == n
     # Answering it deals a new game in the chosen mode.
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
@@ -218,6 +222,46 @@ def test_the_play_mode_question_sets_how_the_model_plays_a_side(browser: Any, st
     page.close()
 
 
+def test_the_play_mode_question_describes_the_search_it_would_keep(browser: Any, static_site: str) -> None:
+    # A link's own spec is kept by the rollout choice, so that is the one the question describes.
+    page = _open(browser, f"{static_site}/?model=off&view=us&search=rollout:2:1:1:z2")
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    assert page.inner_text("#mode-opponent-rollout-spec") == "its top 2 moves, each played out in 1 sampled world"
+    page.click("#mode-choice-us")
+    page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout:2:1:1:z2'")
+    # Back on the policy, it offers the measured spec again.
+    page.select_option("#search-mode-select", "policy")
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    assert page.inner_text("#mode-opponent-rollout-spec") == "its top 4 moves, each played out in 16 sampled worlds"
+    page.close()
+
+
+def test_show_analysis_follows_the_view_and_the_toggle(browser: Any, static_site: str) -> None:
+    page = _open(browser, f"{static_site}/?model=off&view=us")
+    # Off in a player's view, on in the Developer view: each view's default, set on a change of view.
+    assert not page.is_checked("#analysis-visible-toggle")
+    page.select_option("#view-select", "DEV")
+    assert page.is_checked("#analysis-visible-toggle")
+    page.select_option("#view-select", "USSR")
+    assert not page.is_checked("#analysis-visible-toggle")
+    # The toggle overrides the default until the view changes again.
+    page.check("#analysis-visible-toggle")
+    page.evaluate("window.__wb.setView('USSR')")
+    assert page.is_checked("#analysis-visible-toggle")
+    page.select_option("#view-select", "DEV")
+    page.uncheck("#analysis-visible-toggle")
+    assert page.evaluate("window.__wb.analysisPanel.readoutShown") is False
+    page.select_option("#view-select", "US")
+    page.select_option("#view-select", "DEV")
+    assert page.evaluate("window.__wb.analysisPanel.readoutShown") is True
+    box = page.locator("#analysis-visible-toggle").bounding_box()
+    assert box and box["x"] + box["width"] <= 1440
+    assert page.errors == []
+    page.close()
+
+
 def test_a_players_view_shows_no_readout_and_no_hints(browser: Any, server: str, checkpoint: Dict[str, str]) -> None:
     # A small search, so the model's own moves are quick; the view names the side, so no question.
     page = _open(browser, server + "/?view=us&search=rollout:2:1:1:z2")
@@ -247,11 +291,102 @@ def test_a_players_view_shows_no_readout_and_no_hints(browser: Any, server: str,
     page.keyboard.press("f")
     page.evaluate("window.__wb.analysisPanel.playFavourite()")
     assert page.evaluate("window.__wb.state.step_index") == n
-    # The Developer view shows everything again, and searches this decision too.
-    page.evaluate("window.__wb.setView('DEV')")
+    # Show analysis turns the readout on for the player's own decision -- which is then searched,
+    # being on screen -- and off again.
+    page.check("#analysis-visible-toggle")
     page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
     page.wait_for_function("window.__wb.liveAnalysis && !!window.__wb.liveAnalysis.search", timeout=120000)
+    assert page.evaluate("window.__searched").count(1) == 1
+    assert page.locator(".trace-choice-badge").count() > 0
+    page.uncheck("#analysis-visible-toggle")
+    assert page.locator("#analysis-body .analysis-choice").count() == 0
+    assert page.locator(".trace-choice-badge").count() == 0
+    # The Developer view shows everything again, and keeps the search already made: a change of
+    # view never re-reads the position.
+    page.evaluate("window.__wb.setView('DEV')")
+    page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+    assert page.evaluate("window.__wb.liveAnalysis && !!window.__wb.liveAnalysis.search")
+    assert page.evaluate("window.__searched").count(1) == 1
     assert page.locator(".trace-choice-badge").count() > 0
     assert page.evaluate("document.getElementById('btn-play-favourite').disabled") is False
+    # Playing the USSR makes this the model's decision: its search is already made, so auto-play
+    # arms at once with it rather than searching again.
+    searched_again, same, armed = page.evaluate("""() => { const wb = window.__wb, n = window.__searched.length,
+        a = wb.liveAnalysis; wb.setView('USSR');
+        return [window.__searched.length - n, wb.liveAnalysis === a && !!a.search, wb.autoPlayTimer !== null]; }""")
+    assert (searched_again, same, armed) == (0, True, True)
+    page.wait_for_function(f"window.__wb.state.step_index > {n}", timeout=30000)
+    assert page.errors == []
+    page.close()
+
+
+def test_the_play_mode_question_starts_one_search_at_a_time(browser: Any, server: str, checkpoint: Dict[str, str]) -> None:
+    # A fresh open, so the question is asked; the model loads while it is open.
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    errors: list = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(server + "/?model=off")
+    page.wait_for_function("window.__wb && window.__wb.liveState && window.__wb.positionToken", timeout=30000)
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    # Record every search: the position it was asked for, and how many ran at once on the runner.
+    page.evaluate("""() => { const wb = window.__wb, r = wb.runner, search = r.search.bind(r), now = r.searchNow.bind(r);
+        window.__asked = []; window.__active = 0; window.__most = 0;
+        r.search = (...args) => { window.__asked.push(wb.state.step_index); return search(...args); };
+        r.searchNow = async (...args) => { window.__most = Math.max(window.__most, ++window.__active);
+            try { return await now(...args); } finally { window.__active--; } }; }""")
+    page.evaluate(f"window.__wb.loadModel({{source: {{kind: 'local', path: '{RUN}/{SNAP}'}}}})")
+    page.wait_for_function("window.__wb.liveAnalysis && !!window.__wb.liveAnalysis.policy", timeout=120000)
+    # The rollout root, the default on a fresh open; playing the US, the model sets up the USSR.
+    assert page.is_checked("#mode-opponent-rollout")
+    page.click("#mode-choice-us")
+    page.wait_for_function("window.__wb.state.decision_context.decision_player === 'US' && window.__wb.liveAnalysis "
+                           "&& window.__wb.liveAnalysis.decision_player === 'US'", timeout=300000)
+    asked = page.evaluate("window.__asked")
+    assert asked and len(asked) == len(set(asked)), f"a position was searched twice: {asked}"
+    assert page.evaluate("window.__most") == 1
+    # The runner itself: a request still waiting when a newer one comes is superseded, never run;
+    # one already running finishes, and the newest runs after it.
+    outcomes = page.evaluate("""async () => { const wb = window.__wb, r = wb.runner, s = wb.engine.snapshot(),
+        spec = {k: 2, worlds: 1, horizon: 1, rule: 'z2'}, ask = () => r.search(s, wb.model, wb.modelKey, spec, 7);
+        const first = ask();
+        await new Promise(res => setTimeout(res, 0));   // the first is running
+        const all = await Promise.allSettled([first, ask(), ask()]);
+        return all.map(o => o.status === 'fulfilled' ? 'ok' : o.reason.message); }""")
+    assert outcomes == ["ok", "superseded by a newer search", "ok"]
+    assert page.evaluate("window.__most") == 1
+    assert errors == []
+    page.close()
+
+
+def test_a_failed_search_is_reported_in_a_players_view(browser: Any, server: str, checkpoint: Dict[str, str]) -> None:
+    page = _open(browser, server + "/?view=us&search=rollout:2:1:1:z2&model=off")
+    # Every search fails, and the model is held on its first decision so the panel can be read.
+    page.evaluate("""() => { const wb = window.__wb; wb.maybeAutoPlay = () => {};
+        wb.runner.search = () => Promise.reject(new Error('the search broke')); }""")
+    page.evaluate(f"window.__wb.loadModel({{source: {{kind: 'local', path: '{RUN}/{SNAP}'}}}})")
+    page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.search_error", timeout=120000)
+    assert page.evaluate("window.__wb.liveAnalysis.decision_player") == "USSR"
+    body = page.inner_text("#analysis-body")
+    assert "The model is choosing for USSR" in body
+    assert "The rollout root failed, so the model plays its policy's move instead: the search broke" in body
+    # It does: the favourite is the policy's argmax.
+    assert page.evaluate("window.__wb.analysisPanel.autoPlayMove() === window.__wb.liveAnalysis.policy.argmax_idx")
+    assert page.errors == []
+    page.close()
+
+
+def test_a_view_change_drops_a_move_armed_for_the_old_auto_side(browser: Any, server: str, checkpoint: Dict[str, str]) -> None:
+    # The Developer view, the model auto-playing the USSR with a quick search.
+    page = _open(browser, server + "/?auto=ussr&search=rollout:2:1:1:z2&model=off")
+    page.evaluate("window.__wb.loadModel({source: {kind: 'local', path: '%s/%s'}})" % (RUN, SNAP))
+    # With the USSR's move armed, hand the USSR to the player: the move is dropped at once, not when
+    # some later readout lands -- the armed timer would otherwise race it, and could play for them.
+    page.wait_for_function("window.__wb.autoPlayTimer !== null && window.__wb.state.decision_context.decision_player === 'USSR'",
+                           timeout=120000)
+    n, timer = page.evaluate("() => { const wb = window.__wb; wb.setView('USSR'); return [wb.state.step_index, wb.autoPlayTimer]; }")
+    assert timer is None, "the move armed for the old auto side is still armed"
+    page.wait_for_timeout(1000)   # well past AUTO_PLAY_DELAY_MS
+    assert page.evaluate("window.__wb.state.step_index") == n
+    assert page.evaluate("window.__wb.state.decision_context.decision_player") == "USSR"
     assert page.errors == []
     page.close()

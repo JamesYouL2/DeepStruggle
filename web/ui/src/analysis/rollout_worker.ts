@@ -23,8 +23,17 @@ let model: Model | null = null;
 
 const post = (m: OutMsg) => (self as unknown as Worker).postMessage(m);
 
-self.onmessage = async (ev: MessageEvent<InMsg>) => {
-  const msg = ev.data;
+/**
+ * One message at a time. A search awaits the model between its batch steps, and the engine and its
+ * rollout batch are this worker's only ones: a second search started meanwhile would restore its
+ * own position into them under the first.
+ */
+let queue: Promise<void> = Promise.resolve();
+self.onmessage = (ev: MessageEvent<InMsg>) => {
+  queue = queue.then(() => handle(ev.data));
+};
+
+async function handle(msg: InMsg): Promise<void> {
   try {
     if (msg.type === "load") {
       engine = await WasmEngine.load(msg.base);
@@ -39,4 +48,4 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
   } catch (e) {
     post({ type: "error", id: msg.type === "search" ? msg.id : undefined, message: e instanceof Error ? e.message : String(e) });
   }
-};
+}

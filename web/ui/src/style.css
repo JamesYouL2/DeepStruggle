@@ -720,6 +720,19 @@ body {
   white-space: nowrap;
 }
 .search-mode .analysis-select { flex: 0 0 auto; width: auto; }
+.analysis-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.analysis-toggle input { margin: 0; cursor: pointer; }
 /* Below 1500px the dev group's caption goes; below 1400px the other outer captions and the
    brand's second line too, so the bar stays one line down to a laptop's width. */
 @media (max-width: 1500px) {
