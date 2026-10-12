@@ -120,8 +120,11 @@ export class AnalysisPanel {
   private lastAnalysis: LiveAnalysis | null = null;
   private auto: AutoSide = "";
   /**
-   * A player's view (game/view.ts): the side the model plays, whose readout -- its options, its
-   * probabilities, its critic, all read from its own hand -- is not shown while it decides.
+   * A player's view (game/view.ts): the side the model plays. In a player's view the readout is
+   * never shown -- not while the model decides (its options, probabilities and critic are read
+   * from its own hand), and not while the player does (the critic's win chances, the policy and
+   * the search would be hints) -- and nothing is painted on the board. The model still reads every
+   * position: auto-play plays `favourite()` for its side.
    */
   private hiddenSide: "US" | "USSR" | null = null;
 
@@ -296,7 +299,7 @@ export class AnalysisPanel {
   }
 
   public playFavourite(): void {
-    if (this.hidingDecision()) return;   // the model's own move, made by auto-play
+    if (this.hiddenSide) return;   // a player's view: the model moves only its own side, by auto-play
     const idx = this.favourite();
     if (idx !== null) this.onPlayFlat(idx);
   }
@@ -477,9 +480,10 @@ export class AnalysisPanel {
   private renderBody(state: GameState | null = null): void {
     const a = this.lastAnalysis;
     this.renderInfo();
-    this.favButton.disabled = this.favourite() === null;
+    this.favButton.disabled = this.hiddenSide !== null || this.favourite() === null;
     const fav = a?.choices.find(c => c.idx === a.policy?.argmax_idx);
-    this.favButton.title = fav ? `Play the model's most likely move: ${fav.name ?? "#" + fav.idx} (F)` : "No decision to make";
+    this.favButton.title = this.hiddenSide ? "Off in a player's view -- switch to the Developer view to use it"
+      : fav ? `Play the model's most likely move: ${fav.name ?? "#" + fav.idx} (F)` : "No decision to make";
 
     if (this.status === "error") {
       this.badge.textContent = "error";
@@ -500,10 +504,14 @@ export class AnalysisPanel {
       return;
     }
     this.badge.textContent = a.merged_influence ? "E4.1 view" : "E4 view";
-    if (this.hidingDecision()) {
-      this.favButton.disabled = true;
-      this.body.innerHTML = `<div class="trace-empty">The model is choosing for <b>${esc(this.hiddenSide!)}</b> (auto-play). `
-        + `Its readout is hidden in this view: its options and its critic are read from its own hand.</div>`;
+    if (this.hiddenSide) {
+      const me = this.hiddenSide === "US" ? "USSR" : "US";
+      const searching = a.search_pending ? " It is searching (rollout root): a few seconds." : "";
+      this.body.innerHTML = this.hidingDecision()
+        ? `<div class="trace-empty">The model is choosing for <b>${esc(this.hiddenSide)}</b>.${searching}</div>`
+        : `<div class="trace-empty player-view-note">You are playing <b>${me}</b>. The model's readout -- its win `
+          + `chances, its move probabilities and its search -- stays off in a player's view. Switch to the `
+          + `Developer view to see it.</div>`;
       return;
     }
 
@@ -580,7 +588,7 @@ export class AnalysisPanel {
    */
   public decorate(state: GameState | null): void {
     clearDecorations();
-    if (this.hidingDecision()) return;
+    if (this.hiddenSide) return;   // a player's view paints no hints
     const a = this.lastAnalysis;
     if (!a || !a.policy || !state || a.choices.length === 0) return;
     const dType = state.decision_context?.decision_type;

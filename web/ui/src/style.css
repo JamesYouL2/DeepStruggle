@@ -777,6 +777,19 @@ body {
 .mode-choice-ussr .mode-choice-title { color: var(--ussr-red-light); }
 .mode-choice-text { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .mode-dialog-note { font-size: 10px; color: var(--text-dim); margin: 2px 0 0; }
+.mode-opponent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+.mode-opponent legend { font-size: 11px; font-weight: 700; color: var(--text-muted); padding: 0 4px; }
+.mode-opponent-option { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.4; cursor: pointer; }
+.mode-opponent-option b { color: var(--text-main); }
+.mode-opponent-option input { margin-top: 2px; }
 
 /* The two badges one above the other, to leave the buttons the width. */
 .session-info {

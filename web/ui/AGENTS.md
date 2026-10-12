@@ -216,9 +216,21 @@ web/ui/
      Choosing a headline card is not a turn; a headline event is its owner's (the engine makes
      the resolving event's owner the phasing player). The developer's view marks nothing.
    - While the other side decides, the state carries `view_hidden_decision` and no legal actions:
-     the HUD says who is to move, the analysis panel withholds the model's readout (its policy
-     would read the hidden hand off the probabilities), auto-play is locked to the other side, and
-     `sendAction` / `sendFlatAction` refuse clicks for it (only auto-play moves for it).
+     the HUD says who is to move, auto-play is locked to the other side, and `sendAction` /
+     `sendFlatAction` refuse clicks for it (only auto-play moves for it).
+   - **No hints in a player's view** (`AnalysisPanel.hiddenSide`): the analysis panel never shows
+     the model's readout -- not while the other side decides (its policy would read the hidden hand
+     off the probabilities) and not while the player does (the critic's win chances, the policy and
+     the search are hints) -- no probability badges are painted on the board, and *★ Play
+     favourite* and `F` are off. The model still reads every position: auto-play plays its
+     favourite for its side. With the rollout root on, only the model's own decisions are searched
+     (`runAnalysis`); switching the view re-reads the position, so the Developer view searches the
+     decision on screen.
+   - **How the model plays a side.** The play-mode question (`#mode-dialog`, `askMode`) also asks
+     it (`#mode-opponent`): the rollout root, the strongest player, or the policy -- the search
+     select's two settings, set through `setSearch`. A fresh open offers the rollout root unless the
+     link named `search=`; New Game offers the setting in force. Only *Play as US / USSR* sets it;
+     *Developer* leaves the search select alone, and cancelling sets nothing.
    - Debug Tools and Replay Mode are developer-only; loading or dropping a replay switches to the
      developer view. Limitation: the `pos=` link token is the full save, so a player view hides
      the other side from the page, not from someone who decodes the link.
@@ -260,7 +272,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
-| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen |
+| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen; the play-mode question sets the search for a side (rollout root by default) and leaves it alone for Developer; with a model, the player's own decisions show no readout, no badges and no favourite, and are not searched, while the Developer view shows and searches them |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |

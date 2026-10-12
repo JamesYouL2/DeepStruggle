@@ -3,7 +3,9 @@
 A player's view (`?view=us|ussr`) draws every panel from `redactState` (web/ui/src/game/view.ts),
 never from the engine's full display state. These tests drive a game in the page -- both sides by
 the auto-play path, `sendFlatAction(i, 0, true)`, so no model is needed -- and check what the
-panels were handed (`__wb.shown`) and what the page actually says.
+panels were handed (`__wb.shown`) and what the page actually says. With a model loaded, a player's
+view also shows none of its readout -- no win chances, no move probabilities, no search -- and
+searches only the model's own decisions.
 
 Needs web/ui/dist (tools/scripts/build_web.sh) and a Playwright Chromium.
 """
@@ -12,7 +14,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from tests.web.test_e2e_workbench import _open, browser, static_site  # noqa: F401 -- fixtures
+from tests.web.test_e2e_workbench import (RUN, _open, _open_model_chooser, browser, checkpoint,  # noqa: F401 -- fixtures
+                                          server, static_site)
 
 #: Play the first legal action for whoever is to move, until `stop(state)` holds.
 _PLAY_UNTIL = """stop => { const wb = window.__wb, until = new Function('s', 'return ' + stop);
@@ -176,4 +179,79 @@ def test_new_game_and_the_view_select_fit_a_laptop_screen(browser: Any, static_s
     page.wait_for_function("window.__wb.state.step_index === 0")
     assert page.evaluate("window.__wb.shown.view") == "USSR"
     assert page.evaluate("document.getElementById('view-select').value") == "USSR"
+    page.close()
+
+
+def test_the_play_mode_question_sets_how_the_model_plays_a_side(browser: Any, static_site: str) -> None:
+    page = browser.new_page(viewport={"width": 1366, "height": 768})
+    page.goto(f"{static_site}/?model=off")
+    page.wait_for_function("window.__wb && window.__wb.liveState && window.__wb.positionToken", timeout=30000)
+    # A fresh open offers the strongest player, the rollout root, for playing a side.
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    assert page.is_checked("#mode-opponent-rollout") and not page.is_checked("#mode-opponent-policy")
+    page.click("#mode-choice-us")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert page.input_value("#search-mode-select") == "rollout"
+    page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout'")
+    # New Game offers the setting in force; the policy turns the search off.
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    assert page.is_checked("#mode-opponent-rollout")
+    page.check("#mode-opponent-policy")
+    page.click("#mode-choice-ussr")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert page.input_value("#search-mode-select") == "policy"
+    page.wait_for_function("!new URLSearchParams(location.search).has('search')")
+    # The Developer choice leaves the search select as it is; cancelling sets nothing.
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.check("#mode-opponent-rollout")
+    page.click("#mode-choice-dev")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert page.input_value("#search-mode-select") == "policy"
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.check("#mode-opponent-rollout")
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert page.input_value("#search-mode-select") == "policy"
+    page.close()
+
+
+def test_a_players_view_shows_no_readout_and_no_hints(browser: Any, server: str, checkpoint: Dict[str, str]) -> None:
+    # A small search, so the model's own moves are quick; the view names the side, so no question.
+    page = _open(browser, server + "/?view=us&search=rollout:2:1:1:z2")
+    # Record whose decision every search is run on.
+    page.evaluate("""() => { const r = window.__wb.runner, search = r.search.bind(r); window.__searched = [];
+        r.search = (...args) => { window.__searched.push(window.__wb.engine.decisionPlayer()); return search(...args); }; }""")
+    _open_model_chooser(page)
+    page.select_option("#analysis-source-select", "local")
+    page.wait_for_function(f"[...document.querySelectorAll('#analysis-run-select option')].some(o => o.value === '{RUN}')")
+    page.select_option("#analysis-run-select", RUN)
+    # The USSR (the model) sets up first, by auto-play; then the US -- the player -- is to choose.
+    page.wait_for_function("window.__wb.state.decision_context.decision_player === 'US' && window.__wb.liveAnalysis "
+                           "&& window.__wb.liveAnalysis.decision_player === 'US' && !!window.__wb.liveAnalysis.policy",
+                           timeout=120000)
+    body = page.inner_text("#analysis-body")
+    assert "You are playing US" in body
+    assert page.locator("#analysis-body .analysis-choice").count() == 0, "the model's move list is shown"
+    assert "ROLLOUT ROOT" not in body
+    assert page.locator(".trace-choice-badge").count() == 0, "the model's probabilities are painted on the board"
+    a = page.evaluate("window.__wb.liveAnalysis")
+    assert not a.get("search") and not a.get("search_pending"), "the player's own decision was searched"
+    searched = page.evaluate("window.__searched")
+    assert searched and set(searched) == {-1}, f"searches ran on {searched} -- only the model's side (-1) should be"
+    # Neither the button nor the key plays the model's move for the player.
+    assert page.evaluate("document.getElementById('btn-play-favourite').disabled") is True
+    n = page.evaluate("window.__wb.state.step_index")
+    page.keyboard.press("f")
+    page.evaluate("window.__wb.analysisPanel.playFavourite()")
+    assert page.evaluate("window.__wb.state.step_index") == n
+    # The Developer view shows everything again, and searches this decision too.
+    page.evaluate("window.__wb.setView('DEV')")
+    page.wait_for_selector("#analysis-body .analysis-choice", timeout=60000)
+    page.wait_for_function("window.__wb.liveAnalysis && !!window.__wb.liveAnalysis.search", timeout=120000)
+    assert page.locator(".trace-choice-badge").count() > 0
+    assert page.evaluate("document.getElementById('btn-play-favourite').disabled") is False
+    assert page.errors == []
     page.close()

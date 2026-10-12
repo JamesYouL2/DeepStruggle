@@ -78,6 +78,8 @@ export class TSApp {
    * in a worker with its own engine and model where the browser has workers, else inline.
    */
   private searchSpec: RolloutSpec | null = null;
+  /** The link named a search (`search=`): a fresh open then keeps it rather than offering the rollout root. */
+  private urlSearch = false;
   private runner: RolloutRunner | null = null;
   private searchRuns = 0;
 
@@ -218,6 +220,7 @@ export class TSApp {
     this.urlView = params.has("view");
     this.view = this.isReplayMode ? "DEV" : viewFromParam(params.get("view"));
     this.searchSpec = parseRolloutParam(params.get("search"));
+    this.urlSearch = params.has("search");
   }
 
   /**
@@ -225,6 +228,11 @@ export class TSApp {
    * on the board stays live underneath, so a link, a test or an impatient player can go on without
    * answering; Escape and the close button keep the current mode. On "new", the choice also deals
    * the new game -- cancelling deals nothing.
+   *
+   * It also asks how the model plays when you play a side (#mode-opponent): the rollout root, its
+   * strongest player, or the policy -- the search select's two settings. A fresh open offers the
+   * rollout root unless the link named a search; New Game offers the setting in force. Choosing a
+   * side sets it; the Developer choice leaves the search select as it is, and cancelling sets nothing.
    */
   private askMode(reason: "open" | "new") {
     const dialog = document.getElementById("mode-dialog");
@@ -235,9 +243,18 @@ export class TSApp {
         ? "A fresh deal follows your choice. Close to keep the game on the board."
         : "You can change this any time in the Play mode select above.";
     }
+    const rolloutRadio = document.getElementById("mode-opponent-rollout") as HTMLInputElement | null;
+    const policyRadio = document.getElementById("mode-opponent-policy") as HTMLInputElement | null;
+    const offerRollout = this.searchSpec !== null || (reason === "open" && !this.urlSearch);
+    if (rolloutRadio) rolloutRadio.checked = offerRollout;
+    if (policyRadio) policyRadio.checked = !offerRollout;
     dialog.classList.remove("hidden");
     const choose = (mode: ViewMode | null) => {
       dialog.classList.add("hidden");
+      if ((mode === "US" || mode === "USSR") && rolloutRadio) {
+        const spec = rolloutRadio.checked ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null;
+        if (spec !== this.searchSpec) this.setSearch(spec);
+      }
       for (const b of buttons) b.removeEventListener("click", onClick);
       document.getElementById("mode-dialog-close")?.removeEventListener("click", onClose);
       dialog.removeEventListener("click", onBackdrop);
@@ -283,11 +300,18 @@ export class TSApp {
     if (!sel) return;
     sel.value = this.searchSpec ? "rollout" : "policy";
     sel.addEventListener("change", () => {
-      this.searchSpec = sel.value === "rollout" ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null;
-      this.searchRuns++;          // a search still running was asked for under the old setting
-      this.syncUrl();
-      this.runAnalysis(this.version);
+      this.setSearch(sel.value === "rollout" ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null);
     });
+  }
+
+  /** Set how the model picks its move (null: the policy), from the select or the play-mode question. */
+  private setSearch(spec: RolloutSpec | null) {
+    this.searchSpec = spec;
+    const sel = document.getElementById("search-mode-select") as HTMLSelectElement | null;
+    if (sel) sel.value = spec ? "rollout" : "policy";
+    this.searchRuns++;          // a search still running was asked for under the old setting
+    this.syncUrl();
+    void this.runAnalysis(this.version);
   }
 
   /**
@@ -341,8 +365,9 @@ export class TSApp {
 
   /**
    * Switch whose eyes the board is drawn for. A player's view locks auto-play to the other side
-   * (the model plays it), and turns off the tools that show the full state -- Debug Tools and
-   * Replay Mode -- leaving replay mode if it was on.
+   * (the model plays it), hides the model's readout and its hints (analysis_view.ts), and turns
+   * off the tools that show the full state -- Debug Tools and Replay Mode -- leaving replay mode if
+   * it was on.
    */
   private setView(v: ViewMode, rerender = true) {
     this.view = v;
@@ -365,7 +390,13 @@ export class TSApp {
     }
     this.renderState();
     this.syncUrl();
-    this.maybeAutoPlay();
+    // Which decisions the search runs on depends on the view (runAnalysis): read the position again.
+    if (this.searchSpec && this.model && !this.isReplayMode) {
+      this.searchRuns++;
+      void this.runAnalysis(this.version);
+    } else {
+      this.maybeAutoPlay();
+    }
   }
 
   /** A player's view, and the decision on the board is the other side's (the model's). */
@@ -440,7 +471,10 @@ export class TSApp {
         this.analysisPanel.render(a, this.shown);
         this.analysisPanel.decorate(this.shown);
       }
-      if (this.searchSpec && a.decision_player && !this.isReplayMode) {
+      // In a player's view only the model's own side is searched: the player's decisions would
+      // spend seconds on a recommendation the view does not show.
+      const opp = opponentOf(this.view);
+      if (this.searchSpec && a.decision_player && !this.isReplayMode && (!opp || a.decision_player === opp)) {
         // The search answers later and auto-play waits for it (favourite() is null meanwhile).
         void this.runSearch(a, version);
         return;
