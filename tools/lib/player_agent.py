@@ -20,7 +20,7 @@ from ai.models.coldwar_net_v2 import (ColdWarNetV2, check_checkpoint_layout,
 from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
 from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 from ai.search.heuristic_mcts import HeuristicMCTSConfig, make_heuristic_mcts_agent
-from ai.search.rollout_root import RolloutRootAgent, rollout_spec_config
+from ai.search.rollout_root import RolloutRootAgent, SparseRolloutAgent, rollout_spec_config
 from bindings.ts_env import check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
@@ -617,6 +617,14 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         setattr(agent, "forced_opening", name)
         setattr(agent, "name", f"{agent.name}+{name}")
         return agent
+    if s.lower().startswith("sparse:"):
+        # sparse:<frac>:rollout:<...> -- the rollout root at a random <frac> of decisions, the network's
+        # greedy move at the rest (ai/search/rollout_root.SparseRolloutAgent).
+        _, frac_s, rest = s.split(":", 2)
+        inner = load_agent(rest, device=device)
+        if not isinstance(inner, RolloutRootAgent):
+            raise ValueError(f"sparse: needs a rollout: spec, not {rest!r}")
+        return SparseRolloutAgent(inner, float(frac_s))
     if s.lower().startswith("rollout:"):
         # rollout:<checkpoint>[:k[:worlds[:horizon[:rule]]]] -- the network's top k moves played out
         # by the network in sampled worlds, a cautious choice (ai/search/rollout_root.py); an omitted

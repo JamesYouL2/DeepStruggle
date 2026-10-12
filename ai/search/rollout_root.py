@@ -233,6 +233,41 @@ class RolloutRootAgent:
         return self.select_actions_batch([state])[0]
 
 
+class SparseRolloutAgent:
+    """A rollout root applied at a random `frac` of decisions, the network's greedy move at the rest -- to
+    measure whether its corrections help one at a time (the network following up) or only in sequence (the
+    search following up). `sparse:<frac>:rollout:...` in tournament specs."""
+
+    def __init__(self, inner: RolloutRootAgent, frac: float, seed: int = 24601) -> None:
+        if not 0.0 < frac <= 1.0:
+            raise ValueError("sparse: the searched fraction must be in (0, 1]")
+        self.inner = inner
+        self.frac = float(frac)
+        self.name = f"{inner.name}@{frac:g}"
+        self._rng = random.Random(seed)
+        self.searched = 0
+        self.decisions = 0
+
+    def reseed(self, seed: int) -> None:
+        self.inner.reseed(seed)
+        self._rng = random.Random(seed + 1)
+
+    def select_actions_batch(self, states: Sequence[ts.GameState]) -> List[int]:
+        states = list(states)
+        lg, masks, _ = self.inner.root._forward(states)
+        picks = [int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf))) for i in range(len(states))]
+        chosen = [i for i in range(len(states)) if self._rng.random() < self.frac]
+        if chosen:
+            for i, a in zip(chosen, self.inner.select_actions_batch([states[i] for i in chosen])):
+                picks[i] = a
+        self.decisions += len(states)
+        self.searched += len(chosen)
+        return picks
+
+    def select_action(self, state: ts.GameState, *_: Any, **__: Any) -> int:
+        return self.select_actions_batch([state])[0]
+
+
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     """rollout:<checkpoint>[:k[:worlds[:horizon[:rule]]]] -> (checkpoint, config, label); an
     omitted field is the measured player's (4, 16, 4, z2)."""
