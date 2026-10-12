@@ -162,7 +162,7 @@ def _key(d: Dict[int, Any]) -> Dict[str, Any]:
 def annotate_states(states: Sequence[ts.GameState], logits_fn: Any, features: int,
                     searchers: Sequence[Tuple[str, str, Any]], seed: int) -> List[Dict[str, Any]]:
     """The raw network's and every searcher's answer at each position (positions of one game)."""
-    from tools.scripts.event_play_census import position_token
+    from tools.lib.corpus_driver import position_token
 
     obs = np.stack([np.asarray(ts.extract_observation_features(s, mover_of(s), features), dtype=np.float32)
                     for s in states])
@@ -212,7 +212,7 @@ def annotate(a: argparse.Namespace) -> int:
     import torch
 
     from tools.lib.player_agent import load_agent
-    from tools.scripts.event_play_census import load_policy, selfplay
+    from tools.lib.corpus_driver import load_policy, selfplay
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     k, n = (int(x) for x in a.part.split("/"))
@@ -342,7 +342,7 @@ def reference(a: argparse.Namespace) -> int:
 
     from tools.lib.player_agent import load_agent
     from tools.scripts.bank_clarity import value_moves_per_world
-    from tools.scripts.event_play_census import state_from_token
+    from tools.lib.corpus_driver import state_from_token
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     k, n = (int(x) for x in a.part.split("/"))
@@ -401,7 +401,7 @@ def oracle(a: argparse.Namespace) -> int:
     import torch
 
     from tools.lib.player_agent import load_agent
-    from tools.scripts.event_play_census import state_from_token
+    from tools.lib.corpus_driver import state_from_token
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     rows = _my_rows(a)
@@ -434,15 +434,15 @@ def oracle(a: argparse.Namespace) -> int:
 
 def playouts(a: argparse.Namespace) -> int:
     from ai.eval.paired_playouts import compare
-    from tools.lib.player_agent import OnnxAgent
-    from tools.scripts.event_play_census import state_from_token
+    from tools.lib.corpus_driver import load_policy, state_from_token
+    from tools.lib.position_bank import position_seed
 
     rows = _my_rows(a)
-    onnx = a.onnx or (os.path.splitext(a.model)[0] + ".onnx")
-    agent = OnnxAgent(onnx)
+    # The raw network, greedy: the --onnx export when one is named, else the .pt itself.
+    logits_fn, _ = load_policy(a.onnx or a.model)
 
     def act(obs: Any, masks: Any) -> Any:
-        return agent.act_batch(obs, masks, 0.0, True)
+        return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
 
     k = int(a.part.split("/")[0])
     searcher: Any = None
@@ -456,7 +456,8 @@ def playouts(a: argparse.Namespace) -> int:
             positions = [(state_from_token(r["pos"]), [int(m) for m in r["pmoves"]]) for r in batch]
             if searcher is not None:
                 searcher.reseed(a.seed + 100_003 * k + lo)
-            scores = compare(positions, act, a.pairs, a.seed + 100_003 * k + lo,
+            # One seed per position, from its id: a row's pairs do not depend on its part or batch.
+            scores = compare(positions, act, a.pairs, [position_seed(str(r["id"]), a.seed) for r in batch],
                              select=searcher.select_actions_batch if searcher is not None else None)
             for r, sc in zip(batch, scores):
                 f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "pairs": a.pairs,
@@ -588,7 +589,7 @@ def subs_select(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def subs_stage(a: argparse.Namespace) -> int:
     from ai.eval.subs_followup import subs_branches
     from tools.lib.player_agent import OnnxAgent
-    from tools.scripts.event_play_census import state_from_token
+    from tools.lib.corpus_driver import state_from_token
 
     rows = _my_rows(a)
     agent = OnnxAgent(a.onnx or (os.path.splitext(a.model)[0] + ".onnx"))
@@ -615,7 +616,7 @@ def subs_analysis(bank: Sequence[Dict[str, Any]], rows: Sequence[Dict[str, Any]]
     """The Subs tables: coups after the event, each branch against `alt`, and a split-sample best
     branch (chosen on even pairs, measured on odd), overall and by DEFCON."""
     from ai.eval.subs_followup import BRANCHES, COUNTS
-    from tools.scripts.event_play_census import state_from_token
+    from tools.lib.corpus_driver import state_from_token
 
     by_id = {r["id"]: r for r in bank}
     pos: List[Dict[str, Any]] = []
@@ -1189,6 +1190,211 @@ def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, A
     return "\n".join(out), num
 
 
+#: Search-valued raw regret at or above which a position is "large" (2 points of win probability on
+#: the [-1, 1] value scale); the playout sample takes every such position.
+LARGE_REGRET = 0.04
+
+
+def playout_select(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, Any]],
+                   rest: int, control: int, seed: int,
+                   large: float = LARGE_REGRET) -> List[Dict[str, Any]]:
+    """The playout sample, three classes of bank position by the reference's verdict (`solve`):
+
+    * `big` -- raw's search-valued regret is `large` or more: every one, `pl_incl` 1;
+    * `ctrl` -- raw's move is the reference best and k=8 @256 plays it too: `control` of them at
+      random, raw's move against raw's second most probable move;
+    * `rest` -- everything else: `rest` of them at random.
+
+    `big` and `rest` rows play raw's move, the best move and k=8 @256's move (`pmoves`, raw first).
+    `pl_incl` is the chance the sample took the row, so a playout figure divides the row's bank
+    weight by it to stand for the population. Each row also carries the verdict it was chosen by:
+    `regret` (raw's), `best`, `conf`."""
+    refs = {r["id"]: r for r in ref_rows}
+    classes: Dict[str, List[Dict[str, Any]]] = {"big": [], "rest": [], "ctrl": []}
+    for b in bank_rows:
+        if b["id"] not in refs:
+            continue
+        v = solve(b, refs[b["id"]])
+        raw, best = int(b["raw"]), int(v["best"])
+        g256 = b["methods"].get("g256", {}).get("choice")
+        regret = float(v["regret"]["raw"][0])
+        if regret >= large:
+            cls = "big"
+        elif best == raw and (g256 is None or int(g256) == raw):
+            cls = "ctrl"
+        else:
+            cls = "rest"
+        if cls == "ctrl":
+            order = [b["legal"][i] for i in np.argsort(-np.asarray(b["logits"]), kind="stable")]
+            moves = [raw] + [int(m) for m in order if int(m) != raw][:1]
+        else:
+            moves = list(dict.fromkeys([raw] + [m for m in (best, None if g256 is None else int(g256))
+                                                if m is not None]))
+        classes[cls].append(dict(b, regret=regret, best=best, conf=v["confidence"], pl_class=cls,
+                                 pmoves=moves))
+    rng = random.Random(seed)
+    out: List[Dict[str, Any]] = []
+    for cls, want in (("big", None), ("rest", rest), ("ctrl", control)):
+        pool = sorted(classes[cls], key=lambda r: r["id"])
+        take = pool if want is None or want >= len(pool) else rng.sample(pool, want)
+        incl = 1.0 if not pool else len(take) / len(pool)
+        out += [dict(r, pl_incl=incl) for r in take]
+    return out
+
+
+def _paired_scores(scores: Dict[str, List[float]], x: Optional[int], y: int) -> Tuple[float, float]:
+    """Mean paired difference of move x's playout scores over move y's, and its variance (of the
+    mean); 0 where x is y or was not played out."""
+    if x is None or x == y or str(x) not in scores:
+        return 0.0, 0.0
+    d = [u - w for u, w in zip(scores[str(x)], scores[str(y)])]
+    m = sum(d) / len(d)
+    return m, (sum((t - m) ** 2 for t in d) / (len(d) - 1) / len(d) if len(d) > 1 else 0.0)
+
+
+def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[str, Any]]],
+              cards: Dict[int, Dict[str, Any]], countries: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Per playout row: its population weight (bank weight / `pl_incl`), raw's search-valued regret,
+    the decision kind and a finer label, and the paired playout gain over raw's move of the best move
+    (`gain`) and of k=8 @256's move (`g256`), the runs' pairs pooled. `runs` are playout outputs
+    keyed by row id."""
+    from tools.lib.corpus_driver import state_from_token
+
+    modes = {EVENT: "EVENT", SPACE: "SPACE", EVENT + 2: "INFL", EVENT + 3: "COUP", EVENT + 4: "REALIGN"}
+
+    def rel(a: int, side: str) -> str:
+        if a >= 110:
+            return "pass"
+        c = cards[a + 1]
+        if int(c["id"]) == 6:
+            return "China"
+        if int(c["ops"]) == 0:
+            return "scoring"
+        return card_relation(str(c["side"]), side).replace("opponent", "opp")
+
+    def ops(a: int) -> str:
+        return f" {cards[a + 1]['ops']}" if a < 110 else ""
+
+    def card_name(a: int) -> str:
+        return str(cards[a + 1]["name"]) if a < 110 else "pass"
+
+    out: List[Dict[str, Any]] = []
+    for b in inputs:
+        sc: Dict[str, List[float]] = {}
+        for run in runs:
+            got = run.get(b["id"])
+            if got is None:
+                continue
+            for m, xs in got["scores"].items():
+                sc.setdefault(m, []).extend(xs)
+        if not sc:
+            continue
+        raw, best, side = int(b["raw"]), int(b["best"]), str(b["side"])
+        g256 = b["methods"].get("g256", {}).get("choice")
+        st = state_from_token(b["pos"])
+        dt = b["decision_type"]
+        r: Dict[str, Any] = {"id": b["id"], "b": b, "w": float(b["weight"]) / float(b.get("pl_incl", 1.0)),
+                             "regret": float(b["regret"]), "side": side, "turn": int(b["turn"]),
+                             "defcon": int(st.defcon), "gain": _paired_scores(sc, best, raw),
+                             "g256": _paired_scores(sc, None if g256 is None else int(g256), raw),
+                             "sub": "", "raw_card": "", "best_card": ""}
+        if dt == "SELECT_CARD":
+            r["kind"] = "headline" if b["phase"] == "HEADLINE" else "AR card choice"
+            r["sub"] = f"{rel(raw, side)}{ops(raw)} -> {rel(best, side)}{ops(best)}"
+            r["raw_card"], r["best_card"] = card_name(raw), card_name(best)
+        elif dt == "SELECT_PLAY_MODE":
+            r["kind"] = "play mode"
+            cid = int(b.get("card") or 0)
+            r["sub"] = (f"{rel(cid - 1, side) if cid else '?'} card: "
+                        f"{modes.get(raw, str(raw))} -> {modes.get(best, str(best))}")
+            r["raw_card"] = r["best_card"] = str(cards[cid]["name"]) if cid else "?"
+        elif dt == "SELECT_OP_MODE":
+            r["kind"] = "op mode"
+            r["sub"] = f"{modes.get(raw, str(raw))} -> {modes.get(best, str(best))}"
+        elif dt == "POINT_NODE":
+            r["kind"] = f"target ({str(st.ctx().op_mode).split('.')[-1].lower()})"
+
+            def region(a: int) -> str:
+                c = countries.get(a - ActionEncoder.NODE_OFFSET)
+                return str(c["region"]) if c else str(a)
+            r["sub"] = f"{region(raw)} -> {region(best)}"
+        else:
+            r["kind"] = dt.lower()
+        out.append(r)
+    return out
+
+
+def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_per_game: float,
+                  large: float = LARGE_REGRET) -> str:
+    """Where raw play loses, in points of win probability a game (both sides' decisions summed): each
+    playout row's paired gain of the best move over raw's, weighted back to the population, grouped
+    by the decision's kind and by finer labels, beside what k=8 @256 recovers there."""
+    scale = 100.0 * decisions_per_game / bank_weight
+    out: List[str] = []
+
+    def total(rs: Sequence[Dict[str, Any]], f: str) -> Tuple[float, float]:
+        return (scale * sum(r["w"] * r[f][0] for r in rs),
+                scale * math.sqrt(sum(r["w"] ** 2 * r[f][1] for r in rs)))
+
+    def tab(title: str, key: Callable[[Dict[str, Any]], Optional[str]], rs: Sequence[Dict[str, Any]],
+            top: int = 12, min_n: int = 1) -> None:
+        g: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+        for r in rs:
+            k = key(r)
+            if k is not None:
+                g[k].append(r)
+        ranked = sorted(((total(v, "gain"), k, v) for k, v in g.items() if len(v) >= min_n),
+                        key=lambda x: -x[0][0])
+        out.extend([f"## {title}", "", "| group | n | share of decisions | best over raw | k=8 @256 over raw |",
+                    "|:---|---:|---:|---:|---:|"])
+        for (m, s), k, v in ranked[:top]:
+            gm, gs = total(v, "g256")
+            out.append(f"| {k} | {len(v)} | {100 * sum(r['w'] for r in v) / bank_weight:.2f}% | "
+                       f"{m:+.1f} ± {s:.1f} | {gm:+.1f} ± {gs:.1f} |")
+        out.append("")
+
+    big = [r for r in rows if r["regret"] >= large]
+    out += ["# Where raw play loses: paired playouts by decision kind", "",
+            f"Points of win probability a game, both sides' decisions summed ({decisions_per_game:.1f} decisions "
+            "with two or more legal moves a game): each playout row's paired gain of the best move over raw's, "
+            "weighted back to the decisions raw play meets. 'k=8 @256 over raw' is what that searcher's own "
+            "move recovers. 'Large' is a search-valued raw regret of 2+ points, where the gain is "
+            "(research/log/E7_search_disagreement_bank.md); the rest sits at its noise.", ""]
+    tab("total", lambda r: "large regret (2+ points)" if r["regret"] >= large else "the rest", rows)
+    tab("large regret: decision kind", lambda r: r["kind"], big)
+    tab("large regret: side x kind", lambda r: f"{r['side']} {r['kind']}", big, top=10)
+    tab("large regret: era x kind", lambda r: f"{era_label(r['turn'])} {r['kind']}", big, top=12)
+    tab("large regret: DEFCON x kind",
+        lambda r: f"D{min(r['defcon'], 4)}{'+' if r['defcon'] >= 4 else ''} "
+                  f"{r['kind'] if r['kind'] in ('AR card choice', 'play mode') else 'other'}", big, top=10)
+    cc = [r for r in big if r["kind"] == "AR card choice"]
+    tab("large regret, AR card choice: raw's card -> the best card (kind, Ops)", lambda r: r["sub"], cc, min_n=5)
+    tab("large regret, AR card choice: the card raw plays instead (n >= 4)", lambda r: r["raw_card"], cc, min_n=4)
+    tab("large regret, AR card choice: the card the best move plays (n >= 4)", lambda r: r["best_card"], cc, min_n=4)
+    tab("large regret, play mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "play mode"],
+        top=10, min_n=4)
+    tab("large regret, play mode: the card (n >= 4)", lambda r: r["raw_card"],
+        [r for r in big if r["kind"] == "play mode"], top=10, min_n=4)
+    tab("large regret, op mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "op mode"], top=6)
+    tab("large regret, influence targets: raw's region -> the best region", lambda r: r["sub"],
+        [r for r in big if r["kind"] == "target (influence)"], top=10, min_n=4)
+    tab("large regret, headline: raw's card -> the best card (kind, Ops)", lambda r: r["sub"],
+        [r for r in big if r["kind"] == "headline"], top=8, min_n=4)
+    out += ["## The 20 positions that cost raw the most a game (large regret)", "",
+            "| turn/AR | side | DEFCON | kind | raw | best | gain a decision | a game |", "|:---|:---|---:|:---|:---|:---|---:|---:|"]
+    for r in sorted(big, key=lambda r: -r["w"] * r["gain"][0])[:20]:
+        b, nm = r["b"], r["b"]["names"]
+        out.append(f"| T{b['turn']} AR{b['ar']} | {r['side']} | {r['defcon']} | {r['kind']} | "
+                   f"{nm.get(str(b['raw']), b['raw'])} | {nm.get(str(b['best']), b['best'])} | "
+                   f"{100 * r['gain'][0]:+.1f} ± {100 * math.sqrt(r['gain'][1]):.1f} | "
+                   f"{scale * r['w'] * r['gain'][0]:+.2f} |")
+    return "\n".join(out) + "\n"
+
+
+def era_label(turn: int) -> str:
+    return "T1-3" if turn <= 3 else ("T4-7" if turn <= 7 else "T8-10")
+
+
 def read_all(paths: Sequence[str]) -> List[Dict[str, Any]]:
     """Every row of the files, duplicates kept (oracle rows repeat an id once per searcher)."""
     out: List[Dict[str, Any]] = []
@@ -1308,6 +1514,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sr.add_argument("--games", type=int, required=True, help="annotate's game count")
     sr.add_argument("--sample", type=int, default=8, help="annotate's --sample")
     sr.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
+    ps = sub.add_parser("playout-select", help="the playout sample from the bank and its reference")
+    ps.add_argument("--bank", required=True)
+    ps.add_argument("--reference", nargs="+", required=True)
+    ps.add_argument("--rest", type=int, default=771, help="positions taken from the 'rest' class")
+    ps.add_argument("--control", type=int, default=300, help="positions taken from the agreement controls")
+    ps.add_argument("--seed", type=int, default=0)
+    ps.add_argument("--out", required=True, help="bank.jsonl.gz rows with `pmoves` and `pl_incl`")
+    lk = sub.add_parser("leak", help="where raw play loses, by decision kind, from paired playouts")
+    lk.add_argument("--bank", required=True, help="the whole bank (its weights are the population)")
+    lk.add_argument("--playouts-input", required=True, help="playout-select's output")
+    lk.add_argument("--playouts", nargs="+", required=True,
+                    help="playouts outputs of the same input, raw continuation; their pairs are pooled")
+    lk.add_argument("--decisions-per-game", type=float, required=True,
+                    help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
+    lk.add_argument("--out", required=True)
     rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
     rp.add_argument("--bank", required=True)
     rp.add_argument("--reference", nargs="+", required=True)
@@ -1319,6 +1540,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
     rp.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
     a = ap.parse_args(argv)
+    if a.cmd == "playout-select":
+        rows = playout_select(read_rows([a.bank]), read_rows(a.reference), a.rest, a.control, a.seed)
+        with gzip.open(a.out, "wt") as f:
+            for r in rows:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        got = collections.Counter(r["pl_class"] for r in rows)
+        print(f"{len(rows)} positions ({dict(got)}), {sum(len(r['pmoves']) for r in rows)} moves to play out "
+              f"-> {a.out}", file=sys.stderr)
+        return 0
+    if a.cmd == "leak":
+        cards = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
+        countries = {int(c["id"]): c for c in json.load(open("rules/map.json"))["countries"]}
+        runs = [{r["id"]: r for r in read_rows([p])} for p in a.playouts]
+        rows = leak_rows(read_rows([a.playouts_input]), runs, cards, countries)
+        weight = sum(float(b["weight"]) for b in read_rows([a.bank]))
+        open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game))
+        print(f"leak tables over {len(rows)} positions -> {a.out}", file=sys.stderr)
+        return 0
     if a.cmd == "report":
         cards = {int(c["id"]): str(c["name"]) for c in json.load(open("rules/cards.json"))}
         md, num = analysis(read_rows([a.bank]), read_rows(a.reference), read_all(a.oracle) if a.oracle else [],
