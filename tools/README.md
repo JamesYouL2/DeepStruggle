@@ -1311,6 +1311,46 @@ and `subs-report` gives the leads over raw's play and the coup counts by DEFCON.
 
 ---
 
+## 7f. The Control-Break Census (`tools/scripts/control_census.py`)
+
+How often a side spends Ops to break the opponent's control of a country, whether the break lasts,
+and what it costs, a checkpoint against the humans of the ts-replayer corpus. A point of Ops
+influence into a country the opponent controls costs 2 Ops; a *break play* is one card's Ops with
+at least one such point. Each country it entered ends the round flipped, broken or still held, and
+a flipped or broken one is *retaken* if the opponent controls it again when the mover's next action
+round starts.
+
+* `human` / `selfplay` -- every Ops influence point (classed: elsewhere, into control without
+  breaking it, the point that breaks it) and every break play, in the corpus's games and in a
+  checkpoint's greedy self-play. `selfplay --bank` also writes one row per break play of the first
+  `--bank-games` games, at its first point into control.
+* `onhuman` -- the checkpoint at each human point's position: its pick and its probability of an
+  opponent-controlled target and of Cuba, for same-position comparisons.
+* `playouts` -- per bank row, paired playouts of the checkpoint's own move against the same card's
+  Ops kept out of every country the opponent controls (`NoBreak` narrows the mover's masks until
+  its action round ends), then the checkpoint greedy on both sides (`--continue-with sims:k`
+  searches). It takes the `search_bank.yml` stage interface, so CI runs it with `-f tool=`.
+* `report` -- shares by side and era with game-clustered standard errors (own games and same
+  positions), Cuba with Fidel still to come, what happens to the countries entered, by country,
+  and the playouts' cost per play and per game by side, era, outcome and country.
+
+```bash
+O=data/reports/control_census; M=<checkpoint.pt>
+PYTHONPATH=.:build/release .venv/bin/python tools/scripts/control_census.py human --out $O/human.json.gz
+PYTHONPATH=.:build/release .venv/bin/python tools/scripts/control_census.py selfplay --checkpoint $M \
+  --games 4096 --out $O/selfplay.json.gz --bank $O/bank.jsonl.gz --bank-games 400
+PYTHONPATH=.:build/release .venv/bin/python tools/scripts/control_census.py onhuman --human $O/human.json.gz \
+  --checkpoint $M --out $O/onhuman.json.gz
+gh release create control-bank-<date> $O/bank.jsonl.gz --prerelease
+gh workflow run search_bank.yml --ref <branch> -f tool=tools/scripts/control_census.py -f stage=playouts \
+  -f release=control-bank-<date> -f model='_models/<network>.pt' -f args="--pairs 512"
+PYTHONPATH=.:build/release .venv/bin/python tools/scripts/control_census.py report --human $O/human.json.gz \
+  --selfplay NAME=$O/selfplay.json.gz --onhuman NAME=$O/onhuman.json.gz --bank $O/bank.jsonl.gz \
+  --playouts $O/playouts.jsonl.gz --out $O/report.md
+```
+
+---
+
 ## 8. Shared Helpers Library (`tools/lib/`)
 Internal simulation, evaluation, and logging modules imported by the CLI tools:
 - `tools/lib/player_agent.py`: unified agent loader (`load_agent`) and policy inference wrappers, including `OnnxAgent` for `tools/export_onnx.py` exports.

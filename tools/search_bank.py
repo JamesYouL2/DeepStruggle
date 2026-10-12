@@ -92,6 +92,14 @@ import numpy as np
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
+import torch
+from ai.eval.paired_playouts import compare
+from ai.eval.subs_followup import BRANCHES, COUNTS, NUCLEAR_SUBS, subs_branches
+from tools.lib.corpus_driver import load_policy, position_token, selfplay, state_from_token
+from tools.lib.player_agent import OnnxAgent, load_agent
+from tools.lib.position_bank import position_seed
+from tools.scripts.bank_clarity import value_moves_per_world
+from tools.scripts.event_play_census import load_holding
 
 SCHEMA = 1
 #: label -> (simulations, k): the configurations of research/log/E7_gumbel_headroom.md
@@ -162,7 +170,6 @@ def _key(d: Dict[int, Any]) -> Dict[str, Any]:
 def annotate_states(states: Sequence[ts.GameState], logits_fn: Any, features: int,
                     searchers: Sequence[Tuple[str, str, Any]], seed: int) -> List[Dict[str, Any]]:
     """The raw network's and every searcher's answer at each position (positions of one game)."""
-    from tools.lib.corpus_driver import position_token
 
     obs = np.stack([np.asarray(ts.extract_observation_features(s, mover_of(s), features), dtype=np.float32)
                     for s in states])
@@ -209,10 +216,7 @@ def _sha256(path: str) -> str:
 
 
 def annotate(a: argparse.Namespace) -> int:
-    import torch
 
-    from tools.lib.player_agent import load_agent
-    from tools.lib.corpus_driver import load_policy, selfplay
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     k, n = (int(x) for x in a.part.split("/"))
@@ -338,11 +342,7 @@ def moves_to_value(r: Dict[str, Any], ref_choices: Sequence[int], top: int) -> L
 
 
 def reference(a: argparse.Namespace) -> int:
-    import torch
 
-    from tools.lib.player_agent import load_agent
-    from tools.scripts.bank_clarity import value_moves_per_world
-    from tools.lib.corpus_driver import state_from_token
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     k, n = (int(x) for x in a.part.split("/"))
@@ -398,10 +398,7 @@ def _my_rows(a: argparse.Namespace) -> List[Dict[str, Any]]:
 
 
 def oracle(a: argparse.Namespace) -> int:
-    import torch
 
-    from tools.lib.player_agent import load_agent
-    from tools.lib.corpus_driver import state_from_token
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     rows = _my_rows(a)
@@ -433,9 +430,6 @@ def oracle(a: argparse.Namespace) -> int:
 
 
 def playouts(a: argparse.Namespace) -> int:
-    from ai.eval.paired_playouts import compare
-    from tools.lib.corpus_driver import load_policy, state_from_token
-    from tools.lib.position_bank import position_seed
 
     rows = _my_rows(a)
     # The raw network, greedy: the --onnx export when one is named, else the .pt itself.
@@ -447,7 +441,6 @@ def playouts(a: argparse.Namespace) -> int:
     k = int(a.part.split("/")[0])
     searcher: Any = None
     if a.continue_with:
-        from tools.lib.player_agent import load_agent
         searcher = load_agent(f"gumbel:{a.model}:{a.continue_with}", device="cpu")
     t0 = time.time()
     with gzip.open(a.out, "wt") as f:
@@ -571,7 +564,6 @@ Verdicts = Sequence[Tuple[Dict[str, Any], Dict[str, Any]]]
 
 def is_subs_decision(r: Dict[str, Any]) -> bool:
     """A US action-round play-mode decision for Nuclear Subs with the event legal."""
-    from ai.eval.subs_followup import NUCLEAR_SUBS
 
     return (r["decision_type"] == "SELECT_PLAY_MODE" and r["phase"] == "ACTION_ROUND" and r["side"] == "US"
             and int(r["card"]) == NUCLEAR_SUBS and EVENT in r["legal"] and len(r["legal"]) > 1)
@@ -587,9 +579,6 @@ def subs_select(rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def subs_stage(a: argparse.Namespace) -> int:
-    from ai.eval.subs_followup import subs_branches
-    from tools.lib.player_agent import OnnxAgent
-    from tools.lib.corpus_driver import state_from_token
 
     rows = _my_rows(a)
     agent = OnnxAgent(a.onnx or (os.path.splitext(a.model)[0] + ".onnx"))
@@ -615,8 +604,6 @@ def subs_analysis(bank: Sequence[Dict[str, Any]], rows: Sequence[Dict[str, Any]]
                   per_game: float) -> Tuple[str, Dict[str, Any]]:
     """The Subs tables: coups after the event, each branch against `alt`, and a split-sample best
     branch (chosen on even pairs, measured on odd), overall and by DEFCON."""
-    from ai.eval.subs_followup import BRANCHES, COUNTS
-    from tools.lib.corpus_driver import state_from_token
 
     by_id = {r["id"]: r for r in bank}
     pos: List[Dict[str, Any]] = []
@@ -1258,7 +1245,6 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
     the decision kind and a finer label, and the paired playout gain over raw's move of the best move
     (`gain`) and of k=8 @256's move (`g256`), the runs' pairs pooled. `runs` are playout outputs
     keyed by row id."""
-    from tools.lib.corpus_driver import state_from_token
 
     modes = {EVENT: "EVENT", SPACE: "SPACE", EVENT + 2: "INFL", EVENT + 3: "COUP", EVENT + 4: "REALIGN"}
 
@@ -1579,7 +1565,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               f"{sum(len(r['pmoves']) for r in bank)} moves to play out -> {a.out}", file=sys.stderr)
         return 0
     if a.cmd == "event-report":
-        from tools.scripts.event_play_census import load_holding
 
         def rates(path: Optional[str]) -> Optional[Dict[Tuple[int, str], Tuple[int, int]]]:
             return ar_event_rates([load_holding(r) for r in json.load(open(path))["holdings"]]) if path else None

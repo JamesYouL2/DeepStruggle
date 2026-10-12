@@ -14,12 +14,15 @@ on:
   # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
   # push run skips every job.
   push:
-    branches: [exp/search-bank, exp/leak-r34]
+    branches: [exp/search-bank, exp/leak-r34, exp/control-breaks]
     paths: [.github/workflows/search_bank.yml]
   workflow_dispatch:
     inputs:
+      tool:
+        description: "The script whose stage runs: tools/search_bank.py, or another with the same --model/--bank/--part/--out stage interface (tools/scripts/control_census.py playouts)"
+        default: "tools/search_bank.py"
       stage:
-        description: "tools/search_bank.py stage"
+        description: "The tool's stage"
         default: "annotate"
       args:
         description: "Further arguments for the stage (each part also gets --part k/N --out)"
@@ -44,6 +47,7 @@ permissions:
   contents: read
 
 env:
+  TOOL: ${{ inputs.tool || 'tools/search_bank.py' }}
   STAGE: ${{ inputs.stage || 'annotate' }}
   ARGS: ${{ inputs.args || '--games 1500' }}
   RELEASE: ${{ inputs.release }}
@@ -101,7 +105,7 @@ jobs:
           sha256sum "$pt"
           bank=()
           if [ -n "$RELEASE" ]; then bank=(--bank input/bank.jsonl.gz); fi
-          OMP_NUM_THREADS=4 PYTHONPATH=.:build/release python tools/search_bank.py "$STAGE" --model "$pt" \
+          OMP_NUM_THREADS=4 PYTHONPATH=.:build/release python "$TOOL" "$STAGE" --model "$pt" \
             "${bank[@]}" --part "${{ matrix.part }}/$RUNNERS" --out "out/part-${{ matrix.part }}.jsonl.gz" $ARGS
       - uses: actions/upload-artifact@v4
         if: always()
@@ -129,7 +133,7 @@ jobs:
           cp parts/part-1.jsonl.gz.meta.json "report/$STAGE.meta.json" 2>/dev/null || true
           {
             echo "commit: $GITHUB_SHA"
-            echo "stage: $STAGE  args: $ARGS"
+            echo "tool: $TOOL  stage: $STAGE  args: $ARGS"
             echo "model: $HF_REPO $MODEL (template $TEMPLATE)  release: $RELEASE"
             echo "runners: $RUNNERS (parts received: $(ls parts/part-*.jsonl.gz | wc -l))"
             echo "rows: $(zcat "report/$STAGE.jsonl.gz" | wc -l)"
