@@ -141,7 +141,6 @@
  "tools/scripts/advantage_variance_probe.py": 3,
  "tools/scripts/bench_throughput.py": 5,
  "tools/scripts/card_event_trajectory.py": 4,
- "tools/scripts/checkpoint_report.py": 6,
  "tools/scripts/collapse_trace.py": 1,
  "tools/scripts/decisive_cost.py": 4,
  "tools/scripts/goal_probes.py": 2,
