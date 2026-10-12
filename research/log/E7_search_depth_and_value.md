@@ -238,7 +238,7 @@ R32's online improved-policy targets with the rollout root as the teacher's sear
 R39's margin is the soup's raw strength; the rollout's part transfers at ~10–25 Elo whatever the budget.
 Played instead of distilled, it is ~140: rollout on R34's raw snapshot beats it 73.0%.
 
-**Why** (`rollout_consistency.py` on R34's raw 6,800M snapshot: 2,844 positions from 64 greedy games, every
+**Why** (`ai/eval/rollout_consistency.py` on R34's raw 6,800M snapshot: 2,844 positions from 64 greedy games, every
 decision type, each searched three times with fresh seeds; `data/reports/rollout_consistency_R34_6800.txt`):
 
 * **Half the verdicts are noise at 16 worlds.** The root departs from the network's move at 15% of decisions, in
