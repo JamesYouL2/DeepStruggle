@@ -142,6 +142,47 @@ def test_regret_is_measured_on_worlds_the_best_move_was_not_chosen_on() -> None:
     assert v["critic_best"] == 7
 
 
+def _verdict_pair(i: int, raw_value: float, alt_value: float, g256: int) -> tuple:
+    """A bank row (raw 5; 7 then 8 by logit) and its reference: raw's move and move 7 valued flat
+    over 16 worlds."""
+    bank = {"id": f"{i:016x}", "raw": 5, "legal": [5, 7, 8], "logits": [2.0, 1.0, 0.0], "weight": 2.0,
+            "methods": {"g256": {"choice": g256}}}
+    ref = {"id": bank["id"], "values": {"5": [raw_value] * 16, "7": [alt_value] * 16},
+           "critic": {"5": [0.0] * 16, "7": [0.0] * 16}, "reference": {"action": 7, "agreement": 1.0}}
+    return bank, ref
+
+
+def test_playout_select_takes_every_large_regret_samples_the_rest_and_weights_by_inclusion() -> None:
+    from tools.search_bank import playout_select
+    big = [_verdict_pair(i, 0.0, 0.1, 7) for i in range(5)]               # raw loses 0.1: large
+    ctrl = [_verdict_pair(100 + i, 0.1, 0.0, 5) for i in range(40)]       # raw best, k=8 @256 agrees
+    rest = [_verdict_pair(200 + i, 0.0, 0.01, 8) for i in range(30)]      # raw loses 0.01: small
+    pairs = big + ctrl + rest
+    out = playout_select([b for b, _ in pairs], [r for _, r in pairs], rest=10, control=8, seed=3)
+    by = {c: [r for r in out if r["pl_class"] == c] for c in ("big", "rest", "ctrl")}
+    assert [len(by[c]) for c in ("big", "rest", "ctrl")] == [5, 10, 8]
+    assert {r["pl_incl"] for r in by["big"]} == {1.0}
+    assert {r["pl_incl"] for r in by["rest"]} == {10 / 30} and {r["pl_incl"] for r in by["ctrl"]} == {8 / 40}
+    assert all(r["pmoves"] == [5, 7] and abs(r["regret"] - 0.1) < 1e-9 for r in by["big"])
+    assert all(r["pmoves"] == [5, 7, 8] for r in by["rest"])           # raw, the best, k=8 @256's
+    assert all(r["pmoves"] == [5, 7] and r["best"] == 5 for r in by["ctrl"])   # raw against raw's second
+
+
+def test_leak_weights_each_rows_paired_gain_back_to_the_population() -> None:
+    from tools.search_bank import _paired_scores, leak_analysis
+    # Best beats raw by 0.2 in every pair; the row stands for 10 population decisions (weight 1,
+    # sampled with probability 0.1) of a bank weighing 100, in games of 50 decisions:
+    # 100 points x 50 / 100 x 10 x 0.2 = +100.0 a game.
+    gain = _paired_scores({"5": [0.0, 0.5, 0.5, 1.0], "7": [0.2, 0.7, 0.7, 1.2]}, 7, 5)
+    assert abs(gain[0] - 0.2) < 1e-9 and gain[1] < 1e-12
+    assert _paired_scores({"5": [0.0]}, 5, 5) == (0.0, 0.0)
+    row = {"id": "x", "w": 10.0, "regret": 0.1, "gain": gain, "g256": (0.1, 0.0), "kind": "AR card choice",
+           "side": "US", "turn": 9, "defcon": 2, "sub": "opp 2 -> own 3", "raw_card": "A", "best_card": "B",
+           "b": {"turn": 9, "ar": 3, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}}}
+    md = leak_analysis([row], bank_weight=100.0, decisions_per_game=50.0)
+    assert "| AR card choice | 1 | 10.00% | +100.0 ± 0.0 | +50.0 ± 0.0 |" in md
+
+
 def _play_mode_row(i: int, card: int, side: str, legal: List[int], logits: List[float]) -> dict:
     return {"id": f"{i:016x}", "decision_type": "SELECT_PLAY_MODE", "phase": "ACTION_ROUND", "card": card,
             "side": side, "turn": 4, "legal": legal, "logits": logits,

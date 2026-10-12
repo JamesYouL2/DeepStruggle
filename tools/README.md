@@ -1257,6 +1257,46 @@ opponent failing to finish a won game, so `settle` drops those rows from the ban
     --prove 'prove/*.jsonl.gz' --out ai/eval/banks/blunders_E7.jsonl
 ```
 
+---
+
+## 7e. The Search Disagreement Bank (`tools/search_bank.py`)
+
+Where Gumbel search departs from the raw network on raw-play positions, and whether those
+departures are worth anything: stages `annotate` (raw self-play positions put to the raw network
+and to Gumbel k=4 @16, k=4 @64, k=8 @256), `select` (a stratified, population-weighted bank),
+`reference` (Gumbel k=16 @1024 x3 and equal-budget move values in shared redealt worlds), `oracle`
+(the best move forced into a searcher's candidates), `playouts` (paired playouts by the raw
+network) and `report`. The CI stages run through `.github/workflows/search_bank.yml`, which takes a
+published `.pt` as it is, or rebuilds a published ONNX export as a torch checkpoint on each runner.
+Results and method: `research/log/E7_search_disagreement_bank.md` on the fork's `exp/search-bank`.
+
+**Where raw play loses, by decision kind.** `playout-select` takes the playout sample from the bank
+and its reference: every position whose search-valued raw regret is 2+ points, `--rest` of the
+other positions and `--control` of the agreement controls (raw is the best and k=8 @256 plays it),
+each with the moves to play out (`pmoves`) and the chance the sample took it (`pl_incl`). `leak`
+pairs those playouts back to the population: the best move's gain over raw's, in points a game,
+by decision kind (card choice, influence target, play mode, headline, Ops mode), then by side, era,
+DEFCON, card and region, beside what k=8 @256's own move recovers. Pass several `playouts` outputs
+of the same input to pool their pairs.
+
+```bash
+gh workflow run search_bank.yml --ref <branch> -f stage=annotate -f args="--games 1500" \
+  -f model='_models/<network>.pt'
+PYTHONPATH=.:build/release .venv/bin/python tools/search_bank.py select \
+  --annotated annotate.jsonl.gz --size 8000 --control 2000 --out bank.jsonl.gz
+gh release create search-bank-<date> bank.jsonl.gz --prerelease
+gh workflow run search_bank.yml --ref <branch> -f stage=reference -f release=search-bank-<date> \
+  -f model='_models/<network>.pt'
+PYTHONPATH=.:build/release .venv/bin/python tools/search_bank.py playout-select --bank bank.jsonl.gz \
+  --reference reference.jsonl.gz --out playout_input/bank.jsonl.gz
+gh release create playout-input-<date> playout_input/bank.jsonl.gz --prerelease
+gh workflow run search_bank.yml --ref <branch> -f stage=playouts -f release=playout-input-<date> \
+  -f model='_models/<network>.pt' -f args="--pairs 1024"
+PYTHONPATH=.:build/release .venv/bin/python tools/search_bank.py leak --bank bank.jsonl.gz \
+  --playouts-input playout_input/bank.jsonl.gz --playouts playouts.jsonl.gz \
+  --decisions-per-game <8 x annotated positions / games> --out leak.md
+```
+
 A second bank comes from the same annotated positions: `event-select` takes every action-round
 play-mode decision where the event is a legal choice, at most `--cap` per (card, side), with the
 event and the raw network's most probable alternative (Space as well on an opponent's card) as the
