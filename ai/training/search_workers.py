@@ -12,6 +12,7 @@ exact; `tests/training/test_turn_credit.py`), answers as (queue index, legal act
 from __future__ import annotations
 
 import io
+import os
 import multiprocessing as mp
 import queue as _queue
 import traceback
@@ -30,13 +31,19 @@ Answer = Tuple[int, List[int], np.ndarray]
 def _worker_main(jobs: Any, results: Any, model_bytes: bytes, cfg: Tuple[int, int, int, str],
                  device: str, seed: int) -> None:
     torch.set_num_threads(2)
+    parent = os.getppid()
     dev = torch.device(device)
     net = torch.load(io.BytesIO(model_bytes), map_location=dev, weights_only=False).eval()
     k, worlds, horizon, rule = cfg
     teacher = RolloutTeacher(net, RolloutConfig(k=k, worlds=worlds, horizon=horizon, rule=rule),
                              device=dev, subsample=1.0, seed=seed)
     while True:
-        msg = jobs.get()
+        try:
+            msg = jobs.get(timeout=30.0)
+        except _queue.Empty:
+            if os.getppid() != parent:          # the trainer died without closing us: do not linger
+                return
+            continue
         if msg is None:
             return
         rid, items = msg
