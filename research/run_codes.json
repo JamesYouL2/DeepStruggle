@@ -886,6 +886,27 @@
     "opponent_self_pool": true,
     "block_lambda": "off"
    }
+  },
+  "R46": {
+   "description": "R1 with E7-04-44's learning-rate step-down from the branch point: 3e-4 for 100M, 1e-4 for 100M, then 3e-5",
+   "first": "E7-A8-R1-S44@6400M+R46_20261013_173310",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off",
+    "lr_schedule": "step",
+    "lr_schedule_every": 100000000
+   }
+  },
+  "R47": {
+   "description": "R1 with 4x the minibatch (16,384): a quarter of the gradient steps per iteration, at the constant rate",
+   "first": "E7-A8-R1-S44@6400M+R47_20261013_173310",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off",
+    "batch_size": 16384
+   }
   }
  },
  "overrides": {
@@ -1031,7 +1052,10 @@
   "E7-A8-R1-S44@6400M+R34@6790M+R43_20261013_022433": "E7-A8-R1-S44@6400M+R34@6790M+R43",
   "E7-A8-R1-S44@6400M+R34@7200M+R44_20261013_072402": "E7-A8-R1-S44@6400M+R34@7200M+R44",
   "E7-A8-R34-S44_20261013_072522": "E7-A8-R34-S44",
-  "E7-A8-R1-S44@6400M+R45_20261013_093808": "E7-A8-R1-S44@6400M+R45"
+  "E7-A8-R1-S44@6400M+R45_20261013_093808": "E7-A8-R1-S44@6400M+R45",
+  "E7-A8-R1-S44-2_20261013_143743": "E7-A8-R1-S44-2",
+  "E7-A8-R1-S44@6400M+R46_20261013_173310": "E7-A8-R1-S44@6400M+R46",
+  "E7-A8-R1-S44@6400M+R47_20261013_173310": "E7-A8-R1-S44@6400M+R47"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
