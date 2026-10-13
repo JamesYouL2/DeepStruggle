@@ -653,3 +653,32 @@ def test_search_workers_answer_every_queued_decision_on_this_rollouts_rows() -> 
         t.train_step()
     finally:
         pool.close()
+
+
+def test_teacher_policy_targets_are_the_frozen_teachers_own_policy() -> None:
+    """--search-teacher-policy: the searched rows' target is the teacher's softmax over the legal moves,
+    no search -- the control for the rollout-root teacher."""
+    cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
+               card_self_attention=False, cross_attention=False, per_entity_heads=16,
+               head_context=True, head_static=True, head_entities="country", head_center=True,
+               identity_dim=0, drop_static=True, hidden_dim=64, num_res_blocks=0, num_attn_heads=4,
+               card_lookup=False, card_lookup_heads=0, card_lookup_dim=0, card_lookup_identity_dim=0,
+               categorical_value=False)
+    torch.manual_seed(0)
+    dev = torch.device("cpu")
+    teacher = create_ladder_net(dev, **cfg)
+    with pytest.raises(ValueError, match="teacher-policy"):
+        NashPGTrainer(active_net=create_ladder_net(dev, **cfg), env=TsVectorizedEnv(num_envs=2, base_seed=7),
+                      num_envs=2, buffer_size=4, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_ce_coef=0.1, search_teacher_policy=True)
+    t = NashPGTrainer(active_net=create_ladder_net(dev, **cfg), env=TsVectorizedEnv(num_envs=4, base_seed=7),
+                      num_envs=4, buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
+                      device=dev, search_ce_coef=0.1, search_subsample=1.0, search_node_filter="all",
+                      search_teacher_net=teacher, search_teacher_policy=True)
+    t.collect_rollouts()
+    rows = t.buffer.has_search > 0.5
+    assert int(rows.sum()) > 0
+    obs, masks = t.buffer.obs[rows], t.buffer.masks[rows]
+    with torch.no_grad():
+        want = torch.softmax(teacher(obs, masks)[0].float(), dim=-1)
+    assert torch.allclose(t.buffer.search_pi[rows], want, atol=1e-4)

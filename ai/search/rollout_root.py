@@ -233,6 +233,50 @@ class RolloutRootAgent:
         return self.select_actions_batch([state])[0]
 
 
+class TeacherPolicyTargets:
+    """The control for the rollout teacher: at a searched decision the target is the frozen teacher's
+    own policy over the legal moves, with no search -- R39's mechanics with the rollout root taken out.
+    The same interface as `RolloutTeacher` (`should_search`, `improved_policies`)."""
+
+    def __init__(self, model: Any, device: Any = "cpu", subsample: float = 1.0, node_filter: str = "all",
+                 seed: int = 97531) -> None:
+        if node_filter not in ("all", "card_playmode"):
+            raise ValueError(f"unknown node_filter {node_filter!r}")
+        self.model = model
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self.features = model_obs_features(model)
+        self.subsample = float(subsample)
+        self.node_filter = node_filter
+        self._rng = random.Random(seed)
+
+    def should_search(self, state: ts.GameState) -> bool:
+        if self.node_filter == "card_playmode" and int(state.ctx().decision_type) not in (
+                int(ts.DecisionType.SELECT_CARD), int(ts.DecisionType.SELECT_PLAY_MODE)):
+            return False
+        return self.subsample >= 1.0 or self._rng.random() < self.subsample
+
+    def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        states = list(states)
+        if not states:
+            return []
+        obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), self.features),
+                                   dtype=np.float32) for s in states])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
+        with torch.no_grad():
+            lg, _v, _ = self.model(torch.from_numpy(obs).to(self.device), torch.from_numpy(masks).to(self.device))
+        lg_np = lg.float().cpu().numpy()
+        out: List[Tuple[List[int], np.ndarray]] = []
+        for i in range(len(states)):
+            acts = [int(a) for a in np.flatnonzero(masks[i])]
+            if not acts:
+                out.append(([], np.zeros(0)))
+                continue
+            z = np.array([lg_np[i][a] for a in acts], dtype=np.float64)
+            z = np.exp(z - z.max())
+            out.append((acts, z / z.sum()))
+        return out
+
+
 class SparseRolloutAgent:
     """A rollout root applied at a random `frac` of decisions, the network's greedy move at the rest -- to
     measure whether its corrections help one at a time (the network following up) or only in sequence (the

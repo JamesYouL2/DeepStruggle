@@ -1621,6 +1621,8 @@ def train_pipeline(
     search_rollout_k: int = 4,
     search_rollout_worlds: int = 16,
     search_workers: int = 0,
+    search_teacher_policy: bool = False,
+    resume_weights: Optional[str] = None,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -1908,6 +1910,8 @@ def train_pipeline(
         "search_rollout_k": int(search_rollout_k),
         "search_rollout_worlds": int(search_rollout_worlds),
         "search_workers": int(search_workers),
+        "search_teacher_policy": bool(search_teacher_policy),
+        "resume_weights": resume_weights,
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2282,6 +2286,7 @@ def train_pipeline(
         search_rollout_k=search_rollout_k,
         search_rollout_worlds=search_rollout_worlds,
         search_workers=search_workers,
+        search_teacher_policy=search_teacher_policy,
         teacher_net=teacher_net,
         teacher_coef=teacher_coef,
         teacher_seat={"us": 1, "ussr": -1, "both": 0}[teacher_seat],
@@ -2700,6 +2705,15 @@ def train_pipeline(
         next_pool_steps = ((state["total_env_steps"] // pool_every) + 1) * pool_every
         print(f"Resumed from {src}: {state['total_env_steps']:,} steps, iteration {it}, "
               f"{resumed_elapsed:.0f}s of training already done", flush=True)
+        if resume_weights:
+            # Continue a run's training state (step count, optimizer, opponent pool, RNG) from other
+            # weights of the same architecture -- e.g. RL resumed from a soup, which has no state of its own.
+            _sd = torch.load(resume_weights, map_location=dev, weights_only=False)
+            if isinstance(_sd, dict) and "model_state_dict" in _sd:
+                _sd = _sd["model_state_dict"]
+            model.load_state_dict(_sd)
+            trainer.reference_net.load_state_dict(_sd)
+            print(f"[resume weights] the network and pi_ref start from {resume_weights}", flush=True)
         record_start_steps(metadata_path, int(state["total_env_steps"]))
 
     # Restored before anything reads or writes the weights: snapshot_0s.pt claims to be

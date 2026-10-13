@@ -261,6 +261,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Warm-up / Checkpoint options
     parser.add_argument("--warmup-checkpoint", "--load-path", type=str, default=None, help="Path to pre-trained checkpoint")
+    parser.add_argument("--resume-weights", type=str, default=None,
+                        help="With --resume: after restoring the run's state (steps, optimizer, opponent pool, RNG), load "
+                             "these weights (same architecture) into the network and pi_ref -- e.g. RL continued from a soup.")
     parser.add_argument("--warmup-dataset", type=str, default=None, help="Path to dataset file for supervised BC warmup")
     parser.add_argument("--distill-dataset", type=str, default=None,
                         help="Search-target dataset for --mode distill. Must carry search_pi "
@@ -865,6 +868,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Rollout-root search targets: price them in this many worker processes, each with its own "
                              "copy of the frozen teacher, streamed the queued decisions during the rollout and collected "
                              "at its end -- the targets land on the same rows as without workers. 0: the trainer prices them.")
+    parser.add_argument("--search-teacher-policy", action="store_true",
+                        help="Search-CE targets are the frozen --search-teacher-checkpoint's own policy, with no search: the "
+                             "control for the rollout-root teacher (same rows, same weight).")
     parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
                         help="P32: search with this FROZEN network for the search CE targets, instead of the "
                              "network being trained -- whose targets follow it as it changes. Same "
@@ -1028,6 +1034,8 @@ def main():
             search_rollout_k=args.search_rollout_k,
             search_rollout_worlds=args.search_rollout_worlds,
             search_workers=args.search_workers,
+            search_teacher_policy=args.search_teacher_policy,
+            resume_weights=args.resume_weights,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,

@@ -61,7 +61,7 @@ BOOKKEEPING = frozenset({
     "run_name", "description", "device", "tensorboard", "seed", "seed_init", "seed_sampling",
     "seed_env", "seed_pool", "warmup_checkpoint", "warmup_dataset", "distill_dataset",
     "distill_epochs", "distill_lr", "bc_epochs", "curriculum_switch_fraction", "no_cuda_graphs",
-    "merged_influence", "new_directory", "turn_credit_workers", "search_workers",
+    "merged_influence", "new_directory", "turn_credit_workers", "search_workers", "resume_weights",
 })
 #: Settings that do nothing while their switch is off: dropped then, so a stray value cannot make
 #: two identical recipes look different. (switch, its off value, the settings it gates)
@@ -81,7 +81,7 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
     ("forced_openings_frac", 0.0, ("forced_openings_us", "forced_openings_ussr")),
     ("search_ce_coef", 0.0, ("search_sims", "search_subsample", "search_node_filter",
                              "search_gumbel_k", "search_prior_temperature",
-                             "search_teacher_checkpoint", "search_rollout_horizon", "search_rollout_k",
+                             "search_teacher_checkpoint", "search_rollout_horizon", "search_rollout_k", "search_teacher_policy",
                              "search_rollout_worlds")),
     ("teacher_coef", 0.0, ("teacher_checkpoint", "teacher_seat")),
     ("mode_cf_coef", 0.0, ("mode_cf_subsample", "mode_cf_playouts", "mode_cf_from")),
