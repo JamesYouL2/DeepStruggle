@@ -13,6 +13,11 @@
 name: leaderboard-play
 
 on:
+  # The push trigger only registers the workflow from this branch (a dispatch-only workflow that is
+  # not on the default branch cannot be dispatched); every job is skipped on it.
+  push:
+    branches: [exp/leak-r39]
+    paths: [.github/workflows/leaderboard_play.yml]
   workflow_dispatch:
     inputs:
       player:
@@ -47,6 +52,7 @@ env:
 
 jobs:
   plan:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -121,7 +127,7 @@ jobs:
 
   pool:
     needs: [plan, play]
-    if: always() && needs.plan.result == 'success'
+    if: always() && github.event_name == 'workflow_dispatch' && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
