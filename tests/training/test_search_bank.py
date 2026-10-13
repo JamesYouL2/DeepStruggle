@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Sequence
 
 import numpy as np
+import pytest
 import torch
 
 import ts_engine as ts
@@ -18,7 +19,7 @@ from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import load_policy, state_from_token
-from tools.search_bank import legal_actions, main, mover_of, parse_budgets, raw_rank, read_rows
+from tools.search_bank import kind_bootstrap, legal_actions, main, mover_of, parse_budgets, raw_rank, read_rows
 
 
 def _checkpoint(tmp_path: Path) -> str:
@@ -318,3 +319,21 @@ def test_china_bank_plays_the_china_card_against_raws_choice_or_its_best_other_c
     assert len(sample) == 2 and all(r["weight"] == 2.0 for r in sample)   # 4 in the stratum, 2 drawn
     v = china_verdict(bank["r2"], {"60": [1.0, 1.0, 1.0, 1.0], str(CHINA): [0.0, 0.0, 0.0, 0.0]})
     assert v["gain"] == -100.0 and v["kind"] == "too eager" and v["regret"] == 100.0
+
+
+def test_kind_bootstrap_resamples_within_cells() -> None:
+    """A kind's leak is scale x its weighted gains; identical rows in a cell resample to the same
+    total (no spread), and a kind that leaks most in every resample is the largest in all of them."""
+    def row(kind: str, cell: str, gain: float, g256: float, w: float = 1.0) -> dict:
+        return {"kind": kind, "w": w, "gain": (gain, 0.0), "g256": (g256, 0.0),
+                "b": {"stratum": cell, "pl_class": "big"}}
+
+    rows = [row("placement", "a", 0.10, 0.02), row("placement", "a", 0.10, 0.02),
+            row("card", "b", 0.03, 0.01), row("card", "b", 0.03, 0.01)]
+    bs = kind_bootstrap(rows, scale=10.0, resamples=200)
+    assert bs["placement"]["leak"] == pytest.approx(2.0) and bs["card"]["leak"] == pytest.approx(0.6)
+    assert bs["all"]["leak"] == pytest.approx(2.6) and bs["all"]["g256"] == pytest.approx(0.6)
+    assert bs["placement"]["leak_se"] == pytest.approx(0.0, abs=1e-9) and bs["placement"]["largest"] == 1.0
+    # Two different rows in one cell: the resampled totals spread.
+    noisy = kind_bootstrap([row("placement", "a", 0.0, 0.0), row("placement", "a", 0.2, 0.0)], 10.0, 200)
+    assert noisy["placement"]["leak"] == pytest.approx(2.0) and noisy["placement"]["leak_se"] > 0.5
