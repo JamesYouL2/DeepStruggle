@@ -1491,7 +1491,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             spec = player_spec(board, pid)
             a.checkpoints.append(path)
             a.labels.append(pid)
-            notes.append(pl["description"] or f"{net['description']} Played under its {kind_of(spec)} search: `{pid}`.")
+            notes.append(pl["description"]
+                         or f"{net['description'].rstrip('.')}. Played under its {kind_of(spec)} search: `{pid}`.")
             greedy = isinstance(spec, Policy) and spec.temperature <= 0.05
             agents.append(None if greedy else load_spec(spec, path))
         a.notes = a.notes or notes
