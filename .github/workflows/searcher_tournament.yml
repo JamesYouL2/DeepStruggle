@@ -6,7 +6,7 @@
 #   play   N runners, each every N-th shard (tools/tournament.py --part).
 #   pool   the report.
 #
-# Entrants are load_agent specs; {BASE} and {TUNED} stand for the two checkpoints, and name:<label>:
+# Entrants are load_agent specs; {BASE}, {MODEL2} and {TUNED} stand for the checkpoints, and name:<label>:
 # tells apart two searchers of one configuration. {TUNED} needs labels_run, a value_probe.yml run of
 # this repository.
 #
@@ -28,6 +28,9 @@ on:
       model:
         description: "A published export (.onnx, rebuilt with the template) or a torch checkpoint (.pt) in hf_repo"
         default: "E7line_swa_4720-4800M.onnx"
+      model2:
+        description: "Optional second torch checkpoint (.pt) in hf_repo, {MODEL2} in the entrants"
+        default: ""
       template:
         default: "shallow_E7-02+03+04+05_1200M.pt"
       hf_repo:
@@ -44,6 +47,7 @@ env:
   GAMES: ${{ inputs.games_per_side }}
   RUNNERS: ${{ inputs.runners }}
   MODEL: ${{ inputs.model }}
+  MODEL2: ${{ inputs.model2 }}
   TEMPLATE: ${{ inputs.template }}
   HF_REPO: ${{ inputs.hf_repo }}
 
@@ -85,7 +89,10 @@ jobs:
             OMP_NUM_THREADS=4 python tools/value_probe.py tune --model models/base.pt \
               --labels labels/label-*.jsonl.gz --out models/tuned.pt
           fi
-          sha256sum models/*.pt
+          if [ -n "$MODEL2" ]; then
+            curl -sSfL --retry 3 -o models/model2.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL2"
+          fi
+          (cd models && sha256sum *.pt) | tee models/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
           name: searcher-models-${{ github.run_id }}
@@ -112,6 +119,7 @@ jobs:
           mkdir -p parts
           specs="${ENTRANTS//\{BASE\}/models/base.pt}"
           specs="${specs//\{TUNED\}/models/tuned.pt}"
+          specs="${specs//\{MODEL2\}/models/model2.pt}"
           tools/scripts/check_engine_fresh.sh && python tools/tournament.py --models $specs \
             --games-per-side "$GAMES" --device cpu --workers 0 --shard-pairs 1 --temperature 0 \
             --part "${{ matrix.part }}/$RUNNERS" --output-part "parts/part-${{ matrix.part }}.json"
@@ -134,6 +142,10 @@ jobs:
           pattern: searcher-play-${{ github.run_id }}-*
           path: parts
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: searcher-models-${{ github.run_id }}
+          path: models
       - name: Report
         run: |
           mkdir -p report
@@ -143,7 +155,9 @@ jobs:
             echo "commit: $GITHUB_SHA"
             echo "model: $HF_REPO $MODEL$([[ "$MODEL" == *.onnx ]] && echo " (rebuilt with $TEMPLATE)")$([[ "$ENTRANTS" == *"{TUNED}"* ]] && echo "; tuned head from labels run ${{ inputs.labels_run }}")"
             echo "entrants: $ENTRANTS"
+            echo "model2: ${MODEL2:-none}"
             echo "games per side: $GAMES  temperature 0  runners: $RUNNERS"
+            echo "checkpoint sha256:"; cat models/sha256.txt
           } > report/provenance.txt
           { echo '```'; cat report/provenance.txt; echo '```'; cat report/tournament.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
