@@ -280,6 +280,19 @@ probability and scattered over every kind of decision -- a hard target for any a
 strength (R39). The next checks: targets from many more worlds (or averaged over seeds) so that only the stable
 departures teach, and an offline fit test on a fixed bank to separate capacity from optimisation.
 
+### The controls: R39's gain is the soup, not the search (2026-10-13)
+
+Two arms separate R39's ingredients (rows in [`../runs.md`](../runs.md)):
+
+| arm | what it is | result |
+|:---|:---|:---|
+| R44 | 400M of plain RL continued from the R34 soup's own weights (R34's 7,200M state, `--resume-weights`) | 7,520–7,600M SWA: 47.7% against the soup (per seat −2.6 / −1.1 against the soup's self-play rates), **43.0% against R39's** 7,120–7,200M SWA (−6.4 / −6.1), 52.0% against R34's -- RL from the soup does not hold its edge, it drifts back toward the R34 line |
+| R45 | R39 exactly, with the soup's **raw policy** as the target and no rollout root (`--search-teacher-policy`) | in R39's own field: **1576 / 1571 / 1553** at the three windows against R39's 1582 / 1573 / 1551; +13.8 / +8.7 per seat over the plain leg (R39: +15.2 / +8.3), 59.4% head to head (R39: 60.7%); against R39's matched SWA **48.8%** over 4,000 games (US 50.4, USSR 47.1; R45's self-play 49.8 / 49.1) -- within ~1.5 standard errors of level |
+
+So R39's gain over the plain leg is the soup's policy, distilled through a small CE term at 1 in 256 decisions: the
+rollout root's part is at most a few Elo, in line with R40–R42. The CE route does what continued RL from the soup's
+weights does not (R44), and without the search it trains at about the plain run's speed.
+
 ## Reading: where the limits are, and where to go
 
 **Where the limits are.**
