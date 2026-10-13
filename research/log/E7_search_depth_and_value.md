@@ -224,6 +224,62 @@ with the teacher's departures learned well above Gumbel's 1 in 7 and no entropy 
   pull on the network's own positions, kept honest by the RL term, is not a one-shot hard push; the
   offline null is about the second.
 
+## 6. Online distillation, and why it fails (2026-10-11/12)
+
+R32's online improved-policy targets with the rollout root as the teacher's search (`--search-rollout-horizon`,
+`ai/search/rollout_root.RolloutTeacher`; runs in [`../runs.md`](../runs.md)):
+
+| arm | teacher | result |
+|:---|:---|:---|
+| R39 | the R34 soup + rollout | +15.2 / +8.3 per seat over the plain leg, 60.7%; above the raw soup 53.2% -- but 33.4% against its teacher (~25 of the rollout's ~140 Elo absorbed), saturated by 7,200M (35.1%); with rollout on top level with the soup + rollout (47.8%) |
+| R40 | R34's own raw snapshot + rollout | 50.9% over R34, ~+10–20 Elo |
+| R41 | as R40, 4× the targets and 4× the CE weight | 51.0% over R34, 49.5% against R40; against the teacher 37.6%, where R34 itself scores 37.0% -- nothing absorbed |
+| R42 | as R41, 64-world targets and CE weight 1.0 | at 7,000M 48.7% against R34 and 46.9% against R41 -- nothing, slightly worse; stopped |
+
+R39's margin is the soup's raw strength; the rollout's part transfers at ~10–25 Elo whatever the budget.
+Played instead of distilled, it is ~140: rollout on R34's raw snapshot beats it 73.0%.
+
+**Why** (`ai/eval/rollout_consistency.py` on R34's raw 6,800M snapshot: 2,844 positions from 64 greedy games, every
+decision type, each searched three times with fresh seeds; `data/reports/rollout_consistency_R34_6800.txt`):
+
+* **Half the verdicts are noise at 16 worlds.** The root departs from the network's move at 15% of decisions, in
+  every run; but of one run's departures another run departs too in only 62–64% and picks the same move in 57–58%,
+  and only **188 of 432 departures are the same in all three runs**. The improved-policy targets agree on their top
+  move 78% of the time (total variation 0.20 on average, 0.03 at the median: most targets are nearly identical, a
+  minority swing).
+* **The gain is spread thin, not concentrated.** Departures fall at single Influence points 40%, card choices 37%,
+  play modes 19%; in every era, at every DEFCON, for both sides, over dozens of cards with none dominant; each worth
+  **+0.04 to +0.08** of value (2–4 points of win probability). There is no rule to learn -- the ~140 Elo is the sum of
+  many small, partly noisy corrections close to the network's own resolution.
+
+**Worlds at play time** (rollout(k = 4, w, 4 boundaries, z2) on R34's raw 7,200M snapshot against the snapshot raw, 1,000 a side; `data/reports/rollout_worlds_w*.json`, w = 16 is `r34raw_rollout.json`):
+
+| worlds | wins | score | Elo over raw |
+|---:|---:|---:|---:|
+| 4 | 62.0% | 62.6% | +90 |
+| 8 | 69.9% | 70.6% | +152 |
+| 16 | 73.0% | 73.5% | +177 |
+| 32 | 75.1% | 75.6% | +197 |
+| 64 | 77.1% | 77.4% | +214 |
+
+Noise costs strength at play time too: halving 16 → 8 worlds loses ~25 Elo and 8 → 4 another ~60, while doubling to 32 and 64 still adds ~+20 each, with diminishing returns. The search's gain is real per-position evidence that more samples sharpen -- the kind a network cannot amortise -- and 64 worlds is the strongest player measured (~+215 over raw).
+
+**Searched one move at a time** (`sparse:<frac>:rollout:...`: the rollout root at a random fraction of decisions, the network's greedy move elsewhere -- so every follow-up of a searched move is the network's own; R34's raw 7,200M snapshot against itself raw, 1,000 a side; `data/reports/rollout_sparse_*.json`):
+
+| searched fraction | wins | score | Elo over raw | proportional share of +177 |
+|---:|---:|---:|---:|---:|
+| 0.1 | 54.1% | 54.6% | +32 | +18 |
+| 0.25 | 58.1% | 58.8% | +62 | +44 |
+| 0.5 | 64.6% | 65.5% | +111 | +88 |
+| 1 | 73.0% | 73.5% | +177 | +177 |
+
+The gain is above proportional at small fractions (10% of moves searched already gives ~+32 of the +177): a searched move helps on its own, with the network following it up. The search's value does not depend on consecutive searched moves, so distilling single moves is the right target -- the failure is in learning them (noise, spread), not in their need for a searched follow-up.
+
+So a network must learn, from targets half of which are seed noise, corrections each worth a few points of win
+probability and scattered over every kind of decision -- a hard target for any amount of weight (R41) or teacher
+strength (R39). The next checks: targets from many more worlds (or averaged over seeds) so that only the stable
+departures teach, and an offline fit test on a fixed bank to separate capacity from optimisation.
+
 ## Reading: where the limits are, and where to go
 
 **Where the limits are.**

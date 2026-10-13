@@ -1,7 +1,9 @@
 /**
  * Runs the rollout root for the page: in a worker with its own engine and model when the browser
- * has workers (rollout_worker.ts), else inline on the page's own engine. One search at a time; a
- * newer request supersedes an older one, whose answer is then dropped.
+ * has workers (rollout_worker.ts), else inline on the page's own engine. One search at a time, on
+ * either path: a search awaits the model between its batch steps, and two at once would share one
+ * engine and one rollout batch. A request still waiting when a newer one arrives is superseded --
+ * it rejects without running, as the page has moved on from it; one already running finishes.
  */
 import { WasmEngine } from "../engine/wasm_engine";
 import { Model } from "./model";
@@ -14,6 +16,9 @@ export class RolloutRunner {
   private workerModelKey = "";
   private next = 1;
   private pending = new Map<number, { resolve: (r: SearchResult | null) => void; reject: (e: Error) => void }>();
+  /** Settles when the search before the newest request has finished. */
+  private queue: Promise<void> = Promise.resolve();
+  private latest = 0;
 
   constructor(private readonly engine: WasmEngine, private readonly base: string = import.meta.env.BASE_URL) {}
 
@@ -47,10 +52,25 @@ export class RolloutRunner {
   private loadWaiters: { resolve: () => void; reject: (e: Error) => void } | null = null;
 
   /**
-   * The root's decision for the position `state` (the engine's raw bytes) under `spec`. Inline
-   * when there is no worker for this model: then the page's engine runs it between two renders.
+   * The root's decision for the position `state` (the engine's raw bytes) under `spec`, after the
+   * search before it has finished. Rejects without searching if a newer request arrives first.
    */
   async search(state: Uint8Array, model: Model, key: string, spec: RolloutSpec, seed: number): Promise<SearchResult | null> {
+    const ticket = ++this.latest;
+    const before = this.queue;
+    let done!: () => void;
+    this.queue = new Promise<void>(resolve => { done = resolve; });
+    try {
+      await before;
+      if (ticket !== this.latest) throw new Error("superseded by a newer search");
+      return await this.searchNow(state, model, key, spec, seed);
+    } finally {
+      done();
+    }
+  }
+
+  /** One search, now. Inline when there is no worker for this model: then the page's engine runs it between two renders. */
+  private async searchNow(state: Uint8Array, model: Model, key: string, spec: RolloutSpec, seed: number): Promise<SearchResult | null> {
     if (this.worker && this.workerReady && this.workerModelKey === key) {
       await this.workerReady;
       const id = this.next++;

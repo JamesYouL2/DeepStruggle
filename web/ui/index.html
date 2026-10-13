@@ -61,6 +61,13 @@
             <option value="rollout">Rollout root</option>
           </select>
         </label>
+        <!-- The model's readout (its win chances, move probabilities, search) and its badges on the
+             board: on in the Developer view, off in a player's view, either switchable here. The
+             model's own decisions stay hidden in a player's view regardless (main.ts setView). -->
+        <label class="analysis-toggle" title="Show the model's readout -- win chances, move probabilities, search -- and its badges on the board. On in the Developer view, off when you play a side.">
+          <input type="checkbox" id="analysis-visible-toggle">
+          Show analysis
+        </label>
         <!-- Where the model comes from (analysis_view.ts binds these by id), opened by Change.
              The readout -- the policy over the open decision and the critic -- stays in the Model
              Analysis panel. -->
@@ -240,17 +247,29 @@
           <button id="mode-dialog-close" class="btn-icon" title="Keep the current mode (Esc)">✕</button>
         </div>
         <div class="modal-body mode-dialog-body">
+          <!-- How the model picks its moves: the search select's two settings (main.ts askMode). -->
+          <fieldset class="mode-opponent" id="mode-opponent">
+            <legend>When you play a side, the model plays with</legend>
+            <label class="mode-opponent-option">
+              <input type="radio" name="mode-opponent" value="rollout" id="mode-opponent-rollout">
+              <span><b>Rollout root</b> -- its strongest player: <span id="mode-opponent-rollout-spec">its top 4 moves, each played out in 16 sampled worlds</span>. A few seconds a move.</span>
+            </label>
+            <label class="mode-opponent-option">
+              <input type="radio" name="mode-opponent" value="policy" id="mode-opponent-policy">
+              <span><b>Policy</b> -- its most likely move, at once.</span>
+            </label>
+          </fieldset>
           <button id="mode-choice-dev" class="mode-choice" data-mode="DEV">
             <span class="mode-choice-title">Developer</span>
             <span class="mode-choice-text">Both hands, every option, the debug tools and replays. You move both sides, or let the model play one.</span>
           </button>
           <button id="mode-choice-us" class="mode-choice mode-choice-us" data-mode="US">
             <span class="mode-choice-title">Play as US</span>
-            <span class="mode-choice-text">The USSR's hand and headline stay hidden; the model plays the USSR.</span>
+            <span class="mode-choice-text">The USSR's hand and headline stay hidden; the model plays the USSR. No hints: its win chances and move probabilities stay off unless you turn on Show analysis.</span>
           </button>
           <button id="mode-choice-ussr" class="mode-choice mode-choice-ussr" data-mode="USSR">
             <span class="mode-choice-title">Play as USSR</span>
-            <span class="mode-choice-text">The US's hand and headline stay hidden; the model plays the US.</span>
+            <span class="mode-choice-text">The US's hand and headline stay hidden; the model plays the US. No hints: its win chances and move probabilities stay off unless you turn on Show analysis.</span>
           </button>
           <p class="mode-dialog-note" id="mode-dialog-note"></p>
         </div>

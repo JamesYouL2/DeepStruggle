@@ -24,6 +24,9 @@ One pass of greedy self-play per checkpoint feeds every section:
 
     PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
         --checkpoints <pt> [<pt> ...] --games 16384
+    # or a leaderboard player -- a network under a search plays its own self-play games:
+    PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
+        --players '<network>~rollout(k=4,worlds=16,horizon=4,rule=z2)'
 
 Each checkpoint gets `research/log/per_checkpoint/<run>_<step>M.md` (and the raw records in
 `data/eval/per_checkpoint/`); the directory's `README.md` index is rewritten to list every report.
@@ -38,7 +41,9 @@ import hashlib
 import json
 import os
 import re
+import multiprocessing
 import subprocess
+import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -46,6 +51,12 @@ import torch
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
+from tools.lib.action_view import checkpoint_merged_influence
+from tools.lib.data_root import data_path
+from tools.lib.leaderboard import load as load_leaderboard, player_spec
+from tools.lib.player_agent import NeuralAgent, load_agent
+from tools.lib.player_spec import Policy, kind_of, load_spec
 from tools.scripts.event_play_census import (EVENT, SCORING, Holding, HoldingTracker, dump_holding,
                                              load_holding, table as census_table)
 from tools.scripts.star_wars_play import _tag_retrievals, retrieval_table
@@ -509,8 +520,12 @@ def _controlled(st: ts.GameState, countries: Sequence[int], side: Any) -> int:
     return sum(1 for c in countries if ts.Scoring.is_controlled_by(st, c, side))
 
 
-def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[str, Any]:
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
+def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any = None,
+         player: Optional[str] = None, batches: Optional[Sequence[int]] = None) -> Dict[str, Any]:
+    """The report's self-play games: the network's argmax at every decision, or with `agent` (a
+    batch searcher, `select_actions_batch(states)`) the agent's pick -- reseeded per batch of games,
+    so a run is reproducible. `player` names the agent in the records. `batches` restricts the run
+    to those batches (their first game ids), for a worker playing part of it."""
     check_obs_width(model)
     feats = model_obs_features(model)
     width = int(ts.obs_size_for(feats))
@@ -532,7 +547,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
     endings: List[Dict[str, Any]] = []
     observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw,
                  kal_after, chern_us, chern_ussr, chern)
-    for b0 in range(0, games, batch):
+    for b0 in (batches if batches is not None else range(0, games, batch)):
         n = min(batch, games - b0)
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
         env.set_obs_features(feats, feats)
@@ -540,14 +555,26 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             env.set_merged_influence(True, True)
         obs, masks, _ = env.reset_all()
         done = [False] * n
+        if agent is not None and hasattr(agent, "reseed"):
+            agent.reseed(seed + b0)
         for _ in range(20_000):
             if all(done):
                 break
             masks_np = np.asarray(masks)
-            with torch.no_grad():
-                logits = model(torch.from_numpy(np.asarray(obs, dtype=np.float32)[:, :width]).to(device),
-                               torch.from_numpy(masks_np).to(device))[0].float()
-            actions = logits.argmax(-1).cpu().numpy()
+            if agent is None:
+                with torch.no_grad():
+                    logits = model(torch.from_numpy(np.asarray(obs, dtype=np.float32)[:, :width]).to(device),
+                                   torch.from_numpy(masks_np).to(device))[0].float()
+                actions = logits.argmax(-1).cpu().numpy()
+            else:
+                # Every game still being played gets the agent's pick, in one batch; a finished one
+                # (the env has dealt it a new game, which is not part of the run) any legal move.
+                actions = masks_np.argmax(-1).astype(np.int32)
+                live = [i for i in range(n) if not done[i] and not ts.Engine.is_terminal(env.runner.get_state(i))]
+                if live:
+                    picks = agent.select_actions_batch([env.runner.get_state(i) for i in live])
+                    for i, pick in zip(live, picks):
+                        actions[i] = int(pick)
             for i in range(n):
                 if done[i]:
                     continue
@@ -584,7 +611,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             if not done[i]:
                 for o in observers:
                     o.done(b0 + i)
-    return {"games": games, "seed": seed, "batch": batch,
+    return {"games": games, "seed": seed, "batch": batch, "player": player,
             "holdings": [dump_holding(h) for h in census.holdings],
             "star_wars": {"plays": sw.plays, "retrievals": sw.retrievals},
             "five_year_plan": fyp.plays, "aldrich_ames": ames.plays,
@@ -595,6 +622,57 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int) -> Dict[st
             "warsaw_pact": warsaw.choices, "kal_aftermath": kal_after.plays,
             "chernobyl": {"us_plays": chern_us.plays, "ussr_plays": chern_ussr.plays, "regions": chern.regions,
                           "us_placements": chern.placements}}
+
+
+# A worker process's network and agent, loaded once by `_worker_init`.
+_WORKER: Dict[str, Any] = {}
+
+
+def _worker_init(path: str, agent_spec: Optional[str], player: Optional[str], merged: bool) -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    _WORKER.update(model=NeuralAgent.from_checkpoint(path, device=device).model,
+                   agent=load_agent(agent_spec, device=device) if agent_spec else None,
+                   player=player, merged=merged)
+
+
+def _worker_batch(job: Tuple[int, int, int, int]) -> Dict[str, Any]:
+    games, seed, batch, b0 = job
+    t0 = time.time()
+    d = play(_WORKER["model"], _WORKER["merged"], games, seed, batch, agent=_WORKER["agent"],
+             player=_WORKER["player"], batches=[b0])
+    print(f"  batch {b0:,}-{min(b0 + batch, games) - 1:,}: {time.time() - t0:.0f} s", flush=True)
+    return d
+
+
+def _merge(a: Any, b: Any) -> Any:
+    """One batch's records onto the batches before it: lists concatenated (each batch's games in
+    order), dicts merged key by key, counts added. A game-keyed dict has disjoint keys."""
+    if isinstance(a, list):
+        return a + b
+    if isinstance(a, dict):
+        out = dict(a)
+        for k, v in b.items():
+            out[k] = _merge(out[k], v) if k in out else v
+        return out
+    if isinstance(a, (int, float)) and not isinstance(a, bool):
+        return a + b
+    return a
+
+
+def play_parallel(path: str, agent_spec: Optional[str], player: Optional[str], merged: bool, games: int,
+                  seed: int, batch: int, workers: int) -> Dict[str, Any]:
+    """`play` over `workers` processes, a batch at a time, merged in batch order. Every batch is its own
+    game (the env seeded by its first game id, the agent reseeded likewise), so this is the same run
+    as `play` in one process -- the engine's playouts are single-threaded, and a search is CPU-bound."""
+    jobs = [(games, seed, batch, b0) for b0 in range(0, games, batch)]
+    ctx = multiprocessing.get_context("spawn")
+    with ctx.Pool(workers, initializer=_worker_init, initargs=(path, agent_spec, player, merged)) as pool:
+        parts = list(pool.imap(_worker_batch, jobs))
+    d: Dict[str, Any] = {}
+    for part in parts:
+        d = _merge(d, part) if d else part
+    d.update(games=games, seed=seed, batch=batch, player=player)
+    return d
 
 
 def _collect_endings(info: Dict[str, Any], done: List[bool], b0: int, out: List[Dict[str, Any]]) -> None:
@@ -612,7 +690,6 @@ def play_endings(model: Any, merged: bool, games: int, seed: int, batch: int) ->
     """How the same games as `play` end (same seeds, batches and greedy policy, so the same games),
     without the per-decision bookkeeping -- for adding the endings section to a report built from
     records that predate it."""
-    from bindings.ts_env import TsVectorizedEnv, model_obs_features
     feats = model_obs_features(model)
     width = int(ts.obs_size_for(feats))
     device = next(model.parameters()).device
@@ -645,7 +722,6 @@ def play_setups(model: Any, merged: bool, games: int, seed: int, batch: int) -> 
     """Only the setup of the same games as `play` (same seeds, batches and greedy policy, so the
     same placements), stopping each batch once every game has left the setup phase -- for adding
     the setup section to a report built from records that predate it."""
-    from bindings.ts_env import TsVectorizedEnv, model_obs_features
     feats = model_obs_features(model)
     width = int(ts.obs_size_for(feats))
     device = next(model.parameters()).device
@@ -1321,8 +1397,11 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     if meta.get("resumed_from"):
         out.append(f"* **Resumed from:** `{os.path.relpath(str(meta['resumed_from']), '/workspace')}`")
     out += [f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}",
-            f"* **Games:** {d['games']:,} greedy self-play games of the checkpoint against itself, seed "
-            f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games.", "",
+            f"* **Games:** {d['games']:,} " + (f"self-play games of the leaderboard player `{d['player']}` -- this "
+            f"network under that search at every decision, both sides --" if d.get("player")
+            else "greedy self-play games of the checkpoint") + " against itself, seed "
+            f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games. Decisions with a single "
+            "legal answer are played by the engine and never seen by the observers (a forced last card, say).", "",
             CONTENTS, "",
             endings_section(d.get("endings", [])), "",
             setup_section(d.get("setups", [])), "",
@@ -1373,15 +1452,19 @@ def write_index() -> None:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    from bindings.ts_env import model_obs_features
-    from tools.lib.action_view import checkpoint_merged_influence
-    from tools.lib.player_agent import NeuralAgent
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--checkpoints", nargs="+", required=True)
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--checkpoints", nargs="+")
+    src.add_argument("--players", nargs="+",
+                     help="leaderboard player ids (leaderboard/players.json): the network registered for each, "
+                          "played as the player plays -- under its search, if it has one")
     ap.add_argument("--games", type=int, default=16384)
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--seed", type=int, default=55_000)
     ap.add_argument("--load", action="store_true", help="rebuild the reports from the saved records")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="processes playing batches in parallel (the same games and records as one); worth it "
+                         "for a search player, whose playouts are single-threaded")
     ap.add_argument("--output-dir", default=REPORT_DIR)
     ap.add_argument("--data-dir", default=DATA_DIR, help="where the raw records go (and --load reads them)")
     ap.add_argument("--labels", nargs="+", default=None,
@@ -1390,6 +1473,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--notes", nargs="+", default=None,
                     help="a description per checkpoint, in place of its run's metadata.json description")
     a = ap.parse_args(argv)
+    # A player brings its network's file, its search and its description, all from the registry.
+    agents: List[Optional[str]] = []
+    if a.players:
+        board = load_leaderboard()
+        a.checkpoints, a.labels, notes = [], [], []
+        for pid in a.players:
+            if pid not in board.players:
+                ap.error(f"{pid!r} is not a registered player")
+            pl = board.players[pid]
+            if pl["network"] is None:
+                ap.error(f"{pid!r} is a bot, not a network")
+            net = board.networks[str(pl["network"])]
+            path = data_path(net["file"])
+            if _sha(path) != net["sha256"]:
+                ap.error(f"{path} is not the file registered for {pl['network']} (sha256 differs)")
+            spec = player_spec(board, pid)
+            a.checkpoints.append(path)
+            a.labels.append(pid)
+            notes.append(pl["description"]
+                         or f"{net['description'].rstrip('.')}. Played under its {kind_of(spec)} search: `{pid}`.")
+            greedy = isinstance(spec, Policy) and spec.temperature <= 0.05
+            agents.append(None if greedy else load_spec(spec, path))
+        a.notes = a.notes or notes
+    else:
+        agents = [None] * len(a.checkpoints)
     if a.labels and len(a.labels) != len(a.checkpoints) or a.notes and len(a.notes) != len(a.checkpoints):
         ap.error("--labels and --notes need one entry per checkpoint")
     os.makedirs(a.output_dir, exist_ok=True)
@@ -1412,7 +1520,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 d["endings"] = play_endings(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
                 json.dump(d, open(dump, "w"))
         else:
-            d = play(model, merged, a.games, a.seed, a.batch)
+            agent_spec = agents[k]
+            player = a.labels[k] if agent_spec is not None else None
+            if agent_spec is not None and merged:
+                raise SystemExit(f"{path}: a search picks moves in the E4 view; this checkpoint plays E4.1")
+            if a.workers > 1:
+                # Each worker's OpenMP pool shares the machine's cores rather than claiming all of them.
+                os.environ.setdefault("OMP_NUM_THREADS", str(max(1, (os.cpu_count() or 1) // a.workers)))
+                d = play_parallel(path, agent_spec, player, merged, a.games, a.seed, a.batch, a.workers)
+            else:
+                agent = load_agent(agent_spec, device=dev) if agent_spec is not None else None
+                d = play(model, merged, a.games, a.seed, a.batch, agent=agent, player=player)
             json.dump(d, open(dump, "w"))
         md = report(path, d, merged, feats, label, note)
         out = os.path.join(a.output_dir, f"{stem}.md")

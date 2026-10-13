@@ -37,6 +37,8 @@ from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E
 from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .turn_credit import TurnCredit  # noqa: E402
 from ai.search.rollout_root import RolloutConfig, RolloutTeacher  # noqa: E402
+from .search_workers import SearchWorkers  # noqa: E402
+from .forced_openings import OpeningSeeder  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -294,6 +296,7 @@ class BaseNashPGTrainer:
         search_rollout_horizon: int = 0,  # > 0: the search-CE targets come from a rollout root
         search_rollout_k: int = 4,
         search_rollout_worlds: int = 16,
+        search_workers: int = 0,          # > 0: the rollout-root targets priced by worker processes
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
         teacher_coef: float = 0.0,
         teacher_seat: int = 1,         # +1 US, -1 USSR, 0 both
@@ -352,6 +355,9 @@ class BaseNashPGTrainer:
         seed_scenarios: Sequence[str] = (),
         seed_frac: float = 0.0,
         seed_scenarios_from: int = 0,
+        forced_openings_frac: float = 0.0,     # > 0: per side, that share of games start from a forced opening
+        forced_openings_us: Sequence[str] = (),
+        forced_openings_ussr: Sequence[str] = (),
         aux_opp_legality: float = 0.0,
         aux_opp_legality_frac: float = 0.1,
         aux_opp_legality_min_batch: int = 4096,
@@ -409,6 +415,9 @@ class BaseNashPGTrainer:
         if search_rollout_horizon > 0 and (search_gumbel_k > 0 or search_ce_coef <= 0.0 or search_value_beta > 0.0):
             raise ValueError("rollout-root targets (--search-rollout-horizon) replace the Gumbel root: they need "
                              "--search-ce-coef > 0 and neither --search-gumbel-k nor --search-value-beta")
+        if search_workers > 0 and (search_rollout_horizon <= 0 or search_teacher_net is None):
+            raise ValueError("--search-workers prices rollout-root targets of a frozen teacher: it needs "
+                             "--search-rollout-horizon > 0 and --search-teacher-checkpoint")
         if search_value_beta > 0.0 and search_gumbel_k <= 0:
             raise ValueError("search values into the critic (T2) need the Gumbel root: "
                              "--search-gumbel-k > 0")
@@ -488,6 +497,16 @@ class BaseNashPGTrainer:
                      if search_gumbel_k > 0 else ", visit-count targets"), flush=True)
         self.search_gumbel_k = int(search_gumbel_k)
         self.search_rollout_horizon = int(search_rollout_horizon)
+        #: With workers, the queued decisions are streamed to them during the rollout and collected
+        #: at its end, so the targets land on this rollout's rows as before (ai/training/search_workers.py).
+        self._search_pool: Optional[SearchWorkers] = None
+        if search_workers > 0:
+            self._search_pool = SearchWorkers(
+                int(search_workers), search_teacher_net,
+                RolloutConfig(k=int(search_rollout_k), worlds=int(search_rollout_worlds),
+                              horizon=int(search_rollout_horizon), rule="z2"), self.device)
+            print(f"[X4b] the rollout-root targets are priced by {search_workers} worker processes "
+                  f"beside the rollout", flush=True)
         self.search_saturated_frac = 0.0
         #: (buffer step, env, cloned state) of every decision to search this rollout; searched in
         #: one batch by `_flush_search_targets` when the rollout ends.
@@ -639,6 +658,16 @@ class BaseNashPGTrainer:
                   f"gradient on the forced plays)", flush=True)
         elif seed_frac > 0.0:
             raise ValueError("--seed-frac needs --seed-scenarios")
+        # Owner 2026-10-13: openings forced as environment, independently per side
+        # (ai/training/forced_openings.py) -- the network learns to play on from them.
+        self.opening_seeder: Optional[OpeningSeeder] = None
+        self._openings_started = False
+        if forced_openings_frac > 0.0:
+            self.opening_seeder = OpeningSeeder(float(forced_openings_frac), list(forced_openings_us),
+                                                list(forced_openings_ussr), self.num_envs)
+            print(f"[forced openings] each side, independently, in {forced_openings_frac:.0%} of games: US "
+                  f"{list(forced_openings_us)}, USSR {list(forced_openings_ussr)} -- as environment (no policy "
+                  f"gradient on the forced placements or the Marshall Plan headline)", flush=True)
         # Owner 2026-10-06: at the learner's play-mode decision for Wargames / Arms Race / One Small
         # Step with the event legal and applicable, play the event with probability
         # force_event_frac, trained as the policy's own (show_and_decide.ApplicableEventForcer).
@@ -1365,6 +1394,8 @@ class BaseNashPGTrainer:
     def collect_rollouts(self) -> Dict[str, Any]:
         """Collects on-policy rollouts across all parallel environments."""
         t0 = time.time()
+        if self._search_pool is not None:
+            self._search_pool.begin()
         self.active_net.eval()
         if self._graphs is not None:
             self._graphs.begin_rollout()
@@ -1380,6 +1411,9 @@ class BaseNashPGTrainer:
         self.buffer.reset()
         if self._behaviour_w is not None:
             self._behaviour_w.fill_(1.0)
+        if self.opening_seeder is not None and not self._openings_started:
+            self.opening_seeder.draw(np.arange(self.num_envs))
+            self._openings_started = True
         if self.seeder is not None and not self._seed_started:
             # The first rollout's games are drawn here rather than in __init__, because a resumed
             # run only knows its step count (and so whether seeding has started) after loading.
@@ -1511,6 +1545,15 @@ class BaseNashPGTrainer:
                             _forced_t,
                             unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1),
                             log_probs_t)
+                if self.opening_seeder is not None:
+                    _fo = self.opening_seeder.apply(actions_t, np.asarray(self._masks_np), _dp, self.env.runner)
+                    if _fo.any():
+                        learner_np = np.asarray(learner_np, dtype=bool) & ~_fo
+                        learner_t = torch.from_numpy(learner_np).to(self.device)
+                        _pm_learner = _pm & learner_t
+                        _fo_t = torch.from_numpy(_fo).to(self.device)
+                        log_probs_t = torch.where(
+                            _fo_t, unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1), log_probs_t)
                 if self.event_forcer is not None:
                     # Applicable events forced as the policy's OWN play: learner stays 1, the stored
                     # log-prob is log pi of the event, and a floor weight on the row goes back to 1.
@@ -1594,6 +1637,8 @@ class BaseNashPGTrainer:
                 self._script_draw(np.flatnonzero(self._dones_np > 0.5))
             if self.seeder is not None:
                 self.seeder.draw(np.flatnonzero(self._dones_np > 0.5), self.total_env_steps)
+            if self.opening_seeder is not None:
+                self.opening_seeder.draw(np.flatnonzero(self._dones_np > 0.5))
             if self.aux_opp_legality > 0.0:
                 self._opp_legal_game_over(np.flatnonzero(self._dones_np > 0.5))
 
@@ -1964,6 +2009,8 @@ class BaseNashPGTrainer:
             st = self.env.runner.get_state(i)
             if not ts.Engine.is_terminal(st) and self._searcher.should_search(st):
                 self._search_queue.append((step, i, st.clone()))
+        if self._search_pool is not None:
+            self._search_pool.feed(self._search_queue)
 
     def _flush_search_targets(self) -> None:
         """Search every queued decision in one batch and write the visit distributions into the
@@ -1995,7 +2042,11 @@ class BaseNashPGTrainer:
             res: List[Tuple[List[int], Any]] = []
             root_values: List[float] = []
             sat_n = 0.0
-            for s0 in range(0, len(queue), SEARCH_CHUNK):
+            if self._search_pool is not None:
+                self._search_pool.feed(queue, final=True)
+                got = self._search_pool.collect()
+                res = [got.get(j, ([], _np.zeros(0))) for j in range(len(queue))]
+            for s0 in range(0, len(queue) if self._search_pool is None else 0, SEARCH_CHUNK):
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
                 if self.search_gumbel_k > 0 or self.search_rollout_horizon > 0:
                     res.extend(self._searcher.improved_policies(chunk))
@@ -2094,6 +2145,8 @@ class BaseNashPGTrainer:
             for _name in self.event_forcer.forced:
                 combined[f"force_applicable_{_name}"] = float(self.event_forcer.applicable[_name])
                 combined[f"force_forced_{_name}"] = float(self.event_forcer.forced[_name])
+        if self.opening_seeder is not None:
+            combined["forced_openings_moves"] = float(self.opening_seeder.forced_moves)
         if self.seeder is not None:
             _g = self.seeder.games
             combined["seed_games_frac"] = float(_g[0]) / max(float(_g.sum()), 1.0)

@@ -423,6 +423,12 @@ The workbench serves four purposes, all in the page:
   or discards stay), its face-down headline, and the model's readout while it decides; the map
   marks the countries its latest turn changed or targeted. The model plays it by auto-play, and
   Debug Tools and replays are developer-view only (`web/ui/src/game/view.ts`, `last_turn.ts`).
+  No hints by default: **Show analysis** in the technical bar shows or hides the model's readout
+  (its win chances, move probabilities and search), its badges on the board and *Play favourite*.
+  It is on in the Developer view and off in a player's view, and either can be switched; the
+  model's own decisions stay hidden in a player's view regardless. The play-mode dialog asks how
+  the model plays the other side -- the **rollout root** (offered by default, a few seconds a move)
+  or the policy. A decision is searched only when auto-play plays it or the readout shows it.
 
 The address bar always carries `pos` (the position itself), `model`, `auto` and `view`, updated with
 `replaceState`, so copying it shares the exact board. The engine badge shows the page engine's

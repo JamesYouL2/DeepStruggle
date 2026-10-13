@@ -45,7 +45,7 @@
       "rule": "z2"
     },
     "description": "",
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+_R34_R34-S45_R34-S46_7120..7200M_rollout_k_4_worlds_16_horizon_4_rule_z2.md"
   },
   "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M": {
     "network": "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M",
@@ -133,6 +133,27 @@
     "inference": {
       "kind": "policy",
       "temperature": 0.0
+    },
+    "description": "",
+    "report": null
+  },
+  "E7-A8-R1-S44@6400M+R39@7120..7200M": {
+    "network": "E7-A8-R1-S44@6400M+R39@7120..7200M",
+    "inference": {
+      "kind": "policy",
+      "temperature": 0.0
+    },
+    "description": "",
+    "report": null
+  },
+  "E7-A8-R1-S44@6400M+R39@7120..7200M~rollout(k=4,worlds=16,horizon=4,rule=z2)": {
+    "network": "E7-A8-R1-S44@6400M+R39@7120..7200M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 16,
+      "horizon": 4,
+      "rule": "z2"
     },
     "description": "",
     "report": null

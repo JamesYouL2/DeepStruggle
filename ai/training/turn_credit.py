@@ -30,6 +30,8 @@ from __future__ import annotations
 import io
 import math
 import multiprocessing as mp
+import os
+import queue as _queue
 import random
 import time
 import traceback
@@ -104,10 +106,16 @@ def _worker_main(jobs: Any, results: Any, model_bytes: bytes, device: str) -> No
     """A pricing worker: its own copy of the network, fed (weights, decisions) and answering with rows
     one job at a time, in order."""
     torch.set_num_threads(2)
+    parent = os.getppid()
     dev = torch.device(device)
     net = torch.load(io.BytesIO(model_bytes), map_location=dev, weights_only=False).eval()
     while True:
-        msg = jobs.get()
+        try:
+            msg = jobs.get(timeout=30.0)
+        except _queue.Empty:
+            if os.getppid() != parent:          # the trainer died without closing us: do not linger
+                return
+            continue
         if msg is None:
             return
         weights, items, params, seed = msg
@@ -258,7 +266,6 @@ class TurnCredit:
     def _get_result(self) -> Tuple[str, Any, Dict[str, float]]:
         """The next worker answer; raises rather than waiting forever on a worker that died (an OOM
         in a worker's CUDA context kills it without a reply)."""
-        import queue as _queue
         assert self._results is not None
         while True:
             try:

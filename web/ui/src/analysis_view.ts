@@ -120,10 +120,18 @@ export class AnalysisPanel {
   private lastAnalysis: LiveAnalysis | null = null;
   private auto: AutoSide = "";
   /**
-   * A player's view (game/view.ts): the side the model plays, whose readout -- its options, its
-   * probabilities, its critic, all read from its own hand -- is not shown while it decides.
+   * A player's view (game/view.ts): the side the model plays. Its decisions' readout is never
+   * shown -- its options, probabilities and critic are read from its own hand -- whatever
+   * `readoutShown` says. The model still reads every position: auto-play plays `favourite()` for
+   * its side.
    */
   private hiddenSide: "US" | "USSR" | null = null;
+  /**
+   * The readout -- the critic's win chances, the policy, the search -- and its badges on the board
+   * are on screen (Show analysis in the technical bar, main.ts). They would be hints to a player:
+   * the Developer view turns them on, a player's view off, and the toggle overrides either.
+   */
+  private readoutShown = true;
 
   private sourceSelect = el<HTMLSelectElement>("analysis-source-select");
   private runSelect = el<HTMLSelectElement>("analysis-run-select");
@@ -296,14 +304,14 @@ export class AnalysisPanel {
   }
 
   public playFavourite(): void {
-    if (this.hidingDecision()) return;   // the model's own move, made by auto-play
+    if (!this.readoutOnScreen()) return;   // a hint with the readout off, or the model's own move
     const idx = this.favourite();
     if (idx !== null) this.onPlayFlat(idx);
   }
 
   /**
    * Set the player's view: `side` is the model's side (auto-play is locked to it), or null for
-   * the developer's view, which unlocks auto-play and shows everything.
+   * the developer's view, which unlocks auto-play. Whether the readout shows is `readoutShown`.
    */
   public setHiddenSide(side: "US" | "USSR" | null): void {
     this.hiddenSide = side;
@@ -316,6 +324,22 @@ export class AnalysisPanel {
   /** The analysis on screen is the hidden side's decision. */
   private hidingDecision(): boolean {
     return !!this.hiddenSide && this.lastAnalysis?.decision_player === this.hiddenSide;
+  }
+
+  /** Show the readout and its badges, or keep them off (Show analysis). */
+  public setReadoutShown(on: boolean): void {
+    this.readoutShown = on;
+    this.renderBody();
+  }
+
+  /** A decision by `side` would have its readout on screen. */
+  public showsReadoutFor(side: "US" | "USSR"): boolean {
+    return this.readoutShown && side !== this.hiddenSide;
+  }
+
+  /** The readout of the analysis on screen is shown. */
+  private readoutOnScreen(): boolean {
+    return this.readoutShown && !this.hidingDecision();
   }
 
   /** The side that plays the model's favourite by itself ("" = nobody). */
@@ -477,9 +501,11 @@ export class AnalysisPanel {
   private renderBody(state: GameState | null = null): void {
     const a = this.lastAnalysis;
     this.renderInfo();
-    this.favButton.disabled = this.favourite() === null;
+    this.favButton.disabled = !this.readoutOnScreen() || this.favourite() === null;
     const fav = a?.choices.find(c => c.idx === a.policy?.argmax_idx);
-    this.favButton.title = fav ? `Play the model's most likely move: ${fav.name ?? "#" + fav.idx} (F)` : "No decision to make";
+    this.favButton.title = this.hidingDecision() ? `The model plays ${this.hiddenSide} in this view`
+      : !this.readoutShown ? "The analysis is hidden -- turn on Show analysis in the top bar to use it"
+      : fav ? `Play the model's most likely move: ${fav.name ?? "#" + fav.idx} (F)` : "No decision to make";
 
     if (this.status === "error") {
       this.badge.textContent = "error";
@@ -500,10 +526,8 @@ export class AnalysisPanel {
       return;
     }
     this.badge.textContent = a.merged_influence ? "E4.1 view" : "E4 view";
-    if (this.hidingDecision()) {
-      this.favButton.disabled = true;
-      this.body.innerHTML = `<div class="trace-empty">The model is choosing for <b>${esc(this.hiddenSide!)}</b> (auto-play). `
-        + `Its readout is hidden in this view: its options and its critic are read from its own hand.</div>`;
+    if (!this.readoutOnScreen()) {
+      this.body.innerHTML = this.readoutOffNote(a);
       return;
     }
 
@@ -575,12 +599,33 @@ export class AnalysisPanel {
   }
 
   /**
+   * What the panel says with the readout off. On the model's own move, that it is choosing -- and
+   * whether its search is running or has failed, since a failed search leaves it playing the
+   * policy's move rather than the one asked for. Otherwise, how to turn the readout on.
+   */
+  private readoutOffNote(a: LiveAnalysis): string {
+    const who = a.decision_player;
+    if (who && who === this.auto) {
+      const searching = a.search_pending ? " It is searching (rollout root): a few seconds." : "";
+      const failed = a.search_error
+        ? `<div class="analysis-error search-failed">The rollout root failed, so the model plays its policy's move instead: ${esc(a.search_error)}</div>`
+        : "";
+      return `<div class="trace-empty">The model is choosing for <b>${esc(who)}</b>.${searching}</div>${failed}`;
+    }
+    const me = this.hiddenSide === "US" ? "USSR" : "US";
+    return `<div class="trace-empty readout-off-note">${this.hiddenSide ? `You are playing <b>${me}</b>. ` : ""}`
+      + `The model's readout -- its win chances, its move probabilities and its search -- is hidden. `
+      + `Turn on <b>Show analysis</b> in the top bar to see it`
+      + `${this.hiddenSide ? "; the model's own decisions stay hidden in a player's view" : ""}.</div>`;
+  }
+
+  /**
    * Paint every legal action's probability on the thing you would click to take it.
    * Must run after the HUD, hands and map have rendered the same `state`.
    */
   public decorate(state: GameState | null): void {
     clearDecorations();
-    if (this.hidingDecision()) return;
+    if (!this.readoutOnScreen()) return;   // no hints with the readout off, nor the model's own options
     const a = this.lastAnalysis;
     if (!a || !a.policy || !state || a.choices.length === 0) return;
     const dType = state.decision_context?.decision_type;
