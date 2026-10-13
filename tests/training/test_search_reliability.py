@@ -4,10 +4,12 @@ weights are the bank's weight over its inclusion probability."""
 from __future__ import annotations
 
 import argparse
+import gzip
+import json
 
 import pytest
 
-from tools.search_reliability import PER_GAME, chunk_seed, parse_spec, summarize
+from tools.search_reliability import PER_GAME, chunk_seed, parse_spec, report, summarize
 
 
 def _bank(i: str, weight: float, incl: float) -> dict:
@@ -53,10 +55,6 @@ def test_specs_and_seeds() -> None:
 def test_runs_merge_by_position(tmp_path) -> None:
     """Two runs' searchers side by side; their playouts' moves pooled; a raw move scored differently
     across runs is refused."""
-    import gzip
-    import json
-    from tools.search_reliability import report
-
     def w(name: str, rows: list) -> str:
         p = str(tmp_path / name)
         with gzip.open(p, "wt") as f:
@@ -86,3 +84,30 @@ def test_specs_on_a_second_network_and_the_raw_move() -> None:
     assert parse_spec("n=raw") == ("n", "raw")
     with pytest.raises(argparse.ArgumentTypeError):
         parse_spec("bad=@2:256:8")
+
+
+def test_report_by_decision_kind(tmp_path) -> None:
+    """--by-kind repeats the table on each kind's positions; a kind's per-game gain is its share of
+    a game, so the kinds add up to the whole."""
+    def w(name: str, rows: list) -> str:
+        p = str(tmp_path / name)
+        with gzip.open(p, "wt") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        return p
+
+    bank = w("bank.jsonl.gz", [_bank("a", 1.0, 1.0), _bank("b", 3.0, 1.0)])
+    s = w("s.jsonl.gz", [
+        {"id": "a", "raw": 1, "kind": "target (influence)", "picks": {"x": [2]}, "evals": {"x": [10]}},
+        {"id": "b", "raw": 5, "kind": "play mode", "picks": {"x": [6]}, "evals": {"x": [10]}}])
+    p = w("p.jsonl.gz", [
+        {"id": "a", "pairs": 4, "score": {"1": 0.4, "2": 0.6}, "diff_vs_raw": {"2": [0.2, 0.01]}},
+        {"id": "b", "pairs": 4, "score": {"5": 0.5, "6": 0.4}, "diff_vs_raw": {"6": [-0.1, 0.01]}}])
+    out = str(tmp_path / "r.md")
+    assert report(bank, [s], [p], out, by_kind=True) == 0
+    res = json.load(open(str(tmp_path / "r.json")))
+    placement, mode = res["by_kind"]["target (influence)"]["x"], res["by_kind"]["play mode"]["x"]
+    assert placement["gain_per_game"] == pytest.approx(0.2 * 1.0 * PER_GAME)
+    assert mode["gain_per_game"] == pytest.approx(-0.1 * 3.0 * PER_GAME)
+    assert placement["gain_per_game"] + mode["gain_per_game"] == pytest.approx(res["x"]["gain_per_game"])
+    assert "## target (influence) (1 positions)" in open(out).read()

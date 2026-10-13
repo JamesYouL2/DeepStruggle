@@ -116,6 +116,22 @@ class RawPicker:
         return [int(a) for a in z.argmax(axis=1)]
 
 
+def decision_kind(row: Dict[str, Any], state: Any) -> str:
+    """The decision's kind, labelled as tools/search_bank.py's `leak` stage labels it: headline, AR
+    card choice, play mode, op mode, target (<op mode>) -- `target (influence)` is an influence
+    placement -- or the decision type."""
+    dt = str(row.get("decision_type", ""))
+    if dt == "SELECT_CARD":
+        return "headline" if row.get("phase") == "HEADLINE" else "AR card choice"
+    if dt == "SELECT_PLAY_MODE":
+        return "play mode"
+    if dt == "SELECT_OP_MODE":
+        return "op mode"
+    if dt == "POINT_NODE":
+        return f"target ({str(state.ctx().op_mode).split('.')[-1].lower()})"
+    return dt.lower() or "?"
+
+
 def chunk_seed(spec: str, seed: int, ids: Sequence[str]) -> int:
     """One search call's streams: its searcher, its seed index and the positions it holds."""
     h = hashlib.sha256(f"{spec}|{seed}|{','.join(ids)}".encode()).digest()
@@ -154,8 +170,8 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
         else:
             _path, cfg, label = search_spec_config(f"gumbel:{mpath}:{body}")
             searchers[name] = (BatchedMCTS(net, device="cpu", config=cfg), tag + label)
-    res = {str(r["id"]): {"id": r["id"], "raw": int(r["raw"]), "picks": {n: [] for n, _ in specs},
-                          "evals": {n: [] for n, _ in specs}} for r in rows}
+    res = {str(r["id"]): {"id": r["id"], "raw": int(r["raw"]), "kind": decision_kind(r, state_from_token(r["pos"])),
+                          "picks": {n: [] for n, _ in specs}, "evals": {n: [] for n, _ in specs}} for r in rows}
     secs = {n: 0.0 for n, _ in specs}
     t0 = time.time()
     for lo in range(0, len(rows), chunk):
@@ -312,14 +328,34 @@ def summarize(bank_rows: Dict[str, Dict[str, Any]], search_rows: Dict[str, Dict[
     return out
 
 
-def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], out: str) -> int:
+TABLE_HEAD = ["| searcher | evals / search | s / search | departs | reproduced by another seed | same move | gain per game (pts) | vs first (pts / game) | gain per departure (pts) | departures beating raw | confirmed better / worse |",
+              "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|"]
+
+
+def _table_rows(res: Dict[str, Any], names: Sequence[str]) -> List[str]:
+    lines = []
+    for n in names:
+        r = res[n]
+        vs = (f"{100 * r['vs_first_per_game']:+.1f} ± {100 * r['vs_first_per_game_se']:.1f}"
+              if "vs_first_per_game" in r else "--")
+        lines.append(f"| `{n}` | {r['evals_per_search']:.0f} | {r['seconds_per_search']:.3f} | "
+                     f"{r['departure_rate']:.1%} | {r['reproducibility']:.1%} | {r['same_move']:.1%} | "
+                     f"{100 * r['gain_per_game']:+.1f} ± {100 * r['gain_per_game_se']:.1f} | {vs} | "
+                     f"{100 * r['gain_per_departure']:+.2f} | {r['precision_positive']:.1%} | "
+                     f"{r['confirmed_better']:.1%} / {r['confirmed_worse']:.1%} |")
+    return lines
+
+
+def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], out: str,
+           by_kind: bool = False) -> int:
     bank_rows = {str(r["id"]): r for r in _read([bank])}
     # Several runs merge by position: their searchers side by side, their playouts' moves pooled.
     # Valid because a position's pairs depend only on its id and the playout seed, so the raw move
     # scores the same in every run that shares the seed (checked below).
     search_rows: Dict[str, Dict[str, Any]] = {}
     for r in _read(search_paths):
-        cur = search_rows.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "picks": {}, "evals": {}})
+        cur = search_rows.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "kind": r.get("kind", "?"),
+                                                    "picks": {}, "evals": {}})
         cur["picks"].update(r["picks"])
         cur["evals"].update(r["evals"])
     play_rows: Dict[str, Dict[str, Any]] = {}
@@ -363,19 +399,26 @@ def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], ou
     pr = next(iter(play_rows.values()))
     lines += [f"Paired raw-network continuations, {pr['pairs']} pairs per move; every figure population-"
               "weighted by the bank's inclusion weights. Gain is the pick's playout score minus raw's, "
-              "in win probability (per game: points of a game summed over its decisions).", "",
-              "| searcher | evals / search | s / search | departs | reproduced by another seed | same move | gain per game (pts) | vs first (pts / game) | gain per departure (pts) | departures beating raw | confirmed better / worse |",
-              "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|"]
-    for n in names:
-        r = res[n]
-        vs = (f"{100 * r['vs_first_per_game']:+.1f} ± {100 * r['vs_first_per_game_se']:.1f}"
-              if "vs_first_per_game" in r else "--")
-        lines.append(f"| `{n}` | {r['evals_per_search']:.0f} | {r['seconds_per_search']:.3f} | "
-                     f"{r['departure_rate']:.1%} | {r['reproducibility']:.1%} | {r['same_move']:.1%} | "
-                     f"{100 * r['gain_per_game']:+.1f} ± {100 * r['gain_per_game_se']:.1f} | {vs} | "
-                     f"{100 * r['gain_per_departure']:+.2f} | {r['precision_positive']:.1%} | "
-                     f"{r['confirmed_better']:.1%} / {r['confirmed_worse']:.1%} |")
-    lines.append("")
+              "in win probability (per game: points of a game summed over its decisions).", ""]
+    lines += TABLE_HEAD + _table_rows(res, names) + [""]
+    if by_kind:
+        # The same table on each decision kind's positions alone: per game is that kind's share of a
+        # game, so the kinds' rows add up to the whole table's.
+        w_all = sum(float(b["weight"]) / float(b["pl_incl"]) for b in bank_rows.values())
+        res["by_kind"] = {}
+        kinds = sorted({str(s.get("kind", "?")) for s in search_rows.values()})
+        for k in kinds:
+            sub = {i: b for i, b in bank_rows.items() if str(search_rows.get(i, {}).get("kind")) == k}
+            if not any(i in play_rows for i in sub):
+                continue
+            w_k = sum(float(b["weight"]) / float(b["pl_incl"]) for b in sub.values())
+            rk = summarize(sub, search_rows, play_rows, names, dpg * w_k / w_all if dpg else None)
+            for n in names:
+                rk[n]["evals_per_search"] = res[n]["evals_per_search"]
+                rk[n]["seconds_per_search"] = res[n]["seconds_per_search"]
+            res["by_kind"][k] = rk
+            npos = sum(1 for i in sub if i in play_rows)
+            lines += [f"## {k} ({npos} positions)", ""] + TABLE_HEAD + _table_rows(rk, names) + [""]
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -411,12 +454,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--search", nargs="+", required=True)
     r.add_argument("--playouts", nargs="+", required=True)
     r.add_argument("--out", required=True)
+    r.add_argument("--by-kind", action="store_true",
+                   help="also the table on each decision kind's positions (placement is `target (influence)`)")
     a = ap.parse_args(argv)
     if a.cmd == "search":
         return search(a.bank, a.model, a.spec, a.seeds, a.part, a.chunk, a.out, a.model2)
     if a.cmd == "playouts":
         return playouts(a.bank, a.search, a.model, a.pairs, a.seed, a.part, a.out)
-    return report(a.bank, a.search, a.playouts, a.out)
+    return report(a.bank, a.search, a.playouts, a.out, a.by_kind)
 
 
 if __name__ == "__main__":
