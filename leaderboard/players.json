@@ -158,6 +158,18 @@
     "description": "",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R39@7120..7200M~rollout(k=4,worlds=32,horizon=4,rule=z2)": {
+    "network": "E7-A8-R1-S44@6400M+R39@7120..7200M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 32,
+      "horizon": 4,
+      "rule": "z2"
+    },
+    "description": "The R39 SWA under the rollout root at 32 worlds (k=4, 4 boundaries, z2); the best setting of the R39 tuning (research/log/E7_rollout_root_tuning_R39.md), +41 Elo over 16 worlds head to head",
+    "report": null
+  },
   "E7-A8-R1-S44@6720..6800M": {
     "network": "E7-A8-R1-S44@6720..6800M",
     "inference": {

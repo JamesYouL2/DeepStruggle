@@ -1,0 +1,149 @@
+# Leaderboard pairings for one player, split over runners (tools/leaderboard_play.py):
+#
+#   plan   the jobs: every opponent x every slice of `chunk` deals a side.
+#   play   one job per slice: leaderboard_play at that slice's base seed, which records the slice
+#          as its own match record. The base seeds are the ones the unsplit 1,000-a-side pairing
+#          (batch chunk 1,000) deals at, so the slices together play exactly its games.
+#   pool   the new records, in one file to append to leaderboard/matches/<epoch>.jsonl and commit.
+#
+# The player must be registered and committed on the ref first (tools/leaderboard.py add-player);
+# leaderboard_play refuses an unregistered player, an engine outside the epoch, or a dirty tree.
+#
+#   gh workflow run leaderboard_play.yml --ref <branch> -f player='<player-id>'
+name: leaderboard-play
+
+on:
+  workflow_dispatch:
+    inputs:
+      player:
+        description: "A registered player id (leaderboard/players.json)"
+        required: true
+      epoch:
+        default: "E7"
+      opponents:
+        description: "Space-separated player ids (empty: the epoch's main players)"
+        default: ""
+      games_per_side:
+        default: "1000"
+      chunk:
+        description: "Deals a side per job; must divide 500 (the unsplit pairing's batch half)"
+        default: "100"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  PLAYER: ${{ inputs.player }}
+  EPOCH: ${{ inputs.epoch }}
+  OPPONENTS: ${{ inputs.opponents }}
+  GAMES: ${{ inputs.games_per_side }}
+  CHUNK: ${{ inputs.chunk }}
+  HF_REPO: ${{ inputs.hf_repo }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      jobs: ${{ steps.p.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - id: p
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          epoch, chunk, games = os.environ["EPOCH"], int(os.environ["CHUNK"]), int(os.environ["GAMES"])
+          assert 500 % chunk == 0 and games % chunk == 0, "chunk must divide 500 and games_per_side"
+          players = json.load(open("leaderboard/players.json"))
+          opps = os.environ["OPPONENTS"].split() or json.load(open("leaderboard/epochs.json"))[epoch]["main"]
+          for p in [os.environ["PLAYER"], *opps]:
+              assert p in players, f"unregistered player {p}"
+          # Pair k of the unsplit pairing deals at 10000 + (k // 500) * 1000 + k % 500.
+          seeds = [10000 + (k // 500) * 1000 + k % 500 for k in range(0, games, chunk)]
+          jobs = [{"i": i, "opponent": o, "seed": s}
+                  for i, (o, s) in enumerate((o, s) for o in opps for s in seeds)]
+          print("jobs=" + json.dumps(jobs))
+          EOF
+
+  play:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJson(needs.plan.outputs.jobs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Fetch the two networks
+        env:
+          OPP: ${{ matrix.job.opponent }}
+        run: |
+          python3 - <<'EOF' > fetch.txt
+          import json, os
+          players = json.load(open("leaderboard/players.json"))
+          nets = json.load(open("leaderboard/networks.json"))
+          for pid in (os.environ["PLAYER"], os.environ["OPP"]):
+              net = players[pid]["network"]
+              if net is not None:
+                  print(nets[net]["hf"], nets[net]["file"])
+          EOF
+          while read -r hf file; do
+            mkdir -p "data/$(dirname "$file")"
+            curl -sSfL --retry 3 -o "data/$file" "https://huggingface.co/$HF_REPO/resolve/main/$hf"
+          done < fetch.txt
+      - name: Play ${{ matrix.job.opponent }} at seed ${{ matrix.job.seed }}
+        env:
+          OPP: ${{ matrix.job.opponent }}
+          SEED: ${{ matrix.job.seed }}
+        run: |
+          mkdir -p out
+          before=$(wc -l < "leaderboard/matches/$EPOCH.jsonl")
+          tools/scripts/check_engine_fresh.sh && python tools/leaderboard_play.py --epoch "$EPOCH" \
+            --players "$PLAYER" --opponents "$OPP" --games-per-side "$CHUNK" --base-seed "$SEED" \
+            --batch-chunk-size $((2 * CHUNK)) --device cpu
+          tail -n +$((before + 1)) "leaderboard/matches/$EPOCH.jsonl" > "out/records-${{ matrix.job.i }}.jsonl"
+          test -s "out/records-${{ matrix.job.i }}.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard-play-${{ github.run_id }}-${{ matrix.job.i }}
+          path: out/
+          if-no-files-found: error
+
+  pool:
+    needs: [plan, play]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          build-engine: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: leaderboard-play-${{ github.run_id }}-*
+          path: out
+          merge-multiple: true
+      - name: Pool
+        run: |
+          mkdir -p report
+          cat $(ls out/records-*.jsonl | sort -V) > "report/$EPOCH.new.jsonl"
+          echo "$(wc -l < "report/$EPOCH.new.jsonl") records for $PLAYER (commit $GITHUB_SHA)" > report/provenance.txt
+          cat "report/$EPOCH.new.jsonl" >> "leaderboard/matches/$EPOCH.jsonl"
+          python tools/leaderboard.py show > report/leaderboard.md
+          { cat report/provenance.txt; echo; cat report/leaderboard.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard-play-${{ github.run_id }}
+          path: report/
+          retention-days: 90
