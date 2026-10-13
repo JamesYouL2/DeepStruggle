@@ -11,6 +11,7 @@ import torch
 from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
 from ai.training.generic_trainer import run_search_distillation
 from tools.lib.data_root import data_path
+from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR
 from tools.lib.player_agent import load_agent
 from tools.lib.batch_tournament import BatchMatchRunner
 from tools.lib.tournament_evaluator import TournamentEvaluator
@@ -679,6 +680,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="P32 B4': price in this many worker processes, each with its own copy of the network, "
                              "beside the next rollout -- a rollout's rows arrive one iteration later. 0: price in the "
                              "trainer after each rollout.")
+    parser.add_argument("--forced-openings-frac", type=float, default=0.0,
+                        help="Owner 2026-10-13: each side, independently, in this share of games has its setup played by one of "
+                             "--forced-openings-us / -ussr (tools/lib/openings.py), as ENVIRONMENT -- no policy gradient on the "
+                             "forced placements -- so the network learns to play on from them without being taught to choose "
+                             "them. us_marshall also headlines Marshall Plan on turn 1 when it is in hand (else another US "
+                             "opening is played). 0 = off.")
+    parser.add_argument("--forced-openings-us", nargs="*", default=list(FORCED_OPENINGS_US),
+                        help="US openings for --forced-openings-frac (default: the owner's three).")
+    parser.add_argument("--forced-openings-ussr", nargs="*", default=list(FORCED_OPENINGS_USSR),
+                        help="USSR openings for --forced-openings-frac (default: the owner's two).")
     parser.add_argument("--force-applicable-events", nargs="+", default=None,
                         choices=["wargames", "arms_race", "one_small_step", "wargames_branch"],
                         help="Owner 2026-10-06: at the learner's play-mode decision for the listed card "
@@ -1103,6 +1114,9 @@ def main():
             turn_credit_batch=args.turn_credit_batch,
             turn_credit_buffer=args.turn_credit_buffer,
             turn_credit_workers=args.turn_credit_workers,
+            forced_openings_frac=args.forced_openings_frac,
+            forced_openings_us=args.forced_openings_us,
+            forced_openings_ussr=args.forced_openings_ussr,
             force_applicable_events=args.force_applicable_events,
             force_event_frac=args.force_event_frac,
             force_events_from=args.force_events_from,

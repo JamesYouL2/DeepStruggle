@@ -38,6 +38,7 @@ from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .turn_credit import TurnCredit  # noqa: E402
 from ai.search.rollout_root import RolloutConfig, RolloutTeacher  # noqa: E402
 from .search_workers import SearchWorkers  # noqa: E402
+from .forced_openings import OpeningSeeder  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
 
@@ -354,6 +355,9 @@ class BaseNashPGTrainer:
         seed_scenarios: Sequence[str] = (),
         seed_frac: float = 0.0,
         seed_scenarios_from: int = 0,
+        forced_openings_frac: float = 0.0,     # > 0: per side, that share of games start from a forced opening
+        forced_openings_us: Sequence[str] = (),
+        forced_openings_ussr: Sequence[str] = (),
         aux_opp_legality: float = 0.0,
         aux_opp_legality_frac: float = 0.1,
         aux_opp_legality_min_batch: int = 4096,
@@ -654,6 +658,16 @@ class BaseNashPGTrainer:
                   f"gradient on the forced plays)", flush=True)
         elif seed_frac > 0.0:
             raise ValueError("--seed-frac needs --seed-scenarios")
+        # Owner 2026-10-13: openings forced as environment, independently per side
+        # (ai/training/forced_openings.py) -- the network learns to play on from them.
+        self.opening_seeder: Optional[OpeningSeeder] = None
+        self._openings_started = False
+        if forced_openings_frac > 0.0:
+            self.opening_seeder = OpeningSeeder(float(forced_openings_frac), list(forced_openings_us),
+                                                list(forced_openings_ussr), self.num_envs)
+            print(f"[forced openings] each side, independently, in {forced_openings_frac:.0%} of games: US "
+                  f"{list(forced_openings_us)}, USSR {list(forced_openings_ussr)} -- as environment (no policy "
+                  f"gradient on the forced placements or the Marshall Plan headline)", flush=True)
         # Owner 2026-10-06: at the learner's play-mode decision for Wargames / Arms Race / One Small
         # Step with the event legal and applicable, play the event with probability
         # force_event_frac, trained as the policy's own (show_and_decide.ApplicableEventForcer).
@@ -1397,6 +1411,9 @@ class BaseNashPGTrainer:
         self.buffer.reset()
         if self._behaviour_w is not None:
             self._behaviour_w.fill_(1.0)
+        if self.opening_seeder is not None and not self._openings_started:
+            self.opening_seeder.draw(np.arange(self.num_envs))
+            self._openings_started = True
         if self.seeder is not None and not self._seed_started:
             # The first rollout's games are drawn here rather than in __init__, because a resumed
             # run only knows its step count (and so whether seeding has started) after loading.
@@ -1528,6 +1545,15 @@ class BaseNashPGTrainer:
                             _forced_t,
                             unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1),
                             log_probs_t)
+                if self.opening_seeder is not None:
+                    _fo = self.opening_seeder.apply(actions_t, np.asarray(self._masks_np), _dp, self.env.runner)
+                    if _fo.any():
+                        learner_np = np.asarray(learner_np, dtype=bool) & ~_fo
+                        learner_t = torch.from_numpy(learner_np).to(self.device)
+                        _pm_learner = _pm & learner_t
+                        _fo_t = torch.from_numpy(_fo).to(self.device)
+                        log_probs_t = torch.where(
+                            _fo_t, unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1), log_probs_t)
                 if self.event_forcer is not None:
                     # Applicable events forced as the policy's OWN play: learner stays 1, the stored
                     # log-prob is log pi of the event, and a floor weight on the row goes back to 1.
@@ -1611,6 +1637,8 @@ class BaseNashPGTrainer:
                 self._script_draw(np.flatnonzero(self._dones_np > 0.5))
             if self.seeder is not None:
                 self.seeder.draw(np.flatnonzero(self._dones_np > 0.5), self.total_env_steps)
+            if self.opening_seeder is not None:
+                self.opening_seeder.draw(np.flatnonzero(self._dones_np > 0.5))
             if self.aux_opp_legality > 0.0:
                 self._opp_legal_game_over(np.flatnonzero(self._dones_np > 0.5))
 
@@ -2117,6 +2145,8 @@ class BaseNashPGTrainer:
             for _name in self.event_forcer.forced:
                 combined[f"force_applicable_{_name}"] = float(self.event_forcer.applicable[_name])
                 combined[f"force_forced_{_name}"] = float(self.event_forcer.forced[_name])
+        if self.opening_seeder is not None:
+            combined["forced_openings_moves"] = float(self.opening_seeder.forced_moves)
         if self.seeder is not None:
             _g = self.seeder.games
             combined["seed_games_frac"] = float(_g[0]) / max(float(_g.sum()), 1.0)

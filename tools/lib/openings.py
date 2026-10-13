@@ -69,6 +69,14 @@ PANAMA = 70
 US_E516_43: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 4), (FRANCE, 2), (ITALY, 1), (ITALY, 1), (IRAN, 1))
 US_E516_44: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 2), (FRANCE, 3), (ITALY, 2), (IRAN, 1), (PANAMA, 1))
 
+#: The owner's training openings (2026-10-13), one side each, for --forced-openings (the network plays
+#: on from them; they are not taught as its own choice). US: West Germany 4 / Italy 3 / Iran 2, West
+#: Germany 4 / Italy 4 / Iran 1, and -- with Marshall Plan in hand -- West Germany 3 / Italy 2 / France 2
+#: / Iran 2 with Marshall Plan headlined on turn 1 (`US_MARSHALL`, chosen at the game's setup by
+#: `ai/training/forced_openings.py`). Seven Western Europe points first, then the two bonus points.
+US_MARSHALL: Sequence[Tuple[int, int]] = ((WEST_GERMANY, 3), (ITALY, 2), (FRANCE, 2), (IRAN, 2))
+MARSHALL_PLAN = 23
+
 #: A name maps to a script per side. A side with no script sets up for itself -- one-sided
 #: openings exist for evaluation (the other side replying as the agent would); training's
 #: --forced-opening needs both sides.
@@ -82,7 +90,19 @@ OPENINGS: Dict[str, Dict[str, List[int]]] = {
     "us_e516_44": {"US": expand(US_E516_44)},
     "ph_west_germany": {"US": expand(US_OPENING), "USSR": expand(USSR_POLAND_HUNGARY)},
     "ph_no_west_germany": {"US": expand(US_NO_WEST_GERMANY), "USSR": expand(USSR_POLAND_HUNGARY)},
+    # One side each: the owner's training openings (--forced-openings), and for evaluation.
+    "us_wg4_it3_ir2": {"US": expand(US_OPENING)},
+    "us_wg4_it4_ir1": {"US": expand(US_OPENING_ITALY4)},
+    "us_marshall": {"US": expand(US_MARSHALL)},
+    "ussr_eg1_pl4_au1": {"USSR": expand(USSR_OPENING_AUSTRIA)},
+    "ussr_eg1_pl4_yu1": {"USSR": expand(USSR_OPENING)},
 }
+
+#: The owner's --forced-openings sets per side. `us_marshall` is conditional: with Marshall Plan
+#: in the US hand at setup it is played and Marshall Plan headlined on turn 1; without, one of the
+#: other two US openings is played instead.
+FORCED_OPENINGS_US: Tuple[str, ...] = ("us_wg4_it3_ir2", "us_wg4_it4_ir1", "us_marshall")
+FORCED_OPENINGS_USSR: Tuple[str, ...] = ("ussr_eg1_pl4_au1", "ussr_eg1_pl4_yu1")
 
 
 #: The four human-opening pairs --setup-script-frac draws from by default.

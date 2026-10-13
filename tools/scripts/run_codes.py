@@ -78,6 +78,7 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
     ("force_applicable_events", None, ("force_event_frac", "force_events_from",
                                        "force_event_credit")),
     ("seed_scenarios", None, ("seed_frac", "seed_scenarios_from")),
+    ("forced_openings_frac", 0.0, ("forced_openings_us", "forced_openings_ussr")),
     ("search_ce_coef", 0.0, ("search_sims", "search_subsample", "search_node_filter",
                              "search_gumbel_k", "search_prior_temperature",
                              "search_teacher_checkpoint", "search_rollout_horizon", "search_rollout_k",
