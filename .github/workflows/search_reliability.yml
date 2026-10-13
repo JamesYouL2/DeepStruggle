@@ -207,7 +207,7 @@ jobs:
           sets=(); labels=()
           for j in $JUDGES; do
             PYTHONPATH=. python tools/search_reliability.py report --bank models/bank.jsonl.gz \
-              --search search/search-*.jsonl.gz --playouts playouts/playouts-j$j-*.jsonl.gz --out "report/report-j$j.md"
+              --search search/search-*.jsonl.gz --playouts playouts/playouts-j$j-*.jsonl.gz --out "report/report-j$j.md" --by-kind
             sets+=(--playouts playouts/playouts-j$j-*.jsonl.gz); labels+=("model$j")
           done
           if [ -n "$TRANSFER_ROLES" ]; then
