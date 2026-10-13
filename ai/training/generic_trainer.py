@@ -25,6 +25,7 @@ import torch.nn.functional as F
 import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create_like
+from ai.models.grow import widen_factor, widen_optimizer_state, widen_state_dict
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
 from bindings.ts_env import (OBS_LAYOUT_NAME, TsVectorizedEnv, check_obs_width,
                              model_obs_features)
@@ -1459,7 +1460,7 @@ def _optimizer_state_with_added(model: nn.Module, added: Sequence[str], saved: D
 
 
 def load_resume_state(path: str, model: nn.Module, trainer: Any,
-                      seed: Optional[int] = None) -> Dict[str, Any]:
+                      seed: Optional[int] = None, widen: bool = False) -> Dict[str, Any]:
     """Restore a run in place and return where it left off.
 
     `seed` is the seed the *resuming* run was given. Where it differs from the one the state was
@@ -1472,6 +1473,24 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
     honouring the flag is less surprising than silently ignoring it.
     """
     blob = torch.load(path, map_location=trainer.device, weights_only=False)
+    if widen:
+        # --resume-widen: the model's grouped projections are k times wider than the state's. The
+        # network and pi_ref are widened without changing their function, Adam's moments with them
+        # (ai/models/grow.py); the same perturbation seed widens both alike.
+        saved_sd = blob["model_state_dict"]
+        k = widen_factor(saved_sd, model.state_dict())
+        if k == 1:
+            raise ValueError("--resume-widen: the model's projections are no wider than the resume state's")
+        if blob.get("ema_state_dict") is not None:
+            raise ValueError("--resume-widen does not widen an --ema-weights average")
+        p = int(saved_sd["lad_board.0.weight"].shape[0])
+        names = [n for n, _ in model.named_parameters()]
+        blob["model_state_dict"] = widen_state_dict(saved_sd, k, generator=torch.Generator().manual_seed(int(seed or 0)))
+        blob["reference_state_dict"] = widen_state_dict(blob["reference_state_dict"], k,
+                                                        generator=torch.Generator().manual_seed(int(seed or 0)))
+        blob["optimizer_state_dict"] = widen_optimizer_state(blob["optimizer_state_dict"], names, p, k)
+        print(f"[resume widen] grouped projections {p} -> {p * k}: each unit copied {k}x, the fusion layer "
+              f"reading each copy at 1/{k}; the network computes what it did", flush=True)
     added = _load_allowing_added_heads(model, blob["model_state_dict"])
     if added:
         # A branch that adds a training-only head (e.g. --aux-card-events) to a state written
@@ -1623,6 +1642,7 @@ def train_pipeline(
     search_workers: int = 0,
     search_teacher_policy: bool = False,
     resume_weights: Optional[str] = None,
+    resume_widen: bool = False,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -1912,6 +1932,7 @@ def train_pipeline(
         "search_workers": int(search_workers),
         "search_teacher_policy": bool(search_teacher_policy),
         "resume_weights": resume_weights,
+        "resume_widen": bool(resume_widen),
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2693,7 +2714,7 @@ def train_pipeline(
     _ema_state: Optional[Dict[str, Any]] = None
     if resume:
         src = resolve_resume(resume)
-        state = load_resume_state(src, model, trainer, seed=seed)
+        state = load_resume_state(src, model, trainer, seed=seed, widen=resume_widen)
         _ema_state = state.get("ema_state_dict")
         it = state["iteration"]
         resumed_elapsed = state["elapsed_seconds"]

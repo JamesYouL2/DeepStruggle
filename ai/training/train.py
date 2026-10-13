@@ -264,6 +264,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume-weights", type=str, default=None,
                         help="With --resume: after restoring the run's state (steps, optimizer, opponent pool, RNG), load "
                              "these weights (same architecture) into the network and pi_ref -- e.g. RL continued from a soup.")
+    parser.add_argument("--resume-widen", action="store_true", default=False,
+                        help="With --resume: the model's grouped input projections (--ladder-entity-proj-dim) are an "
+                             "integer multiple of the state's; widen the network, pi_ref and Adam's moments without "
+                             "changing what it plays (ai/models/grow.py) and continue.")
     parser.add_argument("--warmup-dataset", type=str, default=None, help="Path to dataset file for supervised BC warmup")
     parser.add_argument("--distill-dataset", type=str, default=None,
                         help="Search-target dataset for --mode distill. Must carry search_pi "
@@ -1036,6 +1040,7 @@ def main():
             search_workers=args.search_workers,
             search_teacher_policy=args.search_teacher_policy,
             resume_weights=args.resume_weights,
+            resume_widen=args.resume_widen,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,
