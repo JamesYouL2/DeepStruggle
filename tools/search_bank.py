@@ -1324,8 +1324,46 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
     return out
 
 
+def kind_bootstrap(rows: Sequence[Dict[str, Any]], scale: float, resamples: int = 2000,
+                   seed: int = 0) -> Dict[str, Dict[str, float]]:
+    """Each decision kind's leak (`scale` x the weighted gain of the best move over raw's) and what
+    k=8 @256 recovers, with standard errors from a stratified bootstrap: positions resampled within
+    their (bank stratum, playout class) cell, so the sampling of positions and their playout noise
+    both count. `largest` is the share of resamples in which the kind leaks the most."""
+    cells: Dict[Tuple[str, str], List[Dict[str, Any]]] = collections.defaultdict(list)
+    for r in rows:
+        cells[(str(r["b"].get("stratum", "")), str(r["b"].get("pl_class", "")))].append(r)
+    kinds = sorted({str(r["kind"]) for r in rows}) + ["all"]
+
+    def totals(rs: Iterable[Dict[str, Any]]) -> Dict[str, Tuple[float, float]]:
+        t = {k: [0.0, 0.0] for k in kinds}
+        for r in rs:
+            for k in (str(r["kind"]), "all"):
+                t[k][0] += scale * r["w"] * r["gain"][0]
+                t[k][1] += scale * r["w"] * r["g256"][0]
+        return {k: (v[0], v[1]) for k, v in t.items()}
+
+    point = totals(rows)
+    rng = random.Random(seed)
+    draws: Dict[str, List[Tuple[float, float]]] = {k: [] for k in kinds}
+    largest = {k: 0 for k in kinds}
+    for _ in range(resamples):
+        t = totals(r for cell in cells.values() for r in rng.choices(cell, k=len(cell)))
+        for k in kinds:
+            draws[k].append(t[k])
+        largest[max((k for k in kinds if k != "all"), key=lambda k: t[k][0])] += 1
+
+    def sd(xs: Sequence[float]) -> float:
+        m = sum(xs) / len(xs)
+        return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1))
+
+    return {k: {"leak": point[k][0], "leak_se": sd([d[0] for d in draws[k]]),
+                "g256": point[k][1], "g256_se": sd([d[1] for d in draws[k]]),
+                "largest": largest[k] / resamples} for k in kinds}
+
+
 def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_per_game: float,
-                  large: float = LARGE_REGRET) -> str:
+                  large: float = LARGE_REGRET, resamples: int = 2000) -> str:
     """Where raw play loses, in points of win probability a game (both sides' decisions summed): each
     playout row's paired gain of the best move over raw's, weighted back to the population, grouped
     by the decision's kind and by finer labels, beside what k=8 @256 recovers there."""
@@ -1361,6 +1399,19 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
             "move recovers. 'Large' is a search-valued raw regret of 2+ points, where the gain is "
             "(research/log/E7_search_disagreement_bank.md); the rest sits at its noise.", ""]
     tab("total", lambda r: "large regret (2+ points)" if r["regret"] >= large else "the rest", rows)
+    if resamples > 0 and big:
+        bs = kind_bootstrap(big, scale, resamples)
+        out += [f"## large regret: decision kind, stratified bootstrap ({resamples} resamples)", "",
+                "Positions resampled within their (bank stratum, playout class) cell: the ± counts the "
+                "sampling of positions as well as the playout noise the tables below print alone.", "",
+                "| kind | best over raw | share | k=8 @256 over raw | leaks the most in |",
+                "|:---|---:|---:|---:|---:|"]
+        for k, v in sorted(bs.items(), key=lambda kv: (kv[0] == "all", -kv[1]["leak"])):
+            share = f"{100 * v['leak'] / bs['all']['leak']:.0f}%" if k != "all" and bs["all"]["leak"] else ""
+            most = f"{100 * v['largest']:.0f}%" if k != "all" else ""
+            out.append(f"| {k} | {v['leak']:+.1f} ± {v['leak_se']:.1f} | {share} | "
+                       f"{v['g256']:+.1f} ± {v['g256_se']:.1f} | {most} |")
+        out.append("")
     tab("large regret: decision kind", lambda r: r["kind"], big)
     tab("large regret: side x kind", lambda r: f"{r['side']} {r['kind']}", big, top=10)
     tab("large regret: era x kind", lambda r: f"{era_label(r['turn'])} {r['kind']}", big, top=12)
@@ -1528,6 +1579,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="playouts outputs of the same input, raw continuation; their pairs are pooled")
     lk.add_argument("--decisions-per-game", type=float, required=True,
                     help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
+    lk.add_argument("--resamples", type=int, default=2000,
+                    help="stratified bootstrap resamples for the per-kind standard errors (0: none)")
     lk.add_argument("--out", required=True)
     rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
     rp.add_argument("--bank", required=True)
@@ -1555,7 +1608,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         runs = [{r["id"]: r for r in read_rows([p])} for p in a.playouts]
         rows = leak_rows(read_rows([a.playouts_input]), runs, cards, countries)
         weight = sum(float(b["weight"]) for b in read_rows([a.bank]))
-        open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game))
+        open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game, resamples=a.resamples))
         print(f"leak tables over {len(rows)} positions -> {a.out}", file=sys.stderr)
         return 0
     if a.cmd == "report":
