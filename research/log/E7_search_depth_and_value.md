@@ -293,6 +293,16 @@ So R39's gain over the plain leg is the soup's policy, distilled through a small
 rollout root's part is at most a few Elo, in line with R40–R42. The CE route does what continued RL from the soup's
 weights does not (R44), and without the search it trains at about the plain run's speed.
 
+**Why RL from the soup loses it and CE toward the soup keeps it.** R44's raw snapshots against the soup (greedy, 1,000 a
+side; `data/reports/r44_<step>_vs_soup.json`): step 0 49.5% (it is the soup), then **42.8% at 7,210M** and 42.1–44.3%
+at every later 50–100M mark -- the loss is complete within the first 10M steps and never recovers. R34's own raw
+snapshots score 41.9% (7,200M) and 40.9% (7,120M) against the soup, and R44's SWA (47.7%) matches R34's SWA (47.3%):
+after 10M steps R44 *is* an R34 run. Its statistics snap back within the first few iterations too (entropy 0.64 →
+0.74, the gap loss 2.1 → 2.8). The soup's edge over its members is a property of one averaged point in weight space,
+where three seeds' iterate noise cancels; the first PPO steps leave that point and reintroduce a single run's noise.
+A CE target makes the soup's *function* a signal at every update instead, so it survives training -- and the
+student keeps its own RL signal and its own SWA bonus on top, which is how R39's SWA (1676) passes the soup (1650).
+
 ## Reading: where the limits are, and where to go
 
 **Where the limits are.**
