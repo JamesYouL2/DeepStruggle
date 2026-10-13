@@ -403,12 +403,19 @@ def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], ou
     lines += TABLE_HEAD + _table_rows(res, names) + [""]
     if by_kind:
         # The same table on each decision kind's positions alone: per game is that kind's share of a
-        # game, so the kinds' rows add up to the whole table's.
+        # game, so the kinds' rows add up to the whole table's. A bank from the search bank's
+        # playout-select also splits by playout class: its large-regret rows (`big`) are where the
+        # gain is, and the rest -- most of a game's weight -- sits at its noise
+        # (research/log/E7_leak_by_kind_R39.md), so a searcher is read on `big` first.
         w_all = sum(float(b["weight"]) / float(b["pl_incl"]) for b in bank_rows.values())
-        res["by_kind"] = {}
         kinds = sorted({str(s.get("kind", "?")) for s in search_rows.values()})
-        for k in kinds:
-            sub = {i: b for i, b in bank_rows.items() if str(search_rows.get(i, {}).get("kind")) == k}
+        slices: List[Tuple[str, str, Optional[str]]] = [("by_kind", k, None) for k in kinds]
+        if any(b.get("pl_class") == "big" for b in bank_rows.values()):
+            slices += [("big_by_kind", "all", "big")] + [("big_by_kind", k, "big") for k in kinds]
+        for group, k, cls in slices:
+            sub = {i: b for i, b in bank_rows.items()
+                   if (k == "all" or str(search_rows.get(i, {}).get("kind")) == k)
+                   and (cls is None or b.get("pl_class") == cls)}
             if not any(i in play_rows for i in sub):
                 continue
             w_k = sum(float(b["weight"]) / float(b["pl_incl"]) for b in sub.values())
@@ -416,9 +423,10 @@ def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], ou
             for n in names:
                 rk[n]["evals_per_search"] = res[n]["evals_per_search"]
                 rk[n]["seconds_per_search"] = res[n]["seconds_per_search"]
-            res["by_kind"][k] = rk
+            res.setdefault(group, {})[k] = rk
             npos = sum(1 for i in sub if i in play_rows)
-            lines += [f"## {k} ({npos} positions)", ""] + TABLE_HEAD + _table_rows(rk, names) + [""]
+            title = k if cls is None else f"large regret: {k}"
+            lines += [f"## {title} ({npos} positions)", ""] + TABLE_HEAD + _table_rows(rk, names) + [""]
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

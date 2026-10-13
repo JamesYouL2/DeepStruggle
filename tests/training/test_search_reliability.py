@@ -111,3 +111,29 @@ def test_report_by_decision_kind(tmp_path) -> None:
     assert mode["gain_per_game"] == pytest.approx(-0.1 * 3.0 * PER_GAME)
     assert placement["gain_per_game"] + mode["gain_per_game"] == pytest.approx(res["x"]["gain_per_game"])
     assert "## target (influence) (1 positions)" in open(out).read()
+
+
+def test_report_large_regret_slice(tmp_path) -> None:
+    """A playout-select bank (rows with `pl_class`) also gets the large-regret tables: `big` rows
+    alone, all kinds and per kind."""
+    def w(name: str, rows: list) -> str:
+        p = str(tmp_path / name)
+        with gzip.open(p, "wt") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        return p
+
+    bank = w("bank.jsonl.gz", [dict(_bank("a", 1.0, 1.0), pl_class="big"), dict(_bank("b", 3.0, 1.0), pl_class="rest")])
+    s = w("s.jsonl.gz", [
+        {"id": "a", "raw": 1, "kind": "target (influence)", "picks": {"x": [2]}, "evals": {"x": [10]}},
+        {"id": "b", "raw": 5, "kind": "target (influence)", "picks": {"x": [6]}, "evals": {"x": [10]}}])
+    p = w("p.jsonl.gz", [
+        {"id": "a", "pairs": 4, "score": {"1": 0.4, "2": 0.6}, "diff_vs_raw": {"2": [0.2, 0.01]}},
+        {"id": "b", "pairs": 4, "score": {"5": 0.5, "6": 0.4}, "diff_vs_raw": {"6": [-0.1, 0.01]}}])
+    out = str(tmp_path / "r.md")
+    assert report(bank, [s], [p], out, by_kind=True) == 0
+    res = json.load(open(str(tmp_path / "r.json")))
+    assert res["big_by_kind"]["all"]["x"]["gain_per_game"] == pytest.approx(0.2 * 1.0 * PER_GAME)
+    assert res["big_by_kind"]["target (influence)"]["x"]["gain_per_game"] == pytest.approx(0.2 * 1.0 * PER_GAME)
+    assert res["by_kind"]["target (influence)"]["x"]["gain_per_game"] == pytest.approx((0.2 - 0.3) * PER_GAME)
+    assert "## large regret: all (1 positions)" in open(out).read()
