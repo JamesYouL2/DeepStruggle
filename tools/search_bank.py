@@ -51,7 +51,10 @@ Stages (each resumable, each writing JSONL.gz rows of schema `SCHEMA`):
   raw network and to every Gumbel configuration in `--budgets` (default the three measured in
   research/log/E7_gumbel_headroom.md: k=4 @16, k=4 @64, k=8 @256), recording each one's choice,
   its candidates, their evaluations and mean values, and when each was dropped. `--part k/N` takes
-  a disjoint share of the games, so CI runners split the work.
+  a disjoint share of the games, so CI runners split the work. With `--player SPEC` (a player spec
+  without its checkpoint, e.g. `rollout:4:32:4:z2`, run on `--model`) that player plays itself
+  instead, and every later stage studies *its* move: a row's `raw` is the player's choice and the
+  network's argmax moves to `net` -- so the census measures the searched player's leak.
 
 A row (`SCHEMA` 1):
 
@@ -62,8 +65,9 @@ A row (`SCHEMA` 1):
     side, turn, ar, phase, decision_type, card   (card: the card the decision is about, or 0)
     legal       legal flat actions, ascending
     logits      the raw network's logit of each legal action, same order
-    raw         the raw network's argmax
-    played      the action self-play took (sampled at the temperature)
+    raw         the raw network's argmax -- with `--player`, the player's choice (the move under study)
+    net         with `--player` only: the raw network's argmax
+    played      the action self-play took (sampled at the temperature; with `--player` its choice)
     methods     {label: {"spec", "choice", "candidates", "n", "q", "dropped", "value"}}
                 (n / q / dropped keyed by action, as strings in JSON; q is the mover's mean value
                 of the candidate's position, value the network's value of the position for the mover)
@@ -227,10 +231,15 @@ def annotate(a: argparse.Namespace) -> int:
     todo = [g for g in mine if g not in done]
     budgets = parse_budgets(a.budgets)
     json.dump({"schema": SCHEMA, "model": os.path.basename(a.model), "model_sha256": _sha256(a.model),
-               "temperature": a.temperature, "sample": a.sample, "seed": a.seed, "games": a.games,
+               "temperature": None if a.player else a.temperature, "player": a.player,
+               "sample": a.sample, "seed": a.seed, "games": a.games,
                "part": a.part, "budgets": {lb: {"simulations": s, "k": kk} for lb, s, kk in budgets}},
               open(a.out + ".meta.json", "w"), indent=1)
     logits_fn, features = load_policy(a.model)
+    player: Any = None
+    if a.player:
+        head, _, rest = a.player.partition(":")
+        player = load_agent(f"{head}:{a.model}" + (f":{rest}" if rest else ""), device="cpu")
     searchers = []
     for label, sims, kk in budgets:
         spec = f"gumbel:{a.model}:{sims}:{kk}"
@@ -238,8 +247,11 @@ def annotate(a: argparse.Namespace) -> int:
     t0 = time.time()
     total = 0
     for gi, g in enumerate(todo):
+        if player is not None:
+            player.reseed(a.seed + g)
         trackers = selfplay(logits_fn, features, 1, a.seed + g, 1, a.temperature,
-                            lambda: Sampler(a.sample, a.seed + g))
+                            lambda: Sampler(a.sample, a.seed + g),
+                            states_fn=None if player is None else player.select_actions_batch)
         kept = trackers[0].kept
         rows: List[Dict[str, Any]] = []
         for lo in range(0, len(kept), a.chunk):
@@ -248,6 +260,10 @@ def annotate(a: argparse.Namespace) -> int:
             for (dec, _s, played), r in zip(part, got):
                 r.update({"model": os.path.basename(a.model), "game": {"seed": a.seed + g, "index": g},
                           "decision": dec, "played": played})
+                if player is not None:
+                    # The player's move is the one under study; every later stage reads it as `raw`.
+                    r["net"], r["raw"] = r["raw"], int(played)
+                    r["names"].setdefault(str(int(played)), ActionEncoder.get_action_name(_s, int(played)))
                 rows.append(r)
         with gzip.open(a.out, "at") as f:
             for r in rows:
@@ -1205,7 +1221,8 @@ def playout_select(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[
       random, raw's move against raw's second most probable move;
     * `rest` -- everything else: `rest` of them at random.
 
-    `big` and `rest` rows play raw's move, the best move and k=8 @256's move (`pmoves`, raw first).
+    `big` and `rest` rows play raw's move, the best move and k=8 @256's move (`pmoves`, raw first),
+    and, where the bank studies a searched player (`net`, annotate's `--player`), the network's argmax.
     `pl_incl` is the chance the sample took the row, so a playout figure divides the row's bank
     weight by it to stand for the population. Each row also carries the verdict it was chosen by:
     `regret` (raw's), `best`, `conf`."""
@@ -1228,8 +1245,8 @@ def playout_select(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[
             order = [b["legal"][i] for i in np.argsort(-np.asarray(b["logits"]), kind="stable")]
             moves = [raw] + [int(m) for m in order if int(m) != raw][:1]
         else:
-            moves = list(dict.fromkeys([raw] + [m for m in (best, None if g256 is None else int(g256))
-                                                if m is not None]))
+            net = b.get("net")
+            moves = list(dict.fromkeys([raw] + [int(m) for m in (best, g256, net) if m is not None]))
         classes[cls].append(dict(b, regret=regret, best=best, conf=v["confidence"], pl_class=cls,
                                  pmoves=moves))
     rng = random.Random(seed)
@@ -1478,6 +1495,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     an.add_argument("--seed", type=int, default=700_000, help="game g is played from seed + g")
     an.add_argument("--sample", type=int, default=8, help="keep one decision in this many")
     an.add_argument("--temperature", type=float, default=0.1)
+    an.add_argument("--player", default=None,
+                    help="a searched player plays instead, e.g. rollout:4:32:4:z2 (on --model); rows study its move")
     an.add_argument("--budgets", nargs="+", default=list(DEFAULT_BUDGETS), help="label=sims:k")
     an.add_argument("--chunk", type=int, default=64, help="positions per search call")
     an.add_argument("--out", required=True)
