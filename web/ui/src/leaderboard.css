@@ -105,3 +105,23 @@ a:hover { text-decoration: underline; }
   .lb-table th, .lb-table td { padding: 6px 6px; }
   .lb-hide-narrow { display: none; }
 }
+
+/* Tabs: the ratings, and the codes the players' names are written in. */
+.lb-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border-color); }
+.lb-tabs button {
+  background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-muted);
+  font: inherit; font-weight: 600; padding: 8px 14px; cursor: pointer;
+}
+.lb-tabs button:hover { color: var(--text-main); }
+.lb-tabs button.active { color: var(--text-main); border-bottom-color: var(--gold); }
+#lb-tab-codes h2 { font-size: 15px; margin: 18px 0 8px; }
+.lb-codes-toggle { display: block; margin: 8px 0 4px; color: var(--text-muted); }
+.lb-codes td { vertical-align: top; }
+.lb-code code { font-weight: 600; color: var(--gold); }
+.lb-flags { max-width: 420px; }
+.lb-flag {
+  display: inline-block; margin: 1px 2px 1px 0; padding: 0 4px; border-radius: 3px;
+  background: var(--bg-card); font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
+}
+.lb-flags summary { cursor: pointer; color: var(--text-muted); }
+.lb-codes-line a code { color: var(--gold); }

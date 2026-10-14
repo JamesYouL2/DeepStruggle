@@ -4,6 +4,9 @@
  * (tools/scripts/build_web.sh), so the page computes nothing: a view -- the main players, or the
  * main players plus some lineages -- is a filter over that one fit, and a rating is the same
  * number in every view. The view is kept in the link, so a filtered table can be shared.
+ *
+ * A second tab lists the architecture and recipe codes the players' names are written in, with each
+ * code's description and flags, read from research/run_codes.json by the same fit (`codes`).
  */
 
 interface Seat { w: number; l: number; d: number }
@@ -56,6 +59,22 @@ interface Epoch {
   pairs: Pair[];
 }
 
+/** One architecture or recipe code (research/run_codes.json). */
+interface CodeInfo {
+  description: string;
+  flags: Record<string, unknown>;
+  /** The first run directory trained under it. */
+  first: string | null;
+  /** The networks on the board trained under it (the last code of its kind in the name). */
+  networks: string[];
+}
+
+interface Codes {
+  architectures: Record<string, CodeInfo>;
+  recipes: Record<string, CodeInfo>;
+  by_network: Record<string, { architecture: string | null; recipe: string | null }>;
+}
+
 interface LeaderboardData {
   schema: number;
   commit: string | null;
@@ -64,9 +83,21 @@ interface LeaderboardData {
   networks: Record<string, Network>;
   players: Record<string, Player>;
   epochs: Record<string, Epoch>;
+  /** Absent from a leaderboard.json fitted before the codes tab existed. */
+  codes?: Codes;
 }
 
 type View = "main" | "lineage" | "all";
+type Tab = "ratings" | "codes";
+
+/** `--flag value` as the command line spells it: `--x` for true, `--no-x` for false, lists spaced. */
+function flagText(name: string, value: unknown): string {
+  const flag = "--" + name.replace(/_/g, "-");
+  if (value === true) return flag;
+  if (value === false) return `--no-${name.replace(/_/g, "-")}`;
+  if (Array.isArray(value)) return `${flag} ${value.join(" ")}`;
+  return `${flag} ${String(value)}`;
+}
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -81,6 +112,8 @@ class LeaderboardPage {
   private view: View = "main";
   private lineages = new Set<string>();
   private selected: string | null = null;
+  private tab: Tab = "ratings";
+  private allCodes = false;
 
   constructor(private readonly data: LeaderboardData) {
     const params = new URLSearchParams(location.search);
@@ -90,6 +123,8 @@ class LeaderboardPage {
     this.view = v === "lineage" || v === "all" ? v : "main";
     for (const l of (params.get("lineage") ?? "").split(",")) if (l) this.lineages.add(l);
     this.selected = params.get("player");
+    this.tab = params.get("tab") === "codes" ? "codes" : "ratings";
+    this.allCodes = params.get("codes") === "all";
 
     const sel = $<HTMLSelectElement>("lb-epoch");
     sel.innerHTML = names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
@@ -103,6 +138,22 @@ class LeaderboardPage {
       const box = ev.target as HTMLInputElement;
       if (box.checked) this.lineages.add(box.value); else this.lineages.delete(box.value);
       this.render();
+    });
+    for (const b of document.querySelectorAll<HTMLButtonElement>(".lb-tabs button")) {
+      b.addEventListener("click", () => { this.tab = b.dataset.tab as Tab; this.render(); });
+    }
+    // A code named anywhere on the page opens the codes tab at its row.
+    document.addEventListener("click", (ev) => {
+      const a = (ev.target as HTMLElement).closest<HTMLElement>("a[data-code]");
+      if (!a) return;
+      ev.preventDefault();
+      this.tab = "codes";
+      this.render();
+      document.getElementById(`code-${a.dataset.code}`)?.scrollIntoView({ block: "center" });
+    });
+    $("lb-tab-codes").addEventListener("change", (ev) => {
+      const box = ev.target as HTMLInputElement;
+      if (box.id === "lb-codes-all") { this.allCodes = box.checked; this.render(); }
     });
     $("lb-body").addEventListener("click", (ev) => {
       if ((ev.target as HTMLElement).closest("a")) return;
@@ -201,9 +252,14 @@ class LeaderboardPage {
     const desc = [pl?.description, net?.description].filter(Boolean).map(s => esc(s!)).join(" ");
     const old = net?.old_names.length ? ` Formerly ${net.old_names.map(n => `<code>${esc(n)}</code>`).join(", ")}.` : "";
     const links = this.links(pid);
+    const nc = pl?.network ? this.data.codes?.by_network[pl.network] : undefined;
+    const codeLine = nc && (nc.architecture || nc.recipe)
+      ? `<p class="lb-codes-line">${nc.architecture ? `Architecture ${this.codeLink(nc.architecture)}` : ""}${nc.architecture && nc.recipe ? " · " : ""}${nc.recipe ? `recipe ${this.codeLink(nc.recipe)}` : ""}</p>`
+      : "";
     box.innerHTML = `
       <h2>${esc(pid)}</h2>
       <p>${desc}${old}</p>
+      ${codeLine}
       ${links ? `<p class="lb-links">${links}</p>` : ""}
       <p>Elo <b>${rating.elo.toFixed(0)}</b>${pid === this.ep.anchor ? " (the anchor)" : ` ± ${rating.se.toFixed(0)}`} · ${rating.games.toLocaleString("en-US")} games against ${rating.opponents} opponents, ${rating.main_opponents} of them main players.</p>
       <div class="lb-table-wrap"><table class="lb-table">
@@ -217,6 +273,53 @@ class LeaderboardPage {
           <td class="num us lb-hide-narrow">${fmtSeat(h.asUs)}</td>
           <td class="num ussr lb-hide-narrow">${fmtSeat(h.asUssr)}</td></tr>`).join("")}</tbody>
       </table></div>`;
+  }
+
+  private codeLink(code: string): string {
+    const kind = code.startsWith("A") ? "architectures" : "recipes";
+    const info = this.data.codes?.[kind][code];
+    return `<a href="?tab=codes" data-code="${esc(code)}" title="${esc(info?.description ?? "")}"><code>${esc(code)}</code></a>`;
+  }
+
+  private renderCodes(): void {
+    const box = $("lb-tab-codes");
+    const codes = this.data.codes;
+    if (!codes) {
+      box.innerHTML = `<p class="lb-dim">This leaderboard.json predates the codes; rebuild it with tools/scripts/build_web.sh.</p>`;
+      return;
+    }
+    const src = `https://github.com/${esc(this.data.github)}/blob/${esc(this.data.commit ?? "main")}`;
+    const table = (kind: "architectures" | "recipes", title: string, inline: boolean): string => {
+      const rows = Object.entries(codes[kind]).filter(([, c]) => this.allCodes || c.networks.length);
+      const body = rows.map(([code, c]) => {
+        const flags = Object.entries(c.flags).map(([k, v]) => `<code class="lb-flag">${esc(flagText(k, v))}</code>`).join(" ");
+        const flagCell = !flags ? `<span class="lb-dim">the defaults</span>`
+          : inline ? flags : `<details><summary>${Object.keys(c.flags).length} flags</summary>${flags}</details>`;
+        const nets = c.networks.length
+          ? c.networks.map(n => `<span class="lb-player">${esc(n)}</span>`).join("<br>")
+          : `<span class="lb-dim">${c.first ? `first run <code>${esc(c.first)}</code>` : "–"}</span>`;
+        return `<tr id="code-${esc(code)}"><td class="lb-code"><code>${esc(code)}</code></td>
+          <td>${esc(c.description) || `<span class="lb-dim">no description</span>`}</td>
+          <td class="lb-flags">${flagCell}</td><td class="lb-hide-narrow">${nets}</td></tr>`;
+      }).join("");
+      return `<h2>${title}</h2>
+        <div class="lb-table-wrap"><table class="lb-table lb-codes">
+          <thead><tr><th>Code</th><th>What it is</th><th>Flags</th><th class="lb-hide-narrow">On the board</th></tr></thead>
+          <tbody>${body}</tbody></table></div>`;
+    };
+    box.innerHTML = `
+      <p class="lb-note">A player's name says how it was trained: <code>E7-A8-R1-S44</code> is engine E7,
+        architecture A8, recipe R1, seed 44, and each <code>@&lt;step&gt;M+&lt;change&gt;</code> a branch point
+        and what changed there (a new recipe or architecture, a seed, or a soup in parentheses). A code is a set of
+        <code>tools/train.py</code> flags -- an architecture the network's shape, a recipe every other training
+        setting -- assigned by <code>tools/scripts/run_codes.py</code> and listed here from
+        <a href="${src}/research/run_codes.json">research/run_codes.json</a>
+        (<a href="${src}/research/architectures_and_recipes.md">the same tables</a>). A network is trained
+        under the last code of each kind in its name. Recipe flags are those that differ from the defaults.</p>
+      <label class="lb-codes-toggle"><input type="checkbox" id="lb-codes-all" ${this.allCodes ? "checked" : ""}>
+        Show every code, not only those of networks on the board</label>
+      ${table("recipes", "Recipes", true)}
+      ${table("architectures", "Architectures", false)}`;
   }
 
   private renderScale(): void {
@@ -234,11 +337,21 @@ class LeaderboardPage {
   }
 
   private render(): void {
+    $("lb-tab-ratings").hidden = this.tab !== "ratings";
+    $("lb-tab-codes").hidden = this.tab !== "codes";
+    for (const b of document.querySelectorAll<HTMLButtonElement>(".lb-tabs button")) {
+      const on = b.dataset.tab === this.tab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", String(on));
+    }
     this.renderLineages();
     this.renderScale();
     this.renderTable();
     this.renderDetail();
+    this.renderCodes();
     const params = new URLSearchParams();
+    if (this.tab === "codes") params.set("tab", "codes");
+    if (this.allCodes) params.set("codes", "all");
     params.set("epoch", this.epoch);
     if (this.view !== "main") params.set("view", this.view);
     if (this.view === "lineage" && this.lineages.size) params.set("lineage", [...this.lineages].sort().join(","));

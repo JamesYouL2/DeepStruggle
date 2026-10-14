@@ -40,6 +40,8 @@ from tools.lib.player_spec import (Inference, PlayerSpecError, Policy, kind_of, 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LEADERBOARD_DIR = ROOT / "leaderboard"
+#: The architecture and recipe codes (`tools/scripts/run_codes.py`): each code's flag set and description.
+RUN_CODES = ROOT / "research" / "run_codes.json"
 HF_REPO = "mihaild/deepstruggle"
 GITHUB_REPO = "mihaild/DeepStruggle"
 #: Elo per natural-log unit of odds.
@@ -112,6 +114,41 @@ def lineage(network: Optional[str]) -> Optional[str]:
     """The run a network descends from: its name up to the first `@` (`E7-A8-R1-S44@6400M+...`
     is lineage `E7-A8-R1-S44`)."""
     return network.split("@", 1)[0] if network else None
+
+
+#: A code in a network's name: `A8`, `R34` (not the engine `E7`, a seed `S44` or a step `@6400M`).
+_CODE = re.compile(r"(?<![A-Za-z0-9])([AR])(\d+)(?![0-9])")
+
+
+def network_codes(network: str) -> Tuple[Optional[str], Optional[str]]:
+    """The architecture and recipe a network was trained under: the last A code and the last R code in
+    its name, since each branch point names what changed (`E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13`
+    is A13 under R48; a soup of `(R34,R34-S45,R34-S46)` is R34). Names in the old scheme carry none."""
+    last: Dict[str, Optional[str]] = {"A": None, "R": None}
+    for m in _CODE.finditer(network):
+        last[m.group(1)] = m.group(1) + m.group(2)
+    return last["A"], last["R"]
+
+
+def codes_data(board: Board, path: pathlib.Path = RUN_CODES) -> Dict[str, object]:
+    """The page's tab of codes: every architecture and recipe with its description and flags, the
+    networks on the board trained under it, and each network's pair -- read from run_codes.json, the
+    one place the codes are defined, so the tab cannot drift from them."""
+    codes = json.loads(path.read_text(encoding="utf-8"))
+    by_network: Dict[str, Dict[str, Optional[str]]] = {}
+    users: Dict[str, Set[str]] = {}
+    for net in board.networks:
+        a, r = network_codes(net)
+        by_network[net] = {"architecture": a, "recipe": r}
+        for c in (a, r):
+            if c:
+                users.setdefault(c, set()).add(net)
+    out: Dict[str, object] = {"by_network": by_network}
+    for kind in ("architectures", "recipes"):
+        out[kind] = {code: {"description": str(v.get("description", "")), "flags": v.get("flags", {}),
+                            "first": v.get("first"), "networks": sorted(users.get(code, set()))}
+                     for code, v in sorted(codes.get(kind, {}).items(), key=lambda kv: int(kv[0][1:]))}
+    return out
 
 
 def player_spec(board: Board, pid: str) -> Inference:
@@ -598,7 +635,7 @@ def site_data(board: Board, commit: Optional[str] = None) -> Dict[str, object]:
                         "kind": kind_of(spec), "inference": pl["inference"],
                         "description": pl["description"], "report": player_report(board, pid)}
     return {"schema": 1, "commit": commit, "hf_repo": HF_REPO, "github": GITHUB_REPO,
-            "networks": board.networks, "players": players, "epochs": epochs}
+            "networks": board.networks, "players": players, "epochs": epochs, "codes": codes_data(board)}
 
 
 def markdown_table(board: Board, ratings: Sequence[Rating]) -> str:

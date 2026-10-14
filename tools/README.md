@@ -724,6 +724,11 @@ the view is kept in the link. The report is the player's own (`players.json`), a
 policy falls back to its network's: a network's behaviour report is of its greedy play, so a search
 or a sampled policy of the same weights shows no report until one of its own is registered
 (`add-player <id> --replace --report <path>`; `tools/lib/leaderboard.py` `player_report`).
+A second tab, **Recipes & architectures**, lists the codes the names are written in -- each code's
+description and flags -- read by the same `fit` from `research/run_codes.json` (`codes_data`), so it
+cannot drift from the codes `tools/scripts/run_codes.py` assigns. A network is trained under the last
+A and the last R code in its name (`network_codes`); the tab shows the codes of the networks on the
+board (or every code), and a player's detail links its two.
 
 ## 2c. Publishing to Hugging Face (`tools/publish_hf.py`)
 

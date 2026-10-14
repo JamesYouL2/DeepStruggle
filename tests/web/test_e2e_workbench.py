@@ -563,6 +563,20 @@ def test_the_leaderboard_page_filters_one_fit(browser: Any, static_site: str) ->
     anchor = next(r for r in ep["ratings"] if r["player"] == ep["anchor"])
     assert page.eval_on_selector_all("#lb-detail tbody tr", "rs => rs.length") == anchor["opponents"]
     assert "view=all" in page.url
+    # The codes tab: the recipes and architectures of the networks on the board, from the same fit; the
+    # selected player's codes link to their rows.
+    pid = next(p for p, pl in data["players"].items() if pl["network"] and data["codes"]["by_network"][pl["network"]]["recipe"]
+               and p != ep["anchor"] and any(r["player"] == p for r in ep["ratings"]))
+    page.click(f"#lb-body tr[data-player='{pid}']")
+    recipe = data["codes"]["by_network"][data["players"][pid]["network"]]["recipe"]
+    page.click(f"#lb-detail a[data-code='{recipe}']")
+    assert page.is_visible("#lb-tab-codes") and not page.is_visible("#lb-tab-ratings")
+    assert page.is_visible(f"#code-{recipe}")
+    used = [c for c, v in data["codes"]["recipes"].items() if v["networks"]]
+    assert page.eval_on_selector_all("#lb-tab-codes table.lb-codes", "ts => ts[0].tBodies[0].rows.length") == len(used)
+    page.check("#lb-codes-all")
+    assert page.eval_on_selector_all("#lb-tab-codes table.lb-codes", "ts => ts[0].tBodies[0].rows.length") == len(data["codes"]["recipes"])
+    assert "tab=codes" in page.url and "codes=all" in page.url
     assert not errors
 
 

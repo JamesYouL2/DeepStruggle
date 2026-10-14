@@ -246,6 +246,38 @@ def test_site_data_aggregates_a_pair_from_the_first_players_side(tmp_path: pathl
     assert pair["a_as_ussr"] == {"w": 3, "l": 7, "d": 0}
 
 
+def test_a_network_is_trained_under_the_last_code_of_each_kind_in_its_name() -> None:
+    assert lb.network_codes("E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M") == ("A13", "R48")
+    assert lb.network_codes("E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M") == ("A8", "R34")
+    assert lb.network_codes("E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M") == ("A8", "R1")
+    assert lb.network_codes("E7-20-44-4390M.45") == (None, None)         # the old scheme names no codes
+
+
+def test_the_codes_tab_lists_run_codes_with_the_networks_trained_under_each(tmp_path: pathlib.Path) -> None:
+    board = _board(tmp_path, ["A", "B"], [])
+    board.networks = {"E7-A8-R1-S44@6800M": board.networks["A@1M"],
+                      "E7-A8-R1-S44@6400M+R34@7200M+A13@8000M": board.networks["B@1M"]}
+    codes_file = tmp_path / "run_codes.json"
+    codes_file.write_text(json.dumps({
+        "architectures": {"A13": {"description": "wide", "flags": {"ladder_entity_proj_dim": 512}},
+                          "A8": {"description": "heads", "flags": {}}},
+        "recipes": {"R34": {"description": "gap", "flags": {"logit_gap_coef": 0.001}, "first": "run_x"},
+                    "R1": {"description": "plain", "flags": {}}, "R2": {"description": "unused", "flags": {}}}}))
+    codes = cast(Dict[str, Dict[str, Dict[str, object]]], lb.codes_data(board, codes_file))
+    assert list(codes["architectures"]) == ["A8", "A13"]                  # in numeric order
+    assert codes["architectures"]["A13"]["networks"] == ["E7-A8-R1-S44@6400M+R34@7200M+A13@8000M"]
+    assert codes["architectures"]["A8"]["networks"] == ["E7-A8-R1-S44@6800M"]
+    assert codes["recipes"]["R34"]["flags"] == {"logit_gap_coef": 0.001} and codes["recipes"]["R34"]["first"] == "run_x"
+    assert codes["recipes"]["R2"]["networks"] == []
+    assert codes["by_network"]["E7-A8-R1-S44@6400M+R34@7200M+A13@8000M"] == {"architecture": "A13", "recipe": "R34"}
+    # The real file: every code a network on the real board names is defined there.
+    real = lb.load()
+    data = cast(Dict[str, Dict[str, Dict[str, object]]], lb.site_data(real)["codes"])
+    for net, pair in data["by_network"].items():
+        for kind, code in (("architectures", pair["architecture"]), ("recipes", pair["recipe"])):
+            assert code is None or code in data[kind], f"{net} names {code}, which run_codes.json does not define"
+
+
 def test_plan_pairs_skips_what_is_recorded(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B", "C"], ["D"])
     _play(board, {"A": 1500.0, "B": 1600.0, "D": 1550.0}, [("D", "A")])

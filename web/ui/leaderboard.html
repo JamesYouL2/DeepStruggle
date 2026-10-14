@@ -22,6 +22,11 @@
     <a class="lb-nav" id="lb-workbench-link" href="./">Engine workbench →</a>
   </header>
   <main class="lb-main">
+    <nav class="lb-tabs" role="tablist" aria-label="Leaderboard sections">
+      <button type="button" role="tab" data-tab="ratings" id="lb-tab-ratings-btn">Ratings</button>
+      <button type="button" role="tab" data-tab="codes" id="lb-tab-codes-btn">Recipes &amp; architectures</button>
+    </nav>
+    <div id="lb-tab-ratings" role="tabpanel">
     <section class="lb-controls">
       <label>Engine epoch <select id="lb-epoch"></select></label>
       <div class="lb-view" role="radiogroup" aria-label="Which players to show">
@@ -47,6 +52,8 @@
       </table>
     </div>
     <section class="lb-detail" id="lb-detail" hidden></section>
+    </div>
+    <section id="lb-tab-codes" role="tabpanel" hidden></section>
     <p class="lb-error" id="lb-error" hidden></p>
     <footer class="lb-footer" id="lb-footer"></footer>
   </main>
