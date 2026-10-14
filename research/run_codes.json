@@ -932,6 +932,17 @@
     "block_lambda": "off",
     "batch_size": 16384
    }
+  },
+  "R48": {
+   "description": "R34 with 4x the minibatch (16,384): R47's noise reduction on the gap-penalty recipe",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48_20261014_032219",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "logit_gap_coef": 0.001,
+    "block_lambda": "off",
+    "batch_size": 16384
+   }
   }
  },
  "overrides": {
@@ -1081,7 +1092,8 @@
   "E7-A8-R1-S44-2_20261013_143743": "E7-A8-R1-S44-2",
   "E7-A8-R1-S44@6400M+R46_20261013_173310": "E7-A8-R1-S44@6400M+R46",
   "E7-A8-R1-S44@6400M+R47_20261013_173310": "E7-A8-R1-S44@6400M+R47",
-  "E7-A8-R1-S44@6400M+A13_20261013_194024": "E7-A8-R1-S44@6400M+A13"
+  "E7-A8-R1-S44@6400M+A13_20261013_194024": "E7-A8-R1-S44@6400M+A13",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48_20261014_032219": "E7-A8-R1-S44@6400M+R34@7200M+R48"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
