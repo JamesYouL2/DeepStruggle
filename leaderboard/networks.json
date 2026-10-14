@@ -91,7 +91,7 @@
     "sha256": "70786f2a0c616176484fb0f9b97b738fa0044d02c4e87fd105a7ee27e6ec0a7f",
     "description": "R48's plateau state (9,170M) widened in place to 512-wide grouped input projections (--resume-widen; A13), R48's recipe, trained to 12,000M (research/runs.md).",
     "old_names": [],
-    "hf": null,
+    "hf": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt",
     "report": null
   },
   "E7-A8-R1-S44@6400M+R39@7120..7200M": {
