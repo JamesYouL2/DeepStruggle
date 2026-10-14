@@ -46,6 +46,14 @@ Stages (each resumable, each writing JSONL.gz rows of schema `SCHEMA`):
   US's coups for the rest of the turn counted in each.
 * `subs-report` -- (local) does the model follow Subs with battleground coups, and what the event
   is worth with and without the scripted follow-up, by DEFCON.
+* `screen-select` / `confirm-select` -- (local) the playout-judged census, for a player no search
+  reference judges well (annotate's `--player`): every bank row's candidates -- the player's move,
+  the network's `--top` most probable, k=8 @256's -- go to `playouts` at a modest pair count (the
+  screen); `confirm-select` takes the best on those pairs and, where its paired lead over the
+  player's move is at least `--floor` and `--z` standard errors, sends the two to `playouts` again
+  with a fresh `--seed` (the confirmation), so choosing the best of several noisy scores does not
+  inflate the gain the `leak` stage reads (`--screen`, `--large 0`). A row not escalated counts as
+  no loss, so the leak is a lower bound: what a full-playout judge can find and recover.
 * `annotate` -- the raw network plays itself (`--temperature`, default 0.1, the tournaments'
   setting); one decision in `--sample` with two or more legal moves is kept, and each is put to the
   raw network and to every Gumbel configuration in `--budgets` (default the three measured in
@@ -453,7 +461,8 @@ def playouts(a: argparse.Namespace) -> int:
     from tools.lib.corpus_driver import load_policy, state_from_token
     from tools.lib.position_bank import position_seed
 
-    rows = _my_rows(a)
+    # A row with one move to play has nothing to compare (confirm-select's rows the screen cleared).
+    rows = [r for r in _my_rows(a) if len(r["pmoves"]) >= 2]
     # The raw network, greedy: the --onnx export when one is named, else the .pt itself.
     logits_fn, _ = load_policy(a.onnx or a.model)
 
@@ -1259,6 +1268,45 @@ def playout_select(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[
     return out
 
 
+def screen_select(bank_rows: Sequence[Dict[str, Any]], top: int = 6) -> List[Dict[str, Any]]:
+    """Every bank row with its screen candidates (`pmoves`, raw first): raw's move, the network's
+    `top` most probable and k=8 @256's. One playout class, `pl_incl` 1: the bank's weights stand."""
+    out: List[Dict[str, Any]] = []
+    for b in bank_rows:
+        order = [int(b["legal"][i]) for i in np.argsort(-np.asarray(b["logits"]), kind="stable")]
+        g256 = b["methods"].get("g256", {}).get("choice")
+        moves = list(dict.fromkeys([int(b["raw"])] + order[:top] + ([] if g256 is None else [int(g256)])))
+        out.append(dict(b, pmoves=moves, pl_class="screen", pl_incl=1.0))
+    return out
+
+
+def confirm_select(screen_rows: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[str, Any]]],
+                   z: float = 1.5, floor: float = 0.01) -> List[Dict[str, Any]]:
+    """Per screened row, the best move on the screen's pairs and its paired lead over raw's; where
+    the lead is at least `floor` (win probability) and `z` standard errors the row is `escalated`:
+    `pmoves` raw's move and the best, to be played again on fresh pairs. Elsewhere `best` is raw's
+    move and `pmoves` raw's alone (the playouts stage skips it). `regret` is the screen's lead in
+    value units (twice the win probability), for the tables' grouping only: it is the selected
+    maximum, inflated by construction, and no gain is read from it."""
+    out: List[Dict[str, Any]] = []
+    for b in screen_rows:
+        sc: Dict[str, List[float]] = {}
+        for run in runs:
+            got = run.get(b["id"])
+            if got is not None:
+                for m, xs in got["scores"].items():
+                    sc.setdefault(m, []).extend(xs)
+        if not sc:
+            raise ValueError(f"row {b['id']} has no screen playouts")
+        raw = int(b["raw"])
+        best = max((int(m) for m in sc), key=lambda m: (sum(sc[str(m)]) / len(sc[str(m)]), m == raw))
+        lead, var = _paired_scores(sc, best, raw)
+        up = best != raw and lead >= floor and lead >= z * math.sqrt(var)
+        out.append(dict(b, best=best if up else raw, regret=2 * lead, conf=f"z{lead / math.sqrt(var):.2f}" if var else "-",
+                        escalated=up, screen_best=best, pmoves=[raw, best] if up else [raw]))
+    return out
+
+
 def _paired_scores(scores: Dict[str, List[float]], x: Optional[int], y: int) -> Tuple[float, float]:
     """Mean paired difference of move x's playout scores over move y's, and its variance (of the
     mean); 0 where x is y or was not played out."""
@@ -1269,12 +1317,26 @@ def _paired_scores(scores: Dict[str, List[float]], x: Optional[int], y: int) -> 
     return m, (sum((t - m) ** 2 for t in d) / (len(d) - 1) / len(d) if len(d) > 1 else 0.0)
 
 
+def _pooled(runs: Sequence[Dict[str, Dict[str, Any]]], rid: str) -> Dict[str, List[float]]:
+    sc: Dict[str, List[float]] = {}
+    for run in runs:
+        got = run.get(rid)
+        if got is None:
+            continue
+        for m, xs in got["scores"].items():
+            sc.setdefault(m, []).extend(xs)
+    return sc
+
+
 def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[str, Any]]],
-              cards: Dict[int, Dict[str, Any]], countries: Dict[int, Dict[str, Any]]) -> List[Dict[str, Any]]:
+              cards: Dict[int, Dict[str, Any]], countries: Dict[int, Dict[str, Any]],
+              screen: Optional[Sequence[Dict[str, Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
     """Per playout row: its population weight (bank weight / `pl_incl`), raw's search-valued regret,
     the decision kind and a finer label, and the paired playout gain over raw's move of the best move
     (`gain`) and of k=8 @256's move (`g256`), the runs' pairs pooled. `runs` are playout outputs
-    keyed by row id."""
+    keyed by row id. With `screen` (confirm-select's rows as `inputs`) k=8 @256's gain is read from
+    the screen's pairs -- it was not chosen on them -- and a row the screen did not escalate counts
+    with no gain."""
     from tools.lib.corpus_driver import state_from_token
 
     modes = {EVENT: "EVENT", SPACE: "SPACE", EVENT + 2: "INFL", EVENT + 3: "COUP", EVENT + 4: "REALIGN"}
@@ -1297,23 +1359,20 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
 
     out: List[Dict[str, Any]] = []
     for b in inputs:
-        sc: Dict[str, List[float]] = {}
-        for run in runs:
-            got = run.get(b["id"])
-            if got is None:
-                continue
-            for m, xs in got["scores"].items():
-                sc.setdefault(m, []).extend(xs)
-        if not sc:
-            continue
+        sc = _pooled(runs, b["id"])
         raw, best, side = int(b["raw"]), int(b["best"]), str(b["side"])
+        if not sc and not (screen is not None and best == raw):
+            continue
         g256 = b["methods"].get("g256", {}).get("choice")
+        gsc = sc if screen is None else _pooled(screen, b["id"])
         st = state_from_token(b["pos"])
+        for m in (raw, best):  # a screen's best can lie outside every searcher's candidates
+            b["names"].setdefault(str(m), ActionEncoder.get_action_name(st, m))
         dt = b["decision_type"]
         r: Dict[str, Any] = {"id": b["id"], "b": b, "w": float(b["weight"]) / float(b.get("pl_incl", 1.0)),
                              "regret": float(b["regret"]), "side": side, "turn": int(b["turn"]),
                              "defcon": int(st.defcon), "gain": _paired_scores(sc, best, raw),
-                             "g256": _paired_scores(sc, None if g256 is None else int(g256), raw),
+                             "g256": _paired_scores(gsc, None if g256 is None else int(g256), raw),
                              "sub": "", "raw_card": "", "best_card": ""}
         if dt == "SELECT_CARD":
             r["kind"] = "headline" if b["phase"] == "HEADLINE" else "AR card choice"
@@ -1383,7 +1442,10 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
                   large: float = LARGE_REGRET, resamples: int = 2000) -> str:
     """Where raw play loses, in points of win probability a game (both sides' decisions summed): each
     playout row's paired gain of the best move over raw's, weighted back to the population, grouped
-    by the decision's kind and by finer labels, beside what k=8 @256 recovers there."""
+    by the decision's kind and by finer labels, beside what k=8 @256 recovers there. `large` <= 0
+    is the playout-screened census (confirm-select): every row is read, none is screened out by a
+    search-valued regret."""
+    scope = "large regret" if large > 0 else "all positions"
     scale = 100.0 * decisions_per_game / bank_weight
     out: List[str] = []
 
@@ -1408,17 +1470,24 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
                        f"{m:+.1f} ± {s:.1f} | {gm:+.1f} ± {gs:.1f} |")
         out.append("")
 
-    big = [r for r in rows if r["regret"] >= large]
+    big = [r for r in rows if large <= 0 or r["regret"] >= large]
     out += ["# Where raw play loses: paired playouts by decision kind", "",
             f"Points of win probability a game, both sides' decisions summed ({decisions_per_game:.1f} decisions "
             "with two or more legal moves a game): each playout row's paired gain of the best move over raw's, "
             "weighted back to the decisions raw play meets. 'k=8 @256 over raw' is what that searcher's own "
-            "move recovers. 'Large' is a search-valued raw regret of 2+ points, where the gain is "
-            "(research/log/E7_search_disagreement_bank.md); the rest sits at its noise.", ""]
-    tab("total", lambda r: "large regret (2+ points)" if r["regret"] >= large else "the rest", rows)
+            "move recovers." + (" 'Large' is a search-valued raw regret of 2+ points, where the gain is "
+                                "(research/log/E7_search_disagreement_bank.md); the rest sits at its noise."
+                                if large > 0 else ""), ""]
+    if large > 0:
+        tab("total", lambda r: "large regret (2+ points)" if r["regret"] >= large else "the rest", rows)
+    else:
+        out += ["Screened census: the best move is chosen on the screen's pairs, and its gain measured on "
+                "fresh pairs where the screen's lead held (escalated); other rows count as no loss, so the "
+                "total is a lower bound. 'raw' is the move under study (annotate --player: the player's).", ""]
+        tab("total", lambda r: "escalated" if r["b"].get("escalated") else "not escalated", rows)
     if resamples > 0 and big:
         bs = kind_bootstrap(big, scale, resamples)
-        out += [f"## large regret: decision kind, stratified bootstrap ({resamples} resamples)", "",
+        out += [f"## {scope}: decision kind, stratified bootstrap ({resamples} resamples)", "",
                 "Positions resampled within their (bank stratum, playout class) cell: the ± counts the "
                 "sampling of positions as well as the playout noise the tables below print alone.", "",
                 "| kind | best over raw | share | k=8 @256 over raw | leaks the most in |",
@@ -1429,26 +1498,26 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
             out.append(f"| {k} | {v['leak']:+.1f} ± {v['leak_se']:.1f} | {share} | "
                        f"{v['g256']:+.1f} ± {v['g256_se']:.1f} | {most} |")
         out.append("")
-    tab("large regret: decision kind", lambda r: r["kind"], big)
-    tab("large regret: side x kind", lambda r: f"{r['side']} {r['kind']}", big, top=10)
-    tab("large regret: era x kind", lambda r: f"{era_label(r['turn'])} {r['kind']}", big, top=12)
-    tab("large regret: DEFCON x kind",
+    tab(f"{scope}: decision kind", lambda r: r["kind"], big)
+    tab(f"{scope}: side x kind", lambda r: f"{r['side']} {r['kind']}", big, top=10)
+    tab(f"{scope}: era x kind", lambda r: f"{era_label(r['turn'])} {r['kind']}", big, top=12)
+    tab(f"{scope}: DEFCON x kind",
         lambda r: f"D{min(r['defcon'], 4)}{'+' if r['defcon'] >= 4 else ''} "
                   f"{r['kind'] if r['kind'] in ('AR card choice', 'play mode') else 'other'}", big, top=10)
     cc = [r for r in big if r["kind"] == "AR card choice"]
-    tab("large regret, AR card choice: raw's card -> the best card (kind, Ops)", lambda r: r["sub"], cc, min_n=5)
-    tab("large regret, AR card choice: the card raw plays instead (n >= 4)", lambda r: r["raw_card"], cc, min_n=4)
-    tab("large regret, AR card choice: the card the best move plays (n >= 4)", lambda r: r["best_card"], cc, min_n=4)
-    tab("large regret, play mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "play mode"],
+    tab(f"{scope}, AR card choice: raw's card -> the best card (kind, Ops)", lambda r: r["sub"], cc, min_n=5)
+    tab(f"{scope}, AR card choice: the card raw plays instead (n >= 4)", lambda r: r["raw_card"], cc, min_n=4)
+    tab(f"{scope}, AR card choice: the card the best move plays (n >= 4)", lambda r: r["best_card"], cc, min_n=4)
+    tab(f"{scope}, play mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "play mode"],
         top=10, min_n=4)
-    tab("large regret, play mode: the card (n >= 4)", lambda r: r["raw_card"],
+    tab(f"{scope}, play mode: the card (n >= 4)", lambda r: r["raw_card"],
         [r for r in big if r["kind"] == "play mode"], top=10, min_n=4)
-    tab("large regret, op mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "op mode"], top=6)
-    tab("large regret, influence targets: raw's region -> the best region", lambda r: r["sub"],
+    tab(f"{scope}, op mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "op mode"], top=6)
+    tab(f"{scope}, influence targets: raw's region -> the best region", lambda r: r["sub"],
         [r for r in big if r["kind"] == "target (influence)"], top=10, min_n=4)
-    tab("large regret, headline: raw's card -> the best card (kind, Ops)", lambda r: r["sub"],
+    tab(f"{scope}, headline: raw's card -> the best card (kind, Ops)", lambda r: r["sub"],
         [r for r in big if r["kind"] == "headline"], top=8, min_n=4)
-    out += ["## The 20 positions that cost raw the most a game (large regret)", "",
+    out += [f"## The 20 positions that cost raw the most a game ({scope})", "",
             "| turn/AR | side | DEFCON | kind | raw | best | gain a decision | a game |", "|:---|:---|---:|:---|:---|:---|---:|---:|"]
     for r in sorted(big, key=lambda r: -r["w"] * r["gain"][0])[:20]:
         b, nm = r["b"], r["b"]["names"]
@@ -1591,6 +1660,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ps.add_argument("--control", type=int, default=300, help="positions taken from the agreement controls")
     ps.add_argument("--seed", type=int, default=0)
     ps.add_argument("--out", required=True, help="bank.jsonl.gz rows with `pmoves` and `pl_incl`")
+    ss = sub.add_parser("screen-select", help="every bank row with its screen candidates, to play out")
+    ss.add_argument("--bank", required=True)
+    ss.add_argument("--top", type=int, default=6, help="the network's most probable moves among the candidates")
+    ss.add_argument("--out", required=True)
+    cf = sub.add_parser("confirm-select", help="the screen's best per row, escalated where its lead holds")
+    cf.add_argument("--screen-input", required=True, help="screen-select's output")
+    cf.add_argument("--playouts", nargs="+", required=True, help="the screen's playouts")
+    cf.add_argument("--z", type=float, default=1.5)
+    cf.add_argument("--floor", type=float, default=0.01, help="least lead escalated (win probability)")
+    cf.add_argument("--out", required=True)
     lk = sub.add_parser("leak", help="where raw play loses, by decision kind, from paired playouts")
     lk.add_argument("--bank", required=True, help="the whole bank (its weights are the population)")
     lk.add_argument("--playouts-input", required=True, help="playout-select's output")
@@ -1600,6 +1679,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
     lk.add_argument("--resamples", type=int, default=2000,
                     help="stratified bootstrap resamples for the per-kind standard errors (0: none)")
+    lk.add_argument("--screen", nargs="*", default=None,
+                    help="the screen's playouts (a confirm-select census: k=8 @256's gain read from them)")
+    lk.add_argument("--large", type=float, default=LARGE_REGRET,
+                    help="search-valued regret of the 'large' rows; 0 for a confirm-select census")
     lk.add_argument("--out", required=True)
     rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
     rp.add_argument("--bank", required=True)
@@ -1621,13 +1704,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"{len(rows)} positions ({dict(got)}), {sum(len(r['pmoves']) for r in rows)} moves to play out "
               f"-> {a.out}", file=sys.stderr)
         return 0
+    if a.cmd in ("screen-select", "confirm-select"):
+        if a.cmd == "screen-select":
+            rows = screen_select(read_rows([a.bank]), a.top)
+        else:
+            rows = confirm_select(read_rows([a.screen_input]), [{r["id"]: r for r in read_rows([p])} for p in a.playouts],
+                                  a.z, a.floor)
+        with gzip.open(a.out, "wt") as f:
+            for r in rows:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        print(f"{len(rows)} positions, {sum(1 for r in rows if len(r['pmoves']) >= 2)} to play out, "
+              f"{sum(len(r['pmoves']) for r in rows if len(r['pmoves']) >= 2)} moves -> {a.out}", file=sys.stderr)
+        return 0
     if a.cmd == "leak":
         cards = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
         countries = {int(c["id"]): c for c in json.load(open("rules/map.json"))["countries"]}
         runs = [{r["id"]: r for r in read_rows([p])} for p in a.playouts]
-        rows = leak_rows(read_rows([a.playouts_input]), runs, cards, countries)
+        screen = None if a.screen is None else [{r["id"]: r for r in read_rows([p])} for p in a.screen]
+        rows = leak_rows(read_rows([a.playouts_input]), runs, cards, countries, screen=screen)
         weight = sum(float(b["weight"]) for b in read_rows([a.bank]))
-        open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game, resamples=a.resamples))
+        open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game, large=a.large,
+                                             resamples=a.resamples))
         print(f"leak tables over {len(rows)} positions -> {a.out}", file=sys.stderr)
         return 0
     if a.cmd == "report":
