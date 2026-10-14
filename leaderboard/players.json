@@ -155,17 +155,6 @@
     "description": "",
     "report": null
   },
-  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~gumbel(sims=256,k=8,fpu=0.2)": {
-    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
-    "inference": {
-      "kind": "gumbel",
-      "sims": 256,
-      "k": 8,
-      "fpu": 0.2
-    },
-    "description": "",
-    "report": null
-  },
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=16,horizon=4,rule=z2)": {
     "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
     "inference": {
