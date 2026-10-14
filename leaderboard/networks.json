@@ -78,6 +78,22 @@
     "hf": "E7-A8-R1-S44@6400M+R34_20261010_031009/swa_7120-7200M.pt",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9120..9200M": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34@7200M+R48_20261014_032219/swa_9120-9200M.pt",
+    "sha256": "9fda6bb8744dfd0c8e00d3e9af33f1b7cc7674acfe0ae387b092373ba4c54658",
+    "description": "R34's gap penalty plus 4x the minibatch (16,384), continued from R34's 7,200M state to its plateau at 9,200M (research/runs.md, R48): the strongest purely trained single run at A8 width.",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt",
+    "sha256": "70786f2a0c616176484fb0f9b97b738fa0044d02c4e87fd105a7ee27e6ec0a7f",
+    "description": "R48's plateau state (9,170M) widened in place to 512-wide grouped input projections (--resume-widen; A13), R48's recipe, trained to 12,000M (research/runs.md).",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R39@7120..7200M": {
     "file": "checkpoints/E7-A8-R1-S44@6400M+R39_20261011_145632/swa_7120-7200M.pt",
     "sha256": "19d3008de140f2952f139aead8226936f1a36b7b1489e99c16f54dd23f1e32f0",
