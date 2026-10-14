@@ -19,7 +19,8 @@ from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import load_policy, state_from_token
-from tools.search_bank import kind_bootstrap, legal_actions, main, mover_of, parse_budgets, raw_rank, read_rows
+from tools.search_bank import (confirm_select, kind_bootstrap, legal_actions, main, mover_of, parse_budgets, raw_rank,
+                               read_rows, screen_select)
 
 
 def _checkpoint(tmp_path: Path) -> str:
@@ -337,3 +338,16 @@ def test_kind_bootstrap_resamples_within_cells() -> None:
     # Two different rows in one cell: the resampled totals spread.
     noisy = kind_bootstrap([row("placement", "a", 0.0, 0.0), row("placement", "a", 0.2, 0.0)], 10.0, 200)
     assert noisy["placement"]["leak"] == pytest.approx(2.0) and noisy["placement"]["leak_se"] > 0.5
+
+
+def test_a_kind_filtered_screen_leaves_the_other_rows_on_raws_move_unescalated() -> None:
+    def row(i: str, dt: str, phase: str) -> dict:
+        return {"id": i, "decision_type": dt, "phase": phase, "raw": 3, "legal": [1, 3, 5],
+                "logits": [0.1, 0.5, 0.2], "methods": {"g256": {"choice": 1}}, "weight": 1.0}
+    rows = screen_select([row("a", "SELECT_CARD", "ACTION_ROUND"), row("h", "SELECT_CARD", "HEADLINE"),
+                          row("p", "POINT_NODE", "ACTION_ROUND")], decision="SELECT_CARD", phase="ACTION_ROUND")
+    assert [r["pmoves"] for r in rows] == [[3, 5, 1], [3], [3]]
+    run = {"a": {"scores": {"3": [0.0] * 8, "5": [1.0, 0.9] * 4, "1": [0.0] * 8}}}
+    got = {r["id"]: r for r in confirm_select(rows, [run])}
+    assert got["a"]["escalated"] and got["a"]["best"] == 5 and got["a"]["pmoves"] == [3, 5]
+    assert not got["h"]["escalated"] and got["h"]["best"] == 3 and got["h"]["pmoves"] == [3]

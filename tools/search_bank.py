@@ -1268,11 +1268,17 @@ def playout_select(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[
     return out
 
 
-def screen_select(bank_rows: Sequence[Dict[str, Any]], top: int = 6) -> List[Dict[str, Any]]:
+def screen_select(bank_rows: Sequence[Dict[str, Any]], top: int = 6, decision: Optional[str] = None,
+                  phase: Optional[str] = None) -> List[Dict[str, Any]]:
     """Every bank row with its screen candidates (`pmoves`, raw first): raw's move, the network's
-    `top` most probable and k=8 @256's. One playout class, `pl_incl` 1: the bank's weights stand."""
+    `top` most probable and k=8 @256's. One playout class, `pl_incl` 1: the bank's weights stand.
+    With `decision` / `phase` only the rows of that decision type and phase are screened; the rest
+    keep raw's move alone (`pmoves` [raw], not played out), so the census measures that kind only."""
     out: List[Dict[str, Any]] = []
     for b in bank_rows:
+        if (decision is not None and b["decision_type"] != decision) or (phase is not None and b["phase"] != phase):
+            out.append(dict(b, pmoves=[int(b["raw"])], pl_class="screen", pl_incl=1.0))
+            continue
         order = [int(b["legal"][i]) for i in np.argsort(-np.asarray(b["logits"]), kind="stable")]
         g256 = b["methods"].get("g256", {}).get("choice")
         moves = list(dict.fromkeys([int(b["raw"])] + order[:top] + ([] if g256 is None else [int(g256)])))
@@ -1296,9 +1302,12 @@ def confirm_select(screen_rows: Sequence[Dict[str, Any]], runs: Sequence[Dict[st
             if got is not None:
                 for m, xs in got["scores"].items():
                     sc.setdefault(m, []).extend(xs)
+        raw = int(b["raw"])
+        if not sc and len(b["pmoves"]) < 2:  # not screened: raw's move stands
+            out.append(dict(b, best=raw, regret=0.0, conf="-", escalated=False, screen_best=raw, pmoves=[raw]))
+            continue
         if not sc:
             raise ValueError(f"row {b['id']} has no screen playouts")
-        raw = int(b["raw"])
         best = max((int(m) for m in sc), key=lambda m: (sum(sc[str(m)]) / len(sc[str(m)]), m == raw))
         lead, var = _paired_scores(sc, best, raw)
         up = best != raw and lead >= floor and lead >= z * math.sqrt(var)
@@ -1663,6 +1672,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ss = sub.add_parser("screen-select", help="every bank row with its screen candidates, to play out")
     ss.add_argument("--bank", required=True)
     ss.add_argument("--top", type=int, default=6, help="the network's most probable moves among the candidates")
+    ss.add_argument("--decision", default=None, help="screen only this decision type (e.g. SELECT_CARD)")
+    ss.add_argument("--phase", default=None, help="screen only this phase (e.g. ACTION_ROUND)")
     ss.add_argument("--out", required=True)
     cf = sub.add_parser("confirm-select", help="the screen's best per row, escalated where its lead holds")
     cf.add_argument("--screen-input", required=True, help="screen-select's output")
@@ -1706,7 +1717,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     if a.cmd in ("screen-select", "confirm-select"):
         if a.cmd == "screen-select":
-            rows = screen_select(read_rows([a.bank]), a.top)
+            rows = screen_select(read_rows([a.bank]), a.top, a.decision, a.phase)
         else:
             rows = confirm_select(read_rows([a.screen_input]), [{r["id"]: r for r in read_rows([p])} for p in a.playouts],
                                   a.z, a.floor)
