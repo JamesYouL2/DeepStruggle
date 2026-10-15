@@ -2,99 +2,57 @@
 name: ts-match-replay
 description: >-
   Simulate individual Twilight Struggle matches between agents, play interactively via CLI terminal,
-  generate standardized .tslog.json game replays, and launch Web Workbench browser matches. Activate this skill
-  whenever the user asks to play a match, watch a game replay, play interactively in the terminal, or connect
-  a bot to the web UI.
+  generate standardized .tslog.json game replays, and play or watch games in the browser Web Workbench.
+  Activate this skill whenever the user asks to play a match, watch a game replay, play interactively
+  in the terminal, or play against a model in the web UI.
 ---
 
 # Twilight Struggle AI: Match Simulator & Replay Guide
 
-This skill provides step-by-step instructions for running offline matches between any two agents, playing interactively in the terminal, and inspecting replays via the Web Workbench.
-
-> [!IMPORTANT]
-> **Dynamic Checkpoints**:
-> Checkpoint paths evolve as new models are trained.
-> - Run `python tools/inspect_checkpoints.py` to view all saved models and architectures.
-> - You can pass `--us neural` or `--ussr neural` without a path to **automatically select the latest trained checkpoint**.
-> - Specific paths shown in examples below (e.g. `<checkpoint_path>.pt`) should be replaced with current models.
+Offline matches between any two agents, terminal play, and replays in the Web Workbench. Never
+write ad-hoc match scripts: use `tools/play_match.py`.
 
 ---
 
-## 1. Quick Reference: Match & Replay Commands
-
-### A. Simulating a Match Between Two Checkpoints
-```bash
-# Pit two checkpoints against each other:
-# (Replace with paths discovered via tools/inspect_checkpoints.py, or use 'neural' for latest)
-PYTHONPATH=. .venv/bin/python tools/play_match.py \
-  --us data/checkpoints/<run_A>/<snapshot_A>.pt \
-  --ussr data/checkpoints/<run_B>/<snapshot_B>.pt \
-  --game-id match_vA_vs_vB \
-  --seed 42
-```
-*Output*: Dumps `data/replays/match_vA_vs_vB.tslog.json` and prints the direct Web Workbench viewer URL:
-`http://localhost:8000/?replay=match_vA_vs_vB.tslog.json`
-
-### B. Interactive Terminal Play (Human vs AI Bot)
-Allows a human to play Twilight Struggle directly in the terminal with numbered move prompts:
+## 1. Matches and replays
 
 ```bash
-# Play as US against the latest trained NeuralBot as USSR:
-PYTHONPATH=. .venv/bin/python tools/play_match.py \
-  --us human \
-  --ussr neural \
-  --game-id my_human_game
-```
-*The replay is automatically saved to `data/replays/` so you can review your game on the web map afterward.*
+# Two checkpoints (or any agent identifiers, section 3)
+PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py \
+  --us data/checkpoints/<run_A>/<snapshot_A>.pt --ussr data/checkpoints/<run_B>/<snapshot_B>.pt \
+  --game-id match_A_vs_B --seed 42
 
-### C. Match with Strategic Commentary & Regional Scoring Audits
-Embeds strategic rationale, chain-of-thought lines, and regional scoring calculations directly into the replay metadata:
+# Human in the terminal against the newest checkpoint
+PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us human --ussr neural --game-id my_game
+
+# With strategic commentary and scoring audits in the replay metadata
+PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us strategic --ussr event_heavy --commentary
+```
+
+Each match writes `data/replays/<game-id>.tslog.json` and prints the workbench URL
+(`http://localhost:8000/?replay=<file>`). `--trace` records the model's policy and critic at every
+step for the workbench's readout; `--opening`, `--temperature` and `--device` are also available.
+
+## 2. Web Workbench
+
+The workbench runs entirely in the browser (engine as WebAssembly, models as ONNX); the local
+server only lists this machine's checkpoints and replays.
 
 ```bash
-PYTHONPATH=. .venv/bin/python tools/play_match.py \
-  --us strategic \
-  --ussr event_heavy \
-  --commentary \
-  --game-id strategic_vs_event
+tools/scripts/build_web.sh                       # rebuild after any engine change
+PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 ```
 
----
+Open `http://localhost:8000/`. Choose *Play as US / USSR* (the other side's private information is
+hidden and the model plays it) or *Developer*; pick a model in *Model Analysis* (a local checkpoint,
+a Hugging Face repo, or a dropped `.onnx`) and set *Auto-play* for its side. Replays load from the
+server's list, *Load Replay*, or by dropping a `.tslog.json`. Details: `web/ui/AGENTS.md`.
 
-## 2. Web Workbench: Live Browser Play Against AI
+## 3. Agent identifiers (`--us`, `--ussr`, `--agent` for self-play)
 
-### Step 1: Start Backend Game Server
-```bash
-PYTHONPATH=. .venv/bin/python -m uvicorn web.server.main:app --host 0.0.0.0 --port 8000
-```
-
-### Step 2: Connect Bot Client via WebSocket
-In a separate terminal, start the bot for the opponent side:
-```bash
-# Connect NeuralBot as USSR (replace with target model checkpoint):
-PYTHONPATH=. .venv/bin/python -m web.bot_client \
-  --game-id game-1 \
-  --role USSR \
-  --type neural \
-  --model-path data/checkpoints/<target_run>/<snapshot>.pt
-
-# Or connect HeuristicBot as USSR:
-PYTHONPATH=. .venv/bin/python -m web.bot_client --game-id game-1 --role USSR --type heuristic
-```
-
-### Step 3: Open Browser
-Navigate to:
-`http://localhost:8000/?game_id=game-1&role=US`
-
----
-
-## 3. Supported Agent Identifiers
-
-When using `--us`, `--ussr`, or `--agent` in `tools/play_match.py`:
-- `heuristic`: Rule-based battleground and scoring timing expert ([`HeuristicBot`](../../../bot/heuristic_bot.py)).
-- `random`: Uniform stochastic player ([`RandomBot`](../../../bot/random_bot.py)).
-- `strategic`: DEFCON-2 realist containment agent with rich strategy notes ([`StrategicBot`](../../../bot/strategic_bot.py)).
-- `event_heavy`: Event-prioritizing agent with EVENT_FIRST timing ([`EventHeavyBot`](../../../bot/event_heavy_bot.py)).
-- `exploratory`: Exploration agent testing Space Race, coups, and edge cases ([`ExploratoryBot`](../../../bot/exploratory_bot.py)).
-- `human`: Interactive terminal player prompting for stdin input ([`HumanBot`](../../../bot/human_bot.py)).
-- `neural`: Auto-discovers and loads the latest trained `.pt` checkpoint.
-- Path to any `.pt` file (e.g. `data/checkpoints/<run>/<snapshot>.pt`): Loads that specific checkpoint, auto-detecting V1, V2, or V3 architecture.
+- `heuristic` ([`HeuristicBot`](../../../bot/heuristic_bot.py)), `random` ([`RandomBot`](../../../bot/random_bot.py)),
+  `strategic` ([`StrategicBot`](../../../bot/strategic_bot.py)), `event_heavy` ([`EventHeavyBot`](../../../bot/event_heavy_bot.py)),
+  `exploratory` ([`ExploratoryBot`](../../../bot/exploratory_bot.py)), `human` ([`HumanBot`](../../../bot/human_bot.py)).
+- `heuristic_mcts[:sims]` ([`HeuristicMCTSBot`](../../../bot/heuristic_mcts_bot.py)): search with no checkpoint; it sees both hands.
+- `neural`: the newest checkpoint under `data/checkpoints/`; `neural:<path>` or any `.pt` path: that
+  checkpoint, its architecture detected from the weights.

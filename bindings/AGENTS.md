@@ -1,158 +1,148 @@
 # Python Bindings & Environment Wrappers (`bindings/`)
 
-This directory contains the Python native extension module (`ts_engine`) built with **`nanobind`**, along with the environment wrappers and action codec that bridge the C++20 simulation core with Python.
+The Python extension module `ts_engine` (built with **nanobind**), the WebAssembly entry point, and
+the environment wrappers and action codec that bridge the C++20 core with Python. Section numbers
+are cited from elsewhere; keep them.
 
 ---
 
 ## 1. File Overview
 
-- [`CMakeLists.txt`](CMakeLists.txt): Nanobind module build target configuring `ts_engine` compilation and linkage against `ts_engine_core`.
-- [`ts_bindings.cpp`](ts_bindings.cpp): Complete nanobind module definition. Exposes:
+- [`CMakeLists.txt`](CMakeLists.txt): the nanobind module target, linked against `ts_engine_core`
+  (under `emcmake` it builds `ts_engine_wasm` instead).
+- [`ts_bindings.cpp`](ts_bindings.cpp): the module definition. Exposes:
   - Enums: `Player`, `Phase`, `DecisionType`, `Resolution`, `TimingBranch`, `OpMode`, `CardLocation`, `WarEra`, `Region`, `RegionalStatus`, `RollType`.
-  - Structs: `MicroAction`, `CountryState`, `DecisionContext`, `GameState`.
-  - Static Engine API: `init_game()`, `step()`, `step_flat()`, `try_step()`, `try_step_flat()`,
-    `auto_advance_step()`, `is_terminal()`, `get_terminal_utility()`, `get_legal_action_mask()`, `get_flat_action_mask()`, `get_legal_action_indices()`, and the held-scoring predicates.
-  - Neural Network & Vectorized RL: `extract_observation()`, `decode_flat_action()`, `encode_micro_action()`, `ActionMask`, `VectorizedBatchRunner` (contiguous multi-game simulation).
-  - **P23 / E4.1 merged-influence view** (`engine/AGENTS.md` §4): `get_flat_action_mask(state, merged_influence=False)` (module and `Engine`), `ActionMask.generate_flat_mask(state, merged_influence=False)`, `Engine.step_flat` / `try_step_flat(..., merged_influence=False)`, and `ActionMask.is_merged_influence_action(state, idx)`. The runner holds the view **per env and side** -- `set_merged_influence(us, ussr)` and `set_merged_influence_env(i, us, ussr)` -- because a tournament seats an E4 and an E4.1 agent in one game; its cached mask is built for whoever decides next and a step is applied in the actor's view. Default everywhere is off, which is exactly E4. `bindings/ts_env.TsVectorizedEnv` mirrors the per-side flags so `reset_all(base_seed)`, which builds a new runner, keeps them.
-  - **The view spec's observation half** (`engine/AGENTS.md` §6a): `extract_observation_features(state, perspective, features)` -- the base layout plus the requested `OBS_FEATURE_*` blocks; `features` has no default, and unknown bits raise. `obs_size_for(features)` is the width, `OBS_FEATURES_ALL` every known bit. The runner holds a set **per env and side** (`set_obs_features(us, ussr)`, `set_obs_features_env(i, us, ussr)`), writes each row in its decider's set and zero-pads to the widest (`obs_width`), so agents with different sets share a batch; each reads its own prefix. `TsVectorizedEnv.set_obs_features` mirrors the sets across `reset_all(base_seed)`, and `model_obs_features(model)` reads a model's set from its weights.
-  - **`BatchedSearch`** ([`batched_search.hpp`](batched_search.hpp), 2026-10-03): the tree half of `ai/search/batched_mcts.py` (`backend="cpp"`). Up to `capacity` independent PUCT searches advanced in lockstep, the trees split into `num_groups` contiguous evaluation groups: `reset(roots, simulations, rng_state, num_groups)` -- `simulations` one budget for every tree or a list with one per tree, so searches of different sizes share one set of rounds (the Gumbel root's candidates, `ai/search/gumbel_root.py`); a tree's node storage is released when it is more than twice what its new budget can use, since a node holds a whole 1.5 KB `GameState` -- then per group `k = select_leaves(g)` writes that group's leaves into rows `[group_offset(g), +k)` of the leaf buffers (its roots on the first call, then one simulation round per call), Python runs the network on them, and `expand_and_backup(g, probs, values)` fills them in and backs their values up; `group_has_budget(g)` says whether the group needs another round. Rounds are taken group 0, 1, 0, 1, ... so the chance seeds come out in the Python tree's order, and the Python driver pipelines them: the tree selects one group's leaves while the GPU evaluates the other's. `set_buffers(obs, masks)` makes C++ write leaves into caller-owned arrays -- page-locked torch tensors, so the copies to and from the GPU are asynchronous -- and frees its own. `ai/search/batched_mcts.py` keeps one searcher, rebuilt only when a batch exceeds its capacity (capacity bounds the trees it holds, not what a search computes). The grouping is part of the search's semantics, not only its speed (a row's network output depends on the batch it is evaluated in), so `ai/search/batched_mcts.search_groups` is the one rule both trees follow: two halves from 1,024 trees on (512 per half), one group below -- smaller halves only double the network calls. `root(i)` returns `(terminal, mover, value_us, actions, priors, visits, value_sums)`, `set_root_priors(i, priors)` takes root noise drawn by the caller. The search is the Python tree's bit for bit, random draws included: `reset(roots, simulations, rng_state)` takes the caller's `random.Random.getstate()[1]`, each new child's chance seed is `getrandbits(64)` from a C++ copy of CPython's MT19937 in the Python tree's order (round by round, trees in index order), and `mt_state()` hands the advanced state back for `setstate()`. `tests/training/test_batched_search_cpp.py` holds the two to identical visit counts and generator states, and a 400-game search tournament reproduces the Python tree's games exactly. Descents, featurisation and backups run across trees with `gomp_parallel_for`; only the seeds are handed out serially (a round walks every tree to its untaken edge, numbers the seeds in tree order, then builds the children), so nothing depends on the thread count. Takes the evaluating model's `obs_features` and `merged_influence`, and `fpu_reduction` (first-play urgency: an unvisited move is valued at its node's value less this, from the mover's side; 0, the default, is the original rule -- `BatchedMCTSConfig.fpu_reduction`, the same arithmetic in both trees). Python-only: not in the wasm build.
-  - `GameState.raw_bytes()`: the state's memory, for exact equality tests (it is trivially copyable).
-  - Hand-knowledge helpers over `CardLocation`: `in_hand_of()`, `known_to_opponent()`, `hand_of()`, `hand_holder()`, `revealed()`, plus `reveal_hand()` / `reveal_both_hands()`. Use these instead of comparing a location to a hand constant — see [`engine/AGENTS.md`](../engine/AGENTS.md) §7.
-  - Metadata helpers: `MapData`, `CardData`, `StateMachine`, `Operations`, `Scoring`, `CardHandlers`.
-  - `EffectBits` submodule: the named 64-bit continuous-effect flags.
-  - Dictionary serializer: `state_to_dict()` / `GameState.to_dict()` -- the display state.
-  - JSON text of the same: `GameState.to_display_json()`, `GameState.to_save_json()` (byte for
-    byte `json.dumps(to_save_dict(), sort_keys=True, separators=(",", ":"))`) and
-    `state_from_save_json()`. `game_ending_reason(state)` names why a game ended
-    (`tools/lib/tournament_evaluator.classify_game_ending_reason` delegates to it), and
-    `selftest_digest(games)` is the whole-game digest the WebAssembly build must reproduce.
-- [`state_json.hpp`](state_json.hpp) / [`state_json.cpp`](state_json.cpp): **the display state,
-  the save and its loader, and the ending reason, written once** as a small dependency-free JSON
-  value tree. The nanobind functions above convert the tree to Python objects; the WebAssembly
-  build prints it. Two hand-kept copies would drift -- the browser showing or saving a position
-  differently from Python -- which is why the conversions moved here out of `ts_bindings.cpp`.
-- [`wasm/ts_engine_wasm.cpp`](wasm/ts_engine_wasm.cpp): the engine for the **browser workbench**,
-  a flat C API compiled by Emscripten (`tools/scripts/build_web.sh`; under `emcmake` this
-  directory builds `ts_engine_wasm` into `web/ui/public/engine/` instead of the Python module).
-  New game, raw-bytes undo snapshots, display/save JSON, loading a save (refused unless it
-  round-trips), stepping a MicroAction with the workbench's forced-die drain (all or nothing),
-  masks in both action views, flat-action decode, observations, names, debug setters, the action
-  layout and the engine fingerprint baked in at build; and the rollout root's playouts
-  (`ts_rollout_*`, `ts_determinize`) over the position held, one batch at a time.
+  - Structs: `MicroAction`, `CountryState`, `DecisionContext`, `GameState` (`raw_bytes()` for exact equality tests).
+  - Engine API: `init_game()`, `step()`, `step_flat()`, `try_step()`, `try_step_flat()`,
+    `auto_advance_step()`, `is_terminal()`, `get_terminal_utility()`, `get_legal_action_mask()`,
+    `get_flat_action_mask()`, `get_legal_action_indices()`, and the held-scoring predicates.
+  - RL: `extract_observation()`, `decode_flat_action()`, `encode_micro_action()`, `ActionMask`,
+    `VectorizedBatchRunner` (contiguous multi-game simulation).
+  - **The merged-influence view** (P23 / E4.1, [`engine/AGENTS.md`](../engine/AGENTS.md) §4):
+    `merged_influence=False` on `get_flat_action_mask`, `ActionMask.generate_flat_mask`,
+    `Engine.step_flat` / `try_step_flat`, plus `ActionMask.is_merged_influence_action(state, idx)`.
+    The runner holds the view **per env and side** (`set_merged_influence(us, ussr)`,
+    `set_merged_influence_env(i, us, ussr)`) because a tournament can seat an E4 and an E4.1 agent in
+    one game; its cached mask is built for whoever decides next. Off everywhere by default (exactly
+    E4); `TsVectorizedEnv` keeps the flags across `reset_all(base_seed)`.
+  - **Observation feature blocks** ([`engine/AGENTS.md`](../engine/AGENTS.md) §6a):
+    `extract_observation_features(state, perspective, features)` — the base plus the requested
+    `OBS_FEATURE_*` blocks; `features` has no default and unknown bits raise. `obs_size_for(features)`
+    is the width, `OBS_FEATURES_ALL` every known bit. The runner holds a set per env and side
+    (`set_obs_features(us, ussr)`, `set_obs_features_env(i, us, ussr)`), writes each row in its
+    decider's set and zero-pads to the widest (`obs_width`); `TsVectorizedEnv.set_obs_features`
+    keeps the sets across `reset_all`, and `ts_env.model_obs_features(model)` reads a model's set
+    from its weights.
+  - **`BatchedSearch`** ([`batched_search.hpp`](batched_search.hpp)): the C++ tree behind
+    `ai/search/batched_mcts.py` (`backend="cpp"`), Python-only. Up to `capacity` PUCT searches in
+    lockstep, split into `num_groups` evaluation groups: `reset(roots, simulations, rng_state,
+    num_groups)` (one budget or one per tree, so the Gumbel root's candidates share rounds), then per
+    group `select_leaves(g)` → the network → `expand_and_backup(g, probs, values)` until
+    `group_has_budget(g)` is false; the driver evaluates one group on the GPU while the tree selects
+    the other's. `set_buffers(obs, masks)` writes leaves into caller-owned (page-locked) arrays.
+    `root(i)` returns `(terminal, mover, value_us, actions, priors, visits, value_sums)`;
+    `set_root_priors(i, priors)` takes root noise. **It is the Python tree bit for bit, random draws
+    included**: chance seeds come from a C++ copy of CPython's MT19937 in the Python tree's order
+    (`mt_state()` hands the state back), descents and backups run across `gomp_parallel_for` with
+    only the seeds handed out serially, so nothing depends on the thread count. The grouping is part
+    of the search's semantics (a row's network output depends on its batch), so
+    `batched_mcts.search_groups` is the one rule both trees follow. Also takes the model's
+    `obs_features`, `merged_influence` and `fpu_reduction` (0 = the original rule).
+    `tests/training/test_batched_search_cpp.py` holds the two trees to identical visits and states.
+  - Hand-knowledge helpers over `CardLocation`: `in_hand_of()`, `known_to_opponent()`, `hand_of()`,
+    `hand_holder()`, `revealed()`, `reveal_hand()` / `reveal_both_hands()`. Use them instead of
+    comparing a location to a hand constant ([`engine/AGENTS.md`](../engine/AGENTS.md) §7).
+  - Metadata helpers: `MapData`, `CardData`, `StateMachine`, `Operations`, `Scoring`,
+    `CardHandlers`; the `EffectBits` submodule (named 64-bit continuous-effect flags).
+  - Serialization: `state_to_dict()` / `GameState.to_dict()` (the display state),
+    `GameState.to_display_json()`, `GameState.to_save_json()` (byte for byte
+    `json.dumps(to_save_dict(), sort_keys=True, separators=(",", ":"))`), `state_from_save_json()`;
+    `game_ending_reason(state)` (`tools/lib/tournament_evaluator.classify_game_ending_reason`
+    delegates to it) and `selftest_digest(games)`, the whole-game digest the WebAssembly build must
+    reproduce.
+  - **Save format** `ts_save_v2`: `GameState.to_save_dict()` / `state_from_save_dict()`, named
+    fields (unknown keys ignored, missing ones defaulted) so a save opens in another build. It
+    restores the board, tracks, card locations, RNG, headline owners, die-roll record **and the
+    decision state machine** (`ctx_stack`, `ctx_stack_depth`): without the stack (v1) a state saved
+    mid-decision restored at a different decision — 91 of 97 positions on one seed — with every
+    visible field matching. `action_history` and `turn_aggregates` are deliberately not saved: no
+    rule or observation reads them. If one ever does, add it here.
+- [`state_json.hpp`](state_json.hpp) / [`state_json.cpp`](state_json.cpp): **the display state, the
+  save and its loader, and the ending reason, written once** as a dependency-free JSON value tree,
+  converted to Python objects here and printed by the WebAssembly build — two hand-kept copies
+  would drift.
+- [`wasm/ts_engine_wasm.cpp`](wasm/ts_engine_wasm.cpp): the engine for the **browser workbench**, a
+  flat C API compiled by Emscripten (`tools/scripts/build_web.sh`, into `web/ui/public/engine/`):
+  new game, raw-bytes undo snapshots, display/save JSON, loading a save (refused unless it
+  round-trips), stepping with the workbench's forced-die drain, masks in both action views, decode,
+  observations, names, debug setters, the action layout, the engine fingerprint baked in at build,
+  and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`).
 - [`selftest.hpp`](selftest.hpp): one whole-game digest (full save, both observations, the mask,
-  every position) compiled into both builds; `tests/web/test_wasm_engine.py` compares the numbers.
-- [`rollout_batch.hpp`](rollout_batch.hpp) / [`rollout_batch.cpp`](rollout_batch.cpp) (2026-10-10):
-  **the rollout root's playouts, written once for both builds.** `ts::rollout::determinize` is the
-  C++ port of `ai/search/dmcts.determinize` (the opponent's unknown hand and the draw deck
-  reshuffled from a SplitMix64 state, every count and every seen card kept, an unrevealed opposing
-  headline forgotten); `RolloutBatch` holds the worlds of one or more decisions -- each candidate
-  move in each sampled world, one dice stream per world with `shared_dice` -- and plays them
-  greedily to a horizon of action-round boundaries with the DEFCON-2 suicide guard, marking terminal
-  rows with their result and rows at the horizon as leaves. `Config::stop` (2026-10-15) chooses where
-  a playout stops: `kBoundaries` (the default, the measured root), `kTurnEnd` -- the first position
-  whose turn differs from the decision's, however many action rounds the turn has -- or `kLater`, the
-  later of the two (P33: what the critic misses at the searched player's leaks is visible by the turn's
-  end, not within 4 boundaries). Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later")`; the page
-  and its parity harness pass `ts_rollout_reset`'s seventh argument (0 / 1 / 2). `step`, `fill_live`
-  and `fill_leaves` run across the OpenMP team (`gomp_parallel_for`, the pool shared with torch) from
-  32 rows up, the rows listed serially first, so every result is bit-identical at any thread count
-  (`test_a_batch_plays_the_same_rows_on_one_thread_and_on_many`); the WebAssembly build stays serial
-  (`__EMSCRIPTEN__`). 2026-10-15: a searched match ran single-threaded at one core. The network stays outside: the caller
-  loops `fill_live` -> logits -> `step` until `all_done`, then `fill_leaves` -> critic ->
-  `set_leaf_values`, then reads `values`. The root's choice is here too: `top_candidates` (the k
-  most probable legal moves from the root's logits), `parse_rule` (argmax / z<x> / kl<t>) and
-  `decide` (each candidate's mean value, its paired lead over the network's own move with the
-  standard error, and the pick under the rule). Python: `ts.RolloutBatch`, `ts.determinize`,
-  `ts.rollout_candidates`, `ts.rollout_decide` and `ts.rollout_parse_rule`, which
-  `ai/search/rollout_root.py` drives with torch and nothing else; the browser: the `ts_rollout_*`
-  and `ts_determinize` exports of the WebAssembly module, which `web/ui/src/analysis/rollout.ts`
-  drives with onnxruntime in a worker -- the same C++, so the two searchers differ only in the
-  network's arithmetic. Held bit-identical across the two builds by `tests/web/test_wasm_engine.py`
-  (rows, worlds, observations ply by ply, values, the decision under each rule), covered on its own
-  by `tests/bindings/test_rollout_batch.py`, and the page's loop against Python's on one position
-  by `tests/web/test_e2e_workbench.py`. Serial for now: the loop over rows is a plain `for`, so the
-  WebAssembly build compiles it unchanged; the `gomp_parallel_for` pass is a later, measured change.
-  - Save format: `GameState.to_save_dict()` / `state_from_save_dict()`, tagged `ts_save_v2`. Named
-    fields, not a byte blob, so a save written by one build opens in another: an unknown key is
-    ignored and a missing one keeps its default. It restores the board, the tracks, the card
-    locations, the RNG, **and the decision state machine** (`ctx_stack`, `ctx_stack_depth`), plus
-    the headline owners and the die-roll record.
+  every position) compiled into both builds; `tests/web/test_wasm_engine.py` compares them.
+- [`rollout_batch.hpp`](rollout_batch.hpp) / [`rollout_batch.cpp`](rollout_batch.cpp): **the rollout
+  root's playouts, written once for both builds.** `ts::rollout::determinize` is the C++ port of
+  `ai/search/dmcts.determinize` (the opponent's unknown hand and the draw deck reshuffled from a
+  SplitMix64 state, every count and seen card kept, an unrevealed opposing headline forgotten).
+  `RolloutBatch` holds the worlds of one or more decisions — each candidate move in each sampled
+  world, one dice stream per world (`shared_dice`) — and plays them greedily with the DEFCON-2
+  suicide guard, marking terminal rows with their result and stopped rows as leaves. `Config::stop`
+  chooses where a playout stops: `kBoundaries` (the default and the measured root: a horizon of
+  action-round boundaries), `kTurnEnd` (the first position in another turn) or `kLater` (the later
+  of the two; P33). Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later")`; the page passes
+  `ts_rollout_reset`'s seventh argument (0 / 1 / 2). The network stays outside: the caller loops
+  `fill_live` → logits → `step` until `all_done`, then `fill_leaves` → critic → `set_leaf_values`,
+  then reads `values`. The root's choice is here too: `top_candidates` (the k most probable legal
+  moves), `parse_rule` (argmax / z<x> / kl<t>) and `decide` (each candidate's mean value, its paired
+  lead over the network's own move with its standard error, the pick). `step`, `fill_live` and
+  `fill_leaves` run across the OpenMP team (`gomp_parallel_for`) from 32 rows up, rows listed
+  serially first, so results are bit-identical at any thread count
+  (`test_a_batch_plays_the_same_rows_on_one_thread_and_on_many`); the WebAssembly build stays
+  serial. Python drives it from `ai/search/rollout_root.py` (`ts.RolloutBatch`, `ts.determinize`,
+  `ts.rollout_candidates`, `ts.rollout_decide`, `ts.rollout_parse_rule`), the page from
+  `web/ui/src/analysis/rollout.ts` — the same C++, so the two searchers differ only in the network's
+  arithmetic. Held bit-identical across builds by `tests/web/test_wasm_engine.py`, covered by
+  `tests/bindings/test_rollout_batch.py`, and the page's loop is checked against Python's by
+  `tests/web/test_e2e_workbench.py`.
+- [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).
+- [`settle.py`](settle.py): `SettleMode`, the one rule for how far past decisions nobody controls
+  the engine is advanced. Settlers that stop at different depths put two components on different
+  decisions while both believe they are synchronised; a settle mode is a property of the
+  measurement, so state it when it matters.
+- [`ts_engine/`](ts_engine/__init__.pyi): **generated** type stub package (`__init__.pyi` plus one
+  file per submodule), regenerated by the build from the module just built; never hand-edit it.
+  What introspection cannot recover goes in [`ts_engine.pyi.pattern`](ts_engine.pyi.pattern).
+- [`action_encoder.py`](action_encoder.py): the codec between the flat action space (220 slots) and
+  `ts::MicroAction`.
+- [`ts_env.py`](ts_env.py): `TsVectorizedEnv` and `TsSingleEnv`, the batch-runner environments for
+  PyTorch RL loops; `check_obs_width(model)` and `model_obs_features(model)`.
+  - `TsVectorizedEnv.step` returns an `info` dict whose `completed_episodes` entries carry `turn`
+    (reads 11 for a completed game, since `finish_end_turn` increments before testing its bound),
+    `ply` (game length in [`ai/game_length.py`](../ai/game_length.py)'s numeration, 1 = the USSR's
+    turn-1 headline, 154 = all ten turns; prefer it to `turn`) and `ending_reason` (one of
+    `ENDING_REASON_KEYS`: `20vp`, `europe_control`, `final_scoring`, `defcon1_self`,
+    `defcon1_provoked`, `held_scoring`, `wargames`). The same values are per-env in
+    `info["terminal_turns"]` / `["terminal_plies"]` / `["ending_reasons"]`.
+  - **The runner's cached observation and mask**: `step_flat_all` rebuilds each env it steps,
+    `reset_game` the env it resets, and `set_state` nothing — whoever calls it must refresh.
+    `TsVectorizedEnv` refreshes only after `_apply_start_position` actually injects a start position
+    (an observation costs ~7.9 µs against ~0.8 µs for a step; `tests/training/test_env_refresh.py`).
+  - **Each env's state lives in a `ts::CachedState`** ([`engine/AGENTS.md`](../engine/AGENTS.md)
+    §6b), so **`get_state(i)` returns a copy**: writing to it does not reach the runner; put a
+    position back with `set_state(i, state)` and refresh. `BatchedSearch` nodes hold `CachedState`
+    the same way.
+  - A `start_provider` returns a mid-game pool position (stored pre-deal one turn before its target,
+    so `start_turn` is `state.turn + 1`) or, for `--forced-opening`, a fresh deal whose setup a script
+    has played (`tools/lib/openings.play_scripted_setup`, `start_turn` 1;
+    `tests/training/test_forced_opening.py`).
 
-    The decision stack is not optional and v1 omitted it, which is what the version bump marks.
-    Without it a state saved mid-decision restored pointing at a *different* decision — measured at
-    91 of 97 mid-game positions on one seed — while every visible board field matched, so nothing
-    looked wrong. `engine/src/observation.cpp` reads `ctx()`, walks `ctx_stack` and encodes
-    `ctx_stack_depth`, so the restored state also produced a different observation.
-
-    Deliberately **not** saved: `action_history` and `turn_aggregates`. Both are written and never
-    read — no hit in `observation.cpp`, and in `engine/src` only the two increments at
-    `ops.cpp:322,412` — so they are diagnostics, and restoring them would grow the format to
-    preserve a display detail. If a rule ever starts reading either, it must be added here.
-- [`ts_engine/`](ts_engine/__init__.pyi): **Generated** type stub *package* — `__init__.pyi` plus one file per nanobind
-  submodule (`EffectBits.pyi`) — for IDE completion and `pyrefly`. Regenerated by the build from the
-  module just built, so it cannot drift from the bindings; never hand-edit it. To express something
-  introspection cannot recover (the shape of a value returned as an untyped `nb::dict`, say), edit
-  [`ts_engine.pyi.pattern`](ts_engine.pyi.pattern) and rebuild.
-- [`action_encoder.py`](action_encoder.py): Bidirectional codec translating between the flat 212-dimensional policy action space and hierarchical `ts::MicroAction` engine structs.
-- [`ts_env.py`](ts_env.py): Vectorized (`TsVectorizedEnv`) and single-game (`TsSingleEnv`) batch runner
-**`step()` raises; `try_step()` returns a bool.** A refused action is a caller bug, not a game
-event: since P14 `step` validates against the same mask a caller is expected to sample from, so a
-refusal can only mean the action was chosen against a different state -- which is exactly the
-staleness bug the env guard reports. `step()`/`step_flat()` therefore raise `RuntimeError` naming
-what the engine was asking for, and `try_step()`/`try_step_flat()` keep the bool for the callers
-that genuinely probe legality (the fuzzers, and mask-vs-step differential sweeps). Prefer
-`tools.lib.game_step.step_checked`, which wraps `try_step*` with a richer diagnostic.
-
-Flipping the default surfaced four Python tests that had been walking a game by feeding indices
-from the 128-wide **per-decision** mask (`get_legal_action_indices`) to `step_flat`, which reads the
-**flat 212-dim** space. Every step was refused, every refusal discarded, and the loops ran to their
-iteration caps against a frozen state. One always hit a `pytest.skip` it could never escape, and
-`test_dmcts`'s `_midgame_state` returned the opening position, so every determinization test was
-checking a freshly dealt hand. The two mask spaces are not interchangeable; `get_flat_action_mask`
-is the one `step_flat` reads.
-
-  environments for PyTorch RL loops. `TsVectorizedEnv.step` returns an `info` dict whose
-  `completed_episodes` entries carry:
-  - `turn` — the terminal game turn, read before the auto-reset. Note it reads 11 for a completed
-    game, because `finish_end_turn` increments before testing its bound.
-  - `ply` — game length in the continuous player-slot numeration of
-    [`ai/game_length.py`](../ai/game_length.py), where 1 is the USSR's turn-1 headline and 154 is a
-    game that played all ten turns out. Prefer it to `turn`, which cannot separate a game abandoned
-    at turn 7 AR1 from one that ran to turn 7 AR7.
-  - `ending_reason` — one of `ENDING_REASON_KEYS` (`20vp`, `final_scoring`, `defcon1_self`,
-    `defcon1_provoked`, `held_scoring`, `wargames`), classified via
-    `tools.lib.tournament_evaluator.classify_game_ending_reason` (imported lazily to keep torch out
-    of the env's import chain).
-
-  The same values are exposed per-env as `info["terminal_turns"]` / `info["terminal_plies"]` /
-  `info["ending_reasons"]`.
-
-  **The runner's cached observation and mask.** `VectorizedBatchRunner` keeps one observation and
-  mask per env, and three things keep them current:
-  * `step_flat_all` rebuilds each env it steps;
-  * `reset_game` rebuilds the env it resets;
-  * `set_state` rebuilds nothing, so whoever calls it must refresh.
-
-  **Each env's state lives in a `ts::CachedState`** (`engine/include/ts/cached_state.hpp`,
-  2026-10-06), which keeps the position's own legal mask: the agent's action is validated against
-  it, and the mask auto-advance generated where it stopped is the one handed out -- one mask
-  generation per decision where there were three (single-threaded `step_flat_all`, 2.93 → 2.44 µs
-  per env-step, the same games). Only the slot's own calls can change a state, so
-  **`get_state(i)` returns a copy**, not the live reference it used to be: writing to it does not
-  reach the runner, and it does not follow the runner when it steps. Put a position back with
-  `set_state(i, state)` (and refresh). `BatchedSearch`'s nodes hold `CachedState` the same way.
-
-  `TsVectorizedEnv` refreshes only after `_apply_start_position` actually injects a start position
-  through `set_state`. That applies in `step`'s auto-reset, in `reset_env` and in `reset_all`.
-  Building an observation costs ~7.9 µs per env against ~0.8 µs for a game step. Refreshing all envs
-  whenever any game ended doubled that cost on most steps, while `reset_env` and `reset_all`
-  injected without any refresh. `tests/training/test_env_refresh.py` pins both halves.
-
-  A `start_provider` returns either a mid-game pool position (stored pre-deal, one turn before its
-  target, so the episode's `start_turn` is `state.turn + 1`) or, for `--forced-opening`, a fresh
-  deal whose setup a script has played (`tools/lib/openings.play_scripted_setup`). A turn-1 state is
-  always the latter, so its `start_turn` is 1. `tests/training/test_forced_opening.py` checks that no
-  setup decision reaches the policy, across automatic resets too.
+**`step()` raises; `try_step()` returns a bool.** `step` validates against the same mask a caller
+samples from, so a refusal means the action was chosen against a different state — a caller bug.
+`step()`/`step_flat()` raise `RuntimeError` naming what the engine was asking for;
+`try_step()`/`try_step_flat()` keep the bool for callers that genuinely probe legality (fuzzers,
+mask-vs-step sweeps). Prefer `tools.lib.game_step.step_checked`. **The two mask spaces are not
+interchangeable**: `get_legal_action_indices` is the 128-wide per-decision mask, while `step_flat`
+reads the flat space of `get_flat_action_mask` (feeding one to the other once froze four tests on a
+refused state).
 
 ---
 
@@ -166,22 +156,18 @@ is the one `step_flat` reads.
 
 ## 3. How to Compile & Test
 
-**Threads: one OpenMP pool per process, torch's.** The batch runner's parallel loops go through
-`gomp_parallel_for` in [`gomp_parallel.hpp`](gomp_parallel.hpp) (shared with `BatchedSearch`), which calls libgomp's `GOMP_parallel` directly, and
-the extension links GCC's `libgomp.so.1` by exact file. Torch ships libgomp and the loader shares
-it by soname, so the engine and torch use one runtime and one thread pool (and one
-`OMP_WAIT_POLICY`, which `tools/train.py` and `tools/tournament.py` set to PASSIVE). Do **not** go back to
-`#pragma omp`: under clang it links LLVM's libomp, a second pool of spinning workers beside
-torch's (measured 5-7% slower on a rollout loop), and clang's `-fopenmp=libgomp` compiles the
-loops *serially* without a warning. `tests/bindings/test_build_toolchain.py` catches all three:
-a non-clang engine (`ts_engine.BUILD_COMPILER`), a thread pool added beside torch's, and loops
-that do not spread across threads.
+**Threads: one OpenMP pool per process, torch's.** The batch runner's, `BatchedSearch`'s and
+`RolloutBatch`'s parallel loops go through `gomp_parallel_for` ([`gomp_parallel.hpp`](gomp_parallel.hpp)),
+which calls libgomp's `GOMP_parallel` directly, and the extension links GCC's `libgomp.so.1` by
+exact file; torch ships libgomp and the loader shares it by soname, so there is one runtime, one
+pool and one `OMP_WAIT_POLICY` (`tools/train.py` and `tools/tournament.py` set PASSIVE). Do **not**
+go back to `#pragma omp`: under clang it links LLVM's libomp, a second pool of spinning workers
+(measured 5-7% slower on a rollout loop), and clang's `-fopenmp=libgomp` compiles the loops
+*serially* without a warning. `tests/bindings/test_build_toolchain.py` catches a non-clang engine
+(`ts_engine.BUILD_COMPILER`), a second pool, and loops that do not spread across threads.
 
 ```bash
 cmake -B build/release -S . -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3   # clang, found by CMake
 cmake --build build/release -j
-
-# Run Python binding tests. Invoke pytest as a module, never via .venv/bin/pytest:
-# that console script carries an absolute shebang and breaks if the venv is moved.
-PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/bindings
+PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/bindings    # python -m pytest, never .venv/bin/pytest
 ```

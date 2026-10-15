@@ -3,8 +3,8 @@
 Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 `AGENTS.md` (plus `engine/AGENTS.md`, `bindings/AGENTS.md`, `bot/AGENTS.md`,
-`web/server/AGENTS.md`) carries the full architecture and directory listings. This file is the
-short version: what you need to be productive immediately.
+`web/server/AGENTS.md`, `web/ui/AGENTS.md`) carries the full architecture and directory listings.
+This file is the short version: what you need to be productive immediately, and every rule.
 
 ## What this is
 
@@ -12,8 +12,9 @@ The AI, simulation engine, web workbench, and training infrastructure for a Delu
 **Twilight Struggle** (110-card) implementation. Three layers:
 
 1. **C++20 engine** (`engine/`) — zero-allocation simulation core, exposed to Python via nanobind.
-2. **Python AI/training stack** (`ai/`, `bindings/`, `tools/`) — network, RL training (NashPG), rewards, bots.
-3. **Web workbench** (`web/`) — FastAPI game server + Vite/TypeScript SVG map UI for human vs bot/replay play.
+2. **Python AI/training stack** (`ai/`, `bindings/`, `tools/`) — networks, RL training (NashPG), search, rewards, bots.
+3. **Web workbench** (`web/`) — a browser page (Vite/TypeScript/SVG) that runs the engine as
+   WebAssembly and models as ONNX; `web/server/` is only a local files server.
 
 ## Build & environment setup
 
@@ -22,25 +23,23 @@ The AI, simulation engine, web workbench, and training infrastructure for a Delu
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Web UI
-cd web/ui && npm install && npm run build && cd ../..
-
 # C++ engine + nanobind extension (root CMake orchestrates engine/ and bindings/)
 # Needs clang and LLVM's LTO tools: apt-get install clang llvm lld
 #   (no root: tools/scripts/install_clang_userspace.sh)
 cmake -B build/release -S . -DPython_EXECUTABLE=$(pwd)/.venv/bin/python3
 cmake --build build/release -j
+
+# Web page: the WebAssembly engine, then npm ci + build into web/ui/dist
+# (needs Emscripten: tools/scripts/install_emsdk.sh)
+tools/scripts/build_web.sh
 ```
 
-**The engine is built with clang, and CMake refuses any other compiler.** Same sources and
-flags, clang 21 against GCC 15: about +20% on the batch runner's step + observation path and on
-raw stepping, with bit-identical games. CMake finds `clang++` by itself (including the
-`~/.local/bin` wrapper the userspace installer writes); a build directory created under GCC is
-reconfigured with clang by `tools/scripts/check_engine_fresh.sh`. The batch runner's parallel
-loops call GCC's `libgomp` directly rather than through `#pragma omp`, so the process keeps the
-one OpenMP thread pool it shares with torch -- clang's own OpenMP would add a second pool and was
-measured 5-7% *slower* on a rollout loop. `tests/bindings/test_build_toolchain.py` fails on a
-non-clang engine, on a second pool, and on loops that silently run serially.
+**The engine is built with clang, and CMake refuses any other compiler** — about +20% over GCC on
+the same sources, with bit-identical games. `tools/scripts/check_engine_fresh.sh` reconfigures a
+build directory created under GCC. The batch runner's parallel loops call GCC's `libgomp` directly
+(not `#pragma omp`) so the process keeps the one OpenMP pool it shares with torch; clang's own
+OpenMP adds a second pool, measured 5-7% slower. `tests/bindings/test_build_toolchain.py` fails on
+a non-clang engine, a second pool, or loops that silently run serially (`bindings/AGENTS.md` §3).
 
 Three requirements degrade rather than break if absent: `z3-solver` (the human-log converter then
 falls back to per-turn heuristics and no longer reproduces the corpus), `tensorboard` (training
@@ -49,12 +48,11 @@ still writes `training_metrics.jsonl`) and `playwright` (browser E2E tests only)
 The extension lands at `build/release/ts_engine.cpython-*.so` — the binary root, not
 `build/release/bindings/` — and is imported via `PYTHONPATH=.:build/release`.
 
-**The type stubs are generated, not written.** Building regenerates `bindings/ts_engine/` — a stub
-*package*, `__init__.pyi` plus one file per nanobind submodule — from the module just built, so it
-cannot drift from the bindings. `tests/bindings/test_stub_is_generated.py` fails if the committed
-copy no longer matches. Never hand-edit those files; rebuild and commit what changed. To express
-something introspection cannot recover, such as the shape of a value returned as an untyped
-`nb::dict`, edit `bindings/ts_engine.pyi.pattern`.
+**The type stubs are generated, not written.** Building regenerates `bindings/ts_engine/` (a stub
+package) from the module just built; `tests/bindings/test_stub_is_generated.py` fails if the
+committed copy no longer matches. Never hand-edit it: rebuild and commit what changed. What
+introspection cannot recover (e.g. the shape of an untyped `nb::dict`) goes in
+`bindings/ts_engine.pyi.pattern`.
 
 **Never run an experiment against a stale engine.** Guard every command that generates or consumes
 a checkpoint, dataset, Elo anchor or diagnostic:
@@ -65,8 +63,8 @@ tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/pyth
 
 It exits 0 when the built module matches the `engine/`/`bindings/` sources, and rebuilds and exits
 1 when it does not, so the chained command does not run. A rebuilt engine can change the decision
-stream with no Python change: datasets in the `(seed, actions)` format then truncate silently, and
-old checkpoints keep loading and running forward passes, so nothing announces the problem.
+stream with no Python change: `(seed, actions)` datasets then truncate silently, and old checkpoints
+keep loading and running, so nothing announces the problem.
 
 Sanitizer build (AddressSanitizer + UBSan), for engine work:
 ```bash
@@ -78,46 +76,42 @@ cmake --build build_san -j
 ASAN_OPTIONS=detect_leaks=0 ./build_san/engine/ts_tests
 tools/scripts/run_asan.sh .venv/bin/python -m pytest -q tests/bindings   # preloads clang's ASan runtime
 ```
-`-shared-libasan` on the extension only: Python is not instrumented, so the extension uses
-compiler-rt's shared runtime, which `run_asan.sh` preloads. The executables keep the static one.
+`-shared-libasan` is for the extension only (Python is not instrumented, so `run_asan.sh` preloads
+compiler-rt's shared runtime); the executables keep the static one.
 
 ## Tests & type checking
 
-**`tests/` is split into groups, and not every group is relevant to every change.** Match the
-suite to what you touched — most importantly, **do not run the whole of `tests/web` for AI or
-tools changes.** It tells you nothing about them and fails on missing build artifacts
-(`web/ui/dist`, a Playwright browser) that are deliberately not in the repo, so a red web suite on
-a backend change is pure noise. The one exception is an engine or bindings change: the workbench
-runs the engine as WebAssembly, and `tests/web/test_wasm_engine.py` is what proves that build still
-plays the native engine's games.
+**Match the suite to what you touched.** In particular, **do not run the whole of `tests/web` for
+AI or tools changes**: it tells you nothing about them and fails on build artifacts that are
+deliberately not in the repo (`web/ui/dist`, a Playwright browser), so a red web suite on a backend
+change is noise. The exception is an engine or bindings change: the page runs the engine as
+WebAssembly, and `tests/web/test_wasm_engine.py` proves that build still plays the native games.
 
 | you changed | run |
 |:---|:---|
 | `engine/`, `bindings/` | C++ suite, then `tests/bindings tests/engine_logic` (~30s), then `tools/scripts/build_web.sh --engine` and `tests/web/test_wasm_engine.py` |
 | `tools/lib/ts_replayer_*` | the above + `tests/replayer` |
 | `ai/`, `bot/`, `tools/` | the above + `tests/training` |
-| `web/**` | **also** `tests/web`, after `tools/scripts/build_web.sh` (below) |
+| `web/**` | **also** `tests/web`, after `tools/scripts/build_web.sh` |
 | `research/**` | `tests/docs` (fast, no build needed) — every relative link must resolve |
 | any `.py` | **also** `tests/lint` (fast, no build needed) — no new import inside a function or class; the per-file baseline only goes down |
 
 ### The ts-replayer corpus
 
 `tests/replayer` (and a few tests in `tests/engine_logic`) run against the **real** human corpus,
-not synthetic data — that is the point of them, so it cannot be generated. It is ~5 MB,
-git-ignored, and downloaded once into `datasets/ts_replayer` in the **shared data tree** — the
-main checkout's `data/`, which `tools/lib/data_root.py` finds from git even inside a worktree — so
-every checkout and worktree shares one copy instead of re-fetching 300 throttled requests.
-`tools/lib/corpus_paths.py` resolves the location (`$TS_REPLAYER_CORPUS` overrides it). **A missing corpus fails these tests; it does not skip them** — a `skipif` on missing
-input passes on every machine while checking nothing.
+which cannot be generated. It is ~5 MB, git-ignored, and downloaded once into
+`datasets/ts_replayer` in the **shared data tree** (the main checkout's `data/`, found from git even
+inside a worktree by `tools/lib/data_root.py`; `$TS_REPLAYER_CORPUS` overrides it). **A missing
+corpus fails these tests; it does not skip them** — a `skipif` on missing input passes on every
+machine while checking nothing.
 
 ```bash
 PYTHONPATH=.:build/release .venv/bin/python tools/download_ts_replayer.py
 ```
 
-`pytest-xdist` is installed; `-n auto` takes the backend suite from minutes to about a minute. The
-single whole-corpus test, `test_every_game_in_the_corpus_converts`, is marked `corpus_full` and
-**deselected by default** because it dominates `tests/replayer` on its own. Run it before merging
-any change to `tools/lib/ts_replayer_*`:
+The whole-corpus test, `test_every_game_in_the_corpus_converts`, is marked `corpus_full` and
+**deselected by default** because it dominates `tests/replayer`. Run it before merging any change
+to `tools/lib/ts_replayer_*`:
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m pytest -q -m corpus_full tests/replayer
@@ -135,18 +129,17 @@ tools/scripts/check_engine_fresh.sh
 ./build/release/engine/ts_fuzz --games 10000
 ./build/release/engine/ts_fuzz --steps 5000000 --seed 42
 
-# 2. Backend Python — everything except the web UI. The default suite for backend work.
+# 2. Backend Python — everything except the web UI (-n auto: pytest-xdist, about a minute)
 PYTHONPATH=. .venv/bin/python -m pytest -q -n auto tests/bindings tests/engine_logic tests/replayer tests/training tests/docs tests/lint
 
 #    Narrower loops while iterating:
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/bindings tests/engine_logic
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/replayer
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/training
-PYTHONPATH=. .venv/bin/python -m pytest -q tests/lint          # imports at module top (a ratchet: tests/lint/nested_imports_baseline.json)
+PYTHONPATH=. .venv/bin/python -m pytest -q tests/lint          # imports at module top (ratchet: tests/lint/nested_imports_baseline.json)
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/engine_logic/test_all_110_cards.py::TestName::test_case
 
-# 3. Web/UI — for changes under web/ AND to engine/ or bindings/ (the page runs the engine as
-#    WebAssembly, and tests/web holds it bit-identical to the native build). Prerequisites:
+# 3. Web/UI — for changes under web/ AND to engine/ or bindings/. Prerequisites:
 tools/scripts/build_web.sh                              # wasm engine + web/ui/dist (Emscripten)
 .venv/bin/python -m playwright install chromium         # for the E2E tests
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/web
@@ -155,31 +148,36 @@ PYTHONPATH=. .venv/bin/python -m pytest -q tests/web
 .venv/bin/pyrefly check ai tools tests web bindings
 ```
 
-> Invoke pytest as `python -m pytest`, not via the `.venv/bin/pytest` console script: that script
-> carries an absolute shebang from wherever the venv was first created, which breaks if the venv or
-> the repository is ever moved or copied. For the same reason, use the path of whichever checkout
-> actually holds `.venv/` — it is not necessarily the directory you are working in.
+**Invoke pytest as `python -m pytest`**, not via `.venv/bin/pytest`: that script carries an
+absolute shebang from wherever the venv was created and breaks if the venv or repository moves.
+Likewise use the path of whichever checkout actually holds `.venv/`, which need not be the one you
+are working in.
 
 What each group covers: `bindings/` (nanobind surface), `engine_logic/` (game rules driven through
 the bindings — prefer adding new rule coverage to `engine/tests/*.cpp`), `replayer/` (the
-`ts_replayer` log-conversion pipeline), `training/` (RL/reward/NashPG stack), `docs/` (the
-research record's internal links resolve — archiving the E3 ladder once broke 105 of them
-silently), `web/` (server, bot-client, Playwright E2E), `differential/` (cross-engine fuzzing,
-WIP).
+`ts_replayer` log-conversion pipeline), `training/` (RL/reward/NashPG/search stack), `docs/` (the
+research record's internal links resolve), `web/` (local server, wasm parity, Playwright E2E),
+`differential/` (cross-engine fuzzing, WIP).
 
 **Run pyrefly with explicit paths, never bare.** pyrefly honours `.git/info/exclude`, so in a
 checkout whose exclude file covers the working directory a bare `pyrefly check` matches **zero**
-files and exits 0 — which satisfies "must return 0 errors" while checking nothing. `No Python
-files matched patterns ...` on the last line means you have measured nothing.
+files and exits 0. `No Python files matched patterns ...` on the last line means you measured
+nothing.
 
-**Do not run the differential suites.** `tests/differential/` is gated behind the
-`differential_fuzz` marker / `--run-fuzz` flag, and `pytest_ignore_collect` in `tests/conftest.py`
-keeps it out of collection entirely — those modules fail at *import*, and a skip applied after
-collection would be too late. It is WIP and not part of the check a change is expected to pass
-(tracked as TEST-1 in `BUGS.md`). `pyrefly.toml` likewise excludes it and `external/**`.
+**Do not run the differential suites.** `tests/differential/` fails at *import*, so
+`pytest_ignore_collect` in `tests/conftest.py` keeps it out of collection unless `--run-fuzz` /
+`-m differential_fuzz` is given. It is WIP and not part of the check a change must pass (TEST-1 in
+`BUGS.md`); `pyrefly.toml` excludes it and `external/**`.
 
-**Two demonstration datasets, built not committed.** Both land under the git-ignored `data/` tree
-and both must be rebuilt after an engine change:
+**Test data is never committed.** The replay and checkpoint directories under `data/` are
+git-ignored, so no test may assume they hold anything — and never guard such a test with a skip,
+which passes everywhere while checking nothing. Use the `generated_replay_dir` fixture
+(`tests/conftest.py`), which generates a replay into a temp dir and points the server at it via
+`TS_REPLAYS_DIR`. Schema drift is caught by `tests/bindings/replay_schema.golden.json`; regenerate
+it with `python tests/bindings/test_replay_schema_golden.py` when the schema changes on purpose.
+
+**Two demonstration datasets, built not committed.** Both land under `data/` and both must be
+rebuilt after an engine change:
 
 ```bash
 # self-play, from a chosen checkpoint
@@ -190,55 +188,44 @@ PYTHONPATH=.:build/release .venv/bin/python tools/generate_dataset.py \
 PYTHONPATH=.:build/release .venv/bin/python tools/build_human_dataset.py
 ```
 
-The self-play set is a *syntax* prior — it can only distil the policy that produced it, and it
-carries that policy's biases. The human set is the only *strategy* prior available, and its value
-targets are masked on the part of the corpus whose recording stops before the end of the game.
+The self-play set is a *syntax* prior (it can only distil the policy that produced it, biases
+included); the human set is the only *strategy* prior, and its value targets are masked on games
+whose recording stops before the end.
 
 ## Running training / tournaments / matches / web play
 
-**Never write ad-hoc scripts to invoke training, tournaments, or match simulation directly — always
-go through the unified CLIs below** (invariant "no ad-hoc scripts").
+**Never write ad-hoc scripts to invoke training, tournaments, or match simulation — always go
+through the unified CLIs below** (invariant 9).
 
-**Derive the command from a run that worked; do not copy the template below.** The template has
-now omitted lineage-critical flags three times running -- the opponent pool, the architecture, and
-a warm start the ladder does not use -- and each fix added the missing flag while the *next* one
-drifted. A fourth (`--ref-update-freq`, 5,000,000 in every late E3 arm against the 200,000
-default) was found only by diffing. Prose cannot fix this: the flags you forget are the ones you
-are not thinking about. So ask:
+**Derive a launch command from a run that worked, not from a template.** Copied templates have
+dropped lineage-critical flags four times (invariant 15); the flags you forget are the ones you are
+not thinking about. So ask the tool, before launching and again after (it reads `metadata.json`, so
+the second run confirms what the run actually received):
 
 ```bash
 tools/scripts/launch_flags.py <a-recent-healthy-run-dir>                  # what it actually used
 tools/scripts/launch_flags.py <reference-run> --diff <your-new-run>       # what you changed
 ```
 
-Defaults are read from `build_parser()`, so a flag added to the CLI tomorrow is covered without
-editing anything. Run the `--diff` form **after** launching too: it reads `metadata.json`, so it
-confirms what the run received rather than what you meant to pass.
+Defaults are read from `build_parser()`, so a flag added tomorrow is covered. The A (architecture)
+and R (recipe) codes in a run name are flag sets listed in `research/architectures_and_recipes.md`.
 
 **A warm start is optional and is NOT what the ladder does.** Every late E3 arm was a cold start;
-E4-01 and E4-02 were warm-started only because the numbered "Phase 0 / Phase 1-3" framing below
-reads as a mandatory pipeline. It is not one. Omit `--warmup-checkpoint` unless the arm is
-specifically about warm starting, and note it in the run description when you use it, because it
-is a difference from the lineage.
+E4-01/E4-02 were warm-started only because an earlier "Phase 0 / Phase 1-3" framing read as
+mandatory (a branch `@<step>M+...` resumes its parent's state, which is not a warm start). Omit
+`--warmup-checkpoint` unless the arm is about warm starting, and say so in its description when
+you use it.
 
 ```bash
-# Phase 0 (OPTIONAL): BC warmup from a demonstration dataset
+# RL self-play + live snapshot evals (+ optional post-training tournament). Shape only: take the
+# architecture/recipe flags from launch_flags.py on the parent run, never from here.
 TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
-  --mode warmup --arch v2 --warmup-dataset <dataset.jsonl.gz> \
-  --bc-epochs 2 --batch-size 1024 --output-dir <warmup.pt>
-
-# Phase 1-3: RL self-play + live snapshot evals + post-training tournament
-TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
-  --arch v2 --train-steps 160000000 --snapshot-every-steps 10000000 \
-  --reward-scheme blunder_aware \
-  --opponent-frac 0.3 --opponent-self-pool --opponent-pool-size 12 \
-  --identity-dim 16 --per-entity-heads 64 --graph-layers 0 --self-transform \
-  --run-name E<n>-A<n>-R<n>-S<n> \
-  --eval-opponents heuristic random <checkpoint.pt> --eval-games-per-side 50 \
-  --post-tournament --post-tournament-models heuristic random <checkpoint.pt> \
-  --post-tournament-games 500
-#   add --warmup-checkpoint <warmup.pt> ONLY for a deliberately warm-started arm
-# or: ./tools/scripts/train_and_tournament.sh v2 160000000 10000000 <warmup.pt>
+  --arch ladder <A-code flags> <R-code flags, incl. the opponent pool of invariant 14> \
+  --run-name E<n>-A<n>-R<n>-S<n> --description "..." \
+  --train-steps <N> --snapshot-every-steps 10000000 \
+  --eval-opponents heuristic random --eval-games-per-side 50
+#   OPTIONAL BC warmup: --mode warmup --warmup-dataset <dataset.jsonl.gz> --bc-epochs 2 --output-dir <warmup.pt>,
+#   then --warmup-checkpoint <warmup.pt> ONLY for a deliberately warm-started arm
 
 # Standalone tournament / Elo evaluation over a checkpoint directory
 PYTHONPATH=. .venv/bin/python tools/tournament.py \
@@ -257,12 +244,11 @@ PYTHONPATH=. .venv/bin/python tools/leaderboard.py show --main-only   # or --lin
 # the final SWA, soups and leaderboard networks): tools/README.md §2c
 PYTHONPATH=.:build/release .venv/bin/python tools/publish_hf.py run <run-dir> --dry-run
 
-# Single match / replay generation (also supports --us human for interactive CLI play)
+# Single match / replay generation (also --us human for interactive CLI play)
 PYTHONPATH=. .venv/bin/python tools/play_match.py --us heuristic --ussr strategic
 
-# Web workbench: the page runs the engine (WebAssembly) and models (ONNX) itself; the local
-# server only lists this machine's checkpoints and replays. Rebuild the page after an engine change.
-tools/scripts/build_web.sh                       # needs Emscripten: tools/scripts/install_emsdk.sh
+# Web workbench: rebuild the page after an engine change (it runs its own copy of the engine)
+tools/scripts/build_web.sh
 PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 # then open http://localhost:8000/ -- or publish web/ui/dist (GitHub Pages: .github/workflows/pages.yml)
 ```
@@ -272,117 +258,93 @@ Other `tools/` CLIs: `generate_dataset.py` and `build_human_dataset.py` (demonst
 (cached fetch of the human corpus), `behavioral_test.py` (scripted probes). Full flag reference in
 `tools/README.md`.
 
-**Human replay conversion (`tools/lib/ts_replayer_*.py`):** the corpus of human games is converted
-to engine decisions by rebuilding each log entry's position, driving it through the engine, and
-checking the result against the log's own next board; the hands, which the log never states in
-full, are solved for a whole game at once as a z3 constraint problem. Nothing is guessed — a
-decision the log does not determine is a bug to diagnose, not a gap to fill (see `AGENTS.md` §4
-and `tools/README.md` §6).
-
-**Test data is never committed.** The replay and checkpoint directories under `data/` are
-git-ignored, so no test may assume they hold anything — and never guard such a test with a skip,
-which passes everywhere while checking nothing. Use the `generated_replay_dir` fixture
-(`tests/conftest.py`), which generates a replay into a temp dir and points the server at it via
-`TS_REPLAYS_DIR`. Schema drift is caught separately by
-`tests/bindings/replay_schema.golden.json`; regenerate it with
-`python tests/bindings/test_replay_schema_golden.py` when the schema changes on purpose.
+**Human replay conversion (`tools/lib/ts_replayer_*.py`):** each log entry's position is rebuilt,
+driven through the engine and checked against the log's own next board; the hands, which the log
+never states in full, are solved for a whole game at once as a z3 constraint problem. Nothing is
+guessed — a decision the log does not determine is a bug to diagnose (invariant 12,
+`AGENTS.md` §4, `tools/README.md` §6).
 
 ## Architecture
 
-**Engine (`engine/`, C++20):** `ts::GameState` is trivially copyable and capped at 4 KB — no heap
-allocation in the simulation core. Turns/events are decomposed into a stream of 4-byte
-`MicroAction` structs (`DecisionType`, target/card/country id, sub-choice, flags) processed by a
-state machine (`state_machine.cpp`) uniformly across `Phase::HEADLINE` and `Phase::ACTION_ROUND`.
-Card event handlers live in `src/events/{early,mid,late}_war.cpp` split by era.
-`ActionMask::generate_flat_mask_212` / `decode_flat_action_212` define the canonical **212-dim flat
-action space**. All simulation randomness goes through the deterministic SplitMix64 PRNG in
-`state.rng_state` (`ts::Prng`) — never `std::rand` or similar, since replays must be bit-for-bit
-reproducible from a seed.
+**Engine (`engine/`, C++20):** `ts::GameState` is trivially copyable and capped at 4 KB. Turns and
+events are a stream of 4-byte `MicroAction`s (`DecisionType`, target/card/country id, sub-choice,
+flags) processed by one state machine (`state_machine.cpp`) across `Phase::HEADLINE` and
+`Phase::ACTION_ROUND`. Card event handlers live in `src/events/{early,mid,late}_war.cpp`.
+`ActionMask::generate_flat_mask_212` / `decode_flat_action_212` define the canonical **flat action
+space** (220 wide since P17; the names are historical). All randomness goes through the SplitMix64
+PRNG in `state.rng_state` (`ts::Prng`), so replays are bit-for-bit reproducible from a seed.
 
-**Bindings (`bindings/`):** the nanobind module (`ts_bindings.cpp`) exports `ts_engine` and a
-vectorized batch runner. `action_encoder.py` is the bidirectional Python codec for the 212-dim flat
-action space; `ts_env.py` wraps single and vectorized (batched, C++-driven) environments for RL.
+**Bindings (`bindings/`):** `ts_bindings.cpp` exports `ts_engine`, the vectorized batch runner, the
+C++ MCTS tree (`BatchedSearch`) and the rollout root's batch (`RolloutBatch`, shared with the
+WebAssembly build). `action_encoder.py` is the Python codec for the flat action space; `ts_env.py`
+wraps single and vectorized environments for RL.
 
 **Never change the observation without asking.** The layout is a representation decision and it is
-the owner's, not a detail to be improved in passing. This covers adding a feature, removing one,
-changing what a slot means, and changing the width. Two reasons it is worse than an ordinary
-refactor:
+the owner's: adding a feature, removing one, changing a slot's meaning or the width. Why it is worse
+than an ordinary refactor:
 
 * A network reads fixed slices, so a changed observation does not fail — a checkpoint keeps loading
-  and simply misreads. The *width* half of this is now caught: every model checks its input width
-  in `extract_features`, and `bindings.ts_env.check_obs_width` checks a model against the engine
-  before a probe runs. A change of *content* at the same width is invisible to everything.
-* It invalidates every checkpoint and every `(seed, actions)` dataset, and resets the Elo ladder,
-  so the cost is paid by every measurement that came before.
+  and misreads. Width changes are caught (`extract_features` checks every model's input width,
+  `bindings.ts_env.check_obs_width` checks a model against the engine); a *content* change at the
+  same width is invisible to everything.
+* It invalidates every checkpoint and every `(seed, actions)` dataset and resets the Elo ladder.
 
 Propose the change, say what it costs in floats, and wait. Two standing preferences from the owner:
-**do not spend a large vector on a rare mechanism** — a per-country or per-card bit for one card is
-not worth 84 or 110 floats — and **a partial version of a feature is worse than none**.
+**do not spend a large vector on a rare mechanism** (a per-country or per-card bit for one card is
+not worth 84 or 110 floats) and **a partial version of a feature is worse than none**.
 
-**There is one observation layout: v2.3, 3,824 floats** — 84x26 board, 110x14 card, 100 global.
-The earlier layouts are gone, along with every way of asking for one:
-`ts.extract_observation(state, perspective)` and `ts.VectorizedBatchRunner(n, seed)` take no
-`layout` argument, `TsVectorizedEnv` takes no `layout` or `obs_flags`, and `tools/train.py` has no
-`--obs-layout` or `--engine-flag`. `ts.OBS_SIZE` is the width. That is not tidying: a defaulted
-`layout` parameter was the mechanism behind five separate instances of one bug, because handing a
-model the wrong layout returns a number instead of raising. With one layout there is no argument to
-get wrong. Checkpoints from the retired layouts cannot be loaded and are not being converted — they
-predate the starred-card fix, so they were trained against a different game; `check_obs_width` and
-`check_checkpoint_layout` refuse them by width rather than letting them misread.
-`obs_flags::STAGED_CARDS` survives in `engine/include/ts/game_state.hpp` (exported as
-`OBS_FLAG_STAGED_CARDS`) as a reserved bit, so the bit is never reused with a different meaning;
-no code path varies on it.
+**There is one observation layout: v2.3, 3,824 floats** (84x26 board, 110x14 card, 100 global;
+`ts.OBS_SIZE`). Nothing takes a `layout` argument — a defaulted one caused five instances of one
+bug, because a wrong layout returns a number instead of raising. Checkpoints from retired layouts
+predate the starred-card fix and are refused by width (`check_obs_width`,
+`check_checkpoint_layout`). `obs_flags::STAGED_CARDS` (`OBS_FLAG_STAGED_CARDS`) survives only as a
+reserved bit, so it is never reused with another meaning.
 
-**Optional feature blocks are appended, never inserted (the view spec, 2026-10-01).** An approved
-observation addition is an `obs_features` bit (`engine/include/ts/game_state.hpp`) whose block is
-written *after* the 3,824 base floats, so the base stays bit-identical and every existing checkpoint
-keeps running. A model's set is recorded in its weights (LadderNet's `obs_features` buffer) and in
-the run's `metadata.json`; `tools/train.py --obs-features <name>...` chooses it. There is no default
-to get wrong: `ts.extract_observation_features(state, perspective, features)` requires the set
-(ask it with `bindings.ts_env.model_obs_features(model)`), `ts.obs_size_for(features)` is the width,
-and `check_obs_width` refuses a model handed another set's width. The batch runner holds a set **per
-env and side** (`set_obs_features(us, ussr)`), writes each row in its decider's set and zero-pads to
-the widest, so models with different sets play each other in one batch; each reads its own prefix.
-Blocks so far: `OPS_BUDGET` (bit 1, 3 floats -- the Ops a SELECT_PLAY_MODE card grants after every
-modifier, /5, and each side's per-card modifier; P30 C4). Adding a block still needs the owner.
+**Optional feature blocks are appended, never inserted.** An approved addition is an
+`obs_features` bit (`engine/include/ts/game_state.hpp`) whose block is written *after* the 3,824
+base floats, so existing checkpoints keep running. A model's set is recorded in its weights
+(LadderNet's `obs_features` buffer) and in `metadata.json`, and chosen with
+`tools/train.py --obs-features`. There is no default: `ts.extract_observation_features(state,
+perspective, features)` requires the set (`bindings.ts_env.model_obs_features(model)`),
+`ts.obs_size_for(features)` is the width, and the batch runner holds a set per env and side
+(`set_obs_features(us, ussr)`), zero-padding rows to the widest so models with different sets share
+a batch. Blocks so far: `OPS_BUDGET` (bit 1, 3 floats; P30 C4). Adding a block still needs the owner.
 
-**AI (`ai/`):** `models/coldwar_net_v2.py` is the baseline (ColdWarNetV2: GNN GraphConv +
-card/country cross-attention + global ResNet with masked action heads); `models/coldwar_net.py`
-holds V1, kept because checkpoints predating V2 name it, and the architecture is detected from a
-checkpoint's own weights. `training/nash_pg.py` implements NashPG — PPO-style loss with KL
-regularization against a frozen reference policy snapshot (`π_ref`), refreshed periodically, to
-converge toward Nash equilibrium without cycling. `training/rollout_buffer.py` does trajectory
-storage + GAE (zero-sum, alternating between players); `training/train.py` is the CLI entry point
-behind `tools/train.py`. `rewards/reward_calculator.py` holds the reward strategies
-(`BlunderAwareRewardCalculator`, `ZeroSumTerminalReward`, `ShapedZeroSumReward`,
-`UsefulActionsReward`) — perspective-aligned and zero-sum across US/USSR. `ai/eval/` is the probe
-suite (calibration, ablations, behavioral and human-corpus comparisons) and `ai/search/pimcts.py`
-is the perfect-information MCTS used for evaluation.
+**AI (`ai/`):** the current lineage is LadderNet (`models/ladder_net.py`, `--arch ladder`), the
+configurable P21 backbone whose required structural flags make up the A codes;
+`models/coldwar_net_v2.py` (ColdWarNetV2, and `ColdWarNetMLP` for `--arch mlp`) and
+`models/coldwar_net.py` (V1) stay so older checkpoints load — the architecture is detected from a
+checkpoint's own weights. `training/nash_pg.py` implements NashPG: a PPO-style loss with KL
+regularization against a frozen reference snapshot (`π_ref`), refreshed periodically, to converge
+toward Nash equilibrium without cycling. `training/rollout_buffer.py` holds trajectories and
+zero-sum alternating GAE; `training/train.py` is the CLI behind `tools/train.py`.
+`rewards/reward_calculator.py` holds the perspective-aligned, zero-sum reward schemes.
+`ai/search/` holds the searchers (`rollout_root.py`, the rollout root; `gumbel_root.py` and
+`batched_mcts.py`; `pimcts.py`, perfect-information MCTS for evaluation) and `ai/eval/` the probe
+suite.
 
-**Bots (`bot/`):** all inherit `BaseBot` (`select_action` for dict/JSON-based servers,
-`select_flat_action` for the fast 212-dim vectorized path, `reset`). Baselines: `random_bot`,
-`heuristic_bot`, `exploratory_bot`, `strategic_bot` (DEFCON-2 containment focus),
-`event_heavy_bot`, `human_bot` (interactive CLI); `neural_bot` loads ColdWarNet checkpoints.
+**Bots (`bot/`):** all inherit `BaseBot` (`select_action` for dict/JSON callers,
+`select_flat_action` for the flat vectorized path, `reset`). Baselines: `random_bot`,
+`heuristic_bot`, `heuristic_mcts_bot` (search with a hand-written leaf evaluation; sees both
+hands), `exploratory_bot`, `strategic_bot`, `event_heavy_bot`, `human_bot` (interactive CLI);
+`neural_bot` loads checkpoints.
 
-**Web (`web/`):** the workbench runs in the browser. `web/ui/` (Vite + TypeScript + SVG) holds
-the engine as WebAssembly (`bindings/wasm/ts_engine_wasm.cpp`, built by
-`tools/scripts/build_web.sh`), the game session (`src/game/`: stepping, dice, undo, the action log,
-position links) and model analysis (`src/analysis/`: ONNX in onnxruntime-web, from a local
-checkpoint, a Hugging Face repo or a dropped file). The display state and the save are one C++
-implementation (`bindings/state_json.cpp`) shared by the Python bindings and the WebAssembly build,
-and `tests/web/test_wasm_engine.py` holds the two engines to bit-identical games.
-`web/server/main.py` is only the local files server: it lists checkpoints (exporting one to ONNX on
-first request, `tools/export_onnx.py`) and replays. `replay.py` reads and writes `.tslog.json` under
-the replay directory (`TS_REPLAYS_DIR` overrides it).
+**Web (`web/`):** `web/ui/` (Vite + TypeScript + SVG) holds the engine as WebAssembly
+(`bindings/wasm/ts_engine_wasm.cpp`), the game session (`src/game/`) and model analysis
+(`src/analysis/`: ONNX in onnxruntime-web, from a local checkpoint, a Hugging Face repo or a dropped
+file, plus the rollout root). Display state and saves are one C++ implementation
+(`bindings/state_json.cpp`) shared with the Python bindings, and `tests/web/test_wasm_engine.py`
+holds the two engines to bit-identical games. `web/server/main.py` only lists checkpoints
+(exporting each to ONNX on first request, `tools/export_onnx.py`) and replays; `replay.py` reads and
+writes `.tslog.json` (`TS_REPLAYS_DIR` overrides the directory).
 
-**Data layout:** `data/` is git-ignored and holds working artifacts — model checkpoints,
-`.tslog.json` game logs, and compressed demonstration `.jsonl.gz` datasets. `rules/` holds
-`rules.json`/`cards.json`/`map.json` and related spec files, the formal spec the engine implements
-— tracked in git, except `rules/Rules_Final.pdf` (the official rulebook, GMT Games copyright),
-which stays git-ignored. `external/struggler` is a git submodule used as an independent reference
-engine for differential testing.
+**Data layout:** `data/` is git-ignored and holds checkpoints, `.tslog.json` game logs and
+`.jsonl.gz` datasets. `rules/` holds the formal spec the engine implements
+(`rules.json`/`cards.json`/`map.json`, ...), tracked except `rules/Rules_Final.pdf` (GMT Games
+copyright). `external/struggler` is a git submodule used as a reference engine for differential
+testing.
 
-## Key invariants (see `AGENTS.md` §4 for full detail)
+## Key invariants (`AGENTS.md` §4 has the full detail)
 
 1. `ts::GameState` must stay trivially copyable and ≤ 4 KB — no heap allocation in the engine core.
 2. Action space is always the flat space (`ActionEncoder` / `generate_flat_mask_212`; 220 wide since P17, the name is historical) — don't introduce parallel encodings. The E4.1 merged-influence view (P23) is not one: same 220 slots, and its composed actions are *defined* as the E4 steps they name. A checkpoint's view is read from its run directory (`tools/lib/action_view.py`); every harness must build masks in the deciding agent's view.
@@ -397,24 +359,21 @@ engine for differential testing.
 11. Never change the C++ engine without asking the owner first.
 12. Human replay conversion is never approximated — a decision the log does not determine is diagnosed, not filled in.
 13. Never measure against a stale engine — run `tools/scripts/check_engine_fresh.sh` before generating or consuming any checkpoint, dataset, or benchmark number, and re-take anything measured before a rebuild.
-14. **An RL run needs an opponent pool.** `--opponent-frac 0.3 --opponent-self-pool
+14. **An RL run needs an opponent pool:** `--opponent-frac 0.3 --opponent-self-pool
     --opponent-pool-size 12`, as every run since E3-30 has used. Without it the policy trains only
-    against its own current self, one seat runs away, and the critic loses all skill — twice now,
-    from two different causes (`research/archive/E3_ladder/log/P15_X4b_collapse_is_pool_starvation.md`,
-    `research/log/E4_pool_starvation_recurrence.md`). Before launching, diff the intended flags
-    against a recent healthy run's `metadata.json` rather than trusting the template above; the
-    startup banner must say `[opponent pool] ... frac=0.3`.
-15. **Derive a launch command from a healthy run, never from the template.** Run
+    against its current self, one seat runs away and the critic loses all skill — twice now, from
+    two different causes (`research/archive/E3_ladder/log/P15_X4b_collapse_is_pool_starvation.md`,
+    `research/log/E4_pool_starvation_recurrence.md`). The startup banner must say
+    `[opponent pool] ... frac=0.3`.
+15. **Derive a launch command from a healthy run, never from a template.** Run
     `tools/scripts/launch_flags.py <reference-run> --diff <your-run>` before launching and again
-    after, and be able to justify every line it prints. Four lineage-critical flags have drifted
-    this way already -- the opponent pool, `identity_dim`/`per_entity_heads`/`graph_layers`/
-    `self_transform`, a warm start the ladder does not use, and `ref_update_freq` at 200,000
-    against E3's 5,000,000 -- and each was found only after the compute was spent
-    (`research/findings/training/e4_architecture_discontinuity.md`). Invariant 14 was written for
-    the pool and then applied only to the pool; a rule you have to remember to apply to each new
-    field is not a rule, which is why this one is a command.
+    after, and be able to justify every line it prints. Four lineage-critical flags drifted
+    otherwise -- the opponent pool, the architecture flags, a warm start the ladder does not use,
+    and `ref_update_freq` (200,000 against E3's 5,000,000) -- each found only after the compute was
+    spent (`research/findings/training/e4_architecture_discontinuity.md`). A rule you must remember
+    to apply to each new field is not a rule, which is why this one is a command.
 
-Each of `engine/AGENTS.md`, `bindings/AGENTS.md`, `bot/AGENTS.md`, `web/server/AGENTS.md`, and root
-`AGENTS.md` carries a "keep documentation synchronized" rule — when you change behavior in one of
-those directories, update its `AGENTS.md` (and root `AGENTS.md` if the change is architecturally
-significant) in the same change.
+Each of `engine/AGENTS.md`, `bindings/AGENTS.md`, `bot/AGENTS.md`, `web/server/AGENTS.md`,
+`web/ui/AGENTS.md` and root `AGENTS.md` carries a "keep documentation synchronized" rule — when you
+change behavior in one of those directories, update its `AGENTS.md` (and root `AGENTS.md` if the
+change is architecturally significant) in the same change.

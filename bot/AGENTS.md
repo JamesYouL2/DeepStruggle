@@ -1,37 +1,35 @@
 # Bot Clients & AI Agents Guide (`bot/`)
 
-This directory contains pure bot client implementations, baseline heuristics, and decision policies for **Twilight Struggle**. All bots inherit from [`BaseBot`](base_bot.py).
+Bot implementations, baseline heuristics and decision policies for **Twilight Struggle**. All bots
+inherit from [`BaseBot`](base_bot.py).
 
 ---
 
 ## 1. Overview of Bot Clients
 
-- [`base_bot.py`](base_bot.py): Abstract `BaseBot` class defining the standard interface for Twilight Struggle agents:
-  - `select_action(state_dict, legal_actions_dict) -> Optional[dict]`: Dict-based action selection for JSON-driven callers.
-  - `select_flat_action(state, player) -> int`: Fast 212-dim flat index selection for vectorized environments.
-  - `reset()`: Resets internal memory or search state between games.
-- [`random_bot.py`](random_bot.py): `RandomBot` baseline stochastic player making uniform random choices over legal moves.
-- [`heuristic_bot.py`](heuristic_bot.py): `HeuristicBot` rule-based expert player prioritizing key battlegrounds, scoring card timing, and ops efficiency.
-- [`neural_bot.py`](neural_bot.py): `NeuralBot` deep reinforcement learning player driven by ColdWarNet-family PyTorch checkpoints, loaded through `tools.lib.player_agent.NeuralAgent.from_checkpoint`: the architecture (V1, V2 or the P21 LadderNet) is detected from the weights, and a retired architecture is refused outright rather than partially loaded. The bot builds E4 masks and reads the base observation, so a checkpoint in the merged-influence view or with observation feature blocks is refused. (It used to pick V1/V2 itself and could not load any LadderNet, so `tools/play_match.py` could not play two E7 checkpoints against each other; `tests/training/test_neural_bot_checkpoint.py`.)
-- [`exploratory_bot.py`](exploratory_bot.py): `ExploratoryBot` agent designed to explore diverse decision paths, Space Race, Realignments, and Coups.
-- [`strategic_bot.py`](strategic_bot.py): `StrategicBot` high-level strategic agent prioritizing DEFCON-2 containment, coups, realignments, and Space Race safety with rich strategy/commentary generation.
-- [`event_heavy_bot.py`](event_heavy_bot.py): `EventHeavyBot` agent maximizing card event play and event-first timing.
-- [`human_bot.py`](human_bot.py): `HumanBot` interactive terminal CLI player prompting the user for numbered choices.
+- [`base_bot.py`](base_bot.py): the abstract `BaseBot` interface:
+  - `select_action(state_dict, legal_actions_dict) -> Optional[dict]`: dict-based selection for JSON-driven callers.
+  - `select_flat_action(state, player) -> int`: a flat action index, for vectorized environments.
+  - `reset()`: clears internal memory or search state between games.
+- [`random_bot.py`](random_bot.py): `RandomBot`, uniform over legal moves.
+- [`heuristic_bot.py`](heuristic_bot.py): `HeuristicBot`, a fixed rule list (battlegrounds, scoring-card timing, ops efficiency); `tools/tournament.py`'s default Elo anchor.
+- [`heuristic_mcts_bot.py`](heuristic_mcts_bot.py): `HeuristicMCTSBot` (`heuristic_mcts[:sims]` in `tools/play_match.py`), MCTS over the real engine with `ai.search.heuristic_eval` at the leaf and no checkpoint. 18/20 against HeuristicBot from 16 simulations on (`research/findings/training/heuristic_mcts_baseline.md`). **It searches the true state and sees the opponent's hand**: fine for a benchmark, never a claim about play under real information.
+- [`neural_bot.py`](neural_bot.py): `NeuralBot`, loaded through `tools.lib.player_agent.NeuralAgent.from_checkpoint`: the architecture (V1, V2 or LadderNet) is detected from the weights and a retired one is refused rather than partially loaded. It builds E4 masks and reads the base observation, so a checkpoint in the merged-influence view or with observation feature blocks is refused (`tests/training/test_neural_bot_checkpoint.py`).
+- [`exploratory_bot.py`](exploratory_bot.py): `ExploratoryBot`, explores diverse paths: Space Race, realignments, coups.
+- [`strategic_bot.py`](strategic_bot.py): `StrategicBot`, DEFCON-2 containment, coups, realignments and Space Race safety, with strategy commentary.
+- [`event_heavy_bot.py`](event_heavy_bot.py): `EventHeavyBot`, maximises event play and event-first timing.
+- [`human_bot.py`](human_bot.py): `HumanBot`, interactive terminal player prompting for numbered choices.
 
 ---
 
 ## 2. Launching Bots
 
-### Playing Against a Model in the Web Workbench:
-The workbench runs in the browser and plays neural models itself (ONNX exports of checkpoints),
-so no bot process is involved: pick a model in *Model Analysis* and set *Auto-play* to the side it
-should play (see [`web/ui/AGENTS.md`](../web/ui/AGENTS.md)). The network bot client that used to
-connect a `BaseBot` to a server-side game (`web/bot_client.py`) was removed with that server.
+**Against a model in the web workbench** no bot process is involved: the page plays ONNX exports
+of checkpoints itself (pick a model in *Model Analysis*, set *Auto-play*; see
+[`web/ui/AGENTS.md`](../web/ui/AGENTS.md)).
 
-### Running Offline Matches Between Bots:
-Matches can be run offline with full replay generation via [`tools/play_match.py`](../tools/play_match.py):
+**Offline matches** with replay generation go through [`tools/play_match.py`](../tools/play_match.py):
 ```bash
-# Run a match between HeuristicBot and StrategicBot
 PYTHONPATH=. .venv/bin/python tools/play_match.py --us heuristic --ussr strategic
 ```
 

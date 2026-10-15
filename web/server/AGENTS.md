@@ -7,12 +7,9 @@ with no server at all. This directory is what a *local* checkout adds on top: th
 page cannot reach -- this machine's checkpoints and replays -- and the replay writer the Python
 tools use.
 
-It holds **no game**. There are no sessions, no WebSocket and no bot clients; the server-side
-session (`session.py`), its model readout (`analysis.py`) and the network bot client
-(`web/bot_client.py`) were removed when the game moved into the page. Their behaviour lives on in
-`web/ui/src/game/` and `web/ui/src/analysis/`, held to the originals by `tests/web` (the action
-log by a golden recorded from the Python session, the readout against `read_policy` /
-`read_critic`).
+It holds **no game**: no sessions, no WebSocket, no bot clients. The game lives in
+`web/ui/src/game/` and `web/ui/src/analysis/` (the action log is pinned by a golden recorded from
+the old Python session, the readout against `read_policy` / `read_critic`).
 
 ---
 
@@ -44,16 +41,14 @@ log by a golden recorded from the Python session, the readout against `read_poli
     Written by `tools/lib/self_play.py`, `tools/play_match.py` and the tournament tools; the
     browser workbench exports its own games in the same format (*Export Replay*).
   - Optional per-step **trace**: `policy` (what the model believed at that node) and `critic`
-    (both value heads from both perspectives on the state the step's snapshot shows -- of which
-    only the reading of the side to move there, the next step's `player`, is a trained one; the
-    workbench highlights it and dims the other), plus
-    `metadata.trace` naming the model, engine build and settings that produced them. Written by
-    `tools/lib/self_play.py` and `tools/play_match.py --trace`, and after the fact by
-    `tools/annotate_replay.py`; see `ai/eval/policy_readout.py`. `policy.top` lists **every**
-    legal action by default (`trace_top_k=0`), because the workbench paints each probability
-    onto the card, mode button or country it belongs to. **Every reader must treat both
-    keys as absent by default** — a heuristic bot has no distribution, a human game has no
-    model, and replays predating the trace have neither.
+    (both value heads from both perspectives on the step's snapshot; only the side to move there,
+    the next step's `player`, reads a trained value, and the workbench dims the other), plus
+    `metadata.trace` naming the model, engine build and settings. Written by
+    `tools/lib/self_play.py`, `tools/play_match.py --trace` and, after the fact,
+    `tools/annotate_replay.py` (`ai/eval/policy_readout.py`). `policy.top` lists **every** legal
+    action by default (`trace_top_k=0`) so the workbench can paint each probability where it
+    belongs. **Every reader must treat both keys as absent by default** — a heuristic bot has no
+    distribution, a human game no model, and old replays neither.
   - `start_position` in the metadata marks a game begun from a loaded position (a shared link)
     rather than from the seed; such a replay cannot be re-driven from the seed alone.
   - `ReplayManager`: discovers and loads those files, confined to the replay directory.
@@ -85,8 +80,7 @@ log by a golden recorded from the Python session, the readout against `read_poli
 tools/scripts/build_web.sh
 PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 
-# Tests. Invoke pytest as a module, never via .venv/bin/pytest: that console script carries an
-# absolute shebang and breaks if the venv is moved. tests/web needs the built page
-# (tools/scripts/build_web.sh) and, for the E2E tests, a Playwright Chromium.
+# Tests (python -m pytest, never .venv/bin/pytest). tests/web needs the built page and, for the
+# E2E tests, a Playwright Chromium (.venv/bin/python -m playwright install chromium).
 PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 ```

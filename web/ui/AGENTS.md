@@ -25,7 +25,9 @@ web/ui/
 │   │                           # last_turn.ts (what the other side's latest turn did to the map)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
-│   │                           # readout.ts (policy + critic for the position on screen)
+│   │                           # readout.ts (policy + critic for the position on screen),
+│   │                           # rollout.ts / rollout_runner.ts / rollout_worker.ts (the rollout root
+│   │                           # in a worker with its own engine and model; bindings/rollout_batch.hpp)
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
 │   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
@@ -69,16 +71,20 @@ web/ui/
      or peeked), `OUT` once discarded or removed, `NOT YET` for a Mid War card before Mid War;
      the hover tooltip says where exactly. It sits inside the badge because country nodes are
      drawn over the badges.
-   - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge in the
-     corner right of the influence boxes, placed from `rect.inf-us`, so it never covers a
-     number. The HTML badge's CSS is scoped to `span.trace-choice-badge`: unscoped, it reached the
-     SVG text and drew it at 10 map units.
+   - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge right of
+     the influence boxes, placed from `rect.inf-us`, so it never covers a number (the HTML badge's
+     CSS stays scoped to `span.trace-choice-badge`, or it reaches the SVG text).
    - **This turn's effects** (`#map-turn-effects`, `CardsView.renderTurnEffects`) run across the
      top of the map: every flag whose `EFFECT_INFO_MAP` duration is `TURN`, the card's text on
      hover. Permanent and conditional effects, and the Space Race attempt flags, stay in the
      right rail's effects panel.
    - Mouse pan and zoom, with metadata loaded autonomously and re-rendered on arrival.
 2. **Layout: cards on the left, the board, the HUD rail on the right (`index.html`, `style.css`)**:
+   - The top of the page is three blocks: the disclaimer; the technical bar (engine badge, play
+     mode with New Game, the active model with *Change* opening `#model-chooser`, the search select,
+     then the developer's tools: Cancel Action, Debug Tools, Replay Mode, Leaderboard); and the game
+     bar (the tracks and whose decision it is). A fresh open (a link naming no position, replay or
+     view) and every New Game first ask for the play mode (`#mode-dialog`, `main.ts askMode`).
    - `.main-content` is a three-column grid: `#cards-sidebar` (the hands panel -- USSR / US /
      Piles / All tabs, the switch unchanged) the full height of the board on the left, the map in
      the middle, and the right rail with the Decision HUD, model analysis / replay readout and
@@ -126,14 +132,11 @@ web/ui/
      dropped **file**. The file carries its description in ONNX metadata (`analysis/onnx_meta.ts`):
      a model whose observation width differs from the engine's is refused, one exported next to
      another engine build is flagged.
-   - **The repo's catalogue (`hfCatalog`, `analysis/model.ts`) is one request.**
-     `tools/publish_hf.py` writes `models.json` at the repo root on every publish: each `.onnx`
-     with its commit date, sha256 and size, and the default model. The page reads that file and
-     never lists the tree. A repo without one (any other repo typed in) is listed:
-     `listHfModels` pages the tree *without* `expand` (1,000 entries a page; with `expand`, which
-     adds each file's last commit, pages are 50 -- 42 requests and ~17 s for this repo once a few
-     runs were published), then asks `paths-info` for the dates of the `.onnx` files alone, 50
-     paths a request, and reads `default.json` for the default.
+   - **The repo's catalogue (`hfCatalog`, `analysis/model.ts`) is one request**: `models.json`
+     at the repo root, written by `tools/publish_hf.py` on every publish (each `.onnx` with its
+     commit date, sha256 and size, and the default model). A repo without one is listed by
+     `listHfModels`: the tree *without* `expand` (1,000 entries a page, against 50 with it), then
+     `paths-info` for the `.onnx` dates, and `default.json` for the default.
    - **The default model.** A link with no `model` loads the model `DEFAULT_HF_REPO`
      (`mihaild/deepstruggle@main`) names (`models.json`'s `default`, set by
      `tools/publish_hf.py default`; `default.json` in a repo without a manifest), or its newest
@@ -182,6 +185,13 @@ web/ui/
      with the engine's own die, and drops the move if the position changed meanwhile. With
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
+   - **Search.** The search select is the policy's argmax or the **rollout root** (`search=rollout`
+     in the URL, `search=rollout:k:worlds:horizon:rule` for another spec): the engine's own batch
+     (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
+     `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
+     The panel shows each candidate's mean value and paired lead and marks the pick; the favourite
+     and auto-play take the pick and wait for it. A model in the merged (E4.1) view is refused for
+     search.
    - **The address bar is the share link.** `syncUrl()` writes `pos` (the engine's save JSON,
      zlib, base64url -- `game/position.ts`, interchangeable with Python's zlib), `model`
      (`local:` / `hf:` source, or `off`; a dropped file has no address), `auto` and `view`, with
@@ -189,8 +199,7 @@ web/ui/
      same link keeps the game's history; *New Game* starts afresh in the page (in the same view).
    - A generic `.hidden { display: none }` rule backs every mode-specific panel.
    - The header wraps rather than overflows: below ~1750px the tracks take a second row, so
-     *New Game*, *Debug Tools*, *Replay Mode* and the view select stay on screen (they used to be
-     pushed off the right edge on a laptop screen).
+     *New Game*, *Debug Tools*, *Replay Mode* and the view select stay on screen.
 9. **Player views (`game/view.ts`, the header's view select, `view=us|ussr` in the URL)**:
    - *Developer view* shows everything. *Play as US / USSR* is for playing one side against the
      model without seeing the other side's private information. `main.ts` keeps the engine's full

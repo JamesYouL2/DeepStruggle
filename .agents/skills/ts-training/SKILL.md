@@ -9,154 +9,89 @@ description: >-
 
 # Twilight Struggle AI: Model Training Runbook
 
-This skill provides step-by-step instructions and standard execution commands for training ColdWarNet neural networks on the C++ simulation engine.
+How to launch training on the C++ engine. The rules here are the repository's invariants
+(`CLAUDE.md`, `AGENTS.md` §4); the full flag reference is `tools/README.md`.
 
 > [!CAUTION]
-> **MANDATORY: NEVER WRITE AD-HOC PYTHON SCRIPTS TO TRAIN MODELS OR CLONE BEHAVIOR!**
-> Do **NOT** create scratch scripts, one-off `.py` files, or ad-hoc scripts importing `ai.training.behavioral_cloning`.
-> ALL training workflows (Behavioral Cloning warmup, RL self-play, or hybrid BC warmup + RL) MUST be run using the unified CLI:
-> `tools/train.py`
-
-> [!IMPORTANT]
-> **Dynamic Versions, Checkpoints & Datasets**:
-> Model architectures (`v1`, `v2`, `v3`, `v4`...), checkpoint directories, and demonstration datasets evolve continuously over time:
-> - **Architecture**: Check `ai/models/` or current SOTA flag (e.g. `--arch v3`). Never assume a fixed architecture version across runs.
-> - **Warmup Seed Checkpoint**: Inspect available models via `python tools/inspect_checkpoints.py` to select the current champion or warmup checkpoint.
-> - **Datasets**: Check `data/datasets/` for the latest demonstration dataset (e.g. `data/datasets/*.jsonl.gz`).
-> - The paths shown in the examples below use representative placeholders `<arch>`, `<warmup_seed.pt>`, and `<dataset.jsonl.gz>`.
+> **NEVER WRITE AD-HOC PYTHON SCRIPTS TO TRAIN MODELS OR CLONE BEHAVIOR.**
+> All training — BC warmup, RL self-play, or BC warmup followed by RL — goes through `tools/train.py`.
 
 ---
 
-## 1. "Train Model Starting from Warmup Dataset" Workflows
+## 1. Before launching
 
-Depending on the user's intent, there are two standard ways to train starting from a warmup dataset:
+1. **Fresh engine**: prefix every launch with `tools/scripts/check_engine_fresh.sh &&` (it rebuilds
+   and exits 1 when the build is stale, so the launch does not run against old rules).
+2. **Commit first** (locally, never push) and pass `--description "<what changed and why>"`;
+   `tools/train.py` writes the commit, mode and description into the run's `metadata.json`.
+3. **Derive the flags from a healthy run, never from a template** (the examples below show shape
+   only):
+   ```bash
+   tools/scripts/launch_flags.py <a-recent-healthy-run-dir>              # what it actually used
+   tools/scripts/launch_flags.py <reference-run> --diff <your-new-run>   # after launching: what changed
+   ```
+   The architecture and recipe codes (A/R in the run name) are flag sets in
+   `research/architectures_and_recipes.md`; the current lineage is `--arch ladder` with its
+   required `--ladder-*` flags.
+4. **An RL run needs the opponent pool** (`--opponent-frac 0.3 --opponent-self-pool`, pool size 12):
+   without it one seat runs away and the critic collapses. The startup banner must say
+   `[opponent pool] ... frac=0.3`.
+5. **Name the run**: `--run-name E<n>-A<n>-R<n>-S<n>[@<step>M+<changes>]`
+   (`research/method/run_nomenclature.md`); the directory becomes
+   `data/checkpoints/<name>_<date>_<time>`, and `tools/scripts/run_codes.py --run <dir>` checks
+   the name against the recorded flags. Without a run name the directory is `run_<arch>_<date>_<time>`,
+   for smoke tests only.
 
-### Option A: Pure BC Warmup (Supervised Pre-training Only)
-When the user asks to "warm up a model", "pre-train on dataset", or "clone behavior":
+## 2. Commands
+
+### RL self-play
+```bash
+tools/scripts/check_engine_fresh.sh && TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
+  --arch ladder <A-code flags> <R-code flags> \
+  --run-name E<n>-A<n>-R<n>-S<n> --description "..." \
+  --train-steps <N> --snapshot-every-steps 10000000 \
+  --eval-opponents heuristic random --eval-games-per-side 50
+```
+Budgets are in env steps, never hours; if the user asks for hours, convert with the run's observed
+steps/sec and say what you assumed. For an A/B, both arms share `--train-steps` and
+`--pool-every-steps`. A continuation of a run under the same name is `--resume <its-dir>` and
+writes into the same directory. Watch a launched run with
+`tools/scripts/watch_run.py <run-dir> --target-steps <N>`, which reports START / PROGRESS / STALL /
+NOSTART / CRASH / DONE, since silence and success look alike.
+
+### Optional: BC warmup (not what the ladder does)
 ```bash
 TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
-  --mode warmup \
-  --arch <arch> \
-  --warmup-dataset data/datasets/<latest_dataset>.jsonl.gz \
-  --bc-epochs 2 \
-  --batch-size 1024 \
-  --output-dir data/checkpoints/coldwar_net_<arch>_warmup.pt
+  --mode warmup --arch ladder <A-code flags> --warmup-dataset <dataset.jsonl.gz> \
+  --bc-epochs 2 --batch-size 1024 --output-dir <warmup.pt>
 ```
-*This streams the dataset without high RAM usage (<70 MB), runs BC epochs, and saves the standalone warmup checkpoint.*
+Then `--warmup-checkpoint <warmup.pt>` on the RL run, or pass `--warmup-dataset` directly to an RL
+run to warm up and continue in one go. Say so in the run's description: a warm start is a
+difference from the lineage. Datasets stream with bounded memory (`WarmupDataset.stream_batches`),
+never loaded whole.
 
-### Option B: Full RL Training Starting from Warmup Dataset (BC Warmup -> NashPG RL)
-When the user asks to train a model starting from a warmup dataset. Budgets are in env
-steps, not hours -- if the user asks for $N$ hours, convert using the run's observed
-steps/sec and say what you assumed:
+### Smoke test (seconds)
 ```bash
 TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
-  --arch <arch> \
-  --warmup-dataset data/datasets/<latest_dataset>.jsonl.gz \
-  --bc-epochs 2 \
-  --train-steps 160000000 \
-  --snapshot-every-steps 10000000 \
-  --reward-scheme blunder_aware \
-  --eval-opponents heuristic random \
-  --eval-games-per-side 50 \
-  --post-tournament
+  --arch v2 --train-steps 200000 --snapshot-every-steps 100000 --num-envs 64 \
+  --eval-opponents heuristic random --eval-games-per-side 5
 ```
-*`tools/train.py` automatically runs BC warmup first, saves the warmed-up checkpoint in the run directory, loads the weights into active and reference policies, and immediately begins NashPG RL self-play!*
 
----
-
-## 2. Standard Training Commands
-
-### A. Full Time-Bounded RL Run Starting from Existing Checkpoint
-Runs vectorized NashPG self-play across 512 parallel C++ environments, with blunder-aware reward shielding, live snapshot evaluation, and automated post-training massive tournament:
-
+### Demonstration datasets (rebuild after every engine change)
 ```bash
-TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
-  --arch <arch> \
-  --train-steps 160000000 \
-  --snapshot-every-steps 10000000 \
-  --warmup-checkpoint data/checkpoints/<latest_warmup_or_champion>.pt \
-  --reward-scheme blunder_aware \
-  --eval-opponents heuristic random data/checkpoints/<historical_champion>.pt \
-  --eval-games-per-side 50 \
-  --post-tournament \
-  --post-tournament-models heuristic random data/checkpoints/<historical_champion>.pt \
-  --post-tournament-games 500
-```
-> [!NOTE]
-> If `--output-dir` is not explicitly passed, `tools/train.py` automatically generates a compliant timestamped directory using the current architecture: `data/checkpoints/run_<arch>_YYYYMMDD_HHMMSS`.
-
-### B. Fast Smoke-Test / Sanity Check (30 Seconds)
-Use this whenever verifying code changes, new loss functions, or architecture modifications before launching a long training session:
-
-```bash
-TRITON_CACHE_DIR=.triton_cache PYTHONPATH=. .venv/bin/python tools/train.py \
-  --arch <arch> \
-  --train-steps 200000 \
-  --snapshot-every-steps 100000 \
-  --num-envs 64 \
-  --eval-opponents heuristic random \
-  --eval-games-per-side 5 \
-  --post-tournament \
-  --post-tournament-models heuristic random \
-  --post-tournament-games 10
+PYTHONPATH=.:build/release .venv/bin/python tools/generate_dataset.py \
+  --models <checkpoint.pt> --total-games 5000 --output-path <dataset.jsonl.gz>   # self-play: a syntax prior
+PYTHONPATH=.:build/release .venv/bin/python tools/build_human_dataset.py          # human corpus: the strategy prior
 ```
 
-### C. Demonstration Dataset Generation
-Generates thousands of games in parallel using 500 C++ environments and multi-temperature exploration schedules:
+## 3. What a run writes
 
-```bash
-PYTHONPATH=. .venv/bin/python tools/generate_dataset.py \
-  --total-games 5000 \
-  --batch-size 500 \
-  --output data/datasets/warmup_<date>_<N>k_games.jsonl.gz
-```
-
----
-
-## 3. Mandatory Rules & Invariants for Training
-
-1. **Pre-Training Commit & Metadata Record**:
-   Before launching any training run:
-   - Create a clean git commit on the active branch recording all codebase modifications (without pushing / advancing remote master).
-   - Ensure a short description of the changes and training intent is provided via `--description "<text>"`.
-   - `tools/train.py` automatically captures the git commit hash, commit message, training mode, and description, writing `metadata.json` into the checkpoint directory.
-
-2. **Never Write Ad-Hoc Scripts**:
-   All training, BC warmup, and fine-tuning **MUST** be invoked through `tools/train.py`. Writing standalone Python scripts or scratch files violates repository architecture.
-
-2. **Mandatory Checkpoint Directory Naming**:
-   All checkpoint runs **MUST** follow the versioned timestamp pattern:
-   `data/checkpoints/run_[version]_[start date]_[start time]`
-   *(e.g., `data/checkpoints/run_v3_20260827_205207`). Never use hardcoded or ad-hoc names like `run_2h`.*
-
-3. **Environment Variables**:
-   Always prefix training invocations with:
-   `TRITON_CACHE_DIR=.triton_cache PYTHONPATH=.`
-   This prevents Triton cache permission collisions in shared environments.
-
-4. **Reward Scheme Selection**:
-   - `blunder_aware` (Default & Strongly Recommended): Shields the agent from learning spurious event traps (+1.0 for setting DEFCON traps, -1.0 for unprovoked DEFCON suicide, 0.0 for falling into opponent traps).
-   - `zero_sum`: Terminal win/loss only (+1.0 / -1.0).
-   - `shaped`: Zero-sum with heuristic milestones (VP swing shaping).
-
-5. **Architecture Evolution**:
-   - Always check current architectures available in `ai/models/` (e.g. `v3` dual pointer co-attention, `v2` cross-attention).
-   - Ensure the `--arch` flag matches the network architecture being trained or fine-tuned.
-
-6. **Memory-Bounded Dataset Streaming**:
-   When training BC, never load full datasets into monolithic memory tensors. Always use bounded streaming via `WarmupDataset.stream_batches`.
-
----
-
-## 4. Monitoring & Verifying a Training Run
-
-1. **Step Throughput**:
-   On a modern CPU with 512 parallel environments, throughput should reach **4,000 – 6,000 steps/sec**.
-2. **Loss Convergence**:
-   - Policy Loss (`L_policy`): Typically fluctuates between -0.05 and +0.05.
-   - Value Loss (`L_value_win`): Should steadily decrease towards < 0.15.
-   - KL Divergence from Reference Policy (`D_KL`): Kept bounded below 0.20 by the NashPG reference penalty.
-3. **Live Snapshots**:
-   Snapshots are written every `--snapshot-every-steps` (default 10M) as `snapshot_[N]steps.pt` and evaluated against heuristic baselines. Evaluation leaves training's RNG streams untouched, so the interval is reporting only. The self-play opponent pool grows on its own schedule, `--pool-every-steps` (default 5M, written as `pool_[N]steps.pt` between snapshots), and two arms of an A/B must share that one.
-4. **Post-Training Tournament**:
-   When `--post-tournament` is enabled, `tools/tournament.py` automatically executes a massive round-robin tournament across all snapshots and baselines upon training completion, dumping `massive_tournament_report.md`.
+- `snapshot_<N>steps.pt` every `--snapshot-every-steps` (default 10M), evaluated live; evaluation
+  leaves training's RNG untouched, so the interval is reporting only. The opponent pool grows on
+  its own schedule, `--pool-every-steps` (default 5M, `pool_<N>steps.pt`).
+- `training_metrics.jsonl`, mirrored to `<run-dir>/tb` for TensorBoard; `metadata.json` with the
+  flags, commit and description.
+- With `--post-tournament`, a round robin over the snapshots at the end (`final_tournament_report.md`).
+  Ratings that are compared across runs come from the leaderboard instead (the `ts-tournament` skill).
+- Reward schemes (`--reward-scheme`): `blunder_aware` (default), `terminal`, `shaped`,
+  `useful_actions`, `curriculum`.
