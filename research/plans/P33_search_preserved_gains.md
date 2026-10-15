@@ -8,6 +8,47 @@ owner's priority: "improvements of basic checkpoint that also are preserved unde
 two offline forms are null, see below), not a search-side tuning plan (that is the fork's rollout
 tuning), and not a product recipe (the product is the searched soup).
 
+**The owner's standard (2026-10-15): a model that goes *much* further, not a one-off.** This
+section says what the record allows on that question before the arms below.
+
+* **Every single big lever has been pulled once and did not move the plateau on its own:**
+  capacity (E6-10-44, 11.2M parameters against 3.2M, behind at matched games and at matched
+  wall-clock), the token architecture (E7-09-44, level at 400M at ~9× the compute), human data
+  (a 157–236 Elo handicap as injection; the BC prior washes out in 2% of training), the league
+  (level), search as a policy teacher (seven forms), counterfactual credit (B4′). What did move it
+  were readouts the policy could not express (the card-conditioned heads, ~3,000M of climbing)
+  and optimiser noise (the minibatch, the step-down, souping).
+* **The headroom is nevertheless large and it is measurable.** The rollout root's gain over the
+  raw network keeps rising with worlds (+90 / +177 / +214 at 4 / 16 / 64) with no ceiling in
+  sight, and the searched player still leaks ≥ 87 points a game by the paired-playout judge. A
+  network near the search's ceiling would show neither. What the search adds is *evaluation
+  depth*: four action rounds of consequences over sampled worlds, which a forward pass does not
+  compute. So the model that goes much further is one that has **internalised deeper
+  evaluation**, and the only training signal that carries it is a **value** signal -- the
+  policy-side forms fail because a one-hot on a near-tie teaches "be less sure", while a value
+  regression averages noisy labels across positions instead of fitting them one by one.
+* **Why capacity did not pay, and when it should.** A larger trunk has nothing to fit when the
+  policy is saturated (logits 19–33 nats, the PPO gradient ∝ 1 − P ≈ 0) and the critic's target is
+  the λ-return of sampled games. In AlphaZero-style training the capacity is spent on the search's
+  value and visit targets, not on the policy gradient. The order this plan follows is therefore:
+  first make the training signal deep (E1, E4, E6, E7), **then** re-test capacity under it (E2,
+  and the token architecture from scratch) -- a capacity re-test on today's signal would repeat
+  E6-10-44.
+* **The full AlphaZero loop is out of reach at this scale, a sparse one is not.** The root costs
+  ~910 network rows a decision against one for the trainer's own forward (~95k decisions/s), so
+  searching every training move is ~900× the inference. Searching 1–2% of them is 10–20×, the
+  regime R42 already ran in (9k steps/s). The two halves of that loop that have *not* been run
+  here are value targets from the deployed search (E1) and the searched move being **played** in
+  the training games (E7), not only used as a target. Those are the arms with a step-change
+  shape; the diagnostics decide which goes first.
+* **The one lever that stays with the owner: hidden information.** The observation carries no
+  play history, so the network infers the opponent's hand from the board alone, and the search
+  samples worlds uniformly from the unknown pool. Belief-state methods (ReBeL, DeepStack) are the
+  literature's step change for hidden-information games, but any form of them is an observation or
+  architecture decision, and the cheapest probe -- a hand-prediction head on the frozen trunk
+  against the "deck or hidden" prior -- would first show whether the trunk already carries a belief.
+  Listed as E8, a probe only; the representation decision is the owner's.
+
 ## Where the record stands (main, 2026-10-15)
 
 The three results the owner named, with the numbers behind them
@@ -232,6 +273,54 @@ already stops there; 1 in 128 decisions to hold the cost). Judged under the 4-bo
 critic that has learned what the turn's end looks like should make the 4-boundary leaves worth
 more — and, as a product read, under a 6-boundary root.
 
+## E6 — exact endgame values as critic targets (the one place noise-free labels exist)
+
+The engine can enumerate the rest of the game where it ends in the current turn
+(`tools/scripts/blunder_bank.py prove`: dice averaged, the opponent's replies searched; 400k–2M
+nodes a position), and 23.5% of A13+R48's games reach final scoring, 22 of the 35 confirmed
+blunders are in turn 10, and the US's last placement is the one recurring engine-proven leak.
+Those positions have **exact** values -- the only noise-free value labels in the game -- and a
+critic that is exact there bootstraps the turns before it through the λ-return. Build: a labelling
+pass over the trainer's own turn-10 positions (a `--exact-endgame-frac` of the last-round
+positions solved on CPU workers beside the rollout, the budget capped, unsolved ones skipped),
+their v_win target replaced by the exact value, in the mover's frame, averaged over the mover's
+unseen cards as `prove` does. Cost: the solver's node budget sets it; at 1 in 16 last-round
+positions and a 200k-node cap it is a CPU-side cost only. **Read:** the critic's error on an
+exact-labelled held-out set of turn-10 positions (the bank's 7 solvable rows plus fresh ones);
+then, under the root, the share of games lost at final scoring and the US last-placement leak
+(the census's 1.8 points). A product-side last-placement solver is the cheaper way to the same
+points at play time; this arm is for the *critic*, whose exactness the search then reads at every
+turn-10 leaf.
+
+## E7 — act with the search in training (expert iteration, sparse)
+
+R39–R42 used the root's improved policy as a **target** and left the rollouts untouched: the
+training games were still the network's own, and their returns the network's own. In expert
+iteration the searched move is *played*: the games get stronger, the λ-returns are the searched
+player's, and the critic learns the searched player's value function -- the one the search
+needs. Build: at 1 in S learner decisions (S = 64, ~1.5%) the rollout root chooses and its move is
+forced as environment, exactly as a forced opening is (`learner = 0`, no policy gradient on it,
+`ai/training/forced_openings.py`'s mechanism), with the improved policy as a CE target there as in
+R39. The search's network is the learner's own frozen snapshot, refreshed with π_ref. Cost ~R39's.
+**Read:** raw and searched as for E1; the own-search gain is the number of interest -- a network
+whose games are played by the search should see the root add *less* on top of it than the
+control's does (the gap closing from below) while its searched rating rises. **Caution, from
+R29/R31:** the targets follow the learner here; the frozen snapshot and the refresh cadence keep
+them still between refreshes, and KL(target ‖ policy) = search CE − target entropy is watched as
+in P32 -- rising past 0.5 inside a refresh period stops the arm. A positive E7 is the first arm
+with a from-scratch cell (S = 256, the heads recipe), since it changes the training distribution
+itself.
+
+## E8 — does the trunk carry a belief about the opponent's hand? (probe, CPU)
+
+A head on the frozen trunk of A13+R48's SWA, trained on 50k self-play positions to predict the
+opponent's hidden hand (110 sigmoids), against the "deck or hidden" prior (the pool's uniform
+probability) and against a probe that sees the discards and the known cards only. **Read:** log
+loss and the AUC per card. If the trunk beats the public-information probe, a belief is already
+represented and a belief *input* would add little; if it does not, the gap is the ceiling that a
+history or belief feature could lift, and the number goes to the owner as the cost/benefit of
+that representation decision. No training arm follows from this plan.
+
 ## E5 — the setup under searched continuation (a check, ~40 min)
 
 The network's setup (USSR Poland +3, Yugoslavia +3 in 100% of games; US West Germany +4, Italy
@@ -247,14 +336,20 @@ over several turns — the same fault E1/E4 target — and R43 is re-run after E
 
 ## Sequencing (two arms at a time)
 
-1. **Now, no GPU conflict:** E0a–E0d (eval-only; E0a needs the small two-network build). One
-   day of CPU/GPU-eval time in all.
-2. **Then two arms:** E1a (β 0.5, S 64) and E1b (if E0b supports it; else E1a's second cell).
-   Both from A13+R48's plateau, 400M, read at 80M windows raw and searched.
-3. **E5 beside them** (eval only).
-4. **Then by the rules:** E2 or E3 or E4, one cell each, never more than two arms live.
-5. **Adoption:** a positive form is carried to the next from-scratch run only as a *late-phase*
-   recipe unless a from-scratch cell shows it is safe from step 0 — the gap penalty's lesson.
+1. **Now, no GPU conflict:** E0a–E0d and E8 (eval-only; E0a needs the small two-network build).
+   One day of CPU/GPU-eval time in all.
+2. **Then two arms:** E1a (β 0.5, S 64) and E7 (S 64) -- the two halves of the sparse loop, one
+   value-side and one acting-side, from A13+R48's plateau, 400M, read at 80M windows raw and
+   searched. E1b takes E7's slot if E0b finds the greedy/sampled gap and E7's build is not ready.
+3. **E5 beside them** (eval only); E6's labelling pass built meanwhile (CPU).
+4. **Then by the rules:** E6, E4, E2 or E3, one cell each, never more than two arms live. A
+   positive E1 or E7 moves E2 (capacity under the deeper signal) ahead of the rest.
+5. **Adoption, and the from-scratch question.** A positive form is carried to the next
+   from-scratch run only as a *late-phase* recipe unless a from-scratch cell shows it is safe
+   from step 0 -- the gap penalty's lesson. The from-scratch run that this plan aims at is the
+   heads recipe plus whichever of E1/E6/E7 passed, **then** the capacity re-test on that signal
+   (A14 and the tokens), judged at saturation and under the root. That run is the candidate for
+   "much further"; nothing before it is.
 
 ## Measure
 
@@ -275,6 +370,13 @@ over several turns — the same fault E1/E4 target — and R43 is re-run after E
 * E0d: departures at rank 5–8 > 25% → E3 and k = 6; < 10% → channel 1 closed.
 * E1: adopt per the rule above; null with a positive E0c → E2.
 * E5: > 3 SE for another setup under searched play → re-run R43 after E1; level → closed.
+* E6: critic error on exact-labelled turn-10 positions halves and the final-scoring loss share
+  falls under the root → adopt; exact labels learned but no game effect → the endgame is not where
+  the searched player's points are, closed.
+* E7: own-search gain smaller than the control's **and** searched rating higher → adopt and open
+  the from-scratch cell; KL(target ‖ policy) past 0.5 inside a refresh period → stop (the R29 loop).
+* E8: trunk beats the public-information probe → no belief input proposed; trunk at the prior →
+  the gap is reported to the owner as the case for a history/belief representation.
 
 ## Follow-ups
 
