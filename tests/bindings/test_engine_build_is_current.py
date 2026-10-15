@@ -14,6 +14,8 @@ whatever else happens to be on sys.path.
 
 import os
 import pathlib
+import subprocess
+import sys
 from typing import Optional
 
 import pytest
@@ -74,3 +76,17 @@ def test_extension_comes_from_this_checkout() -> None:
     assert str(so_path).startswith(str(REPO) + os.sep), (
         f"ts_engine was imported from {so_path}, which is outside this checkout at {REPO}"
     )
+
+
+def test_importing_bindings_does_not_put_build_release_ahead_of_pythonpath(tmp_path: pathlib.Path) -> None:
+    """`bindings/__init__.py` adds build/release as a fallback. It once prepended it, so a process
+    given another build on PYTHONPATH (a match's spawned workers, run from build/dev) silently loaded
+    release's engine instead. An explicit PYTHONPATH entry must stay ahead of it."""
+    other = tmp_path / "other_build"
+    other.mkdir()
+    code = ("import sys, bindings; "
+            f"print(sys.path.index({str(other)!r}) < sys.path.index({str(REPO / 'build' / 'release')!r}))")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(other), str(REPO)])}
+    out = subprocess.run([sys.executable, "-c", code], env=env, cwd=str(tmp_path), capture_output=True,
+                         text=True, check=True)
+    assert out.stdout.strip() == "True"
