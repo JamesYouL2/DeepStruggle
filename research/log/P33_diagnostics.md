@@ -181,6 +181,34 @@ calibrated in every slice; averaging the two is no better than the decider's alo
 (227 positions, 0.144, [`../archive/E3_ladder/findings/value_bootstrap_perspective.md`](../archive/E3_ladder/findings/value_bootstrap_perspective.md))
 was never fixed.
 
+**1b. Which reading carries the offset, and does a constant remove it?** (the owner: averaged over the
+hidden cards, the two sides should agree; if they do not, a constant should improve calibration). Each
+reading's signed error against the result in the decider's frame, per decider side; then the other
+side's reading shifted by the mean sum, fit per bucket and side on even games and scored on odd ones.
+`data/logs/temp/offset.out`.
+
+| | soup US | soup USSR | A13+R48 US | A13+R48 USSR |
+|:---|---:|---:|---:|---:|
+| signed error, decider's reading | −0.022 | +0.024 | −0.057 | +0.048 |
+| signed error, other side's reading (negated) | −0.110 | −0.058 | −0.130 | −0.015 |
+| log loss, decider's reading | **0.483** | **0.487** | **0.481** | **0.486** |
+| log loss, other side's reading + fitted shift | 0.501 | 0.495 | 0.505 | 0.502 |
+| log loss, average of both, shift removed | 0.487 | 0.486 | 0.485 | 0.486 |
+
+* **Two offsets, not one.** The other side's reading is optimistic for itself by ~0.08 (0.11–0.13 at AR1).
+  And the decider's own reading has a **side offset**: in greedy self-play it underrates the US by 0.02
+  (soup) to 0.05 (A13+R48) from both seats -- the US decider is pessimistic, the USSR decider
+  optimistic. Pooled over sides the two cancel, which is why P33b's mover-frame bias read under 0.6
+  points. A plausible cause: the critic is trained on temperature-1 games, whose seat balance differs
+  from greedy play's (the searched soup's own US bar is 54%).
+* **A constant does not repair the other side's reading:** shifted, it is still 0.008–0.024 worse in log
+  loss than the decider's. Its error is position-specific, not an offset.
+* **Averaging the two sides gains nothing** (±0.001 for the USSR, worse for the US): the decider's
+  reading alone is the best estimate. Decider-side leaves are the fix; no averaged leaf is worth building.
+* The side offset is nearly common-mode in the root -- every candidate of a decision has the same mover,
+  and in the mover's frame both deciders' readings lean the same way -- so it matters for absolute values
+  (value targets, calibration), not for the root's comparisons.
+
 **2. No drift, but jumps at every change of mover.** The US-frame value's mean change from one decision
 to the next is within ±0.01 for every kind of step; its RMS is 0.03 between one mover's decisions and
 **0.12–0.13** at hand-overs, round boundaries and turn boundaries alike -- the two perspectives
