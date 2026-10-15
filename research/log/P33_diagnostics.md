@@ -1,10 +1,42 @@
-# P33 diagnostics (2026-10-15): the critic is calibrated but blind where the searched player errs
+# P33 diagnostics (2026-10-15): the critic is the channel search keeps, and it is blind where the searched player errs
 
 The no-training diagnostics of [P33](../plans/P33_search_preserved_gains.md). Networks: R39's SWA
 (`E7-A8-R1-S44@6400M+R39@7120..7200M`), A13+R48's SWA (`…+R48@9170M+A13@11920..12000M`) and the R34
 soup (`E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M`). Engine fingerprint b670b258 (the build of
 the `hand-knowledge-tracking` worktree, whose `engine/` and `bindings/` sources are identical to this
-branch's). P33a's results are added when its games finish.
+branch's); the games in play from 4687c0eb (parallel rollout stepping, bit-identical picks).
+
+## P33a — the leaf-critic swap (`rollout:<A>:4:16:4:z2:<B>`)
+
+A two-network root: candidates and greedy playouts from network A, the leaf critic from network B.
+Each player 1,000 deals a side against the searched soup (k = 4, 16 worlds, 4 boundaries, z2); the seat
+bar is the searched soup's self-play, US 54.1% / USSR 45.9% (both orientations averaged); the two
+swapped players also head to head. `data/reports/p33a_*.json`.
+
+| player (playouts / leaf critic) | score | as US | as USSR | US − bar | USSR − bar |
+|:---|---:|---:|---:|---:|---:|
+| A13+R48 / A13+R48 | 49.8% | 55.3% | 44.2% | +1.2 | −1.7 |
+| A13+R48 / soup | 50.4% | 52.0% | 48.9% | −2.1 | +3.0 |
+| soup / **A13+R48** | **46.2%** | 48.8% | 43.7% | **−5.3** | **−2.2** |
+| R39 / R39 | 51.3% | 57.2% | 45.4% | +3.1 | −0.5 |
+| R39 / soup | 51.1% | 55.2% | 47.1% | +1.1 | +1.2 |
+| soup / R39 | *running* | | | | |
+
+| head to head | score | as US | as USSR |
+|:---|---:|---:|---:|
+| A13+R48 playouts + soup critic vs soup playouts + A13+R48 critic | **58.2%** | 57.2% | 59.2% |
+| R39 playouts + soup critic vs soup playouts + R39 critic | 50.3% | 54.0% | 46.7% |
+
+* **A13+R48's critic is its searched weakness.** Its candidates and playouts with the soup's critic are
+  level with the searched soup; the soup's with A13+R48's critic lose in both seats, and the two swaps
+  head to head are 58.2%, above 50% in both seats. By the plan's rule the leaf moves the rating more
+  than the playouts: the critic is the search-preserved channel, and A13+R48's raw gain (+29 over the
+  soup) was bought with a worse critic at the leaves.
+* **On the 256-wide pair nothing moves:** R39 and the soup are level under search whichever critic
+  reads the leaf (50.3% head to head). The soup's searched lead over A13+R48 is A13+R48's critic,
+  not something special about the soup's.
+* This sits beside P33c without contradiction: every critic is at chance on the decisive leak pairs,
+  but A13+R48's ranks the ordinary leaf differences the root mostly decides on slightly worse.
 
 ## P33c — the critic on labelled move pairs (`ai/eval/leak_critic.py`)
 
@@ -159,6 +191,8 @@ held-out games; read on another held-out set (19,281 positions, 574,593 pool ent
 
 ## Decisions so far
 
+* **The critic is the search-preserved channel** (P33a): A13+R48's searched deficit is its critic. An
+  arm is judged by its critic under the root, not by its raw rating.
 * Critic track: **R50 and R55 are dropped** (P33b); **R49 is skipped** -- its own target is blind to the
   leak pairs (the horizon read above).
 * The leak is the critic's at the decisive positions (P33c), and invisible within 4 action rounds:
