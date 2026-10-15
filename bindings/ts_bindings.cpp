@@ -705,7 +705,8 @@ NB_MODULE(ts_engine, m) {
                      if (stop == "boundaries") s = ts::rollout::Stop::kBoundaries;
                      else if (stop == "turn") s = ts::rollout::Stop::kTurnEnd;
                      else if (stop == "later") s = ts::rollout::Stop::kLater;
-                     else throw std::invalid_argument("stop must be 'boundaries', 'turn' or 'later'");
+                     else if (stop == "earlier") s = ts::rollout::Stop::kEarlier;
+                     else throw std::invalid_argument("stop must be 'boundaries', 'turn', 'later' or 'earlier'");
                      new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s}, seed);
                  }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
                  nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries")

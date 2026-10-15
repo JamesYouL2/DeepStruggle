@@ -288,6 +288,29 @@ def test_the_later_stop_needs_both_the_boundaries_and_the_turns_end() -> None:
             assert b.row_crossed()[r] >= 1 and int(b.row_state(r).turn) == int(st.turn) + 1
 
 
+def test_the_earlier_stop_ends_at_whichever_comes_first() -> None:
+    """kEarlier: a row is a leaf at the turn's end if that comes within the horizon, else after the
+    horizon's boundaries -- and with a horizon beyond the turn it is the turn-end stop exactly."""
+    st = _position()
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=1, shared_dice=True, guard=True, features=0, seed=23, stop="earlier")
+    b.add(st, cands, 4)
+    _play(b, seed=5)
+    for r in range(b.rows()):
+        if b.row_terminal()[r]:
+            continue
+        turned = int(b.row_state(r).turn) == int(st.turn) + 1
+        crossed = int(b.row_crossed()[r])
+        assert (turned and crossed <= 1) or (not turned and crossed == 1)
+
+    def leaves(stop: str, horizon: int) -> List[bytes]:
+        x = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=29, stop=stop)
+        x.add(st, cands, 4)
+        _play(x, seed=6)
+        return [bytes(x.row_state(r).raw_bytes()) for r in range(x.rows())]
+    assert leaves("earlier", 99) == leaves("turn", 99)
+
+
 def test_a_bad_horizon_or_stop_is_refused() -> None:
     with pytest.raises(ValueError):
         ts.RolloutBatch(horizon=-1)

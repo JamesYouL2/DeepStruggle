@@ -125,6 +125,7 @@ bool RolloutBatch::at_stop(const Row& r) const noexcept {
     switch (cfg_.stop) {
         case Stop::kTurnEnd: return turn_over;
         case Stop::kLater: return boundaries && turn_over;
+        case Stop::kEarlier: return boundaries || turn_over;
         case Stop::kBoundaries: break;
     }
     return boundaries;
@@ -192,7 +193,7 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
                     record_key(r);
                     r.crossed = 0;
                     // A move that ends the turn has already reached the next one: under kTurnEnd
-                    // its row is a leaf at once.
+                    // and kEarlier its row is a leaf at once.
                     r.done = at_stop(r);
                 }
             }

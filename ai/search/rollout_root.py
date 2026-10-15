@@ -54,15 +54,15 @@ _ROWS = 4096
 
 
 #: Where a playout stops (the engine's `rollout::Stop`): after `horizon` action-round boundaries (the
-#: measured root), at the end of the decision's turn, or at the later of the two.
-STOPS = ("boundaries", "turn", "later")
+#: measured root), at the end of the decision's turn, or at the later or the earlier of the two.
+STOPS = ("boundaries", "turn", "later", "earlier")
 
 
 @dataclass
 class RolloutConfig:
     k: int = 4
     worlds: int = 16
-    horizon: int = 4            # action-round boundaries (read by the "boundaries" and "later" stops)
+    horizon: int = 4            # action-round boundaries (read by every stop but "turn")
     rule: str = "z2"
     seed: int = 0
     stop: str = "boundaries"    # one of STOPS
@@ -507,6 +507,6 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
-    stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend"}[cfg.stop]
+    stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend", "earlier": "-untilturnend"}[cfg.stop]
     horizon = "" if cfg.stop == "turn" else f"-h{cfg.horizon}"
     return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}-{cfg.rule}"

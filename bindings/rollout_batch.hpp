@@ -41,8 +41,9 @@ Player acting_player(const GameState& s) noexcept;
 // root as measured). kTurnEnd: at the first position whose turn differs from the decision's -- the next
 // turn's start, however many action rounds the turn turns out to have (North Sea Oil, the space race's
 // eighth); `horizon` is not read. kLater: at the later of the two, so at least `horizon` boundaries and
-// never inside the decision's turn.
-enum class Stop : uint8_t { kBoundaries = 0, kTurnEnd = 1, kLater = 2 };
+// never inside the decision's turn. kEarlier: at the earlier of the two -- the turn's end when it comes
+// within `horizon` boundaries, else after `horizon` boundaries.
+enum class Stop : uint8_t { kBoundaries = 0, kTurnEnd = 1, kLater = 2, kEarlier = 3 };
 
 struct Config {
     int horizon = 4;            // action-round boundaries to play through; 0 = none
@@ -59,7 +60,7 @@ struct Row {
     uint16_t candidate;         // index into that decision's candidate list
     int32_t crossed;            // action-round boundaries crossed so far
     uint8_t turn, action_round; // the row's current key, with phasing and phase below
-    uint8_t start_turn;         // the decision's turn (Stop::kTurnEnd / kLater read it)
+    uint8_t start_turn;         // the decision's turn (Stop::kTurnEnd / kLater / kEarlier read it)
     Player phasing;
     Phase phase;
     bool done, terminal, leaf_valued, refused;

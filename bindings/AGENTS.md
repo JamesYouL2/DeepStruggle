@@ -87,9 +87,10 @@ are cited from elsewhere; keep them.
   world, one dice stream per world (`shared_dice`) — and plays them greedily with the DEFCON-2
   suicide guard, marking terminal rows with their result and stopped rows as leaves. `Config::stop`
   chooses where a playout stops: `kBoundaries` (the default and the measured root: a horizon of
-  action-round boundaries), `kTurnEnd` (the first position in another turn) or `kLater` (the later
-  of the two; P33). Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later")`; the page passes
-  `ts_rollout_reset`'s seventh argument (0 / 1 / 2). The network stays outside: the caller loops
+  action-round boundaries), `kTurnEnd` (the first position in another turn), `kLater` (the later
+  of the two) or `kEarlier` (the earlier: the turn's end when it comes within the horizon; P33).
+  Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later"|"earlier")`; the page passes
+  `ts_rollout_reset`'s seventh argument (0 / 1 / 2 / 3). The network stays outside: the caller loops
   `fill_live` → logits → `step` until `all_done`, then `fill_leaves` → critic → `set_leaf_values`,
   then reads `values`. The root's choice is here too: `top_candidates` (the k most probable legal
   moves), `parse_rule` (argmax / z<x> / kl<t>) and `decide` (each candidate's mean value, its paired

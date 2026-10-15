@@ -96,7 +96,7 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
 
 @pytest.mark.parametrize("seed,plies,horizon,stop", [(21, 70, 2, "boundaries"), (34, 150, 1, "boundaries"),
                                                      (47, 40, 0, "boundaries"), (58, 90, 4, "turn"),
-                                                     (63, 120, 2, "later")])
+                                                     (63, 120, 2, "later"), (71, 130, 3, "earlier")])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
                                                                  tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
