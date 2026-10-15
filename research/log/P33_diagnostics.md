@@ -83,6 +83,22 @@ end. A13+R48's SWA.
 * **Weighted by the population the gain is smaller** (42.8% and 48.7% wrong): it sits in the strata the
   bank over-samples, so the effect on typical play will be smaller than the unweighted figures.
 
+### And in play? The rollout root stopping at the later of 4 boundaries and the turn's end
+
+The R34 soup under the rollout root with `stop=later` (the later of 4 boundaries and the end of the
+decision's turn) against the soup under today's root (`stop=boundaries`), both k = 4, 16 worlds, z2;
+1,000 deals a side, 8 parts of one 125-pairing batch each, pooled (`data/reports/later_soup_later_vs_soup.json`).
+
+| | score | as US | as USSR |
+|:---|---:|---:|---:|
+| soup + later root vs soup + today's root | **47.8%** | 52.3% | 43.2% |
+| the searched soup's own self-play bar | — | 54.1% | 45.9% |
+
+* **Playing longer is slightly worse in games:** −1.8 and −2.7 points against the bars, about 2 SE
+  below level. The turn-end read ranks the leak pairs better (above), but at 16 worlds the longer
+  greedy playouts add more noise per world than signal. A longer stop may need more worlds to pay;
+  untested.
+
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 
 2,048 self-play games at each temperature per network; the critic's value at every decision against
