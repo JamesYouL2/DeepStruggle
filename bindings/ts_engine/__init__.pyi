@@ -839,10 +839,10 @@ def determinize(state: GameState, me: Player, seed: int) -> GameState:
 
 class RolloutBatch:
     """
-    The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries, and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).
+    The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries (stop='boundaries', the default), to the end of the decision's turn ('turn'), or to the later of the two ('later'), and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).
     """
 
-    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0) -> None: ...
+    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0, stop: str = 'boundaries') -> None: ...
 
     def add(self, base: GameState, candidates: Sequence[int], worlds: int) -> int:
         """
