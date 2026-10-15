@@ -8,7 +8,7 @@ reads an information set and the two sides differ by 0.144 mean absolute. Replac
 Per-player GAE removes the cross-perspective bootstrap instead of patching it: each player's own
 subsequence, bootstrapped from that player's next OWN decision, opponent rewards folded in.
 
-See `research/findings/training/value_bootstrap_perspective.md`.
+See `research/archive/E3_ladder/findings/value_bootstrap_perspective.md`.
 """
 
 from __future__ import annotations

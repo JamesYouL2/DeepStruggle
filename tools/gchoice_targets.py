@@ -12,7 +12,8 @@ checkpoint on held-out games: did it move where the search departs, and nowhere 
 * `departures` -- a one-hot on the root's choice at `--budget` where it departs from the
   network's argmax, the network's own distribution where they agree. The bank found the better
   move inside the network's top 8 almost always and search evaluation-limited
-  (research/log/E7_search_disagreement_bank.md), so the search's own pick is the target.
+  (research/log/E7_search_disagreement_bank.md on the fork's `exp/search-bank` branch, not in this
+  repository), so the search's own pick is the target.
 * `gated` -- as `departures`, but only where the root's own value margin, Q(choice) - Q(argmax)
   in win probability, is at least `--min-margin`; the network's own distribution elsewhere.
 * `consensus` -- as `departures`, but only where the root at `--agree-with`, another recorded

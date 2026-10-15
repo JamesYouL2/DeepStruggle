@@ -13,7 +13,7 @@ return metric -- RMSE 0.551 -> 0.481, outcome correlation 0.861 -> 0.901, exact 
 lambda 1 -- and lost by 520 Elo at 80M steps, because its advantages carried 28% more variance on
 identical data and the advantage is what the policy gradient consumes. A better offline return
 estimate is not a better training signal. See
-research/findings/training/value_bootstrap_perspective.md.
+research/archive/E3_ladder/findings/value_bootstrap_perspective.md.
 
     tools/scripts/advantage_variance_probe.py <checkpoint.pt> [--envs 64] [--steps 512]
 """

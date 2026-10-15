@@ -40,7 +40,7 @@ consequence of the two facts above sitting together, it was unremarked until 202
 why results have to be attributed by exposure rather than to "the" opponent (`on_episode_end`).
 Whether it helps or hurts is untested: it costs coherence and buys within-episode diversity, and
 diversity is the mechanism this docstring credits. See
-`research/findings/training/pooling.md` §3b.
+`research/archive/E3_ladder/findings/pooling.md` §3b.
 
 **A growing pool, kept spread across the run.** The first version took a fixed list of
 checkpoints, which measured well (E3-19-22 held self-play imbalance to 9.0pp where its control

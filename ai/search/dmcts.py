@@ -9,8 +9,9 @@ This searches an *information set* instead. Before each search it resamples the 
 the cards it cannot see are shuffled and redealt, preserving every count and every card it *has*
 seen. It then runs an independent tree on each sample and sums the root visit counts. That is
 determinized MCTS (also called Perfect Information Monte Carlo): a standard, honest baseline for
-imperfect-information games, and the same family as the approach named in
-`research/plans/P3_determinized_search_expert_iteration.md`.
+imperfect-information games, and the same family as the approach named in the E3 plan P3,
+`research/archive/E3_ladder/plans/P3_determinized_search_expert_iteration.md` (text in git at
+e5e8a7c).
 
 **What the engine makes this possible without any C++ change:** card locations already
 distinguish `HAND_US_KNOWN` from `HAND_US_UNKNOWN`, so the engine records which of the opponent's

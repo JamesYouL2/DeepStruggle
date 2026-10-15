@@ -1468,7 +1468,8 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
             "with two or more legal moves a game): each playout row's paired gain of the best move over raw's, "
             "weighted back to the decisions raw play meets. 'k=8 @256 over raw' is what that searcher's own "
             "move recovers." + (" 'Large' is a search-valued raw regret of 2+ points, where the gain is "
-                                "(research/log/E7_search_disagreement_bank.md); the rest sits at its noise."
+                                "(research/log/E7_search_disagreement_bank.md on the fork's exp/search-bank branch); "
+                                "the rest sits at its noise."
                                 if large > 0 else ""), ""]
     if large > 0:
         tab("total", lambda r: "large regret (2+ points)" if r["regret"] >= large else "the rest", rows)

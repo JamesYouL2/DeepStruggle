@@ -5,12 +5,13 @@ import numpy as np
 import ts_engine as ts
 from bindings.settle import SettleMode
 from bindings.action_encoder import ActionEncoder
+from tools.lib.game_step import IllegalActionError
 from ai.rewards.reward_calculator import RewardCalculator, ZeroSumTerminalReward, BlunderAwareRewardCalculator
 from ai.game_length import ply as _game_ply
 
 # Canonical short keys for the game-ending reasons reported per completed episode.
-# The long-form strings come from tools.lib.tournament_evaluator.classify_game_ending_reason,
-# which stays the single source of truth for the classification itself.
+# The long-form strings come from ts.game_ending_reason (ts::state_json::ending_reason, the
+# one classifier, which tools.lib.tournament_evaluator.classify_game_ending_reason wraps).
 ENDING_REASON_KEYS: Tuple[str, ...] = (
     "20vp",
     "europe_control",
@@ -30,20 +31,15 @@ _ENDING_REASON_MAP: Dict[str, str] = {
     "wargames": "wargames",
 }
 
-_ending_classifier: Optional[Callable[[ts.GameState], str]] = None
-
 
 def _classify_ending(state: ts.GameState, held_scoring: bool) -> str:
     """Maps a terminal state to one of ENDING_REASON_KEYS.
 
-    Imported lazily: tools.lib.tournament_evaluator pulls in torch and the model zoo,
-    which the environment itself has no need for.
+    Asks the engine directly rather than through tools.lib.tournament_evaluator, whose
+    classify_game_ending_reason is the same call: that module imports the model zoo (torch,
+    onnxruntime) and, through tools.lib.player_agent, this module.
     """
-    global _ending_classifier
-    if _ending_classifier is None:
-        from tools.lib.tournament_evaluator import classify_game_ending_reason
-        _ending_classifier = classify_game_ending_reason
-    reason = _ending_classifier(state)
+    reason = ts.game_ending_reason(state)
     key = _ENDING_REASON_MAP.get(reason, "20vp")
     # DEFCON 1 keeps absolute precedence (as in the classifier); otherwise an
     # unplayed scoring card is the more specific cause than the VP total it produced.
@@ -395,7 +391,6 @@ class TsVectorizedEnv:
 
         # 2. Step C++ simulation in parallel
         action_list = [int(a) for a in actions]
-        from tools.lib.game_step import IllegalActionError
 
         step_results = self.runner.step_flat_all(action_list, self._auto_advance)
         # 0 = the engine refused the action. Never observed (0 refusals in 5,052 batched steps),

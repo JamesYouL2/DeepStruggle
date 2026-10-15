@@ -2402,7 +2402,7 @@ def train_pipeline(
     # Frozen-opponent sampling. A share of environments plays the learner against a past
     # snapshot instead of against itself, so the outcome depends on the learner's actions
     # again and the advantage signal has something to be non-zero about. See
-    # ai/training/opponent_pool.py and research/plans/P10_opponent_sampling.md.
+    # ai/training/opponent_pool.py and research/archive/E3_ladder/plans/P10_opponent_sampling.md.
     _league_seen: Set[str] = set()
 
     def _league_scan() -> int:
@@ -2546,7 +2546,7 @@ def train_pipeline(
                     # E3-29-28_20260917_074357 trained 5M steps against a single frozen copy of
                     # itself, winning 99.7%, and the resulting "collapse" cost two days of
                     # investigation aimed at the CE coefficient and the reference schedule.
-                    # See research/log/P15_X4b_collapse_is_pool_starvation.md.
+                    # See research/archive/E3_ladder/log/P15_X4b_collapse_is_pool_starvation.md.
                     print("[opponent pool] WARNING: resuming a self-growing pool but found no "
                           f"snapshots in {_run_dir!r}, so the pool starts at ONE frozen copy of "
                           "the current policy. This is nearly plain self-play and the arm will "

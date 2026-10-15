@@ -2663,7 +2663,7 @@ class NashPGTrainer(BaseNashPGTrainer):
                 # it is so the series stays comparable across every run ever logged; the
                 # assembled objective and the regulariser's share are logged separately below,
                 # because their absence is how a KL term reaching 300x the surrogate stayed
-                # invisible for two days. See research/log/P15_kl_domination.md.
+                # invisible for two days. See research/archive/E3_ladder/log/P15_kl_domination.md.
                 policy_loss_t += ppo_loss.detach()
                 policy_loss_total_t += policy_loss.detach()
                 val_loss_t += val_loss.detach()

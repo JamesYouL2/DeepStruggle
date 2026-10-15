@@ -4,7 +4,7 @@
 Two uses, named differently in the research record:
 
 * **SWA** -- the snapshots of *one run* along its trajectory, e.g. its last 80M, one every 10M
-  (P28 step 1, `research/plans/P28_strength_on_E6.md`). If the late snapshots swing around a plateau
+  (P28 step 1, `research/log/P28_step1_swa_and_search.md`). If the late snapshots swing around a plateau
   because of step-size noise rather than because they play differently, their average plays at
   least as well as the best of them. Every arm is rated on its snapshots and on this. Written as
   `<run>/swa_<from>-<to>M.pt`.

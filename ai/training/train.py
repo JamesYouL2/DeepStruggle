@@ -610,12 +610,14 @@ def build_parser() -> argparse.ArgumentParser:
                              "space or Ops for a chosen card), so events the policy rarely plays still get "
                              "tried; the stored log-prob stays the policy's own. 1.0 (default) = off. The "
                              "expert review's first candidate (research/log/expert_review_E7.md).")
-    # P31 (research/plans/P31_show_and_decide.md): show the learner rare situations, let training
+    # P31 (research/log/P31_branch_arms_B1_B2.md): show the learner rare situations, let training
     # decide what they are worth. Every flag is off by default.
     parser.add_argument("--play-mode-floor", type=float, default=0.0,
                         help="P31 1a: the learner's behaviour policy at play-mode decisions and the "
-                             "non-country choices inside events is (1-eps)*pi + eps*uniform(legal); "
-                             "the stored log-prob is the mixture's, so PPO's ratio corrects it. 0 is off.")
+                             "non-country choices inside events is mu = (1-eps)*pi + eps*uniform(legal). "
+                             "The stored log-prob stays the policy's own, and each floor sample's "
+                             "surrogate is weighted by pi_old/mu (at most 1/(1-eps)) outside PPO's "
+                             "clip. 0 is off.")
     parser.add_argument("--floor-scope", choices=["all", "seeded"], default="all",
                         help="P31 1a: apply the floor in every game, or only in --seed-scenarios games.")
     parser.add_argument("--floor-from", type=int, default=0,
@@ -723,7 +725,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "(HUMAN_OPENING_MIX).")
     parser.add_argument("--setup-mc-min-batch", type=int, default=512,
                         help="Finished-game setup placements to gather before one MC setup step.")
-    # P28 step 2 (research/plans/P28_strength_on_E6.md): optimiser levers at the plateau.
+    # P28 step 2 (research/log/P28_step2a_lr_schedule.md): optimiser levers at the plateau.
     parser.add_argument("--lr-schedule", choices=["constant", "step", "cosine"], default="constant",
                         help="Learning-rate schedule, in env steps from --lr-schedule-start. constant "
                              "(the default) keeps --lr throughout; step lowers it to each of "
@@ -739,7 +741,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr-schedule-span", type=int, default=200_000_000,
                         help="cosine schedule: steps from --lr to --lr-min.")
     parser.add_argument("--lr-min", type=float, default=3e-5, help="cosine schedule: the floor.")
-    # P29 bet 2 (research/plans/P29_big_bets_from_scratch.md): auxiliary targets from each game's end.
+    # P29 bet 2 (research/log/P29_bet2_ownership_probes.md): auxiliary targets from each game's end.
     parser.add_argument("--aux-ownership", type=float, default=0.0,
                         help="Weight of an auxiliary head predicting who controls each of the 84 "
                              "countries at game end (mine / opponent's / neither, in the mover's "

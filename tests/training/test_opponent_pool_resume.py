@@ -157,7 +157,7 @@ def test_the_run_directory_a_resume_argument_names_holds_the_snapshots() -> None
 
     Nothing failed. E3-29-28_20260917_074357 trained 5M steps against that one opponent, beating
     it 99.7%, and the resulting decline was investigated as a property of search-CE training for
-    two days. See research/log/P15_X4b_collapse_is_pool_starvation.md.
+    two days. See research/archive/E3_ladder/log/P15_X4b_collapse_is_pool_starvation.md.
 
     So pin the property that was actually broken: for every accepted spelling of --resume, the
     directory derived from it is the one holding the snapshots.

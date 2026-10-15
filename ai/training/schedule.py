@@ -1,7 +1,9 @@
 """P28 step 2: a learning-rate schedule and an exponential moving average of the weights.
 
 Until P28 the learning rate was a constant 3e-4 with no averaging, and late snapshots of a run swing
-by about 8 points against the same opponent (`research/plans/P28_strength_on_E6.md`, mechanism 1).
+by about 8 points against the same opponent (P28, text in git at e5e8a7c). What each lever did:
+`research/log/P28_step2a_lr_schedule.md` (a stepped rate does not cut the spread) and
+`research/log/P28_step2b_ema_weights.md` (EMA beats raw snapshots).
 Both levers here are off by default: `constant` returns the base rate unchanged, and an EMA time
 constant of 0 builds no average.
 

@@ -17,9 +17,11 @@ Everything needed to rebuild the observation is already implied by `seed` plus t
 
 **`--target gchoice`** answers with a noise-free Gumbel root (`ai/search/gumbel_root.py`, the
 `gumbel:` tournament searcher) instead of PUCT visit counts, which the target-forms probe found
-carry no measurable gain at 32-64 simulations (research/log/E7_search_target_forms.md). Where the
-root's choice departs from the network's argmax, `search_pi` is a one-hot on it; where they agree
-it is the network's own distribution, so those positions hold the policy where it is. Each such
+carry no measurable gain at 32-64 simulations (summarised in research/log/E7_gchoice_distill.md;
+the note itself, research/log/E7_search_target_forms.md, is on the unmerged branch
+research/e7-search-card-results). Where the root's choice departs from the network's argmax,
+`search_pi` is a one-hot on it; where they agree it is the network's own distribution, so those
+positions hold the policy where it is. Each such
 record also carries `gchoice` -- the network's argmax and distribution, and per budget in
 `--gumbel-sims` the root's choice with every candidate's evaluations and mean value -- so
 `tools/gchoice_targets.py` can rewrite the target (another budget, a margin gate, the network's

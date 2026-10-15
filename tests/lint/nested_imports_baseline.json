@@ -38,7 +38,6 @@
  "ai/training/start_pool.py": 4,
  "ai/training/train.py": 2,
  "ai/training/warmup_dataset_loader.py": 1,
- "bindings/ts_env.py": 2,
  "tests/bindings/test_merged_influence.py": 2,
  "tests/bindings/test_obs_features.py": 5,
  "tests/conftest.py": 11,
