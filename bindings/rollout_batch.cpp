@@ -290,7 +290,8 @@ size_t RolloutBatch::fill_leaves(float* obs, uint8_t* masks) {
     const int64_t n = static_cast<int64_t>(leaf_order_.size());
     for_rows(n, [&](int64_t j) {
         const Row& r = rows_[leaf_order_[j]];
-        extract_observation_features(r.state, movers_[r.position], cfg_.features, obs + j * obs_width_);
+        const Player side = cfg_.leaf == Leaf::kDecider ? acting_player(r.state) : movers_[r.position];
+        extract_observation_features(r.state, side, cfg_.features, obs + j * obs_width_);
         ActionMask::generate_flat_mask_212(r.state, masks + j * A);
     });
     return static_cast<size_t>(n);
@@ -299,7 +300,10 @@ size_t RolloutBatch::fill_leaves(float* obs, uint8_t* masks) {
 void RolloutBatch::set_leaf_values(const float* values) {
     for (size_t j = 0; j < leaf_order_.size(); ++j) {
         Row& r = rows_[leaf_order_[j]];
-        r.value = values[j];
+        // A kDecider leaf was read from its decider's side: the opponent's value is negated into the
+        // root mover's frame, which every row's value is in.
+        const bool flip = cfg_.leaf == Leaf::kDecider && acting_player(r.state) != movers_[r.position];
+        r.value = flip ? -values[j] : values[j];
         r.leaf_valued = true;
     }
     leaf_order_.clear();

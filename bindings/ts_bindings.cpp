@@ -698,7 +698,7 @@ NB_MODULE(ts_engine, m) {
             "until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). "
             "Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).")
             .def("__init__", [](RB* self, int horizon, bool shared_dice, bool guard, uint32_t features,
-                                uint64_t seed, const std::string& stop) {
+                                uint64_t seed, const std::string& stop, const std::string& leaf) {
                      if (horizon < 0) throw std::invalid_argument("horizon must be >= 0");
                      if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
                      ts::rollout::Stop s;
@@ -707,9 +707,14 @@ NB_MODULE(ts_engine, m) {
                      else if (stop == "later") s = ts::rollout::Stop::kLater;
                      else if (stop == "earlier") s = ts::rollout::Stop::kEarlier;
                      else throw std::invalid_argument("stop must be 'boundaries', 'turn', 'later' or 'earlier'");
-                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s}, seed);
+                     ts::rollout::Leaf l;
+                     if (leaf == "mover") l = ts::rollout::Leaf::kMover;
+                     else if (leaf == "decider") l = ts::rollout::Leaf::kDecider;
+                     else throw std::invalid_argument("leaf must be 'mover' or 'decider'");
+                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s, l}, seed);
                  }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
-                 nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries")
+                 nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries",
+                 nb::arg("leaf") = "mover")
             .def("add", [](RB& self, const ts::GameState& base, const std::vector<int>& candidates, size_t worlds) {
                      std::vector<uint16_t> c;
                      for (int a : candidates) {

@@ -45,12 +45,20 @@ Player acting_player(const GameState& s) noexcept;
 // within `horizon` boundaries, else after `horizon` boundaries.
 enum class Stop : uint8_t { kBoundaries = 0, kTurnEnd = 1, kLater = 2, kEarlier = 3 };
 
+// Whose side a leaf's critic is read from. kMover: the root mover's, at every leaf (the root as measured).
+// kDecider: the leaf's own decider's -- the side the critic is trained on -- with the value negated into
+// the mover's frame where that is the opponent. The trainer only ever reads a decision from its decider's
+// side, so a kMover leaf where the opponent decides is outside the critic's training distribution
+// (P33: 15-55% of leaves by stop rule; the off-side reading is off by ~0.10).
+enum class Leaf : uint8_t { kMover = 0, kDecider = 1 };
+
 struct Config {
     int horizon = 4;            // action-round boundaries to play through; 0 = none
     bool shared_dice = true;    // one dice stream per world, every candidate
     bool guard = true;          // the DEFCON-2 suicide guard in the playouts
     uint32_t features = 0;      // obs_features bits the network reads (0: the base layout)
     Stop stop = Stop::kBoundaries;
+    Leaf leaf = Leaf::kMover;
 };
 
 struct Row {

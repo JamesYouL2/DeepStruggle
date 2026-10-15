@@ -57,6 +57,11 @@ _ROWS = 4096
 #: measured root), at the end of the decision's turn, or at the later or the earlier of the two.
 STOPS = ("boundaries", "turn", "later", "earlier")
 
+#: Whose side a leaf's critic is read from (the engine's `rollout::Leaf`): the root mover's at every leaf
+#: (the measured root), or the leaf's decider's -- the side the critic is trained on -- negated into the
+#: mover's frame where that is the opponent (P33, research/log/P33_diagnostics.md).
+LEAF_SIDES = ("mover", "decider")
+
 
 @dataclass
 class RolloutConfig:
@@ -66,6 +71,7 @@ class RolloutConfig:
     rule: str = "z2"
     seed: int = 0
     stop: str = "boundaries"    # one of STOPS
+    leaf_side: str = "mover"    # one of LEAF_SIDES
     #: Play the playouts' forwards (every ply, and the leaf reads) through CUDA graphs. Opt-in: a
     #: graph's batch is padded, and a row's value can move by ~1e-7 with the batch size (the Gumbel
     #: searcher's measurement), so the search is not bit-identical to the eager one. What it buys is
@@ -127,9 +133,12 @@ class _GraphedForward:
 
 
 def _stop_kw(cfg: RolloutConfig) -> Dict[str, str]:
-    """The batch's `stop` argument, passed only when it is not the default -- so an engine build from
-    before the stop existed still runs the measured root."""
-    return {} if cfg.stop == "boundaries" else {"stop": cfg.stop}
+    """The batch's `stop` and `leaf` arguments, each passed only when it is not the default -- so an
+    engine build from before they existed still runs the measured root."""
+    kw = {} if cfg.stop == "boundaries" else {"stop": cfg.stop}
+    if cfg.leaf_side != "mover":
+        kw["leaf"] = cfg.leaf_side
+    return kw
 
 
 def parse_rule(rule: str) -> Tuple[str, float]:
@@ -150,6 +159,8 @@ class RolloutRoot:
         self.rule, self.param = parse_rule(config.rule)
         if config.stop not in STOPS:
             raise ValueError(f"stop must be one of {STOPS}, got {config.stop!r}")
+        if config.leaf_side not in LEAF_SIDES:
+            raise ValueError(f"leaf_side must be one of {LEAF_SIDES}, got {config.leaf_side!r}")
         self.features = model_obs_features(model)
         use_graphs = bool(config.cuda_graphs) and self.device.type == "cuda"
         self._graphed: Dict[int, _GraphedForward] = {}
@@ -476,6 +487,8 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             continue
         if p in STOPS:
             stop = p
+        elif p in LEAF_SIDES:
+            continue                                   # rollout_spec_config reads the leaf side
         elif p == "graphs":
             graphs = True
         else:
@@ -490,9 +503,10 @@ def rollout_spec_leaf(spec: str) -> Optional[str]:
 
 
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:leaf checkpoint]]]]] -> (checkpoint,
-    config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries), the stop one
-    of STOPS, and the leaf is `rollout_spec_leaf`'s."""
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider][:graphs][:leaf checkpoint]]]]] ->
+    (checkpoint, config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries,
+    the mover's side), the stop one of STOPS, `decider` reads each leaf from its decider's side, and the
+    leaf checkpoint is `rollout_spec_leaf`'s."""
     parts = spec.split(":")
     if parts[0].lower() != "rollout" or len(parts) < 2:
         raise ValueError(f"not a rollout spec: {spec!r}")
@@ -502,11 +516,14 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
 
     d = RolloutConfig()
     stop, _leaf, graphs = _spec_tail(spec)
+    side = "decider" if "decider" in parts[6:] else "mover"
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
-                        horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs)
+                        horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs,
+                        leaf_side=side)
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
     stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend", "earlier": "-untilturnend"}[cfg.stop]
     horizon = "" if cfg.stop == "turn" else f"-h{cfg.horizon}"
-    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}-{cfg.rule}"
+    side_label = "-dleaf" if cfg.leaf_side == "decider" else ""
+    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}-{cfg.rule}"

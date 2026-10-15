@@ -311,6 +311,42 @@ def test_the_earlier_stop_ends_at_whichever_comes_first() -> None:
     assert leaves("earlier", 99) == leaves("turn", 99)
 
 
+def test_decider_leaves_are_read_from_their_deciders_side_and_negated_into_the_movers_frame() -> None:
+    """leaf="decider": each leaf's observation is its decider's, and where that is the root mover's
+    opponent the critic's value is negated into the mover's frame; leaf="mover" reads the mover's side."""
+    st = _position()
+    cands = _legal(st)[:3]
+    mover = ts.Player(int(st.ctx().decision_player)) if int(st.ctx().decision_player) else st.phasing_player
+    checked = {"same": 0, "flipped": 0}
+    settings = [(leaf, stop, h) for leaf in ("mover", "decider") for stop, h in (("turn", 2), ("boundaries", 1),
+                                                                                  ("boundaries", 2), ("boundaries", 3))]
+    for leaf, stop, horizon in settings:
+        b = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=31, stop=stop, leaf=leaf)
+        b.add(st, cands, 6)
+        _play(b, seed=7)
+        obs, _masks = b.fill_leaves()
+        term = b.row_terminal()
+        leaf_rows = [r for r in range(b.rows()) if not term[r]]
+        assert len(leaf_rows) == obs.shape[0] > 0
+        for j, r in enumerate(leaf_rows):
+            s = b.row_state(r)
+            dp = int(s.ctx().decision_player) or int(s.phasing_player)
+            side = ts.Player(dp) if leaf == "decider" else mover
+            assert np.array_equal(obs[j], np.asarray(ts.extract_observation(s, side), dtype=np.float32))
+        b.set_leaf_values(np.full(obs.shape[0], 0.25, dtype=np.float32))
+        values = np.asarray(b.values())
+        for r in leaf_rows:
+            s = b.row_state(r)
+            dp = int(s.ctx().decision_player) or int(s.phasing_player)
+            flip = leaf == "decider" and dp != int(mover)
+            assert values[r] == pytest.approx(-0.25 if flip else 0.25)
+            if leaf == "decider":
+                checked["flipped" if flip else "same"] += 1
+    assert checked["flipped"] > 0 and checked["same"] > 0      # leaves of both kinds were checked
+    with pytest.raises(ValueError):
+        ts.RolloutBatch(horizon=4, leaf="other")
+
+
 def test_a_bad_horizon_or_stop_is_refused() -> None:
     with pytest.raises(ValueError):
         ts.RolloutBatch(horizon=-1)

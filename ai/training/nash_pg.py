@@ -297,6 +297,7 @@ class BaseNashPGTrainer:
         search_rollout_k: int = 4,
         search_rollout_worlds: int = 16,
         search_rollout_stop: str = "boundaries",   # where the rollout root's playouts stop (STOPS)
+        search_rollout_leaf_side: str = "mover",   # whose side its leaves are read from (LEAF_SIDES)
         search_workers: int = 0,          # > 0: the rollout-root targets priced by worker processes
         search_teacher_policy: bool = False,   # the frozen teacher's raw policy as the target (no search)
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
@@ -487,7 +488,8 @@ class BaseNashPGTrainer:
                 self._searcher = ContinuationValues(
                     search_teacher_net if search_teacher_net is not None else self.reference_net,
                     RolloutConfig(k=1, worlds=int(search_rollout_worlds), horizon=int(search_rollout_horizon),
-                                  rule="argmax", stop=str(search_rollout_stop), cuda_graphs=bool(cuda_graphs)),
+                                  rule="argmax", stop=str(search_rollout_stop), cuda_graphs=bool(cuda_graphs),
+                                  leaf_side=str(search_rollout_leaf_side)),
                     device=self.device, subsample=search_subsample, node_filter=search_node_filter)
             elif search_teacher_policy:
                 # The control for the rollout teacher: the teacher's own policy, no search.
@@ -500,7 +502,7 @@ class BaseNashPGTrainer:
                     search_teacher_net if search_teacher_net is not None else active_net,
                     RolloutConfig(k=int(search_rollout_k), worlds=int(search_rollout_worlds),
                                   horizon=int(search_rollout_horizon), rule="z2", stop=str(search_rollout_stop),
-                                  cuda_graphs=bool(cuda_graphs)),
+                                  cuda_graphs=bool(cuda_graphs), leaf_side=str(search_rollout_leaf_side)),
                     device=self.device, subsample=search_subsample, node_filter=search_node_filter)
             else:
                 self._searcher = BatchedMCTS(
@@ -517,7 +519,8 @@ class BaseNashPGTrainer:
                     featurise_capacity=SEARCH_CHUNK)
             if rollout_values:
                 print(f"[R49] rollout-root value targets: beta {search_value_beta}, {search_rollout_worlds} worlds, "
-                      f"horizon {search_rollout_horizon}, stop {search_rollout_stop}, subsample {search_subsample}, from "
+                      f"horizon {search_rollout_horizon}, stop {search_rollout_stop}, leaves read from the "
+                      f"{search_rollout_leaf_side}'s side, subsample {search_subsample}, from "
                       f"{'the frozen teacher' if search_teacher_net is not None else 'pi_ref'}", flush=True)
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
                   f"{search_node_filter}, subsample {search_subsample}"
@@ -535,7 +538,8 @@ class BaseNashPGTrainer:
             self._search_pool = SearchWorkers(
                 int(search_workers), search_teacher_net,
                 RolloutConfig(k=int(search_rollout_k), worlds=int(search_rollout_worlds),
-                              horizon=int(search_rollout_horizon), rule="z2", stop=str(search_rollout_stop)), self.device)
+                              horizon=int(search_rollout_horizon), rule="z2", stop=str(search_rollout_stop),
+                              leaf_side=str(search_rollout_leaf_side)), self.device)
             print(f"[X4b] the rollout-root targets are priced by {search_workers} worker processes "
                   f"beside the rollout", flush=True)
         self.search_saturated_frac = 0.0

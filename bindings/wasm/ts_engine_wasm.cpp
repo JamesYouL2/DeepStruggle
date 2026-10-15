@@ -258,16 +258,18 @@ TS_API void ts_determinize(int player, uint32_t seed_lo, uint32_t seed_hi) {
 }
 
 // `stop`: 0 = after `horizon` boundaries, 1 = at the end of the decision's turn, 2 = the later of the two,
-// 3 = the earlier of the two
-// (ts::rollout::Stop).
+// 3 = the earlier of the two (ts::rollout::Stop). `leaf`: 0 = read every leaf from the root mover's side,
+// 1 = from the leaf's decider's, negated into the mover's frame (ts::rollout::Leaf).
 TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t features,
-                            uint32_t seed_lo, uint32_t seed_hi, int stop) {
+                            uint32_t seed_lo, uint32_t seed_hi, int stop, int leaf) {
     if (horizon < 0) { g_error = "horizon must be >= 0"; return 0; }
     if (stop < 0 || stop > 3) { g_error = "stop must be 0 (boundaries), 1 (turn), 2 (later) or 3 (earlier)"; return 0; }
+    if (leaf < 0 || leaf > 1) { g_error = "leaf must be 0 (mover) or 1 (decider)"; return 0; }
     if (features & ~ts::obs_features::ALL) { g_error = "unknown obs_features bit"; return 0; }
     const uint64_t seed = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
     g_rollout = std::make_unique<ts::rollout::RolloutBatch>(
-        ts::rollout::Config{horizon, shared_dice != 0, guard != 0, features, static_cast<ts::rollout::Stop>(stop)}, seed);
+        ts::rollout::Config{horizon, shared_dice != 0, guard != 0, features, static_cast<ts::rollout::Stop>(stop),
+                            static_cast<ts::rollout::Leaf>(leaf)}, seed);
     return 1;
 }
 

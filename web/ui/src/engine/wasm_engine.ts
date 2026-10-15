@@ -150,9 +150,10 @@ export class WasmEngine {
 
   /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed, and
    *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier). */
-  rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true, stop = 0): void {
+  rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true, stop = 0,
+               leaf = 0): void {
     const ok = this.M._ts_rollout_reset(horizon, sharedDice ? 1 : 0, guard ? 1 : 0, features >>> 0,
-      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop);
+      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf);
     if (!ok) throw new Error(this.lastError());
   }
 

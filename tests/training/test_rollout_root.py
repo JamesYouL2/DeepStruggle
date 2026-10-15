@@ -184,6 +184,9 @@ def test_cuda_graphs_are_eager_on_the_cpu_and_parse_from_the_spec(tmp_path: Path
     assert c.stop == "later" and c.cuda_graphs
     _, c, label = rollout_spec_config(f"rollout:{path}:4:16:4:z2:earlier")
     assert c.stop == "earlier" and label.endswith("-h4-untilturnend-z2")
+    _, c, label = rollout_spec_config(f"rollout:{path}:4:16:4:z2:earlier:decider:graphs")
+    assert c.leaf_side == "decider" and c.cuda_graphs and label.endswith("-h4-untilturnend-dleaf-z2")
+    assert rollout_spec_leaf(f"rollout:{path}:4:16:4:z2:decider") is None
     assert rollout_spec_leaf(f"rollout:{path}:4:16:4:z2:graphs:{path}") == str(path)
 
 

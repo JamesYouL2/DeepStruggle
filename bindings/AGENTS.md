@@ -90,7 +90,11 @@ are cited from elsewhere; keep them.
   action-round boundaries), `kTurnEnd` (the first position in another turn), `kLater` (the later
   of the two) or `kEarlier` (the earlier: the turn's end when it comes within the horizon; P33).
   Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later"|"earlier")`; the page passes
-  `ts_rollout_reset`'s seventh argument (0 / 1 / 2 / 3). The network stays outside: the caller loops
+  `ts_rollout_reset`'s seventh argument (0 / 1 / 2 / 3). `Config::leaf` chooses whose side a leaf's
+  critic is read from: `kMover` (the default and the measured root: the root mover's at every leaf) or
+  `kDecider` (the leaf's decider's, the side the critic is trained on, its value negated into the
+  mover's frame where that is the opponent; P33). Python `leaf="mover"|"decider"`, the page's eighth
+  argument (0 / 1). The network stays outside: the caller loops
   `fill_live` → logits → `step` until `all_done`, then `fill_leaves` → critic → `set_leaf_values`,
   then reads `values`. The root's choice is here too: `top_candidates` (the k most probable legal
   moves), `parse_rule` (argmax / z<x> / kl<t>) and `decide` (each candidate's mean value, its paired
