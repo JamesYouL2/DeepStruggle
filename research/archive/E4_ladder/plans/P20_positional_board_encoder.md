@@ -90,7 +90,7 @@ summary is cheap and may still carry useful aggregate signal.
 
 The current whole board path is 36–39k parameters, so this is a real increase — but the model is
 3.1M against architectures that solve comparable games with far more, and
-[`P6`](../../E3_ladder/plans/P6_attention_backbone.md) notes Ataraxos and AlphaStar both encode the board
+P6 (an unrun E3 attention plan, deleted) noted Ataraxos and AlphaStar both encode the board
 positionally with a transformer for exactly this reason.
 
 **Start with flatten-tokens-at-16 (+11%).** It keeps the per-country nonlinearity — a flat map of
@@ -99,7 +99,7 @@ encoder learns it once — while restoring position.
 
 ## Honest counter-arguments
 
-* **Capacity is reportedly not the bottleneck on v2** ([`P6`](../../E3_ladder/plans/P6_attention_backbone.md)). True, and
+* **Capacity is reportedly not the bottleneck on v2** (P6). True, and
   this proposal is not about capacity: a pooled summary destroys information that no amount of
   downstream capacity can recover. But it does mean "more parameters helped" would be the wrong
   reading of a positive result, and the control has to be a parameter-matched arm, not the

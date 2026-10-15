@@ -1,164 +1,92 @@
 # Reserve — ideas with a trigger, not a slot
 
 Each entry names the measurement that would promote it to a step file. Nothing here is queued.
-Add new ideas here first (`README.md`, rule 4).
+Add new ideas here first ([`README.md`](README.md), rule 4). Ideas that were tried are listed at the
+end with their result.
 
-## Annealed potential shaping
-**Trigger:** empty battlegrounds at turn 8 and the setup probe are still flat after P1, P2 and
-P4 — i.e. the target is fixed and the agent still does not expand.
-Form: `R_t = (1−α_t)·[Φ(s′)−Φ(s)] + α_t·R_game`, α_t → 1 (`ideas_and_plans.md` §2), with the
-battleground term of `Scoring::compute_useful_actions_potential` made monotone in the gap to
-control (`experiments.md` §12.4) — that is an engine change and needs approval. Policy-invariant
-only under a perfect critic; while it is on, the agent learns Φ's mistakes, which is why it is
-annealed and why it is behind the target fixes. The owner regards shaping as a stretch; it runs
-only with a specific flat-probe result to justify it.
+## Base-model cells left over from P30
+**Trigger:** the owner wants another base-recipe arm. C2 from scratch (the card-event target, a
+small positive on a branch, reaches the trunk); C3 (a stepped LR over the last third); C1b (tokens
+by concatenation, identities at full scale). [P30](P30_base_model_quality.md).
 
-## League / PFSP
-**Promoted 2026-09-16.** The trigger fired: the stall after 160M with oscillating side balance
-is the cycling this entry was waiting for. The pool, PFSP and the first exploiter are now
-[P15](../archive/E3_ladder/plans/P15_breaking_the_cycle.md) X1/X3; a full multi-exploiter league remains here, triggered
-by X1 succeeding *and* X3 proving insufficient.
+## Human data as state distribution and critic signal (was P7 7b–7d)
+**Trigger:** a measured weakness that lives in positions self-play rarely reaches. 7b: converted
+human turn-boundary positions as 5–10% of start states (`--start-pool-frac` machinery), turns ≥ 4
+only; 7c: a critic-only loss on human outcomes, policy term off; 7d: the old injection
+(`--inject-dataset`) re-run on the new corpus as a discriminator, never adopted. If 7d still costs
+Elo, the mechanism is at fault (then a card-level human KL anchor, piKL form); if it helps, the old
+corpus was (then advantage-filtered imitation). Background:
+[`../log/P7_human_injection_and_its_cost.md`](../log/P7_human_injection_and_its_cost.md).
+
+## Seeding chains self-play never reaches
+**Trigger:** a leak on a chain whose precursor the network never plays (Nuclear Subs, the Cuba
+trap). The Cuba defence was learned only with the scenario seeded *and* bounded logit gaps (R33);
+neither alone. An effect-conditioned coup-target correction for the Subs coup (P32's B6) waits
+behind it.
 
 ## PSRO-lite: meta-Nash opponent sampling
-**Trigger:** P15-X3's span-the-run pool and PFSP are both neutral. Sample pool opponents from
-the meta-game Nash of the pool's head-to-head matrix (Lanctot et al. 2017) instead of
-uniform/variance weighting; needs a periodic in-run mini-tournament, which X0's anchor evals
-already half-build.
+**Trigger:** a pool or league change is wanted again. Sample pool opponents from the meta-game
+Nash of the pool's head-to-head matrix (Lanctot et al. 2017) instead of uniformly; needs a periodic
+in-run mini-tournament.
 
 ## Optimism / extragradient in the optimizer
-**Trigger:** P15-X2 shows the anchor timescale matters but no refresh cadence both damps the
-cycle and keeps learning speed. OGDA / extragradient / optimistic mirror descent are the
-last-iterate-convergent update rules; deeper surgery than a flag, so it waits for evidence
-that the anchor family is the right one but insufficient.
+**Trigger:** evidence that the π_ref timescale matters but no refresh cadence both damps
+oscillation and keeps learning speed. OGDA / optimistic mirror descent are last-iterate-convergent;
+deeper surgery than a flag.
 
 ## Codified rewind + pool gating (was P25 step 5)
-**Trigger:** a run on the production recipe stalls, meaning per-seat Elo against its own earlier
-snapshots is flat for 40M or more, more often than about 1 run in 10. P25 closed without it,
-because collapse on the fixed pool has been a recoverable delay
-([`../log/P25_stress_bench.md`](../log/P25_stress_bench.md#closing-p25-2026-09-24)). The design
-is in [`../archive/E4_ladder/plans/P25_collapse_robustness.md`](../archive/E4_ladder/plans/P25_collapse_robustness.md),
-step 5:
-* resume from the last snapshot that passed, with the sampling seed advanced by a fixed rule;
-* admit a snapshot to the pool only if it passes the same per-seat check.
+**Trigger:** runs on the production recipe stall (per-seat strength against their own earlier
+snapshots flat for 40M+) more often than ~1 in 10. P25 closed without it because collapse on the
+fixed pool is a recoverable delay ([`../log/P25_stress_bench.md`](../log/P25_stress_bench.md#closing-p25-2026-09-24));
+design in [`../archive/E4_ladder/plans/P25_collapse_robustness.md`](../archive/E4_ladder/plans/P25_collapse_robustness.md)
+step 5: resume from the last snapshot that passed with the sampling seed advanced; admit a
+snapshot to the pool only if it passes the same check.
 
 ## Per-side capacity
-**Trigger, revised 2026-09-23:** the P25 bench shows the winning seat sharpening inside the
-shared network while the losing seat is still learning (E4-36-03), every E4 collapse loses the
-same seat, and E3 X1 measured a seat with no gradient decaying 50% → 7% in 40M. Promoted into
-[P24](P24_league.md) as the *per-seat main agents* design question; what stays here is the
-standalone arm — side-specific adapters or heads on the shared trunk, or a side-conditioned
-film layer — triggered if P25's signal-side levers (3c–3e) leave a seed collapsing *and* P24 is
-not yet running. An architecture change, so behind the dynamics fixes.
+**Trigger:** a seat stays behind while the other sharpens inside the shared network. Side-specific
+adapters or heads on the shared trunk, or a side-conditioned FiLM layer. An architecture change;
+the side must be an input, not a fixed per-side training mode.
 
 ## Board handicap curriculum for the weak seat
-**Trigger:** P25 steps 3–5 and P24 all leave the US seat unable to hold 50% against frozen
-anchors from scratch. The textbook asymmetric-game answer (KataGo's handicap training): give
-the weak seat a small *board* handicap at setup — extra influence, never VP, since 95.5% of
-endings sit at |VP| = 20 and a scoreboard komi does not port
-([restoring_advantage_signal](../archive/E3_ladder/plans/restoring_advantage_signal.md)) — and
-anneal it to zero as that seat's frozen-anchor win share rises. It shifts the state
-distribution while on and is an **engine change**, so it is last and needs approval; the
-E3 start-pool result (−115 Elo from a bad allocation) is the caution on how it is metered.
+**Trigger:** one seat cannot hold its level against frozen references from scratch. KataGo-style: a
+small *board* handicap at setup (extra influence, never VP: 95.5% of endings sit at |VP| = 20),
+annealed to zero as that seat's share rises. An **engine change**; needs approval.
 
 ## Voice of America exposure probe
-**Trigger:** the agent contests battlegrounds — empty battlegrounds at turn 8 down from 6.2 of 29
-toward the human rate, and Saudi Arabia / India / Algeria no longer conceded in almost every game
-(`experiments.md` §25). Until then a probe measuring how it *defends* a foothold measures a
-foothold it never takes.
-
-Was probe 2 of P0 and is a correct description of a real mistake, so it is kept in full rather
-than rewritten later. VOA (`cid 74`) is a US event removing **4 USSR Influence from non-European
-countries, at most 2 per country** (`mid_war.cpp:475`), so a USSR position of exactly 1–2 there
-can be erased outright and one of 3+ cannot. Measure over self-play games at each `TURN_CLEANUP`
-node — the same node P0's pre-deal calibration samples, so the two share a pass: is VOA still
-unplayed (`get_card_location(74)` in the deck or either US hand slot, read from the true state,
-not from the observation), and how many non-European countries does the USSR hold at 1–2
-influence. Report `min(count, 2)` alongside the raw count, because 4 points at 2 per country can
-clear at most two of them, and split controlled from uncontrolled rather than excluding
-controlled: 48 of the 63 non-European countries have stability ≤ 2, so 1–2 influence there is
-frequently *control*, and losing it is the worse case, not the excluded one. Yardstick from the
-human corpus, with the caveat that VOA reaches play in a fraction of 266 games — under 30 and the
-punished-rate half is not reportable.
-
-## Layout attribution: which v2.2 change did it, and are the card slots worth anything
-**Status: dead, and not merely deprioritised.** It asked which of v2.2's changes carried the
-~+92 Elo (§24) and whether v2.1's card-tracking slots do anything (§23.2). Both questions are
-now unanswerable by the means proposed: v2.2 and v2.1 are deleted along with every argument that
-could select one, and the checkpoints trained on them are refused by `check_checkpoint_layout`
-rather than misread. Re-running the arms would mean reintroducing the layouts, which is the bug
-class the single-layout refactor removed — five silent wrong-layout failures in this repository,
-the last costing a published diagnostic.
-
-What survives is the *question*, if a future observation decision ever depends on it: it would
-have to be asked forward, as an ablation against the current single layout, not backward against
-retired ones. Nothing currently depends on the answer.
+**Trigger:** the agent contests battlegrounds (empty battlegrounds at turn 8 toward the human rate).
+VOA (`cid 74`) removes 4 USSR Influence from non-European countries, at most 2 per country, so a
+USSR position of 1–2 there can be erased. At each `TURN_CLEANUP`: is VOA unplayed (true state), and
+how many non-European countries does the USSR hold at 1–2 (report `min(count, 2)`, split controlled
+from uncontrolled: 48 of the 63 have stability ≤ 2). Human yardstick only if VOA reaches play in
+30+ corpus games.
 
 ## AIVAT-style evaluation
-**Trigger:** two arms land within ~20 Elo of each other and the decision matters. Value-based
-control variates at die nodes (P2's clone average is exactly the die-node baseline) and at deal
-nodes (the pre-deal critic). Would take a 1,000-game tournament from ~20 Elo to ~5. `../log/variance_and_noise.md`
-and `../method/references.md` §3.
+**Trigger:** two arms land within ~20 Elo and the decision matters. Value-based control variates at
+die nodes (P2's clone average) and deal nodes (the pre-deal critic); ~20 Elo → ~5 for a 1,000-game
+tournament. [`../log/variance_and_noise.md`](../log/variance_and_noise.md),
+[`../method/references.md`](../method/references.md) §3.
 
 ## Q-boosting proper (action-value critic, Expected SARSA(λ))
-**Trigger:** P2 and P5 are adopted and the P0 decomposition attributes most remaining return
-variance to policy sampling. `references.md` §3. An action-value head over the 212-dim space is
-a larger change than P2 and is only worth it once chance is handled.
+**Trigger:** chance is handled (P2) and the remaining return variance is attributed to policy
+sampling. An action-value head over the flat action space; [`../method/references.md`](../method/references.md) §3.
 
-## Shallow expectimax at play time
-**Trigger:** the owner wants a stronger product than the no-search network and accepts search
-at play time. One or two plies over the enumerated dice with the critic at the leaves — the
-TD-Gammon form (`references.md` §3); P2's helper is the building block. Not a training change.
+## Categorical value head with ending-type atoms
+**Trigger:** DEFCON-1 endings stay mispriced (calibration split by ending type). A plain categorical
+head was −28 Elo on E3 ([`../archive/E3_ladder/plans/P1_categorical_value_advantage_filtering.md`](../archive/E3_ladder/plans/P1_categorical_value_advantage_filtering.md)).
 
-## Belief head with a real target weight
-**Trigger:** P5's belief AUC is near chance while the VOA-exposure probe stays at baseline.
-Raise `belief_loss_coef`, or give the belief its own tokens in P6's backbone.
+## Entropy schedule
+**Trigger:** entropy reads as the residual noise floor after the π_ref cadence is settled. Anneal
+`--entropy-coef` late in training (Ataraxos damping).
 
-## Categorical head with ending-type atoms
-**Trigger:** DEFCON-1 endings stay mispriced after P1 (calibration curve split by ending type).
-The 51-atom "VP & end types" head of `ideas_and_plans.md` §3.
+## Tried, with results
 
-## Entropy / KL-to-π_ref schedule (Ataraxos damping)
-**Partly promoted:** the ref-refresh half is now [P15](../archive/E3_ladder/plans/P15_breaking_the_cycle.md) X2. What
-stays here is the *entropy* schedule (annealing `--entropy-coef` late in training), triggered
-by X2 adopting a slow anchor and entropy then reading as the residual noise floor.
-
-## Human policy anchor, card-level only (piKL form)
-**Trigger:** P7d — the §22 replication with the new corpus — *still* costs Elo, i.e. the
-mechanism, not the data, was at fault. A fixed human-trained policy π_h as a second KL anchor
-in `nash_pg.py` (the machinery already exists for π_ref; this one is never refreshed), small
-coefficient annealed to zero, applied only at card-level decision types (`SELECT_CARD`,
-headline, play mode, space) where strong players agree and self-play is blind; placement
-micro-actions untouched. `paper_cicero_diplomacy.md`, `paper_kl_regularized_search.md`.
-
-## Advantage-filtered imitation
-**Trigger:** P7d now *helps*, i.e. the old corpus was at fault. Imitate a human decision only
-where the current critic does not rate it clearly bad (the P1 filtering machinery, applied to
-the injected batch), so mistakes in the corpus are not copied. Still policy-side; still behind
-P7b/P7c.
-
-## Expert iteration on human positions
-**Trigger:** P7b adopted and P3 finds search helps. Run P3's determinized searcher on human
-positions — boards self-play never reaches — and distil into the network. Combines the
-state-distribution benefit with the model's own value; no human *decision* is imitated.
-
-## Belief-head targets from reconstructed human hands
-**Trigger:** P5 adopted and the opponent hands in the P7 corpus are determined by the solver
-for a useful share of positions. Supervised targets for β_opp on human play.
-
-## Setup anchor from human setups
-**Trigger:** P4 (macro-action credit) and its MC-target fallback both fail to move the setup
-probe. ~3,000 strong setups are a good prior for a decision with ~1,000 candidates; yardstick
-first (P0), prior only if learning it from the game fails.
-
-## The cloud consolidation run
-**Trigger:** the recipe is fixed — no queued step would change it. Then one long run (~400M+
-steps) of the winning configuration on rented GPUs: v2.2 was still gaining at 320M where earlier
-layouts had stopped (`experiments.md` §24), so budget keeps paying on the current recipe — though
-per-leg gains carry ±16 Elo (`../log/variance_and_noise.md`), so the payoff is not extrapolatable to a
-number in advance. Spend the budget once, on a recipe that has been screened and confirmed on
-the 4090; never on a screen.
-
-## Play-time search as a product
-**Trigger:** the no-search player has reached the mediocre-human bar and the owner wants more.
-P3's determinized searcher with an MMD root step (Ataraxos). A few seconds per move is
-acceptable.
+* **League / PFSP** — [P24](P24_league.md).
+* **Potential shaping** — a small VP potential (E7-16-44) gave no gain
+  ([`../log/P30_win_only_and_vp_potential.md`](../log/P30_win_only_and_vp_potential.md)).
+* **Setup anchor from human setups** — P4 arm B held the human opening on 1 of 2 seeds
+  ([`../log/P4_setup_arms.md`](../log/P4_setup_arms.md)); the owner's openings as forced
+  environment are R43 ([`../runs.md`](../runs.md)).
+* **Search at play time / as a product** — built: Gumbel, PUCT and the rollout root are leaderboard
+  players ([`../checkpoints.md`](../checkpoints.md)).
+* **Belief head, oracle critic** — sized and shelved ([P5](P5_oracle_critic.md)).
+* **Layout attribution (which v2.2 change carried +92 Elo)** — dead: the retired layouts are gone.

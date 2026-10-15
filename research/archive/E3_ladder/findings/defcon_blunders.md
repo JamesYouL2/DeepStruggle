@@ -3,8 +3,8 @@
 The provoked DEFCON-1 loss is this project's clearest named failure: the agent plays an opponent
 card for Operations, the event fires, DEFCON falls to 1 on its own turn and it loses. **Update
 discipline: rewritten in place.** The traces, the replays and the arms are in
-[`../../../log/P9_architecture.md`](../../../log/P9_architecture.md); the queued follow-up is
-[`../../../plans/P8_teach_the_defcon_conjunction.md`](../../../plans/P8_teach_the_defcon_conjunction.md).
+[`../../../log/P9_architecture.md`](../../../log/P9_architecture.md); the follow-up, P8 (an auxiliary risk head), was closed when the critic was found to see the
+forced-exit trap at entry ([`../../../log/P32_cpu_checks.md`](../../../log/P32_cpu_checks.md)).
 
 Filed under `training/` — what the critic represents and what a reward window costs — but resting
 on an engine-side taxonomy: the provoked/self-inflicted split is read off the engine's own
@@ -83,6 +83,5 @@ instrument ([`../../../method/running_experiments.md`](../../../method/running_e
 
 The behavioural target is reachable and the current mechanism is too blunt to be worth its cost:
 the turn-scoped window is **5.6× wider than the mistake it credits**, so it penalises every other
-decision in the turn as well. `--window-provoked-defcon` is **not adopted**. The queued step is a
-narrower window plus the auxiliary risk head, which is
-[`../../../plans/P8_teach_the_defcon_conjunction.md`](../../../plans/P8_teach_the_defcon_conjunction.md).
+decision in the turn as well. `--window-provoked-defcon` is **not adopted**. The queued step was a
+narrower window plus the auxiliary risk head (P8, closed; [`../../../plans/README.md`](../../../plans/README.md)).

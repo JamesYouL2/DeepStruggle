@@ -345,7 +345,7 @@ unrelated to the opponent pool and its verdict is the opposite one
   for with −17.3 points from the opening.
 * It was then **demoted a second time** for the advantage-collapse problem specifically:
   `is_salvageable` filters on board balance, not on outcome uncertainty, which is the wrong
-  quantity ([`../../../plans/restoring_advantage_signal.md`](../plans/restoring_advantage_signal.md)).
+  quantity (`restoring_advantage_signal.md`, an E3 plan absorbed into P15; deleted, in git history).
 
 ## What the record does not say
 

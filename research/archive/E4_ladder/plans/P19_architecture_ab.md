@@ -49,8 +49,8 @@ come from `tools/lib/checkpoint_id.py`, which refuses a name clash.
 
 **Extended to settle P21's anchor.** Add the best snapshots of `E4-01-01` and `E4-02-01`, so the
 same tournament determines which of the four E4 runs rates highest. That arm becomes the absolute
-yardstick for every rung of [P21](../../../plans/P21_architecture_ladder.md) — see *Two comparisons, with
-different jobs* there for why it is a yardstick and not a control.
+yardstick for every rung of [P21](../../../plans/P21_architecture_ladder.md)
+([`../../../log/P21_ladder_status.md`](../../../log/P21_ladder_status.md)): a yardstick, not a control.
 
 Two sanity conditions that must hold before the headline number is read at all:
 

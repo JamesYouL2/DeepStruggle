@@ -1,27 +1,12 @@
 # Archive — superseded, kept for provenance
 
-Nothing here is current. These are earlier reports and planning documents, retained because later
-conclusions cite them and because a withdrawn result is itself part of the record.
+Nothing here is current; do not cite it as a live finding. Current answers are in
+[`../questions.md`](../questions.md), arms in [`../runs.md`](../runs.md). A file stays here only
+while something live cites it; anything else superseded is deleted and recoverable from git
+(`git log -- research/archive/`), which is where the E1/E2 reports, the pre-P0 idea list and the
+early planning notes went in the 2026-10-15 revision.
 
-**Do not cite anything in this directory as a live finding.** The current answers live in
-[`../questions.md`](../questions.md), and the arms behind them in [`../runs.md`](../runs.md).
-
-**Two sub-directories are programme buckets rather than retired documents.**
-[`E3_ladder/`](E3_ladder/README.md) holds a whole superseded programme — its numbers predate P17
-and are not comparable to anything current. [`E4_ladder/`](E4_ladder/README.md) is different: E4
-is the *running* programme and those numbers **are** current; it holds only the plans inside E4
-that are finished, so the queue stays a queue.
-
-| file | what it was |
+| directory | what |
 |:---|:---|
-| [`e1_reanchor_report.md`](e1_reanchor_report.md) | the E1 re-anchor after the first batch of engine fixes |
-| [`e2_human_corpus_results.md`](e2_human_corpus_results.md) | E2, the human corpus used as a strong-player control |
-| [`e3_tournament_report.md`](e3_tournament_report.md) | an early E3 tournament, before the current rating protocol |
-| [`engine_progress.md`](engine_progress.md) | a running engine-completeness log, superseded by `BUGS.md` and the engine findings |
-| [`ideas_and_plans.md`](ideas_and_plans.md) | the pre-P0 idea list, since split into [`../plans/`](../plans/README.md) |
-| [`next_step_brief.md`](next_step_brief.md) | a point-in-time planning note |
-| `claude_proposal.txt` | an early proposal, kept verbatim |
-
-Two reasons a file lands here rather than being deleted: a number in it is cited by something
-still live, or it records a prediction that was later contradicted — which is worth more than a
-tidy directory.
+| [`E3_ladder/`](E3_ladder/README.md) | the whole pre-P17 programme: its findings, logs, closed plans, run registry and checkpoint catalogue. Numbers are not comparable to anything after P17; the README lists the lessons that still hold |
+| [`E4_ladder/`](E4_ladder/README.md) | three closed E4 plans (P19, P20, P25) whose diagnoses are still cited |

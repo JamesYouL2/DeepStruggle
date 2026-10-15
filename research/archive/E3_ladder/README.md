@@ -12,7 +12,7 @@ specific claim.
 |:---|:---|
 | checkpoints, replays, datasets, reports | `/workspace/data/archive/E3_ladder/` (45G + 2.3G + 137M) |
 | research logs | `log/` — 20 documents |
-| plans | `plans/` — P15, P16 |
+| plans | `plans/` — P1, P9, P10, P14, P15, P17 (×3); the rest deleted, in git history |
 | training findings | `findings/` — 7 documents |
 
 ## What we learned that still holds
@@ -58,23 +58,20 @@ already agreeing — scoping search to them was wrong
 **Opening influence placement froze for 155M steps** and was only unfrozen by a resume
 (`log/P15_setup_placement.md`) — worth re-checking early in any new ladder.
 
-## Open questions carried into E4
+## Open questions carried into E4, and where they went
 
-Each of these was raised on the old engine and never settled. They are worth re-asking, not
-re-reading.
-
-1. **Does the oscillate-then-stall cycle still happen with a healthy pool?** P15's central question
-   (`plans/P15_breaking_the_cycle.md`). Both observed collapses turned out to be pool starvation, so
-   the premise may never have been tested under a correct configuration.
-2. **Does a slower reference-policy refresh help on its own?** `log/P15_X2_slow_anchor.md` was
-   inconclusive against a starved pool.
-3. **Where is the search signal, measured without the card/play-mode restriction?**
-4. **How many seeds does an arm need?** `findings/seed_variance.md` set error bars on the old
-   engine; the new one changes game length and episodes per step, so the bars move.
-5. **Does the DEFCON-1 blunder persist?** `findings/defcon_blunders.md` calls it the clearest named
-   failure; E4's corrected probe should re-baseline it.
-6. **Is pooled still better than non-pooled, and by how much?** `findings/pooling.md` has the old
-   numbers; E4-01-01 gives an accidental modern data point for the non-pooled arm.
+1. **Does the oscillate-then-stall cycle survive a healthy pool?** Replaced rather than answered:
+   with a pool, runs climb to a plateau, and side collapses are recoverable delays
+   ([`../../log/E4_collapse_is_recoverable.md`](../../log/E4_collapse_is_recoverable.md)).
+2. **Does a slower π_ref refresh help?** From scratch it loses; switched on late it helped on
+   drained-pool legs only ([`../../findings/training/ref_update_freq_open_ablation.md`](../../findings/training/ref_update_freq_open_ablation.md)).
+3. **Where is the search signal?** Spread over ~7% of decisions rather than a tail
+   ([`../../log/E7_blunder_census.md`](../../log/E7_blunder_census.md)); search as a teacher is
+   P32/P33 ([`../../plans/README.md`](../../plans/README.md)).
+4. **How many seeds does an arm need?** [`../../log/variance_and_noise.md`](../../log/variance_and_noise.md).
+5. **Does the DEFCON-1 blunder persist?** Engine-proven blunders are rare on the E7 heads soup
+   ([`../../log/E7_blunder_census.md`](../../log/E7_blunder_census.md)).
+6. **Is pooled better than non-pooled?** A pool is required: `CLAUDE.md` invariant 14.
 
 ## One measurement caveat that outlived its document
 

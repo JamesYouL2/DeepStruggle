@@ -1,101 +1,33 @@
 # P2 — Chance-aware value targets
 
-**Status:** **sized offline 2026-09-28, low priority**: averaging over dice and deals would
-remove about 7% of the critic's one-step error variance (dice 4.3%, deal 2.8%), 17% on turn 1 and
-about 5% by turns 8–10. See *Sizing* below.
-**Gate:** P0's chance-variance decomposition puts dice + deal at a substantial share of return
-variance; P1's target form is settled (the expectation is taken over whatever P1 adopted).
-**Needs approval:** **yes** — a batched forced-roll enumeration helper in `bindings/`. It is not
-a rules change: `ROLL_DIE` already accepts a forced die in `primary_id`/`secondary_id`
-(`engine/src/state_machine.cpp`, `case DecisionType::ROLL_DIE`), the helper only steps clones
-with each value. Put the exact signature in front of the owner before writing it.
+**Status: sized offline and shelved (2026-09-28).** Averaging over dice and deals would remove
+about **7%** of the critic's one-step error variance. Low priority: it needs a bindings helper and
+the owner's approval for that gain.
+**Needs approval:** yes — a batched forced-roll enumeration helper in `bindings/` (not a rules
+change: `ROLL_DIE` already accepts a forced die). Put the signature in front of the owner first.
 
-## Goal
+## The idea
 
-Take the expectation over chance in the value target where the engine makes it exact, instead
-of bootstrapping through the one outcome that happened:
+Take the expectation over chance in the value target where the engine makes it exact:
 
-1. **Dice.** For a decision whose step lands on a `ROLL_DIE` node, the bootstrap value is the
-   average of the critic over all outcomes (6 for one die, 36 for two) stepped on clones, not
-   the value after the sampled roll.
-2. **Deal.** The λ-return stops at the `TURN_CLEANUP` node (the pre-deal afterstate) and
-   bootstraps from the critic there; nothing before the deal is credited with the hand that came
-   after it.
+1. **Dice.** At a step that lands on a `ROLL_DIE` node, bootstrap from the critic's mean over all
+   outcomes (6 or 36) stepped on clones, not from the value after the sampled roll.
+2. **Deal.** End the λ-return at the `TURN_CLEANUP` afterstate and bootstrap from the critic there,
+   so nothing before the deal is credited with the hand that came after it (Stochastic MuZero's
+   afterstates, Suphx's per-round boundary value).
 
-## Why
-
-- "GAE falls short" (`references.md` §3): even with a perfect state-value critic, GAE keeps the
-  variance of *sampling* the future; the fix is expected backups (Q-boosting / Expected SARSA).
-  Our dominant sampled-future noise is the die, and unlike a poker opponent's action, it is
-  enumerable and its distribution is known exactly.
-- Stochastic MuZero: value on afterstates, chance averaged explicitly. Suphx GRP: a boundary
-  value so per-round credit is not swamped by luck across rounds. The engine hands us both
-  objects for free — the forced-roll node and the explicit pre-deal node.
-- The failures this targets are the dice-adjacent ones: 40–70% of games ending at DEFCON 1
-  (`experiments.md` §18.2), coup decisions, and forced-win misses where the critic's optimism
-  is partly one lucky roll's worth of bootstrapped value.
-
-## Change
-
-`bindings/ts_bindings.cpp`: `enumerate_roll_outcomes(states, ...)` → for each state whose
-context is a pending `ROLL_DIE` of a dice type, the clones after each forced value, plus the
-outcome count (so `TURN_CLEANUP` is excluded — it is a deal, handled by 2). Batched over the
-512 envs; `GameState` is 4 KB, so this is ≤ 36 × 512 × 4 KB per step.
-
-`ai/training/rollout_buffer.py`: at steps that led to a dice node, replace `next_val` by the mean
-critic value over the clones (one extra batched forward pass over ≤ 36 × 512 observations per
-such step; dice nodes are a small fraction of steps, so a few percent of rollout time — measure
-it). At `TURN_CLEANUP` steps, treat the pre-deal state as a bootstrap point: the trace from
-earlier steps ends there with `V(pre-deal)`, and the critic is trained at that state like any
-other. The `--slice-turn-boundaries` flag already exists in `ai/training/train.py` — *decide
-before running:* whether it already does part 2, and if so, whether it was ever measured.
-
-Sign discipline: every value in the clone average is from the mover's perspective at the
-decision step; the mover can change between the decision and the roll. This is the bug class in
-`../log/measurement_bugs.md` (*a policy was choosing its own dice*) and `ai/search/pimcts.py`'s docstring — write the test first.
-
-## Procedure
-
-Three arms if the budget allows, two if not: {dice only, deal only, both} vs the P1 baseline,
-2 seeds × 80M each. If only one arm: *both*. Confirm the winner at 2 × 240M.
-
-## Measure
-
-Pre-deal calibration (P0 item 4) first; DEFCON-1 ending share and final-turn distribution;
-forced-win take rate and its cost-of-declining (`experiments.md` §4.4 table); empty battlegrounds
-at turn 8; then Elo.
-
-## Decision rule
-
-- Adopt if DEFCON-1 share drops or pre-deal calibration improves, at Elo not worse than −20.
-- Kill if rollout throughput drops by more than ~10% without a probe moving — then the
-  expectation is not where the variance was, and P0's decomposition was misread.
-- If *deal only* wins and *dice only* is neutral, note it: it says the deal, not the coup, is the
-  chance that matters, and P5 (oracle critic) is the next variance reducer on that side.
-
-## Follow-ups
-
-- Adopted: the same batched forward pass over dice clones is the building block for the
-  shallow expectimax at play time that TD-Gammon used (`references.md` §3) — queue as a reserve
-  item, since the owner prefers a no-search player.
-- Adopted: AIVAT-style evaluation baselines (reserve) become straightforward, since the die-node
-  control variate is exactly this average.
-
-## Runs
-
-(none yet)
+Sign discipline: every value in the clone average is from the mover's perspective at the decision
+step, and the mover can change before the roll — write the test first
+([`../log/measurement_bugs.md`](../log/measurement_bugs.md), *a policy was choosing its own dice*).
 
 ## Sizing (2026-09-28)
 
-`tools/scripts/chance_sizing.py` measures what P2 removes directly, rather than P0's
-outcome-level decomposition. Decisions were sampled from E5-11-43@560M's self-play at temperature
-1: 49,869 of them, from 2,000 games. For each, the chosen action is applied to a copy and the
-chance that follows is resolved 16 times with fresh engine seeds, settling as training does. The
-critic's value of each result, from the deciding player's side, gives Var_chance V(s'). That is
-exactly the part of the one-step error delta = V(s') − V(s) that averaging over outcomes removes.
-It is set against Var(delta) as a whole. Report: `data/reports/chance_sizing_e5_11_43.md`.
+`tools/scripts/chance_sizing.py` on E5-11-43@560M self-play at temperature 1: 49,869 decisions from
+2,000 games, the chance after each chosen action resolved 16 times; the critic's Var_chance V(s′)
+is the part of δ = V(s′) − V(s) that averaging removes. Report:
+`data/reports/chance_sizing_e5_11_43.md`.
 
-| | decisions followed by it | share of Var(delta) P2 removes |
+| | decisions followed by it | share of Var(δ) removed |
 |:---|---:|---:|
 | dice (same turn) | 8.3% | 4.3% |
 | deal (the turn advances) | 1.7% | 2.8% |
@@ -103,13 +35,8 @@ It is set against Var(delta) as a whole. Report: `data/reports/chance_sizing_e5_
 
 By turn: 16.6% (turn 1), 9.3% (2–3), 8.0% (4–5), 6.0% (6–7), 4.5% (8–10).
 
-**Reading.** P2 would take about 7% off the variance of the steps the critic's targets and the
-policy's advantages are built from. The share is largest early and shrinks as the late game's own
-swings dominate. This is the chance *as the critic sees it*, which is all P2 can average, because
-it averages the critic's values. A critic that under-reacts to a coup's success would
-under-state the luck here, and P2 would equally fail to remove it. The rest of the one-step
-variance is mostly the sampled actions themselves (at temperature 1, the signal the policy
-gradient needs) and the critic's own inconsistency. That puts P2 behind cheaper levers: it needs a
-new bindings helper and your approval for a ~7% reduction. Together with P5's sizing (the hidden
-hand adds +0.3 points of outcome variance explained), variance reduction in the targets is not
-where this model's limits are.
+**Reading.** The rest of the one-step variance is the sampled actions (the signal the policy
+gradient needs) and the critic's own inconsistency. With P5's sizing (the hidden hand adds +0.3
+points of explained variance), variance reduction in the targets is not where this model's limits
+are. Judge any revival on training outcome, never on offline target quality: E3-22's better
+offline return estimate lost 520 Elo.

@@ -1,226 +1,84 @@
-# Plans — what is queued, in what order, and why
+# Plans — what is queued, and what each closed plan concluded
 
-This directory is the **queue**. Each file is one step that has not been run yet.
-[`../log/`](../log/README.md) is the **record** of what was run. A step lives in exactly one of the
-two places at a time, and a step that finishes moves to `../archive/` rather than being deleted —
-see maintenance rule 3.
+This directory is the **queue**: one file per step that has not been run yet.
+[`../log/`](../log/README.md) is the **record** of what was run. A closed plan's file is deleted
+(or, rarely, archived) and leaves one row in the table below with its outcome and a link to the log
+that holds the numbers. A deleted plan's text is in git: `git log -- research/plans/<file>`.
 
-> **Reorganised 2026-09-21.** Twelve closed plans moved out of this directory into
-> `../archive/E3_ladder/plans/` and `../archive/E4_ladder/plans/`. The queue below is E4-era; the
-> E3 tiering that used to stand here is archived with the programme it belonged to
-> ([`../archive/E3_ladder/plans/P15_breaking_the_cycle.md`](../archive/E3_ladder/plans/P15_breaking_the_cycle.md)).
+## The goal
 
-## The current goal
+**Base-model quality** (owner, 2026-10-01): what one training run produces, judged at saturation
+on two seeds; SWAs and soups are evaluation devices, not the product. Since 2026-10-15 the
+deployed player is the network under the rollout root, so a gain counts when it survives that
+search ([P33](P33_search_preserved_gains.md)). The behavioural bar is still a mediocre human: a
+sane setup, contested battlegrounds, no self-inflicted DEFCON 1, and a card it must not play
+disposed of through that card's own exit.
 
-A no-search player at the level of a **mediocre human**: no simple mistakes, basic strategy. In
-this game that means a sane setup (Poland ≥ 3 as USSR, West Germany ≥ 4 as US), contesting
-battlegrounds instead of leaving ~7.5 of them empty from turn 8, not losing to its own DEFCON,
-and disposing of a card it must not play through the exit that card has — spacing it, running it
-through UN Intervention, or holding it — rather than spending the scarce exit on the card that had
-its own. Elo against the heuristic bot is the secondary number; the probes are the acceptance
-test. Search is acceptable as a diagnostic and as a distillation source, not as the product. The
-literature behind the ordering is in [`../method/references.md`](../method/references.md).
+## Active
 
-## Where things stand
-
-The E3-era framing that used to open this file — *"every configuration stalls after ~160M, so P15
-and its instruments first"* — belonged to a programme that is now archived. E4 replaced the
-question rather than answering it: **the architecture turned out to dominate**, and most of the
-strength the late-E3 bundle had is one mechanism.
-
-What E4 has established, collected in
-[`../log/P21_ladder_status.md`](../log/P21_ladder_status.md):
-
-* Against the ~440 Elo from a flat MLP to the anchor, **grouped positional projections are worth
-  +109 and the country per-entity head +282**. The card head is worth **−7**.
-* **M2d has not plateaued at 80M**: +159.8 Elo from 80M to 160M, within-seed over six seeds.
-* M2d runs at **~50,000 steps/s against the anchor architecture's ~11,600** — 4.3×. At matched
-  wallclock it beats the anchor decisively; at matched steps and 80M the anchor is still ~50 Elo
-  ahead.
-* **No part of the country head's input can be removed**
-  ([`../log/P21_M2abc_head_inputs.md`](../log/P21_M2abc_head_inputs.md)).
-
-And two failure modes, which together are why nothing here should be read off a single arm:
-
-* **Side collapse** ([`../findings/training/side_collapse.md`](../findings/training/side_collapse.md),
-  revised by [`../log/E4_collapse_is_recoverable.md`](../log/E4_collapse_is_recoverable.md)) —
-  **entry** is common (12.5% of seeds are inside an episode at 80M) and bitwise reproducible, but
-  it is **not an outcome**: 5 of 7 arms scored COLLAPSED recover when continued, and a collapse
-  that recovers costs **−1.4 Elo**, i.e. nothing. A collapse that does *not* recover costs
-  **−394**. Nothing measured at onset predicts which follows except `adv_std_raw` returning.
-* **Entropy inflation** ([`../findings/training/entropy_inflation.md`](../findings/training/entropy_inflation.md))
-  — the anchor lost **356 Elo** over its second 80M with *every* collapse indicator healthy. One
-  arm, no replicate.
-
-**The ~160M stall is untested on the new architecture, not refuted.** M2d climbs through the
-80M→160M window; nothing has run it past 160M.
-
-**The anchor is not a stable reference above 80M.** Rungs compared at 80M are unaffected — that is
-where it was measured and where it is healthy.
-
-## The queue
-
-### Active
-
-| item | what | cost | status |
-|:---|:---|:---|:---|
-| **[P33](P33_search_preserved_gains.md)** | **proposed (2026-10-15).** Base-checkpoint gains the rollout root keeps. The minibatch (R47/R48), width (A13) and CE-toward-the-soup (R39) arms raise the raw network but reverse under the root (searched: R34 soup 1791 > R39 1779 > A13+R48 1767; raw the other way), and the root does not distil (R39–R42, two offline rounds). Reading: a rollout root re-decides the policy's ranking and keeps only the candidate set, the greedy rollout play and the leaf critic -- and no arm since the heads line touched the critic, which is trained on temperature-1 returns while the search plays greedy. Four eval-only diagnostics first (a leaf-critic swap between networks, critic calibration greedy vs sampled, the critic on the confirmed leak pairs, candidate recall), then the critic track (greedy-continuation value targets through the root; a greedy value head fed by greedy-only envs), with value capacity, a top-k recall hinge and turn-end targets behind the diagnostics' rules; the setup re-checked under searched continuation. Every arm read raw **and** under `rollout(4,16,4,z2)` | ~4 GPU-h of diagnostics; 400M arms from A13+R48's plateau, ~4.5 h each | **proposed** |
-| **[P32](P32_teacher_and_paired_credit.md)** | **proposed (2026-10-09).** After the heads line: search still adds ~+65 Elo on top but fails as a teacher because PUCT visit-count targets inject entropy (0.30 → 0.5, twice). Track T fixes the teacher — Gumbel improved-policy targets, search values into the critic, surprise-gated CE, an entropy target — judged on the model's own search gap; track B4′ replaces 1c with paired turn-end counterfactual credit (per-pair redeal of hidden cards, common chance, critic read at the pre-deal afterstate, precision-weighted), which also yields a continuous leak bank; plus the setup oracle on the heads line, a Wargames-at-6 check, the forced-exit DEFCON trap (a probe of the critic at trap entry, then a forced-exit auxiliary target; a staged-card observation proposal that stood here was withdrawn -- the engine shows the card) and a seed-43 heads run | branches from `E7-A8-R1-S44@6400M`, ~1.5–4 h each | **running (2026-10-11).** Settled: a *frozen* teacher (the heads soup searched at k=4 @32) is the first teacher that pays — R32 +7/+8 per seat over the plain leg, 59% head to head, its SWA the best no-search model (1645); a self-referential teacher loops (R29, R31); the logit-gap loss (R34, 1e-3) is a replicated greedy gain on three seeds and its soup the strongest pure model (1644); search now hurts R32 (critic behind its prior), so T2 is on the loop's critical path; B4′ as built is a null and parked; seeding stays required for chains self-play never reaches (Cuba trap, reach ~0). Done (2026-10-15), superseded by P33: R36 is R32 (the gap loss adds nothing on the teacher); R35 null; R39 (rollout-root teacher) SWA 1676, but the transfer is the soup's raw policy (R45) and the root's margin does not distil (R40–R42); R46–R48 and A13 raise the raw network only, not the searched player |
-| **[P31](P31_show_and_decide.md)** | **proposed (2026-10-06).** The rare-spot card leaks from the expert review that 1,600M more steps and a league left at their floor (Wargames at a lead, One Small Step, Special Relationship + NATO, KAL-007 + South Korea, Glasnost + Reformer, Nuclear Subs, Chernobyl). Four generic "show, then let training decide" mechanisms — a play-mode action floor, scenario seeding with the precursor forced as environment, counterfactual mode credit from paired playouts, an opponent-legality auxiliary head — screened as 400M branches from E7-20-44@2,800M against its control leg, judged on the review's spot banks, then one from-scratch adoption run | ~1 week of builds; ~6 GPU-h of branches; ~18 GPU-h from scratch | **proposed** |
-| **[P30](P30_base_model_quality.md)** | **current focus (2026-10-01).** Base-model quality, judged at saturation (~1B steps) on two seeds, with SWA and soups as evaluation only. C1 card and country tokens (the input representation), C2 the card-event auxiliary target (built), C3 an LR step-down in the base recipe; P29's bets 4–5 carried over | ~3 h per arm solo, two at a time | **proposed**; base recipe = the shallow trunk (E7-01/02-44) |
-| **[P26](P26_training_throughput.md)** | **done (2026-09-25)**; was the current focus. Training throughput, first, because a faster step means more experiments in the same time. Quick measurement of TF32, bf16 autocast and `torch.compile` on M2d, and of the snapshot-probe cost, before deciding which to take through the adoption gates | ~1 h of GPU for the quick screen | **screened** ([`../log/P26_quick_screen.md`](../log/P26_quick_screen.md)): TF32 +13–16% with no visible drift; compile + TF32 up to +30% but an erratic rollout; bf16 drifts (7% of argmaxes); staleness check +5% and GAE graph ~+4% bit-identical; snapshot eval 17% of wall |
-| **[P27](P27_ops_block_planning.md)** | **current focus (2026-09-26).** Short-horizon planning inside an ops play: an influence play is solved exactly, and the policy is compared with the alternatives and with its own critic. That tells capacity, learning and data apart for "no plan over a few micro-steps" | probe: minutes per checkpoint | **stages 1–2 done** ([`../log/P27_ops_block_stage1.md`](../log/P27_ops_block_stage1.md)): half of takeable contested battlegrounds missed, but the rollout oracle finds taking one worth −0.8 ± 0.6 pp under this policy's continuation; nothing to train toward |
-| **[P4](P4_setup_macro_action_credit.md)** | **done; A1 adopted as the default 2026-09-26, reverted 2026-09-27 after E5-12.** The setup. Rewritten for E4: the setup follows a critic whose preference oscillates. Arm A (λ = 1 inside the setup block) and arm B (a human setup anchor, as a contrast) against the centred-heads TF32 controls, 2 seeds × 80M | ~1 GPU-h | **screened** ([`../log/P4_setup_arms.md`](../log/P4_setup_arms.md)): A fixes Poland, not West Germany; B holds the human opening on 1 of 2 seeds; strength +27 / +18, inside noise |
-| **[P23](P23_merged_influence_E4_1.md)** | **E4.1**: "influence, first point in X" as one decision | — | **parked** (owner, 2026-09-24): the US seat collapses in 6 of 6 runs from scratch, and the cause is not found ([`../log/P23_E4_1_ab.md`](../log/P23_E4_1_ab.md)) |
-| **[P24](P24_league.md)** | an AlphaStar-style league (main agent, main exploiter reset to the main's early snapshot, league exploiter) with no supervised policy to reset to. A small trainer change (a pool that grows from other runs' directories) plus a driver over `tools/train.py` | 3 concurrent learners; judged at matched **wallclock** | **stage 1 done (2026-09-26)** ([`../log/P24_stage1_exploiter_collapse.md`](../log/P24_stage1_exploiter_collapse.md)): main + one greedy-target exploiter from the plateau vs E4-61's own legs: late mean −6 (seed 43), **+65** (seed 44, 57.9% ± 1.2 head to head); pair +30. More seeds before adopting |
-| **[P22](P22_card_lookup_attention.md)** | identity-keyed card lookup — P22-a | ~84k params | **done, rejected**: −154 / −72 at 80M ([`../log/P22_width_probe_and_card_lookup.md`](../log/P22_width_probe_and_card_lookup.md)); archive with the next reorganisation |
-| width probe | `E4-23-03/05`: `entity_proj_dim` 256 → 512 | 2 arms | **done, rejected**: −129 to −291 ([`../log/P22_width_probe_and_card_lookup.md`](../log/P22_width_probe_and_card_lookup.md)) |
-| **[P21](P21_architecture_ladder.md)** | the architecture ladder. **11 of 14 rungs done** — M0, M1, M2, M2d, M2e, M2a, M2b, M2c, M2.5, M2.5c, M2.5b. **Nothing has beaten M2d**: all three removals lose and all three identity additions lose. M3/M4/M5 remain and are **blocked** on the `board_mode`/`card_mode` split that [P22](P22_card_lookup_attention.md) carries | ~1.3 GPU-h per rung | **M2 family closed** |
-
-### Queued, unblocked
-
-**Superseded by [P30](P30_base_model_quality.md) (2026-10-01):** bets 1–3 closed, bets 4–5 carried into P30. **Was next for strength (2026-09-29): [P29](P29_big_bets_from_scratch.md)** — five structural bets from scratch, judged at the plateau rather than at 80M: card↔card attention and a wider trunk, KataGo-style ownership/VP auxiliary heads, the E4.1 merged-influence view re-run on the flat-temperature recipe (its collapses all predate that fix), the ops budget in the observation (owner's approval), and search-driven training from scratch once a critic can carry it. [P28](P28_strength_on_E6.md) holds what the bets are judged by — the frozen panel and the E6-04 verdict — and the tail levers (LR schedule, EMA, SWAs, cross-lineage pools) as polish after a bet lands. The line below is the E4-era note both supersede.
-
-**Next for strength, after P26:** a clean replicate of the slow-π_ref switch (`--ref-update-freq 5000000` from 80M or 160M), branched from E4-08-36 and E4-08-37's resume states so their straight 240M runs are the same-seed controls ([`../log/E4_clean_replicates.md`](../log/E4_clean_replicates.md)).
-
-| item | what | why now |
+| plan | what | status |
 |:---|:---|:---|
-| **anchor replicate** | a second anchor arm to 160M | the 356 Elo fall is one arm with `seed = None`. ~3.9 GPU-h, and it gates whether "the late-E3 architecture degrades" can be said at all |
-| **`ref_update_freq` ablation** | run: 5M from scratch **loses** (E4-26, −168 / −68 at 80M); 5M from 160M **wins** (E4-31-03, +83 over the seed-11 baseline at 240M, one seed); 100k from 160M rated in `late_round2_240M`; 5M from 80M (E4-34-03) and the seed-5 replicate (E4-31-05) running | [`../log/E4_dynamics_ref_lambda.md`](../log/E4_dynamics_ref_lambda.md), [`../log/E4_late_dynamics.md`](../log/E4_late_dynamics.md) |
-| **[P18](P18_training_throughput.md)** | why one training arm cannot fill the GPU | its stated gate (E4-01-01's continuation) passed long ago, and throughput is now a *first-class* ladder axis — the 4.3× gap between architectures is most of why M2d wins |
-| **[P0](P0_instruments.md)** | the remaining probes | needs a status pass first: several instruments it proposes now exist (`watch_run.py` health alarms, the collapse detector, `ladder_report.py`) |
+| **[P33](P33_search_preserved_gains.md)** | base-checkpoint gains the rollout root keeps; the critic as the main track, every arm read raw **and** under `rollout(4,16,4,z2)` | diagnostics done ([`../log/P33_diagnostics.md`](../log/P33_diagnostics.md)); R52 proposed |
 
-### Queued, no GPU
+## Shelved or done, kept for a sizing or a design
 
-| item | what |
-|:---|:---|
-| [P7](P7_human_data.md) 7b–7d | 7a is done — conversion, BC warmup and injection all have log entries. The arms remain |
-| [P13](P13_one_game_driver.md) | one game driver — removes the five-loop divergence that has already produced search bugs |
-| [P11](P11_scaling_out.md) | running the programme in parallel on rented GPUs. Nothing rented, no money spent |
-
-### Behind the ladder
-
-Tiered behind the E3 stall programme and **not re-ranked against what E4 knows**. Re-rank before
-running any of them.
-
-| item | what it tests | note |
+| plan | what | why shelved |
 |:---|:---|:---|
-| [P8](P8_teach_the_defcon_conjunction.md) | auxiliary risk head for provoked DEFCON-1 | instruments exist |
-| [P4](P4_setup_macro_action_credit.md) | macro-action credit for placement blocks | rebase the file first |
-| [P2](P2_chance_aware_targets.md) | dice expectation + pre-deal bootstrap in value targets | **sized 2026-09-28: removes ~7% of one-step error variance (dice 4.3%, deal 2.8%); low priority.** Also **read the E3-22 lesson first**: a better offline return estimate lost by 520 Elo. Judge on training outcome, never on offline target quality |
-| [P5](P5_oracle_critic.md) | oracle critic as a deal-side variance reducer | **shelved 2026-09-28**: the opponent's hand adds +0.3 points of explained variance offline |
-| [reserve](reserve.md) | ideas with triggers — PSRO-lite meta-Nash sampling, optimism/extragradient, per-side capacity | |
+| [P2](P2_chance_aware_targets.md) | dice expectation + pre-deal bootstrap in the value targets | removes ~7% of one-step error variance (dice 4.3%, deal 2.8%); needs a bindings helper |
+| [P5](P5_oracle_critic.md) | oracle critic as a deal-side variance reducer | the opponent's hand adds +0.3 points of explained variance (0.283 → 0.286) |
+| [P24](P24_league.md) | AlphaStar-style league without a supervised reset point | run on E5–E7; it helped only paired with setup credit on the deep trunk (E5-21, E6-04), and adds nothing measurable on the shallow trunk or from a plateau; the per-seat design for a next attempt is in the file |
+| [P13](P13_one_game_driver.md) | one game driver | **done**: one checked step and one chance drain under every loop; the file keeps the replay contract that code comments cite |
+| [reserve](reserve.md) | ideas with a trigger | |
 
-## Archived programmes
+## Closed
 
-| where | what |
-|:---|:---|
-| **P25 (closed)** | [`../archive/E4_ladder/plans/P25_collapse_robustness.md`](../archive/E4_ladder/plans/P25_collapse_robustness.md): collapse on the fixed pool is a recoverable delay; no lever adopted ([`../log/P25_stress_bench.md`](../log/P25_stress_bench.md#closing-p25-2026-09-24)) |
-| [`../archive/E4_ladder/plans/`](../archive/E4_ladder/plans/P19_architecture_ab.md) | **P19** — is the late-E3 bundle stronger on this engine? Answered: +447 Elo. **[P20](../archive/E4_ladder/plans/P20_positional_board_encoder.md)** — the pooled board path is unmotivated without a graph. Answered *by P21*, which built the positional path as a side effect of a different question: M1 alone is +109 |
-| [`../archive/E3_ladder/plans/`](../archive/E3_ladder/plans/P15_breaking_the_cycle.md) | P1, P3, P6, P9, P10, P14, P15, P16, P17 (×3), restoring_advantage_signal — the E3 stall programme and the engine work under it |
-
-## The baseline these arms run against
-
-- **Engine:** post-P17. One observation layout; old-layout checkpoints are refused, not misread.
-  The observation is not to be changed without asking (`CLAUDE.md`).
-- **Recipe defaults changed since E4-08:**
-  * TF32 and centred per-entity heads (P26, 2026-09-25);
-  * ~~`--block-lambda setup-side` (P4 A1, 2026-09-26)~~ **reverted to `off` on 2026-09-27**
-    ([`../log/E5_12_setup_credit_at_flat_temperature.md`](../log/E5_12_setup_credit_at_flat_temperature.md)):
-    at flat 1.0 it added no strength (−73 / +30) and froze the setup, bad or good. E5-11 is the control;
-  * **`--rollout-temps 1.0 1.0 1.0 1.0`** (2026-09-27, [`../log/E5_06_rollout_temperature.md`](../log/E5_06_rollout_temperature.md)):
-    sampling at the policy plateaus +135/+170 above the old sharpening bands.
-
-  Runs before a change are reproduced with the old flag. `launch_flags.py` reads a missing record as
-  the old value.
-- **Architecture / matched control:** **M2d** — `--arch ladder --ladder-input-mode grouped
-  --ladder-aggregation flatten --drop-static --per-entity-heads 64 --ladder-head-entities
-  country`, with `--ladder-head-context` and `--ladder-head-static` both on. Its representative is
-  **seed 13** (`E4-08-13@80M` at 80M, `E4-08-13@160M` at 160M), chosen as the rung's median on *both*
-  budgets so it biases later comparisons in neither direction.
-- **Do not use seed 1 for a ladder arm.** It is the seed on which M2d collapses, and it already
-  produced one published-then-withdrawn conclusion. Seeds 3 and 5 are clean for M2d at both
-  budgets and already rated there, which makes a rung-vs-M2d comparison **seed-matched**.
-- **Every arm gets the collapse detector**, but a `COLLAPSED` verdict means *"inside an episode at
-  the budget's end"*, not *"failed"*. Do not re-run on it and do not read the arm's Elo as the
-  rung's strength — extend it instead, or record it as censored. Re-run only when `adv_std_raw`
-  fails to return, which is the case that costs 394 Elo. Record the per-rung **entry** count: it is
-  the free observable, and M2.5b entering on 3 of 3 seeds is the one architecture-linked result it
-  has produced.
-- **Before reading any A/B**, diff the configs with `tools/scripts/launch_flags.py --diff`.
-
-## Budget rule
-
-Throughput is now architecture-dependent to a degree that changes planning, so quote both:
-
-| architecture | steps/s | 80M | 160M |
-|:---|---:|---:|---:|
-| M2d-class (ladder, positional) | ~50,000 | ~27 min | ~53 min |
-| late-E3 bundle (the anchor) | ~11,600 | ~1.9 h | ~3.9 h |
-
-**Screen** every factor at 1–2 seeds × 80M; **confirm** only a screen's winner at 2 seeds at the
-larger budget; never compare across budgets. Seed variance is **~95–100 Elo between seeds** and
-effects under **~40 Elo are not measurable at affordable seed counts**
-([`../archive/E3_ladder/findings/seed_variance.md`](../archive/E3_ladder/findings/seed_variance.md)).
-
-**The collapse tax is much smaller than it looked.** Entry happens to ~12.5% of seeds by 80M, but
-an arm that enters and recovers is **worth as much as one that never entered** (−1.4 Elo, 0.05
-pooled sd), so entry is not a reason to re-run. Only a *non-recovering* arm costs anything, and
-that is 2 of 7 observed. Budget for roughly **one re-run in twenty arms**, not one in eight — and
-detect it by `adv_std_raw` failing to return above ~0.05, not by `us_episode_frac` pinning, which
-flagged four arms that were fine
-([`../log/E4_collapse_is_recoverable.md`](../log/E4_collapse_is_recoverable.md)).
-
-And read [`../log/variance_and_noise.md`](../log/variance_and_noise.md) before quoting anything:
-
-- rate **four late snapshots** and compare arms by the **pooled head-to-head over all sixteen
-  snapshot pairings**; a single-cell comparison cannot resolve below ~50 Elo;
-- a continuation seed is worth ~15 Elo and a leg's *gain* carries **±16 Elo**;
-- **never compare Elo across tournaments.** Bradley-Terry is field-relative: one unchanged anchor
-  checkpoint has rated 2074.2, 2089.7, 2093.3 and 2149.9 across four fields;
-- every snapshot is a branch point and `--seed` works on a resume, so paired continuations from
-  one state are cheap — but they still differ by the seed floor, so branching does not substitute
-  for two seeds.
-
-An arm inside these bars is *neutral*, not *better*. Read
-[`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.md) before adding an
-instrument.
+| plan | question | outcome |
+|:---|:---|:---|
+| **P32** ([file](P32_teacher_and_paired_credit.md)) | a search teacher that does not flatten the policy; paired turn-end credit | a **frozen** teacher pays (R32 SWA 1645, R39 1676); the rollout root's margin does not distil (R40–R42); search values into the critic null (R35); B4′ parked (R37/R38); the logit-gap loss (R34) replicated on three seeds and went into the recipe. Superseded by P33 |
+| P31 (deleted) | four "show, then let training decide" mechanisms for rare-spot card leaks | B1 play-mode floor and B2 scenario seeding level on strength, leaks unmeasured; forcing taught Wargames only by showing it; **card-conditioned heads (E7-33-44) found it unforced and became the heads line (A8)**; 1c became P32's B4′; 1d never run ([`../log/P31_branch_arms_B1_B2.md`](../log/P31_branch_arms_B1_B2.md)) |
+| **P30** ([file](P30_base_model_quality.md)) | base-model quality: input representation, auxiliary targets, LR schedule | shallow trunk adopted; C1 tokens stopped at 400M (level, ~9× compute); C2 card-event target a small positive on a branch, never run from scratch; C4 ops budget no detectable effect; search-trained E7-18-44 fails; C3 never run |
+| P29 (deleted) | five structural bets from scratch | bet 1, a 3.5× trunk, not better at 560M and worse at matched wall-clock ([log](../log/P29_bet1_wider_m2d.md)); bet 2, the ownership target never reached the trunk ([log](../log/P29_bet2_ownership_probes.md)); bet 3, the merged-influence view trains cleanly on E6 but plays ~235 Elo weaker ([log](../log/P29_bet3_merged_view.md)); bets 4–5 into P30 |
+| P28 (deleted) | the E6 measurement floor and tail levers | panel built, E6-04-44 adopted ([log](../log/P28_step0_panel_and_E6_04_verdict.md)); SWA beats every snapshot ([log](../log/P28_step1_swa_and_search.md)); a stepped LR does not cut the spread ([log](../log/P28_step2a_lr_schedule.md)); EMA beats raw snapshots, but averaging stays out of training ([log](../log/P28_step2b_ema_weights.md)) |
+| P27 (deleted) | is "no plan inside an ops play" capacity, learning or data? | half of takeable contested battlegrounds are missed, but the rollout oracle prices taking one at −0.8 ± 0.6 pp under this policy: nothing to train toward ([log](../log/P27_ops_block_stage1.md)) |
+| P26 (deleted) | training throughput after the 09-23 pass | TF32 +13–16%, adopted; compile erratic; bf16 drifts; snapshot eval 17% of wall ([log](../log/P26_quick_screen.md)) |
+| P23 (deleted) | E4.1: "influence, first point in X" as one decision | US seat collapses in 6 of 6 runs on E4 ([log](../log/P23_E4_1_ab.md)); on E6 trains cleanly but −235 Elo (P29 bet 3). The view survives as `--merged-influence` |
+| P22 (deleted) | identity-keyed card lookup; trunk width 256 → 512 | both rejected: −154 / −72 and −129 to −291 at 80M ([log](../log/P22_width_probe_and_card_lookup.md)) |
+| **P21** ([file](P21_architecture_ladder.md)) | the architecture ladder, one mechanism at a time from an MLP | **M2d** wins: grouped projections +109, the country per-entity head +282, the card head −7; no identity addition or removal beat it ([log](../log/P21_ladder_status.md)); M3–M5 became P30 C1. The file keeps the `--arch ladder` contract and rung flags the code cites |
+| P18 (deleted) | why one training arm cannot fill the GPU | superseded by the CPU pass ([log](../log/training_throughput_cpu.md)) and P26 |
+| P11 (deleted) | running the programme on rented GPUs | E3-era programme; the rental scripts are [`../../tools/scripts/cloud/`](../../tools/scripts/cloud/README.md) |
+| P8 (deleted) | an auxiliary risk head for provoked DEFCON 1 | premise withdrawn: the critic does see the forced-exit trap at entry (US −0.08, USSR 0.00; [log](../log/P32_cpu_checks.md)); `--defcon-coef` exists, never measured |
+| P7 (deleted) | human data | conversion, BC warmup and injection done ([conversion](../log/P7_replayer_conversion.md), [BC](../log/P7_human_bc_warmup.md), [injection](../log/P7_human_injection_and_its_cost.md): a 157–236 Elo handicap); arms 7b–7d never run, kept in [reserve](reserve.md) |
+| P4 (deleted) | setup credit through the placement block; a human anchor as contrast | A fixes Poland, not West Germany; B holds the human opening on 1 of 2 seeds; +27 / +18, inside noise ([log](../log/P4_setup_arms.md)); A1 adopted, then reverted at flat temperature ([log](../log/E5_12_setup_credit_at_flat_temperature.md)) |
+| P0 (deleted) | instruments to judge later steps by | built piecemeal: `ai/eval/setup_probe.py`, `ai/eval/sequencing.py`, `tools/scripts/goal_probes.py`; the chance decomposition became P2's sizing |
+| P25 | collapse robustness | a collapse on the fixed pool is a recoverable delay; no lever adopted ([archived](../archive/E4_ladder/plans/P25_collapse_robustness.md), [log](../log/P25_stress_bench.md#closing-p25-2026-09-24)) |
+| P19, P20 | is the late-E3 bundle stronger on E4? a positional board path? | +447 Elo; the positional path is P21's M1 ([archived](../archive/E4_ladder/README.md)) |
+| P1–P17 (E3) | the E3 stall programme | [`../archive/E3_ladder/`](../archive/E3_ladder/README.md) |
 
 ## How to maintain this directory
 
-1. **Before running a step**, read its file and fill in anything marked *decide before running*.
-   If the design changed since it was written, edit the file first so the log entry can quote it.
-2. **While running**, keep the file — add the run directory names under *Runs* so a second session
-   can find them.
-3. **When a step is done** (adopted, rejected, or abandoned with a reason):
-   - write the entry under [`../log/`](../log/README.md) — setup, numbers, verdict, caveats, and
-     the *Follow-ups* the step file listed, with which of them are being queued;
-   - **`git mv` the step file into `../archive/<programme>/plans/`** and delete its row above. Do
-     not `git rm` it: a closed plan's diagnosis often outlives its proposal. P20 is the standing
-     example — its question was answered by a different programme, and its analysis of *why*
-     pooling was the bottleneck remains the clearest in the record;
-   - **correct the file's own status header in the same commit.** The header is what a reader
-     trusts first, and P21 carried "proposed, not launched" while being the most-executed
-     programme in the repo;
-   - queue the follow-ups that survived as new step files, each with a row above.
-4. **New ideas** go in `reserve.md` with a trigger — the measurement that would promote them to a
-   step — not as a step file. A step file means someone intends to run it next.
-5. **Do not keep results here.** Partial numbers from a run in progress belong in the run
-   directory, final ones under `../log/`. A plan file that has accumulated results is a log entry
-   that has not been written yet.
-6. **One step, one file.** If a step grows a second hypothesis, split it; arms that test two things
-   at once produce results that cannot be attributed
-   ([`../log/measurement_bugs.md`](../log/measurement_bugs.md), *evaluation consumed most of a
-   training run*).
-8. **Labels inside a plan (owner, 2026-10-15).** `P<n>` is a plan that combines many ideas. A
-   specific experiment under it that trains nothing — a probe, a census, a check — is `P<n>a`,
-   `P<n>b`, …; one that trains a model takes a **recipe code `R<nn>`** (a training approach) or an
-   **architecture code `A<nn>`**, reserved in the plan and registered in
-   [`../architectures_and_recipes.md`](../architectures_and_recipes.md) when launched, so the run
-   name carries it. `E` is the engine revision and nothing else — never a label for an experiment.
-7. **A sweep is one row, not N.** The M2d seed census produced 62 run directories; recording each
-   in [`../runs.md`](../runs.md) would bury every other arm. Record the sweep once with its census
-   linked, and give individual rows only to rung representatives and anomalies.
+1. **Before running a step**, fill in anything its file marks *decide before running*; if the
+   design changed, edit the file first so the log can quote it.
+2. **While running**, list the run directories under *Runs* so another session can find them.
+3. **When a step is done** (adopted, rejected or abandoned with a reason): write the log entry with
+   the numbers and the follow-ups; **delete the plan file** and leave a one-line outcome row above
+   linking the log. Archive it instead only when its diagnosis outlives its proposal (P20 is the
+   example). Queue surviving follow-ups as new files.
+4. **New ideas** go in [`reserve.md`](reserve.md) with a trigger, not as a step file: a step file
+   means someone intends to run it next.
+5. **No results here.** A plan that accumulates results is a log entry not yet written.
+6. **One step, one file.** Arms that test two things at once produce unattributable results.
+7. **A sweep is one row**, in [`../runs.md`](../runs.md) as well: record it once with its census
+   linked; individual rows only for representatives and anomalies.
+8. **Labels inside a plan (owner, 2026-10-15).** `P<n>` is a plan. A measurement under it that
+   trains nothing is `P<n>a`, `P<n>b`, …; one that trains a model takes a recipe code `R<nn>` or an
+   architecture code `A<nn>`, reserved in the plan and registered in
+   [`../architectures_and_recipes.md`](../architectures_and_recipes.md) at launch. `E` is the
+   engine revision only.
+
+Budgets, seed counts and error bars are not repeated here: see
+[`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.md),
+[`../log/variance_and_noise.md`](../log/variance_and_noise.md) and
+[`../method/running_experiments.md`](../method/running_experiments.md).
 
 ## Step file template
 
@@ -229,7 +87,7 @@ instrument.
 
 **Status:** queued | running | blocked on <what>
 **Gate:** <what must be true before this runs>
-**Needs approval:** <engine / bindings changes, or "none">
+**Needs approval:** <engine / bindings / observation changes, or "none">
 
 ## Goal
 ## Why (which measured failure, which finding, which paper)
@@ -237,6 +95,6 @@ instrument.
 ## Procedure (arms, seeds, budget, control)
 ## Measure (probes first, Elo last)
 ## Decision rule (adopt / kill / extend — decided before running)
-## Follow-ups (what to queue depending on the outcome)
+## Follow-ups
 ## Runs (filled in while running)
 ```
