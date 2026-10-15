@@ -129,6 +129,7 @@ later of the two.
 | `turn` (CUDA graphs on both sides) | **51.3%** | 55.3% | 47.3% | +1.2 | +1.4 |
 | `turn`, replicate on other deals (`--base-seed 20000`) | 51.1% | 53.9% | 48.4% | −0.2 | +2.5 |
 | `turn`, both (4,000 games) | **51.2%** | 54.6% | 47.9% | +0.5 | +2.0 |
+| `earlier` (the turn's end if within 4 boundaries) | **51.9%** | 56.6% | 47.2% | **+2.5** | **+1.3** |
 | `later` | 47.8% | 52.3% | 43.2% | −1.8 | −2.7 |
 | the searched soup's own self-play bar | — | 54.1% | 45.9% | | |
 
@@ -145,7 +146,11 @@ later of the two.
   **L ≈ +3.5 points** (each ± ~1.6, from two 2,000-game matches). Read together: a leaf at the turn
   boundary is worth having when it is nearer than 4 boundaries, not when reaching it costs extra
   plies. The rule that takes only the good half -- the *earlier* of 4 boundaries and the turn's end --
-  is predicted at about +L over today's root; it is not built (a fourth `stop` value).
+  is predicted at about +L over today's root.
+* **The earlier rule, measured** (`stop=earlier`, same deals): **51.9%, +2.5 / +1.3**, the best of the
+  four stops and above the bar in both seats; about 1.7 SE above level, against a prediction of ~+3.5
+  points (within its error). Consistent with the split: the leaf at the turn boundary helps when it is
+  nearer than 4 boundaries.
 * 4 boundaries beat 2 by +35 Elo on the soup ([`E7_search_depth_and_value.md`](E7_search_depth_and_value.md)),
   so a shorter stop alone is not what helps: the leaf's position in the turn is.
 * For R52: a turn-end leaf is at least as good as today's in play, at 16 worlds, without training.
