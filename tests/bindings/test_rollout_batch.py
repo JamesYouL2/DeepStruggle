@@ -347,6 +347,27 @@ def test_decider_leaves_are_read_from_their_deciders_side_and_negated_into_the_m
         ts.RolloutBatch(horizon=4, leaf="other")
 
 
+def test_own_leaves_play_on_to_the_movers_next_decision() -> None:
+    """leaf="own": every non-terminal leaf is a position the root mover decides, at or past the stop."""
+    st = _position()
+    cands = _legal(st)[:3]
+    mover = int(st.ctx().decision_player) or int(st.phasing_player)
+    for stop, horizon in (("turn", 2), ("boundaries", 1), ("boundaries", 3), ("earlier", 2)):
+        b = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=37, stop=stop, leaf="own")
+        b.add(st, cands, 6)
+        _play(b, seed=8)
+        term = b.row_terminal()
+        obs, _masks = b.fill_leaves()
+        leaf_rows = [r for r in range(b.rows()) if not term[r]]
+        assert len(leaf_rows) == obs.shape[0] > 0
+        for j, r in enumerate(leaf_rows):
+            s = b.row_state(r)
+            assert (int(s.ctx().decision_player) or int(s.phasing_player)) == mover
+            if stop == "turn":
+                assert int(s.turn) == int(st.turn) + 1
+            assert np.array_equal(obs[j], np.asarray(ts.extract_observation(s, ts.Player(mover)), dtype=np.float32))
+
+
 def test_a_bad_horizon_or_stop_is_refused() -> None:
     with pytest.raises(ValueError):
         ts.RolloutBatch(horizon=-1)

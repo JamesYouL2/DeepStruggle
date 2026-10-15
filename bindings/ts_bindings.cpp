@@ -710,7 +710,8 @@ NB_MODULE(ts_engine, m) {
                      ts::rollout::Leaf l;
                      if (leaf == "mover") l = ts::rollout::Leaf::kMover;
                      else if (leaf == "decider") l = ts::rollout::Leaf::kDecider;
-                     else throw std::invalid_argument("leaf must be 'mover' or 'decider'");
+                     else if (leaf == "own") l = ts::rollout::Leaf::kOwn;
+                     else throw std::invalid_argument("leaf must be 'mover', 'decider' or 'own'");
                      new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s, l}, seed);
                  }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
                  nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries",

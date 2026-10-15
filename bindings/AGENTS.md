@@ -93,8 +93,9 @@ are cited from elsewhere; keep them.
   `ts_rollout_reset`'s seventh argument (0 / 1 / 2 / 3). `Config::leaf` chooses whose side a leaf's
   critic is read from: `kMover` (the default and the measured root: the root mover's at every leaf) or
   `kDecider` (the leaf's decider's, the side the critic is trained on, its value negated into the
-  mover's frame where that is the opponent; P33). Python `leaf="mover"|"decider"`, the page's eighth
-  argument (0 / 1). The network stays outside: the caller loops
+  mover's frame where that is the opponent) or `kOwn` (past the stop, play on to the root mover's next
+  decision and read it from the mover's side: on-distribution and with the mover's own hand; P33).
+  Python `leaf="mover"|"decider"|"own"`, the page's eighth argument (0 / 1 / 2). The network stays outside: the caller loops
   `fill_live` → logits → `step` until `all_done`, then `fill_leaves` → critic → `set_leaf_values`,
   then reads `values`. The root's choice is here too: `top_candidates` (the k most probable legal
   moves), `parse_rule` (argmax / z<x> / kl<t>) and `decide` (each candidate's mean value, its paired

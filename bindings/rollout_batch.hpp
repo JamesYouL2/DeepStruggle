@@ -49,8 +49,11 @@ enum class Stop : uint8_t { kBoundaries = 0, kTurnEnd = 1, kLater = 2, kEarlier 
 // kDecider: the leaf's own decider's -- the side the critic is trained on -- with the value negated into
 // the mover's frame where that is the opponent. The trainer only ever reads a decision from its decider's
 // side, so a kMover leaf where the opponent decides is outside the critic's training distribution
-// (P33: 15-55% of leaves by stop rule; the off-side reading is off by ~0.10).
-enum class Leaf : uint8_t { kMover = 0, kDecider = 1 };
+// (P33: 15-55% of leaves by stop rule; the off-side reading is off by ~0.10). kDecider gives up the
+// mover's knowledge of its own hand at those leaves. kOwn: a playout that reaches its stop plays on to the
+// root mover's next decision and is read there, from the mover's side -- on-distribution and with the
+// mover's information (the owner's design, P33).
+enum class Leaf : uint8_t { kMover = 0, kDecider = 1, kOwn = 2 };
 
 struct Config {
     int horizon = 4;            // action-round boundaries to play through; 0 = none

@@ -122,13 +122,16 @@ size_t RolloutBatch::refused() const noexcept {
 bool RolloutBatch::at_stop(const Row& r) const noexcept {
     const bool boundaries = r.crossed >= cfg_.horizon;
     const bool turn_over = r.state.turn != r.start_turn;
+    bool stop = boundaries;
     switch (cfg_.stop) {
-        case Stop::kTurnEnd: return turn_over;
-        case Stop::kLater: return boundaries && turn_over;
-        case Stop::kEarlier: return boundaries || turn_over;
+        case Stop::kTurnEnd: stop = turn_over; break;
+        case Stop::kLater: stop = boundaries && turn_over; break;
+        case Stop::kEarlier: stop = boundaries || turn_over; break;
         case Stop::kBoundaries: break;
     }
-    return boundaries;
+    // kOwn: past the stop, only a position the root mover decides is a leaf.
+    if (stop && cfg_.leaf == Leaf::kOwn) stop = acting_player(r.state) == movers_[r.position];
+    return stop;
 }
 
 void RolloutBatch::settle_and_mark(Row& r) noexcept {

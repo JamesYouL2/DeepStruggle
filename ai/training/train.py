@@ -868,8 +868,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Rollout-root search: playouts of this many action-round boundaries (0 = off; where they stop is --search-rollout-stop). With --search-ce-coef > 0 it replaces the Gumbel root of the search-CE targets (ai/search/rollout_root.py): the target is softmax(logit + sigma(completed Q)) with the candidates' rollout values, and needs no --search-gumbel-k. With --search-value-beta > 0 and no CE it gives value targets instead (P33's critic track): the greedy continuation's mean leaf value, blended into v_win's target.")
     parser.add_argument("--search-rollout-stop", choices=["boundaries", "turn", "later", "earlier"], default="boundaries",
                         help="Where the rollout root's playouts stop: after --search-rollout-horizon boundaries (the default, the measured root), at the end of the decision's turn, or at the later or the earlier of the two.")
-    parser.add_argument("--search-rollout-leaf-side", choices=["mover", "decider"], default="mover",
-                        help="Whose side the rollout root's leaves are read from: the root mover's at every leaf (the default, the measured root), or each leaf's decider's -- the side the critic is trained on -- negated into the mover's frame where that is the opponent (P33).")
+    parser.add_argument("--search-rollout-leaf-side", choices=["mover", "decider", "own"], default="mover",
+                        help="Whose side the rollout root's leaves are read from: the root mover's at every leaf (the default, the measured root); each leaf's decider's -- the side the critic is trained on -- negated into the mover's frame where that is the opponent; or own: past the stop, play on to the mover's next decision and read it there (P33).")
     parser.add_argument("--search-rollout-k", type=int, default=4,
                         help="Rollout-root search targets: candidates (the teacher's most probable moves).")
     parser.add_argument("--search-rollout-worlds", type=int, default=16,
