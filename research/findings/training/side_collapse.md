@@ -1,199 +1,49 @@
 # Side collapse: a reproducible, escapable learning-arrest
 
-> **REVISED 2026-09-22 — the rate and the strength cost below were wrong, and are corrected in
-> place.** Seven arms scored COLLAPSED were each continued by a further 80M steps and **five
-> recovered**, including all four seeds behind the 12.5% headline. Every terminal verdict in the
-> original census was *censored*: no arm had been watched longer after onset than the slowest
-> observed recovery took. A collapse that recovers costs **−1.4 Elo** against arms that never
-> collapsed — nothing. One that does not costs **−394**. Full account:
-> [`../../log/E4_collapse_is_recoverable.md`](../../log/E4_collapse_is_recoverable.md).
->
-> **What survives unchanged:** entry is real, reproducible and bitwise deterministic; `adv_std_raw`
-> and `explained_variance` separate *entry* cleanly; the state is sticky but not absorbing; and
-> M2.5b enters on 3 of 3 seeds. The sections below are kept because the entry phenomenon is what
-> they actually measured.
->
-> **2026-09-23:** in the late-dynamics and E4.1 runs, all 11 episodes lose the **US** seat, loosening the update late brings one on, a slow π_ref delays one on seed 5 but does not prevent it, and the first collapse logged per seat shows equal advantage spreads on both seats, with only the losing seat's entropy rising: [`../../log/E4_collapse_census_per_seat.md`](../../log/E4_collapse_census_per_seat.md).
+**Conclusion (E4, P21 rung M2d: grouped input, country head only, pooled 0.3/12, cold start).** One
+seat — always the **US** in every episode logged — stops winning: `us_episode_frac` falls to ~0 and
+stays there. It is an **arrest, not a degradation** (the arm stops improving; before onset it is
+level with clean seeds). About **17% of seeds enter** it by 80M (5 of 30), and entry is **sticky but
+not absorbing**: of seven arms scored COLLAPSED and continued 80M further, **five recovered**. A
+recovered collapse costs **compute, not strength** (−1.4 Elo, 0.05 pooled SD, against never-collapsed
+seeds at 160M); the one that never recovered (seed 14) cost **~−394** at 240M
+([`../../log/E4_collapse_is_recoverable.md`](../../log/E4_collapse_is_recoverable.md)). Recurrent
+collapses in the late-dynamics legs were largely a drained opponent pool: on a fixed pool the seed-5
+continuation did not collapse (3 of 3; [`../../log/P25_pool_resume_bug.md`](../../log/P25_pool_resume_bug.md)).
 
-**2026-09-20.** Collapse was the dominant failure of the late E3 ladder and was only ever observed
-after the fact, in arms too expensive to re-run. The P21 architecture ladder produced a
-configuration that collapses at **80M steps in about 30 minutes on a 3.2M-parameter network**, so
-for the first time it can be measured rather than described. This is the census from 30 distinct
-seeds.
+## What is established
 
-**The configuration:** P21 arm M2d — grouped positional input, per-entity head on **countries
-only** (`pe_card` removed), cold start, pooled (`frac 0.3`, capacity 12), 80M steps. Arms differ
-only in `--seed`.
+* **Bitwise reproducible.** Three 80M runs of seed 1, hours apart, gave byte-identical checkpoints
+  and metrics with every cuDNN determinism flag off: this model (dense `Linear`, GELU, LayerNorm,
+  `allow_tf32=False`) has no non-deterministic kernel. A property of the configuration, to be
+  re-verified for anything with attention.
+* **Detection of entry, not outcome.** Minimum `adv_std_raw` 0.0036–0.0313 in arms that entered
+  against 0.087–0.198 clean, and maximum `explained_variance` 0.999–1.000 against 0.974–0.991 —
+  no overlap over 30 seeds. The critic looks *excellent* exactly when the run is failing
+  ([`../../method/detecting_collapse.md`](../../method/detecting_collapse.md)). Neither predicts
+  escape (seed 21 sat at 0.0226 and escaped). The mechanism transfers between lineages; the
+  threshold does not (`adv_std_raw < 0.01` had 0 hits in 47 E3 runs).
+* **Onset does not predict persistence** (35–72M; the earliest one escaped), and five candidate
+  predictors — depth, duration, exact-zero run length and count, onset timing — were falsified.
+* **Per seat** ([`../../log/E4_collapse_census_per_seat.md`](../../log/E4_collapse_census_per_seat.md)):
+  both seats show equal advantage spreads at the first logged collapse; only the losing seat's
+  entropy rises. Loosening the update late brings one on; a slow π_ref delays it.
+* **Cause: no single seed stream is sufficient** — eight arms moving initialisation, sampling,
+  deals or the opponent draw one at a time were all clean
+  ([`../../log/E4_collapse_attribution.md`](../../log/E4_collapse_attribution.md)); necessity is
+  untested (an all-clean result has p 0.34 at the base rate).
+* **Not the only failure mode:** [`entropy_inflation.md`](entropy_inflation.md) lost ~330 Elo with
+  every indicator here healthy.
 
-## What it is
-
-One seat stops winning. `us_episode_frac` — the share of self-play episodes the US wins — falls to
-zero and stays there. Every observed instance has been USSR-dominant; **no US-side collapse has
-ever occurred** in any arm of the ladder (`us_pinned` is 0.0% everywhere), though the detector
-checks both tails.
-
-It is **not a degradation**. The arrested arm does not get worse; it stops getting better. Rating
-a collapsing seed's snapshots against a clean seed's at matched steps:
-
-| steps | seed 1 (collapses) | seed 3 (clean) |
-|---:|---:|---:|
-| 20M | **1752.4** | 1727.2 |
-| 40M | **1820.6** | 1811.4 |
-| 60M | 1802.4 | **2004.9** |
-| 80M | 1792.7 | **2167.8** |
-
-Per 20M interval the collapsing seed gains +68.2, −18.2, −9.7 — flat after 40M — while the clean
-seed gains +84.2, +193.5, +162.9. Before the onset the two are indistinguishable and the
-collapsing one is fractionally *ahead*.
-
-## Rate
-
-| outcome | seeds | share |
-|:---|---:|---:|
-| **terminal collapse** | 4 — seeds 1, 12, 22, 26 | **13.3%** |
-| **entered and escaped** | 1 — seed 21 | 3.3% |
-| clean | 25 | 83.3% |
-
-~~**4 of 30, Wilson 95% CI [5.3%, 29.7%].**~~ **Withdrawn 2026-09-22.** All four of those seeds
-recover when continued past 80M — seed 1 to 0.293, seed 12 to 0.434, seed 22 to 0.386, seed 26 to
-0.517. What this table counted was **arms still inside an entry episode when the budget ended**,
-which is a statement about where the cutoff fell, not about an outcome. Read every "terminal
-collapse" row below as "in an episode at 80M". Two seed-1 re-runs are excluded as replicates, and
-that part stands.
-
-## Entry and persistence are different things
-
-**5 of 30 arms (17%) entered the pinned state** — 15+ consecutive logged rows with
-`us_episode_frac < 0.02`. **Of those, 1 of 5 escaped.**
-
-| seed | onset | longest pinned run | terminal | outcome |
-|---:|---:|---:|---:|:---|
-| 21 | **35M** | 45 rows | 0.343 | **escaped** |
-| 12 | 39M | 143 rows | 0.010 | collapsed |
-| 1 | 44M | 87 rows | 0.016 | collapsed |
-| 22 | 49M | 91 rows | 0.016 | collapsed |
-| 26 | **72M** | 70 rows | 0.010 | collapsed |
-
-**Onset does not predict persistence.** The seed that escaped entered *earliest*, and onset spans
-35M to 72M. Whatever decides the outcome happens after entry, not at it.
-
-**The state is sticky, not absorbing.** Seed 21 held `us_episode_frac` at 0.0000 for 45
-consecutive rows with `adv_std_raw` down to 0.0226 — squarely inside the collapsed range — and
-then climbed back to finish at 0.343. An earlier version of this record called the collapse an
-absorbing state and a clean bifurcation; **both are wrong**, and seed 21 is the counterexample.
-
-## Strength cost
-
-Rated in one 26-entrant field, 200 games per pair, τ=0.0:
-
-| group | n | mean | sd | range |
-|:---|---:|---:|---:|:---|
-| clean | 21 | **1993.3** | 77.5 | 1829.7 – 2128.7 |
-| recovered (seed 21) | 1 | 1969.8 | — | — |
-| **collapsed** | 4 | **≈1697** | 12.4 | **1677.6 – 1716.1** |
-
-References in the same field: anchor 2055.3, M2 with both heads 2016.4, M1 1718.2.
-
-~~**Collapse is an attractor in strength too.**~~ **Withdrawn 2026-09-22.** Those four ratings were
-taken on checkpoints captured *mid-episode*. Continued to 160M the same four arms average
-**2224.3** against **2225.7** for four M2d seeds that never collapsed — a difference of **−1.4
-Elo, 0.05 pooled sd**. Seed 1 alone goes from the 1741.6 quoted here to **2222.6**.
-
-So a collapse that recovers costs **compute, not strength**, and the "ends worse than not having
-the mechanism" reading is false. What *is* true, on the one arm that never recovered: seed 14
-rates **1830.3 at 240M**, roughly **−394**, with 80M more compute than either group. Recovery and
-non-recovery are different events, not two points on a scale.
-
-The convergence of the four numbers is explained by their all being snapshots of the same state —
-an arm inside an episode — rather than by an attractor in strength.
-
-## It is bitwise reproducible
-
-Three independent 80M runs of seed 1 — launched hours apart, with tournaments competing for the
-same GPU — produced **byte-identical final checkpoints** (`sha256[:16] = fbfc08d937071163`) and
-identical values on every logged metric across all 1,221 iterations. Independently, all three rate
-**1700.8** in a 65,000-game tournament.
-
-This holds despite `cudnn.benchmark`, `cudnn.deterministic` and `use_deterministic_algorithms` all
-being **False** and `CUBLAS_WORKSPACE_CONFIG` unset. The explanation is mundane: those flags do not
-*create* determinism, they *force* it where a non-deterministic kernel would otherwise be chosen.
-This model has none — dense `Linear`, GELU and LayerNorm, no convolutions, no scatter-add, no
-atomics, `allow_tf32=False`.
-
-**It is therefore a property of this configuration and must be re-verified, not assumed.** P21's
-M3 and M4 rungs add attention, and some scaled-dot-product backends use `atomicAdd`.
-
-## Detection
-
-Two metrics separate **entry into the pinned state** with no overlap across 30 seeds:
-
-| | clean arms | arms that entered |
-|:---|:---|:---|
-| minimum `adv_std_raw` | 0.0874 – 0.1983 | **0.0036 – 0.0313** |
-| maximum `explained_variance` | 0.9736 – 0.9913 | **0.9990 – 1.0000** |
-
-Advantage variance collapses because every game ends the same way, and the critic's
-`explained_variance` climbs to ~1.0 *because* the policy is degenerate — a one-sided policy is a
-trivially easy prediction problem. This is
-[`../../method/detecting_collapse.md`](../../method/detecting_collapse.md)'s "critic quality
-measures the critic, not the policy" with a live instance: the critic looks **excellent** exactly
-when the run is failing.
-
-**Neither metric predicts escape.** Seed 21's minimum `adv_std_raw` was 0.0226, inside the
-collapsed range. They detect entry, not outcome.
-
-`adv_std_raw < 0.01` was previously **rejected** as a detector because it had 0 hits across 47 E3
-runs. That rejection stands for E3 — but within this configuration the direction separates
-perfectly. Consistent with the scope rule: the mechanism transfers, the threshold does not.
-
-## Claims that were made and withdrawn
-
-Recorded because the reasoning should be traceable, and because three of the four share one cause.
+## Withdrawn claims
 
 | claim | why it was wrong |
 |:---|:---|
-| "the country head alone buys nothing" | read off a **collapsed** arm's Elo, which measures the collapse |
-| "the two heads are superadditive" | same collapsed arm |
-| "M2d reaches the anchor" | a **four-seed** mean, and the four landed within 9 points of the best of all 495 possible four-seed draws |
-| "bifurcation into an absorbing state; bimodal with nothing between" | seed 21 entered fully and escaped, and sits at 10.2% pinned — inside the gap claimed to be empty |
-| "a partial per-entity correction distorts the card-vs-country trade-off" | impossible: over 25,600 decision points the legal mask offers **both** blocks 0.00% of the time |
+| 4 of 30 terminal collapses (13.3%), CI [5.3, 29.7]% | censored: all four recover past 80M; it counted arms *inside an episode* at the cutoff |
+| collapse costs ~300 Elo (≈1697 against 1993 clean) | ratings of mid-episode snapshots; at 160M the same arms are level |
+| an absorbing state, a clean bifurcation | seed 21 was pinned 45 rows and climbed out to 0.343 |
+| "the country head alone buys nothing", "the heads are superadditive" | read off a collapsed arm's Elo |
+| "M2d reaches the anchor" | a four-seed mean at the luckiest end of all 495 draws |
+| a partial per-entity correction distorts the card-vs-country trade-off | the mask never offers both blocks (0.00% of 25,600 decisions) |
 
-The detector itself was wrong twice, in the same direction — once one-sided (it would have scored a
-US-side collapse as clean), once using pinned *fraction* instead of *terminal state* (it scored the
-recovery as a collapse and stopped a sweep early). Both errors would have silently corrupted the
-statistic the sweep existed to produce.
-
-## A second, different failure mode
-
-The collapse described here is not the only way an arm loses strength.
-[`entropy_inflation.md`](entropy_inflation.md) records the anchor losing ~330 Elo over its second
-80M with **every indicator in this document healthy** -- `adv_std_raw` between 0.217 and 0.262,
-`us_episode_frac` finishing at 0.301, verdict CLEAN and correctly so. The policy there does not
-become one-sided, it becomes indecisive. The side-collapsed arm `E4-08-14@160M` shows the same
-sustained entropy inflation, which suggests entropy is the more general indicator and this
-document's signature catches only one manifestation.
-
-## What is open
-
-* **Why escape happens.** One instance. The decisive window is the rows just after entry, and
-  resume states every 5M now bracket it for every arm.
-* **Whether it is specific to `pe_card`'s removal.** M2 with both heads has never collapsed, but
-  it has far fewer seeds. The comparison needs a matched sweep.
-* ~~**Whether the pinned phase costs strength even when survived.**~~ **Answered: no detectable
-  cost.** In [`../../log/P21_M2d_160M_slope.md`](../../log/P21_M2d_160M_slope.md) the three arms
-  that entered and escaped rank 2nd, 3rd and 4th of six at 160M, within 15 Elo of the
-  never-pinned leader, and seed 21 has the largest 80M→160M slope in the set (+205.8). Three arms,
-  so not a population claim — but the worry that a survived episode leaves damage has no support.
-* **Which source of randomness carries it.** Attempted and inconclusive; see
-  [`../../log/E4_collapse_attribution.md`](../../log/E4_collapse_attribution.md). Eight arms split
-  `--seed` into initialisation, sampling, deals/dice and the opponent draw, one at a time in both
-  directions. All eight came back clean, which **conclusively refutes sufficiency** for every
-  single stream -- initialisation in particular, in both directions, so "some seeds just start in a
-  bad place" is wrong. It establishes nothing about necessity: under a 12.5% base rate an
-  all-clean result has probability 0.34, so "every stream is necessary" is simply what that base
-  rate looks like from the inside. Answering it properly needs conditional rates over ~15-50 arms
-  per cell.
-* **Whether intervention can prevent it.** The branch points exist: take the 35M or 45M resume
-  state and change exactly one thing — reseed only the sampling, widen the pool, alter
-  `ref_update_freq`, restore `pe_card`. Every branch shares a byte-identical prefix, so a
-  difference is attributable to the intervention alone. None has been run.
+The detector itself was wrong twice (one-sided; pinned fraction instead of terminal state).

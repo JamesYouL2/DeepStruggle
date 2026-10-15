@@ -1,29 +1,26 @@
 # findings/training — what a training choice is worth
 
-Each finding is a **difference measured inside one engine**: one configuration against another, on
-matched seeds and budgets. Under the assumption in
+Each finding is a **difference measured inside one engine** (matched seeds and budgets). Under
 [`../../method/what_survives_an_engine_change.md`](../../method/what_survives_an_engine_change.md)
-these outlive the engine revision they were measured on, where an absolute rating does not.
+these outlive the engine they were measured on; absolute ratings do not.
 
 | file | what it settles |
 |:---|:---|
-| [`../../archive/E3_ladder/findings/architecture.md`](../../archive/E3_ladder/findings/architecture.md) | the backbone progression — identity, self-transform, per-entity heads — and what each was worth |
-| [`../../archive/E3_ladder/findings/pooling.md`](../../archive/E3_ladder/findings/pooling.md) | the opponent pool: decisive on side balance, unresolved on strength; and the four unrelated things the word "pool" names here |
-| [`../../archive/E3_ladder/findings/seed_variance.md`](../../archive/E3_ladder/findings/seed_variance.md) | how much of a rating is just where the run stopped — the error bars, and the two conclusions they withdraw |
-| [`../../archive/E3_ladder/findings/value_bootstrap_perspective.md`](../../archive/E3_ladder/findings/value_bootstrap_perspective.md) | why the perspective negation in GAE is load-bearing: the assumption behind it is false (0.144 mean absolute), and both replacements lose — patching the term breaks telescoping (E3-21-28), and per-player trajectories telescope correctly but add 28% advantage variance and lose **520 Elo** at 80M (E3-22-28). Also: a better offline return estimate is not a better training signal |
-| [`../../archive/E3_ladder/findings/throughput.md`](../../archive/E3_ladder/findings/throughput.md) | what a run actually costs per step — and the two confounds (GPU model, concurrent runs) that made every earlier rate misleading |
-| [`../../archive/E3_ladder/findings/defcon_blunders.md`](../../archive/E3_ladder/findings/defcon_blunders.md) | that the critic never sees a provoked DEFCON-1, and what windowing the credit costs |
-| [`forward_pass_trace.md`](forward_pass_trace.md) | the actual forward pass: every country goes through one shared transform, and its token reaches the logits by four routes — pooled trunk, cross-attention keys, a disabled read-out, and the unpooled per-entity head. Pooling is the bottleneck (token ~89%, trunk ~14%) |
-| [`country_identity_without_graph_conv.md`](country_identity_without_graph_conv.md) | only 30 of 84 countries are distinguishable by their static observation slots — Egypt, Iran and Libya are identical — so identity is a per-country bias disambiguating the other 54; ablating it moves per-country logits by more than the whole across-country spread, yet it encodes no map structure. Graph depth remains open, not settled at 0 |
-| [`trunk_depth_and_state.md`](trunk_depth_and_state.md) | **the shallow trunk** (0 residual blocks) beats M2d on two seeds; the trunk drops state at the input projections, and training adds outcome information, not state; card × board interactions are partly representable (0.80), better with attention (0.90), and **not learned by RL** (trained trunks = untrained, 0.66) |
-| [`training_length_and_evaluation.md`](training_length_and_evaluation.md) | the shallow recipe **saturates at ~900M–1B steps** (+100 Elo from 560M to 880M), so 560M comparisons are pre-saturation; SWA and soups are measuring devices for base-model quality; E7 = E6 in strength; two shallow arms at once give +20% throughput |
-| [`side_collapse.md`](side_collapse.md) | the first collapse this repository can measure rather than describe: 4 of 30 seeds, **bitwise reproducible**, a learning-arrest rather than a degradation, and **escapable** — one arm entered the pinned state for 45 rows and climbed out. `adv_std_raw` and `explained_variance` separate entry perfectly but predict nothing about escape |
-| [`entropy_inflation.md`](entropy_inflation.md) | a **second** failure mode, invisible to every collapse indicator here: the anchor lost ~330 Elo over its second 80M with `adv_std_raw` and `us_episode_frac` both healthy the whole time. A cliff (296 Elo in one 10M interval), Elo mirroring policy entropy inversely, and the side-collapsed arm showing the same sustained inflation — so entropy may be the more general indicator |
+| [`training_length_and_evaluation.md`](training_length_and_evaluation.md) | runs keep climbing long after they look saturated (A4 ~3,700M, A8 6,800M, R48 9,200M); SWA and soups are measuring devices; the league adds nothing measurable |
+| [`trunk_depth_and_state.md`](trunk_depth_and_state.md) | the shallow trunk (0 residual blocks) beats M2d on two seeds; state is lost at the input projections; card × board interactions are representable but not learned by RL |
+| [`side_collapse.md`](side_collapse.md) | the E4 side collapse: reproducible, escapable (5 of 7 recover), free when recovered, detected on entry by `adv_std_raw` / `explained_variance` |
+| [`entropy_inflation.md`](entropy_inflation.md) | a second failure mode invisible to those detectors: −330 Elo with entropy rising |
+| [`forward_pass_trace.md`](forward_pass_trace.md) | ColdWarNetV2's forward pass (pooling is the bottleneck) and the meaning of every per-entity observation slot |
+| [`country_identity_without_graph_conv.md`](country_identity_without_graph_conv.md) | only 30 of 84 countries are distinguishable by static slots; identity is a heavily used per-country bias that encodes no map; graph depth is open |
+| [`e4_architecture_discontinuity.md`](e4_architecture_discontinuity.md) | E4 launched with the default network, not late E3's; accepted, so E3 and E4 numbers do not compare |
+| [`ref_update_freq_open_ablation.md`](ref_update_freq_open_ablation.md) | 200k is the baseline, not a drift; a slow π_ref loses from scratch on E4 |
+| [`heuristic_mcts_baseline.md`](heuristic_mcts_baseline.md) | a checkpoint-free searching baseline that beats `HeuristicBot` 18–20 of 20 |
 
-Read [`../../archive/E3_ladder/findings/seed_variance.md`](../../archive/E3_ladder/findings/seed_variance.md) before believing any single-arm result on this page.
-The spread between same-condition arms is the yardstick an effect has to clear, and it has already
-withdrawn two conclusions that looked solid — including the map-graph depth result that every arm
-from E3-17 onward is nonetheless built on.
+**E3-era findings** (architecture progression, pooling, seed variance, DEFCON blunders, the value
+bootstrap, throughput, which decisions to search) are in
+[`../../archive/E3_ladder/findings/`](../../archive/E3_ladder/README.md). Their seed-variance rule
+still applies: the spread between same-condition arms is the yardstick an effect must clear
+([`../../archive/E3_ladder/findings/seed_variance.md`](../../archive/E3_ladder/findings/seed_variance.md)).
 
-The arms behind these are registered in [`../../runs.md`](../../runs.md); the question each answers,
-with its verdict, is in [`../../questions.md`](../../questions.md).
+Training results since E5 that have no findings file are summarised by question in
+[`../../questions.md`](../../questions.md) and per arm in [`../../runs.md`](../../runs.md).

@@ -20,6 +20,15 @@ Verification status: papers marked **[full]** were read in full (HTML or PDF) du
 **[abs]** means only the abstract or a secondary description was read and specific numbers
 should be re-checked before being quoted in an experiment entry.
 
+**What came of it** (measured here since): a categorical value head lost (−28 Elo, E3-06) and
+advantage filtering gained (+25 / +24, E3-07)
+([`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md),
+[`../questions.md`](../questions.md)); search adds ~+40 to +140 Elo at play time (Gumbel k8@256 +41,
+the rollout root +141 on the R34 soup) but little of it distils into the network (R32 absorbed about
+half of a Gumbel@32 teacher's +34; R40–R42 nothing of the rollout root; [`../runs.md`](../runs.md)).
+Section references below to `experiments.md` and the old E7–E9 stage labels point at the retired
+pre-split record; its content is in [`../log/`](../log/README.md).
+
 ---
 
 ## 1. The modern self-play recipe
@@ -51,8 +60,8 @@ Stratego is a bluffing game. See §2.
 ### Policy improvement by planning with Gumbel **[abs]**
 Danihelka, Guez, Schrittwieser, Silver, ICLR 2022. Gumbel AlphaZero/MuZero: guaranteed policy
 improvement with as few as 2–16 simulations per move by using Gumbel-top-k sampling and a
-sequential-halving root. Relevance: retires the "MCTS costs 32× per decision" objection in
-`next_step_brief.md` §4C. If search-in-the-loop is ever wanted, this is the cheap form.
+sequential-halving root. Relevance: retires the "MCTS costs 32× per decision" objection; this is the form used
+here (`ai/search/gumbel_root.py`, recipes R29–R32).
 
 ### AlphaZero-inspired game learning: MCTS only at test time **[abs]**
 arXiv:2204.13307 (Scheiermann & Konen). Trains without search and adds MCTS at test time; reports
@@ -258,9 +267,5 @@ also what an earlier plateau looks like.
 
 
 
-An 80M-step arm is ~1.5 h on the 4090 and gains on the current recipe are still measurable at
-320M (`experiments.md` §24). Screen every factor at 2 seeds × 80M (3 h); confirm only the winner
-of a screen at 2 seeds × 240M (9 h); rate the last four snapshots and pool all sixteen
-pairings; never compare across budgets or tournaments. A leg's gain carries ±16 Elo
-(`../log/variance_and_noise.md`), so within-lineage trends need that bar. The current ordering and budget
-rule live in [`../plans/README.md`](../plans/README.md).
+The current practice — judge a recipe at its plateau, or as a 400M branch from one — is
+[`running_experiments.md`](running_experiments.md).

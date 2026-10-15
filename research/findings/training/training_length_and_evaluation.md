@@ -1,46 +1,42 @@
 # Training length, and how a recipe is measured
 
-Measured 2026-09-30 – 10-01 on E7 (training findings).
+E7, 2026-09-30 – 10-14. The owner's framing: **base-model quality is the goal**; a recipe is judged
+at its plateau, and SWA and soups are ways to read it with less noise, not part of training.
 
-## Recipes are judged at 560M before they saturate
+## Runs keep climbing long after they look saturated
 
-The shallow recipe (E7-01-44 continued as E7-02-44), traced in one field every 80M:
+* **The first "saturation" was premature.** E7-02-44's trace rose ~+100 Elo from 560M to 880M and
+  +27 to 1,200M ([`../../log/E7_02_44_saturation.md`](../../log/E7_02_44_saturation.md)), but the
+  same seed-44 line then gained +54 to 2,000M, met the pre-registered plateau rule at 2,800M, and
+  rose again from ~2,960M (the league's control leg, bit-identical to the league until its first
+  publish) to a real plateau at **~3,700M**
+  ([`../../log/E7_line_to_2000M.md`](../../log/E7_line_to_2000M.md),
+  [`../../log/E7_league_from_2800M.md`](../../log/E7_league_from_2800M.md)).
+* **Later lines plateau later still** (rule: the mean of the last two 400M windows against fixed
+  references within +1.5 points of the two before): the A8 heads run at **6,800M**
+  ([`../../log/P31_branch_arms_B1_B2.md`](../../log/P31_branch_arms_B1_B2.md)), R48 at **9,200M**,
+  A13+R48 at **11,200M** ([`../../runs.md`](../../runs.md)).
+* **The deep (M2d) trunk plateaus at ~560M** and ends ~120 Elo under the shallow one
+  ([`../../log/E7_06_44_deep_to_saturation.md`](../../log/E7_06_44_deep_to_saturation.md)).
+* **Consequence.** Every arm compared at 560M (P28 onward) was compared on the first part of the
+  curve. A late branch from a plateau (400M from 6,400M) is the cheap way to compare recipes now.
 
-| steps | 400M | 560M | 720M | 880M | 1,040M | 1,200M |
-|:---|---:|---:|---:|---:|---:|---:|
-| Elo | 1451 | 1505 | 1565 | 1603 | 1616 | 1630 |
+## SWA and soups
 
-* About +100 Elo from 560M to 880M, then +27 to 1,200M. **It saturates at about 900M–1B steps,**
-  roughly 3 h solo.
-* The 1,120–1,200M SWA beats the 480–560M SWA 64.4% (+110 Elo), in both seats.
-* **The deep recipe saturates earlier, at about 560M** (E7-06-44, plain M2d to 1,200M: its snapshots
-  stay at about 1,500–1,550 from 560M on). The league line gained only about +20 Elo per 200M
-  from 560M to 760M.
-* **Consequence.** Every arm since P28 was compared at 560M, before saturation. An ordering at 560M
-  is a statement about the first 60% of the curve, not about the base model a recipe reaches.
-  Logs: [`../../log/E7_02_44_saturation.md`](../../log/E7_02_44_saturation.md).
-
-## SWA and the model soup are measuring devices, not the product
-
-The owner's framing (2026-10-01): **base-model quality is the goal.** SWA and model soups are
-ways to read a recipe with less noise; they do not enter training.
-
-* **SWA** (uniform average of one run's last 80M): +50 to +110 Elo over the run's snapshots, more
-  on the deep trunk.
-* **Model soup** (average of branches of one trained state; never across seeds, which breaks the
-  net): +42 Elo over the best SWA on the deep line, +50 on the shallow line.
-* The shallow soup (E7-02/03/04/05-44 at 1,200M, 2613) is the strongest model measured
-  ([`../../log/E7_shallow_soup.md`](../../log/E7_shallow_soup.md)). Its best single ingredient was
-  the learning-rate step-down branch (E7-04-44), which is a training-recipe signal.
+* **SWA** (uniform average of a run's last 80M): +50 to +110 Elo over snapshots on the early lines;
+  at the A8 plateau the SWA beats its raw 6,800M snapshot 53.8% (US +8.2, USSR +0.6). Part of that
+  gain is optimiser noise: a learning-rate step-down (R46) or a 4× minibatch (R47) puts it into the
+  raw weights (raw against raw 56.9% / 56.0%), a one-time +15–25 Elo, not a higher ceiling.
+* **Model soup** (average of SWAs of branches from one trained state, never across independent
+  seeds): +42 over the best SWA on the deep E6 line; on the leaderboard the A8 heads soup is +45 over
+  its SWA (1625 against 1580) and the R34 soup +21 over R34's SWA.
 
 ## Other measured facts
 
-* **E7 does not change strength.** E7-01-44 (E6-12-44's recipe on E7) is level with E6-12-44 on
-  E7: 47.1% head to head on snapshots, 49.8% on SWAs
+* **E7 does not change strength** — E7-01-44 is level with E6-12-44 on E7
   ([`../engine/engine_revisions.md`](../engine/engine_revisions.md)).
-* **The league adds little on the shallow trunk.** About +10 Elo on snapshots (USSR +2.3, US +1.3)
-  and nothing on the SWA (E6-13-44 against E6-12-44, one seed).
-* **Throughput.**
-  * Two shallow arms at once give +20% total steps/s (110k against 91.7k alone); three add
-    nothing.
-  * The host drifts by about ±7% over a day, so compare speeds only between runs made together.
+* **The league adds nothing measurable** on the shallow trunk: +10 Elo on snapshots, 0 on SWAs
+  (E6-13-44), and level with its control from 2,800M (E7-21-44); exploiters rarely reach the publish
+  bar from a plateau main.
+* **Throughput:** two shallow arms at once give +20% total steps/s (110k against 91.7k), three add
+  nothing; the host drifts ~±7% over a day, so compare speeds only between runs made together.

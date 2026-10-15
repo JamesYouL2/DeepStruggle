@@ -1,168 +1,68 @@
 # Bookkeeping — how to record an experiment so it can be found again
 
-Written on 2026-09-16, after the record failed a specific test: *"we had a lot of comparison
-between pooled and non-pooled arms, and it is hard to find now."* It was hard to find because the
-evidence sat in one log file, two plan files, three git-ignored tournament reports and nine
-`metadata.json` descriptions, and no document anywhere held the answer. Two of the arms were not
-in any table at all, and one word — "pool" — named four unrelated mechanisms.
+Written 2026-09-16, when "what did we learn about pooled vs non-pooled?" took one log, two plans,
+three git-ignored reports and nine `metadata.json` descriptions to answer, and "pool" named four
+different mechanisms. The rule: **an experiment is not recorded until the question it answers has a
+row.** Arms are found only by people who already know their names.
 
-The rule that follows from that is short: **an experiment is not recorded until the question it
-answers has a row.** Recording the arm is not enough. Arms are found by people who already know
-what they are looking for.
-
-## The four places, and what goes in each
+## The four places
 
 | | file | discipline |
 |:---|:---|:---|
-| 1 | [`../runs.md`](../runs.md) | one row per **arm** — what it varied, seeds, budgets, directory, and a link to the writeup |
-| 2 | [`../questions.md`](../questions.md) | one row per **question** — the arms that bear on it, and the verdict |
+| 1 | [`../runs.md`](../runs.md) | one row per **arm**: what it varied, seeds, budget, directory, link to the writeup |
+| 2 | [`../questions.md`](../questions.md) | one row per **question**: the arms that bear on it, and the verdict |
 | 3 | `../log/<programme>.md` | the experiment: setup, numbers, prediction, outcome, caveats. Append-only |
-| 4 | `../findings/engine/<topic>.md` or `../findings/training/<topic>.md` | what is true now, cited to 3. Rewritten in place |
+| 4 | `../findings/{engine,training}/<topic>.md` | what is true now, cited to 3. Rewritten in place |
 
-**Which of the two findings directories.** Ask what would invalidate the claim. If a rules fix, a
-mask change or a broken probe would delete it, it is **engine** knowledge and it is pinned to a
-commit. If only a better-powered replication would move it, it is **training** knowledge and it is
-a difference measured between two arms inside one engine. The cases where that test does not
-decide are listed in [`../findings/README.md`](../findings/README.md), and the assumption the split
-rests on is [`what_survives_an_engine_change.md`](what_survives_an_engine_change.md).
-
-1 and 2 are indexes and cost a minute each. 3 is where the work goes. 4 exists only when a
-question has an answer worth stating without its narrative.
+Engine or training finding? Ask what would invalidate it: a rules fix, mask change or broken probe
+→ **engine**; only a better-powered replication → **training**
+([`../findings/README.md`](../findings/README.md)). Ratings live in `leaderboard/`: a log cites a
+player's Elo from `tools/leaderboard.py show` at a commit rather than copying a table.
 
 ## Every measurement lands in `log/` first
 
-**A number is recorded when it is in `../log/`. Everywhere else links to it.** No other document
-may hold the only copy of a measurement — not `findings/`, not `runs.md`, not `checkpoints.md`,
-not a plan, and certainly not a commit message.
+No other document holds the only copy of a number — not `findings/`, `runs.md`, `checkpoints.md`, a
+plan, or a commit message. (On 2026-09-16 three tournaments went straight into `findings/` as
+verdicts, with no setup, sample size or instrument anywhere.) "Measurement" includes tournaments,
+probes that returned nothing, statistics computed from `training_metrics.jsonl`, sensitivity checks
+and corpus counts. The entry carries the question, **the instrument and sample size**, the result
+with an error bar, the verdict, and what would overturn it. **Test:** from a `findings/` claim, one
+link must reach the sample size and the instrument.
 
-This is stricter than "write a log entry when the arm finishes", and it is stricter for a reason:
-on 2026-09-16 three measurements were produced and written straight into `findings/` and
-`checkpoints.md` — the per-player GAE tournament, the PFSP tournament, and the base-rate
-sensitivity analysis behind both. Each was a *verdict* in the right place. None had the setup, the
-sample size, the instrument or the caveats anywhere, because those belong to the experiment and
-`findings/` is not where experiments live. A reader asking "how was that 520 Elo obtained, over how
-many games, against which snapshots" had nowhere to go.
-
-What "measurement" covers here is broad, and deliberately so:
-
-* a tournament or any Elo number;
-* a probe, sweep or diagnostic run, including ones that returned nothing;
-* a statistic computed from `training_metrics.jsonl` — a windowed comparison, a correlation, a
-  variance estimate;
-* a sensitivity or robustness check on any of the above;
-* a count taken from the corpus, the engine or the logs to settle a question.
-
-The log entry carries: what was asked, how it was measured, **the instrument and the sample size**,
-the result with an error bar, the verdict, and what would overturn it. `findings/` then states the
-conclusion in a sentence or two and links back. If the conclusion later changes, `findings/` is
-rewritten and the log entry is not — that asymmetry is the whole point of the split, and it only
-works if the numbers are in the half that never moves.
-
-**The practical test.** Open the `findings/` claim and follow its link. If you cannot reach the
-sample size and the instrument in one hop, the measurement is not recorded yet.
-
-**Where in `log/`.** One file per programme, as the index describes. A measurement that belongs to
-an existing programme is appended to that programme's file; a new programme gets a new file and a
-row in [`../log/README.md`](../log/README.md). A measurement large enough to be looked up on its own
-— a full round-robin matrix, a corpus census — gets its own file beside the programme's, linked
-from it.
+A measurement belonging to an existing programme is appended to its file; a new programme gets a new
+file and a row in [`../log/README.md`](../log/README.md).
 
 ## Before launching
 
-**Register the prediction.** In the plan file or in the arm's `--description`, say what the probes
-and the Elo should do. It costs a minute and it is the difference between a result and a
-rationalisation.
+* **Register the prediction** — what the probes and the Elo should do — in the plan or the arm's
+  `--description`.
+* **Name the endpoint and the instrument that produces it.** The pooling replication pre-registered
+  a statistic, never computed it, and reported a different instrument chosen afterwards.
+* **If `engine/` changed since the control was trained, measure the decision stream** (both builds,
+  fixed seeds, diff action and mask hash;
+  [`../findings/engine/engine_change_decision_stream.md`](../findings/engine/engine_change_decision_stream.md)).
+* **Grep before reusing a word** for a new mechanism.
+* **Write `--description` for a stranger**: the programme, the matched control, what it is judged on.
+  It is often the only record that survives.
 
-**Name the endpoint, and say which instrument produces it.** Write down the statistic, the
-sample size, and the file it will be read from. The pooling replication pre-registered *mean
-|ussr_win_rate − 0.5| over the final 40M*, the arms landed, and the number was never computed —
-what got reported instead was external side balance from a tournament, a different instrument
-chosen after the fact. That is exactly the failure pre-registration exists to prevent, and
-naming the instrument as well as the statistic is what would have caught it.
+## While running and after
 
-**If `engine/` changed since the control was trained, measure the decision stream before claiming
-the pair is matched.** Build both engines, replay fixed seeds under a deterministic walk and under
-the arms' own policies, and diff the decision type, the chosen action and the legal mask's hash at
-every step. It takes hours; the alternative is re-running the control. Record the verdict in the
-arm's row in [`../runs.md`](../runs.md) — the two worked examples are the `ROLL_DIE` pair and P14,
-both under *E3-21*.
+* Add the `runs.md` row **at launch**, not at the end; an unlisted directory is how E3-18 and E3-19
+  went missing.
+* At the end: write the log entry (negative results too); fill the arm's result cell, or write **no
+  writeup**; add or update the `questions.md` row (including back to **open**); write a finding only
+  when the answer stands without its narrative.
 
-**Name the mechanism unambiguously.** Before reusing a word, grep for it. "Pool" already meant an
-opponent pool, a start-state pool, a pooled head-to-head rating protocol, and global average
-pooling inside the network. If the word is taken, the new thing needs a different one, and the
-disambiguation belongs at the top of its findings file.
+## Artifacts
 
-**Write the `--description` for a stranger.** `tools/train.py --description` is the only record
-that survives if nothing else is written, and it is frequently the only record that exists. Say
-which programme the arm belongs to, what its matched control is, and what it is judged on.
-`E3-17-24`'s description is the model: it states the comparison, the confound it fixes, and why.
+* **One `data/` tree, the main checkout's** (`/workspace/data`). A worktree's own `data/` is empty and
+  deleted with it (1.4 GB of checkpoints were once stranded in one). `tools/lib/data_root.py` resolves
+  the shared tree from `git rev-parse --git-common-dir`, `$TS_DATA_ROOT` overrides it, and
+  `tools/train.py` uses it. Paths typed on a command line (`--output-dir`) are not routed through
+  it: write `/workspace/data/...`. Paths quoted in `research/` are relative to the repository root.
+* **`data/` is git-ignored, so copy the numbers that carry a claim into the log** and name the report
+  file. Stage checkpoints under readable names before rating them; a report whose entrants are
+  `snapshot_final#1..#4` is unusable.
 
-## While running
-
-Add the row to [`../runs.md`](../runs.md) **when the run is launched**, not when it finishes. A
-run that dies half-way still consumed GPU-hours and still has a directory, and an unlisted
-directory is how `E3-18` and `E3-19` went missing from a table whose whole purpose is to identify
-a directory unambiguously.
-
-## When it finishes
-
-1. Write the log entry: question, setup, result with sample size and an error bar, verdict,
-   caveats. A negative or inconclusive result gets the same treatment as a positive one.
-2. Fill in the `result written up in` cell of the arm's row. If there is nothing to link, write
-   **no writeup** in the cell. An honest "no writeup" is a useful signal; an empty cell is not.
-3. Add or update the row in [`../questions.md`](../questions.md). If the arm was run for a
-   question that already has a row, the verdict is what changes — including to **open** if the
-   result withdraws an earlier one.
-4. If the answer is now stable enough to state without its narrative, put it in
-   `../findings/`, and link back to the log rather than re-telling the experiment.
-
-## All artifacts go to `/workspace/data`, never to a worktree's own `data/`
-
-**There is one `data/` tree and it belongs to the main checkout.** Checkpoints, tournaments,
-datasets, replays — everything a run or a probe writes.
-
-`data/` is git-ignored, which means a git worktree does **not** share it. A worktree gets its own
-empty one, and `data/checkpoints/...` then names two different directories depending on which
-directory the command was run from. Anything written to the worktree's copy is deleted with the
-worktree.
-
-This was found on 2026-09-17 with 1.4 GB of checkpoints, four completed runs and five tournament
-reports sitting inside `.claude/worktrees/fix-profiler-bias/data/` while every earlier run sat in
-`/workspace/data`. The catalogue in [`../checkpoints.md`](../checkpoints.md) quoted paths that
-resolved for the session that wrote them and for nobody else.
-
-**The code now resolves this itself.** `tools/lib/data_root.py` finds the main checkout from
-`git rev-parse --git-common-dir` — which points at the main repository's `.git` from inside any
-worktree — and `data_root()` returns its `data/`. `tools/train.py` uses it for run directories, so
-a run launched from a worktree writes to the shared tree without being told. `$TS_DATA_ROOT`
-overrides it for a caller that means somewhere else.
-
-What still needs care, because it is not routed through that helper:
-
-* **`--output-dir`, and any path passed on a command line.** Write `/workspace/data/...`, or run
-  from the main checkout where `data/` means the right thing. A bare `data/tournaments/...` typed
-  in a worktree is the failure this section is about.
-* **Staged symlinks.** `readlink -f` them so the link survives a move; a relative symlink into
-  `data/` breaks as soon as either end moves.
-* **Paths quoted in `research/`.** They are relative to the repository root and therefore correct
-  when read from the main checkout. Do not "fix" them to worktree paths.
-
-## Do not leave a result in `data/checkpoints/`
-
-`data/` is git-ignored. A `report.md` written there by `tools/tournament.py` can be deleted by
-anyone clearing disk space and no commit will record that it existed. Three of the five pooling
-results were in that state when this file was written: `arena80_160/report.md`,
-`arena_p12/report.md` and `arena_320/report.md`. **Copy the numbers that carry a claim into the
-log entry**, name the report file, and mark it untracked so a later reader knows the tracked copy
-is the only one.
-
-The same applies to a tournament whose model labels are positional. `pool_comparison_tournament.md`
-names its entrants `snapshot_final#1` through `#4` and nothing anywhere says which arm each was;
-it is unusable. Stage checkpoints under readable symlink names before rating them, the way
-`arena_p12/` does.
-
-## The test to apply before calling it recorded
-
-Ask the question out loud — "what did we learn about X?" — and try to answer it in **one lookup**
-from [`../questions.md`](../questions.md). If the answer requires opening three files and
-reconciling them, the row is not written yet.
+**The test before calling it recorded:** ask "what did we learn about X?" and answer it in one
+lookup from [`../questions.md`](../questions.md).

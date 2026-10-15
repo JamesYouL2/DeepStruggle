@@ -1,21 +1,17 @@
 # Method — how to run an experiment and how to trust the number
 
-`log/` and `findings/` hold what was learned. This directory holds how to learn it without fooling
-yourself, which is kept separate because it is read at a different moment: before a run, and again
-when a result looks too good.
+Read before a run, and again when a result looks too good. **Living reference.**
 
 | file | what it is for |
 |:---|:---|
-| [`bookkeeping.md`](bookkeeping.md) | how an experiment must be recorded to stay findable — the rule that an experiment is not recorded until the *question* it answers has a row |
-| [`run_nomenclature.md`](run_nomenclature.md) | the naming scheme, `E<n>-A<n>-R<n>-S<n>` plus branch points, SWAs and soups, and when the engine letter bumps |
-| [`running_experiments.md`](running_experiments.md) | launching, resuming and monitoring a run |
-| [`measurement_pitfalls.md`](measurement_pitfalls.md) | the checklist to work through before trusting a number |
-| [`measurement_tiers.md`](measurement_tiers.md) | how much evidence a claim needs before it counts as settled |
-| [`what_survives_an_engine_change.md`](what_survives_an_engine_change.md) | the assumption that relative training results cross an engine revision while absolute ratings do not — stated as an assumption, with its evidence and its gaps |
-| [`detecting_collapse.md`](detecting_collapse.md) | which internal metric sees which failure mode, as self-relative triggers — plus the scope rule that mechanisms transfer across a lineage but magnitudes never do |
-| [`human_play.md`](human_play.md) | playing the workbench by hand, and what to look for |
-| [`references.md`](references.md) | external sources, and the rules texts the engine implements |
+| [`measurement_pitfalls.md`](measurement_pitfalls.md) | **read before trusting a number**: every way an instrument here has lied, with the cheap check |
+| [`running_experiments.md`](running_experiments.md) | how an arm is rated (SWA + snapshots, per-seat acceptance, leaderboard), budgeted, and what a step is |
+| [`bookkeeping.md`](bookkeeping.md) | how to record an experiment so it can be found: `runs.md`, `questions.md`, the log, findings |
+| [`run_nomenclature.md`](run_nomenclature.md) | `E<n>-A<n>-R<n>-S<n>@<step>M+<changes>`, SWAs and soups, the old attempt-number scheme |
+| [`measurement_tiers.md`](measurement_tiers.md) | which probe runs every iteration, per snapshot, once per arm |
+| [`detecting_collapse.md`](detecting_collapse.md) | which internal metric sees which failure mode; self-relative alarms (`watch_run.py`) |
+| [`what_survives_an_engine_change.md`](what_survives_an_engine_change.md) | the assumption that relative results cross an engine revision and absolute ratings do not |
+| [`human_play.md`](human_play.md) | the two human corpora (ts-replayer for moves, ITS for length and endings) and the agreement measure |
+| [`references.md`](references.md) | the literature behind the plan ordering, mapped to this game |
 
-The companion to this directory is [`../log/measurement_bugs.md`](../log/measurement_bugs.md):
-every instrument that reported confident nonsense, written up in full. The checklist here is the
-short form; that file is the evidence for why each item is on it.
+The evidence for each checklist item is [`../log/measurement_bugs.md`](../log/measurement_bugs.md).

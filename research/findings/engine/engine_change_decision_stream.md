@@ -1,83 +1,33 @@
 # An engine change that moves no decision
 
-Invariant 13 says never measure against a stale engine, and the reflex that follows is that any
-engine change invalidates the comparisons that straddle it. That reflex is right about *absolute*
-numbers and wrong as a blanket rule: a correctness change that does not alter the decision stream
-cannot alter what a training run experiences, so results either side of it stay comparable.
+**Conclusion.** An engine change invalidates comparisons that straddle it only if it moves the
+decision stream, and that can be measured cheaply instead of assumed. P14 — `StateMachine::step`
+validating against `generate_flat_mask_212` instead of re-deriving each rule, the mask no longer
+emitting unplayable actions, and the Missile Envy forced-play rule fixed (`0d2f499`;
+[`../../archive/E3_ladder/plans/P14_one_definition_of_legality.md`](../../archive/E3_ladder/plans/P14_one_definition_of_legality.md))
+— moved **nothing**: the same games through `b5f2c06` and the fixed build, comparing outcome, chosen
+action **and the legal mask's popcount and hash** at every step:
 
-P14 is the worked example, and it is worth recording because the instinct was to bump the engine
-letter and re-run a baseline at roughly double the compute.
+| policy | games | steps | divergences |
+|---|---:|---:|---:|
+| policy-free deterministic walk | 300 | 55,786 | 0 |
+| E3-20-28 @160M / @320M, argmax (pooled) | 512 | 234,473 | 0 |
+| E3-17-25 @160M, argmax (unpooled) | 256 | 95,553 | 0 |
+| **total** | **1,068** | **385,812** | **0** |
 
-## What changed
+So the letter stayed E3 and `E3-20-28` remained the matched baseline for `E3-21-28`. The licence
+comes from the measurement, not from the change looking small.
 
-[`../../plans/P14_one_definition_of_legality.md`](../../archive/E3_ladder/plans/P14_one_definition_of_legality.md),
-in two parts:
+**The qualification.** The sweep covers fresh self-play. One archived replay
+(`h2_480M_selfplay_20260502.tslog.json`, step 631) records a pass at a `SELECT_CARD` node where
+passing was never legal and the pre-P14 `step` accepted it: **`step` used to be the more permissive
+side**, which a sweep asking "does the mask offer something step refuses?" cannot see. Ten of eleven
+archived replays reproduce exactly; the eleventh is kept in `data/replays/archive_pre_p14/`.
 
-* **The Missile Envy forced-play rule.** `forced_card_id` only ever holds `MISSILE_ENVY`, so the
-  disjunct `forced_card_id == card || forced_card_id == MISSILE_ENVY` was always true while a force
-  was live and the effective rule became "every card must go to Ops". Both the mask and
-  `StateMachine::step` now test phase, in-hand and card identity.
-* **One definition of legality.** `StateMachine::step` validates against
-  `ActionMask::generate_flat_mask_212` instead of re-deriving each rule, and the mask stopped
-  emitting actions nobody can play (`DecisionType::NONE`, a `CHOOSE_BRANCH` outside an event frame,
-  a node with no decision player). The blanket "ensure at least one action is legal" fallback went
-  with them.
+**Why nothing moved.** A 1.54M-position sweep of sampled self-play found zero natural mask/step
+disagreements; the three C++ tests P14 broke were hand-built states, two of them asserting a coup
+the rules forbid.
 
-## What it moved: nothing
-
-Both engine builds were compiled side by side — `b5f2c06` (before P14) and the fixed build, whose
-committed part is `0d2f499` — and
-the same games were played through each, recording at every step the decision type, the **legal
-mask's popcount and hash**, and the action chosen. The mask hash is the sensitive part: an engine
-change can alter what is *offered* without altering what a deterministic chooser *picks*, and a
-policy sees the offer.
-
-| policy | games | steps | outcome | action | mask |
-|---|---:|---:|---:|---:|---:|
-| policy-free deterministic walk | 300 | 55,786 | 0 | 0 | 0 |
-| E3-20-28 @160M, argmax (pooled) | 256 | 118,472 | 0 | 0 | 0 |
-| E3-20-28 @320M, argmax (pooled) | 256 | 116,001 | 0 | 0 | 0 |
-| E3-17-25 @160M, argmax (unpooled) | 256 | 95,553 | 0 | 0 | 0 |
-| **total** | **1,068** | **385,812** | **0** | **0** | **0** |
-
-Zero divergences of any kind, at every step of every game. Not one mask differed.
-
-**One qualification, found afterwards and worth more than the headline.** That measurement covers
-*fresh self-play*. Re-running the archived replays turned up one case it did not: step 631 of
-`h2_480M_selfplay_20260502.tslog.json` records flat action 211 (pass) at a `SELECT_CARD` node
-inside an event where `allow_early_stop` is 0 and the mask offers exactly two cards. Passing was
-never legal there; the pre-P14 `step` accepted it anyway. Ten of the eleven archived replays still
-reproduce exactly, so this is rare rather than systematic — but it is a real recorded game, and it
-shows the collapse does change legality in the direction the sweep could not see: **step used to be
-the more permissive side**, and a sweep that only asks "does the mask offer something step
-refuses?" is blind to that. The replay is kept in `data/replays/archive_pre_p14/` as the evidence.
-
-## Why that is the expected result, in hindsight
-
-The conditions P14 touches do not arise in play. A 1.54M-position sweep of sampled self-play found
-**zero** naturally occurring mask/step disagreements; every class needed a seeded conjunction. The
-three C++ tests the change broke were all hand-built states, and two of them were asserting a coup
-that the rules forbid — US couping Egypt at DEFCON 2, illegal because Egypt is Middle East — which
-passed only because `step` never validated coup targets while the mask did.
-
-So the change fixes what a caller could *construct* and what a crash could *expose*, not what
-self-play actually does.
-
-## What this licenses, and what it does not
-
-**Licensed.** The engine letter stays E3. `E3-20-28` remains a matched baseline for `E3-21-28`,
-the value-bootstrap arm, which is the difference between running one arm and two. Checkpoints,
-datasets and Elo anchors taken before P14 stay comparable to those taken after.
-
-**Not licensed.** "The engine changed but the numbers are probably fine" as a general argument. The
-licence here comes from a measurement — 385,812 steps, four policies, mask included — not from the
-change looking small. An engine change that *does* move the stream still invalidates everything
-that straddles it, and the measurement is cheap enough that there is no reason to assume either
-way. Build both engines, replay fixed seeds, diff the masks.
-
-## How to repeat it
-
-`git worktree add --detach <tmp> <old-commit>`, build it into its own directory, then run the same
-dump script under each build and diff. Two `ts_engine` modules cannot share an interpreter, so it
-has to be two processes writing to files. The scripts used are throwaway; the method is the part
-worth keeping.
+**How to repeat it.** `git worktree add --detach <tmp> <old-commit>`, build each engine into its own
+directory, run the same dump script under each build in separate processes (two `ts_engine` modules
+cannot share an interpreter), diff the masks.

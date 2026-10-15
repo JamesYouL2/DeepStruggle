@@ -1,106 +1,28 @@
 # E4 was launched with a different network from every late E3 arm
 
-**Found 2026-09-19**, by checking rather than assuming. Both E4 arms ran the bare architecture
-defaults; all eleven late E3 arms did not.
+**Conclusion (found 2026-09-19; resolved by accepting it).** E4-01-01 and E4-02-01 ran the bare
+architecture defaults instead of the flags all eleven late E3 arms carried, because the launch was
+copied from the `CLAUDE.md` template without diffing `metadata.json`. The owner accepted E4-01/02 as
+the new baseline rather than discard 560M steps, so **no E3 number is comparable to an E4 one**;
+everything internal to E4 (pooled vs unpooled, the round robin, the collapse analysis) is sound.
 
-| flag | E3-30 … E3-37 (11 runs) | **E4-01-01, E4-02-01** |
+| flag | E3-30 … E3-37 | **E4-01-01, E4-02-01** |
 |:---|:---|:---|
 | `identity_dim` | 16 | **0** |
 | `per_entity_heads` | 64 | **0** |
 | `graph_layers` | 0 | **2** |
 | `self_transform` | True | **False** |
 
-The state dicts confirm it independently of the metadata, which is the check that matters —
-metadata records what was asked for, weights record what was built:
+The state dicts confirm it (weights record what was built; metadata only what was asked for). The
+E3 net is ~18% more expensive per forward (3.46 against 2.94 ms at batch 512), which confounds the
+E3↔E4 throughput comparison of P18 (since deleted; the throughput work is
+[`../../log/training_throughput_cpu.md`](../../log/training_throughput_cpu.md)) but does not explain its
+100% → 55% GPU-utilisation drop. Blunder rates and training dynamics
+(`entropy`, `kl_div`, `adv_std_raw`, …) are not comparable across the two lineages at all
+([`../../method/detecting_collapse.md`](../../method/detecting_collapse.md)).
 
-```
-only in E3:  card_identity (110,16)   country_identity (84,16)
-             pe_card.0 (64,158)       pe_country.0 (64,170)      board_fc.0 (64,42)
-only in E4:  gconv1.linear (64,26)    gconv2.linear (64,64)
-differing :  card_fc.0  E3 (64,30) -> E4 (64,14)     [the 16-wide identity concat is gone]
-             policy_head.3  E3 (212,...) -> E4 (220,...)   [expected: the P17 repack]
-```
-
-Only the `policy_head` difference is the intended one.
-
-## Cause
-
-The training command in `CLAUDE.md` does not carry the architecture flags, and E4 was launched
-from it without diffing against a recent run's `metadata.json`. This is the same failure as the
-opponent-pool omission a few hours earlier, and **invariant 14 already says to do that diff** — it
-was written after the pool incident and then not followed for architecture.
-
-The continuations inherit from the originals, so all four E4 directories share it.
-
-## It costs ~18% per forward, and does NOT explain the GPU anomaly
-
-Both nets built fresh at equal action width, batch 512, same device:
-
-```
-E4 (as launched)  3.09M params   340.0 fwd/s   2.94 ms
-E3 (late arms)    3.15M params   288.9 fwd/s   3.46 ms
-```
-
-Near-identical parameter counts; E3's is 18% more expensive. That is far too small to explain the
-100% → 55% utilisation drop between engines, so
-[`../../plans/P18_training_throughput.md`](../../plans/P18_training_throughput.md)'s headline
-anomaly stands.
-
-## What it confounds
-
-Every E3↔E4 comparison made on 2026-09-19 now carries an architecture term:
-
-* **Throughput.** E3-22-28's 12,157 st/s against E4's 14,335 is +18%, and the architecture alone is
-  worth ~18% per forward. The +40% "game progress per second" figure in P18 mixes two causes and
-  cannot be split without rebuilding one arm. The **16% fewer decisions per turn** measurement is
-  unaffected — it counts decisions, not time.
-* **Blunder rates.** E3-20-28 against E4-02-01 at matched steps compares two networks as well as
-  two engines.
-* **Strength.** E3 checkpoints cannot load on the E4 action space anyway, so no direct comparison
-  was made; but any future one must account for this too.
-
-Nothing *internal* to E4 is affected. Both arms share the architecture, so E4-01 against E4-02 —
-the pooled/unpooled comparison, the round robin, the collapse analysis — is sound.
-
-## The open decision
-
-E4 is internally consistent and works as a fresh ladder. But it is not comparable to E3, and
-`per_entity_heads` was carried by every late E3 arm rather than being an experiment, which
-suggests it had been found worth having. Before spending seeds and a sweep on this architecture,
-the choice is:
-
-1. **Accept E4 as the new baseline** and record the discontinuity here; or
-2. **Relaunch E4-02 with matching flags** so the ladder continues the architecture E3 settled on.
-
-Worth deciding before the compute goes in, not after.
-
-## The general lesson
-
-Invariant 14 tells you to diff flags against a recent healthy run before launching. It was written
-for the opponent pool and applied only to the opponent pool. **Diff the whole `metadata.json`, not
-the flags you happen to be thinking about** — the ones you are not thinking about are exactly the
-ones that drift.
-
-## A fourth flag difference, which is NOT a drift
-
-`tools/scripts/launch_flags.py` also reports `ref_update_freq` differing (E3-37-31 5,000,000 vs
-E4 200,000). That one is not a defect: 200,000 is the setting 43 of 51 E3 arms used, and the arm
-that collapsed by KL domination carried 5,000,000. See
-[`ref_update_freq_open_ablation.md`](ref_update_freq_open_ablation.md). A diff tells you a flag
-differs; only a survey tells you whether the difference is a mistake.
-
-## Which of these comparisons are still allowed
-
-The throughput comparison above is a **deliberate engineering measurement** -- the owner asked
-why an arm no longer saturates the GPU -- and it is kept, with its architecture confound stated.
-Wall-clock and utilisation are properties of the implementation, not of the self-play
-distribution.
-
-The **blunder-rate** comparison is not: it is measured through the self-play distribution, which
-[`../../method/what_survives_an_engine_change.md`](../../method/what_survives_an_engine_change.md)
-already rules out across a revision.
-
-And no E3/E4 comparison of **training dynamics** -- `entropy`, `kl_div`, `clip_frac`,
-`adv_std_raw`, critic quality -- is admissible at all. Those magnitudes reverse sign between the
-two lineages; see [`../../method/detecting_collapse.md`](../../method/detecting_collapse.md).
-Health thresholds are self-relative, and E4's reference envelope is built from E4 arms only.
+**The lesson, now `CLAUDE.md` invariant 15:** diff the whole `metadata.json` against a healthy run
+(`tools/scripts/launch_flags.py <ref> --diff <new>`), not the flags you happen to be thinking about.
+A diff says a flag differs; only a survey says whether the difference is a mistake —
+`ref_update_freq` (5,000,000 in E3-37 against E4's 200,000) is not one: 43 of 51 E3 arms used 200,000
+([`ref_update_freq_open_ablation.md`](ref_update_freq_open_ablation.md)).

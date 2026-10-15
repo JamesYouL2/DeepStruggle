@@ -1,24 +1,18 @@
 # findings/engine — what the simulator does
 
-Pinned to a commit. A finding here can invalidate **absolute** numbers wholesale: if a rules defect
-or a lying instrument is found, the ratings measured through it are gone rather than re-sized.
+Pinned to a commit. A finding here can invalidate **absolute** numbers wholesale: when a rules defect
+or a lying instrument is found, the ratings measured through it are gone, not re-sized.
 
 | file | what it settles |
 |:---|:---|
-| [`engine_revisions.md`](engine_revisions.md) | the E1 → E2 → E3 ladder, what each boundary changed, and which comparisons each one breaks |
-| [`engine_change_decision_stream.md`](engine_change_decision_stream.md) | that P14 — the mask/step collapse and the Missile Envy rule — moved **no** decision: 1,068 games, 385,812 steps, four policies, zero divergences including in the legal mask |
-| [`hidden_information_legality.md`](hidden_information_legality.md) | that the legal action **set** can depend on the opponent's hidden hand — The Cambridge Five names regions from cards only the opponent can see — which breaks the assumption every determinized search makes |
-| [`ply_headline_order.md`](ply_headline_order.md) | that `ai.game_length.ply` numbered headlines by side while the engine resolves them in Ops order — fixed by ordering on `headline_stage`; the correction is 0.00026 SD of terminal ply, so earlier decisiveness numbers stand |
+| [`engine_revisions.md`](engine_revisions.md) | the E1 → E7 letters, what each boundary changed, and which comparisons each breaks; E7 = E6 in strength |
+| [`engine_change_decision_stream.md`](engine_change_decision_stream.md) | P14 moved **no** decision (1,068 games, 385,812 steps, masks included); how to measure the next change |
+| [`hidden_information_legality.md`](hidden_information_legality.md) | the legal action **set** can depend on the opponent's hidden hand (The Cambridge Five), which breaks determinized search |
+| [`event_completion_categories.md`](event_completion_categories.md) | PARTIAL_OK / BEST_EFFORT / MUST_COMPLETE: early stop and fizzling are two facts, and the fixes are coupled (P17 §6a) |
+| [`flattening_card_play.md`](flattening_card_play.md) | P17's merged card-resolution node (−17.5% decisions) and the end of `INFLUENCE` meaning "decline" |
+| [`missile_envy_starred_removal.md`](missile_envy_starred_removal.md) | Missile Envy removed a starred card whose Event never fired (fixed at E4) |
+| [`ply_headline_order.md`](ply_headline_order.md) | `ply` now orders headlines by resolution; the correction is 0.00026 SD, so earlier numbers stand |
 
-The second is the concrete evidence for the assumption in
-[`../../method/what_survives_an_engine_change.md`](../../method/what_survives_an_engine_change.md),
-and also its limit: it shows an engine change that moves nothing, which is the easy direction. It
-says nothing about a rules fix that does move play.
-
-Open defects live in [`../../../BUGS.md`](../../../BUGS.md), not here. A bug leaves that file when
-it is fixed and has a regression test; if the fix changed what the engine does, the *consequence*
-is what gets written up here.
-
-The instrument failures — every probe that reported confident nonsense — are in
-[`../../log/measurement_bugs.md`](../../log/measurement_bugs.md), with the short checklist drawn
-from them in [`../../method/measurement_pitfalls.md`](../../method/measurement_pitfalls.md).
+Open defects live in [`../../../BUGS.md`](../../../BUGS.md); a fixed bug's *consequence* is written
+up here. Instruments that reported confident nonsense: [`../../log/measurement_bugs.md`](../../log/measurement_bugs.md),
+checklist in [`../../method/measurement_pitfalls.md`](../../method/measurement_pitfalls.md).

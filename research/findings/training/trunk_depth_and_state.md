@@ -17,7 +17,7 @@ The shallow trunk is `--ladder-res-blocks 0`: observation → grouped projection
   ones 50–60. So at 560M, with the league, the deep SWA leads (E6-04-44 against E6-13-44: 45.6%
   for the shallow one).
 * **At saturation the gap widens** (E7-06-44: M2d continued to 1,200M). The deep recipe plateaus
-  at about 560M while the shallow one gains to about 900M–1B. At 1,200M the shallow trunk wins
+  at about 560M while the shallow one keeps gaining. At 1,200M the shallow trunk wins
   64.8% on snapshots (US +14.0, USSR +6.1 against the panel) and 57.2% on SWAs (+6.5 / +0.7).
 * Logs: [`../../log/P30_shallow_trunk.md`](../../log/P30_shallow_trunk.md),
   [`../../log/E7_06_44_deep_to_saturation.md`](../../log/E7_06_44_deep_to_saturation.md).
@@ -75,12 +75,17 @@ could reach. Within-card R² counts only the board-dependent part
 * Logs: [`../../log/P30_card_country_interaction.md`](../../log/P30_card_country_interaction.md),
   [`../../log/P30_card_board_targets.md`](../../log/P30_card_board_targets.md).
 
-## What this points at for base-model quality
+## What came of it
 
-* **Not depth or width after the fusion.** That is settled twice: M2d against shallow, and the
-  768 × 8 bet 1.
-* **The input representation.** That is where state is lost, and where per-entity structure
-  already proved its worth (the country head, +282).
-* **The learning signal.** The architecture can hold more than RL puts into it.
+* **Not depth or width after the fusion** — settled twice (M2d against shallow, the 768 × 8 bet 1).
+* **The input representation.** Card and country tokens with attention (P30 C1, E7-09-44) led at
+  200M and had no lead at 400M, at ~9× the compute per step
+  ([`../../log/P30_C1_tokens.md`](../../log/P30_C1_tokens.md)). Widening the input projections in
+  place (A13, 256 → 512, `--resume-widen`) was the only late branch still rising at 8,000M, and on
+  R48's plateau it made the strongest greedy network (A13+R48, leaderboard 1679;
+  [`../../runs.md`](../../runs.md)).
+* **The learning signal.** An auxiliary card-event target (P30 C2, E7-13-44) lifted the frozen
+  card-board probe (within-card 0.62 → 0.66) with a small, branch-spread-sized strength gain
+  ([`../../log/P30_c2_card_probe_and_branch_soups.md`](../../log/P30_c2_card_probe_and_branch_soups.md)).
 
-[P30](../../plans/P30_base_model_quality.md) turns these into arms.
+Plan: [P30](../../plans/P30_base_model_quality.md).
