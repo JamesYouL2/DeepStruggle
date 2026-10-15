@@ -4,6 +4,11 @@
 (network + `rollout(k=4,worlds=16,horizon=4,rule=z2)`) gets stronger when the network does. The
 owner's priority: "improvements of basic checkpoint that also are preserved under search."
 
+**Labels.** Per the nomenclature (2026-10-15): `P33a`–`P33f` are this plan's measurements that train
+nothing; `R49`–`R55` are training approaches and `A14` an architecture, reserved here and registered in
+[`../architectures_and_recipes.md`](../architectures_and_recipes.md) at launch, where a run's name
+carries them (`…+A13@12000M+R49`). `E` is the engine only.
+
 **What this plan is not.** Not another way to distil the search into the policy (five online and
 two offline forms are null, see below), not a search-side tuning plan (that is the fork's rollout
 tuning), and not a product recipe (the product is the searched soup).
@@ -31,15 +36,15 @@ section says what the record allows on that question before the arms below.
   policy is saturated (logits 19–33 nats, the PPO gradient ∝ 1 − P ≈ 0) and the critic's target is
   the λ-return of sampled games. In AlphaZero-style training the capacity is spent on the search's
   value and visit targets, not on the policy gradient. The order this plan follows is therefore:
-  first make the training signal deep (E1, E4, E6, E7), **then** re-test capacity under it (E2,
+  first make the training signal deep (R49/R50, R52, R53, R54), **then** re-test capacity under it (A14,
   and the token architecture from scratch) -- a capacity re-test on today's signal would repeat
   E6-10-44.
 * **The full AlphaZero loop is out of reach at this scale, a sparse one is not.** The root costs
   ~910 network rows a decision against one for the trainer's own forward (~95k decisions/s), so
   searching every training move is ~900× the inference. Searching 1–2% of them is 10–20×, the
   regime R42 already ran in (9k steps/s). The two halves of that loop that have *not* been run
-  here are value targets from the deployed search (E1) and the searched move being **played** in
-  the training games (E7), not only used as a target. Those are the arms with a step-change
+  here are value targets from the deployed search (R49) and the searched move being **played** in
+  the training games (R54), not only used as a target. Those are the arms with a step-change
   shape; the diagnostics decide which goes first.
 * **The one lever that stays with the owner: hidden information.** The observation carries no
   play history, so the network infers the opponent's hand from the board alone, and the search
@@ -47,7 +52,7 @@ section says what the record allows on that question before the arms below.
   literature's step change for hidden-information games, but any form of them is an observation or
   architecture decision, and the cheapest probe -- a hand-prediction head on the frozen trunk
   against the "deck or hidden" prior -- would first show whether the trunk already carries a belief.
-  Listed as E8, a probe only; the representation decision is the owner's.
+  Listed as P33f, a probe only; the representation decision is the owner's.
 
 ## Where the record stands (main, 2026-10-15)
 
@@ -130,7 +135,7 @@ greedy one (R34 at T = 1 scores 36.6% against the plain SWA; greedy 55.5%). The 
 are reached by greedy play and ask "what happens from here under greedy play". Where sampled play
 is riskier than greedy play — DEFCON 2 with a coup in the mix, a scoring card that must not be
 held — the critic prices the sampled policy's accidents into the position. DEFCON 2 card choice is
-the single largest item of the searched leak. This is a hypothesis, and §E0b measures it before
+the single largest item of the searched leak. This is a hypothesis, and §P33b measures it before
 any arm is built on it.
 
 **The measurement rule that follows.** From here every arm is read **under the root as well as
@@ -142,11 +147,11 @@ the JSON, [`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.m
 reading is kept so a raw loss is
 not hidden by a searched gain. Cost: ~11 min per 1,000 rollout games on one GPU, ~25 min a read.
 
-## E0 — diagnostics first (no training; ~4 GPU-hours in all)
+## P33a–P33d — diagnostics first (no training; ~4 GPU-hours in all)
 
 Each one separates two explanations and decides which arms below run. Pre-registered reads.
 
-### E0a — the leaf-critic swap
+### P33a — the leaf-critic swap
 
 A two-network root: candidates and rollouts from network A, the leaf read by network B
 (`RolloutRoot` gains a `leaf_model`; `rollout_root.py:_net` is one forward, so B is a second
@@ -162,12 +167,12 @@ A8/A13 models read the same 3,824-float observation, so any pair works.
 
 1,000 deals a side each against the searched soup, plus the two swapped pairs head to head.
 **Read:** if swapping the leaf moves the rating by more than swapping the rollouts (> 3 SE), the
-critic is the search-preserved channel and E1 is the route; if the rollouts carry it, channel 2
-(greedy play inside the horizon) is, and E3 moves ahead of E1; if neither moves it, the searched
-ratings are at a common ceiling set by the horizon and E4 (the longer-horizon value target) is
+critic is the search-preserved channel and the critic track is the route; if the rollouts carry it, channel 2
+(greedy play inside the horizon) is, and R51 moves ahead of the critic track; if neither moves it, the searched
+ratings are at a common ceiling set by the horizon and R52 (the longer-horizon value target) is
 the route.
 
-### E0b — the critic's calibration on greedy against sampled play
+### P33b — the critic's calibration on greedy against sampled play
 
 For R39's SWA, A13+R48's SWA and the R34 soup: 2,000 self-play games greedy and 2,000 at
 temperature 1, the critic's value at every decision against the game's result. Report log loss
@@ -176,26 +181,26 @@ and the signed error by DEFCON, turn and side, on each kind of game (extend
 hypothesis above predicts the critic is well calibrated on temperature-1 games and biased on
 greedy ones, with the bias concentrated at DEFCON 2 and in the late turns, and larger on the
 gap-penalty line than on the plain SWA. If the greedy-game error is not larger (< 2 SE of the
-sampled-game error), drop E1b and E1c and keep E1a only.
+sampled-game error), drop R50 and R55 and keep R49 only.
 
-### E0c — the critic on the confirmed leak positions
+### P33c — the critic on the confirmed leak positions
 
 The searched-leak bank holds 1,122 confirmed positions with 2,048-pair playout labels for the
 player's move and the best move. For each, the critic's value after each move (one forward each,
 the mover's frame) against the playout difference, for the three networks. **Read:** the share
 of pairs the critic ranks wrong and the correlation of its difference with the labelled one. If
 the critic ranks the labelled pairs no better than chance on the DEFCON-2 card choices, that is
-the leak's location and E1's target; if it ranks them right and the root still kept the wrong
-move, the horizon or the world noise is the fault and E4 is.
+the leak's location and the critic track's target; if it ranks them right and the root still kept the wrong
+move, the horizon or the world noise is the fault and R52 is.
 
-### E0d — candidate recall
+### P33d — candidate recall
 
 The root at k = 8 on 2,000 positions from R39's searched self-play, recording the rank under the
 network of the move it picks. **Read:** the share of departures at rank 5–8. Above ~25% (the leak
-census's 27% at rank 5–6), k = 6 at play time is a product change worth its +50% cost, and E3's
+census's 27% at rank 5–6), k = 6 at play time is a product change worth its +50% cost, and R51's
 recall objective is worth an arm; below 10%, channel 1 is closed.
 
-## E1 — the critic as the search's leaf (the main track)
+## R49 and R50 — the critic as the search's leaf (the main track)
 
 Three forms, from cheapest to most faithful. Each branches from A13+R48's plateau state
 (`resume_11210…` or its last resume) with its recipe (`--logit-gap-coef 0.001 --batch-size
@@ -203,7 +208,7 @@ Three forms, from cheapest to most faithful. Each branches from A13+R48's platea
 80M windows under the rule above. The policy loss is untouched in all three, so none can flatten
 the policy (R35's design).
 
-### E1a — greedy-continuation value targets (T2 with the root)
+### R49 — greedy-continuation value targets (T2 with the root)
 
 `--search-value-beta β` with `--search-rollout-horizon 4`: at 1 in S learner decisions the
 position is played out greedily by the **learner's own frozen snapshot** (not a teacher: the
@@ -221,7 +226,7 @@ search that §1 of the depth log showed cannot choose and §4 showed loses groun
 target here is the deployed search's own leaf estimate, averaged over 16 worlds, 4 action rounds
 ahead.
 
-### E1b — a greedy value head
+### R50 — a greedy value head, fed by greedy-only environments
 
 A second value head `v_greedy` on the trunk, trained only on the returns of environments that
 play **both sides greedily** (a `--greedy-env-frac f` of the envs, f = 0.25; those envs contribute
@@ -231,30 +236,30 @@ otherwise. No search cost; the price is a quarter of the rollout games carrying 
 gradient (≈ −25% policy throughput; the exploration of the other 75% is unchanged). Build: an
 env flag in the batch runner's temperature path (`--rollout-temps` is already per-env), a head, a
 masked loss, the root's reader, `check_checkpoint_layout` unchanged (the observation does not
-move). If E0b finds no greedy/sampled gap, skip.
+move). If P33b finds no greedy/sampled gap, skip.
 
-### E1c — the single-head variant of E1b
+### R55 — the single-head variant
 
-As E1b but one head, mixed targets (f = 0.25 greedy envs feed `v_win` with everyone else). Fewer
-parts; the critic then predicts a 3:1 mixture. Run only if E1b is positive and the owner prefers
+As R50 but one head, mixed targets (f = 0.25 greedy envs feed `v_win` with everyone else). Fewer
+parts; the critic then predicts a 3:1 mixture. Run only if R50 is positive and the owner prefers
 one head; otherwise skip.
 
-### E1 decision rule
+### Decision rule for the critic track
 
 Adopt the first form whose searched SWA beats the control's searched SWA by the per-seat rule
 with raw not lower by more than 1 SE, **and** whose own-search gain (its searched self over its
-raw self) is not smaller than the control's. A positive E0c with a null E1 means the critic is
-signal-limited in a way 400M of these targets does not fix; then the value-capacity arm (E2).
+raw self) is not smaller than the control's. A positive P33c with a null critic track means the critic is
+signal-limited in a way 400M of these targets does not fix; then the value-capacity arm (A14).
 
-## E2 — value capacity, only if E1 moves the critic's labels but not the games
+## A14 — value capacity, only if the critic track moves the critic's labels but not the games
 
 A value-only residual block after the fusion (policy heads untouched), grown in place at identity
 so day-one play is unchanged (the `--resume-widen` pattern, `ai/models/grow.py`): A14. The depth
 log's value probe argued the critic is signal-limited, not capacity-limited (a small head on the
-frozen trunk doubled the sibling correlation), so this waits for E1's evidence. One cell, 400M,
+frozen trunk doubled the sibling correlation), so this waits for the critic track's evidence. One cell, 400M,
 same reads.
 
-## E3 — candidate recall (only if E0d says channel 1 is open)
+## R51 — candidate recall (only if P33d says channel 1 is open)
 
 A recall objective that search preserves by construction: the frozen-teacher CE already pushes
 mass toward the teacher's full distribution; the specific form here is a **top-k hinge** — at a
@@ -263,17 +268,17 @@ the k-th logit and the pick's (nothing when it is inside). It cannot broaden the
 root agrees (no gradient there) and does not ask the argmax to move, which is where R39–R42
 failed. Cheap on R39's targets at 1 in 256. One cell, read under the root at k = 4 and k = 6.
 
-## E4 — the horizon: value targets to the turn's end
+## R52 — the horizon: value targets to the turn's end
 
-If E0a finds a common ceiling and E0c says the critic ranks the leak pairs correctly, the root's
+If P33a finds a common ceiling and P33c says the critic ranks the leak pairs correctly, the root's
 4-boundary horizon is what hides the value (scoring-card and China-card timing resolve at the
 turn's end or later). The base-checkpoint version of a longer horizon is a critic trained on
-**turn-end** greedy continuations: E1a with the stop at the turn boundary (`turn_pricing.price`
+**turn-end** greedy continuations: R49 with the stop at the turn boundary (`turn_pricing.price`
 already stops there; 1 in 128 decisions to hold the cost). Judged under the 4-boundary root — a
 critic that has learned what the turn's end looks like should make the 4-boundary leaves worth
 more — and, as a product read, under a 6-boundary root.
 
-## E6 — exact endgame values as critic targets (the one place noise-free labels exist)
+## R53 — exact endgame values as critic targets (the one place noise-free labels exist)
 
 The engine can enumerate the rest of the game where it ends in the current turn
 (`tools/scripts/blunder_bank.py prove`: dice averaged, the opponent's replies searched; 400k–2M
@@ -292,7 +297,7 @@ then, under the root, the share of games lost at final scoring and the US last-p
 points at play time; this arm is for the *critic*, whose exactness the search then reads at every
 turn-10 leaf.
 
-## E7 — act with the search in training (expert iteration, sparse)
+## R54 — act with the search in training (expert iteration, sparse)
 
 R39–R42 used the root's improved policy as a **target** and left the rollouts untouched: the
 training games were still the network's own, and their returns the network's own. In expert
@@ -302,16 +307,16 @@ needs. Build: at 1 in S learner decisions (S = 64, ~1.5%) the rollout root choos
 forced as environment, exactly as a forced opening is (`learner = 0`, no policy gradient on it,
 `ai/training/forced_openings.py`'s mechanism), with the improved policy as a CE target there as in
 R39. The search's network is the learner's own frozen snapshot, refreshed with π_ref. Cost ~R39's.
-**Read:** raw and searched as for E1; the own-search gain is the number of interest -- a network
+**Read:** raw and searched as for the critic track; the own-search gain is the number of interest -- a network
 whose games are played by the search should see the root add *less* on top of it than the
 control's does (the gap closing from below) while its searched rating rises. **Caution, from
 R29/R31:** the targets follow the learner here; the frozen snapshot and the refresh cadence keep
 them still between refreshes, and KL(target ‖ policy) = search CE − target entropy is watched as
-in P32 -- rising past 0.5 inside a refresh period stops the arm. A positive E7 is the first arm
+in P32 -- rising past 0.5 inside a refresh period stops the arm. A positive R54 is the first arm
 with a from-scratch cell (S = 256, the heads recipe), since it changes the training distribution
 itself.
 
-## E8 — does the trunk carry a belief about the opponent's hand? (probe, CPU)
+## P33f — does the trunk carry a belief about the opponent's hand? (probe, CPU)
 
 A head on the frozen trunk of A13+R48's SWA, trained on 50k self-play positions to predict the
 opponent's hidden hand (110 sigmoids), against the "deck or hidden" prior (the pool's uniform
@@ -321,7 +326,7 @@ represented and a belief *input* would add little; if it does not, the gap is th
 history or belief feature could lift, and the number goes to the owner as the cost/benefit of
 that representation decision. No training arm follows from this plan.
 
-## E5 — the setup under searched continuation (a check, ~40 min)
+## P33e — the setup under searched continuation (a check, ~40 min)
 
 The network's setup (USSR Poland +3, Yugoslavia +3 in 100% of games; US West Germany +4, Italy
 +3, Iran +1, Panama +1) looks wrong to a human (USSR Poland 4, East Germany 4, +1 Yugoslavia or
@@ -331,23 +336,23 @@ openings as environment, no gain). Neither used a searched continuation. Here: t
 (the network's, the human one, the owner's forced-openings set) as forced openings, both sides
 played by the rollout root, 500 paired deals each. **Read:** a setup that beats the network's by
 > 3 SE under searched play is direct evidence that the critic misprices positions that resolve
-over several turns — the same fault E1/E4 target — and R43 is re-run after E1 lands. Level again
+over several turns — the same fault R49 and R52 target — and R43 is re-run after the critic track lands. Level again
 → the setup is a style, not a leak, and it leaves the record.
 
 ## Sequencing (two arms at a time)
 
-1. **Now, no GPU conflict:** E0a–E0d and E8 (eval-only; E0a needs the small two-network build).
+1. **Now, no GPU conflict:** P33a–P33d and P33f (eval-only; P33a needs the small two-network build).
    One day of CPU/GPU-eval time in all.
-2. **Then two arms:** E1a (β 0.5, S 64) and E7 (S 64) -- the two halves of the sparse loop, one
+2. **Then two arms:** R49 (β 0.5, S 64) and R54 (S 64) -- the two halves of the sparse loop, one
    value-side and one acting-side, from A13+R48's plateau, 400M, read at 80M windows raw and
-   searched. E1b takes E7's slot if E0b finds the greedy/sampled gap and E7's build is not ready.
-3. **E5 beside them** (eval only); E6's labelling pass built meanwhile (CPU).
-4. **Then by the rules:** E6, E4, E2 or E3, one cell each, never more than two arms live. A
-   positive E1 or E7 moves E2 (capacity under the deeper signal) ahead of the rest.
+   searched. R50 takes R54's slot if P33b finds the greedy/sampled gap and R54's build is not ready.
+3. **P33e beside them** (eval only); R53's labelling pass built meanwhile (CPU).
+4. **Then by the rules:** R53, R52, A14 or R51, one cell each, never more than two arms live. A
+   positive critic track or R54 moves A14 (capacity under the deeper signal) ahead of the rest.
 5. **Adoption, and the from-scratch question.** A positive form is carried to the next
    from-scratch run only as a *late-phase* recipe unless a from-scratch cell shows it is safe
    from step 0 -- the gap penalty's lesson. The from-scratch run that this plan aims at is the
-   heads recipe plus whichever of E1/E6/E7 passed, **then** the capacity re-test on that signal
+   heads recipe plus whichever of R49/R50/R53/R54 passed, **then** the capacity re-test on that signal
    (A14 and the tokens), judged at saturation and under the root. That run is the candidate for
    "much further"; nothing before it is.
 
@@ -357,33 +362,33 @@ over several turns — the same fault E1/E4 target — and R43 is re-run after E
 * Searched: the same SWA under `rollout(k=4,worlds=16,horizon=4,rule=z2)`, against the control's
   searched SWA and the searched R34 soup (1791); per-seat rates from the JSON.
 * Own-search gain: the searched SWA against its raw self.
-* Critic: E0b's calibration tables and E0c's leak-pair ranking, re-run on each arm's SWA.
+* Critic: P33b's calibration tables and P33c's leak-pair ranking, re-run on each arm's SWA.
 * Stability: entropy, KL to π_ref, pool win rate, value loss — the usual.
 
 ## Decision rules, collected
 
-* E0a: leaf swap > rollout swap by 3 SE → E1 is the track; the reverse → E3 first; neither → E4.
-* E0b: greedy-game critic error larger than sampled-game error by > 2 SE, concentrated at DEFCON
-  2 / late turns → E1b runs; otherwise E1a only.
-* E0c: critic at chance on the DEFCON-2 leak pairs → the leak is the critic's; ranks them right →
-  the horizon's (E4).
-* E0d: departures at rank 5–8 > 25% → E3 and k = 6; < 10% → channel 1 closed.
-* E1: adopt per the rule above; null with a positive E0c → E2.
-* E5: > 3 SE for another setup under searched play → re-run R43 after E1; level → closed.
-* E6: critic error on exact-labelled turn-10 positions halves and the final-scoring loss share
+* P33a: leaf swap > rollout swap by 3 SE → the critic track is the route; the reverse → R51 first; neither → R52.
+* P33b: greedy-game critic error larger than sampled-game error by > 2 SE, concentrated at DEFCON
+  2 / late turns → R50 runs; otherwise R49 only.
+* P33c: critic at chance on the DEFCON-2 leak pairs → the leak is the critic's; ranks them right →
+  the horizon's (R52).
+* P33d: departures at rank 5–8 > 25% → R51 and k = 6; < 10% → channel 1 closed.
+* R49/R50: adopt per the rule above; null with a positive P33c → A14.
+* P33e: > 3 SE for another setup under searched play → re-run R43 after the critic track; level → closed.
+* R53: critic error on exact-labelled turn-10 positions halves and the final-scoring loss share
   falls under the root → adopt; exact labels learned but no game effect → the endgame is not where
   the searched player's points are, closed.
-* E7: own-search gain smaller than the control's **and** searched rating higher → adopt and open
+* R54: own-search gain smaller than the control's **and** searched rating higher → adopt and open
   the from-scratch cell; KL(target ‖ policy) past 0.5 inside a refresh period → stop (the R29 loop).
-* E8: trunk beats the public-information probe → no belief input proposed; trunk at the prior →
+* P33f: trunk beats the public-information probe → no belief input proposed; trunk at the prior →
   the gap is reported to the owner as the case for a history/belief representation.
 
 ## Follow-ups
 
-* A positive E1 re-opens the teacher loop with a repaired critic: re-freeze to the arm's SWA only
+* A positive critic track re-opens the teacher loop with a repaired critic: re-freeze to the arm's SWA only
   if it *searched* beats the current teacher searched (P32's corrected rule).
-* A positive E1b makes `v_greedy` the leaf for every searched product player.
-* If E0a says the soup's lead is the critic's noise averaging, a cheap product option is a leaf
+* A positive R50 makes `v_greedy` the leaf for every searched product player.
+* If P33a says the soup's lead is the critic's noise averaging, a cheap product option is a leaf
   ensemble (the model's critic averaged with the soup's); it is not a base-checkpoint gain and is
   recorded as a product note only.
 

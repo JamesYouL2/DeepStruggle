@@ -37,6 +37,12 @@ branch point on the way to it:
   head) is recipe: the policy never reads it.
 - **`S`** — the **seed** of the environment, sampling and opponent pool.
 
+**Plans and their experiments use the same letters** (owner, 2026-10-15): a plan combining many
+ideas is `P<n>` (`research/plans/`); an experiment under it that trains nothing is `P<n>a`,
+`P<n>b`, …; one that trains a model is named by the code it introduces -- an `R` for a training
+approach, an `A` for an architecture -- reserved in the plan and registered here at launch. `E`
+is never an experiment label.
+
 **A code is a set of flags, not a description.** `tools/scripts/run_codes.py` reads each run's
 `metadata.json`, splits its non-default `tools/train.py` flags into architecture, recipe and
 bookkeeping (output, cadence, evals, budget, seeds), and gives each distinct set a code --

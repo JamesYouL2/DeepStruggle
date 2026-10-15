@@ -212,6 +212,12 @@ instrument.
    at once produce results that cannot be attributed
    ([`../log/measurement_bugs.md`](../log/measurement_bugs.md), *evaluation consumed most of a
    training run*).
+8. **Labels inside a plan (owner, 2026-10-15).** `P<n>` is a plan that combines many ideas. A
+   specific experiment under it that trains nothing — a probe, a census, a check — is `P<n>a`,
+   `P<n>b`, …; one that trains a model takes a **recipe code `R<nn>`** (a training approach) or an
+   **architecture code `A<nn>`**, reserved in the plan and registered in
+   [`../architectures_and_recipes.md`](../architectures_and_recipes.md) when launched, so the run
+   name carries it. `E` is the engine revision and nothing else — never a label for an experiment.
 7. **A sweep is one row, not N.** The M2d seed census produced 62 run directories; recording each
    in [`../runs.md`](../runs.md) would bury every other arm. Record the sweep once with its census
    linked, and give individual rows only to rung representatives and anomalies.
