@@ -20,6 +20,7 @@ phase, and decomposed into each side's bias against the realised result.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -34,6 +35,7 @@ class Decision:
     value: float       # v_win from the mover's perspective
     turn: int
     phase: str
+    defcon: int = 0
 
 
 @dataclass
@@ -83,7 +85,8 @@ def play(model: Any, device: Any, num_envs: int = 512, base_seed: int = 4242, te
             if side == 0:
                 continue
             st = runner.get_state(int(i))
-            games[i].decisions.append(Decision(side, float(values[i]), int(st.turn), str(st.current_phase).split(".")[-1]))
+            games[i].decisions.append(Decision(side, float(values[i]), int(st.turn), str(st.current_phase).split(".")[-1],
+                                               int(st.defcon)))
         runner.step_flat_all([int(a) for a in picks], auto_advance=True)
     utils = np.asarray(runner.get_terminal_utilities(), dtype=np.float64)
     for i in range(num_envs):
@@ -196,6 +199,69 @@ def _auc(scores: Any, labels: Any) -> float:
     return float((ranks[y].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
 
 
+def _log_loss(p: Any, y: Any) -> Any:
+    q = np.clip(np.asarray(p, dtype=np.float64), 1e-6, 1 - 1e-6)
+    yy = np.asarray(y, dtype=np.float64)
+    return -(yy * np.log(q) + (1 - yy) * np.log(1 - q))
+
+
+def _decision_table(games: Sequence[Game]) -> Dict[str, np.ndarray]:
+    """Every decision of every decided game: predicted p, outcome, game id, side, turn, DEFCON."""
+    cols: Dict[str, List[float]] = {"p": [], "y": [], "g": [], "side": [], "turn": [], "defcon": []}
+    for gi, g in enumerate(games):
+        if g.us_util == 0.0:
+            continue
+        for d in g.decisions:
+            cols["p"].append((d.value + 1.0) / 2.0)
+            cols["y"].append(1.0 if g.us_util * d.side > 0 else 0.0)
+            cols["g"].append(gi)
+            cols["side"].append(d.side)
+            cols["turn"].append(d.turn)
+            cols["defcon"].append(d.defcon)
+    return {k: np.asarray(v) for k, v in cols.items()}
+
+
+def compare_report(by_temperature: Dict[float, Sequence[Game]]) -> str:
+    """P33b: the same critic on games played at different temperatures -- the signed error (bias) and
+    the log loss per slice, each game-clustered, and the difference of the first temperature from the
+    last with its SE (independent game sets). The hypothesis it tests: the critic, trained on the returns
+    of sampled play, is biased on greedy play, most at DEFCON 2 and late."""
+    temps = list(by_temperature)
+    tabs = {t: _decision_table(g) for t, g in by_temperature.items()}
+    slices: List[Tuple[str, Any]] = [
+        ("all", lambda t: np.ones(len(t["p"]), dtype=bool)),
+        ("as US", lambda t: t["side"] == 1), ("as USSR", lambda t: t["side"] == -1),
+        ("turns 1-3", lambda t: t["turn"] <= 3), ("turns 4-7", lambda t: (t["turn"] >= 4) & (t["turn"] <= 7)),
+        ("turns 8-10", lambda t: t["turn"] >= 8),
+    ] + [(f"DEFCON {dc}", (lambda dc: lambda t: t["defcon"] == dc)(dc)) for dc in (2, 3, 4, 5)] + [
+        ("DEFCON 2, turns 8-10", lambda t: (t["defcon"] == 2) & (t["turn"] >= 8)),
+    ]
+    head = "  ".join(f"T={t:g}: bias, log loss".ljust(34) for t in temps)
+    out = [f"{'slice':22s}  {head}  T={temps[0]:g} - T={temps[-1]:g}: |bias|, log loss"]
+    for name, sel in slices:
+        cells: List[str] = []
+        stats = {}
+        for t in temps:
+            tab = tabs[t]
+            m = sel(tab)
+            if not m.any():
+                cells.append("–".ljust(34))
+                continue
+            b, bse, n = _clustered(list(tab["p"][m] - tab["y"][m]), list(tab["g"][m]))
+            ll, llse, _ = _clustered(list(_log_loss(tab["p"][m], tab["y"][m])), list(tab["g"][m]))
+            stats[t] = (b, bse, ll, llse)
+            cells.append(f"{b:+.4f}±{bse:.4f}  {ll:.4f}±{llse:.4f}  n={n:,}".ljust(34))
+        diff = ""
+        if temps[0] in stats and temps[-1] in stats:
+            b0, s0, l0, ls0 = stats[temps[0]]
+            b1, s1, l1, ls1 = stats[temps[-1]]
+            db, dl = abs(b0) - abs(b1), l0 - l1
+            sd, sl = math.sqrt(s0 ** 2 + s1 ** 2), math.sqrt(ls0 ** 2 + ls1 ** 2)
+            diff = f"{db:+.4f} ({db / max(sd, 1e-9):+.1f} SE)  {dl:+.4f} ({dl / max(sl, 1e-9):+.1f} SE)"
+        out.append(f"{name:22s}  {'  '.join(cells)}  {diff}")
+    return "\n".join(out)
+
+
 def calibration_report(games: Sequence[Game], bins: int = 10) -> str:
     """Predicted win probability (v + 1) / 2 at every decision, from the mover's side, against
     whether the mover won. Reliability by bin, bias, ECE, Brier and its skill over the base rate,
@@ -231,8 +297,9 @@ def calibration_report(games: Sequence[Game], bins: int = 10) -> str:
         ece = float(sum(abs(ps[idx == b].mean() - ys[idx == b].mean()) * (idx == b).mean()
                         for b in range(bins) if (idx == b).any()))
         auc = _auc(ps, ys)
-        return (f"bias {bias:+.4f} ± {bse:.4f}  ECE {ece:.4f}  Brier {brier:.4f}  skill {skill:+.3f}  "
-                f"AUC {auc:.3f}  (n={n:,}, win rate {base:.3f})")
+        ll, llse, _ = _clustered(list(_log_loss(ps, ys)), list(gs))
+        return (f"bias {bias:+.4f} ± {bse:.4f}  log loss {ll:.4f} ± {llse:.4f}  ECE {ece:.4f}  Brier {brier:.4f}  "
+                f"skill {skill:+.3f}  AUC {auc:.3f}  (n={n:,}, win rate {base:.3f})")
 
     allsel = np.ones_like(p, dtype=bool)
     out.append(f"Calibration of v_win at every decision (mover's side), {len(set(g_l)):,} games:")
@@ -252,6 +319,10 @@ def calibration_report(games: Sequence[Game], bins: int = 10) -> str:
     out.append("\nBy turn:")
     for t in sorted(set(turn_l)):
         out.append(f"  turn {t:2d}: " + summary(turn == t))
+    out.append("\nBy DEFCON:")
+    defcon = np.asarray([d.defcon for g in games if g.us_util != 0.0 for d in g.decisions])
+    for dc in sorted(set(defcon.tolist())):
+        out.append(f"  DEFCON {dc}: " + summary(defcon == dc))
     out.append("\nBy how the game ended:")
     for e in sorted(set(end_l)):
         out.append(f"  {e:13s}: " + summary(end == e))
@@ -267,10 +338,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--envs", type=int, default=512)
     ap.add_argument("--batches", type=int, default=4)
     ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--temperatures", type=float, nargs="+", default=None,
+                    help="P33b: play at each temperature and compare the critic across them (first minus last)")
     ap.add_argument("--seed", type=int, default=4242)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model
+    if a.temperatures:
+        by_t: Dict[float, Sequence[Game]] = {}
+        for t in a.temperatures:
+            gs: List[Game] = []
+            for b in range(a.batches):
+                gs += play(model, dev, num_envs=a.envs, base_seed=a.seed + 1000 * b, temperature=t)
+            by_t[t] = gs
+            print(f"checkpoint {a.checkpoint}, temperature {t}, {len(gs)} games")
+            print(calibration_report(gs))
+            print()
+        print(compare_report(by_t))
+        return 0
     games: List[Game] = []
     for b in range(a.batches):
         games += play(model, dev, num_envs=a.envs, base_seed=a.seed + 1000 * b, temperature=a.temperature)

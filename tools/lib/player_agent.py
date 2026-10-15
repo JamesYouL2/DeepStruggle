@@ -20,7 +20,7 @@ from ai.models.coldwar_net_v2 import (ColdWarNetV2, check_checkpoint_layout,
 from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
 from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 from ai.search.heuristic_mcts import HeuristicMCTSConfig, make_heuristic_mcts_agent
-from ai.search.rollout_root import RolloutRootAgent, SparseRolloutAgent, rollout_spec_config
+from ai.search.rollout_root import RolloutRootAgent, SparseRolloutAgent, rollout_spec_config, rollout_spec_leaf
 from bindings.ts_env import check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
@@ -626,12 +626,18 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
             raise ValueError(f"sparse: needs a rollout: spec, not {rest!r}")
         return SparseRolloutAgent(inner, float(frac_s))
     if s.lower().startswith("rollout:"):
-        # rollout:<checkpoint>[:k[:worlds[:horizon[:rule]]]] -- the network's top k moves played out
-        # by the network in sampled worlds, a cautious choice (ai/search/rollout_root.py); an omitted
-        # field is the measured player's, 4:16:4:z2.
+        # rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:leaf checkpoint]]]]] -- the network's top k
+        # moves played out by the network in sampled worlds, a cautious choice (ai/search/rollout_root.py);
+        # an omitted field is the measured player's, 4:16:4:z2. A leaf checkpoint (P33a) reads the
+        # leaves with that network's critic instead.
         path, rcfg, label = rollout_spec_config(s)
         base = NeuralAgent.from_checkpoint(path, device=device)
-        return RolloutRootAgent(base.model, label, rcfg, device=resolve_device(device))
+        leaf_path = rollout_spec_leaf(s)
+        leaf_agent = NeuralAgent.from_checkpoint(leaf_path, device=device) if leaf_path else None
+        # Named by its network as well as its settings: two networks under one root must not clash.
+        name = f"{base.name}~{label}" + (f"~leaf={leaf_agent.name}" if leaf_agent else "")
+        return RolloutRootAgent(base.model, name, rcfg, device=resolve_device(device),
+                                leaf_model=leaf_agent.model if leaf_agent else None)
     if s.lower().startswith(("search:", "gumbel:")):
         path, cfg, label = search_spec_config(s)
         base = NeuralAgent.from_checkpoint(path, device=device)

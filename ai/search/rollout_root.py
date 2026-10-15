@@ -69,12 +69,19 @@ def parse_rule(rule: str) -> Tuple[str, float]:
 
 
 class RolloutRoot:
-    def __init__(self, model: Any, config: RolloutConfig, device: Any = "cpu") -> None:
+    def __init__(self, model: Any, config: RolloutConfig, device: Any = "cpu", leaf_model: Any = None) -> None:
+        """`leaf_model` (P33a): another network's critic reads the leaves, while `model` still chooses
+        the candidates and plays the playouts -- the two channels a network reaches the search by,
+        separated. It must read the same observation (the same feature blocks)."""
         self.model = model
+        self.leaf_model = leaf_model
         self.cfg = config
         self.device = torch.device(device) if isinstance(device, str) else device
         self.rule, self.param = parse_rule(config.rule)
         self.features = model_obs_features(model)
+        if leaf_model is not None and model_obs_features(leaf_model) != self.features:
+            raise ValueError(f"the leaf network reads observation features {model_obs_features(leaf_model)!r}, "
+                             f"the root's network {self.features!r}: their leaves would not be the same rows")
         self._rng = random.Random(config.seed)
         #: Per position of the last `choose`: the candidates, each one's mean value and paired lead
         #: over the network's move with its standard error, and the worlds used.
@@ -85,13 +92,15 @@ class RolloutRoot:
     def reseed(self, seed: int) -> None:
         self._rng = random.Random(seed)
 
-    def _net(self, obs: np.ndarray, masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Logits and values for observation rows already built, in chunks of _ROWS."""
+    def _net(self, obs: np.ndarray, masks: np.ndarray, model: Any = None) -> Tuple[np.ndarray, np.ndarray]:
+        """Logits and values for observation rows already built, in chunks of _ROWS (`model`, else the
+        root's own network)."""
+        net = self.model if model is None else model
         lgs, vs = [], []
         for lo in range(0, obs.shape[0], _ROWS):
             with torch.no_grad():
-                lg, v, _ = self.model(torch.from_numpy(obs[lo:lo + _ROWS]).to(self.device),
-                                      torch.from_numpy(masks[lo:lo + _ROWS]).to(self.device))
+                lg, v, _ = net(torch.from_numpy(obs[lo:lo + _ROWS]).to(self.device),
+                               torch.from_numpy(masks[lo:lo + _ROWS]).to(self.device))
             lgs.append(lg.float().cpu().numpy())
             vs.append(v.float().reshape(-1).cpu().numpy())
         self.rows += int(obs.shape[0])
@@ -121,7 +130,7 @@ class RolloutRoot:
             raise RuntimeError(f"the engine refused a playout action in {batch.refused()} rows")
         obs, masks = batch.fill_leaves()
         if obs.shape[0]:
-            _lg, v = self._net(np.ascontiguousarray(obs), np.ascontiguousarray(masks))
+            _lg, v = self._net(np.ascontiguousarray(obs), np.ascontiguousarray(masks), self.leaf_model)
             batch.set_leaf_values(np.ascontiguousarray(v, dtype=np.float32))
 
     def choose(self, states: Sequence[ts.GameState]) -> List[int]:
@@ -213,10 +222,10 @@ class RolloutTeacher:
 class RolloutRootAgent:
     """A tournament entrant (`select_actions_batch`, the state-based batch hook)."""
 
-    def __init__(self, model: Any, name: str, config: RolloutConfig, device: Any = "cpu") -> None:
+    def __init__(self, model: Any, name: str, config: RolloutConfig, device: Any = "cpu", leaf_model: Any = None) -> None:
         self.model = model
         self.name = name
-        self.root = RolloutRoot(model, config, device=device)
+        self.root = RolloutRoot(model, config, device=device, leaf_model=leaf_model)
 
     def reseed(self, seed: int) -> None:
         self.root.reseed(seed)
@@ -312,9 +321,17 @@ class SparseRolloutAgent:
         return self.select_actions_batch([state])[0]
 
 
+def rollout_spec_leaf(spec: str) -> Optional[str]:
+    """The leaf checkpoint of rollout:<checkpoint>:k:worlds:horizon:rule:<leaf checkpoint> (P33a), or
+    None: the root's own network reads its leaves."""
+    parts = spec.split(":")
+    return parts[6] if len(parts) > 6 and parts[6] else None
+
+
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule]]]] -> (checkpoint, config, label); an
-    omitted field is the measured player's (4, 16, 4, z2)."""
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:leaf checkpoint]]]]] -> (checkpoint, config,
+    label); an omitted field is the measured player's (4, 16, 4, z2), and the leaf is
+    `rollout_spec_leaf`'s."""
     parts = spec.split(":")
     if parts[0].lower() != "rollout" or len(parts) < 2:
         raise ValueError(f"not a rollout spec: {spec!r}")

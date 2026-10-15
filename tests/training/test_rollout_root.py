@@ -1,6 +1,7 @@
 """ai/search/rollout_root.py: legal and reproducible picks, the network's own move with one
 candidate, rollouts that spend rows only with a horizon, the measured player as the defaults, a
-model read in its own observation feature set, a stuck rollout refused, and the spec."""
+model read in its own observation feature set, a stuck rollout refused, the spec, and a leaf network
+(P33a) that reads the leaves in place of the root's own critic."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,7 +16,7 @@ import ai.search.rollout_root as rollout_root
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.models.ladder_net import create_ladder_net
 from ai.search.rollout_root import (RolloutConfig, RolloutRoot, RolloutRootAgent, parse_rule,
-                                   rollout_spec_config)
+                                   rollout_spec_config, rollout_spec_leaf)
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import load_agent
 
@@ -113,3 +114,58 @@ def test_the_spec(tmp_path: Path) -> None:
     assert len(agent.select_actions_batch(st)) == len(st)
     with pytest.raises(ValueError):
         parse_rule("best")
+
+
+class _ZeroCritic(torch.nn.Module):
+    """A network's policy with a critic that says 0 everywhere."""
+
+    def __init__(self, inner: torch.nn.Module) -> None:
+        super().__init__()
+        self.inner = inner
+
+    def forward(self, obs: torch.Tensor, masks: torch.Tensor) -> Any:
+        lg, v, aux = self.inner(obs, masks)
+        return lg, torch.zeros_like(v), aux
+
+
+def test_the_roots_own_network_as_leaf_is_the_plain_root() -> None:
+    states = _states()
+    cfg = RolloutConfig(k=3, worlds=4, horizon=1, rule="z2", seed=5)
+    model = _model()
+    plain = RolloutRoot(model, cfg)
+    leafed = RolloutRoot(model, cfg, leaf_model=model)
+    assert plain.choose(states) == leafed.choose(states)
+    assert plain.last_stats == leafed.last_stats
+
+
+def test_the_leaf_network_reads_the_leaves() -> None:
+    """A leaf critic that says 0 gives every candidate the same value at a horizon-1 leaf, so no lead
+    ever forms and the root keeps the network's move -- while the root's own critic departs somewhere."""
+    states = _states(24)
+    cfg = RolloutConfig(k=3, worlds=4, horizon=1, rule="argmax", seed=5)
+    model = _model()
+    root = RolloutRoot(model, cfg, leaf_model=_ZeroCritic(model))
+    picks = root.choose(states)
+    checked = 0
+    for st, pick in zip(root.last_stats, picks):
+        if st["worlds"] == 0:
+            continue
+        leaf_values = [q for a, q in st["q"].items()]
+        # a finished game is valued by its result, not by the critic: those rows may still differ
+        if all(abs(q) < 1e-9 for q in leaf_values):
+            assert pick == st["candidates"][0]
+            checked += 1
+    assert checked > 0
+
+
+def test_a_leaf_checkpoint_in_the_spec(tmp_path: Path) -> None:
+    a, b = tmp_path / "a.pt", tmp_path / "b.pt"
+    torch.save(_model().state_dict(), str(a))
+    torch.save(_model().state_dict(), str(b))
+    spec = f"rollout:{a}:2:2:1:z2:{b}"
+    assert rollout_spec_leaf(spec) == str(b) and rollout_spec_leaf(f"rollout:{a}:2:2:1:z2") is None
+    agent = load_agent(spec, device="cpu")
+    assert isinstance(agent, RolloutRootAgent) and agent.root.leaf_model is not None
+    assert "leaf" in agent.name
+    st = _states(4)
+    assert len(agent.select_actions_batch(st)) == len(st)
