@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential clang libclang-rt-dev cmake nodejs npm zsh xz-utils libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
         libxdamage1 libasound2t64 libcups2t64 \
         libxcomposite1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 \
-        libpango-1.0-0 libpangocairo-1.0-0 libcairo2 fontconfig fonts-liberation
+        libpango-1.0-0 libpangocairo-1.0-0 libcairo2 fontconfig fonts-liberation python3-dev gh
 
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
