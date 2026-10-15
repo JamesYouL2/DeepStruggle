@@ -327,6 +327,40 @@ in P32 -- rising past 0.5 inside a refresh period stops the arm. A positive R54 
 with a from-scratch cell (S = 256, the heads recipe), since it changes the training distribution
 itself.
 
+## The critic on both sides (design, 2026-10-15; not built)
+
+**Why.** The trainer reads the critic only from a decision's decider; the rollout root reads leaves from
+the root mover's side, so 15–55% of leaves (by stop rule) were read off the training distribution, where
+the reading is optimistic for its side by ~0.08 and worse calibrated (log loss 0.51 against 0.49;
+[`../log/P33_diagnostics.md`](../log/P33_diagnostics.md), "Is the critic self-consistent?"). A constant
+shift does not repair it and averaging both sides gains nothing. The play-time fixes (`leaf=decider`,
+`leaf=own`) avoid the off-side reading; this arm would make it trustworthy, so a leaf can be read from
+the mover's side anywhere -- no extension plies, no discarded hand.
+
+**What.** At each decision, also train v_win on the *non-decider's* observation of the same state, with
+the negated λ-return as its target. Each side then predicts its own win probability from its own
+information; their per-position disagreement stays allowed (different hidden cards), but their average
+over hidden information is pulled into agreement -- the owner's consistency condition.
+
+**Build.**
+* The batch runner returns the other side's observation per env beside the decider's (a bindings
+  change: one more `extract_observation_features` per env and step, written to a second buffer).
+* The rollout buffer stores it for a subsample `--critic-both-frac f` of steps (f = 0.25: +25%
+  observation memory) and the value loss adds those rows with negated targets at the same weight.
+* The GAE recursion is unchanged (it bootstraps across a change of mover with two decider readings);
+  a same-perspective bootstrap could be re-tested once the off-side reading is trained (the E3 test
+  that found it worse bootstrapped off untrained readings).
+
+**Cost.** One extra observation and, at f = 0.25, ~+25% of value-side trunk forwards and backwards;
+policy throughput roughly unchanged.
+
+**Reads.** (1) `critic_consistency` section 1: the off-side log loss should approach the decider's
+without the decider's getting worse; (2) searched games with `leaf=mover` against the control's
+searched SWA, per seat; (3) raw head to head, so a raw loss is not hidden.
+
+**Risk.** Value capacity shared with the decider critic (A14's value block is the fallback); an arm on
+A13+R48's plateau against the unchanged control, 400M.
+
 ## P33f — does the trunk carry a belief about the opponent's hand? (probe, CPU)
 
 A head on the frozen trunk of A13+R48's SWA, trained on 50k self-play positions to predict the
