@@ -11,7 +11,7 @@ Current status:
 
 * engine in C++ that mostly reproduces rules - some bugs are probably still there, but supposedly nothing major
 * interface to plumb different player implementations, record games between them, replay them in web viewer, and run tournamnets
-* some baseline network architecture and training scripts, that in few hours on 4090 can learn to almost never propose Olympic Games at Defcon 2
+* network architectures and an RL training stack (NashPG self-play against an opponent pool), plus search at play time; the best models are on the leaderboard below, and what each training choice was worth is written up in [`research/`](research/README.md)
 
 ## Play, and the leaderboard
 
@@ -39,7 +39,7 @@ Known, reproducible, unfixed defects are tracked in [`BUGS.md`](BUGS.md).
 ## Highlights
 
 * **C++20 Simulation Core (`engine/`)**: Zero-allocation, high-throughput simulation engine covering the Deluxe Edition—all 110 cards, persistent board effects, simultaneous headline resolution, space race tracks, and regional scoring. Every card has an event handler, but that is not the same as every rule being right: known rules defects are tracked in [`BUGS.md`](BUGS.md).
-* **Neural Policies & Reinforcement Learning (`ai/`)**: Graph Neural Network + ResNet architecture (`ColdWarNet`) regularized under Nash Policy Gradient (NashPG) self-play, paired with behavioral cloning from demonstration datasets (self-play and a corpus of recorded human games) and a suite of evaluation probes in `ai/eval/`.
+* **Neural Policies & Reinforcement Learning (`ai/`)**: `LadderNet` (`ai/models/ladder_net.py`, a configurable trunk with per-entity policy heads) trained by Nash Policy Gradient (NashPG) self-play, optional behavioural cloning from self-play or recorded human games, search at play time (`ai/search/`: a Gumbel root and a rollout root), and a suite of evaluation probes in `ai/eval/`.
 * **Interactive Web Workbench (`web/`)**: A Vite + TypeScript SVG Deluxe Map that runs entirely in the browser -- the engine compiled to WebAssembly, models run as ONNX -- for watching replays (`.tslog.json`), testing the engine by playing it, and playing with a model that shows its move probabilities and critic on every position. Works from GitHub Pages with no server; a small local server adds this machine's checkpoints and replays.
 * **Evaluation & Tournament Suite (`tools/`)**: High-throughput tournament runner with Bradley-Terry Maximum Likelihood Elo estimation, automated loss-cause diagnostics, and match playback.
 
@@ -51,11 +51,13 @@ Known, reproducible, unfixed defects are tracked in [`BUGS.md`](BUGS.md).
 .
 ├── engine/         # Core C++20 zero-allocation simulation engine
 ├── bindings/       # Native Python nanobind module (ts_engine) & environment bridge
-├── ai/             # Neural networks (ColdWarNet), rewards, and NashPG RL pipelines
+├── ai/             # Networks (LadderNet; ColdWarNet V1/V2 for old checkpoints), rewards, NashPG, search, probes
 ├── bot/            # Baseline bots (HeuristicBot, RandomBot, StrategicBot, NeuralBot)
 ├── web/            # Web Workbench, in the browser (WebAssembly engine + ONNX models) + a local files server
 ├── tools/          # Unified CLI suite for training, tournaments, matches, and replays
 ├── rules/          # Formal specifications (cards, map topology, effect flags)
+├── research/       # The research record: arm registry, findings, logs, plans
+├── leaderboard/    # Elo leaderboard records (networks, players, matches)
 └── tests/          # Python test suite across bindings, engine rules, and training
 ```
 
@@ -114,22 +116,22 @@ the tests that need one fail on their own import, with a clearer message.
 
 ```bash
 # Engine rules, the nanobind surface, and the training stack. ~1 min with -n auto.
-PYTHONPATH=.:build/release pytest -n auto tests/bindings tests/engine_logic tests/training
+PYTHONPATH=.:build/release python -m pytest -n auto tests/bindings tests/engine_logic tests/training
 ```
 
 Two suites need something extra and are worth knowing about before you run a bare `pytest`:
 
 ```bash
-# tests/replayer converts a corpus of real human games. Downloaded once per machine, cached
-# outside the repository, ~5 MB.
+# tests/replayer converts a corpus of real human games: downloaded once per machine into the
+# git-ignored data tree, ~5 MB. A missing corpus fails these tests rather than skipping them.
 PYTHONPATH=. python tools/download_ts_replayer.py
-PYTHONPATH=.:build/release pytest -n auto tests/replayer
+PYTHONPATH=.:build/release python -m pytest -n auto tests/replayer
 
 # tests/web needs the built page (with its WebAssembly engine) and a browser, neither of which is
 # in the repository. Emscripten: tools/scripts/install_emsdk.sh
 tools/scripts/build_web.sh
 python -m playwright install chromium
-PYTHONPATH=.:build/release pytest tests/web
+PYTHONPATH=.:build/release python -m pytest tests/web
 ```
 
 `tests/differential/` cross-checks against an external reference engine. It is work in progress,

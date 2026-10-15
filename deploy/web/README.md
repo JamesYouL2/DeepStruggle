@@ -12,9 +12,9 @@ Actions*. The page is then at `https://<owner>.github.io/<repo>/`.
 
 With no server, models come from a **Hugging Face** model repo (type `owner/repo`, press *List*)
 or an `.onnx` **dropped on the page**; replays from *Load Replay* or a dropped `.tslog.json`. A
-link that names no model loads the most recently uploaded `.onnx` in `mihaild/deepstruggle`
-(`DEFAULT_HF_REPO` in `web/ui/src/analysis/model.ts`), so publishing a new default model is an
-upload there. Make the `.onnx` files with
+link that names no model loads the `default` of `mihaild/deepstruggle`'s `models.json`, or its
+newest upload if none is set (`DEFAULT_HF_REPO` in `web/ui/src/analysis/model.ts`;
+`tools/publish_hf.py default` sets it, `tools/README.md` §2c). Make the `.onnx` files with
 
 ```bash
 PYTHONPATH=.:build/release .venv/bin/python tools/export_onnx.py \
@@ -43,9 +43,10 @@ docker run -d --rm --name deepstruggle -p 127.0.0.1:8000:8000 \
   deepstruggle-web
 ```
 
-`--rm` removes the container when it stops, so the next `docker run` can take the name again; without it a stopped container keeps `deepstruggle` until `docker rm deepstruggle` (or `docker start deepstruggle` to resume it). Nothing of value lives in the container -- the exports and replays are in the volumes. The run line also adds what the image cannot enforce for the host: the root filesystem read-only (the
-server writes only under `/data`), no capabilities, no privilege escalation, and the port
-published on the host's loopback only -- there is no authentication. Pass
+Nothing of value lives in the container (exports and replays are in the volumes), hence `--rm`.
+The run line adds what the image cannot enforce for the host: a read-only root filesystem (the
+server writes only under `/data`), no capabilities, no privilege escalation, and the port on the
+host's loopback only -- there is no authentication. Pass
 `--build-arg UID=$(id -u) --build-arg GID=$(id -g)` so the exports and replays the server writes
 under `/data` belong to you; `--build-arg ENGINE_MARCH=native` when the image runs where it was
 built. The runtime settings below apply unchanged.
