@@ -395,3 +395,11 @@ over several turns — the same fault R49 and R52 target — and R43 is re-run a
 ## Runs
 
 (filled in while running; mirrors [`../runs.md`](../runs.md))
+
+* **P33b, P33c, P33d, P33f done (2026-10-15)** -- [`../log/P33_diagnostics.md`](../log/P33_diagnostics.md):
+  the critic is calibrated on greedy play (R50/R55 dropped, R49 stays), ranks ordinary move pairs well
+  but is at chance where the searched player errs (the leak is the critic's), candidate recall is open
+  at 28% of departures (k = 6 and R51 qualify), and the trunk holds exactly the public card
+  information about the opponent's hand. P33a running.
+* **R49 built** (`--search-value-beta` with `--search-rollout-horizon`, no CE; pi_ref's greedy
+  continuation), not launched.
