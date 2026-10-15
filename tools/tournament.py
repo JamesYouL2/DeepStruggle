@@ -339,6 +339,7 @@ def play_tournament_part(
     opening: Optional[str] = None,
     workers: int = 1,
     shard_pairs: int = 10,
+    base_seed: int = 10000,
 ) -> PartConfig:
     """One machine's share of a tournament spread over several: part `index` of `count` of the
     shards `run_massive_tournament(workers=...)` would play, written raw to `output_part` with
@@ -354,8 +355,9 @@ def play_tournament_part(
     print(f" Part {index + 1} of {count}: {len(mine)} shard(s) of {shard_pairs} pair(s)")
     played = run_shards(
         worker_specs, mine, games_per_side, workers,
-        MatchOptions(device=str(dev), temperature=temperature, batch_chunk_size=batch_chunk_size,
-                     track_choices=track_choices, auto_advance=auto_advance),
+        MatchOptions(device=str(dev), base_seed=base_seed, temperature=temperature,
+                     batch_chunk_size=batch_chunk_size, track_choices=track_choices,
+                     auto_advance=auto_advance),
         capture_games=True,
         on_shard_done=lambda r: print(
             f"  shard {r.shard.label}: {r.result['a_wins']}W - {r.result['b_wins']}L - "
@@ -367,6 +369,8 @@ def play_tournament_part(
         "track_choices": track_choices, "auto_advance": auto_advance,
         "anchor_model": anchor_model, "anchor_elo": anchor_elo,
     }
+    if base_seed != 10000:
+        config["base_seed"] = base_seed     # parts of the default deals stay poolable with older ones
     write_part(output_part, config, part, played, time.time() - t_start)
     print(f"Saved part {index + 1}/{count} to: {output_part}")
     return config
@@ -586,6 +590,10 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default=None, help="Directory to auto-discover all snapshot checkpoints")
     parser.add_argument("--include-baselines", action="store_true", default=False, help="Explicitly include RandomBot and HeuristicBot")
     parser.add_argument("--games-per-side", type=int, default=500, help="Games per side per matchup (total 2x games per pair)")
+    parser.add_argument("--base-seed", type=int, default=10000,
+                        help="The first game pair's deal seed. Searchers and samplers are seeded from the "
+                             "deal, so the same entrants with the same seed replay the same games; a "
+                             "replicate of a match needs another seed (e.g. 20000).")
     parser.add_argument("--temperature", type=float, default=0.1,
                         help="Sampling temperature for every neural agent. <= 0.05 plays the "
                              "argmax. The default 0.1 samples, which is fine for comparing "
@@ -716,6 +724,7 @@ def main():
             opening=args.opening,
             workers=1 if workers is None else workers,
             shard_pairs=args.shard_pairs,
+            base_seed=args.base_seed,
         )
         return
 
@@ -736,6 +745,7 @@ def main():
         auto_advance=args.auto_advance,
         workers=workers,
         shard_pairs=args.shard_pairs,
+        base_seed=args.base_seed,
     )
 
 

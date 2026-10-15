@@ -38,8 +38,8 @@ from collections import Counter, defaultdict
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Sequence, Tuple,
-                    TypedDict, cast)
+from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, NotRequired, Optional, Sequence,
+                    Tuple, TypedDict, cast)
 
 import numpy as np
 import torch
@@ -329,6 +329,7 @@ class PartConfig(TypedDict):
     auto_advance: bool
     anchor_model: str
     anchor_elo: float
+    base_seed: NotRequired[int]     # absent in parts written before --base-seed: the default 10000
 
 
 class PartDoc(TypedDict):
