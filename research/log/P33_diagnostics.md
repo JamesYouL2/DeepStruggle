@@ -39,6 +39,26 @@ of pairs it ranks against the label is reported.
   the baseline's large-label rows (unconfirmed, same selection only through the bank's strata) say
   the same.
 
+### Does R49's target see what the critic misses? (`leak_critic --horizon 4`)
+
+The same pairs, each move read the way R49's value target reads a position: the rollout root's own
+continuation -- worlds sampled from the mover's view, dice shared by the two moves, both sides greedy
+through 4 action-round boundaries, the critic at the stop.
+
+| % ranked wrong | A13+R48, 16 worlds | A13+R48, 64 worlds | soup, 16 | R39, 16 |
+|:---|---:|---:|---:|---:|
+| baseline, all | 16.2 ± 0.4 | 14.6 ± 0.4 | 15.1 ± 0.4 | 12.0 ± 0.4 |
+| baseline, the alternative better by ≥ 5 points | 53.9 ± 2.0 | **53.0 ± 2.0** | 58.1 ± 2.0 | 64.4 ± 2.0 |
+| confirmed leaks, all | 49.5 ± 1.5 | **47.0 ± 1.5** | 51.0 ± 1.5 | 55.0 ± 1.5 |
+| confirmed leaks, card choice at DEFCON 2 | 49.1 ± 3.4 | 49.5 ± 3.4 | 46.4 ± 3.4 | 50.0 ± 3.4 |
+
+* The 4-round continuation ranks ordinary pairs better than the bare critic (12–16% wrong against
+  19–20%), but on the decisive pairs it is at chance, and **four times the worlds barely moves it**
+  (49.5 → 47.0%): blindness, not noise. It leans slightly the wrong way on average.
+* **R49 is skipped:** its target cannot teach what the critic is missing, because the 4-round
+  lookahead does not see it either. The difference between the moves shows only beyond that
+  horizon -- where the leak bank's labels (512–2,048 paired playouts to the game's end) see it.
+
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 
 2,048 self-play games at each temperature per network; the critic's value at every decision against
@@ -99,9 +119,11 @@ held-out games; read on another held-out set (19,281 positions, 574,593 pool ent
 
 ## Decisions so far
 
-* Critic track: **R49 runs**; **R50 and R55 are dropped** (P33b).
-* The leak is the critic's at the decisive positions (P33c), so value-target arms (R49, R53, then A14)
-  are the route, not the candidate set alone.
+* Critic track: **R50 and R55 are dropped** (P33b); **R49 is skipped** -- its own target is blind to the
+  leak pairs (the horizon read above).
+* The leak is the critic's at the decisive positions (P33c), and invisible within 4 action rounds:
+  value targets that see further (R52 to the turn's end, R53 exact endgames, game-end playouts) are
+  the remaining route.
 * Channel 1 is open at 28% (P33d): a k = 6 games check and R51 qualify.
 * No belief input follows from P33f; the history question goes to the owner.
 

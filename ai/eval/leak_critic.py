@@ -35,6 +35,7 @@ import torch
 
 import ts_engine as ts
 from ai.eval.paired_playouts import ar_key, decider
+from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 from tools.lib.corpus_driver import state_from_token
@@ -197,6 +198,35 @@ def critic_differences(model: Any, device: Any, pairs: Sequence[LeakPair], dice:
     return v[:, 0] - v[:, 1]
 
 
+def continuation_differences(model: Any, device: Any, pairs: Sequence[LeakPair], worlds: int, horizon: int,
+                             seed: int = 4711) -> np.ndarray:
+    """Per pair: the mean leaf value after `best` minus after `played`, mover's side, under the rollout
+    root's own continuation -- worlds sampled from the mover's view, the dice shared by the two moves,
+    both sides played greedily by `model` through `horizon` action-round boundaries, the critic at the
+    stop (a finished game is its result). This is what R49's value target reads, so it says whether
+    that target carries the distinctions the critic is missing. NaN where no world kept both moves."""
+    root = RolloutRoot(model, RolloutConfig(k=2, worlds=worlds, horizon=horizon, rule="argmax", seed=seed),
+                       device=device)
+    out = np.full(len(pairs), np.nan)
+    for lo in range(0, len(pairs), 256):
+        part = list(pairs[lo:lo + 256])
+        lg, masks, _ = root._forward([p.state for p in part])
+        lg = np.ascontiguousarray(lg, dtype=np.float32)
+        batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=root.features,
+                                seed=root._rng.getrandbits(64))
+        pos: Dict[int, int] = {}
+        for j, p in enumerate(part):
+            pos[j] = batch.positions()
+            batch.add(p.state, [p.played, p.best], worlds)
+        if batch.rows():
+            root._playouts(batch)
+        for j, p in enumerate(part):
+            d = ts.rollout_decide(batch, pos[j], [p.played, p.best], lg[j], masks[j], "argmax")
+            if int(d["worlds"]) > 0:
+                out[lo + j] = float(d["q"][1]) - float(d["q"][0])
+    return out
+
+
 def _wmean(x: np.ndarray, w: np.ndarray) -> float:
     return float(np.sum(x * w) / np.sum(w))
 
@@ -207,6 +237,7 @@ def summarise(name: str, pairs: Sequence[LeakPair], diff: np.ndarray) -> str:
     label = np.asarray([p.label for p in pairs])
     w = np.asarray([p.weight for p in pairs])
     def row(sel: np.ndarray, title: str) -> str:
+        sel = sel & np.isfinite(diff)                  # a pair no world kept both moves of says nothing
         n = int(sel.sum())
         if n < 5:
             return f"  {title:34s} n={n}"
@@ -242,20 +273,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dice", type=int, default=16, help="chance draws per move, shared by the two moves")
     ap.add_argument("--screen", default=None, help="the screening playouts: the unselected baseline")
     ap.add_argument("--min-z", type=float, default=2.0, help="a screened pair counts when its label is this many SEs from 0")
+    ap.add_argument("--horizon", type=int, default=0,
+                    help="read each move's mean leaf value under the rollout root's continuation through this many "
+                         "action-round boundaries (R49's target), in --worlds worlds, instead of the critic after the move")
+    ap.add_argument("--worlds", type=int, default=16)
     ap.add_argument("--settled", action="store_true",
                     help="read the critic once the move's action round is played out greedily, not right after it")
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pairs = load_pairs(a.bank, a.playouts)
     screen = load_screen_pairs(a.bank, a.screen, a.min_z) if a.screen else []
-    how = " (settled: the move's action round played out greedily)" if a.settled else ""
+    how = (f" (the rollout continuation: {a.horizon} boundaries, {a.worlds} worlds)" if a.horizon > 0 else
+           " (settled: the move's action round played out greedily)" if a.settled else "")
     for ck in a.checkpoint:
         model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
-        diff = critic_differences(model, dev, pairs, a.dice, settled=a.settled)
+        diff = (continuation_differences(model, dev, pairs, a.worlds, a.horizon) if a.horizon > 0
+                else critic_differences(model, dev, pairs, a.dice, settled=a.settled))
         print(summarise(f"{ck} -- the confirmed leaks{how}", pairs, diff))
         print()
         if screen:
-            sdiff = critic_differences(model, dev, screen, a.dice, settled=a.settled)
+            sdiff = (continuation_differences(model, dev, screen, a.worlds, a.horizon) if a.horizon > 0
+                     else critic_differences(model, dev, screen, a.dice, settled=a.settled))
             print(summarise(f"{ck} -- baseline: screened pairs signed at |z| >= {a.min_z}{how}", screen, sdiff))
             print()
     return 0
