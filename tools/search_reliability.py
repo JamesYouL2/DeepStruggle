@@ -44,6 +44,16 @@ import time
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
+import ts_engine as ts
+
+from ai.eval.paired_playouts import compare, paired_diff
+from ai.search.batched_mcts import BatchedMCTS
+from ai.search.pimcts import acting_player
+from ai.search.rollout_root import RolloutRoot, rollout_spec_config
+from bindings.action_encoder import ActionEncoder
+from tools.lib.corpus_driver import load_policy, state_from_token
+from tools.lib.player_agent import NeuralAgent, search_spec_config
 
 #: The search bank's annotate stage sampled one decision in 8 of 1,500 games, so its population
 #: weights sum to the decisions of 1,500 / 8 games: a weighted sum times this is per game.
@@ -103,10 +113,6 @@ class RawPicker:
         pass
 
     def choose(self, states: Sequence[Any]) -> List[int]:
-        import torch
-        import ts_engine as ts
-        from ai.search.pimcts import acting_player
-        from bindings.action_encoder import ActionEncoder
         obs = np.stack([np.asarray(ts.extract_observation(s, acting_player(s)), dtype=np.float32) for s in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         with torch.no_grad():
@@ -140,12 +146,6 @@ def chunk_seed(spec: str, seed: int, ids: Sequence[str]) -> int:
 
 def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, part: str,
            chunk: int, out: str, model2: Optional[str] = None) -> int:
-    import torch
-    from ai.search.batched_mcts import BatchedMCTS
-    from tools.lib.corpus_driver import state_from_token
-    from tools.lib.player_agent import NeuralAgent, search_spec_config
-    from bindings.action_encoder import ActionEncoder
-
     rows = _part(list(_read([bank])), part)
     nets = {1: NeuralAgent.from_checkpoint(model, device="cpu").model.eval()}
     paths = {1: model}
@@ -153,7 +153,6 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
         nets[2] = NeuralAgent.from_checkpoint(model2, device="cpu").model.eval()
         paths[2] = model2
     torch.set_grad_enabled(False)
-    from ai.search.rollout_root import RolloutRoot, rollout_spec_config
     searchers: Dict[str, Tuple[Any, str]] = {}
     for name, fields in specs:
         which = 2 if fields.startswith("@2:") else 1
@@ -216,9 +215,6 @@ def position_seed(rid: str, seed: int) -> int:
 
 def playouts(bank: str, search_paths: Sequence[str], model: str, pairs: int, seed: int, part: str,
              out: str) -> int:
-    from ai.eval.paired_playouts import compare, paired_diff
-    from tools.lib.corpus_driver import load_policy, state_from_token
-
     picks: Dict[str, Dict[str, Any]] = {}
     for r in _read(search_paths):            # several search files: their searchers side by side
         cur = picks.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "picks": {}})

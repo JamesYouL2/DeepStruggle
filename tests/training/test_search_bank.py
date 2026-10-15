@@ -15,12 +15,17 @@ import pytest
 import torch
 
 import ts_engine as ts
+from ai.eval.paired_playouts import ar_key, decider, play_safe
+from ai.eval.subs_followup import OPS_COUP, SubsWatch, bg_coup_open, is_us_coup_target
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import load_policy, state_from_token
-from tools.search_bank import (confirm_select, kind_bootstrap, legal_actions, main, mover_of, parse_budgets, raw_rank,
-                               read_rows, screen_select)
+from tools.search_bank import (CHINA, EVENT, SPACE, _paired_scores, china_select, china_verdict, confirm_select,
+                               event_moves, event_select, event_verdict, is_china_decision, is_event_decision,
+                               is_subs_decision, kind_bootstrap, leak_analysis, legal_actions, main, mover_of,
+                               parse_budgets, playout_select, raw_rank, read_rows, screen_select, select, solve,
+                               stratum, subs_select)
 
 
 def _checkpoint(tmp_path: Path) -> str:
@@ -116,7 +121,6 @@ def _row(i: int, raw: int, choices: List[int], q_choice: float, dt: str = "POINT
 
 
 def test_select_weights_reproduce_each_strata_population() -> None:
-    from tools.search_bank import select, stratum
     rows = [_row(i, 5, [5, 5], 0.0) for i in range(300)] + [_row(1000 + i, 5, [7, 5], 0.1) for i in range(90)]
     bank = select(rows, size=60, control=20, seed=1)
     assert len(bank) == 60
@@ -133,7 +137,6 @@ def test_select_weights_reproduce_each_strata_population() -> None:
 
 
 def test_regret_is_measured_on_worlds_the_best_move_was_not_chosen_on() -> None:
-    from tools.search_bank import solve
     bank = {"raw": 5, "legal": [5, 7], "logits": [1.0, 0.0], "methods": {"g": {"choice": 7}}}
     # Move 7 is better on the even worlds only: chosen there, it shows no regret advantage on the odd ones.
     ref = {"values": {"5": [0.0, 0.1] * 8, "7": [0.2, 0.1] * 8}, "critic": {"5": [0.0] * 16, "7": [0.1] * 16},
@@ -155,7 +158,6 @@ def _verdict_pair(i: int, raw_value: float, alt_value: float, g256: int) -> tupl
 
 
 def test_playout_select_takes_every_large_regret_samples_the_rest_and_weights_by_inclusion() -> None:
-    from tools.search_bank import playout_select
     big = [_verdict_pair(i, 0.0, 0.1, 7) for i in range(5)]               # raw loses 0.1: large
     ctrl = [_verdict_pair(100 + i, 0.1, 0.0, 5) for i in range(40)]       # raw best, k=8 @256 agrees
     rest = [_verdict_pair(200 + i, 0.0, 0.01, 8) for i in range(30)]      # raw loses 0.01: small
@@ -171,7 +173,6 @@ def test_playout_select_takes_every_large_regret_samples_the_rest_and_weights_by
 
 
 def test_leak_weights_each_rows_paired_gain_back_to_the_population() -> None:
-    from tools.search_bank import _paired_scores, leak_analysis
     # Best beats raw by 0.2 in every pair; the row stands for 10 population decisions (weight 1,
     # sampled with probability 0.1) of a bank weighing 100, in games of 50 decisions:
     # 100 points x 50 / 100 x 10 x 0.2 = +100.0 a game.
@@ -192,7 +193,6 @@ def _play_mode_row(i: int, card: int, side: str, legal: List[int], logits: List[
 
 
 def test_event_moves_play_the_event_against_raws_alternative_and_space_on_an_opponent_card() -> None:
-    from tools.search_bank import EVENT, SPACE, event_moves, is_event_decision
     infl, coup = EVENT + 2, EVENT + 3
     own = _play_mode_row(0, 5, "US", [EVENT, SPACE, infl, coup], [2.0, 0.5, 1.0, 0.0])
     assert event_moves(own, "own") == [EVENT, infl]          # raw events; the alternative is its best other play
@@ -207,7 +207,6 @@ def test_event_moves_play_the_event_against_raws_alternative_and_space_on_an_opp
 
 
 def test_event_select_caps_each_card_and_side_and_weights_back_to_its_population() -> None:
-    from tools.search_bank import EVENT, event_select
     cards = {5: {"side": "US"}, 9: {"side": "neutral"}}
     rows = ([_play_mode_row(i, 5, "US", [EVENT, EVENT + 2], [0.0, 1.0]) for i in range(50)]
             + [_play_mode_row(100 + i, 5, "USSR", [EVENT, EVENT + 2], [0.0, 1.0]) for i in range(7)]
@@ -222,7 +221,6 @@ def test_event_select_caps_each_card_and_side_and_weights_back_to_its_population
 
 
 def test_event_regret_is_measured_on_pairs_the_best_move_was_not_picked_on() -> None:
-    from tools.search_bank import EVENT, event_verdict
     infl = EVENT + 2
     b = {"raw": infl, "pmoves": [EVENT, infl], "legal": [EVENT, infl], "logits": [0.0, 1.0]}
     # The event wins the even pairs only: picked there, it shows no lead on the odd ones.
@@ -237,7 +235,6 @@ def test_event_regret_is_measured_on_pairs_the_best_move_was_not_picked_on() -> 
 
 
 def test_subs_select_keeps_us_subs_decisions_with_raws_best_non_event_play() -> None:
-    from tools.search_bank import EVENT, SPACE, is_subs_decision, subs_select
     infl, coup = EVENT + 2, EVENT + 3
     r = _play_mode_row(0, 41, "US", [EVENT, SPACE, infl, coup], [3.0, 0.0, 1.0, 2.0])
     assert is_subs_decision(r)
@@ -261,7 +258,6 @@ def _us_play_mode_state() -> ts.GameState:
 
 
 def test_subs_watch_steers_to_a_battleground_coup_only_under_subs_and_counts_it() -> None:
-    from ai.eval.subs_followup import OPS_COUP, SubsWatch, bg_coup_open, is_us_coup_target
     st = _us_play_mode_state()
     mask = np.asarray(ActionEncoder.get_legal_mask(st)).copy()
     w = SubsWatch([int(st.turn)], ["next"])
@@ -282,8 +278,6 @@ def test_subs_watch_steers_to_a_battleground_coup_only_under_subs_and_counts_it(
 
 
 def test_a_state_selector_plays_the_continuation_and_reproduces_the_policy_it_wraps() -> None:
-    from ai.eval.paired_playouts import ar_key, decider, play_safe
-
     def first(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
         return np.array([int(np.flatnonzero(m)[0]) for m in masks], dtype=np.int32)
 
@@ -305,8 +299,6 @@ def test_a_state_selector_plays_the_continuation_and_reproduces_the_policy_it_wr
 
 
 def test_china_bank_plays_the_china_card_against_raws_choice_or_its_best_other_card() -> None:
-    from tools.search_bank import CHINA, china_select, china_verdict, is_china_decision
-
     def row(i: int, raw: int, legal: List[int], logits: List[float], ar: int = 2) -> dict:
         return {"id": f"r{i}", "decision_type": "SELECT_CARD", "phase": "ACTION_ROUND", "side": "US",
                 "ar": ar, "turn": 4, "legal": legal, "logits": logits, "raw": raw}

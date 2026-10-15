@@ -36,6 +36,9 @@ import sys
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
+import ts_engine as ts
+
+from tools.lib.corpus_driver import position_token
 
 
 def _read(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
@@ -60,9 +63,6 @@ def _keep(key: str, seed: int, p: float) -> bool:
 
 def select(targets: Sequence[str], budget: str, departures: int, agreements: int, seed: int,
            out: str) -> int:
-    import ts_engine as ts
-    from tools.lib.corpus_driver import position_token
-
     counts = {"dep": 0, "agree": 0}
     games = 0
     for g in _read(targets):

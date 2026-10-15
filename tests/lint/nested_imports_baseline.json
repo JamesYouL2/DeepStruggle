@@ -109,7 +109,6 @@
  "tests/training/test_replay_trace.py": 4,
  "tests/training/test_run_dir_naming.py": 2,
  "tests/training/test_same_perspective_bootstrap.py": 1,
- "tests/training/test_search_reliability.py": 3,
  "tests/training/test_search_targets.py": 1,
  "tests/training/test_search_tiebreak.py": 2,
  "tests/training/test_setup_arms.py": 8,
@@ -147,7 +146,6 @@
  "tools/scripts/kal007_sk_control.py": 2,
  "tools/scripts/launch_flags.py": 1,
  "tools/scripts/star_wars_play.py": 2,
- "tools/search_reliability.py": 8,
  "tools/value_probe.py": 21,
  "web/server/local_files.py": 1
 }
