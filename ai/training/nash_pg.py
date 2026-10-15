@@ -36,7 +36,7 @@ from .show_and_decide import (EVENT_SLOT, PLAY_MODE_HI, PLAY_MODE_LO,  # noqa: E
                               floor_rows, play_mode_rows)
 from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .turn_credit import TurnCredit  # noqa: E402
-from ai.search.rollout_root import RolloutConfig, RolloutTeacher, TeacherPolicyTargets  # noqa: E402
+from ai.search.rollout_root import ContinuationValues, RolloutConfig, RolloutTeacher, TeacherPolicyTargets  # noqa: E402
 from .search_workers import SearchWorkers  # noqa: E402
 from .forced_openings import OpeningSeeder  # noqa: E402
 from .critic_tracker import CriticTracker
@@ -413,9 +413,16 @@ class BaseNashPGTrainer:
         # `_apply_views`. The searcher builds E4 masks for its targets, so the two are not
         # combined until it learns the other view -- refused here rather than mis-targeted.
         self.merged_influence = bool(merged_influence)
-        if search_rollout_horizon > 0 and (search_gumbel_k > 0 or search_ce_coef <= 0.0 or search_value_beta > 0.0):
-            raise ValueError("rollout-root targets (--search-rollout-horizon) replace the Gumbel root: they need "
-                             "--search-ce-coef > 0 and neither --search-gumbel-k nor --search-value-beta")
+        # R49 (P33): the rollout root's greedy-continuation value as v_win's target, with no policy target.
+        rollout_values = search_rollout_horizon > 0 and search_value_beta > 0.0 and search_ce_coef <= 0.0
+        if rollout_values and (search_gumbel_k > 0 or search_workers > 0 or search_teacher_policy):
+            raise ValueError("rollout-root value targets (--search-value-beta with --search-rollout-horizon) "
+                             "take no --search-gumbel-k, --search-workers or --search-teacher-policy")
+        if search_rollout_horizon > 0 and not rollout_values and (
+                search_gumbel_k > 0 or search_ce_coef <= 0.0 or search_value_beta > 0.0):
+            raise ValueError("rollout-root targets (--search-rollout-horizon) replace the Gumbel root: policy targets "
+                             "need --search-ce-coef > 0 and neither --search-gumbel-k nor --search-value-beta; value "
+                             "targets (R49) need --search-value-beta > 0 and --search-ce-coef 0")
         if search_teacher_policy and (search_teacher_net is None or search_ce_coef <= 0.0 or search_gumbel_k > 0
                                       or search_rollout_horizon > 0 or search_workers > 0):
             raise ValueError("--search-teacher-policy targets a frozen teacher's raw policy: it needs "
@@ -423,9 +430,9 @@ class BaseNashPGTrainer:
         if search_workers > 0 and (search_rollout_horizon <= 0 or search_teacher_net is None):
             raise ValueError("--search-workers prices rollout-root targets of a frozen teacher: it needs "
                              "--search-rollout-horizon > 0 and --search-teacher-checkpoint")
-        if search_value_beta > 0.0 and search_gumbel_k <= 0:
-            raise ValueError("search values into the critic (T2) need the Gumbel root: "
-                             "--search-gumbel-k > 0")
+        if search_value_beta > 0.0 and search_gumbel_k <= 0 and not rollout_values:
+            raise ValueError("search values into the critic need the Gumbel root (T2, --search-gumbel-k > 0) "
+                             "or the rollout root's continuation (R49, --search-rollout-horizon > 0, no CE)")
         if self.merged_influence and (search_ce_coef > 0.0 or search_value_beta > 0.0):
             raise ValueError("--merged-influence with search CE is not supported: the searcher's "
                              "targets are built in the E4 view (P23)")
@@ -473,7 +480,15 @@ class BaseNashPGTrainer:
                 search_teacher_net = search_teacher_net.to(self.device).eval()
                 for _p in search_teacher_net.parameters():
                     _p.requires_grad_(False)
-            if search_teacher_policy:
+            if rollout_values:
+                # R49: greedy continuations from pi_ref -- the learner's own frozen snapshot, refreshed in
+                # place with the reference policy (a frozen teacher if one is given).
+                self._searcher = ContinuationValues(
+                    search_teacher_net if search_teacher_net is not None else self.reference_net,
+                    RolloutConfig(k=1, worlds=int(search_rollout_worlds), horizon=int(search_rollout_horizon),
+                                  rule="argmax"),
+                    device=self.device, subsample=search_subsample, node_filter=search_node_filter)
+            elif search_teacher_policy:
                 # The control for the rollout teacher: the teacher's own policy, no search.
                 self._searcher = TeacherPolicyTargets(search_teacher_net, device=self.device,
                                                       subsample=search_subsample, node_filter=search_node_filter)
@@ -498,6 +513,10 @@ class BaseNashPGTrainer:
                         fpu_reduction=0.2 if search_gumbel_k > 0 else 0.0,
                         gumbel_prior_temperature=float(search_prior_temperature)),
                     featurise_capacity=SEARCH_CHUNK)
+            if rollout_values:
+                print(f"[R49] rollout-root value targets: beta {search_value_beta}, {search_rollout_worlds} worlds, "
+                      f"horizon {search_rollout_horizon}, subsample {search_subsample}, from "
+                      f"{'the frozen teacher' if search_teacher_net is not None else 'pi_ref'}", flush=True)
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
                   f"{search_node_filter}, subsample {search_subsample}"
                   + (f", rollout-root targets k={search_rollout_k}, {search_rollout_worlds} worlds, horizon "
@@ -2060,7 +2079,8 @@ class BaseNashPGTrainer:
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
                 if self.search_gumbel_k > 0 or self.search_rollout_horizon > 0 or self.search_teacher_policy:
                     res.extend(self._searcher.improved_policies(chunk))
-                    root = getattr(self._searcher, "_gumbel", None)
+                    # The Gumbel root keeps its values on its root; ContinuationValues (R49) on itself.
+                    root = getattr(self._searcher, "_gumbel", self._searcher)
                     sat_n += float(getattr(root, "last_saturated_frac", 0.0)) * len(chunk)
                     root_values.extend(float(x) for x in getattr(root, "last_values", []))
                 else:

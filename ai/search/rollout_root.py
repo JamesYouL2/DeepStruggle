@@ -171,6 +171,67 @@ class RolloutRoot:
         return picks
 
 
+class ContinuationValues:
+    """R49 (P33): value targets from the rollout root's own leaves. At a searched decision the position
+    is played on greedily -- from the network's own move, both sides the network -- through the root's
+    horizon in its sampled worlds, and the critic read at the stop (a finished game is its result); the
+    target is the mean, from the mover's side. One candidate, so a quarter of the root's k = 4 cost.
+
+    The interface of the trainer's searchers (`should_search`, `improved_policies`), with no policy
+    target: `improved_policies` returns none and leaves each position's value in `last_values` (NaN
+    where nothing was played out), which the trainer blends into v_win's target (`--search-value-beta`).
+    The network is meant to be the learner's own frozen snapshot -- the trainer passes pi_ref, refreshed
+    in place -- since the target is "greedy play from here", which any snapshot of the line gives."""
+
+    def __init__(self, model: Any, config: RolloutConfig, device: Any = "cpu", subsample: float = 1.0,
+                 node_filter: str = "all", seed: int = 97531) -> None:
+        if node_filter not in ("all", "card_playmode"):
+            raise ValueError(f"unknown node_filter {node_filter!r}")
+        self.root = RolloutRoot(model, config, device=device)
+        self.root.reseed(seed + 1)
+        self.subsample = float(subsample)
+        self.node_filter = node_filter
+        self._rng = random.Random(seed)
+        self.model = model
+        self.last_values: List[float] = []
+
+    def should_search(self, state: ts.GameState) -> bool:
+        if self.node_filter == "card_playmode" and int(state.ctx().decision_type) not in (
+                int(ts.DecisionType.SELECT_CARD), int(ts.DecisionType.SELECT_PLAY_MODE)):
+            return False
+        return self.subsample >= 1.0 or self._rng.random() < self.subsample
+
+    def values(self, states: Sequence[ts.GameState]) -> List[float]:
+        """Each position's greedy-continuation value from its mover's side, in [-1, 1]; NaN where no
+        world was kept (or the position has no legal move)."""
+        states = list(states)
+        root = self.root
+        lg, masks, _ = root._forward(states)
+        lg = np.ascontiguousarray(lg, dtype=np.float32)
+        batch = ts.RolloutBatch(horizon=root.cfg.horizon, shared_dice=True, guard=True,
+                                features=root.features, seed=root._rng.getrandbits(64))
+        cand: Dict[int, List[int]] = {}
+        position_of: Dict[int, int] = {}
+        for i, st in enumerate(states):
+            if ts.Engine.is_terminal(st) or not masks[i].any():
+                continue
+            cand[i] = [int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf)))]
+            position_of[i] = batch.positions()
+            batch.add(st, cand[i], root.cfg.worlds)
+        if batch.rows():
+            root._playouts(batch)
+        out = [float("nan")] * len(states)
+        for i, p in position_of.items():
+            d = ts.rollout_decide(batch, p, cand[i], lg[i], masks[i], "argmax")
+            if int(d["worlds"]) > 0:
+                out[i] = float(d["q"][0])
+        return out
+
+    def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        self.last_values = self.values(states)
+        return [([], np.zeros(0)) for _ in self.last_values]
+
+
 class RolloutTeacher:
     """Training targets from a rollout root: R32's online improved-policy targets (P32 T1) with the
     rollout root in place of the Gumbel root. At a searched decision the target over every legal move
