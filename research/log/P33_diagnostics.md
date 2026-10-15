@@ -20,7 +20,7 @@ swapped players also head to head. `data/reports/p33a_*.json`.
 | soup / **A13+R48** | **46.2%** | 48.8% | 43.7% | **−5.3** | **−2.2** |
 | R39 / R39 | 51.3% | 57.2% | 45.4% | +3.1 | −0.5 |
 | R39 / soup | 51.1% | 55.2% | 47.1% | +1.1 | +1.2 |
-| soup / R39 | *running* | | | | |
+| soup / R39 | 47.9% | 52.7% | 43.0% | −1.4 | −2.9 |
 
 | head to head | score | as US | as USSR |
 |:---|---:|---:|---:|
@@ -32,9 +32,10 @@ swapped players also head to head. `data/reports/p33a_*.json`.
   head to head are 58.2%, above 50% in both seats. By the plan's rule the leaf moves the rating more
   than the playouts: the critic is the search-preserved channel, and A13+R48's raw gain (+29 over the
   soup) was bought with a worse critic at the leaves.
-* **On the 256-wide pair nothing moves:** R39 and the soup are level under search whichever critic
-  reads the leaf (50.3% head to head). The soup's searched lead over A13+R48 is A13+R48's critic,
-  not something special about the soup's.
+* **On the 256-wide pair the effect is small:** R39's playouts with the soup's critic are +1 in both
+  seats, the soup's with R39's critic −1.4 / −2.9, and the two swaps are level head to head (50.3%).
+  The soup's critic is a little better than R39's and clearly better than A13+R48's; the soup's
+  searched lead over A13+R48 is mostly A13+R48's critic.
 * This sits beside P33c without contradiction: every critic is at chance on the decisive leak pairs,
   but A13+R48's ranks the ordinary leaf differences the root mostly decides on slightly worse.
 

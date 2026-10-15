@@ -415,9 +415,9 @@ over several turns — the same fault R49 and R52 target — and R43 is re-run a
 * **R49 built and skipped** (`--search-value-beta` with `--search-rollout-horizon`, no CE): its own
   target -- the 4-round greedy continuation -- ranks the leak pairs at chance at 16 and at 64 worlds, so
   it cannot teach what the critic misses ([`../log/P33_diagnostics.md`](../log/P33_diagnostics.md)).
-* **P33a done (one cell running)**: A13+R48's critic costs it under search -- its playouts with the
-  soup's critic are level with the searched soup, the soup's with its critic lose in both seats, the
-  two swaps head to head 58.2%. R39's critic is level with the soup's (50.3%). The critic is the
+* **P33a done**: A13+R48's critic costs it under search -- its playouts with the soup's critic are
+  level with the searched soup, the soup's with its critic lose in both seats, the two swaps head to
+  head 58.2%. R39's critic is slightly behind the soup's (−1.4 / −2.9 in the soup's root; swaps 50.3%). The critic is the
   channel; arms are read by their critic under the root.
 * **The rollout root with a longer stop, in play (eval only):** `stop=later` (the later of 4
   boundaries and the turn's end) against today's root on the R34 soup, 16 worlds: 47.8%, −1.8 / −2.7
