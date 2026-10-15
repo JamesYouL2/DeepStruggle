@@ -157,6 +157,58 @@ later of the two.
   A critic trained toward turn-end values has the noise averaged out, which a single search
   decision cannot do.
 
+## Is the critic self-consistent? (`ai/eval/critic_consistency.py`)
+
+The owner's question after the stop-rule games: playing deeper should only add information, so why does
+the root lose when its playouts run on? 1,024 greedy self-play games per network (the R34 soup, A13+R48's
+SWA), every decision read from both sides; the deal test on 1,500 turn ends × 16 reseeded deals; the
+leaf probe on 512 bank positions. `data/logs/temp/consistency.out`.
+
+**1. The critic disagrees with itself across perspectives.** The trainer reads a decision only from its
+decider's side; the rollout root reads every leaf from the root mover's. On the same state:
+
+| | soup | A13+R48 |
+|:---|---:|---:|
+| mean v_decider + v_other (0 if consistent) | **+0.085** ± 0.001 | **+0.068** ± 0.001 |
+| mean \|v_decider + v_other\| | **0.132** | **0.131** |
+| log loss of the decider's reading / the other side's | 0.497 / 0.516 | 0.491 / 0.511 |
+
+The other side's reading is optimistic for itself (+0.07–0.09, largest at AR1: +0.11–0.12) and worse
+calibrated in every slice; averaging the two is no better than the decider's alone. The E3 measurement
+(227 positions, 0.144, [`../archive/E3_ladder/findings/value_bootstrap_perspective.md`](../archive/E3_ladder/findings/value_bootstrap_perspective.md))
+was never fixed.
+
+**2. No drift, but jumps at every change of mover.** The US-frame value's mean change from one decision
+to the next is within ±0.01 for every kind of step; its RMS is 0.03 between one mover's decisions and
+**0.12–0.13** at hand-overs, round boundaries and turn boundaries alike -- the two perspectives
+disagreeing, not new information.
+
+**3. No sharper reading at turn starts.** Log loss falls smoothly through each turn (e.g. turns 4-7:
+headline 0.486 → AR6 0.465 on the soup); the headline is not better calibrated than mid-turn.
+
+**4. The deal is nearly a martingale:** the mean value after 16 reseeded deals minus the value before is
++0.004 ± 0.002 (soup) and +0.010 ± 0.002 (A13+R48) -- a small optimism after the deal, under a point of
+win probability. The critic's spread across deals of one position is 0.10 SD.
+
+**5. The root's leaves.** The share of leaves whose decider is the root mover, and the mover's reading
+against the decider's sign-corrected one where it is not:
+
+| stop | mover decides (soup / A13+R48) | mover − decider reading, mean \|.\| | play vs today's root |
+|:---|---:|---:|---:|
+| `earlier` | **85.1% / 85.3%** | 0.102 / 0.095 | **51.9%** |
+| `boundaries` (today) | 80.6% / 80.7% | 0.101 / 0.094 | 50% |
+| `turn` | 49.7% / 49.7% | 0.104 / 0.099 | 51.2% |
+| `later` | **45.0% / 45.0%** | 0.103 / 0.098 | **47.8%** |
+
+A `turn` leaf is a headline decision, whose decider is the root mover for one side only. The stop rules'
+order in play follows the on-distribution share except `turn` against `boundaries`; at an off-distribution
+leaf the reading is off by ~0.10, against the 0.04–0.08 leads the root acts on.
+
+* **Reading:** the critic's main fault as a leaf evaluator is perspective inconsistency, ~0.13 on every
+  position, and the rollout root reads 15–55% of its leaves from the side the critic was not trained on.
+  Two fixes follow: read each leaf from its decider's side (play time, a bindings option), and train the
+  critic on both perspectives (a recipe).
+
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 
 2,048 self-play games at each temperature per network; the critic's value at every decision against
