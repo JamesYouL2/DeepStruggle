@@ -174,6 +174,34 @@ def report(tab: Table, outcome: Dict[int, float], deal_rows: Optional[List[Tuple
         out.append(f"   {b:10s} {int(sel.sum()):7d} {m:+9.3f} ± {se:.3f} {np.abs(s).mean():11.3f} "
                    f"{ll_d:11.4f} {ll_n:14.4f} {ll_a:8.4f}")
 
+    # Which reading carries the offset, and does a constant remove it? Signed error against the result
+    # (2y - 1, the decider's frame) for each reading; then the other side's reading shifted by the mean
+    # sum fitted per bucket and decider side on even games, scored on odd games (both readings and
+    # their average), against the decider's reading on the same odd games.
+    out.append("\n1b. The offset: signed error against the result, and a constant shift (fit on even games, "
+               "scored on odd)")
+    out.append(f"   {'bucket':10s} {'side':>5s} {'err decider':>12s} {'err other':>10s} {'shift':>7s} "
+               f"{'LL decider':>11s} {'LL other+shift':>15s} {'LL avg+shift':>13s}")
+    target = 2 * y - 1
+    even = (g % 2) == 0
+    for b in ["all"] + sorted(set(buckets.tolist())):
+        for sd, sname in ((1.0, "US"), (-1.0, "USSR")):
+            sel = keep & (side == sd) & ((buckets == b) if b != "all" else np.ones(len(g), dtype=bool))
+            if sel.sum() < 400:
+                continue
+            fit, test = sel & even, sel & ~even
+            if fit.sum() < 100 or test.sum() < 100:
+                continue
+            shift = float((vd[fit] + vn[fit]).mean())
+            err_d = float((vd[sel] - target[sel]).mean())
+            err_n = float((-vn[sel] - target[sel]).mean())
+            vn_s = vn[test] - shift
+            ll_d = _ll((vd[test] + 1) / 2, y[test]).mean()
+            ll_ns = _ll(np.clip((1 - vn_s) / 2, 0, 1), y[test]).mean()
+            ll_as = _ll(np.clip((vd[test] - vn_s + 2) / 4, 0, 1), y[test]).mean()
+            out.append(f"   {b:10s} {sname:>5s} {err_d:+12.4f} {err_n:+10.4f} {shift:+7.3f} "
+                       f"{ll_d:11.4f} {ll_ns:15.4f} {ll_as:13.4f}")
+
     out.append("\n2. Drift: the US-frame value from one decision to the next, by kind of step")
     u = side * vd
     kinds: Dict[str, List[Tuple[float, int]]] = {}
