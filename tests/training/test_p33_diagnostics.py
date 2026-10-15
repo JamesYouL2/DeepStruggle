@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 import ts_engine as ts
-from ai.eval import leak_critic
+from ai.eval import critic_consistency, leak_critic
 from ai.eval.critic_boundary import Decision, Game, compare_report
 from ai.models.ladder_net import create_ladder_net
 from bindings.action_encoder import ActionEncoder
@@ -104,3 +104,23 @@ def test_compare_report_reads_the_first_temperature_against_the_last() -> None:
     row = next(line for line in text.splitlines() if line.startswith("DEFCON 2, turns 8-10"))
     assert "+0.1000" in row.split("  ")[1] or "+0.1000" in row       # greedy games biased by 0.1 in p
     assert "(+" in row.rsplit("  ", 2)[-2]                          # |bias| larger at T=0
+
+
+def test_critic_consistency_reads_drift_in_each_games_own_order() -> None:
+    """Rows arrive env-interleaved; the drift table must pair each decision with its own game's next.
+    Two games, each perfectly smooth in the US frame, interleaved: every step's change is zero."""
+    tab = critic_consistency.Table()
+    for k in range(6):
+        for game, level in ((1, 0.2), (2, -0.4)):
+            side = 1 if k % 2 == 0 else -1
+            tab.g.append(game)
+            tab.side.append(side)
+            tab.turn.append(1)
+            tab.ar.append(1 + k // 2)
+            tab.phase.append("ACTION_ROUND")
+            tab.v_dec.append(side * level)          # the decider's frame: US frame times the side
+            tab.v_non.append(-side * level)
+    text = critic_consistency.report(tab, {1: 1.0, 2: -1.0}, None)
+    drift = [line.split() for line in text.split("2. Drift")[1].split("3. Log loss")[0].splitlines()
+             if line.strip().startswith(("hand-over", "round boundary"))]
+    assert drift and all(float(row[-4]) == 0.0 and float(row[-1]) == 0.0 for row in drift)   # mean and RMS
