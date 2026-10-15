@@ -53,7 +53,11 @@ This directory contains the Python native extension module (`ts_engine`) built w
   whose turn differs from the decision's, however many action rounds the turn has -- or `kLater`, the
   later of the two (P33: what the critic misses at the searched player's leaks is visible by the turn's
   end, not within 4 boundaries). Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later")`; the page
-  and its parity harness pass `ts_rollout_reset`'s seventh argument (0 / 1 / 2). The network stays outside: the caller
+  and its parity harness pass `ts_rollout_reset`'s seventh argument (0 / 1 / 2). `step`, `fill_live`
+  and `fill_leaves` run across the OpenMP team (`gomp_parallel_for`, the pool shared with torch) from
+  32 rows up, the rows listed serially first, so every result is bit-identical at any thread count
+  (`test_a_batch_plays_the_same_rows_on_one_thread_and_on_many`); the WebAssembly build stays serial
+  (`__EMSCRIPTEN__`). 2026-10-15: a searched match ran single-threaded at one core. The network stays outside: the caller
   loops `fill_live` -> logits -> `step` until `all_done`, then `fill_leaves` -> critic ->
   `set_leaf_values`, then reads `values`. The root's choice is here too: `top_candidates` (the k
   most probable legal moves from the root's logits), `parse_rule` (argmax / z<x> / kl<t>) and

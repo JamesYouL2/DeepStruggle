@@ -487,7 +487,7 @@ class BaseNashPGTrainer:
                 self._searcher = ContinuationValues(
                     search_teacher_net if search_teacher_net is not None else self.reference_net,
                     RolloutConfig(k=1, worlds=int(search_rollout_worlds), horizon=int(search_rollout_horizon),
-                                  rule="argmax", stop=str(search_rollout_stop)),
+                                  rule="argmax", stop=str(search_rollout_stop), cuda_graphs=bool(cuda_graphs)),
                     device=self.device, subsample=search_subsample, node_filter=search_node_filter)
             elif search_teacher_policy:
                 # The control for the rollout teacher: the teacher's own policy, no search.
@@ -499,7 +499,8 @@ class BaseNashPGTrainer:
                 self._searcher = RolloutTeacher(
                     search_teacher_net if search_teacher_net is not None else active_net,
                     RolloutConfig(k=int(search_rollout_k), worlds=int(search_rollout_worlds),
-                                  horizon=int(search_rollout_horizon), rule="z2", stop=str(search_rollout_stop)),
+                                  horizon=int(search_rollout_horizon), rule="z2", stop=str(search_rollout_stop),
+                                  cuda_graphs=bool(cuda_graphs)),
                     device=self.device, subsample=search_subsample, node_filter=search_node_filter)
             else:
                 self._searcher = BatchedMCTS(

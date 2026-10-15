@@ -169,3 +169,29 @@ def test_a_leaf_checkpoint_in_the_spec(tmp_path: Path) -> None:
     assert "leaf" in agent.name
     st = _states(4)
     assert len(agent.select_actions_batch(st)) == len(st)
+
+
+def test_cuda_graphs_are_eager_on_the_cpu_and_parse_from_the_spec(tmp_path: Path) -> None:
+    states = _states()
+    cfg = RolloutConfig(k=3, worlds=4, horizon=1, rule="z2", seed=3)
+    eager = RolloutRoot(_model(), cfg).choose(states)
+    graphed = RolloutRoot(_model(), RolloutConfig(k=3, worlds=4, horizon=1, rule="z2", seed=3, cuda_graphs=True))
+    assert not graphed._graphed                          # no graphs off the GPU
+    assert graphed.choose(states) == eager
+    path = tmp_path / "m.pt"
+    torch.save(_model().state_dict(), str(path))
+    _, c, _ = rollout_spec_config(f"rollout:{path}:4:16:4:z2:later:graphs")
+    assert c.stop == "later" and c.cuda_graphs
+    assert rollout_spec_leaf(f"rollout:{path}:4:16:4:z2:graphs:{path}") == str(path)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+def test_cuda_graphs_agree_with_the_eager_root() -> None:
+    """Graphs pad the batch, which can move a value by ~1e-7; the picks on these positions agree."""
+    states = _states(24)
+    dev = torch.device("cuda")
+    model = _model().to(dev)
+    eager = RolloutRoot(model, RolloutConfig(k=3, worlds=4, horizon=2, rule="z2", seed=8), device=dev).choose(states)
+    root = RolloutRoot(model, RolloutConfig(k=3, worlds=4, horizon=2, rule="z2", seed=8, cuda_graphs=True), device=dev)
+    assert root._graphed
+    assert root.choose(states) == eager

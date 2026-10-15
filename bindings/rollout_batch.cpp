@@ -1,10 +1,15 @@
 #include "rollout_batch.hpp"
 
+#ifndef __EMSCRIPTEN__
+#include "gomp_parallel.hpp"   // the native build's loops share torch's OpenMP pool; the browser's are serial
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include <utility>
 
 #include "ts/action_mask.hpp"
 #include "ts/engine.hpp"
@@ -198,18 +203,37 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
     return added;
 }
 
+// Rows are independent (each its own GameState), so the per-row work below runs across the OpenMP
+// team with gomp_parallel_for -- the pool the batch runner shares with torch (gomp_parallel.hpp). The
+// rows to visit are listed serially first, so every output slot and every result is the same at any
+// thread count; small batches stay serial, where the team's start-up would cost more than it saves.
+namespace {
+constexpr int64_t kParallelRows = 32;
+
+template <class F>
+void for_rows(int64_t n, F body) {
+#ifndef __EMSCRIPTEN__
+    if (n >= kParallelRows) {
+        gomp_parallel_for(n, std::move(body));
+        return;
+    }
+#endif
+    for (int64_t j = 0; j < n; ++j) body(j);
+}
+}  // namespace
+
 size_t RolloutBatch::fill_live(float* obs, uint8_t* masks) {
     live_order_.clear();
-    size_t n = 0;
     for (uint32_t i = 0; i < rows_.size(); ++i) {
-        Row& r = rows_[i];
-        if (r.done) continue;
-        extract_observation_features(r.state, acting_player(r.state), cfg_.features, obs + n * obs_width_);
-        ActionMask::generate_flat_mask_212(r.state, masks + n * A);
-        live_order_.push_back(i);
-        ++n;
+        if (!rows_[i].done) live_order_.push_back(i);
     }
-    return n;
+    const int64_t n = static_cast<int64_t>(live_order_.size());
+    for_rows(n, [&](int64_t j) {
+        const Row& r = rows_[live_order_[j]];
+        extract_observation_features(r.state, acting_player(r.state), cfg_.features, obs + j * obs_width_);
+        ActionMask::generate_flat_mask_212(r.state, masks + j * A);
+    });
+    return static_cast<size_t>(n);
 }
 
 uint16_t RolloutBatch::guarded_choice(const GameState& s, const float* logits, const uint8_t* mask,
@@ -238,36 +262,37 @@ uint16_t RolloutBatch::guarded_choice(const GameState& s, const float* logits, c
 }
 
 void RolloutBatch::step(const float* logits) {
-    uint8_t mask[A];
-    for (size_t j = 0; j < live_order_.size(); ++j) {
+    for_rows(static_cast<int64_t>(live_order_.size()), [&](int64_t j) {
         Row& r = rows_[live_order_[j]];
-        if (r.done) continue;
+        if (r.done) return;
+        uint8_t mask[A];
         const float* lg = logits + j * A;
         ActionMask::generate_flat_mask_212(r.state, mask);
         int best = -1;
         for (size_t a = 0; a < A; ++a) {
             if (mask[a] && (best < 0 || lg[a] > lg[best])) best = static_cast<int>(a);
         }
-        if (best < 0) { r.refused = r.done = true; continue; }
+        if (best < 0) { r.refused = r.done = true; return; }
         const uint16_t a = guarded_choice(r.state, lg, mask, static_cast<uint16_t>(best));
-        if (!Engine::step_flat(r.state, a)) { r.refused = r.done = true; continue; }
+        if (!Engine::step_flat(r.state, a)) { r.refused = r.done = true; return; }
         settle_and_mark(r);
-    }
+    });
     live_order_.clear();
 }
 
 size_t RolloutBatch::fill_leaves(float* obs, uint8_t* masks) {
     leaf_order_.clear();
-    size_t n = 0;
     for (uint32_t i = 0; i < rows_.size(); ++i) {
-        Row& r = rows_[i];
-        if (!r.done || r.terminal || r.refused || r.leaf_valued) continue;
-        extract_observation_features(r.state, movers_[r.position], cfg_.features, obs + n * obs_width_);
-        ActionMask::generate_flat_mask_212(r.state, masks + n * A);
-        leaf_order_.push_back(i);
-        ++n;
+        const Row& r = rows_[i];
+        if (r.done && !r.terminal && !r.refused && !r.leaf_valued) leaf_order_.push_back(i);
     }
-    return n;
+    const int64_t n = static_cast<int64_t>(leaf_order_.size());
+    for_rows(n, [&](int64_t j) {
+        const Row& r = rows_[leaf_order_[j]];
+        extract_observation_features(r.state, movers_[r.position], cfg_.features, obs + j * obs_width_);
+        ActionMask::generate_flat_mask_212(r.state, masks + j * A);
+    });
+    return static_cast<size_t>(n);
 }
 
 void RolloutBatch::set_leaf_values(const float* values) {

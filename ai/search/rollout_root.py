@@ -66,6 +66,64 @@ class RolloutConfig:
     rule: str = "z2"
     seed: int = 0
     stop: str = "boundaries"    # one of STOPS
+    #: Play the playouts' forwards (every ply, and the leaf reads) through CUDA graphs. Opt-in: a
+    #: graph's batch is padded, and a row's value can move by ~1e-7 with the batch size (the Gumbel
+    #: searcher's measurement), so the search is not bit-identical to the eager one. What it buys is
+    #: the time to launch ~20 small kernels per ply on the one thread every ply waits for.
+    cuda_graphs: bool = False
+
+
+class _GraphedForward:
+    """A network's logits and values as CUDA graphs, one per padded batch size, in one memory pool --
+    the rollout root's playout plies and leaf reads, which are many small forwards on one thread.
+    Batch sizes are padded to a power of two from 64 (to multiples of 1,024 above 4,096), so a game's
+    worth of plies captures a handful of graphs. Rows are independent in these networks: the padding
+    rows do not touch the real ones."""
+
+    def __init__(self, model: Any, device: torch.device) -> None:
+        self.model = model
+        self.device = device
+        self.pool: Optional[Any] = None
+        self.graphs: Dict[int, Tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+
+    @staticmethod
+    def bucket(k: int) -> int:
+        if k <= 4096:
+            n = 64
+            while n < k:
+                n *= 2
+            return n
+        return -(-k // 1024) * 1024
+
+    def _capture(self, n: int, width: int) -> Tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        obs = torch.zeros((n, width), dtype=torch.float32, device=self.device)
+        masks = torch.zeros((n, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.uint8, device=self.device)
+        masks[:, 0] = 1                       # a padding row never has an empty mask
+        side = torch.cuda.Stream(device=self.device)
+        side.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(side), torch.no_grad():
+            for _ in range(2):                # warm-up outside the capture, as CUDA graphs require
+                self.model(obs, masks)
+        torch.cuda.current_stream(self.device).wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self.pool), torch.no_grad():
+            lg, v, _ = self.model(obs, masks)
+            logits = lg.float()
+            values = v.float().reshape(-1)
+        if self.pool is None:
+            self.pool = graph.pool()
+        entry = (graph, obs, masks, logits, values)
+        self.graphs[n] = entry
+        return entry
+
+    def __call__(self, obs: np.ndarray, masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        k = int(obs.shape[0])
+        n = self.bucket(k)
+        graph, g_obs, g_masks, logits, values = self.graphs.get(n) or self._capture(n, int(obs.shape[1]))
+        g_obs[:k].copy_(torch.from_numpy(obs))
+        g_masks[:k].copy_(torch.from_numpy(masks))
+        graph.replay()
+        return logits[:k].cpu().numpy(), values[:k].cpu().numpy()
 
 
 def _stop_kw(cfg: RolloutConfig) -> Dict[str, str]:
@@ -93,6 +151,12 @@ class RolloutRoot:
         if config.stop not in STOPS:
             raise ValueError(f"stop must be one of {STOPS}, got {config.stop!r}")
         self.features = model_obs_features(model)
+        use_graphs = bool(config.cuda_graphs) and self.device.type == "cuda"
+        self._graphed: Dict[int, _GraphedForward] = {}
+        if use_graphs:
+            for net in (model, leaf_model):
+                if net is not None and id(net) not in self._graphed:
+                    self._graphed[id(net)] = _GraphedForward(net, self.device)
         if leaf_model is not None and model_obs_features(leaf_model) != self.features:
             raise ValueError(f"the leaf network reads observation features {model_obs_features(leaf_model)!r}, "
                              f"the root's network {self.features!r}: their leaves would not be the same rows")
@@ -110,6 +174,11 @@ class RolloutRoot:
         """Logits and values for observation rows already built, in chunks of _ROWS (`model`, else the
         root's own network)."""
         net = self.model if model is None else model
+        graphed = self._graphed.get(id(net))
+        if graphed is not None and obs.shape[0]:
+            lg_np, v_np = graphed(np.ascontiguousarray(obs, dtype=np.float32), np.ascontiguousarray(masks, dtype=np.uint8))
+            self.rows += int(obs.shape[0])
+            return lg_np, v_np
         lgs, vs = [], []
         for lo in range(0, obs.shape[0], _ROWS):
             with torch.no_grad():
@@ -396,15 +465,22 @@ class SparseRolloutAgent:
         return self.select_actions_batch([state])[0]
 
 
-def _spec_tail(spec: str) -> Tuple[str, Optional[str]]:
-    """(stop, leaf checkpoint) of rollout:<ckpt>:k:worlds:horizon:rule[:stop][:leaf]. A sixth field that
-    is not a stop is the leaf (the form before the stop existed)."""
+def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
+    """(stop, leaf checkpoint, CUDA graphs) of rollout:<ckpt>:k:worlds:horizon:rule[:stop][:graphs][:leaf].
+    The trailing fields are told apart by value: a stop word, the word `graphs`, or else the leaf (a
+    sixth field that is a path is the leaf, the form before the others existed)."""
     parts = spec.split(":")
-    extra = [p for p in parts[6:] if p]
-    stop = "boundaries"
-    if extra and extra[0] in STOPS:
-        stop = extra.pop(0)
-    return stop, (extra[0] if extra else None)
+    stop, leaf, graphs = "boundaries", None, False
+    for p in parts[6:]:
+        if not p:
+            continue
+        if p in STOPS:
+            stop = p
+        elif p == "graphs":
+            graphs = True
+        else:
+            leaf = p
+    return stop, leaf, graphs
 
 
 def rollout_spec_leaf(spec: str) -> Optional[str]:
@@ -425,11 +501,12 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
         return parts[i] if len(parts) > i and parts[i] else None
 
     d = RolloutConfig()
+    stop, _leaf, graphs = _spec_tail(spec)
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
-                        horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=_spec_tail(spec)[0])
+                        horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs)
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
-    stop = {"boundaries": "", "turn": "-turnend", "later": "-orturnend"}[cfg.stop]
+    stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend"}[cfg.stop]
     horizon = "" if cfg.stop == "turn" else f"-h{cfg.horizon}"
-    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop}-{cfg.rule}"
+    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}-{cfg.rule}"

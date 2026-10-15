@@ -2,9 +2,13 @@
 every seen card, the batch builds k x worlds rows and drops a world whole, a horizon of 0 is all
 leaves, a row stops exactly at its horizon, shared dice give a world's candidates one stream, the
 leaves are read from the mover's side, an illegal candidate is refused, and the turn-end and later
-stops end every row at the right place."""
+stops end every row at the right place, and a batch played across threads gives exactly the rows it
+gives on one."""
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from typing import List, Tuple
 
 import numpy as np
@@ -289,3 +293,43 @@ def test_a_bad_horizon_or_stop_is_refused() -> None:
         ts.RolloutBatch(horizon=-1)
     with pytest.raises(ValueError):
         ts.RolloutBatch(horizon=4, stop="never")
+
+
+_THREADED = r"""
+import hashlib, sys
+import numpy as np
+import ts_engine as ts
+runner = ts.VectorizedBatchRunner(1, 7)
+rng = np.random.default_rng(7)
+for _ in range(60):
+    m = np.asarray(runner.get_action_masks())[0]
+    runner.step_flat_all([int(rng.choice(np.flatnonzero(m)))], True)
+st = runner.get_state(0)
+cands = [int(a) for a in np.flatnonzero(np.asarray(ts.get_flat_action_mask(st, False)))[:4]]
+b = ts.RolloutBatch(horizon=3, shared_dice=True, guard=True, features=0, seed=99, stop="later")
+b.add(st, cands, 32)                                  # 4 x 32 rows: above the parallel threshold
+h = hashlib.sha256()
+ply = 0
+while not b.all_done():
+    obs, masks = b.fill_live()
+    h.update(obs.tobytes()); h.update(masks.tobytes())
+    lg = np.where(masks > 0, np.sin(np.arange(masks.size).reshape(masks.shape) * 0.37 + ply), -1e9).astype(np.float32)
+    b.step(np.ascontiguousarray(lg))
+    ply += 1
+obs, masks = b.fill_leaves()
+h.update(obs.tobytes())
+b.set_leaf_values(np.linspace(-1, 1, obs.shape[0]).astype(np.float32))
+h.update(b.values().tobytes())
+print(h.hexdigest())
+"""
+
+
+def test_a_batch_plays_the_same_rows_on_one_thread_and_on_many() -> None:
+    """step, fill_live and fill_leaves run across the OpenMP team (gomp_parallel_for); the rows are
+    independent and listed serially, so the observations, masks and values are bit-identical."""
+    digests = []
+    for threads in ("1", "8"):
+        env = {**os.environ, "OMP_NUM_THREADS": threads}
+        out = subprocess.run([sys.executable, "-c", _THREADED], env=env, capture_output=True, text=True, check=True)
+        digests.append(out.stdout.strip())
+    assert digests[0] == digests[1] and len(digests[0]) == 64
