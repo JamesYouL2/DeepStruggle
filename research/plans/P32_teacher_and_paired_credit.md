@@ -316,6 +316,18 @@ after, `run_codes.py --run` on the name, readouts at 40M marks.
   triggered (the critic sees the trap).
 * 4: the owner's.
 
+## Outcome (2026-10-15) -- superseded by [P33](P33_search_preserved_gains.md)
+
+T1 is settled: a frozen teacher pays (R32, and R39 with the rollout root as the teacher's search,
++15.2 / +8.3 per seat, SWA 1676), but what transfers is the teacher's *raw* policy (R45, the
+soup's raw policy as the target, is level with R39) and the rollout root's own margin does not
+distil at any budget (R40–R42). T2 with Gumbel k=4 @32 at 1 in 8 is null (R35). B4′ is parked.
+The minibatch and width arms that followed (R46–R48, A13) raise the raw network but not the
+searched player: under the rollout root the R34 soup (1791) stays above R39 (1779) and A13+R48
+(1767) although raw it is below both. P33 takes up the question those results pose -- which base
+improvements the search keeps -- with the critic as the main track and every arm read under the
+root as well as raw.
+
 ## Follow-ups
 
 * T1 promoted → the same target as the from-scratch teacher (P30 C5's gate passes on the base
