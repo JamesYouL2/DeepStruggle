@@ -127,11 +127,14 @@ later of the two.
 | stop vs today's root | score | as US | as USSR | US − bar | USSR − bar |
 |:---|---:|---:|---:|---:|---:|
 | `turn` (CUDA graphs on both sides) | **51.3%** | 55.3% | 47.3% | +1.2 | +1.4 |
+| `turn`, replicate on other deals (`--base-seed 20000`) | 51.1% | 53.9% | 48.4% | −0.2 | +2.5 |
+| `turn`, both (4,000 games) | **51.2%** | 54.6% | 47.9% | +0.5 | +2.0 |
 | `later` | 47.8% | 52.3% | 43.2% | −1.8 | −2.7 |
 | the searched soup's own self-play bar | — | 54.1% | 45.9% | | |
 
-* **Stopping at the turn's end is level to slightly better** (+1.2 / +1.4, each under 1 SE; pooled
-  ~1.2 SE): positive in both seats, not significant. The play-time root does not lose by reading the
+* **Stopping at the turn's end is level to slightly better**: +1.2 / +1.4 on the first deals, −0.2 /
+  +2.5 on the replicate's; pooled over 4,000 games +0.5 / +2.0, about 1.6 SE above level. Not
+  significant, never below the bar. The play-time root does not lose by reading the
   critic at the turn boundary instead of 4 boundaries ahead.
 * **Stopping at the later of the two is worse** (−1.8 / −2.7, ~2 SE).
 * **The two results split by position in the turn.** Where the turn's end lies beyond 4 boundaries
