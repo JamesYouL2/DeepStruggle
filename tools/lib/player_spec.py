@@ -11,12 +11,15 @@ network is a typed spec with named fields, and a player's id spells it out:
     E7-A4-R1-S44@4800M~policy(temperature=0.5)           sampled
     E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)      Gumbel root search
     E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)   rollout root
+    E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)
     E7-A8-R1-S44@6800M~search(sims=128,determinize=true,node_filter=all,subsample=1,backend=cpp,fpu=0)
     HeuristicBot                                         a rule-based bot, no network
 
 A search spec's id names every field, defaults included, so it never depends on what a default is
 today. Only the greedy policy is abbreviated, to the bare network name, because that is the player
-everyone means by a checkpoint's name.
+everyone means by a checkpoint's name. The one exception is a field added after ids using its kind were
+published (`LATE_FIELDS`): it is named only when it differs from the behaviour those ids already had, so
+every existing id and stored spec keeps meaning the same player.
 
 Standard library only: tools/lib/leaderboard.py imports this, and it runs on CI without torch.
 """
@@ -58,6 +61,10 @@ class Rollout:
     worlds: int = 16
     horizon: int = 4
     rule: str = "z2"
+    #: Where a playout stops (ai.search.rollout_root.STOPS) and whose side its leaf is read from
+    #: (LEAF_SIDES): "boundaries" and "mover" are the root every rollout id before them meant.
+    stop: str = "boundaries"
+    leaf: str = "mover"
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,12 @@ BOTS: Final[Dict[str, Tuple[str, str]]] = {"heuristic": ("HeuristicBot", "heuris
                                            "random": ("RandomBot", "random")}
 _NODE_FILTERS: Final = ("all", "card")
 _BACKENDS: Final = ("cpp", "python")
+#: ai.search.rollout_root's STOPS and LEAF_SIDES, without importing it (torch-free here).
+_STOPS: Final = ("boundaries", "turn", "later", "earlier")
+_LEAVES: Final = ("mover", "decider", "own")
+#: Fields added to a kind after ids using it were published, with the value those ids meant. They are
+#: written into an id or a stored spec only when they differ from it.
+LATE_FIELDS: Final[Dict[str, Dict[str, str]]] = {"rollout": {"stop": "boundaries", "leaf": "mover"}}
 #: ai.search.rollout_root.parse_rule's grammar, without importing it (torch-free here).
 _RULE_RE = re.compile(r"^(argmax|z(\d+(\.\d+)?)?|kl(\d+(\.\d+)?)?)$")
 _ID_RE = re.compile(r"^(?P<network>[^~]+?)(?:~(?P<kind>[a-z]+)(?:\((?P<args>[^()]*)\))?)?$")
@@ -126,6 +139,10 @@ def _check(spec: Inference) -> None:
             raise PlayerSpecError(f"horizon must be >= 0, got {spec.horizon}")
         if not _RULE_RE.match(spec.rule):
             raise PlayerSpecError(f"rule must be argmax, z<x> or kl<t>, got {spec.rule!r}")
+        if spec.stop not in _STOPS:
+            raise PlayerSpecError(f"stop must be one of {_STOPS}, got {spec.stop!r}")
+        if spec.leaf not in _LEAVES:
+            raise PlayerSpecError(f"leaf must be one of {_LEAVES}, got {spec.leaf!r}")
     if isinstance(spec, Search):
         if spec.node_filter not in _NODE_FILTERS:
             raise PlayerSpecError(f"node_filter must be one of {_NODE_FILTERS}, got {spec.node_filter!r}")
@@ -150,7 +167,9 @@ def player_id(network: Optional[str], spec: Inference) -> str:
         raise PlayerSpecError(f"a network name may not contain '~' or ':': {network!r}")
     if spec == Policy():
         return network
-    fields = ",".join(f"{f.name}={_fmt(getattr(spec, f.name))}" for f in dataclasses.fields(spec))
+    late = LATE_FIELDS.get(kind_of(spec), {})
+    fields = ",".join(f"{f.name}={_fmt(getattr(spec, f.name))}" for f in dataclasses.fields(spec)
+                      if f.name not in late or getattr(spec, f.name) != late[f.name])
     return f"{network}~{kind_of(spec)}({fields})"
 
 
@@ -172,12 +191,15 @@ def _coerce(cls: type, name: str, raw: str) -> Union[int, float, str, bool]:
 
 def spec_from_dict(d: Mapping[str, object]) -> Inference:
     """The spec stored in leaderboard/players.json: {"kind": ..., <field>: <value>, ...}. Every
-    field is required, so a stored spec never silently takes up a changed default."""
+    field is required, so a stored spec never silently takes up a changed default -- except a
+    `LATE_FIELDS` one, which a spec stored before it existed lacks and which means its old value."""
     kind = d.get("kind")
     if not isinstance(kind, str) or kind not in KINDS:
         raise PlayerSpecError(f"unknown inference kind {kind!r}; one of {sorted(KINDS)}")
     cls = KINDS[kind]
     names = [f.name for f in dataclasses.fields(cls)]
+    late = LATE_FIELDS.get(kind, {})
+    d = {**late, **d}
     extra = sorted(set(d) - set(names) - {"kind"})
     missing = [n for n in names if n not in d]
     if extra or missing:
@@ -200,7 +222,9 @@ def spec_from_dict(d: Mapping[str, object]) -> Inference:
 
 
 def spec_to_dict(spec: Inference) -> Dict[str, object]:
-    return {"kind": kind_of(spec), **dataclasses.asdict(spec)}
+    late = LATE_FIELDS.get(kind_of(spec), {})
+    return {"kind": kind_of(spec), **{k: v for k, v in dataclasses.asdict(spec).items()
+                                      if k not in late or v != late[k]}}
 
 
 def parse_player_id(pid: str) -> Tuple[Optional[str], Inference]:
@@ -249,6 +273,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str]) -> str:
     if isinstance(spec, Gumbel):
         return f"gumbel:{checkpoint}:{spec.sims}:{spec.k}:{_fmt(spec.fpu)}"
     if isinstance(spec, Rollout):
-        return f"rollout:{checkpoint}:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}"
+        tail = (f":{spec.stop}" if spec.stop != "boundaries" else "") + (f":{spec.leaf}" if spec.leaf != "mover" else "")
+        return f"rollout:{checkpoint}:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}{tail}"
     return (f"search:{checkpoint}:{spec.sims}:{'determinize' if spec.determinize else 'none'}:"
             f"{spec.node_filter}:{_fmt(spec.subsample)}:{spec.backend}:{_fmt(spec.fpu)}")

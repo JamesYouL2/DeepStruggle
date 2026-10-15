@@ -345,3 +345,23 @@ def test_snapshot_final_is_never_published_and_never_registered(tmp_path: pathli
     board = _board(tmp_path, ["A", "B"], [])
     board.networks["A@1M"]["file"] = "checkpoints/R_20260101_000000/snapshot_final.pt"
     assert any("by step" in e for e in lb.validate(board))
+
+
+
+def test_a_rollout_players_stop_and_leaf_are_named_only_when_not_the_measured_root() -> None:
+    """Rollout ids predate the stop and leaf settings: an existing id and stored spec keep meaning the
+    measured root, and a non-default stop or leaf is spelled out in the id and in the agent string."""
+    old = "E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)"
+    net, spec = parse_player_id(old)
+    assert player_id(net, spec) == old
+    assert spec_to_dict(spec) == {"kind": "rollout", "k": 4, "worlds": 16, "horizon": 4, "rule": "z2"}
+    assert spec_from_dict({"kind": "rollout", "k": 4, "worlds": 16, "horizon": 4, "rule": "z2"}) == spec
+    assert load_spec(spec, "m.pt") == "rollout:m.pt:4:16:4:z2"
+    new = "E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)"
+    net, spec = parse_player_id(new)
+    assert isinstance(spec, Rollout) and (spec.stop, spec.leaf) == ("earlier", "own")
+    assert player_id(net, spec) == new
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    assert load_spec(spec, "m.pt") == "rollout:m.pt:4:16:4:z2:earlier:own"
+    with pytest.raises(PlayerSpecError):
+        parse_player_id("E7-A8-R1-S44@6800M~rollout(stop=never)")
