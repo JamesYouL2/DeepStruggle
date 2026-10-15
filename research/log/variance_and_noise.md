@@ -149,7 +149,7 @@ individual runs overlap.
   Both were later tried on E6 ([`P28_step2a_lr_schedule.md`](P28_step2a_lr_schedule.md),
   [`P28_step2b_ema_weights.md`](P28_step2b_ema_weights.md)).
 * **`dec_turns40` is still ~200 Elo clear of everything trained since**, which is the subject of
-  the architecture programme ([`P9_architecture.md`](P9_architecture.md)).
+  the architecture programme ([`P9_architecture.md`](../archive/E3_ladder/log/P9_architecture.md)).
 
 ---
 

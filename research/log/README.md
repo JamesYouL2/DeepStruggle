@@ -28,7 +28,7 @@ still resolve.
 | [`critic_vs_policy_160M.md`](critic_vs_policy_160M.md) | §15–§18 | policy or critic, by card; the 160M run ties the previous best |
 | [`observation_layout.md`](observation_layout.md) | §19, §23–§24 | dead history slice; v2.1 neutral; v2.2 +91.7 Elo (all retired since) |
 | [`corrected_engine_arms_H_I.md`](corrected_engine_arms_H_I.md) | §25–§27 | arms H/H2 on v2.3; the KL penalty is worth 169 Elo; 240M → 480M |
-| [`P9_architecture.md`](P9_architecture.md) | — | identity embeddings → self-transform → per-entity heads → no map graph |
+| [`P9_architecture.md`](../archive/E3_ladder/log/P9_architecture.md) | — | archived (E3): identity embeddings → self-transform → per-entity heads → no map graph |
 
 ## Instruments and noise
 

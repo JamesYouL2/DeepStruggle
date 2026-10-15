@@ -6,7 +6,7 @@ self-transform added ~+60; and per-entity residual policy heads — information 
 at 89–91% but stranded before the heads — took the stack to +304 over the control at 80M. Built as a
 replacing head the same idea lost 219 Elo, and attention-pooling into the trunk failed. Seed spread
 is ~95 Elo, which withdrew "0 graph layers beats 2". The critic cannot see a provoked DEFCON-1 at any
-node. Current verdicts: [`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md).
+node. Current verdicts: [`../archive/E3_ladder/findings/architecture.md`](../findings/architecture.md).
 
 The journal of the work that took the network from "it cannot tell 86% of its cards apart" to the
 late-E3 recipe: how each defect was diagnosed, what was built in response, what the probe said
@@ -15,11 +15,11 @@ replacing form of the per-entity heads) and the retracted readings (the anchor t
 orderings, the influence probe that scored below its own baseline twice, the trunk figure that moved
 the right way while play halved) are kept on purpose. The *conclusions* — what the architecture is
 now and what each change is worth — are kept current and short in
-[`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md); this file is why they are believed.
+[`../archive/E3_ladder/findings/architecture.md`](../findings/architecture.md); this file is why they are believed.
 The plan this programme was run from is
-[`../plans/P9_graph_architecture.md`](../archive/E3_ladder/plans/P9_graph_architecture.md), and the arm names are
-decoded in [`../runs.md`](../runs.md), and the scheme behind them in
-[`../method/run_nomenclature.md`](../method/run_nomenclature.md).
+[`../plans/P9_graph_architecture.md`](../plans/P9_graph_architecture.md), and the arm names are
+decoded in [`../runs.md`](../../../runs.md), and the scheme behind them in
+[`../method/run_nomenclature.md`](../../../method/run_nomenclature.md).
 
 These entries were written under the section numbers of the original `research/experiments.md`, by
 way of the retired `research/metrics.md`. The numbers are recorded here so older references still
@@ -56,9 +56,9 @@ Three topics' verdicts were extracted into findings (now archived with the E3 la
 
 | section here | current verdict now in |
 |:---|:---|
-| §21.1 the critic and the provoked DEFCON-1; §21.2 windowing | [`../archive/E3_ladder/findings/defcon_blunders.md`](../archive/E3_ladder/findings/defcon_blunders.md) |
-| *Seed variance is ~95 Elo* (unnumbered, at the end) | [`../archive/E3_ladder/findings/seed_variance.md`](../archive/E3_ladder/findings/seed_variance.md) |
-| §21.5–§21.19, the architecture progression and the probes | [`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md), as before |
+| §21.1 the critic and the provoked DEFCON-1; §21.2 windowing | [`../archive/E3_ladder/findings/defcon_blunders.md`](../findings/defcon_blunders.md) |
+| *Seed variance is ~95 Elo* (unnumbered, at the end) | [`../archive/E3_ladder/findings/seed_variance.md`](../findings/seed_variance.md) |
+| §21.5–§21.19, the architecture progression and the probes | [`../archive/E3_ladder/findings/architecture.md`](../findings/architecture.md), as before |
 
 ---
 
@@ -111,7 +111,7 @@ Two things follow.
 remaining 50M moves it by a few points inside the noise band. The strategic diagnostics are the
 opposite: they improve steadily and are still moving at 60M. So the anchor metric saturates long
 before the behaviour does — another reason not to rate an arm by it
-([`variance_and_noise.md`](variance_and_noise.md)).
+([`variance_and_noise.md`](../../../log/variance_and_noise.md)).
 
 **The DEFCON-suicide rate does not improve over a whole run.** It starts at 9.8%, wanders between
 4.6% and 10.7%, and ends at 10.0%. This is the mistake the project goal names first, and 80M
@@ -127,7 +127,7 @@ warm start cannot save re-learning something nothing learns in the first place.
 
 ## The critic does not see a provoked DEFCON-1 coming, at any node
 
-> Current verdict: [`../archive/E3_ladder/findings/defcon_blunders.md`](../archive/E3_ladder/findings/defcon_blunders.md). The trace
+> Current verdict: [`../archive/E3_ladder/findings/defcon_blunders.md`](../findings/defcon_blunders.md). The trace
 > below is the evidence and stays here.
 
 Traced through the `h2_480M_provoked_*` replays by replaying their recorded flat actions through
@@ -175,8 +175,8 @@ excludes provoked endings, so the one-line label fix is a prerequisite for eithe
 
 ## Windowing a provoked DEFCON-1 moves exactly the class it targets
 
-> Current verdict: [`../archive/E3_ladder/findings/defcon_blunders.md`](../archive/E3_ladder/findings/defcon_blunders.md) — not
-> adopted, −68 Elo on two seeds. The arm is E3-08 in [`../runs.md`](../runs.md).
+> Current verdict: [`../archive/E3_ladder/findings/defcon_blunders.md`](../findings/defcon_blunders.md) — not
+> adopted, −68 Elo on two seeds. The arm is E3-08 in [`../runs.md`](../../../runs.md).
 
 `--window-provoked-defcon` credits a provoked DEFCON-1 to the player who played the card, using
 the existing turn-scoped blunder window, instead of letting the -1 propagate back as an ordinary
@@ -296,7 +296,7 @@ human 11.7% is the closest this project has come -- but not at this price, and t
 should narrow the window before anything else.
 
 > **Naming, and one thing the old names hid.** Runs are named `<engine><attempt>-<steps>` --
-> see [`../method/run_nomenclature.md`](../method/run_nomenclature.md). H2 is **E2**: it predates the Aldrich Ames
+> see [`../method/run_nomenclature.md`](../../../method/run_nomenclature.md). H2 is **E2**: it predates the Aldrich Ames
 > and Star Wars mandatory-choice fixes, so it was trained on a different game from every P1 arm,
 > which are **E3**. Every "against H2" figure below is therefore a *cross-engine* comparison,
 > with the reference playing a game it never trained on. The handicap is small -- two rare cards
@@ -492,7 +492,7 @@ Matched budget, same engine, two seeds, pooled over sixteen snapshot pairings ag
 | identity vs filter, head to head | **58.8% [57.0, 60.4] → +61** | — |
 
 Mean +115 at 80M and +104 at 160M, inside the between-seed spread. Under the log-linear law
-([`../method/references.md`](../method/references.md) §7) that is an **intercept shift**: identity
+([`../method/references.md`](../../../method/references.md) §7) that is an **intercept shift**: identity
 reaches a given strength sooner and does not change the rate, so it is worth about 110 Elo at any
 budget rather than compounding. Filtering has the same shape at a fifth of the size (+20, +24, +32
 across three measurements).
@@ -591,7 +591,7 @@ separately compresses differences between two arms that are both far from the an
 specific comparison, re-anchor and measure that pair.
 
 **The snapshot spread column is why *a single snapshot cannot measure an effect smaller than a
-run's oscillation* ([`variance_and_noise.md`](variance_and_noise.md)) exists.** Four snapshots of
+run's oscillation* ([`variance_and_noise.md`](../../../log/variance_and_noise.md)) exists.** Four snapshots of
 one arm-budget span 17 to 80 Elo. Every effect in the table except identity's is smaller than the
 largest of those spreads, so a single-snapshot version of this table would have been noise dressed
 as a result.
@@ -893,7 +893,7 @@ guessed one. Two things the ladder adds to it:
 
 Two architecture changes, both aimed at the pooling defect above, both with their predicted
 effect written down before the runs — the predictions live with their arms in
-[`../runs.md`](../runs.md), *E3-12 and E3-13*. One prediction held exactly and the other failed,
+[`../runs.md`](../../../runs.md), *E3-12 and E3-13*. One prediction held exactly and the other failed,
 which is the more useful of the two outcomes.
 
 * **E3-12** (`--self-transform`) gives each graph layer a second weight matrix applied to the node
@@ -1128,7 +1128,7 @@ argument.
 were both legible from one seed, so this is reported rather than held -- but E3-15 now becomes the
 recipe everything downstream is measured against, and a baseline resting on one seed is the kind
 of thing *a single snapshot cannot measure an effect smaller than a run's oscillation*
-([`variance_and_noise.md`](variance_and_noise.md)) exists to warn about.
+([`variance_and_noise.md`](../../../log/variance_and_noise.md)) exists to warn about.
 
 ## The architecture progression on one scale
 
@@ -1170,8 +1170,8 @@ read-out and the replacing form of the per-entity heads -- were diagnosed by the
 that chose the successes.
 
 **E3-15 rests on one seed**; it became the late-E3 recipe, and its bundle was re-measured on E4 at
-+447 Elo ([`E4_architecture_ab_result.md`](E4_architecture_ab_result.md)). The E4 ladder then
-showed most of it is the per-entity country head ([`P21_ladder_status.md`](P21_ladder_status.md)).
++447 Elo ([`E4_architecture_ab_result.md`](../../../log/E4_architecture_ab_result.md)). The E4 ladder then
+showed most of it is the per-entity country head ([`P21_ladder_status.md`](../../../log/P21_ladder_status.md)).
 
 ## Does the network price a country for the operation it is performing?
 
@@ -1303,7 +1303,7 @@ distribution even though both models see identical inputs. E3-15 is one seed.
 ## Seed variance is ~95 Elo, and it invalidates the graph-depth comparison
 
 > Current verdict, with every other variance figure alongside it:
-> [`../archive/E3_ladder/findings/seed_variance.md`](../archive/E3_ladder/findings/seed_variance.md).
+> [`../archive/E3_ladder/findings/seed_variance.md`](../findings/seed_variance.md).
 
 The E3-12/E3-15/E3-17 tournament (400 games per side, `data/tournaments/e3_12_15_17_report.md`)
 was the first time two seeds of the same architecture were rated in the same field. They are far

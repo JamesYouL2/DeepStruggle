@@ -28,7 +28,7 @@ Two more instrument faults are recorded elsewhere because they belong to a longe
 tournament that is not reproducible from its own configuration (`metrics.md` §7.2) is in
 [`variance_and_noise.md`](variance_and_noise.md), and the three methodology faults in the
 per-country influence probe (`metrics.md` §21.12) are in
-[`P9_architecture.md`](P9_architecture.md).
+[`P9_architecture.md`](../archive/E3_ladder/log/P9_architecture.md).
 
 ---
 

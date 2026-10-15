@@ -3,7 +3,7 @@
 The provoked DEFCON-1 loss is this project's clearest named failure: the agent plays an opponent
 card for Operations, the event fires, DEFCON falls to 1 on its own turn and it loses. **Update
 discipline: rewritten in place.** The traces, the replays and the arms are in
-[`../../../log/P9_architecture.md`](../../../log/P9_architecture.md); the follow-up, P8 (an auxiliary risk head), was closed when the critic was found to see the
+[`../../../log/P9_architecture.md`](../log/P9_architecture.md); the follow-up, P8 (an auxiliary risk head), was closed when the critic was found to see the
 forced-exit trap at entry ([`../../../log/P32_cpu_checks.md`](../../../log/P32_cpu_checks.md)).
 
 Filed under `training/` — what the critic represents and what a reward window costs — but resting

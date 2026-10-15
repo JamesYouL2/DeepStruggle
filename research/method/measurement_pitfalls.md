@@ -5,7 +5,7 @@ reference**: an entry is added for a new class of fault and removed only when th
 structurally impossible. Keep it under ~200 lines. Full histories:
 [`../log/measurement_bugs.md`](../log/measurement_bugs.md),
 [`../log/variance_and_noise.md`](../log/variance_and_noise.md), probe methodology in
-[`../log/P9_architecture.md`](../log/P9_architecture.md).
+[`../log/P9_architecture.md`](../archive/E3_ladder/log/P9_architecture.md).
 
 > **Distrust the measurement before trusting the result.** Many diagnostics here reported confident,
 > plausible, wrong numbers. When a result surprises, the cheapest first hypothesis is a broken

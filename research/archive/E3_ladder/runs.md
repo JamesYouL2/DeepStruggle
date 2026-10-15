@@ -50,7 +50,7 @@ Observation v2.3, `blunder_aware`, K=40, `eta` 0.1, 512 envs, cold start unless 
 
 | # | arm | varied | seeds | budgets | directory | result written up in |
 |---:|:---|:---|:---|:---|:---|:---|
-| 01 | control | — | 21 | 80M, 160M, 240M | `p1_scalar_nofilter` | [findings/training/architecture.md](findings/architecture.md); [log/P9_architecture.md](../../log/P9_architecture.md) |
+| 01 | control | — | 21 | 80M, 160M, 240M | `p1_scalar_nofilter` | [findings/training/architecture.md](findings/architecture.md); [log/P9_architecture.md](log/P9_architecture.md) |
 | 02 | categorical head, target in normalised units | 21 | **VOID** | `..._VOID_unscaled_target` | [plans/P1](plans/P1_categorical_value_advantage_filtering.md) — died to a units bug |
 | 03 | categorical head, `v_vp` in real VP | 21 | **VOID** | `..._VOID_vp_scale` | [plans/P1](plans/P1_categorical_value_advantage_filtering.md) — died to a scale bug |
 | 04 | categorical head, `--vf-coef` sweep | 21 | **VOID** | `..._VOID_vf_coef` | [plans/P1](plans/P1_categorical_value_advantage_filtering.md) |
@@ -58,9 +58,9 @@ Observation v2.3, `blunder_aware`, K=40, `eta` 0.1, 512 envs, cold start unless 
 | 06 | categorical head, `--value-dist-coef 0.02` | 21 | 80M | `p1_categorical_nofilter` | [findings/training/architecture.md](findings/architecture.md) — −28 Elo |
 | 07 | `--adv-filter-quantile 0.5` | 21, 22 | 80M, 160M | `p1_scalar_filter_seed2026092*` | [plans/P1](plans/P1_categorical_value_advantage_filtering.md) — +25 Elo, +24 at 160M |
 | 08 | `--window-provoked-defcon` | 21, 22 | 80M | `p1_window_provoked_seed2026092*` | [findings/training/defcon_blunders.md](findings/defcon_blunders.md) |
-| 09 | `--arch mlp`, backbone control | 21, 22 | 80M | `p1_mlp_backbone_seed2026092*` | [log/P9_architecture.md](../../log/P9_architecture.md) — −110 Elo |
+| 09 | `--arch mlp`, backbone control | 21, 22 | 80M | `p1_mlp_backbone_seed2026092*` | [log/P9_architecture.md](log/P9_architecture.md) — −110 Elo |
 | 10 | `--identity-dim 16` | 21, 22 | 80M, 160M | `p1_identity_seed2026092*` | [findings/training/architecture.md](findings/architecture.md) — +107/+115 Elo |
-| 11 | `--arch mlp --drop-static` | 21, 22 | 80M | `p1_mlp_static_seed2026092*` | [log/P9_architecture.md](../../log/P9_architecture.md) — −40/−0 Elo, not adopted |
+| 11 | `--arch mlp --drop-static` | 21, 22 | 80M | `p1_mlp_static_seed2026092*` | [log/P9_architecture.md](log/P9_architecture.md) — −40/−0 Elo, not adopted |
 | 12 | `--self-transform` (on identity) | 21, 22 | 80M | `E3-12-2*_<ts>` | [findings/training/architecture.md](findings/architecture.md) — +53/+83 Elo |
 | 13 | `--self-transform --attn-readout 64` | 21, 22 | 80M | `E3-13-2*_<ts>` | [findings/training/architecture.md](findings/architecture.md) — −14/−23, rejected |
 | 14 | `--self-transform --per-entity-heads 64` | 21, 22 | 80M | `E3-14-2*_<ts>` | [findings/training/architecture.md](findings/architecture.md) — −219 Elo, rejected |
@@ -141,7 +141,7 @@ written** — a prediction that failed is the most useful thing on this page.
 ### E3-12 and E3-13 — the graph self-transform and the attention read-out
 
 **E3-12 and E3-13 carry `--identity-dim 16`, and their control is E3-10, not E3-01.** Identity
-is part of the recipe as of the identity arms ([`../../log/P9_architecture.md`](../../log/P9_architecture.md)),
+is part of the recipe as of the identity arms ([`../../log/P9_architecture.md`](log/P9_architecture.md)),
 so an arm that omitted it would be measuring identity again.
 
 Both target what `log/P9_architecture.md` localised (*exact influence and control, read off the

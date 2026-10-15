@@ -11,7 +11,7 @@ specific claim.
 | | |
 |:---|:---|
 | checkpoints, replays, datasets, reports | `/workspace/data/archive/E3_ladder/` (45G + 2.3G + 137M) |
-| research logs | `log/` — 20 documents |
+| research logs | `log/` — 21 documents (P9_architecture.md, the E3 architecture programme, moved here 2026-10-15) |
 | plans | `plans/` — P1, P9, P10, P14, P15, P17 (×3); the rest deleted, in git history |
 | training findings | `findings/` — 7 documents |
 
