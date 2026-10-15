@@ -59,6 +59,30 @@ through 4 action-round boundaries, the critic at the stop.
   lookahead does not see it either. The difference between the moves shows only beyond that
   horizon -- where the leak bank's labels (512–2,048 paired playouts to the game's end) see it.
 
+### Does a turn-end target see it? (`leak_critic --turn-end`, R52's premise)
+
+Each move played out greedily by both sides until the turn changes, in 64 worlds dealt from the
+mover's view (`ts.determinize`), the two moves sharing each world's dice, the critic read at the turn's
+end. A13+R48's SWA.
+
+| % ranked wrong | after the action round | 4-boundary continuation | **to the turn's end** |
+|:---|---:|---:|---:|
+| confirmed leaks, all | 47.4 | 47.0 | **37.8 ± 1.4** (weighted 42.8) |
+| confirmed, card choice | 53.1 | — | **35.7 ± 2.1** |
+| confirmed, play mode | 39.2 | — | **35.9 ± 3.1** |
+| confirmed, card choice at DEFCON 2 | 51.4 | 49.5 | **42.7 ± 3.3** |
+| confirmed, influence placement | 44.4 | — | 44.4 ± 3.1 |
+| confirmed, label ≥ +5 points | 46.4 | 43.1 | **29.9 ± 3.2** |
+| baseline, the alternative better by ≥ 5 points | 52.2 | 53.0 | **37.2 ± 2.0** (weighted 48.7) |
+
+* **R52's premise holds for card choice and play mode:** the correlation with the playout label rises
+  from ~0.08 to +0.43 on the confirmed leaks (+0.54 on card choice), and the largest leaks are ranked
+  right 70% of the time. What the critic misses is visible by the turn's end, not within 4 boundaries.
+* **Influence placement stays at chance** -- the leak's "wrong country in the right region, late"
+  resolves at a later scoring or the final count; R53's exact endgame labels are its candidate.
+* **Weighted by the population the gain is smaller** (42.8% and 48.7% wrong): it sits in the strata the
+  bank over-samples, so the effect on typical play will be smaller than the unweighted figures.
+
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 
 2,048 self-play games at each temperature per network; the critic's value at every decision against
@@ -123,7 +147,8 @@ held-out games; read on another held-out set (19,281 positions, 574,593 pool ent
   leak pairs (the horizon read above).
 * The leak is the critic's at the decisive positions (P33c), and invisible within 4 action rounds:
   value targets that see further (R52 to the turn's end, R53 exact endgames, game-end playouts) are
-  the remaining route.
+  the remaining route. The turn-end read sees the card-choice and play-mode leaks (37.8% wrong against
+  ~47%), not placement: **R52 is the next critic-track arm**, R53 the one for placement.
 * Channel 1 is open at 28% (P33d): a k = 6 games check and R51 qualify.
 * No belief input follows from P33f; the history question goes to the owner.
 

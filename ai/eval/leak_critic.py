@@ -227,6 +227,69 @@ def continuation_differences(model: Any, device: Any, pairs: Sequence[LeakPair],
     return out
 
 
+def _play_to_turn_end(model: Any, device: Any, states: List[ts.GameState], turns: Sequence[int],
+                      max_steps: int = 400) -> None:
+    """Play each state on greedily with `model` (both sides) until its turn differs from `turns[i]` or
+    the game ends. In place."""
+    feats = model_obs_features(model)
+    for _ in range(max_steps):
+        live = [i for i, st in enumerate(states) if not ts.Engine.is_terminal(st) and int(st.turn) == turns[i]]
+        if not live:
+            return
+        for lo in range(0, len(live), 8192):
+            part = live[lo:lo + 8192]
+            obs = np.stack([np.asarray(ts.extract_observation_features(states[i], decider(states[i]), feats),
+                                       dtype=np.float32) for i in part])
+            masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(states[i]), dtype=np.uint8) for i in part])
+            with torch.no_grad():
+                lg, _v, _ = model(torch.from_numpy(obs).to(device), torch.from_numpy(masks).to(device))
+            legal = torch.from_numpy(masks).to(device) > 0
+            acts = lg.float().masked_fill(~legal, float("-inf")).argmax(-1).cpu().numpy()
+            for j, i in enumerate(part):
+                ts.Engine.step_flat(states[i], int(acts[j]))
+                drain_chance(states[i], context="leak_critic turn end")
+    raise RuntimeError(f"positions still in their turn after {max_steps} plies")
+
+
+def turn_end_differences(model: Any, device: Any, pairs: Sequence[LeakPair], worlds: int, seed: int = 2718) -> np.ndarray:
+    """Per pair: the critic's mean value at the turn's end after `best` minus after `played`, mover's
+    side -- worlds dealt from the mover's view (`ts.determinize`), the two moves sharing each world's
+    dice, both sides greedy until the turn changes (a finished game is its result). R52's premise: a
+    value target that stops at the turn's end, where scoring and the China Card resolve, sees what a
+    4-boundary one does not. NaN where no world kept both moves legal."""
+    rng = random.Random(seed)
+    states: List[ts.GameState] = []
+    movers: List[ts.Player] = []
+    turns: List[int] = []
+    owner: List[int] = []                  # the pair each (best, played) couple belongs to
+    for k, p in enumerate(pairs):
+        for _ in range(worlds):
+            world = ts.determinize(p.state, p.mover, rng.getrandbits(64))
+            dice = rng.getrandbits(64)
+            legal = np.asarray(ActionEncoder.get_legal_mask(world))
+            if not (legal[p.best] and legal[p.played]):
+                continue
+            for move in (p.best, p.played):
+                st = world.clone()
+                st.rng_state = dice
+                ts.Engine.step_flat(st, int(move))
+                drain_chance(st, context="leak_critic turn end move")
+                states.append(st)
+                movers.append(p.mover)
+                turns.append(int(p.state.turn))
+            owner.append(k)
+    _play_to_turn_end(model, device, states, turns)
+    v = mover_values(model, device, states, movers).reshape(-1, 2)
+    d = v[:, 0] - v[:, 1]
+    out = np.full(len(pairs), np.nan)
+    own = np.asarray(owner)
+    for k in range(len(pairs)):
+        sel = own == k
+        if sel.any():
+            out[k] = float(d[sel].mean())
+    return out
+
+
 def _wmean(x: np.ndarray, w: np.ndarray) -> float:
     return float(np.sum(x * w) / np.sum(w))
 
@@ -277,22 +340,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="read each move's mean leaf value under the rollout root's continuation through this many "
                          "action-round boundaries (R49's target), in --worlds worlds, instead of the critic after the move")
     ap.add_argument("--worlds", type=int, default=16)
+    ap.add_argument("--turn-end", action="store_true",
+                    help="read each move's critic value at the turn's end after greedy play, in --worlds worlds")
+    ap.add_argument("--screen-max", type=int, default=0, help="score at most this many baseline pairs (a random draw)")
     ap.add_argument("--settled", action="store_true",
                     help="read the critic once the move's action round is played out greedily, not right after it")
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pairs = load_pairs(a.bank, a.playouts)
     screen = load_screen_pairs(a.bank, a.screen, a.min_z) if a.screen else []
-    how = (f" (the rollout continuation: {a.horizon} boundaries, {a.worlds} worlds)" if a.horizon > 0 else
+    if a.screen_max and len(screen) > a.screen_max:
+        screen = random.Random(7).sample(screen, a.screen_max)
+    how = (f" (greedy to the turn's end, {a.worlds} worlds)" if a.turn_end else
+           f" (the rollout continuation: {a.horizon} boundaries, {a.worlds} worlds)" if a.horizon > 0 else
            " (settled: the move's action round played out greedily)" if a.settled else "")
     for ck in a.checkpoint:
         model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
-        diff = (continuation_differences(model, dev, pairs, a.worlds, a.horizon) if a.horizon > 0
+        diff = (turn_end_differences(model, dev, pairs, a.worlds) if a.turn_end else
+                continuation_differences(model, dev, pairs, a.worlds, a.horizon) if a.horizon > 0
                 else critic_differences(model, dev, pairs, a.dice, settled=a.settled))
         print(summarise(f"{ck} -- the confirmed leaks{how}", pairs, diff))
         print()
         if screen:
-            sdiff = (continuation_differences(model, dev, screen, a.worlds, a.horizon) if a.horizon > 0
+            sdiff = (turn_end_differences(model, dev, screen, a.worlds) if a.turn_end else
+                     continuation_differences(model, dev, screen, a.worlds, a.horizon) if a.horizon > 0
                      else critic_differences(model, dev, screen, a.dice, settled=a.settled))
             print(summarise(f"{ck} -- baseline: screened pairs signed at |z| >= {a.min_z}{how}", screen, sdiff))
             print()
