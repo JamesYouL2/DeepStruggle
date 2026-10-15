@@ -691,19 +691,24 @@ NB_MODULE(ts_engine, m) {
         };
         nb::class_<RB>(m, "RolloutBatch",
             "The rollout root's playouts for one or more decisions: the sampled worlds of each "
-            "candidate move, their greedy playouts to a horizon of action-round boundaries (or, with "
-            "horizon=-1, to the end of the decision's turn), and the "
+            "candidate move, their greedy playouts to a horizon of action-round boundaries (stop="
+            "'boundaries', the default), to the end of the decision's turn ('turn'), or to the later of "
+            "the two ('later'), and the "
             "leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), "
             "until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). "
             "Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).")
             .def("__init__", [](RB* self, int horizon, bool shared_dice, bool guard, uint32_t features,
-                                uint64_t seed) {
-                     if (horizon < ts::rollout::kTurnEnd)
-                         throw std::invalid_argument("horizon must be >= 0, or -1 for the end of the turn");
+                                uint64_t seed, const std::string& stop) {
+                     if (horizon < 0) throw std::invalid_argument("horizon must be >= 0");
                      if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
-                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features}, seed);
+                     ts::rollout::Stop s;
+                     if (stop == "boundaries") s = ts::rollout::Stop::kBoundaries;
+                     else if (stop == "turn") s = ts::rollout::Stop::kTurnEnd;
+                     else if (stop == "later") s = ts::rollout::Stop::kLater;
+                     else throw std::invalid_argument("stop must be 'boundaries', 'turn' or 'later'");
+                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s}, seed);
                  }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
-                 nb::arg("features") = 0u, nb::arg("seed") = 0ull)
+                 nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries")
             .def("add", [](RB& self, const ts::GameState& base, const std::vector<int>& candidates, size_t worlds) {
                      std::vector<uint16_t> c;
                      for (int a : candidates) {

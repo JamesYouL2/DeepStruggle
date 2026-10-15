@@ -82,7 +82,7 @@ _GATED: Tuple[Tuple[str, Any, Tuple[str, ...]], ...] = (
     ("search_ce_coef", 0.0, ("search_sims", "search_subsample", "search_node_filter",
                              "search_gumbel_k", "search_prior_temperature",
                              "search_teacher_checkpoint", "search_rollout_horizon", "search_rollout_k", "search_teacher_policy",
-                             "search_rollout_worlds")),
+                             "search_rollout_worlds", "search_rollout_stop")),
     ("teacher_coef", 0.0, ("teacher_checkpoint", "teacher_seat")),
     ("mode_cf_coef", 0.0, ("mode_cf_subsample", "mode_cf_playouts", "mode_cf_from")),
     ("turn_credit_coef", 0.0, ("turn_credit_budget", "turn_credit_worlds", "turn_credit_beta",

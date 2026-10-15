@@ -649,8 +649,8 @@ def test_rollout_value_targets_come_from_pi_refs_greedy_continuation() -> None:
 
 
 def test_turn_end_value_targets_play_to_the_next_turn() -> None:
-    """R52: --search-rollout-horizon -1 with --search-value-beta and no CE -- the same value targets as
-    R49's, from pi_ref's greedy continuation played to the end of the decision's turn."""
+    """--search-rollout-stop turn with --search-value-beta and no CE -- the same value targets as R49's,
+    from pi_ref's greedy continuation played to the end of the decision's turn."""
     cfg = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
                card_self_attention=False, cross_attention=False, per_entity_heads=16,
                head_context=True, head_static=True, head_entities="country", head_center=True,
@@ -662,8 +662,8 @@ def test_turn_end_value_targets_play_to_the_next_turn() -> None:
     t = NashPGTrainer(active_net=create_ladder_net(dev, **cfg), env=TsVectorizedEnv(num_envs=4, base_seed=9),
                       num_envs=4, buffer_size=8, lr=3e-4, eta=0.1, ref_update_freq=500, cuda_graphs=False,
                       device=dev, search_value_beta=0.5, search_subsample=1.0, search_node_filter="all",
-                      search_rollout_horizon=-1, search_rollout_worlds=2)
-    assert isinstance(t._searcher, ContinuationValues) and t._searcher.root.cfg.horizon == -1
+                      search_rollout_horizon=4, search_rollout_stop="turn", search_rollout_worlds=2)
+    assert isinstance(t._searcher, ContinuationValues) and t._searcher.root.cfg.stop == "turn"
     t.collect_rollouts()
     rows = t.buffer.has_search_v > 0.5
     assert int(rows.sum()) > 0 and bool((t.buffer.search_v[rows].abs() <= 1.0 + 1e-6).all())

@@ -53,18 +53,25 @@ _MAX_ROLLOUT_STEPS = 400
 _ROWS = 4096
 
 
-#: `RolloutConfig.horizon` for playouts to the end of the decision's turn (the engine's
-#: `rollout::kTurnEnd`): each stops at the first position of the next turn.
-TURN_END = -1
+#: Where a playout stops (the engine's `rollout::Stop`): after `horizon` action-round boundaries (the
+#: measured root), at the end of the decision's turn, or at the later of the two.
+STOPS = ("boundaries", "turn", "later")
 
 
 @dataclass
 class RolloutConfig:
     k: int = 4
     worlds: int = 16
-    horizon: int = 4            # action-round boundaries; TURN_END (-1) = to the end of the turn
+    horizon: int = 4            # action-round boundaries (read by the "boundaries" and "later" stops)
     rule: str = "z2"
     seed: int = 0
+    stop: str = "boundaries"    # one of STOPS
+
+
+def _stop_kw(cfg: RolloutConfig) -> Dict[str, str]:
+    """The batch's `stop` argument, passed only when it is not the default -- so an engine build from
+    before the stop existed still runs the measured root."""
+    return {} if cfg.stop == "boundaries" else {"stop": cfg.stop}
 
 
 def parse_rule(rule: str) -> Tuple[str, float]:
@@ -83,6 +90,8 @@ class RolloutRoot:
         self.cfg = config
         self.device = torch.device(device) if isinstance(device, str) else device
         self.rule, self.param = parse_rule(config.rule)
+        if config.stop not in STOPS:
+            raise ValueError(f"stop must be one of {STOPS}, got {config.stop!r}")
         self.features = model_obs_features(model)
         if leaf_model is not None and model_obs_features(leaf_model) != self.features:
             raise ValueError(f"the leaf network reads observation features {model_obs_features(leaf_model)!r}, "
@@ -145,7 +154,7 @@ class RolloutRoot:
         lg = np.ascontiguousarray(lg, dtype=np.float32)
         cands: List[List[int]] = [ts.rollout_candidates(lg[i], masks[i], self.cfg.k) for i in range(len(states))]
         batch = ts.RolloutBatch(horizon=self.cfg.horizon, shared_dice=True, guard=True,
-                                features=self.features, seed=self._rng.getrandbits(64))
+                                features=self.features, seed=self._rng.getrandbits(64), **_stop_kw(self.cfg))
         position_of: Dict[int, int] = {}
         for i, st in enumerate(states):
             if len(cands[i]) >= 2 and not ts.Engine.is_terminal(st):
@@ -214,7 +223,7 @@ class ContinuationValues:
         lg, masks, _ = root._forward(states)
         lg = np.ascontiguousarray(lg, dtype=np.float32)
         batch = ts.RolloutBatch(horizon=root.cfg.horizon, shared_dice=True, guard=True,
-                                features=root.features, seed=root._rng.getrandbits(64))
+                                features=root.features, seed=root._rng.getrandbits(64), **_stop_kw(root.cfg))
         cand: Dict[int, List[int]] = {}
         position_of: Dict[int, int] = {}
         for i, st in enumerate(states):
@@ -387,17 +396,27 @@ class SparseRolloutAgent:
         return self.select_actions_batch([state])[0]
 
 
-def rollout_spec_leaf(spec: str) -> Optional[str]:
-    """The leaf checkpoint of rollout:<checkpoint>:k:worlds:horizon:rule:<leaf checkpoint> (P33a), or
-    None: the root's own network reads its leaves."""
+def _spec_tail(spec: str) -> Tuple[str, Optional[str]]:
+    """(stop, leaf checkpoint) of rollout:<ckpt>:k:worlds:horizon:rule[:stop][:leaf]. A sixth field that
+    is not a stop is the leaf (the form before the stop existed)."""
     parts = spec.split(":")
-    return parts[6] if len(parts) > 6 and parts[6] else None
+    extra = [p for p in parts[6:] if p]
+    stop = "boundaries"
+    if extra and extra[0] in STOPS:
+        stop = extra.pop(0)
+    return stop, (extra[0] if extra else None)
+
+
+def rollout_spec_leaf(spec: str) -> Optional[str]:
+    """The leaf checkpoint of rollout:<checkpoint>:k:worlds:horizon:rule[:stop]:<leaf checkpoint> (P33a),
+    or None: the root's own network reads its leaves."""
+    return _spec_tail(spec)[1]
 
 
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:leaf checkpoint]]]]] -> (checkpoint, config,
-    label); an omitted field is the measured player's (4, 16, 4, z2), and the leaf is
-    `rollout_spec_leaf`'s."""
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:leaf checkpoint]]]]] -> (checkpoint,
+    config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries), the stop one
+    of STOPS, and the leaf is `rollout_spec_leaf`'s."""
     parts = spec.split(":")
     if parts[0].lower() != "rollout" or len(parts) < 2:
         raise ValueError(f"not a rollout spec: {spec!r}")
@@ -407,7 +426,10 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
 
     d = RolloutConfig()
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
-                        horizon=int(field(4) or d.horizon), rule=field(5) or d.rule)
+                        horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=_spec_tail(spec)[0])
+    if cfg.horizon < 0:
+        raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
-    horizon = "turn" if cfg.horizon == TURN_END else str(cfg.horizon)
-    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}-h{horizon}-{cfg.rule}"
+    stop = {"boundaries": "", "turn": "-turnend", "later": "-orturnend"}[cfg.stop]
+    horizon = "" if cfg.stop == "turn" else f"-h{cfg.horizon}"
+    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop}-{cfg.rule}"

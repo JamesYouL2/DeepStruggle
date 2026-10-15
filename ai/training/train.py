@@ -863,7 +863,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "completed Q at the Gumbel root). Needs --search-gumbel-k > 0; runs the "
                              "searcher with --search-ce-coef 0 too. The advantages are untouched. 0 = off.")
     parser.add_argument("--search-rollout-horizon", type=int, default=0,
-                        help="Rollout-root search: playouts of this many action-round boundaries, or -1 to the end of the decision's turn (0 = off). With --search-ce-coef > 0 it replaces the Gumbel root of the search-CE targets (ai/search/rollout_root.py): the target is softmax(logit + sigma(completed Q)) with the candidates' rollout values, and needs no --search-gumbel-k. With --search-value-beta > 0 and no CE it gives value targets instead (R49 at a boundary count, R52 at -1): the greedy continuation's mean leaf value, blended into v_win's target.")
+                        help="Rollout-root search: playouts of this many action-round boundaries (0 = off; where they stop is --search-rollout-stop). With --search-ce-coef > 0 it replaces the Gumbel root of the search-CE targets (ai/search/rollout_root.py): the target is softmax(logit + sigma(completed Q)) with the candidates' rollout values, and needs no --search-gumbel-k. With --search-value-beta > 0 and no CE it gives value targets instead (P33's critic track): the greedy continuation's mean leaf value, blended into v_win's target.")
+    parser.add_argument("--search-rollout-stop", choices=["boundaries", "turn", "later"], default="boundaries",
+                        help="Where the rollout root's playouts stop: after --search-rollout-horizon boundaries (the default, the measured root), at the end of the decision's turn, or at the later of the two.")
     parser.add_argument("--search-rollout-k", type=int, default=4,
                         help="Rollout-root search targets: candidates (the teacher's most probable moves).")
     parser.add_argument("--search-rollout-worlds", type=int, default=16,
@@ -1037,6 +1039,7 @@ def main():
             search_rollout_horizon=args.search_rollout_horizon,
             search_rollout_k=args.search_rollout_k,
             search_rollout_worlds=args.search_rollout_worlds,
+            search_rollout_stop=args.search_rollout_stop,
             search_workers=args.search_workers,
             search_teacher_policy=args.search_teacher_policy,
             resume_weights=args.resume_weights,

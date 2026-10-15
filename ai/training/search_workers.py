@@ -28,14 +28,14 @@ from ai.search.rollout_root import RolloutConfig, RolloutTeacher
 Answer = Tuple[int, List[int], np.ndarray]
 
 
-def _worker_main(jobs: Any, results: Any, model_bytes: bytes, cfg: Tuple[int, int, int, str],
+def _worker_main(jobs: Any, results: Any, model_bytes: bytes, cfg: Tuple[int, int, int, str, str],
                  device: str, seed: int) -> None:
     torch.set_num_threads(2)
     parent = os.getppid()
     dev = torch.device(device)
     net = torch.load(io.BytesIO(model_bytes), map_location=dev, weights_only=False).eval()
-    k, worlds, horizon, rule = cfg
-    teacher = RolloutTeacher(net, RolloutConfig(k=k, worlds=worlds, horizon=horizon, rule=rule),
+    k, worlds, horizon, rule, stop = cfg
+    teacher = RolloutTeacher(net, RolloutConfig(k=k, worlds=worlds, horizon=horizon, rule=rule, stop=stop),
                              device=dev, subsample=1.0, seed=seed)
     while True:
         try:
@@ -69,7 +69,7 @@ class SearchWorkers:
         self._results = ctx.Queue()
         self._jobs: List[Any] = []
         self._procs: List[Any] = []
-        cfg = (int(config.k), int(config.worlds), int(config.horizon), str(config.rule))
+        cfg = (int(config.k), int(config.worlds), int(config.horizon), str(config.rule), str(config.stop))
         for w in range(self.n):
             q = ctx.Queue()
             p = ctx.Process(target=_worker_main, args=(q, self._results, buf.getvalue(), cfg, str(device), seed + w),

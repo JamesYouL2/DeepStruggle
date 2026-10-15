@@ -94,8 +94,10 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
-@pytest.mark.parametrize("seed,plies,horizon", [(21, 70, 2), (34, 150, 1), (47, 40, 0), (58, 90, -1)])
-def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int,
+@pytest.mark.parametrize("seed,plies,horizon,stop", [(21, 70, 2, "boundaries"), (34, 150, 1, "boundaries"),
+                                                     (47, 40, 0, "boundaries"), (58, 90, 4, "turn"),
+                                                     (63, 120, 2, "later")])
+def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
                                                                  tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
     critic: the same rows, the same worlds, the same observations ply by ply, the same values."""
@@ -116,7 +118,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     cands = [int(a) for a in np.flatnonzero(mask)[:k]]
     act = int(mask.shape[0])
 
-    batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed)
+    batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed, stop=stop)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
     plies_run = 0
@@ -143,7 +145,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     }
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
-                                "horizon": horizon, "batch_seed": batch_seed}))
+                                "horizon": horizon, "batch_seed": batch_seed, "stop": stop}))
     # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
     root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
     top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)

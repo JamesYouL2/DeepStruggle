@@ -114,6 +114,17 @@ size_t RolloutBatch::refused() const noexcept {
     return n;
 }
 
+bool RolloutBatch::at_stop(const Row& r) const noexcept {
+    const bool boundaries = r.crossed >= cfg_.horizon;
+    const bool turn_over = r.state.turn != r.start_turn;
+    switch (cfg_.stop) {
+        case Stop::kTurnEnd: return turn_over;
+        case Stop::kLater: return boundaries && turn_over;
+        case Stop::kBoundaries: break;
+    }
+    return boundaries;
+}
+
 void RolloutBatch::settle_and_mark(Row& r) noexcept {
     Engine::auto_advance_step(r.state);
     const Player mover = movers_[r.position];
@@ -126,7 +137,7 @@ void RolloutBatch::settle_and_mark(Row& r) noexcept {
         ++r.crossed;
         record_key(r);
     }
-    if (cfg_.horizon == kTurnEnd ? r.state.turn != r.start_turn : r.crossed >= cfg_.horizon) r.done = true;
+    if (at_stop(r)) r.done = true;
 }
 
 size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds) {
@@ -175,8 +186,9 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
                 } else {
                     record_key(r);
                     r.crossed = 0;
-                    // A move that ends the turn has already reached the next one: its row is a leaf.
-                    r.done = cfg_.horizon == kTurnEnd ? r.state.turn != r.start_turn : cfg_.horizon <= 0;
+                    // A move that ends the turn has already reached the next one: under kTurnEnd
+                    // its row is a leaf at once.
+                    r.done = at_stop(r);
                 }
             }
             rows_.push_back(r);

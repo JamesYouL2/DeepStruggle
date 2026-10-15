@@ -50,8 +50,7 @@ class Gumbel:
 @dataclass(frozen=True)
 class Rollout:
     """A rollout root (ai/search/rollout_root.py): the `k` most probable moves, each played out by
-    the network in `worlds` sampled worlds through `horizon` action-round boundaries (-1: to the end of
-    the decision's turn), the critic at
+    the network in `worlds` sampled worlds through `horizon` action-round boundaries, the critic at
     the leaf, then `rule` -- `argmax`, `z<x>` (the best only on an x-SE paired lead over the
     network's move) or `kl<t>`."""
 
@@ -123,8 +122,8 @@ def _check(spec: Inference) -> None:
     if isinstance(spec, Rollout):
         if spec.worlds < 1:
             raise PlayerSpecError(f"worlds must be >= 1, got {spec.worlds}")
-        if spec.horizon < -1:
-            raise PlayerSpecError(f"horizon must be >= 0, or -1 for the end of the turn, got {spec.horizon}")
+        if spec.horizon < 0:
+            raise PlayerSpecError(f"horizon must be >= 0, got {spec.horizon}")
         if not _RULE_RE.match(spec.rule):
             raise PlayerSpecError(f"rule must be argmax, z<x> or kl<t>, got {spec.rule!r}")
     if isinstance(spec, Search):
