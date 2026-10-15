@@ -1,5 +1,12 @@
 # E4-28 — online search distillation on M2d
 
+**Conclusion.** E3's X4b configuration (search CE coef 0.5, 64 sims, 1 in 8 decisions) beat the
+step-matched control on both seats at every snapshot: a level of about +74 Elo (seed 3, 165–180M,
+before the control's seed-specific dip) and +157..+262 (seed 5), reached within 5M, at ~40x the
+cost per step. E3's collapse window (30–36M into the leg) passed without a decline on one seed. The
+extension was never run on E4; search targets were next tried on E7
+([`P30_search_training_e7_18.md`](P30_search_training_e7_18.md)).
+
 Two arms, run overnight 2026-09-22/23: `E4-28-03` (seed 3, 160M → 200M, finished) and
 `E4-28-05` (seed 5, from 80M, stopped at 07:00 near 108M). P15-X4b, re-run on E4: an honest searcher answers 1 in 8 of
 all decisions during RL, and its visit distribution enters the loss as a cross-entropy term.
@@ -73,7 +80,7 @@ at the same distance, against its fixed 160M start (which, unlike the control, d
 200M budget at 06:50. The US seat against the start eases from 63% to 58% over the last 5M,
 within the ±5 pp of 100 games a seat, and `kl_div` stayed at 0.012–0.03 where E3's rose to 2.4–7.5.
 One seed has cleared E3's window; that is evidence the collapse is not inherent to the
-configuration on E4, not proof, and a longer extension is still the first next step.
+configuration on E4, not proof.
 
 ## Headroom left after 20M
 
@@ -152,9 +159,9 @@ end, rated together (`data/reports/E4-28-03_leg.{md,json}`):
   ~7.7).
 * `adv_std_raw` 0.21–0.23 and `kl_div` 0.014–0.03 throughout; no tripwire has fired.
 
-## What this suggests next
+## Proposals at the time
 
-Proposals, not decisions:
+None of these was run on E4: work moved to collapse robustness (P25) and then to the E5 engine.
 
 1. **Extend E4-28-03 past E3's collapse window before adopting anything.** It is the first
    intervention on E4 that beats plain M2d, on two seeds and on both seats, but E3's identical

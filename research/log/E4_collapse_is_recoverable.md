@@ -1,5 +1,10 @@
 # E4 — the collapse census measured entry, not collapse
 
+**Conclusion.** Five of seven arms scored COLLAPSED recovered when given 80M more steps, and the
+four that recovered by 160M rate level with never-collapsed seeds (−1.4 Elo). The one that never
+recovered is −394. Only `adv_std_raw` returning separates the two outcomes; the USSR-dominant
+direction (2,400:1) is expected of weak play.
+
 Seven arms scored `COLLAPSED` were each continued by a further 80M steps, 2026-09-22.
 **Five recovered.** The four seeds behind [`side_collapse.md`](../findings/training/side_collapse.md)'s
 headline 12.5% rate are all among them.

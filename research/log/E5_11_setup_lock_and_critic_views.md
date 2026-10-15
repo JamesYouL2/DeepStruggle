@@ -1,5 +1,11 @@
 # E5-11: a locked US opening that costs 5 points, and a critic read from the side it was never trained on
 
+**Conclusion.** The critic is trained only from the mover's perspective, so the workbench's US-view
+curve during the USSR setup is an untrained extrapolation (mean |Δv| 0.165 against 0.037). E5-11-43's
+US opening is locked at p = 1 on Greece 2, costing ~5 points as US against a sane opening. The
+critic already prefers the sane openings (by 3–4x their real worth); the lock persists because a
+setup placement is credited with the game result at weight ≤ 0.01 and is never resampled.
+
 The owner, playing E5-11 in the workbench, reported two things on 2026-09-27: the critic moves a lot
 during a setup that is itself nearly deterministic, and the US always opens with Greece, with
 probability 1.

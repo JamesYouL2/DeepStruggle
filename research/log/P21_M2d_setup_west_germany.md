@@ -1,5 +1,10 @@
 # M2d s3 160M→240M — the US setup drops West Germany, and flips back and forth
 
+**Conclusion.** E4-08-03's US opening swaps West Germany 4 in and out wholesale between snapshots
+5M apart (near-certain either way), and the critic's preference between the two setups flips sign
+every 5–25M by up to 0.6, with the policy following it in 12 of 17 snapshots. The setup is not
+drifting unguided; it follows an advantage signal that itself oscillates.
+
 Observed in self-play of `E4-08-03@240M`. At setup the US leaves West Germany empty in every game,
 putting the influence into Canada, Italy and France instead. `E4-08-03@160M` stacked 4 influence there.
 

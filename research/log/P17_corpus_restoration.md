@@ -1,5 +1,10 @@
 # P17: restoring the human corpus after the resolution merge
 
+**Conclusion.** The resolution merge broke six corpus games through two engine bugs — Flower Power's
+charge skipped on event-first plays, and the merged resolution node never recording `cur_mode` —
+both fixed, restoring **300 / 300 games, 0 guessed, 0 board mismatches** (122,056 decisions).
+Search's illegal picks came from `advance_root=True`, not determinization.
+
 Companion to [`../plans/P17_action_representation.md`](../archive/E3_ladder/plans/P17_action_representation.md).
 What the merge broke in the log converter, how each was found, and what the measurement bar is.
 
@@ -122,11 +127,9 @@ removed ~20% of decisions and moved which positions the scripted openings reach,
 on such a node and the mismatch surfaces.
 
 The two tests assert the pick is legal *in the state handed over*, which is what
-`advance_root=False` provides, so that is where the flag belongs. **Left open for the owner:**
-whether `best_actions` should carry the "search proposes, true mask disposes" guard the agent path
-already has at `batched_mcts.py:457`, or whether the config contract is the right place to keep
-it. Adding the guard would hide the mismatch rather than surface it, so it is a call about what
-the API promises, not a bug fix.
+`advance_root=False` provides, so that is where the flag belongs. Resolved later by the config
+contract rather than a guard: `advance_root` now defaults to False (`70c6cef`), since every
+production searcher already overrode it.
 
 ## Artifacts
 

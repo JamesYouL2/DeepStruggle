@@ -1,5 +1,11 @@
 # Long runs to 800M (E4-57-43, E4-57-44), 2026-09-25
 
+**Conclusion.** Both TF32 long runs diverged (232M, 596M) through an unbounded drift of the common
+logit level, which lives entirely in the per-entity heads, where a shared shift gets no gradient.
+z-loss stopped the drift but cost 170–460 Elo; fp32 survived to 800M (1 of 1);
+`--ladder-head-center` (centring `pe_country`/`pe_card`) stopped it at no measured cost and became
+the recipe (E4-61). Strength from time alone flattens at ~400M (E4-61-44 best at 2374 @720M).
+
 **Setup:**
 * **Recipe:** today's defaults, the E4-57 configuration: the E4-08 recipe (M2d, λ 0.98,
   pool 0.3/12), TF32, snapshots every 10M, pool every 5M.
@@ -356,7 +362,7 @@ training and speed.
 **Stage 1, divergence (owner's plan):** E4-61-43/44 are the E4-57 configuration (TF32) plus
 `--ladder-head-center`, seeds 43 and 44, as a pair to 800M, launched 14:36 UTC.
 `launch_flags.py --diff` against E4-57-43/44 shows only `--ladder-head-center`.
-**Stage 2, quality,** follows.
+**Stage 2, quality,** is the last section.
 
 ### E4-56-43 past 400M: a treadmill, not convergence or a cycle (2026-09-25)
 

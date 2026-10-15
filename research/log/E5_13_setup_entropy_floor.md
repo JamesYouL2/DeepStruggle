@@ -1,5 +1,11 @@
 # E5-13 — a setup entropy floor keeps the opening moving, and it moves to worse places
 
+**Conclusion.** `--setup-entropy-floor 0.3` kept setup placements resampled (0.2–0.4 nats against
+0.01–0.04) but cost 50–62 Elo on both seeds, and the opening drifted rather than improved: the USSR
+left Poland on both seeds. Rejected; exploration was not what setup learning lacked — the critic's
+signal for setup is too weak. The setup was next credited with the game result
+([`E5_16_setup_mc_credit.md`](E5_16_setup_mc_credit.md)).
+
 **Question.** E5-11 locks its setup by 40M: 0.01–0.04 nats per US placement and about 0.001 per
 USSR placement. E5-11-43's locked US opening, Greece 2, costs it about 5 points as US against a
 sane opening ([`E5_11_setup_lock_and_critic_views.md`](E5_11_setup_lock_and_critic_views.md)).

@@ -1,5 +1,10 @@
 # The shallow line's opening is locked: USSR Poland 6 (2026-10-01)
 
+**Conclusion.** Every shallow run locks the USSR opening at Poland 6 (p = 1.0000) between 80M and
+160M; in its own games the lock costs nothing measurable (every alternative within ~2 points), but
+the critic misjudges every unfamiliar opening by 12-19 points. Attempts to unlock it with setup
+credit or scripted human openings were stopped without a conclusion.
+
 The owner, playing the shallow soup in the workbench: "the shallow model soup goes very strange
 setup". Checked on the soup, its four ingredients, the best raw snapshot and the current runs.
 

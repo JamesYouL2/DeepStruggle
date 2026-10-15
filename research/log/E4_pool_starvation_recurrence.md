@@ -1,5 +1,11 @@
 # E4-01-01 collapsed for want of an opponent pool — and it was a launch error
 
+**Conclusion.** E4-01-01 was launched without the opponent pool (`opponent_frac 0.0`) and collapsed
+one seat by 184M with the X4b fingerprint (self-play US 0.006, DEFCON-1 ~59% of wins); the pooled
+rerun E4-02-01 was healthy. This is why an RL run needs `--opponent-frac 0.3 --opponent-self-pool
+--opponent-pool-size 12` (CLAUDE.md invariant 14). Watch per-seat win rates, not
+`critic_base_rate`.
+
 **2026-09-19.** The first run on the post-P17 engine (Grain Sales flattened, Missile Envy starred
 card fixed) collapsed one seat and was aborted at 184M of 240M. **The cause is configuration, not
 the engine.** Superseded by `E4-02-01`.

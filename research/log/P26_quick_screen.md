@@ -1,6 +1,12 @@
 # P26 quick screen: what each throughput candidate is worth (2026-09-24)
 
-The plan is [`../plans/P26_training_throughput.md`](../plans/P26_training_throughput.md). This
+**Conclusion.** Adopted: bit-identical rollout changes (+8% solo, `d2ad667`), a 10M snapshot interval
+(evaluation overhead 20% → 7–10% of wall), and TF32 as the default (`3f63d24`; KL 1e-7 to fp32,
+level or better on 3 of 3 seeds) — together +34% solo and +23% paired. bf16 across the network moves
+the argmax on 7% of decisions and was not tried. `--compile-update` adds ~9% paired but was not
+shown harmless (−71 and −223 on two of three seeds) and stays opt-in.
+
+The plan is [P26 (closed)](../plans/README.md). This
 screen measures how much each candidate could bring, before any of them goes through the
 adoption gates. Nothing here changed training code; every number comes from scripts in
 `data/logs/perf/`.
@@ -133,8 +139,8 @@ needs no change to numerics or only TF32.
 That is **+8%** in steps/s. The 10M snapshot interval comes on top, removing about half of the
 ~17% evaluation overhead.
 
-**The TF32 ablation runs next.** It uses the E4-08 recipe to 80M on seeds 40–42: E4-56 is the
-fp32 control, E4-57 runs with `--tf32`, and the two arms of a seed run as a pair.
+The TF32 ablation followed: the E4-08 recipe to 80M on seeds 40–42, E4-56 the fp32 control and
+E4-57 with `--tf32`, the two arms of a seed run as a pair.
 
 ## The TF32 A/B (E4-56 fp32, E4-57 `--tf32`), 2026-09-24
 
@@ -270,8 +276,8 @@ and one TF32 run.
 * **Compile time:** the first iteration took 3–8 s here, with inductor's cache warm on this
   machine. A cold cache costs more once, most for `max-autotune`.
 
-**Status:** compile is opt-in and passes gate 1 (numerics). Gate 2, a matched A/B like TF32's,
-has not run. Gate 3, checkpoints, holds by construction.
+Compile passes gate 1 (numerics) and gate 3 (checkpoints, by construction); gate 2 is the A/B
+below.
 
 ## The compile A/B (E4-58, `--compile-update max-autotune`), 2026-09-24
 

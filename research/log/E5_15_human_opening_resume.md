@@ -1,5 +1,11 @@
 # E5-15 — the human opening on a trained model: it helps the US seat, and the USSR only catches up
 
+**Conclusion.** Scripting the human opening onto E5-11 was level (46–50% head to head); 80M of
+training from it gave +6.8 / +2.3 in the US seat and −0.7 / +0.4 in the USSR seat, so it was **not
+accepted** by the owner's per-seat rule. The human opening buys a fixed, sane setup at no strength
+cost, not strength. This model's US does not punish an unbuffered 3/3/3 USSR opening, and is right
+not to by its own playouts.
+
 **Question (owner, 2026-09-28).** Take the current best model. (1) Force the standard human opening
 on it (USSR East Germany +1, Poland +4, Yugoslavia +1; US West Germany +4, Italy +3, Iran +2) and
 measure its strength. (2) Train it for 80M with every game starting from that opening, and check

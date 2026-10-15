@@ -1,6 +1,11 @@
 # P28 step 1 — SWA beats every snapshot; search headroom shrinks on the adopted model
 
-Plan: [`../plans/P28_strength_on_E6.md`](../plans/P28_strength_on_E6.md), step 1 (owner, 2026-09-29: "go
+**Conclusion.** A uniform average of the nine 480–560M snapshots beats every snapshot it was made
+from by 60–85 Elo in both seats (the E6-04-44 SWA became the strongest model), so the late
+snapshots scatter around a better point. Honest 256-sim search adds +11 points on the plain E6-03
+model but only +3.5 on the adopted E6-04, below the +5 gate.
+
+Plan: [P28 (closed)](../plans/README.md), step 1 (owner, 2026-09-29: "go
 ahead with these plans"). The plateau trace was taken in step 0
 ([`P28_step0_panel_and_E6_04_verdict.md`](P28_step0_panel_and_E6_04_verdict.md)).
 

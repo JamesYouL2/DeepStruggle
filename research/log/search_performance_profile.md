@@ -1,5 +1,10 @@
 # Search performance profile (2026-10-03): what takes the time in search evals and search training
 
+**Conclusion.** Search evals were CPU-bound in Python tree work and search training ran ~8x slower
+than plain training. With the tree in C++ and pinned, pipelined leaf buffers, the 400-game
+soup-vs-search eval went from 1,848 s to 133 s, and training with search (32 simulations, 1 in 8
+card decisions) runs at 45-47k steps/s against 95-97k without.
+
 The owner asked for this before optimising search ("benchmark what takes time in running evals and
 training with search"), after search was found to add about +10 points on the best model
 ([`P30_search_headroom_e7.md`](P30_search_headroom_e7.md)).

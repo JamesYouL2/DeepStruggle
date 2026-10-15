@@ -1,5 +1,10 @@
 # E1 and E2 — re-anchoring after the engine changes, and the human corpus as a control
 
+**Conclusion.** E1: the K=40 > control > heuristic ordering survived six engine fixes (1880 against
+1837). E2: the human corpus reproduces the US late-war recovery (mean VP +2.36 at turn 10, US 48.9%
+of finished games), so the agents' USSR imbalance is theirs, not the engine's. §8.1's human
+forced-win take rate is withdrawn.
+
 Records §7–§8 of the original `experiments.md`, the pair of experiments that re-established the
 ladder after six `fix(engine)` commits (E1, §7) and then used the 300-game human ts-replayer corpus
 as the strong-player control the agents could not supply (E2, §8). E2 answers the hypothesis §4.7
@@ -24,7 +29,7 @@ taken. Do the checkpoint rankings survive, and are the old Elo anchors still usa
 `--auto-advance`. Engine verified current via `tools/scripts/check_engine_fresh.sh` (368 C++ tests
 pass, fuzzer clean over 2,000 games). Both checkpoints were staged under distinct filenames first:
 they are both named `snapshot_final`, which is the exact collision §6 warns about. Report:
-`research/e1_reanchor_report.md`.
+`research/e1_reanchor_report.md` (deleted in the 2026-10-15 documentation revision; `git log -- research/archive/e1_reanchor_report.md`).
 
 **Result** (Bradley-Terry, HeuristicBot anchored at 1500):
 

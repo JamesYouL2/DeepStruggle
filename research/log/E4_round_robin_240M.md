@@ -1,5 +1,11 @@
 # E4 round robin at 240M — does the collapse show against a fixed reference?
 
+**Conclusion.** Against a fixed reference from the other arm, the pooled E4-02-01 had one sharp,
+fully recovered US-seat dip at 200M (39% → 11% → 30%) while its USSR seat did not move; the
+unpooled E4-01-01 declined only mildly before its last snapshot. Self-play side split overstated
+the collapse badly (0.02 US in self-play, 31% as US against a fixed reference). Use a reference
+from another arm, never the run's own endpoint.
+
 **Measured 2026-09-19.** 21 entrants: the pooled arm `E4-02-01` at 20M–240M and the unpooled arm
 `E4-01-01` at 20M–180M, every 20M. 210 pairs, **100 games per seat** (200 per pair, 42,000 total),
 per-seat recorded. `/workspace/data/p17/e4_final_round_robin_g100/`.
@@ -79,8 +85,9 @@ reference and 47% overall. Both are true of different things: its USSR seat had 
 against opponents that were not its own overgrown mirror. This is the concrete case against side
 balance as a health metric.
 
-## Open
+## Afterwards
 
-- **Does the 200M excursion recur?** One transient in one run. A re-seeded or longer run would say.
-- **What does the steep section look like?** Needs the unpooled arm re-run past 184M with snapshots
-  kept.
+- **The excursion recurs.** Episodes that enter and recover turned out to be common on M2d
+  ([`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md)).
+- **The steep section of an unpooled collapse was never measured.** The unpooled arm was not
+  re-run: the pool became mandatory instead ([`E4_pool_starvation_recurrence.md`](E4_pool_starvation_recurrence.md)).

@@ -1,6 +1,11 @@
 # P29 bet 1 — a 3.5× larger trunk is not better at 560M and is worse at matched wall-clock
 
-Plan: [`../plans/P29_big_bets_from_scratch.md`](../plans/P29_big_bets_from_scratch.md), bet 1.
+**Conclusion.** A 768 × 8 trunk (11.2M parameters against 3.2M) was behind the M2d control against
+the panel at matched games (−2.4 / −10.4 per seat on snapshots) and clearly worse at matched
+wall-clock (45% and 38% head to head) at two-thirds the throughput: not adopted, so capacity is not
+what holds the plateau. It was still climbing slowly at 560M where the control had levelled off.
+
+Plan: [P29 (closed)](../plans/README.md), bet 1.
 
 **Arm.** E6-10-44 is E6-03-44's recipe and seed with `--ladder-hidden-dim 768 --ladder-res-blocks 8`:
 11.19M parameters against 3.18M. The residual trunk is 5.1× larger; the encoders and heads are

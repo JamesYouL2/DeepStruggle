@@ -1,9 +1,16 @@
 # Collapse census of the late-dynamics and E4.1 runs, and the first per-seat reading
 
+**Conclusion.** In 11 episodes across 10 runs the US was always the losing seat; loosening the
+update late (λ 0.99, π_ref 100k, η 0.05) brought one on within 15–25M on seed 3. The first per-seat
+trace shows equal advantage spreads and near-zero means on both seats, so the losing seat is fed
+noise rather than a biased signal. **Caveat:** every 160→240M leg here was a resume and so ran on
+the drained pool of [`P25_pool_resume_bug.md`](P25_pool_resume_bug.md); the seed-5 collapses did
+not recur on a fixed pool.
+
 **2026-09-23.** Every run from the late-dynamics round
 ([`E4_late_dynamics.md`](E4_late_dynamics.md)), from the λ / π_ref arms before it
 ([`E4_dynamics_ref_lambda.md`](E4_dynamics_ref_lambda.md)) and from the P23 A/B
-([`../plans/P23_merged_influence_E4_1.md`](../plans/P23_merged_influence_E4_1.md)), scanned for
+([P23 (closed)](../plans/README.md)), scanned for
 collapse episodes. This is the evidence behind
 [`../plans/P25_collapse_robustness.md`](../archive/E4_ladder/plans/P25_collapse_robustness.md).
 
@@ -104,7 +111,7 @@ policy is the entropy bonus.
 That predicts `--per-seat-adv-norm` alone does nothing, and that the levers that work are ones that
 give the losing seat games it can win (`--seat-balance`). Slow π_ref (point 3) delayed the
 collapse on seed 5 without preventing it.
-The P25 bench is built to test those predictions.
+The P25 bench tested those predictions ([`P25_stress_bench.md`](P25_stress_bench.md)).
 
 ## Data
 

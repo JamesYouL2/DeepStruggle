@@ -1,5 +1,11 @@
 # P30 (2026-10-03): what search adds on top of the best soup and the best single model
 
+**Conclusion (after the 2,000-game correction at the end).** Honest 256-simulation search adds +8
+points over its own greedy policy on a single snapshot (E7-02-44@1200M) but only +2.5 on the soup,
+so C5's +5 gate passes on the raw model and fails on the soup. Perfect information adds +6.4 to
++8.7 on top, so hidden-information handling inside search is worth pursuing. The first, 400-game
+readings below are withdrawn.
+
 The owner's question, after the E7-15/16-44 tournament: what search adds on top of the best model.
 This also re-measures C5's gate, "+5 pp of honest search headroom on the base recipe at saturation"
 ([`../plans/P30_base_model_quality.md`](../plans/P30_base_model_quality.md)).

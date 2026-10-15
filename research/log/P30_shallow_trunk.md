@@ -1,5 +1,11 @@
 # P30 sanity check (2026-09-30): M2d's residual blocks add nothing -- the shallow net is stronger overall
 
+**Conclusion.** Removing M2d's four residual blocks (`--ladder-res-blocks 0`) made a stronger net on
+both seeds at the plateau: 56.6% and 59.7% head to head on snapshots, each passing the owner's rule,
+18% faster with 58% fewer parameters; the blocks only helped before ~100M, and the two trunks hold
+the same state. The shallow trunk became architecture A4, the E7 line. The league on it adds only
+~+10 Elo.
+
 **E6-12-44** is E6-03-44's recipe and seed exactly with `--ladder-res-blocks 0`: observation →
 projections → fusion → heads, 4 linear layers against M2d's 12. It has 1.34M parameters against
 3.19M, and ran at a median 96k steps/s against 81k. From scratch to 560M, solo. The owner asked
@@ -54,8 +60,9 @@ wins taken 64.2% against 62.1%, avoidable losses avoided 95.2% against 94.8%. Th
 * **M2d's four residual blocks buy no strength at the plateau** on seed 44. They cost 58% of the
   parameters and 16% of the throughput. They helped only early (to about 100M).
 * **Depth is not where the trunk loses the state.** The input projections are.
-* **Seed 43 replicates it (below).** Both seeds pass the pre-registered rule, so the shallow trunk is
-  ready for the owner's adoption decision.
+* **Seed 43 replicates it (below).** Both seeds pass the pre-registered rule; the shallow trunk was
+  adopted as architecture A4, the trunk of the whole E7 line
+  ([`../architectures_and_recipes.md`](../architectures_and_recipes.md)).
 
 ## Seed 43: E6-12-43 against E6-03-43
 

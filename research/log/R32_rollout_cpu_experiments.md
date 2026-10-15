@@ -1,5 +1,12 @@
 # R32 against the searchers, on CPU (2026-10-10): R32 absorbed Gumbel's gain, not the rollout root's
 
+**Conclusion.** Search-CE training toward Gumbel (R32) absorbed Gumbel@256's gain (+1 ± 11 Elo left,
+against +57 on the soup) but none of the rollout root's, which still adds +128 ± 12 on R32. R32 took
+only a fifth of the soup's Gumbel corrections, so the evidence favours "a sharper prior leaves the
+old critic little to correct" over "the policy absorbed its search". The rollout root needs a horizon
+of 4 action-round boundaries; worlds (~+24 per doubling) and candidates still pay, and 8 worlds beats
+Gumbel@256 by +75 at the same cost.
+
 **Question.** R32 (P32 T1: the frozen heads soup's Gumbel k = 4 @32 improved policy as a CE term of
 0.1 inside RL, 1 decision in 8, 6,400 → 6,800M) leaves Gumbel k = 8 @256 almost nothing to add:
 51.2% on itself ([P32](../plans/P32_teacher_and_paired_credit.md)). Three questions follow:
@@ -329,12 +336,9 @@ candidates:
   strongest measured player, +123 over Gumbel@256 and +22 over the measured player.
 * **For play at Gumbel@256's cost:** 8 worlds, +75 over Gumbel@256.
 
-**Next to measure:**
-
-* **6 candidates with 32 worlds** (`6:32:4`) against 32 worlds alone and against the measured
-  player. Both settings still rise, and they may compound: more candidates need more worlds to
-  separate.
-* **64 worlds**, to find where that curve flattens.
+**Measured next, on R39** ([`E7_rollout_root_tuning_R39.md`](E7_rollout_root_tuning_R39.md)):
+6 candidates with 32 worlds does not compound, and 64 worlds adds nothing over 32 in games; 32
+worlds at z2 is the tuned rollout root (+41 ± 8 Elo over `4:16:4:z2`).
 
 **The teacher in T1** is still the larger question. Gumbel's targets moved R32 where
 Gumbel@256 gains and left the rollout root's gain alone. Experiment 2 narrows the candidate
@@ -342,8 +346,8 @@ teacher: the rollout root at horizon 4, with worlds set by the training budget. 
 three quarters of the measured player's lead over Gumbel@256 at 0.56 of its time per decision.
 Depth past 4 boundaries bought nothing at play time, which leaves B4''s turn-end pricing (R37)
 to justify itself on other grounds. Experiment 3's tool measures any teacher's adoption on the
-same bank. The rollout loop still steps one state per Python call; the batched-runner port
-queued behind `ai/search/turn_pricing.py` is what makes any of these affordable inside RL.
+same bank. The rollout loop then stepped one state per Python call; it has since been ported to
+the C++ batch runner (`RolloutBatch`).
 
 ## Replicate
 

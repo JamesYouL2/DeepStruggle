@@ -1,5 +1,10 @@
 # P19 result: the late-E3 architecture is worth ~450 Elo on this engine
 
+**Conclusion.** At 80M, cold-started and pooled, the late-E3 bundle (`identity_dim 16`,
+`per_entity_heads 64`, `graph_layers 0`, `self_transform`) beat the E4 defaults 94.0% head to head
+(+447 Elo, both seats), and beat warm-started default arms at 4x the steps. One seed per arm; which
+of the four flags carries it is [P21](../plans/P21_architecture_ladder.md)'s question.
+
 **2026-09-19.** [P19](../archive/E4_ladder/plans/P19_architecture_ab.md) asked whether the late-E3 architecture
 bundle is stronger than the E4 defaults on the post-P17 engine, and pre-registered the
 measurement and the decision rule before the arms finished. Both arms completed clean.
@@ -90,10 +95,9 @@ problem, and is the strongest indirect support the pooling story has. Separating
 separated is large enough that the ladder should resolve it comfortably, which is the condition
 the owner set for the protocol.
 
-## Next
+## Outcome of the extension
 
-Per P19's decision rule, extending `E4-03` to 320M is warranted — that is where E3's collapse
-appeared, on this architecture, and the pooled 320M arm on the defaults (`E4-02-01`) did not
-collapse.
+P19's rule then extended `E4-03` past 80M. At 160M it had **lost 356 Elo** with no detector firing
+([`../findings/training/entropy_inflation.md`](../findings/training/entropy_inflation.md)).
 
 Reports: `data/reports/E4_80M_roundrobin.md`, `E4_best_of_four.md`, `E4_best_of_four_tau01.md`.

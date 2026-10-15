@@ -1,5 +1,13 @@
 # E5-06: rollout temperature at the policy, from the plateau, 2026-09-26
 
+**Conclusion.** Sampling rollouts at the policy instead of the old sharpening bands (0.15 / 0.50 /
+0.10 / 0.35) is the largest single gain on the E4/E5 ladder: +65 Elo from the plateau against the
+matched resume control (E5-07), +131..+171 from scratch to 240M (E5-08), and from scratch to 800M
+flat 1.0 plateaus +135..+170 above the old default (E5-11, 69–70% head to head). Bands, flat 1.0
+and flat 1.1 were neutral among themselves; **flat 1.0 was adopted as the default on 2026-09-27.**
+It also halves own-DEFCON losses and contests ~4 more battlegrounds at turn 5; the opening still
+oscillates and forced wins stay at 55–60%.
+
 **Arms:** E5-06-43/44. Each is E4-61-SEED's configuration resumed at 410M on E5 and run to 610M, with
 one change: `--rollout-temps 0.8 1.2 0.7 1.1`. `launch_flags.py --diff` against E4-61 shows only that
 flag and `--train-steps`. The default bands, 0.15 / 0.50 / 0.10 / 0.35, sharpen every environment
@@ -69,19 +77,9 @@ only speeds up early training. E5-06 starts at a ceiling, the plateau, and holds
 steps on both seeds. That is the persistence E3's seed B lacked, though in a different regime (a
 late plateau, not training from scratch), with two seeds again.
 
-Two checks are running:
-* **E5-07**, the same resume with the default temperature, tests whether the resume carries any
-  of the gain;
-* **E5-08**, the change from scratch to 240M, repeats E3's setup at three times its budget, which
-  is where E3's seed B lost its gain.
-
-**Proposed:** make `--rollout-temps 0.8 1.2 0.7 1.1` the default. That is the owner's call, since it
-changes the recipe for every future arm.
-
-**Open:**
-* whether the gain holds from scratch, where E3 saw it (a from-scratch pair to 160M);
-* whether other bands do better (a flat 1.0, or bands above 1);
-* whether the sharpened endpoint, entropy 0.35, costs anything the probes can see.
+Two checks followed (next section): **E5-07**, the same resume with the default temperature, to
+see whether the resume carries any of the gain; and **E5-08**, the change from scratch to 240M,
+E3's setup at three times its budget.
 
 ## The resume control (E5-07) and the from-scratch test (E5-08), 2026-09-27
 
@@ -148,8 +146,8 @@ Head to head at matched steps, arm against control:
 * **E5-08-43@240M, a 240M from-scratch run, rates 2293.** That is above E4-61-44@720M (2268) and
   E4-61-43@800M (2245).
 
-**Next (pre-registered in `runs.md`):** E5-09 (flat 1.0) and E5-10 (flat 1.1) against E5-06 and E5-07
-from the same resume. Then the chosen temperature trains from scratch to 800M.
+Then E5-09 (flat 1.0) and E5-10 (flat 1.1) were run against E5-06 and E5-07 from the same resume
+(pre-registered in `runs.md`).
 
 ## Which temperature: bands against flat 1.0 against flat 1.1 (E5-09, E5-10), 2026-09-27
 
@@ -186,7 +184,7 @@ by ≥ 2.5 pp pooled and lose on neither seed.
   better than the bands on both seeds and the best against the default. Its lead over flat 1.0 is
   about 1.5 standard errors, and the rule does not act on that.
 
-**Next:** E5-11-43/44, flat 1.0 from scratch to 800M.
+Flat 1.0 then trained from scratch to 800M as E5-11-43/44 (below).
 
 ## E5-11 at 240M, and per-seat results read against control self-play (2026-09-27)
 
@@ -245,8 +243,6 @@ also holds E4-61 (the default) over the same span, the plateau arms at 610M, and
 * **Training from scratch at the new temperature beats switching temperature on a trained run**, by
   57–63%.
 * **The best models are E5-11-43@560M and E5-11-44@640M.**
-
-**Proposed:** make flat 1.0 the default for `--rollout-temps`. That is the owner's decision.
 
 **Adopted (owner, 2026-09-27).** `--rollout-temps` now defaults to `1.0 1.0 1.0 1.0`
 (`nash_pg.DEFAULT_ROLLOUT_TEMPS`). The old bands are `nash_pg.LEGACY_ROLLOUT_TEMPS`. A run's metadata

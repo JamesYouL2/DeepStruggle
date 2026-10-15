@@ -1,5 +1,10 @@
 # Early training-signal experiments — blunder window, decisive transitions, mid-game starts
 
+**Conclusion.** The blunder window was kept (US self-inflicted DEFCON-1 losses 6 against 46, on
+pre-fix instruments); the decisive-transition result was never recorded; mid-game start sampling is
+harmful as configured (32.7% head to head, -115 Elo) despite a real +3.4 pp gain in the positions it
+trained on.
+
 Records §1–§3 of the original `experiments.md`: the first training-signal knobs tried in this
 project, all on `--arch v2` at ~78M steps, 512 envs, on the **pre-E1 engine** (before the six
 `fix(engine)` commits re-anchored in §7) and the legacy 4,293-float observation. The question the

@@ -1,5 +1,10 @@
 # Determinization audit (2026-10-13): no leak; a few deductions left unused
 
+**Conclusion.** The determinization (C++ rollout root and Python D-MCTS) deals only the opponent's
+unknown cards and the deck and never leaks a hidden card; the engine's `_KNOWN` marks explain every
+revealed card. A few deductions (The Cambridge Five, Missile Envy, Our Man in Tehran, held cards)
+are left unused.
+
 **Question** (owner): does the rollout's determinization respect discards and, above all, the opponent's known cards?
 
 **What determinizes.** `ts.determinize` (C++, `bindings/rollout_batch.cpp`: the rollout root, both builds) and

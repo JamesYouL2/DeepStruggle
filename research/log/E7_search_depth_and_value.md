@@ -352,28 +352,29 @@ student keeps its own RL signal and its own SWA bonus on top, which is how R39's
   C++ for the Python module and the browser's WebAssembly engine, held row-for-row identical by the
   parity test): the worlds now come from the C++ determinizer on SplitMix64 rather than Python's
   `random`, so the picks differ again from the runs above; correctness is held by the tests and the
-  strength and speed of this build are **not yet re-measured** (a training run had the GPU). On the
-  leaderboard it is the `rollout` kind,
-  `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)`, registered
-  and not yet played.
+  strength and speed of this build were not re-measured here. On the leaderboard it is the
+  `rollout` kind, `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)`
+  (its rating: `tools/leaderboard.py show`).
 * **Offline distillation rounds and value-head fine-tuning for search are measured null here**; online
-  improved-policy targets (R32) are the training route that gains. Whether R32 has absorbed what the
-  rollout root adds, or only what Gumbel adds, is the next question -- the rollout root searched on R32
-  against Gumbel on R32 answers it. The other online form under test is P32 B4'
+  improved-policy targets (R32) are the training route that gains. R32 absorbed what Gumbel adds and
+  almost none of what the rollout root adds (the follow-up at the end of this note). The other online
+  form tried is P32 B4'
   ([`../plans/P32_teacher_and_paired_credit.md`](../plans/P32_teacher_and_paired_credit.md)), R37
   (`E7-A8-R1-S44@6400M+R37`, [`../runs.md`](../runs.md)): every option of a *small* decision priced
   over paired worlds to the turn's end, on the rollout's own positions, toward max(pi, 1e-3) exp(10 Q)
   with an evidence weight in place of a gate. Section 5's soft arm at tau 0.1 is the same temperature
   as its beta 10 and did not move; what B4' changes is the option set (all of them, with a floor that
   keeps a saturated option reachable, where the soft arm could only reweight the top 4) and the regime
-  (online, continual). Judge it by P32's rule, target spots moving by more than 3 SE, not by this note.
+  (online, continual). Outcome: R37 a small gain with the leak rate unchanged (2.8% against 2.8%), and
+  R38 at 4x the budget level ([`../runs.md`](../runs.md)).
 * **One offline round does not compound search into the network** -- not Gumbel's picks, not the
   rollout root's (section 5). Until a training route absorbs the rollout root's gain, it is banked by
   searching at play time; besides R32's online targets, the network itself improves through RL and
   representation (the A8 heads are the precedent: Wargames was fixed by giving the policy a
   card-conditioned readout, not by showing it the move).
-* **Longer horizons next:** 4 boundaries beat 2 by +35 on the soup; 6-8 (or to the turn's end) is the
-  obvious next point, with the time cost measured.
+* **Longer horizons:** 4 boundaries beat 2 by +35 on the soup. Stopping at the later of 4 boundaries
+  and the turn's end was tried in P33 and lost 47.8% to the 4-boundary root
+  ([`P33_diagnostics.md`](P33_diagnostics.md)).
 
 ## Replicate
 

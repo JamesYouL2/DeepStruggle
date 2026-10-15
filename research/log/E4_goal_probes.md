@@ -1,5 +1,10 @@
 # How far E4's best checkpoints are from the goal, criterion by criterion
 
+**Conclusion.** Against the no-search "mediocre human" goal, E4's best checkpoints took Poland but met
+the full human US opening at best 25% of the time (humans 57%), and took an immediately winning move
+only 59–70% of the time. Long training to 800M bought Elo, not the named behaviours: the setup kept
+oscillating, battleground coverage got worse and forced wins stayed at 62–66%.
+
 The goal ([`../plans/README.md`](../plans/README.md)) is a no-search player at the level of a
 mediocre human. It is defined by behaviours, not Elo: a sane setup, contesting battlegrounds, not
 losing to one's own DEFCON, and disposing of a card through the exit that card has. This measures

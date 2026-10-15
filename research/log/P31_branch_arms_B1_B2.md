@@ -1,6 +1,16 @@
 # P31 B1 and B2: the play-mode floor and scenario seeding, from E7-20-44@4,390M (2026-10-06)
 
-[P31](../plans/P31_show_and_decide.md) screens four "show, then let training decide" mechanisms as
+**Conclusion.** P31's branch screens from E7-20-44@4,390M were level on strength: the play-mode
+floor (B1) and scenario seeding (B2) repaired nothing measurable and pushed Chernobyl the wrong way,
+and forcing applicable events credited as the policy's own (E7-29-44) suppressed every event through
+the shared play-mode head (−45 Elo). Card-conditioned heads fixed it: a per-branch head made
+Wargames' end-or-pass decision follow the VP lead at no cost (E7-30..32), and with a play-mode head
+too, trained from scratch (A8, `E7-A8-R1-S44`), the policy found Wargames without forcing, pulled
+ahead of the plain line (54.2% at 4,800M) and plateaued at 6,800M level with the best plain soup.
+Its SWA-made heads soup beats that soup 59.4%. Search targets from the plateau gave no clear gain in
+310M; Gumbel on card and play-mode decisions alone keeps about two thirds of full search's gain.
+
+[P31 (closed)](../plans/README.md) screens four "show, then let training decide" mechanisms as
 branches from a late checkpoint. The owner chose the root E7-20-44@4,390M, whose three no-change
 continuations to 4,800M (E7-20-44, E7-20-44-4390M.45 / .46, [`E7_soup_4800M.md`](E7_soup_4800M.md))
 are the noise floor. The position banks P31 reads arms on are not ported (owner: not now), so these

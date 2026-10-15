@@ -1,5 +1,9 @@
 # P30 (2026-10-04): training with search targets, as a branch -- strength moves from USSR to US
 
+**Conclusion.** Search CE targets at X4b's settings, branched from E7-02-44@820M for 400M, fail the
+owner's rule: −3.0 ± 0.5 in the USSR seat, +1.6 in the US seat (about what new seeds alone give),
+51% head to head. At these settings search moves strength between seats rather than adding it.
+
 The owner asked for a 400M-step training run with search starting from 800M, after search moved to
 C++ ([`search_performance_profile.md`](search_performance_profile.md)) and honest search was measured
 at +8 on a single E7 snapshot ([`P30_search_headroom_e7.md`](P30_search_headroom_e7.md)).

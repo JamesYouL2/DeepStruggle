@@ -1,5 +1,11 @@
 # P30 (2026-09-30): card <-> country interaction is learned by the policy, at about the right size
 
+**Conclusion.** Every trained E6 net moves 5–24 points of placement mass into a region when it holds
+that region's scoring card (the shallow trunk most, the old explicit-attention net least), the critic
+misses no such interaction, and a paired-rollout oracle finds neither under- nor over-placement at
+the one-point margin. The interaction is learned without an explicit mechanism, at about the right
+size.
+
 The owner's question: M2d and the shallow trunk have no explicit card <-> country mechanism. Is the
 interaction not needed, or needed and just not learned? Tool:
 `tools/scripts/card_country_interaction_probe.py`. Positions: self-play of E6-12-44@560M and

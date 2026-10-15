@@ -1,5 +1,11 @@
 # The observation layout programme — dead history out, card tracking in, decision context in
 
+**Conclusion.** The 512-float history slice was never written (a constant zero, 4.17% of the
+network); removing it and adding opponent-card tracking (v2.1) was neutral at 80M/240M/320M but
+134,496 parameters cheaper, and adopted. v2.2 (decision context in, unread features out) was
+**+91.7 Elo** over v2.1 on two seeds, the first observation change to clear noise; which of its
+changes did it is not established. All these layouts are retired; the current one is v2.3.
+
 Records §19, §23 and §24 of the original `experiments.md`: the one line of work that produced a
 measurable observation change. §19 establishes that the 512-float history slice was never written by
 anything and that opponent-card knowledge is genuinely absent, and proposes both changes (§19.5
@@ -233,7 +239,7 @@ the arms differ in seed as well as layout, so it does not attribute to the layou
 play differently at all — but because it is the same strength for 134,496 fewer parameters and 402
 fewer observation floats, with the dead history branch gone, and because the card-tracking channel
 is information the agent should have and costs **64 parameters** to carry (one card feature, 12 ->
-13, across the 110-card block). `--obs-layout` now defaults to `v2.1`; the baseline checkpoint is
+13, across the 110-card block). The baseline checkpoint was
 `data/checkpoints/arm_E_cont_240to320/snapshot_final.pt` at 320,012,288 steps.
 
 **What is still unmeasured is card tracking itself.** v2.1 changed two things, but only one carries
@@ -249,7 +255,8 @@ features — at 2–3 seeds, which §20.6 puts at several GPU-days rather than o
 +52.7 and +10.9 Elo in the 240M and 320M pools, which looked like compression. §20.6 shows the same
 experiment repeated on a different seed spans +86.9 to +54.7, so the first two are indistinguishable
 and the trend is not established. E's +10.9 sits below both replicates, which makes its flatline the
-one figure here that may be real; a seed replicate of it is running.
+one figure here that may be real. A seed replicate was launched; its result is not recorded here,
+and v2.2 (§24) superseded v2.1.
 
 **Caveats.** One lineage per layout, and the arms differ in seed. Elo is not comparable across
 tournaments: the identical comparison (D's late four against its own 160M start) read 60.50% in one
@@ -350,12 +357,10 @@ apart: not the width assertions guarding the extraction sites, not `layout_of`, 
 The staged-card reveal was briefly added to v2.2 after arms F and F2 had trained on it, which would
 have had them evaluated against an observation they had never seen, silently.
 
-A run now records what it trained under in its `metadata.json` as `engine_config`, set by
-`--engine-flag NAME`, and **a missing entry is false** — so a checkpoint from before a flag existed
-keeps the behaviour it learned without anyone having to remember. The flags travel with the
-checkpoint wherever the layout does: `NeuralAgent` reads them from the metadata beside the
-snapshot, the batched tournament treats `(layout, flags)` as the pair that must match and falls
-back to per-state extraction when they differ, and `self_play` does the same.
+The fix at the time recorded engine flags in each run's `metadata.json` and matched them alongside
+the layout at evaluation. Both mechanisms are gone: there is one layout (v2.3), no engine flags,
+and optional observation additions are appended feature blocks recorded in the weights
+(`CLAUDE.md`, "Optional feature blocks are appended").
 
 An earlier attempt at this used a wider layout so the difference would be inferable from the
 weights. That worked and was the wrong trade: it spent 110 floats — a per-card feature — on a

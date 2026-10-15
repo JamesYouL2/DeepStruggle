@@ -1,5 +1,10 @@
 # P21 — M2.5 / M2.5c / M2.5b: the identity vector is rejected
 
+**Conclusion.** A trainable per-entity identity vector in the head lost at 80M on both seeds in every
+form: −47/−123 (M2.5), −90/−182 with the card head (M2.5c), −60/−178 replacing the constants
+(M2.5b). M2.5b collapsed on every seed tried, though neither ingredient collapses alone, and every
+arm that fell from 80M to 160M carried identity (3 of 4 identity arms).
+
 One tournament, 18 entrants, 100 games per side at `temperature 0.0`, run 2026-09-22.
 `/workspace/data/reports/P21_six_rungs.{json,md}`.
 
@@ -59,7 +64,9 @@ the rating is the arbiter.
 Both seeds are ones on which **M2d itself runs clean to 160M** (`E4-08-03@160M`, `E4-08-04@160M`: zero
 pinned rows each). Against a ~19%-by-160M base rate two collapses would be p ≈ 0.036, and that
 overstates the chance, because these are not random draws — they are seeds selected for being
-clean on the base architecture. A third seed (6, also clean for M2d) is running.
+clean on the base architecture. A third seed (6, also clean for M2d) entered too: 3 of 3
+([`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md), which also shows two of these
+entries later recovering).
 
 **Neither ingredient collapses alone.** M2b removes the constants without identity: stable, and
 the second-strongest arm in the field. M2.5 and M2.5c add identity while keeping the constants:

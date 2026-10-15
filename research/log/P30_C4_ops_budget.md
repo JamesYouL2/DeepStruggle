@@ -1,4 +1,9 @@
-# P30 C4 (2026-10-01): the ops budget in the observation -- intermediate readout at 320M
+# P30 C4 (2026-10-01): the ops budget in the observation -- readouts at 320M and at saturation
+
+**Conclusion.** The `OPS_BUDGET` observation block (3 floats) showed no detectable effect: it passed
+the owner's rule at 320M and failed it against its paired control at 1,200M (USSR −5.1, 44% head to
+head), but the unchanged recipe on seed 43 differs from seed 44 by as much (43%). With one seed per
+arm, the ~55 Elo seed spread is larger than any effect C4 could have. Not pursued further.
 
 **Arm.** E7-07-44: E7-01-44's shallow recipe from scratch, seed 44, plus `--obs-features ops_budget`
 -- 3 floats appended after the base layout: the Ops the card at a play-mode decision grants after

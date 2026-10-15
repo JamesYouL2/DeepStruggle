@@ -1,5 +1,11 @@
 # Search: what it costs, and how much of it is the coverage
 
+**Conclusion.** Honest (determinized) 96-simulation MCTS beat its raw E3-20-28@320M policy 75.0%;
+privileged information was worth nothing measurable (+2.5 pp) and search saturated by 96
+simulations. The gain shrinks as the policy strengthens: 64% on E4-08-03@240M, 59% after
+distillation, and on E5-11-43@560M null at 64 simulations and +7 pp at 256. Coverage buys strength
+with no cheap plateau.
+
 What a "train with search" arm would actually cost, and the measurement that has to happen before
 one is launched. Written while planning an arm from the 160M checkpoint of `E3-20-28`.
 
@@ -131,12 +137,11 @@ Combining the two, for a 40M / 80M step arm continuing from 160M:
 Every configuration that fits an 8-hour budget searches 5–10% of decisions. The only configuration
 with a strength number attached costs 108h for 40M steps.
 
-## 5. Search-in-training does not exist
+## 5. Search-in-training did not exist yet
 
-There are **zero** references to search or MCTS in `tools/train.py`, `ai/training/train.py`,
-`ai/training/generic_trainer.py` or `ai/training/nash_pg.py`. The searcher is wired only into
-`tools/play_match.py`, for evaluation. An expert-iteration arm has to be built before it can be
-run; P3 is the plan for it.
+At the time the searcher was wired only into `tools/play_match.py`, for evaluation. It has since
+been built into the trainer (`tools/train.py --search-*`; first used in P15-X4b,
+[`../archive/E3_ladder/log/P15_X4b_search_during_rl.md`](../archive/E3_ladder/log/P15_X4b_search_during_rl.md)).
 
 ## 6. Two things that had to be fixed to measure coverage at all
 

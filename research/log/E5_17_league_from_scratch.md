@@ -1,5 +1,10 @@
 # E5-17 — the P24 league from scratch at flat temperature: seed 43 is level with E5-11
 
+**Conclusion.** The league (a main exploiter whose snapshots join the main agent's pool) ran as
+designed on seed 43 — exploits found, published and countered — but left the main agent level with
+E5-11 (49.3% head to head; −4.2 as USSR, +4.3 as US), so it was not accepted, and the Greece-2 US
+opening came back. Combined with game-result setup credit it became E5-21.
+
 **Question.** Does a main exploiter, whose published snapshots join the main agent's pool, make
 the main agent stronger than the same recipe without it? The motivation was that weak setups must
 stay punishable: otherwise the US drifts back to them. Because a main agent plus its exploiter
@@ -84,5 +89,6 @@ where E5-11's critic over-rated them.
 On seed 43 the league runs as designed: exploits found, published and countered. But it leaves
 the main agent level in strength with E5-11 and does not touch the opening. The two mechanisms
 that worked each did one thing: game-result setup credit (E5-16) repaired the opening, and the
-league keeps weaknesses punished. They are complementary. Seed 44 and E5-19 are on hold for the
-owner's decision.
+league keeps weaknesses punished. They are complementary: E5-21 combined them
+([`E5_21_setup_credit_plus_league.md`](E5_21_setup_credit_plus_league.md)) instead of a seed-44
+E5-17 or E5-19.

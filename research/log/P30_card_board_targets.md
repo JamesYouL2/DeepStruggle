@@ -1,5 +1,12 @@
 # P30 (2026-09-30): card × board targets -- representable in the grouped trunk, better with attention, not learned by RL
 
+**Conclusion.** Supervised, the grouped trunk can represent card × board interactions partly (0.80
+within-card R² on event outcomes) and two-layer card/country attention clearly better (0.90, at 7x
+fewer parameters); but RL-trained trunks carry no more of it than an untrained one (0.66 against
+0.665), so the gap is learning, not capacity. Only the expensive attention variant beats the trunk,
+which became P30 C1 ([`P30_C1_tokens.md`](P30_C1_tokens.md)); the auxiliary-target route became C2
+([`P30_c2_card_probe_and_branch_soups.md`](P30_c2_card_probe_and_branch_soups.md)).
+
 The owner's question: we seem not to need complex card <-> country interaction. Is it (1) not
 needed, (2) not representable in the current architecture, or (3) representable but not learned?
 This log answers (1) partly and (2)–(3) directly, on engine-labelled targets that depend on a card

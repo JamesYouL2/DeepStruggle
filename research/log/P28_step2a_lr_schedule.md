@@ -1,6 +1,11 @@
 # P28 step 2a — a stepped learning rate does not cut the spread; averaging at a constant rate wins
 
-Plan: [`../plans/P28_strength_on_E6.md`](../plans/P28_strength_on_E6.md), step 2a.
+**Conclusion.** Stepping the learning rate down (3e-4 → 1e-4 → 3e-5) did not shrink the late
+snapshot spread (SD 1.99 against 2.03), so it was not adopted. Averaged, the constant-rate run wins:
+its 680–760M SWA beats the stepped run's 57.8% and the 480–560M SWA 53.7%, so training at a constant
+rate keeps paying once averaged while raw snapshots look flat.
+
+Plan: [P28 (closed)](../plans/README.md), step 2a.
 
 **Arms.** Both continue E6-04-44 from its 560M end state to 760M, with its flags and the published
 E6-05 exploiters as a static league pool:
@@ -61,6 +66,6 @@ Head to head between SWAs:
   SWA 53.7%, about +20 Elo for 200M more steps. The raw snapshots of the same run hide this
   entirely: their Elo is flat at 1506–1538.
   * The ~1M-game "plateau" is therefore largely an artefact of rating raw snapshots.
-* **The recipe to carry forward is a constant rate plus weight averaging.** This is step 2b (E6-08-44,
-  EMA τ 10M, running). The SWAs that worked averaged over 80M. If τ 10M is too narrow to match them,
-  the next cell is a wider τ (40M) or a periodic SWA of the last 80M as the rated model.
+* **The recipe to carry forward is a constant rate plus weight averaging.** Step 2b tested EMA
+  weights (τ 10M): too narrow to match an 80M SWA, and the owner chose to measure every arm on its
+  snapshots and on its last-80M SWA instead ([`P28_step2b_ema_weights.md`](P28_step2b_ema_weights.md)).

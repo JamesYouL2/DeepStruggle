@@ -1,12 +1,19 @@
 # P9 — the architecture programme, as it happened
 
+**Conclusion (E3 engine).** Each architecture step came from a measured defect: identity embeddings
+(86% of cards shared a feature vector) were worth ~110 Elo, about a tripling of steps; a graph-layer
+self-transform added ~+60; and per-entity residual policy heads — information present in the tokens
+at 89–91% but stranded before the heads — took the stack to +304 over the control at 80M. Built as a
+replacing head the same idea lost 219 Elo, and attention-pooling into the trunk failed. Seed spread
+is ~95 Elo, which withdrew "0 graph layers beats 2". The critic cannot see a provoked DEFCON-1 at any
+node. Current verdicts: [`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md).
+
 The journal of the work that took the network from "it cannot tell 86% of its cards apart" to the
-current recipe: how each defect was diagnosed, what was built in response, what the probe said
-before and after, and what the Elo said. **Update discipline: append-only.** The two failed arms
-(the attention read-out and the replacing form of the per-entity heads) and the retracted
-readings (the anchor that inverted orderings, the influence probe that scored below its own
-baseline twice, the trunk figure that moved the right way while play halved) are the most
-valuable entries in the file and are never removed. The *conclusions* — what the architecture is
+late-E3 recipe: how each defect was diagnosed, what was built in response, what the probe said
+before and after, and what the Elo said. The two failed arms (the attention read-out and the
+replacing form of the per-entity heads) and the retracted readings (the anchor that inverted
+orderings, the influence probe that scored below its own baseline twice, the trunk figure that moved
+the right way while play halved) are kept on purpose. The *conclusions* — what the architecture is
 now and what each change is worth — are kept current and short in
 [`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md); this file is why they are believed.
 The plan this programme was run from is
@@ -44,12 +51,8 @@ resolve; new entries get a descriptive heading and no number.
 
 ## Where the conclusions from this file now live
 
-This file is 1,300 lines and three of its topics were being looked up on their own, which meant
-scrolling a journal to find a verdict. Those verdicts were extracted into `../findings/` on
-2026-09-16. **Nothing was removed from here** — the sections below still carry the full setup,
-the predictions and the retractions, which is what a log is for. Each extracted section carries a
-one-line pointer under its heading, in the same way sections that moved out of `experiments.md`
-left a stub behind.
+Three topics' verdicts were extracted into findings (now archived with the E3 ladder) on
+2026-09-16; the sections below still carry the full setup, the predictions and the retractions.
 
 | section here | current verdict now in |
 |:---|:---|
@@ -1166,7 +1169,9 @@ proportion to its degree; the residual heads from information that was present i
 read-out and the replacing form of the per-entity heads -- were diagnosed by the same instruments
 that chose the successes.
 
-**E3-15 rests on one seed**, and it is now the recipe. That is the standing caveat on this table.
+**E3-15 rests on one seed**; it became the late-E3 recipe, and its bundle was re-measured on E4 at
++447 Elo ([`E4_architecture_ab_result.md`](E4_architecture_ab_result.md)). The E4 ladder then
+showed most of it is the per-entity country head ([`P21_ladder_status.md`](P21_ladder_status.md)).
 
 ## Does the network price a country for the operation it is performing?
 

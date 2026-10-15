@@ -1,5 +1,9 @@
 # Five Year Plan timing as the USSR (2026-10-13): early plays are not a leak
 
+**Conclusion.** The R34 soup holds Five Year Plan to the last action round in 55% of turns; its
+early plays price level with the best alternative (+0.39 / 0.00 pp) while holding where it holds is
+worth ~3.5 pp, so the leak is at most ~0.15 pp a game.
+
 **Question** (owner): the network "mostly learns to postpone Five Year Plan till AR7 as USSR, but sometimes still
 plays it early" -- a sign the network lacks a signal like "USSR, early AR, Five Year Plan → hold"?
 

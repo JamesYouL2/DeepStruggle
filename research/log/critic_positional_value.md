@@ -1,5 +1,10 @@
 # What the critic prices, and the two early-war event cards
 
+**Conclusion.** The 160M critic prices battleground control (about 3x a plain point) and access, but
+not partial progress toward control. As the USSR the model rarely fires its own De-Stalinization or
+Decolonization (6-38% against ~100% for humans), a gap inherited from the BC warm start (20.7%)
+rather than created by RL.
+
 Records §12–§14 of the original `experiments.md`: the diagnosis of *why* battlegrounds sit empty,
 run against the 160M injected run `data/checkpoints/run_v2_20260907_long160M` (warm start / 35M /
 70M / 100M snapshots; exact provenance in §12.0) on the post-E1 engine and the legacy observation.

@@ -1,5 +1,12 @@
 # The opponent pool drained on every resume (fixed in 4eb58df), and the late collapse
 
+**Conclusion.** A resume restored every opponent-pool member at step 0, so spacing eviction drained
+the pool to its two oldest members plus the leg's own recent snapshots; all 57 E4 resumes trained
+their later legs that way. Fixed in `4eb58df`. On the fixed pool the seed-5 continuation from 160M
+did not collapse (3 of 3, against 0 of 5 drained) and finished 170–390 Elo above its drained twins;
+on seed 3, which never collapsed, the fix is neutral to +55. Comparisons between drained arms stay
+fair to each other; their collapse rates and absolute Elo do not.
+
 2026-09-24. Plan: [P25](../archive/E4_ladder/plans/P25_collapse_robustness.md), step 3h. Runs: E4-48 in
 [`../runs.md`](../runs.md).
 
@@ -160,22 +167,14 @@ seed 3 survived.
 **On both lineages the fix is at least neutral, and it is large where the drained pool collapsed.**
 It is a bug fix, so it needs no gate. Every continuation from here on uses it.
 
-## Open
+## Afterwards
 
-* E4-48-05-160M.11's first leg died at ~215M on a CUDA `unspecified launch failure`, raised at
-  the host-to-device copy that follows the two graph replays in `_graphed_forward`. The error is
-  asynchronous, so the faulting kernel is earlier, most likely inside a replay. This is the first
-  such fault in about 20 runs since graphs were introduced. The kernel log is not readable here, so
-  a hardware Xid cannot be ruled out. It was continued from its 215M resume state.
-
-## Next
-
-* **The recipe's late behaviour needs re-measuring on a fixed pool.** The late-dynamics verdicts
-  (λ 0.99, π_ref 100k and η late, slow π_ref from 160M) compared arms that all ran drained. Their
-  ranking may hold, but their collapses may not.
-* **P25's acceptance run (step 6: six seeds, unattended, to 160M) now has to cross resumes on the
-  fixed code.** The late collapse was the reason to expect it to fail, and the bench's from-scratch
-  collapse (E4-27) was a two-seed result that seeds 6 and 7 did not reproduce.
+* E4-48-05-160M.11's first leg died at ~215M on a CUDA `unspecified launch failure` inside the
+  graph replays of `_graphed_forward`; it was continued from its 215M resume state. The graph
+  capture was fixed in `754f9e1` (every graph captured on one stream per cache).
+* The late-dynamics verdicts were not re-measured on a fixed pool. P25 was closed on 2026-09-24 by
+  the owner's criterion (a collapse matters only if training dies or stalls for long), with no
+  lever adopted ([`P25_stress_bench.md`](P25_stress_bench.md#closing-p25-2026-09-24)). Clean
+  never-resumed replicates are [`E4_clean_replicates.md`](E4_clean_replicates.md).
 * `opp_pool_span_m` did not flag the drain, because the step-0 members made the span look like the
-  whole run. A metric computed from the members' real steps, such as the median member age, would
-  have shown it.
+  whole run; a metric from the members' real steps (median member age) would have.

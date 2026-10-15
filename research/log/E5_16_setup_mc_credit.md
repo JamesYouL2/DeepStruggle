@@ -1,5 +1,12 @@
 # E5-16 — setup credited by the game result: the US opening is repaired, and seed 43's USSR pays for it
 
+**Conclusion.** Crediting setup placements with the game result (`--setup-mc-credit`, with the
+setup entropy floor to unlock them) repaired seed 43's US opening (gap to the best alternative
+7.3 → 3.4 points), calibrated the critic on openings, and gained +7.5 in the US seat. The USSR seat
+missed its bar (−5.1 / −1.0), so it was not accepted on its own; the follow-ups show that "loss" is
+the USSR no longer exploiting E5-11's weak US opening (+2.1 ± 1.7 against the repaired one). It
+became half of the E5-21 recipe ([`E5_21_setup_credit_plus_league.md`](E5_21_setup_credit_plus_league.md)).
+
 **Question.** E5-11's setup learns only from the critic, and the critic over-rates unfamiliar
 openings. With γ = 1 and λ = 0.98, a setup placement's λ-return weights the game result by ≤ 0.01
 ([`E5_11_setup_lock_and_critic_views.md`](E5_11_setup_lock_and_critic_views.md)). Setup placements
@@ -101,9 +108,9 @@ confound. Its US gain is the same size against both opponents (+7.5 and +7.7).
   * collateral from the floor's overshoot, near-random openings on both sides for several million
     steps.
   Seed 44's USSR, with the same Poland 3 / Yugoslavia 3 at both ends, is level.
-* **Open next:** a USSR opening check (setup_oracle for the USSR side); the floor with a damped
-  integrator; and seed-43 repeats. Credit per seat, the US only, would test whether the US gain
-  can be had without touching the USSR.
+* **Next:** the USSR opening check and the adaptation test (the follow-ups below). A damped floor
+  integrator and US-only credit were not run; the recipe was replicated on E6 instead
+  ([`E6_04_league_seed44.md`](E6_04_league_seed44.md)).
 
 ## Follow-up: the USSR opening check (2026-09-28)
 

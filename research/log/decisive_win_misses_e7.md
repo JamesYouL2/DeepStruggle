@@ -1,5 +1,10 @@
 # Missed forced wins: E7-02-44@1,200M and the shallow soup, old and new classifier (2026-10-02)
 
+**Conclusion.** E7-02-44@1,200M and the shallow soup take about half their forced wins (0.45 under
+classifier v2), but in ~9 of 10 games with a miss the side wins anyway; the total cost is ~10-11 Elo
+(v2), ~6 (v1). v2 misses ~3% of v1's wins; 4 of the 19 checked are real end-of-turn wins outside its
+scope.
+
 Owner: "check for the E7-02-44@1200M and soup self-plays -- how often they miss decisive win
 according to old and new classifier, and how much Elo does it cost them."
 

@@ -1,5 +1,10 @@
 # P21 rung M0 — the flat MLP floor
 
+**Conclusion.** The flat MLP floor is 1650–1666 at 80M (seed spread 16.6 Elo) and climbs +147 to
+160M. It runs 4.3x faster than the E4 default architecture and beats it 64.5% on 46% of the GPU
+time, so the defaults do not earn their cost; the late-E3 bundle (anchor, +366 above M0@160M) does.
+M0 is a one-seat player (USSR strong, US weak).
+
 **2026-09-19.** The first rung of [P21](../plans/P21_architecture_ladder.md). Two arms on
 different seeds, one to 80M and one to 160M, parameter-matched at 3.177M against the anchor
 architecture's 3.149M (+0.9%), cold-started, pooled, `--drop-static`.

@@ -1,6 +1,11 @@
 # P28 step 0 — the E6 panel, and E6-04-44 adopted
 
-Plan: [`../plans/P28_strength_on_E6.md`](../plans/P28_strength_on_E6.md), step 0. Owner, 2026-09-29:
+**Conclusion.** The frozen E6 panel is E6-03-44 at 80/240/550M (plus `heuristic_mcts:16`). Against
+it, E6-04-44 beats E6-03-44 in both seats (US +2.7 ± 0.6, USSR +1.5 ± 0.5) and was adopted. The
+self-play-bar rule had put the whole gain in the US seat (+9.6 / +0.3): the control's USSR is
+specialised against its own weak US, which inflates the USSR bar.
+
+Plan: [P28 (closed)](../plans/README.md), step 0. Owner, 2026-09-29:
 "proceed with 1st step from it to check E6-04 adaptation under new rules".
 
 ## The trace and the panel

@@ -1,5 +1,9 @@
 # Model soups (2026-09-30): from a shared start they are the best models yet
 
+**Conclusion.** A soup of three branches from a shared 560M start rates +45 over the best single SWA
+(1775 against 1730) and beats its ingredients 65-70%; souping raw snapshots or SWAs makes no
+difference (50.0% head to head).
+
 Terms, as the owner set them: **SWA** is a uniform average of one run's snapshots along its
 trajectory; a **model soup** averages separately trained models. Everything P28 called a "soup"
 is an SWA and is now named so.

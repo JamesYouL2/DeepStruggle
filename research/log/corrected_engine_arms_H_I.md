@@ -1,5 +1,11 @@
 # Arms H, H2 and I on the corrected engine — tactics without strategy, the KL penalty, and 480M
 
+**Conclusion.** On the corrected engine and v2.3, H2 reached 1925 at 160M (about +55 Elo per
+doubling; the seed worth 4.7 Elo). Removing the NashPG KL penalty (`--eta 0`) found no
+intransitivity to prevent but cost 169 Elo, so the penalty stays. 240M to 480M gained +65 against
+its own past and nothing against anything else, with the sides 22 points apart; 82.7% of DEFCON-1
+endings are provoked by playing an opponent's card for Ops at DEFCON 2.
+
 Records §25–§27 of the original `experiments.md`: the first arms after the starred-card fix and the
 first on observation layout **v2.3**. Nothing before §25 is on the same Elo ladder, because the fix
 changes the decision stream. §25 covers arms H (80M, seed 20260920) and H2 (the same recipe on seed

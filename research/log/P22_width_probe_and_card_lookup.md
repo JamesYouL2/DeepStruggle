@@ -1,6 +1,10 @@
 # The width probe and P22-a — neither beats M2d
 
-Two arms of [`P22`](../plans/P22_card_lookup_attention.md), each on the ladder's working seed pair
+**Conclusion.** Doubling M2d's entity projection (256 → 512) lost 129–291 Elo, so capacity is not
+what the card path lacks; P22-a's identity-keyed card lookup lost 72–154 at 80M and was still −53
+at 160M on seed 3. Both rejected.
+
+Two arms of [P22 (closed)](../plans/README.md), each on the ladder's working seed pair
 (3 → 160M, 5 → 80M), each rated in its own field against seed-matched M2d, the P21 anchor and
 `HeuristicBot`. 100 games per seat per pair, temperature 0.
 

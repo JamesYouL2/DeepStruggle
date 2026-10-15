@@ -1,6 +1,10 @@
 # E5-12 — per-side setup credit at flat temperature 1.0: no gain, and it locks the setup, bad or good
 
-**Question.** A1 (`--block-lambda setup-side`, [P4](../plans/P4_setup_macro_action_credit.md)) was
+**Conclusion.** At flat rollout temperature, P4's A1 setup credit (`--block-lambda setup-side`) was
+−73 / +30 Elo against E5-11 at 480–560M and froze whatever opening it had found, including Denmark 7
+on seed 43. `--block-lambda` went back to `off` as the default.
+
+**Question.** A1 (`--block-lambda setup-side`, [P4 (closed)](../plans/README.md)) was
 adopted as a default on 2026-09-26 for Poland, at +27/+18 over 80M, inside the noise. It had never
 run beyond 80M or at flat rollout temperature 1.0, and E5-11 (flat 1.0, `--block-lambda off`)
 already plays Poland in every game. Does A1 add strength or setup stability to the new default
@@ -70,5 +74,5 @@ seed-to-seed spread. Forced wins taken are 58% / 61%, against 66.5% for E5-11-44
   wrong. Denmark 7 on seed 43 coincides with that seed's weak US seat (−8 against self-play).
 * E5-11 without A1 reached a correct, stable opening on seed 44 and plays Poland on both seeds.
 
-**Proposed:** return `--block-lambda` to `off` as the default. E5-11, not E5-12, remains the
-control for the next arms. That is a recipe decision for the owner.
+**Adopted:** `--block-lambda` is back to `off` by default (setup-side was the default only on
+2026-09-26..27). E5-11, not E5-12, remained the control for the next arms.

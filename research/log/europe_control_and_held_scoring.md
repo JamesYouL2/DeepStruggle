@@ -1,5 +1,12 @@
 # Europe control and held scoring, E3-15/E3-17
 
+**Conclusion.** In E3-15/E3-17 the USSR's Europe wins run through a West Germany the US never
+contests (and, under the forced human opening, loses to Blockade). The underlying pathology is the
+critic collapsing to the base rate (87.5% accuracy against a 87.3% base rate at 160M), which zeroes
+the advantages of both sides; both 160M arms rate below their own 80M selves (-75, -64 Elo), all of
+it on the US seat. These arms trained without an opponent pool; the collapse was later traced to
+that ([`../findings/training/side_collapse.md`](../findings/training/side_collapse.md)).
+
 Two questions off the E3-17-22 (0 graph layers, 160M) TensorBoard: the USSR win rate rising to
 90%, and held-scoring losses appearing to rise for the USSR while falling for the US.
 

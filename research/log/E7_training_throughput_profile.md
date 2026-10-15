@@ -1,5 +1,10 @@
 # E7 training throughput: where the time goes, and what stands between it and 2× (2026-10-05)
 
+**Conclusion.** At 512 envs the rollout (0.27 s) and the update (0.36 s) split an iteration; the
+shared-context per-entity head and `torch.compile` each take ~15% and together +32% end to end
+(update 0.364 to 0.213 s). The compile A/B (E7-23-44) came out ~-15 Elo and -2.5 points as USSR, so
+`--compile-update` stays opt-in.
+
 The owner asked, after the network shrank to E7's shallow recipe (1.33M parameters), what larger
 batches would buy and what stops training from being twice as fast. Nothing here changed training
 code; the scripts are in `data/logs/perf/` (`e7_bench.py`, `e7_pe_head.py`, `e7_pe_equiv.py`,

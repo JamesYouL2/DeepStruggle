@@ -1,5 +1,9 @@
 # P21 + P22 — every rung in one field
 
+**Conclusion.** Re-rated together (41 models), M2d is the top of the ladder at every budget and
+every per-rung rejection survives: each rung sits below seed-matched M2d at 80M on both seeds. The
+worst entries are failures — a collapsed M2.5b, the anchor's 160M leg, and M2.5 s3@160M.
+
 Elo is field-relative, so ratings from the per-rung reports cannot be put side by side. This
 tournament rates every rung's current snapshots together: the ladder's seed pair (s3 at 80M and
 160M, s5 at 80M) for every rung from M2a on, M2d s3 to 240M and s5 to 160M, the early rungs

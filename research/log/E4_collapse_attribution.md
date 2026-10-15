@@ -1,5 +1,12 @@
 # E4 — which source of randomness carries the M2d collapse?
 
+**Conclusion.** Moving any one of the four seed streams (init, sampling, env, pool) of the
+collapsing seed 1, or putting any one of seed 1's streams into the clean seed 3, gave a clean run:
+**8 of 8 clean**. No single stream is sufficient, initialisation is refuted both ways, and the
+"every stream is necessary" reading cannot be told from a 12.5% base rate (P = 0.34 for all-clean
+under the null). The 12.5% "terminal" rate itself was later withdrawn
+([`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md)).
+
 Eight arms, `E4-10-01` … `E4-10-08`, 80M steps each, run 2026-09-20/21.
 Companion to [`../findings/training/side_collapse.md`](../findings/training/side_collapse.md),
 which is the census this experiment tries to explain.

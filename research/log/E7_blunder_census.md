@@ -24,7 +24,7 @@ on the current best network, with the engine's own proof where there is one.
 ## Method
 
 Tools `tools/scripts/blunder_census.py` (screen, report) and `tools/scripts/bank_playouts.py
-validate` (`tools/README.md` §7c); workflow `bank_playouts.yml`, `stage=validate`.
+validate` (`tools/README.md` §7d); workflow `bank_playouts.yml`, `stage=validate`.
 
 * **Model.** `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M.pt`, the SWA-made heads soup (sha256
   `91a43a8b089c…`; [`P31_branch_arms_B1_B2.md`](P31_branch_arms_B1_B2.md)).

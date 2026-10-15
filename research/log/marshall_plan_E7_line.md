@@ -1,5 +1,9 @@
 # When the US stopped playing Marshall Plan for its event, seed-44 line (2026-10-05)
 
+**Conclusion.** The US stopped headlining Marshall Plan between 3,200M and 3,360M, on the no-league
+control leg (Early War rate 15-60% before, 0.5-9.6% from 3,680M). It was never played as an event in
+an action round.
+
 Owner: find at which point during training the model stopped playing Marshall Plan as the US.
 
 Marshall Plan (US, 4 Ops, Early War): 1 US Influence in each of 7 non-USSR-controlled countries of

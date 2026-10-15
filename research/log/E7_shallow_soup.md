@@ -1,5 +1,9 @@
 # The shallow model soup (2026-10-01): the best model, +61 Elo over the deep soup
 
+**Conclusion.** A soup of four 1,200M branches of E7-02-44 rates +61 to +65 Elo over the deep soup
+and +50 over E7-02-44's SWA, better in both seats; snapshots or SWAs in the soup make no difference
+(51.4%). Among the branches, the learning-rate step-down is the best single model.
+
 Four branches of one shallow run, from E7-02-44's 870M state to 1,200M:
 
 | branch | what varies |

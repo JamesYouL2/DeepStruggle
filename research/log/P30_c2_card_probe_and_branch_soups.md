@@ -1,5 +1,10 @@
 # P30 (2026-10-03): C2's card-event head reaches the trunk; soups of the two branch arms
 
+**Conclusion.** Unlike bet 2's ownership head, C2's card-event target moves the trunk: within-card
+event-outcome R² 0.619 → 0.656 and ops arithmetic 0.827 → 0.914 against the control, about two thirds
+of the way to a supervised trunk, though the policy responds only slightly more to card events. As a
+soup ingredient it is level with a plain branch; the six-way soup equals the four-way one.
+
 Follow-up to [`P30_branch_arms_c2_play_mode_temp.md`](P30_branch_arms_c2_play_mode_temp.md). The
 owner asked for the card probe on C2 and for a soup of the two arms against the old soup.
 

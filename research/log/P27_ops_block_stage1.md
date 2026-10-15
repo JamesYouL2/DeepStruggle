@@ -1,6 +1,12 @@
 # P27 stage 1: how the models spend an influence ops play, 2026-09-26
 
-**Plan:** [`../plans/P27_ops_block_planning.md`](../plans/P27_ops_block_planning.md).
+**Conclusion.** The policy takes a reachable contested battleground in only about half the influence
+plays where it could, but a rollout oracle shows taking it instead is worth nothing with this policy
+playing on (−0.8 ± 0.6 points), and the critic agrees; there is nothing for stage 3 to teach. On the
+way, two rules were fixed in the engine (E5): influence Ops must be spent in full, and each Ops
+modifier has its own limit (`Operations::combine_ops`).
+
+**Plan:** [P27 (closed)](../plans/README.md).
 
 **Probe:** `tools/scripts/ops_block_probe.py` (exact enumeration, `ai/eval/ops_block.py`), 800
 start positions per checkpoint from its own self-play at temperature 0.1, both seats,

@@ -1,4 +1,10 @@
-# E4-26 / E4-27 — a slower π_ref and a longer λ, phase 1: both lose on seed 3
+# E4-26 / E4-27 — a slower π_ref and a longer λ from scratch: both rejected
+
+**Conclusion.** From scratch on M2d, a 25x slower π_ref (`--ref-update-freq 5000000`) lost 168 and
+68 Elo at 80M on seeds 3 and 5 and was still −59 at 160M; λ 0.99 lost 242 and 286 at 80M by
+inducing a US-seat collapse on 2 of 2 seeds (a reproducible, detector-invisible entry), from which
+seed 5 recovered to −49 by 160M. Neither fixes the oscillation in the setup critic. Applied only
+after 160M, both are measured in [`E4_late_dynamics.md`](E4_late_dynamics.md).
 
 Two one-flag arms on M2d, each against its seed-matched M2d arm, chosen because the setup-critic
 readout ([`P21_M2d_setup_west_germany.md`](P21_M2d_setup_west_germany.md)) and the self-play side
@@ -11,8 +17,8 @@ balance both show the training signal oscillating rather than the network lackin
 
 Seed 3, 80M, flags otherwise identical to `E4-08-03` (`launch_flags.py --diff` shows the one
 change, plus `--resume-every-steps` and the explicitly recorded seed streams). `--gae-lambda` was
-added for this (`c78df99`); it was hard-coded at 0.98 before. Phase 2, seed 5 from scratch to
-160M, is running (`E4-26-05`, `E4-27-05`).
+added for this (`c78df99`); it was hard-coded at 0.98 before. Phase 2 ran seed 5 from scratch to
+160M (`E4-26-05`, `E4-27-05`, below).
 
 ## Strength
 
@@ -174,5 +180,5 @@ The more useful result is negative in a narrower way. The oscillation measured i
 critic is not fixed by slowing the reference or lengthening the credit horizon. Slowing the
 reference trades it for higher entropy; lengthening the horizon trades it for a stuck seat.
 
-Seed 5 to 160M decides only whether either catches up late. A slow anchor that learns more slowly
-early and ends higher is the one outcome still open.
+Seed 5 to 160M closed the one outcome left open, a slow anchor that learns more slowly early and
+ends higher: it did not happen by 160M.

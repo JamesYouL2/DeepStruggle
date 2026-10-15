@@ -1,5 +1,10 @@
 # P30 (2026-10-03): can an oracle critic beat the honest one? Sized on the best model -- barely
 
+**Conclusion.** Adding the opponent's hand to a critic head fitted on the best model's trunk gains
+only +0.0015 to +0.002 AUC (0.815 → 0.817), with or without the raw observation, repeating the E5
+sizing. An oracle critic is not worth building as a variance reducer; the only sizeable gain is at
+setup (3% of decisions).
+
 The owner's question: can a critic trained with the opponent's hand give a better AUC than the
 honest one? Measured offline with `tools/scripts/oracle_sizing.py`, the P5 sizing tool
 ([`../plans/P5_oracle_critic.md`](../plans/P5_oracle_critic.md)), now reporting AUC and with a

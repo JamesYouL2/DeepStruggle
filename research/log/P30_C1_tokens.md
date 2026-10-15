@@ -1,5 +1,10 @@
 # P30 C1 (2026-10-02): card and country tokens with attention -- readouts
 
+**Conclusion.** Card and country tokens with two transformer layers (E7-09-44) learned faster early —
+ahead of every shallow run at 200M and on 240M SWAs (57% against its paired control) — but the lead
+was gone by 400M (level on SWAs, behind on snapshots) at ~9x the compute per step. Stopped at 400M by
+the decision rule registered at launch.
+
 **Arm.** E7-09-44: E7-01-44's shallow recipe, seed 44, plus `--ladder-token-layers 2 --ladder-token-dim 128`
 (195 tokens: 84 countries, 110 cards, one global; each `W·row + b + identity`; two pre-norm
 transformer layers, bf16) and `--compile-update default` ([`../runs.md`](../runs.md)). ~10.4k steps/s

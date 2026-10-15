@@ -1,5 +1,9 @@
 # E7-06-44 (2026-10-01): the deep trunk stops improving at about 560M; the shallow one gains another ~120
 
+**Conclusion.** The deep trunk (M2d, 4 residual blocks) saturates at about 560M; the shallow one
+gains to ~1B and ends ~+120 Elo above it, 64.8% head to head on snapshots and 57.2% on SWAs, so the
+shallow trunk is the base recipe.
+
 The owner asked whether a deep model had ever been trained to saturation. None had: plain M2d
 stopped at 560M, the league line at 760M. E7-06-44 is E6-03-44 (M2d, 4 residual blocks, no
 league, seed 44) resumed from its 560M end state with its own flags, to 1,200M on E7. That makes

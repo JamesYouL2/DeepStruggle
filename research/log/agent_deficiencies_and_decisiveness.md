@@ -1,5 +1,11 @@
 # Agent deficiencies, the decisiveness reward, and the dominance suite
 
+**Conclusion.** On the pre-E1 engine the control missed about a quarter of its forced wins (take
+rate 76.6%) and stopped improving after ~30M steps, yet a declined win was still won 82-95% of the
+time, so the take rate is a floor check, not a strength target. The length-scaled terminal reward
+K=40 was adopted (54.6% head to head, +52 Elo). The 60-65% USSR imbalance came from agents unable to
+convert the US late war, not from the encoding.
+
 Records §4–§6 of the original `experiments.md`: the first systematic diagnosis of what the agent
 gets wrong, measured on the `sp2_pool_off` control and the `dec_turns40` (K=40) arm — `--arch v2`,
 78M steps, 512 envs, **pre-E1 engine**, legacy observation. It covers the forced-win floor and why

@@ -1,150 +1,202 @@
 # Experiment log — index
 
-`research/log/` is the **append-only history** of this project: what was tried, in order, and why
-it stopped. It was split out of `research/experiments.md` (2,789 lines) on 2026-09-13, partitioned
-by programme — one investigated question spanning several arms — with the original section numbers
-kept so that every existing cross-reference, inside and outside these files, still names the right
-entry. Nothing was rewritten: dead ends, abandoned arms, withdrawn claims and the self-corrections
-that followed them stay exactly as written, and **no file here is edited to match current belief**.
-For what is currently believed read `../findings/` — split since 2026-09-16 into
-[`engine/`](../findings/engine/README.md), what the simulator does, and [`training/`](../findings/training/README.md),
-what a training choice is worth; for how a measure is defined and what it can bear read
-`../method/`; for what runs next read `../plans/`. The preamble of the
-original file, including its maintenance rules, is preserved verbatim below the index.
+`research/log/` is the record of what was tried and what came out: one file per programme (one
+question over several arms), named `PN_…` where a plan proposed it. Every measurement lands here
+first and other documents link to it ([`../method/bookkeeping.md`](../method/bookkeeping.md)).
+Results are not rewritten to match later belief: a correction is added next to the claim it
+corrects, and withdrawn claims stay. Obsolete procedure (retired flags, layouts, stale status) is
+trimmed; the earlier text is in git history. What is believed now is in
+[`../findings/`](../findings/README.md); how to measure is in [`../method/`](../method/README.md).
 
-## Where each section went
+An entry states the question, the setup, the result with its sample size and error, the verdict
+and its caveats. Each file opens with a short **Conclusion**.
 
-| file | sections | what it records |
+## Pre-E3: the first agents and the observation (the original `experiments.md` §1–§27)
+
+Section numbers from the retired `experiments.md` (and `metrics.md`) are kept so old references
+still resolve.
+
+| file | § | what it records |
 |:---|:---|:---|
-| [`early_training_signal.md`](early_training_signal.md) | §1–§3 | blunder window, decisive-transition prioritization, mid-game start sampling — the first training-signal knobs, pre-E1 engine |
-| [`agent_deficiencies_and_decisiveness.md`](agent_deficiencies_and_decisiveness.md) | §4–§6 | the forced-win floor, the K=40 decisiveness reward, the side imbalance as first found, the dominance suite, open questions |
-| [`engine_reanchor_and_human_control.md`](engine_reanchor_and_human_control.md) | §7–§8 | E1 re-anchor after the engine fixes; E2, the human corpus as the strong-player control that clears the engine of a USSR bias |
-| [`P7_human_bc_warmup.md`](P7_human_bc_warmup.md) | §9 | E3 — BC warmup on the corpus, the 2M-step washout, how long to train BC, whether the corpus carries the dominance signal |
-| [`P7_human_injection_and_its_cost.md`](P7_human_injection_and_its_cost.md) | §10–§11, §20–§22 | E5 injection dose, the cost of the dominance error, run-to-run variance, and the ablation showing injection cost 157–236 Elo |
-| [`P7_replayer_conversion.md`](P7_replayer_conversion.md) | §8.6–§8.7.5, §9.6–§9.10, and others | how the human corpus is *read*: score reconciliation, hand reconstruction, corpus composition (moved here earlier) |
-| [`critic_positional_value.md`](critic_positional_value.md) | §12–§14 | the 160M run probed: the critic prices control and access but not the road to it; the turn-2 event cards against a human baseline |
-| [`critic_vs_policy_160M.md`](critic_vs_policy_160M.md) | §15–§18 | policy or critic, asked on real held positions; the counterfactual rounds played out; what the finished 160M run was worth |
-| [`observation_layout.md`](observation_layout.md) | §19, §23–§24 | the dead history slice, opponent-card knowledge, and layouts v2.1 (neutral) and v2.2 (+91.7 Elo) |
-| [`corrected_engine_arms_H_I.md`](corrected_engine_arms_H_I.md) | §25–§27 | arms H/H2 on v2.3 and the corrected engine, the NashPG KL-penalty ablation, and 240M → 480M |
-| [`search_cost_and_coverage.md`](search_cost_and_coverage.md) | — | what search costs per decision, what fraction of decisions it is worth spending on, and why the +27pp figure does not transfer to a cheaper arm |
-| [`europe_control_and_held_scoring.md`](europe_control_and_held_scoring.md) | — | E3-15 / E3-17: why the USSR takes Europe (West Germany is never contested), what the per-side held-scoring series actually says, and the forced human opening |
-| [`seed_variance_and_pooling.md`](seed_variance_and_pooling.md) | — | the seed spread that withdrew the first pooling result, the US decay from 80M to 160M, and the analysis plan fixed before the 4 × 4 landed |
-| [`../archive/E3_ladder/log/P15_X0_frozen_anchors.md`](../archive/E3_ladder/log/P15_X0_frozen_anchors.md) | — | P15-X0: three runs at 40M intervals to 320M against two frozen peer anchors — the oscillation with an amplitude at last, and why a field-averaged side gap hides five sixths of it |
-| [`../archive/E3_ladder/log/P15_X0_round_robin.md`](../archive/E3_ladder/log/P15_X0_round_robin.md) | — | the full 24-model field behind P15-X0: Elo, head-to-head and per-side matrices |
-| [`../archive/E3_ladder/log/P15_X4a_distillation.md`](../archive/E3_ladder/log/P15_X4a_distillation.md) | — | one offline round of expert iteration: +47.7 Elo from distilling a 96-sim searcher at card/play-mode nodes, out of a policy that already agreed with it 93.1% of the time and the two-arm washout test showing the edge decays to a dead heat after 20M steps while RL gives away the USSR side |
-| [`../archive/E3_ladder/log/P15_X4a_where_the_search_signal_is.md`](../archive/E3_ladder/log/P15_X4a_where_the_search_signal_is.md) | — | a census of all 85,113 decisions in 200 games: top-1 agreement is uninformative (90.5–97.8% for every decision type) while KL varies 7×, and POINT_NODE placements carry 71.8% of the CE signal against card/play-mode's 20.9% |
-| [`../archive/E3_ladder/log/P15_X4b_search_during_rl.md`](../archive/E3_ladder/log/P15_X4b_search_during_rl.md) | **+165.6 Elo** | the continuous form: an honest searcher supplies CE targets during RL and never acts, matched one-factor against the step-, seed- and cadence-identical control E3-26-28. Clears the pre-registered 25 Elo bar 6.6x, plays USSR at 61.9% against the control's 34.7%, and sheds 88 Elo of its peak in the final 5M — plus the off-by-one that voided two arms first |
-| [`../archive/E3_ladder/log/P15_search_play_mode_bias.md`](../archive/E3_ladder/log/P15_search_play_mode_bias.md) | — | does the searcher dodge operations because it cannot place influence? No: over 18,097 play-mode decisions it shifts toward ops (+2.16 pp) and away from both EVENT and SPACE, taking each escape route from a placement decision less often than the raw policy |
-| [`../archive/E3_ladder/log/P15_X4b_search_headroom.md`](../archive/E3_ladder/log/P15_X4b_search_headroom.md) | — | how much search still adds to a policy trained with search targets: flat across 5M-20M at ~58% win rate and KL ~0.036, which is what expert iteration looks like when the teacher improves with the student |
-| [`../archive/E3_ladder/log/P15_X2_slow_anchor.md`](../archive/E3_ladder/log/P15_X2_slow_anchor.md) | — | does a 25x slower reference anchor prevent the collapse on its own? Interim: from scratch it has not crossed base_rate 0.80 by 72M where the 200k anchor crossed at 44.6M, and holds far more entropy early — one seed each and the seeds differ |
-| [`../archive/E3_ladder/log/P15_control_per_seat.md`](../archive/E3_ladder/log/P15_control_per_seat.md) | — | which side actually degraded? Rated per seat against frozen anchors, the no-search control's **US** win rate falls 47.0% to 19.3% while USSR stays flat — the opposite of what critic_base_rate and a field-averaged side split appeared to say |
-| [`../archive/E3_ladder/log/P15_setup_placement.md`](../archive/E3_ladder/log/P15_setup_placement.md) | — | opening influence placement is frozen in both from-scratch lineages — every point into one country, unchanged across 230M steps — and unfroze within 20M of a resume after 155M of nothing |
-| [`../archive/E3_ladder/log/P15_two_seat_capacity.md`](../archive/E3_ladder/log/P15_two_seat_capacity.md) | — | can one network hold both seats? Yes: a student matches each teacher on its own seat with no interference, and a single checkpoint already plays 83.3% USSR / 79.7% US unaided — so the seat collapses are training dynamics, not capacity |
-| [`../archive/E3_ladder/log/P15_arms_2026_09_17.md`](../archive/E3_ladder/log/P15_arms_2026_09_17.md) | — | one index for the day's dozen measurements: every arm from p28_200M and from scratch, what each showed against its matched ablation and against frozen snapshots, and what the two running arms decide |
-| [`../archive/E3_ladder/log/P15_temperature_selfplay.md`](../archive/E3_ladder/log/P15_temperature_selfplay.md) | — | one checkpoint against itself at five sampling temperatures: greedy and T=0.1 are the same player (50.0%, 6.9 Elo), T=0.5 costs 134 Elo and T=1.0 costs 374 — which retires the temperature objection to comparing older tournament numbers with newer ones |
-| [`../archive/E3_ladder/log/P15_X1_frozen_exploiter.md`](../archive/E3_ladder/log/P15_X1_frozen_exploiter.md) | — | training a USSR counter on purpose against a frozen @280M: +2.1 pp over the warm start (n.s.), and the discovery that the 'unanswered' US strategy was a 200-game artifact — at 1000 games it is level with a model that already existed |
-| [`../archive/E3_ladder/log/P15_X0_selfplay_200M.md`](../archive/E3_ladder/log/P15_X0_selfplay_200M.md) | — | the strong anchor's own side split: E3-20-28 @200M against itself over 500 games, 51.0% US against 48.6% USSR, no detectable bias |
-| [`../archive/E3_ladder/log/P15_X0_search_on_200M.md`](../archive/E3_ladder/log/P15_X0_search_on_200M.md) | — | honest 64-sim MCTS on E3-20-28 @200M against the frozen anchors and against its own base policy: +129.2 Elo, 64.8% over the raw policy, and the first search number taken after the searcher stopped proposing illegal moves |
-| [`../archive/E3_ladder/log/P15_X4b_collapse_is_pool_starvation.md`](../archive/E3_ladder/log/P15_X4b_collapse_is_pool_starvation.md) | **24.0% -> 90.0%** | the dense replay launched to photograph the X4b collapse did not collapse, and that was the result: the original trained against an opponent pool of ONE, beating it 99.7%, because `--resume <dir>` rebuilt the pool from the parent directory. Severity and timing explained; a real, milder decline arrives at ~30M anyway and plateaus at 58% instead of falling to 24% |
-| [`../archive/E3_ladder/log/P15_rollout_temperature.md`](../archive/E3_ladder/log/P15_rollout_temperature.md) | **split 1-1** | sampling rollouts AT the policy (0.8 1.2 0.7 1.1) against the default sharpened bands, a 2x2 with matched controls at two seeds. It accelerates at both seeds (significant at 40–60M), but only seed A holds at 80M (46.0% vs 17.8%); seed B plateaus and its control catches up (+3.0, n.s.). The default was not changed; the ending-mix mechanism did not survive its own control. E4/E5 follow-up: [`E5_06_rollout_temperature.md`](E5_06_rollout_temperature.md) |
-| [`../archive/E3_ladder/log/P15_kl_domination.md`](../archive/E3_ladder/log/P15_kl_domination.md) | — | the KL regulariser reaching 130-900x the PPO surrogate on half of E3-31-28's iterations, invisible because `policy_loss` logs the surrogate alone; plus the search_ce spike diagnosis and the measurement that kills the CE feedback loop -- search targets stay sharp while the policy flattens away from them |
+| [`early_training_signal.md`](early_training_signal.md) | §1–§3 | blunder window kept; mid-game start sampling harmful (−115 Elo) |
+| [`agent_deficiencies_and_decisiveness.md`](agent_deficiencies_and_decisiveness.md) | §4–§6 | forced-win floor, K=40 length-scaled reward adopted, the USSR imbalance, the dominance suite |
+| [`engine_reanchor_and_human_control.md`](engine_reanchor_and_human_control.md) | §7–§8 | E1 re-anchor; E2: the human corpus clears the engine of a USSR bias |
+| [`P7_human_bc_warmup.md`](P7_human_bc_warmup.md) | §9 | BC warmup on the human corpus, its washout, what the corpus carries |
+| [`P7_human_injection_and_its_cost.md`](P7_human_injection_and_its_cost.md) | §10–§11, §20–§22 | human-data injection, and the ablation showing it cost 157–236 Elo |
+| [`P7_replayer_conversion.md`](P7_replayer_conversion.md) | §8.6–§8.7, §9.6–§9.10 | converting the human logs: score reconciliation, hand reconstruction |
+| [`critic_positional_value.md`](critic_positional_value.md) | §12–§14 | the critic prices control, not the road to it; the turn-2 event cards |
+| [`critic_vs_policy_160M.md`](critic_vs_policy_160M.md) | §15–§18 | policy or critic, by card; the 160M run ties the previous best |
+| [`observation_layout.md`](observation_layout.md) | §19, §23–§24 | dead history slice; v2.1 neutral; v2.2 +91.7 Elo (all retired since) |
+| [`corrected_engine_arms_H_I.md`](corrected_engine_arms_H_I.md) | §25–§27 | arms H/H2 on v2.3; the KL penalty is worth 169 Elo; 240M → 480M |
+| [`P9_architecture.md`](P9_architecture.md) | — | identity embeddings → self-transform → per-entity heads → no map graph |
 
-**Conclusions extracted on 2026-09-16.** Three topics were being looked up on their own and were
-buried inside long journals. Their current verdicts now live in `../findings/` —
-[`../archive/E3_ladder/findings/pooling.md`](../archive/E3_ladder/findings/pooling.md), [`../archive/E3_ladder/findings/seed_variance.md`](../archive/E3_ladder/findings/seed_variance.md) and
-[`../archive/E3_ladder/findings/defcon_blunders.md`](../archive/E3_ladder/findings/defcon_blunders.md) — and each source section here carries a
-one-line pointer under its heading. Nothing was removed: the setups, the predictions and the
-retractions stay where they were written, which is the only property this directory has.
+## Instruments and noise
 
-Several entries were moved to the old `../metrics.md` before this split and left stubs behind;
-the stubs travelled with their section. `metrics.md` has since been split in turn, into
-[`measurement_bugs.md`](measurement_bugs.md), [`variance_and_noise.md`](variance_and_noise.md),
-[`P9_architecture.md`](P9_architecture.md), [`../method/running_experiments.md`](../method/running_experiments.md),
-[`../method/human_play.md`](../method/human_play.md),
-[`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.md) and
-[`../archive/E3_ladder/findings/architecture.md`](../archive/E3_ladder/findings/architecture.md); the stubs point at wherever their
-entry landed. The verbatim preamble below still names `metrics.md`, and is left as written.
-
----
-
-## Experiment Log
-
-Running record of experiments actually run against this codebase, what they measured, and
-what the result was. Companion to [`../archive/ideas_and_plans.md`](../archive/ideas_and_plans.md), which holds
-the design intent; this file holds what happened when it was tried.
-
-Only measurements taken in this repository belong here. An entry states what was compared,
-how it was measured, and the number that came out, so that a later reader can tell a settled
-question from an open one without rerunning anything.
-
-**Scope.** This file is about how well the agents play, and what the human corpus says about that
-by comparison. How that corpus is *read* -- reconciling the log's score against the engine's,
-reconstructing the hands the log never states in full, and what the 300 files actually contain --
-is [`P7_replayer_conversion.md`](P7_replayer_conversion.md). Entries that moved
-there kept their original section numbers, and each left a stub here with the part that bears on
-play.
-
----
-
-### How to maintain this file
-
-**Add an entry whenever an experiment finishes**, including one that failed or was
-inconclusive — a negative result that is not written down gets re-run, and an inconclusive
-one that is written down as positive is worse than useless.
-
-Each entry should record:
-
-1. **Question** — what was being decided, in one line.
-2. **Setup** — arch, budget (steps or seconds), envs, checkpoints, what differed between arms.
-3. **Result** — the numbers, with sample size and an error bar or significance where a
-   comparison is being made.
-4. **Verdict** — settled / suggestive / confounded, and the recommendation that follows.
-5. **Caveats** — what the experiment cannot tell you. Single-seed runs, unmeasured
-   variance, and known confounds go here.
-
-**Revise an existing entry when a later finding invalidates it.** Do not silently delete a
-superseded result: mark it and say what invalidated it. Two entries below
-(§2.1, §3.1) are wrong in their original form and are kept precisely because the reason they
-were wrong is the most useful thing in this file.
-
-**Distrust a measurement before trusting a result.** Seven separate diagnostics in this repo
-reported confident numbers that were wrong (now [`measurement_bugs.md`](measurement_bugs.md)). Every one
-of them looked plausible. When an experiment produces a surprising result, the cheapest first
-hypothesis is that the instrument is broken — check that before building on the finding.
-
-**What belongs here, and what does not.** This file holds results: what a training, design or data
-choice was worth, measured. Three companions hold the machinery, because it is read at different
-moments and a result should not have to be read alongside the doubt about it.
-
-| | |
+| file | what it records |
 |:---|:---|
-| [`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.md) | the checklist: what to verify before trusting a number |
-| [`measurement_bugs.md`](measurement_bugs.md) | every instrument that reported confident nonsense, in full |
-| [`variance_and_noise.md`](variance_and_noise.md) | how much of a rating is just where the run stopped |
-| [`P7_replayer_conversion.md`](P7_replayer_conversion.md) | how the human corpus is read: score reconciliation, hand reconstruction, what the 300 files contain |
-| [`../../engine/AGENTS.md`](../../engine/AGENTS.md) | engine design and rules defects, including why `CardLocation` encodes hand knowledge (§7) and the free-coup validation bug (§8) |
-| [`E4_architecture_ab_result.md`](E4_architecture_ab_result.md) | — | P19's answer: the late-E3 architecture bundle is worth **+447 Elo** at matched budget and cold start, and `E4-03-01@80M` beats warm-started arms with 4x the steps. Both P21 anchors point at it |
-| [`P21_M0_flat_mlp.md`](P21_M0_flat_mlp.md) | — | the ladder's floor: a flat MLP rates 1650-1666 at 80M, gains **+147 Elo** from 80M to 160M within seed, and at 160M beats the **E4 default architecture 64.5% using 46% of its GPU time** — the defaults are worse than an MLP per unit compute. Seed variance **16.6 Elo**, not the ~95 assumed |
-| [`P21_M1_grouped.md`](P21_M1_grouped.md) | — | grouping the input by block is worth **+102 Elo** over a flat MLP and is **adopted** — but the gain is one seat (US +26 pp, USSR +0.8 pp) and it is an **intercept, not a slope**: the margin halves to +44 by 160M because M0's slope is twice M1's |
-| [`P21_M2_lookup.md`](P21_M2_lookup.md) | — | the per-entity lookup is worth **+362 Elo** and **reaches the anchor**: M2@160M ties E4-03-01@80M using **65% of its wall clock**, with no attention, identity, pooling, shared encoder or graph. The bundle's repairs are unnecessary when pooling never destroys the information |
-| [`P21_M2d_country_head_collapse.md`](P21_M2d_country_head_collapse.md) | — | the **country head alone is the whole mechanism** (2111.5, level with both-heads M2 at 2062.7, 18% faster and the best side balance in the ladder) while the **card head alone buys nothing**; removing the card head collapses 1 seed in 3, giving the first collapse that reproduces in 30 minutes |
-| [`E4_collapse_attribution.md`](E4_collapse_attribution.md) | — | eight arms splitting `--seed` into initialisation / sampling / deals / opponent-draw, one at a time in both directions: **no single stream is sufficient** (conclusive, initialisation refuted both ways), but the necessity half is uninformative by construction -- all-clean has p=0.34 under the 12.5% base rate. Records the sizing a real answer would need |
-| [`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md) | — | **the census measured entry, not collapse.** Seven arms scored COLLAPSED were continued 80M further and **five recovered**, including all four behind the 12.5% headline. A recovered collapse costs **−1.4 Elo** (0.05 pooled sd); a non-recovered one **−394**. Five predictors of permanence falsified; only `adv_std_raw` returning tracks it. Also records a third detector bug — a fixed 40-row tail window cannot tell "still collapsed" from "just exited" |
-| [`P21_M2d_160M_slope.md`](P21_M2d_160M_slope.md) | — | seven M2d seeds rated at **both** 80M and 160M, so the slope is within-seed: **+159.8 Elo** (sd 33.7, six clean seeds), and all six clear the anchor while costing **under half its GPU-hours** at 4.3x the throughput. A collapse costs **-249** against the arm's own 80M self; entering the pinned state and escaping costs nothing detectable |
-| [`P21_ladder_status.md`](P21_ladder_status.md) | — | **the ladder's standing state and the plan from here**: M1 is worth +106, the country head +282, the card head -12, and M2d reaches 99.5% of full M2 at 1.4x its throughput while closing 89% of the MLP-anchor gap with no attention, identity, pooling or graph. Lists the eight remaining rungs, the ~15 GPU-h they cost, and the four protocol amendments the M2d sweep forced |
-| [`P21_M2abc_head_inputs.md`](P21_M2abc_head_inputs.md) | — | decomposes the country head's +282: **all three input groups are pulling weight** and no simplification survives. Context costs **-84 to -146** to remove (refuting the launch-time prediction), the hand-designed constants **-40 to -73**, and the minimal 15-input head still carries 54-74% of the mechanism. Six arms, zero collapses |
-| [`P21_identity_rungs.md`](P21_identity_rungs.md) | — | **the identity vector is rejected**: M2.5, M2.5c and M2.5b all lose at 80M on both seeds, and M2.5c -- identity plus the card head, the configuration the plan's prediction was about -- is the *worst*. M2.5b collapses on two seeds where M2d runs clean, the ladder's first architecture-linked collapse, and neither ingredient collapses alone. Every arm that falls at 160M carries identity |
-| [`P22_width_probe_and_card_lookup.md`](P22_width_probe_and_card_lookup.md) | — | **both P22 arms rejected.** Doubling `entity_proj_dim` loses **129–291 Elo**, so capacity is not what the card path lacks. The identity-keyed card lookup (P22-a) loses **−154 / −72** at 80M, but seed 3 closes to **−53** by 160M, gaining +234 against M2d's +133 over the same leg. That is one seed |
-| [`P21_full_field.md`](P21_full_field.md) | — | **every rung rated in one field** (41 models): M2d is on top at every budget, every per-rung rejection holds, and the failures — collapsed M2.5b s3, the anchor's 160M leg, M2.5 s3@160M — are the bottom outliers. The table to quote when comparing across rungs |
-| [`E4_goal_probes.md`](E4_goal_probes.md) | — | the goal's acceptance probes on E4's best checkpoints: Poland is solved, but the full US opening lands **25% at best against the human 57%** (Iran is the failing target); under one battleground empty at turn 8; own-DEFCON losses ~1%; search distillation **worsens card disposal** (33–46%); and every checkpoint takes an immediately winning move only **59–70%** of the time |
-| [`E4_search_distillation.md`](E4_search_distillation.md) | — | **online search distillation beats plain M2d on E4, on both seeds tried — durability unproven.** E3's X4b configuration beats its step-matched control at every snapshot on both seats (+54 to +196 on seed 3 over 8 snapshots, +157 to +262 on seed 5 over 5), and 20M steps with search beat 80M without. The gain is a level reached within 5M; search still beats the distilled net 59%, so headroom remains. E3's identical configuration collapsed 30–36M into its leg with a healthy pool; E4-28-03 went through that window to 40M without declining, one seed |
-| [`E4_dynamics_ref_lambda.md`](E4_dynamics_ref_lambda.md) | — | phase 1 of two one-flag arms on M2d, seed 3, 80M: `--ref-update-freq 5M` is **−168 Elo** and `--gae-lambda 0.99` **−242**, both losing on both seats to seed-matched M2d. Neither fixes the oscillation usefully: the slow anchor raises entropy (against the ratchet hypothesis), and λ 0.99 leaves the US seat stuck at 2–4% for 45M steps with a live advantage signal |
-| [`E4_decision_stream_census.md`](E4_decision_stream_census.md) | — | 386 decisions per game; **64% of card resolutions are ops** (influence 46%, coup 15%, realign 3%). Folding the op mode into the first placement saves **11.1%** of decisions (**15.5%** with coup/realign target heads). For credit assignment that equals raising λ from 0.98 to 0.983, a one-flag change |
-| [`P21_M2d_setup_west_germany.md`](P21_M2d_setup_west_germany.md) | — | M2d s3 stops placing US setup influence in West Germany at **185M** (after wobbles at 165–180M), returns to it for one snapshot at 230M, then drops it again. Every snapshot is near-certain either way, so the opening is swapped wholesale rather than drifting. **The critic's preference between the two setups, read at every snapshot on 8 fixed deals, flips by up to 0.6 every 5–25M steps, and the policy follows it** (sign agrees in 12 of 17 snapshots, including the 185M switch and the 230M return). The setup follows an oscillating advantage signal |
-| [`P21_M2d_240M.md`](P21_M2d_240M.md) | — | M2d seed 3 continued to 240M under its own name: **+31.9 Elo** over 160M, winning on both seats (61% / 53%) against +139.7 for the previous 80M, with the side gap closing to −0.1 pp. There is a **−74 dip at 200M** that fully recovers. n = 1 |
+| [`measurement_bugs.md`](measurement_bugs.md) | every instrument that reported confident nonsense, and what stops each recurring |
+| [`variance_and_noise.md`](variance_and_noise.md) | tournament noise (~1.5 points), within-run oscillation, seed spread (~15 Elo) |
+| [`seed_variance_and_pooling.md`](seed_variance_and_pooling.md) | the seed spread that withdrew the first pooling result; the US decay 80M → 160M |
 
-Sections that moved kept their original numbers and left a stub here carrying the part that bears
-on a result. A new entry that turns out to be about an instrument rather than an agent belongs in
-`metrics.md` from the start.
+## E3
 
----
+The P15 programme's logs are archived in [`../archive/E3_ladder/log/`](../archive/E3_ladder/README.md):
+frozen anchors and the 24-model round robin (X0), a frozen exploiter (X1), a slow anchor (X2),
+offline and online search distillation (X4a, X4b: **+165.6 Elo**), the X4b collapse traced to
+opponent-pool starvation (24.0% → 90.0%), rollout temperature, KL domination, two-seat capacity,
+per-seat control ratings, setup placement and temperature self-play.
+
+| file | what it records |
+|:---|:---|
+| [`europe_control_and_held_scoring.md`](europe_control_and_held_scoring.md) | E3-15/17: an uncontested West Germany, and the critic collapsing to the base rate |
+| [`search_cost_and_coverage.md`](search_cost_and_coverage.md) | what search costs per decision and how much coverage buys; re-measured on E4 and E5 |
+| [`training_throughput_cpu.md`](training_throughput_cpu.md) | 39k → 70k steps/s on 1/8 of the CPU; two CUDA-graph hangs fixed |
+
+## E4: the architecture ladder and training dynamics
+
+| file | what it records |
+|:---|:---|
+| [`E4_architecture_ab_result.md`](E4_architecture_ab_result.md) | P19: the late-E3 architecture bundle is worth ~450 Elo at matched budget |
+| [`P17_adapter_validation.md`](P17_adapter_validation.md) | P17: the same checkpoints score the same on both engines |
+| [`P17_corpus_restoration.md`](P17_corpus_restoration.md) | P17: restoring the human corpus after the resolution merge |
+| [`P17_ctx_stack_census.md`](P17_ctx_stack_census.md) | what `ctx_stack` holds, derived and censused |
+| [`P21_M0_flat_mlp.md`](P21_M0_flat_mlp.md) | rung M0: a flat MLP beats the E4 default at 46% of its GPU time |
+| [`P21_M1_grouped.md`](P21_M1_grouped.md) | rung M1: grouped input projections, +102 Elo, adopted |
+| [`P21_M2_lookup.md`](P21_M2_lookup.md) | rung M2: the per-entity lookup, +362 Elo, reaches the anchor |
+| [`P21_M2d_country_head_collapse.md`](P21_M2d_country_head_collapse.md) | the country head is the whole mechanism; the card head buys nothing |
+| [`P21_M2abc_head_inputs.md`](P21_M2abc_head_inputs.md) | M2a/b/c: every input group of the country head pulls weight |
+| [`P21_M2d_160M_slope.md`](P21_M2d_160M_slope.md) | M2d 80M → 160M: +159.8 Elo within seed; what a collapse costs |
+| [`P21_M2d_240M.md`](P21_M2d_240M.md) | M2d to 240M: +31.9 Elo, still gaining slowly |
+| [`P21_M2d_setup_west_germany.md`](P21_M2d_setup_west_germany.md) | the US setup flips West Germany on and off, following the critic |
+| [`P21_identity_rungs.md`](P21_identity_rungs.md) | M2.5 / M2.5b / M2.5c: the identity vector is rejected |
+| [`P22_width_probe_and_card_lookup.md`](P22_width_probe_and_card_lookup.md) | wider entity projections and the card lookup: neither beats M2d |
+| [`P21_full_field.md`](P21_full_field.md) | every rung in one 41-model field |
+| [`P21_ladder_status.md`](P21_ladder_status.md) | the ladder's standing state at 2026-09-21 |
+| [`P23_E4_1_ab.md`](P23_E4_1_ab.md) | the E4.1 merged-influence view A/B from scratch |
+| [`E4_collapse_attribution.md`](E4_collapse_attribution.md) | which randomness stream carries the M2d collapse: no single one |
+| [`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md) | the census measured entry, not collapse: five of seven recovered |
+| [`E4_collapse_census_per_seat.md`](E4_collapse_census_per_seat.md) | collapse census of the late-dynamics and E4.1 runs, read per seat |
+| [`E4_round_robin_240M.md`](E4_round_robin_240M.md) | does the collapse show against a fixed reference? |
+| [`E4_dynamics_ref_lambda.md`](E4_dynamics_ref_lambda.md) | a slower π_ref (−168) and λ 0.99 (−242) from scratch: both rejected |
+| [`E4_late_dynamics.md`](E4_late_dynamics.md) | dynamics changes applied only after 160M |
+| [`E4_clean_replicates.md`](E4_clean_replicates.md) | clean M2d replicates to 240M |
+| [`E4_long_runs.md`](E4_long_runs.md) | M2d to 800M: TF32 drift of the logit level; centred per-entity heads adopted |
+| [`E4_pool_starvation_recurrence.md`](E4_pool_starvation_recurrence.md) | E4-01-01 collapsed without an opponent pool: a launch error |
+| [`E4_search_distillation.md`](E4_search_distillation.md) | online search distillation beats plain M2d on both seeds tried |
+| [`E4_decision_stream_census.md`](E4_decision_stream_census.md) | how cards are played; merging the op mode would save 11% of decisions |
+| [`E4_goal_probes.md`](E4_goal_probes.md) | the goal's acceptance probes on E4's best checkpoints |
+| [`P25_pool_resume_bug.md`](P25_pool_resume_bug.md) | the opponent pool drained on every resume (fixed in `4eb58df`) |
+| [`P25_stress_bench.md`](P25_stress_bench.md) | anti-collapse levers on the λ 0.99 recipe |
+| [`P26_quick_screen.md`](P26_quick_screen.md) | what each throughput candidate is worth |
+| [`P4_setup_arms.md`](P4_setup_arms.md) | setup credit (arm A) and a human setup anchor (arm B) |
+
+## E5: setup credit and the league
+
+| file | what it records |
+|:---|:---|
+| [`E5_01_engine_bump.md`](E5_01_engine_bump.md) | does the E4 → E5 rules change move training? |
+| [`E5_06_rollout_temperature.md`](E5_06_rollout_temperature.md) | rollout temperature at the policy, from the plateau |
+| [`E5_11_setup_lock_and_critic_views.md`](E5_11_setup_lock_and_critic_views.md) | a locked US opening that costs 5 points; the critic read from the wrong side |
+| [`E5_11_selfplay_review.md`](E5_11_selfplay_review.md) | three self-play mistakes checked by playouts |
+| [`E5_12_setup_credit_at_flat_temperature.md`](E5_12_setup_credit_at_flat_temperature.md) | per-side setup credit: no gain, and it locks the setup |
+| [`E5_13_setup_entropy_floor.md`](E5_13_setup_entropy_floor.md) | a setup entropy floor keeps the opening moving, to worse places |
+| [`E5_15_human_opening_resume.md`](E5_15_human_opening_resume.md) | the human opening on a trained model helps the US seat |
+| [`E5_16_setup_mc_credit.md`](E5_16_setup_mc_credit.md) | setup credited by the game result repairs the US opening |
+| [`E5_17_league_from_scratch.md`](E5_17_league_from_scratch.md) | the P24 league from scratch: level with E5-11 |
+| [`E5_21_setup_credit_plus_league.md`](E5_21_setup_credit_plus_league.md) | game-result setup credit plus the league: the best E5 arm |
+| [`P24_stage1_exploiter_collapse.md`](P24_stage1_exploiter_collapse.md) | the main exploiter collapses, and why |
+| [`P27_ops_block_stage1.md`](P27_ops_block_stage1.md) | how the models spend an influence ops play |
+
+## E6: strength recipes (SWA, soups, the shallow trunk)
+
+| file | what it records |
+|:---|:---|
+| [`E6_01_finetune_check.md`](E6_01_finetune_check.md) | does a model that knows the corrected deck beat one that does not? |
+| [`E6_04_league_seed44.md`](E6_04_league_seed44.md) | E5-21's recipe on E6, seed 44: it replicates |
+| [`E6_04_43_seed43_replicate.md`](E6_04_43_seed43_replicate.md) | the adopted E6-04 recipe replicates on seed 43 |
+| [`P28_step0_panel_and_E6_04_verdict.md`](P28_step0_panel_and_E6_04_verdict.md) | the E6 panel; E6-04-44 adopted |
+| [`P28_step1_swa_and_search.md`](P28_step1_swa_and_search.md) | SWA beats every snapshot; search headroom shrinks |
+| [`P28_step2a_lr_schedule.md`](P28_step2a_lr_schedule.md) | a stepped learning rate does not cut the spread |
+| [`P28_step2b_ema_weights.md`](P28_step2b_ema_weights.md) | EMA weights beat raw snapshots; the window must be wide |
+| [`E6_comprehensive_2026-09-29.md`](E6_comprehensive_2026-09-29.md) | every E6 arm on its snapshots and its 80M SWA |
+| [`model_soups_2026-09-30.md`](model_soups_2026-09-30.md) | soups from a shared start: +45 over the best SWA |
+| [`P29_bet1_wider_m2d.md`](P29_bet1_wider_m2d.md) | a 3.5× larger trunk is not better |
+| [`P29_bet2_ownership_probes.md`](P29_bet2_ownership_probes.md) | the ownership target has not reached the trunk |
+| [`P29_bet3_merged_view.md`](P29_bet3_merged_view.md) | the merged-influence view plays ~235 Elo weaker |
+| [`P30_shallow_trunk.md`](P30_shallow_trunk.md) | M2d's residual blocks add nothing: the shallow net is stronger |
+| [`P30_stage_A_trunk_probes.md`](P30_stage_A_trunk_probes.md) | the trunk drops much of the present; the critic is not short of it |
+| [`P30_card_country_interaction.md`](P30_card_country_interaction.md) | card ↔ country interaction is learned, at about the right size |
+| [`P30_card_board_targets.md`](P30_card_board_targets.md) | card × board targets: representable, not learned by RL |
+
+## E7: the shallow line, its plateau, and search
+
+**The line and its soups**
+
+| file | what it records |
+|:---|:---|
+| [`E7_comprehensive_2026-09-30.md`](E7_comprehensive_2026-09-30.md) | 20 models on E7: the deep soup still leads |
+| [`E7_02_44_saturation.md`](E7_02_44_saturation.md) | the shallow recipe to 1,200M: +110 Elo over 560M |
+| [`E7_06_44_deep_to_saturation.md`](E7_06_44_deep_to_saturation.md) | the deep trunk saturates at ~560M, ~120 below the shallow one |
+| [`E7_shallow_soup.md`](E7_shallow_soup.md) | the shallow soup at 1,200M: +61 over the deep soup |
+| [`E7_line_to_2000M.md`](E7_line_to_2000M.md) | the seed-44 line to 4,800M: gains to ~3,700M, then a plateau |
+| [`E7_league_from_2800M.md`](E7_league_from_2800M.md) | the P24 league from 2,800M adds nothing over its control |
+| [`swa4720-4800_vs_soup1200.md`](swa4720-4800_vs_soup1200.md) | the 4,720–4,800M SWA beats the 1,200M soup 55.5% |
+| [`E7_soup_4800M.md`](E7_soup_4800M.md) | a soup of three 4,800M branches: the strongest model at the time |
+| [`E7_training_throughput_profile.md`](E7_training_throughput_profile.md) | where an iteration goes; the compile A/B (stays opt-in) |
+| [`E7_shallow_setup_lock.md`](E7_shallow_setup_lock.md) | the USSR opening locks at Poland 6; unlocking attempts stopped |
+
+**P30–P32 arms**
+
+| file | what it records |
+|:---|:---|
+| [`P30_C4_ops_budget.md`](P30_C4_ops_budget.md) | C4: the ops budget in the observation |
+| [`P30_C1_tokens.md`](P30_C1_tokens.md) | C1: card and country tokens with attention |
+| [`P30_branch_arms_c2_play_mode_temp.md`](P30_branch_arms_c2_play_mode_temp.md) | C2's card-event head; exploration at play-mode decisions |
+| [`P30_c2_card_probe_and_branch_soups.md`](P30_c2_card_probe_and_branch_soups.md) | C2's head reaches the trunk; soups of the branch arms |
+| [`P30_win_only_and_vp_potential.md`](P30_win_only_and_vp_potential.md) | win-only reward and a small VP potential, from scratch |
+| [`P30_oracle_critic_auc.md`](P30_oracle_critic_auc.md) | an oracle critic barely beats the honest one |
+| [`P30_search_headroom_e7.md`](P30_search_headroom_e7.md) | what search adds on top of the best soup |
+| [`P30_search_training_e7_18.md`](P30_search_training_e7_18.md) | search targets as a branch: strength moves from USSR to US |
+| [`P31_branch_arms_B1_B2.md`](P31_branch_arms_B1_B2.md) | the play-mode floor and scenario seeding, from 4,390M |
+| [`E7_league_exploiters_by_seat.md`](E7_league_exploiters_by_seat.md) | exploiting the heads plateau: one seat per exploiter |
+| [`E7_cuban_missile_crisis_probe.md`](E7_cuban_missile_crisis_probe.md) | the heads soup does not understand Cuban Missile Crisis |
+| [`E7_saturated_policy_and_caps.md`](E7_saturated_policy_and_caps.md) | a saturated policy cannot learn; the logit-gap loss (R33/R34) can |
+| [`P32_cpu_checks.md`](P32_cpu_checks.md) | the forced-exit trap, Wargames at a lead of 6, Chernobyl off Europe |
+
+**Search, leaks and the rollout root**
+
+| file | what it records |
+|:---|:---|
+| [`search_performance_profile.md`](search_performance_profile.md) | what takes the time in search; the tree moved to C++ |
+| [`E7_gumbel_headroom.md`](E7_gumbel_headroom.md) | a Gumbel root: +60 Elo at 64 evaluations, +10 more at 256 |
+| [`E7_search_depth_and_value.md`](E7_search_depth_and_value.md) | search gains from depth; the critic cannot choose; the rollout root (+177) |
+| [`E7_gchoice_distill.md`](E7_gchoice_distill.md) | one offline round of Gumbel-choice distillation: slightly weaker |
+| [`R32_rollout_cpu_experiments.md`](R32_rollout_cpu_experiments.md) | R32 absorbed Gumbel's gain, not the rollout root's |
+| [`E7_blunder_census.md`](E7_blunder_census.md) | engine-proven blunders are rare; the costly ones are late placements |
+| [`E7_blunder_bank.md`](E7_blunder_bank.md) | 35 positions where the network's move costs 10+ points |
+| [`E7_leak_by_kind_R34.md`](E7_leak_by_kind_R34.md) | where the R34 soup loses, by decision kind: placement 46% |
+| [`E7_leak_by_kind_R39.md`](E7_leak_by_kind_R39.md) | R39: the leak halves; placement is 61% of it |
+| [`E7_rollout_root_tuning_R39.md`](E7_rollout_root_tuning_R39.md) | the rollout root recovers the placement leak; 32 worlds and z2 (`4:32:4:z2`) |
+| [`E7_searched_leak_R39.md`](E7_searched_leak_R39.md) | where R39 under the rollout root still loses |
+| [`E7_searched_leak_A13_R48.md`](E7_searched_leak_A13_R48.md) | the same census on A13+R48 at 12,000M |
+| [`E7_determinization_audit.md`](E7_determinization_audit.md) | determinization leaks nothing; a few deductions unused |
+| [`P33_diagnostics.md`](P33_diagnostics.md) | the critic is the channel search keeps, blind where the searched player errs |
+
+**Behaviour probes**
+
+| file | what it records |
+|:---|:---|
+| [`expert_review_E7.md`](expert_review_E7.md) | a strong player's review: board judgment strong, card play leaks |
+| [`critic_handover_calibration.md`](critic_handover_calibration.md) | the soup's critic: calibrated overall, blind to DEFCON-1 endings |
+| [`decisive_win_misses_e7.md`](decisive_win_misses_e7.md) | half of forced wins missed, costing ~10 Elo |
+| [`event_census_soup.md`](event_census_soup.md) | per-card event rates of the shallow soup |
+| [`event_census_E7-02-44_E7-08-43.md`](event_census_E7-02-44_E7-08-43.md) | a fifth of the event rates move between seeds |
+| [`event_census_E7-21-44.md`](event_census_E7-21-44.md) | longer training and the league each move a fifth |
+| [`kal007_south_korea_control.md`](kal007_south_korea_control.md) | South Korea's control moves the KAL-007 headline weakly |
+| [`star_wars_event_vs_ops_E7-02-44.md`](star_wars_event_vs_ops_E7-02-44.md) | Star Wars ahead in space: mostly for Ops |
+| [`marshall_plan_E7_line.md`](marshall_plan_E7_line.md) | the US stopped headlining Marshall Plan at ~3,300M |
+| [`E7_five_year_plan_timing.md`](E7_five_year_plan_timing.md) | early Five Year Plan plays are not a leak |
+| [`per_checkpoint/`](per_checkpoint/README.md) | generated behaviour reports, one per rated checkpoint (`tools/scripts/checkpoint_report.py`) |
+
+The subdirectories `E7_blunder_bank/`, `E7_leak_by_kind_*/`, `E7_rollout_root_tuning_R39/` and
+`E7_searched_leak_*/` hold the generated tables their notes link to.

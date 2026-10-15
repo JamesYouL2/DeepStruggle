@@ -1,5 +1,10 @@
 # P21 rung M1 — grouped input projections
 
+**Conclusion.** Separate dense projections for board, card and global inputs gained +102 / +126 Elo
+over M0 at 80M at the same speed — adopted. The whole gain is in the US seat (+26 pp; USSR
+unchanged), and the margin halves by 160M (+44) because M0's slope is twice M1's: the first sign that
+80M readings can flatter early-training effects.
+
 **2026-09-19.** M1 gives board, card and global their own dense projection instead of reading all
 3,824 floats through one layer. No weight sharing, no tokens, position preserved in both, same
 trunk width (480) and matched parameters (3.148M against the anchor's 3.149M), so the rung

@@ -113,8 +113,9 @@ R39 with each candidate against R39 with `4:16:4:z2`: 2,000 games each (1,000 a 
 * **Rule: z2 beats z1 by ~40 Elo at either width.** The offline grid had z1 ahead on large-regret
   rows (+10.2 against +6.4). In games, the departures z1 adds where the evidence is thin cost more
   than its extra corrections gain.
-* **Follow-up, running:** at 32 worlds, the stricter z3 and z2.5 against `4:32:4:z2`, 1,000 a side
-  (CI `38421746865`, `38421768420`).
+* **Follow-up:** at 32 worlds, the stricter z3 and z2.5 against `4:32:4:z2`, 1,000 a side, were
+  launched (CI `38421746865`, `38421768420`); their result is not recorded here, and `4:32:4:z2`
+  stayed the deployed root ([`E7_searched_leak_R39.md`](E7_searched_leak_R39.md)).
 
 Tables: [`4:32:4:z2`](E7_rollout_root_tuning_R39/tournament_w32z2.md),
 [`4:64:4:z2`](E7_rollout_root_tuning_R39/tournament_w64z2.md),

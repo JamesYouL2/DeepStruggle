@@ -1,6 +1,14 @@
 # P4: setup credit (arm A) and a human setup anchor (arm B), 2026-09-25
 
-**Plan:** [`../plans/P4_setup_macro_action_credit.md`](../plans/P4_setup_macro_action_credit.md).
+**Conclusion.** On the E4 recipe at 80M every setup-credit variant (λ = 1 inside the setup block)
+fixed the USSR's Poland but never the US's West Germany; per-side blocks (A1, `--block-lambda
+setup-side`) were best at +39 Elo inside the noise and became the default briefly, until flat
+rollout temperature showed it adds nothing ([`E5_12_setup_credit_at_flat_temperature.md`](E5_12_setup_credit_at_flat_temperature.md)).
+λ = 1 on every same-side deterministic block (A2) cost 289 Elo. A human setup anchor held the
+human opening on one seed of two for +18; a proper setup does not measurably change strength at
+this level.
+
+**Plan:** [P4 (closed)](../plans/README.md).
 
 **Setup:** today's default recipe (E4-08 recipe, TF32, centred per-entity heads), 80M from
 scratch, seeds 43 and 44, run as seed pairs.

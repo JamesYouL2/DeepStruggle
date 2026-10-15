@@ -1,5 +1,11 @@
 # P32 CPU checks -- the forced-exit trap (4a), Wargames at a lead of 6 (2), Chernobyl off Europe (3)
 
+**Conclusion.** Three P32 leads closed without a leak. The forced-exit DEFCON trap is seen by the
+critic on both sides (it drops to the outcome at entry) and explains only a fifth of DEFCON-1
+losses, so the forced-exit auxiliary head (4b) is not sent. Taking the draw at Wargames with a lead
+of 6 is right (playing on scores 0.29). Chernobyl's region choice off Europe is no worse than Europe
+(−0.019 ± 0.008 for forcing Europe).
+
 **Plan:** [`../plans/P32_teacher_and_paired_credit.md`](../plans/P32_teacher_and_paired_credit.md).
 **Network:** the heads soup `E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M`. Probes and outputs in
 `data/reports/` (`trap_probe`, `wargames_lead6`, `chernobyl_regions`, `.py` / `.out`).

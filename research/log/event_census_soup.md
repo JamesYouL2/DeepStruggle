@@ -1,5 +1,10 @@
 # Event census of the shallow soup (2026-10-03)
 
+**Conclusion.** Per-card event rates of the shallow soup over 4,096 greedy games: UN Intervention,
+Junta and the scoring cards are evented 90%+ of holdings, a long tail (Arms Race, Summit, Wargames,
+NATO and others) ~0%. Two later censuses show about a fifth of these rates move between models of
+the same recipe ([`event_census_E7-02-44_E7-08-43.md`](event_census_E7-02-44_E7-08-43.md)).
+
 Owner: for the shallow_E7-02+03+04+05_1200M soup, how often each card in its owner's hand is headlined or played as the event in a round (neutral cards: overall / by US / by USSR), sorted; the opponent's events and chained plays (Grain Sales, Star Wars) excluded; only holdings where playing the event would be legal.
 
 `tools/scripts/event_play_census.py` (8 × 512 greedy self-play games). A holding counts when the owner could have played the event at one of their decisions: a headline choice where the card may be headlined and its event can trigger (`CardHandlers::can_trigger_event`, the engine's test; Defectors is only ever playable this way), or an action-round card choice where selecting it offers the event (checked on a copy). An earlier version counted headline legality only when the card was headlined, which put Defectors at 100%; corrected (81%). The engine offers EVENT for some cards whose event would do nothing (One Small Step when not behind in space, Wargames above DEFCON 2), so those still count; NATO's prerequisite is enforced (4,240 holdings -> 2,021); the engine treats the events of One Small Step and Wargames as triggerable whatever the space track or DEFCON, so they count throughout.

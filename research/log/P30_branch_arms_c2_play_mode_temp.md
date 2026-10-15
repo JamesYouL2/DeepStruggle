@@ -1,5 +1,10 @@
 # P30 branch arms (2026-10-03): C2's card-event head, and exploration at play-mode decisions
 
+**Conclusion.** Branched from E7-02-44@820M to 1,200M, C2's card-event auxiliary head passed the
+owner's rule narrowly (US +1.5 / +3.2 on snapshots / SWA, USSR level), within reach of the
+branch-to-branch spread; a play-mode sampling temperature of 2 hurt slightly (46.7% on SWAs) and is
+not worth pursuing.
+
 **Arms** ([`../runs.md`](../runs.md)), both E7-02-44 branched at 820M (`resume_820051968steps.pt`)
 and run to 1,200M with its flags:
 

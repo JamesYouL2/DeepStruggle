@@ -1,8 +1,16 @@
 # P7 (human data) — BC warmup on the human corpus, and what the corpus actually carries
 
+**Conclusion.** BC warmup on the human corpus lost to self-play warmup (42.6% head to head at 80M)
+because any initialisation washes out: human-move agreement falls to the same ~32% within the first
+2M steps whatever the start. The corpus does carry the signal — on log-evidenced decisions humans
+never chose a dominated trap discard and spent the opponent's card on the space race 99.6% of the
+time, against our agents' 13–38% — so human data has to persist through training to matter. BC from
+a self-play net aligns best, and injection from a human start halts the washout; injection's cost is
+[`P7_human_injection_and_its_cost.md`](P7_human_injection_and_its_cost.md).
+
 Records §9 of the original `experiments.md` in full: experiment E3 and everything that came out of
-it. This is the first half of the human-data programme that [`../plans/P7_human_data.md`](../plans/P7_human_data.md)
-now queues — behaviour cloning from the ts-replayer corpus as an *initialisation*, measured on
+it. This is the first half of the human-data programme ([P7 (closed)](../plans/README.md)) —
+behaviour cloning from the ts-replayer corpus as an *initialisation*, measured on
 `--arch v2` at 80M steps, 512 envs, `blunder_aware` + K=40, post-E1 engine, legacy observation. The
 arc is: the human warmup loses (§9), the prior washes out inside 2% of training (§9.1), how long BC
 should run (§9.2, §9.13), whether the corpus carries the dominance signal at all (§9.3 → §9.4 →
@@ -10,9 +18,8 @@ should run (§9.2, §9.13), whether the corpus carries the dominance signal at a
 injection pilots (§9.12–§9.14). Conversion mechanics are in
 [`P7_replayer_conversion.md`](P7_replayer_conversion.md); the injection dose experiments and the
 ablation that killed injection are in
-[`P7_human_injection_and_its_cost.md`](P7_human_injection_and_its_cost.md). **This file is
-append-only history** — §9.3 and §9.4 keep their wrong numbers and their `SUPERSEDED` labels rather
-than being corrected in place, and nothing is edited to match current belief.
+[`P7_human_injection_and_its_cost.md`](P7_human_injection_and_its_cost.md). The superseded trap
+readings of §9.3–9.4 are condensed to a paragraph; §9.5 has the corrected numbers.
 
 ---
 
@@ -127,80 +134,17 @@ rather than the starting point, it persists for the whole run, and its quality i
 Build that net at ~8 epochs.
 
 
-### 9.3 Do the humans respect the dominance relations? — TRAP NUMBERS WRONG, SUPERSEDED BY 9.5
+### 9.3–9.4 Do the humans respect the dominance relations? — first two readings, superseded by 9.5
 
-**Question.** §4.8 called the dominance result "the strongest argument yet for demonstrations,
-since one human game shows the reversal that RL needs thousands to notice". That is a claim about
-the corpus which had never been checked against the corpus. Before engineering any way to keep
-human data in the policy, it is worth knowing whether the data carries the signal.
-
-**Setup.** `ai/eval/human_dominance.py`, over all 280 converted games. For a policy §4.8 can ask
-how the pair is *ranked*, because there is a distribution; for a human there is only the move, so
-the measure is the stricter half — did they choose the dominated card while a dominant alternative
-of equal Ops sat in the same hand.
-
-| | humans | control | K=40 |
-|:---|---:|---:|---:|
-| Quagmire, chose dominated | **24.3%** (9/37) | 37.5% | 30.7% |
-| Bear Trap, chose dominated | **21.1%** (16/76) | 32.8% | **18.2%** |
-| Space race, chose dominated | **0.4%** (3/712) | 18.1% | 12.6% |
-
-**On the space race the corpus is emphatic.** Humans spend the opponent's card on the track
-essentially always: 3 errors in 712 decidable plays, against our agents' 12.6-18.1%. That is a
-factor of 30 to 45, on the largest sample of the three, and it is exactly the kind of local,
-position-independent preference a demonstration can teach and RL evidently does not find.
-
-**On the traps it is much weaker than §4.8 implies.** Humans are better than the control on both,
-but **K=40 already beats them on Bear Trap** (18.2% against 21.1%) and is close on Quagmire. So on
-trap discards there is little left for the corpus to teach the current best agent.
-
-**Verdict.** The premise is *partly* confirmed, and narrower than the rhetoric it was based on.
-There is one clear, well-evidenced class where human play is strongly better and ours is not, and
-two where our best model has already caught up. Set against §9 -- where the human-warmed arm was
-weaker overall despite inheriting these preferences -- the case for spending GPU time on a
-mechanism to retain human data rests on that one class.
-
-**A denominator caution, in the same family as §4.8's own.** The first version of this counted
-every opponent-card space play as a correct decision and reported 0 errors in 265 "decidable"
-plays. Most of those were not decisions: no equal-Ops own card was in hand, so nothing could have
-been chosen differently. Requiring both kinds of card at the same Ops cut the denominator to 712
-across the corpus and is what makes the 0.4% meaningful. §4.8 records the same trap from the other
-direction — measuring against all space plays reads 2.4% and badly understates the agents' rate.
-
-
-### 9.4 Half the humans' apparent trap mistakes are ours, not theirs — PARTLY WRONG, SUPERSEDED BY 9.5
-
-**Question.** §9.3 put humans at 22.1% dominated on trap discards, better than the control but not
-clearly better than K=40. Are those human mistakes, or does our hand reconstruction hand them a
-card they never held? A dominance pair says "you discarded X when Y was available"; if Y is the
-solver's padding, we invented the alternative and the error is ours.
-
-**Setup.** Each of the 25 dominated discards checked against the log's *own* per-turn hand list --
-the only independent record of what a player held.
-
-| | count |
-|:---|---:|
-| dominant alternative **is** in the log's hand list | **13** |
-| dominant alternative is **not** — reconstruction supplied it | **12** |
-
-**Recomputed over pairs where the log evidences both cards:**
-
-| | as §9.3 measured | log-evidenced pairs only |
-|:---|---:|---:|
-| trap discards, dominated | 22.1% (25/113) | **12.1%** (12/99) |
-| — Quagmire | 24.3% | **6.7%** (2/30) |
-| — Bear Trap | 21.1% | **14.5%** (10/69) |
-
-Against §4.8's agents that reverses the reading: Quagmire **6.7%** against the control's 37.5% and
-K=40's 30.7%; Bear Trap **14.5%** against 32.8% and 18.2%. Humans are better than both agents on
-both traps, where §9.3 had them level with K=40.
-
-**But the log's hand lists are not complete either, so this is a bound, not a value.** Measured
-over all 33,511 human card decisions: **3.5%** of the time the card the human is *recorded playing*
-is itself absent from that turn's hand list. A list that omits cards the player demonstrably held
-cannot be treated as ground truth. So 12.1% is a **lower** bound on the human error rate and 22.1%
-an **upper** one. The useful conclusion survives either way: at the upper bound humans beat the
-control, at the lower bound they beat K=40 as well.
+`ai/eval/human_dominance.py` over all 280 converted games asked whether a human chose a dominated
+card while a dominant alternative of equal Ops sat in the same hand. **Space race:** humans spend
+the opponent's card on the track essentially always, 3 errors in 712 decidable plays (0.4%), against
+our agents' 12.6–18.1% — a factor of 30 to 45, and the result that stood. (A first count over all
+space plays read 0 in 265; requiring both kinds of card at the same Ops is what makes the
+denominator meaningful.) **Traps:** §9.3 first put humans at 22.1% dominated on Quagmire and Bear
+Trap, level with K=40; §9.4 then found that 12 of the 25 "errors" rested on an alternative the
+log's own hand list does not show, giving 12.1–22.1%. Both trap readings were wrong for a reason
+§9.5 found, and their numbers are withdrawn.
 
 ### 9.4.1 The wider consequence: a quarter of the corpus's offered actions are unevidenced
 
@@ -247,8 +191,8 @@ Bear Trap 0/59, Quagmire 0/28. **Every remaining apparent mistake involved a dom
 the log does not list** — a card the reconstruction supplied, or one the log omits. On decisions
 where the log records both cards, the humans in this corpus never chose the dominated one.
 
-**The bound still applies in the other direction.** The log's hand lists are incomplete (§9.4:
-3.5% of the cards humans are recorded *playing* are absent from them), so restricting to
+**The bound still applies in the other direction.** The log's hand lists are incomplete (3.5% of
+the cards humans are recorded *playing* are absent from them), so restricting to
 log-evidenced pairs is conservative and may discard genuine decisions. The true rate lies between
 0% and 11.2%. At either end it beats every agent we have measured: traps 18.2-37.5%, space race
 12.6-18.1%.
@@ -314,8 +258,8 @@ four samples of the same wobble.
 which is already at the ~32-35% attractor RL converges to (§9.1). There was almost no alignment to
 preserve, so the experiment measured whether injection can *raise* agreement rather than whether it
 can *prevent* the washout it was built for. The informative version starts from the **human** BC
-init at ~47% and asks whether injection stops the decay to 32%. That is one flag different and the
-right thing to run next.
+init at ~47% and asks whether injection stops the decay to 32%. That is one flag different; it is
+§9.14.
 
 **Also worth noting:** at weight 1.0 even every-iteration injection did not pull agreement toward
 the BC ceiling of ~47%. Either the weight is too low against the RL updates, or RL actively pulls

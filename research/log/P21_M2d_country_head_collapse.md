@@ -1,5 +1,14 @@
 # P21 — the country head is the whole mechanism, and removing the card head sometimes collapses
 
+**Conclusion.** `pe_country` carries the per-entity mechanism and `pe_card` alone buys nothing
+(M2e ≈ M1). M2d (country head only) collapses the US seat on some seeds; seed 1's collapse is
+bitwise reproducible (byte-identical 80M checkpoints) and a collapsed arm's Elo measures only the
+collapse. The twelve-seed field at the end put M2d's mean 32 Elo under a single M2 seed and read
+that as "keep both heads"; the ladder nevertheless adopted M2d (level with M2 over six clean seeds
+at 1.4x the throughput, [`P21_ladder_status.md`](P21_ladder_status.md)), and it is the E4-08
+recipe every later arm builds on. Collapse turned out mostly recoverable
+([`E4_collapse_is_recoverable.md`](E4_collapse_is_recoverable.md)).
+
 **2026-09-19.** M2 added per-entity heads for both countries and cards and was worth +315 Elo over
 M1. M2d keeps only `pe_country`, M2e only `pe_card`; everything else is identical.
 
@@ -78,7 +87,8 @@ precisely as the policy degenerates, because a one-sided policy is a trivially e
 problem. The rejected `adv_std_raw < 0.01` threshold still never fired (minimum 0.036), but the
 direction now co-occurs with one-sidedness in a second independent arm.
 
-**Rate so far: 1 of 3 seeds.** Seeds 4-6 continue; seed 4 was clean at 56%.
+**Rate at the time: 1 of 3 seeds.** The 30-seed census later put entry at ~12.5% of seeds
+([`../findings/training/side_collapse.md`](../findings/training/side_collapse.md)).
 
 ## Why this configuration is worth keeping
 
@@ -319,9 +329,9 @@ twelve — though twelve points still cannot establish it.
 The two collapsed seeds rate **1719.9** and **1683.4**, both *below* M1's 1736.7. A collapsed arm
 does not merely forfeit the per-entity head's gain; it ends up worse than the rung beneath it.
 
-### Consequence for the ladder
+### Consequence for the ladder, as read then
 
-**M2 keeps both heads.** Dropping `pe_card` is worse on average, more variable, and carries
+*Superseded: the ladder adopted M2d after all (conclusion at the top).* **M2 keeps both heads.** Dropping `pe_card` is worse on average, more variable, and carries
 collapse risk. The earlier reading — "a strict simplification: equal strength, 18% faster, better
 balanced" — is withdrawn in full.
 

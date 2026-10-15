@@ -1,5 +1,10 @@
 # E4 decision stream — how cards are played, and what merging the op mode would save
 
+**Conclusion.** A game is 386 decisions; ops are 64% of card resolutions (influence 46%). Folding
+the op mode into the first placement would remove 11–16% of decisions, which for credit assignment
+equals raising λ from 0.98 to about 0.983, a one-flag change. The merge was later built as the
+E4.1 view ([`P23_E4_1_ab.md`](P23_E4_1_ab.md)).
+
 Asked 2026-09-22: most cards look like they are played for ops. If the op-mode choice were folded
 into the first placement (choose the card, then "coup / realign / place first influence in
 country X"), how many decisions would a game lose, and what would that buy?

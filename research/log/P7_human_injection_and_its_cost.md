@@ -1,5 +1,11 @@
 # P7 (human data) — injection dose, what the behaviour is worth, and the ablation that killed it
 
+**Conclusion.** Injecting supervised steps on human games during RL helps alignment only if applied
+every iteration (weight barely matters), and the largest human/agent gap it could fix is worth ~3
+points of win rate. At full scale it was a handicap: removing it gained 157–236 Elo in a 2x2, and a
+cold start with no warm start and no human data became the strongest model (D@160M beats
+`dec_turns40` 63.6%). Injection has been off since; the corpus is an evaluation asset.
+
 Records §10, §11, §20, §21 and §22 of the original `experiments.md`: the second half of the
 human-data programme. §10 (E5) sweeps injection weight and frequency; §11 measures what the largest
 human/agent behavioural gap is actually worth in win rate and finds a ceiling low enough to change
@@ -10,7 +16,7 @@ injection was a 157–236 Elo handicap, and a cold start without it beats everyt
 observation. §22.2 explicitly invalidates the *magnitudes* of §18, §20 and §9–§10, all of which were
 measured inside the handicap; those entries are left standing where they were written. §20–§22 are
 not numerically adjacent to §10–§11 in the original file — they are here because they are the same
-question. **This file is append-only history** and is not edited to match current belief.
+question.
 
 ---
 
@@ -311,15 +317,13 @@ continuation, which used a fresh seed, so the +58 at 90M is not cleanly separabl
 new-environment-stream effect. Similar jumps at 120M (+40) and 130M (+25) occur well after the
 join, which argues against it being a resume artefact, but it is not proven.
 
-### 22.5 What follows
+### 22.5 What followed
 
-* **Turn injection off** for everything until there is a reason to believe a different form of it
-  helps. §"brainstorm" lists the candidate mechanisms; the cheapest discriminating test is
-  policy-only injection with the value loss disabled, since the BC warm start's critic measured
-  Brier 0.378 -- worse than always predicting even -- and a corrupted critic damages every gradient.
-* **Keep extending D.** It has not saturated at 160M and `--resume` makes continuation a single
-  command.
-* The human corpus remains valuable for **evaluation** -- §14-§17 found real defects with it --
+* **Injection was turned off** for everything after this, and no other form of it was run. The
+  cheapest untested variant is policy-only injection with the value loss disabled (the BC warm
+  start's critic measured Brier 0.378, worse than always predicting even). The remaining human-data
+  arms (start pool, critic targets) are parked in [`../plans/reserve.md`](../plans/reserve.md).
+* The human corpus stayed valuable for **evaluation** -- §14-§17 found real defects with it --
   which is consistent with it being poor training supervision.
 
 ---

@@ -1,6 +1,11 @@
 # P29 bet 3 — the merged-influence view trains cleanly on E6 but plays ~235 Elo weaker
 
-Plan: [`../plans/P29_big_bets_from_scratch.md`](../plans/P29_big_bets_from_scratch.md), bet 3.
+**Conclusion.** On E6's flat-temperature recipe the merged-influence view trained with no collapse
+(P23's collapses were the old sharpening rollout bands), but played about 235 Elo weaker than its
+control in both seats, learned more slowly at every stage and levelled off at ~400M. Not adopted;
+the lead is that the merged op-choice node places influence without seeing the Ops it spends.
+
+Plan: [P29 (closed)](../plans/README.md), bet 3.
 
 **Arm.** E6-09-44: E6-03-44's recipe plus `--merged-influence`, from scratch to 560M, seed 44, solo.
 It ran without `--ladder-head-center`, which the trainer refuses in the merged view.

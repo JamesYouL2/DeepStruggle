@@ -1,5 +1,10 @@
 # P21 — M2d from 80M to 160M: the slope, and what a collapse costs
 
+**Conclusion.** Within-seed over six non-collapsed seeds M2d gains **+159.8 Elo from 80M to 160M**
+(sd 33.7; about +126 once collapse risk is folded in). Every 160M arm beats the anchor at 80M for
+under half its GPU time; arms that entered and escaped the pinned state carry no visible cost,
+while the one that collapsed lost 249. With clean seeds M2d ≈ M2 at 1.4x the throughput.
+
 One tournament, 22 entrants, 100 games per side at `temperature 0.0`, run 2026-09-21.
 `/workspace/data/reports/P21_M2d_160M_slope.{json,md}`.
 Companion to [`../findings/training/side_collapse.md`](../findings/training/side_collapse.md) and
@@ -61,14 +66,6 @@ matched-steps gap at 160M is therefore +465.8 to M2d, and that number is mislead
 M2d did not gain 465, the anchor fell. The defensible comparison is against the anchor's best
 measured state — **M2d@160M 2203.1 vs anchor@80M 2093.3, +110 Elo**, at twice the steps and 46%
 of the wallclock. The anchor's instability is a separate finding and is reported as one.
-
-The paragraph below is kept as written because it states the standard the result had to meet.
-
-**What was missing before the anchor could re-point: an anchor arm at 160M.** The comparison above shows
-M2d wins on wallclock, but it does not show M2d wins at matched steps, and the anchor may also
-improve with a second 80M. That arm costs ~3.8 GPU-h and is the obvious next measurement. Until it
-exists, the defensible claim is *"M2d dominates the anchor per GPU-hour"*, not *"M2d is stronger
-than the anchor"*.
 
 ## Entering the pinned state and escaping costs nothing detectable
 

@@ -1,5 +1,9 @@
 # Does South Korea's control move the soup's KAL-007 headline? (2026-10-03)
 
+**Conclusion.** The soup reads South Korea's control in the right direction (86% / 82% of positions)
+but weakly: flipping control moves P(headline KAL-007) by -0.03 / +0.05 on average, -0.09 / +0.13
+where the decision is open.
+
 Owner: in self-play of the shallow_E7-02+03+04+05_1200M soup, when the US holds Soviets Shoot Down
 KAL-007, is its decision to headline it affected by control of South Korea? Flip control with the
 smallest change of US influence there and compare P(headline KAL-007) in four scenarios: natural
@@ -62,6 +66,6 @@ Paired change in the same positions (flipped − natural):
 
 **Not measured here:** whether headlining KAL-007 *without* control is actually a mistake (it is
 still 2 VP and a DEFCON drop that can pin the USSR's headline response), and how the value head
-reads the same flip. Either is the natural next step if the owner wants it.
+reads the same flip.
 
 Data: `data/eval/kal007/soup_8192.json` (per-position records; `--load` re-tabulates).

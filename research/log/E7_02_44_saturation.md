@@ -1,5 +1,10 @@
 # E7-02-44 (2026-10-01): the shallow recipe keeps gaining to ~900M, then flattens
 
+**Conclusion.** The shallow recipe gains to ~900M and then flattens on this trace (+110 Elo from
+560M to 1,200M, in both seats); its 1,120-1,200M SWA is level with the deep soup (50.8%). The
+"saturates at ~900M" reading was later overturned: the line kept gaining slowly to ~3,700M
+([`E7_line_to_2000M.md`](E7_line_to_2000M.md)).
+
 E7-01-44 (the shallow trunk, no league, seed 44, on E7) continued with its flags exactly from its
 560M end state to 1,200M. Where does it saturate?
 
@@ -30,10 +35,9 @@ The extra 640M steps are worth about +110 Elo, in both seats equally.
 * **Every arm judged at 560M was judged before its recipe saturated.** That includes every P28
   and P29 arm and the shallow/deep comparisons. The ordering of recipes at 560M need not hold at
   saturation: the deep line also kept gaining to 760M (E6-06/07/08-44).
-* **Open:**
-  * where E7-02-44's SWA stands against the current best, the shared-start soup of
-    E6-06/07/08-44 at 760M. They have never been in one field.
-  * whether the deep recipe also saturates near 900M, and above or below the shallow one.
+* **Answered since:** E7-02-44's SWA is level with the deep soup (the next section); the deep
+  recipe saturates at ~560M, ~120 Elo below the shallow one
+  ([`E7_06_44_deep_to_saturation.md`](E7_06_44_deep_to_saturation.md)).
 
 ## Against the current best (2026-10-01)
 
@@ -65,6 +69,5 @@ Head to head (seat-paired, ±1.1):
   snapshot (E6-07-44@700M) 60.9% and is level with the 760M deep SWAs.
 * **The designations are the owner's call.** The candidates are: best raw E7-02-44@1,200M, best
   SWA E7-02-44 1,120–1,200M. For the best overall model, the soup and E7-02-44's SWA are level.
-* **Next lever.** A shallow model soup: branch E7-02-44 at its saturation point into a few
-  continuations, as E6-06/07/08 branched from E6-04-44. On the deep line that added +42 over its
-  best SWA.
+* **Next lever.** A shallow model soup, as E6-06/07/08 branched from E6-04-44 (+42 on the deep
+  line). Done: [`E7_shallow_soup.md`](E7_shallow_soup.md), +50 over E7-02-44's SWA.

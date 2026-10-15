@@ -1,5 +1,10 @@
 # Variance and noise — what a number here is reproducible to
 
+**Conclusion.** A tournament matchup reproduces to ~1.5 points at 1,000 games; most of a single
+final's spread is where the run stopped (30.7 Elo within-run oscillation), so rate four snapshots; a
+seed is worth ~15 Elo and a leg's gain about twice that; game shape varies between seeds as much as
+between arms.
+
 Append-only history of every attempt to put an error bar on this project's numbers: what a
 tournament result is reproducible to, how much of a run's rating is just where it stopped, how
 far two seeds of one configuration drift apart in strength and in the *shape* of the games they
@@ -141,7 +146,8 @@ individual runs overlap.
   constant for the entire run -- there is no decay schedule -- which is exactly what leaves a policy
   wandering at the end rather than settling. Linear or cosine decay, or a weight EMA evaluated
   instead of the live policy, would remove the 30.7 Elo oscillation rather than averaging over it.
-  Neither has been tried.
+  Both were later tried on E6 ([`P28_step2a_lr_schedule.md`](P28_step2a_lr_schedule.md),
+  [`P28_step2b_ema_weights.md`](P28_step2b_ema_weights.md)).
 * **`dec_turns40` is still ~200 Elo clear of everything trained since**, which is the subject of
   the architecture programme ([`P9_architecture.md`](P9_architecture.md)).
 

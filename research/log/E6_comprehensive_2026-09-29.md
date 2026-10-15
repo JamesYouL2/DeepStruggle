@@ -1,7 +1,12 @@
 # The comprehensive E6 tournament (2026-09-29): every arm on its snapshots and on its 80M SWA
 
+**Conclusion.** The strongest E6 models were the SWAs of E6-04-44's 560→760M continuations (E6-06-44
+2560, E6-08-44 2555, level with each other), each beating the E5 best model 69%. SWAs beat snapshots
+on every arm by 23–110 Elo, the league + setup-credit recipe beat the plain one on snapshots and
+SWAs, and training past 560M still paid when read on SWAs.
+
 The owner's measurement rule: every arm is measured twice, on its snapshots and on the SWA of
-its last 80M ([`../plans/P28_strength_on_E6.md`](../plans/P28_strength_on_E6.md), *Measurement rule*).
+its last 80M ([P28 (closed)](../plans/README.md), *Measurement rule*).
 This tournament puts every E6 arm into one field that way, after E6-03-43 (the control recipe on
 seed 43) finished.
 

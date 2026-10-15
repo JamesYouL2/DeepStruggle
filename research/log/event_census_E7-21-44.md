@@ -1,5 +1,9 @@
 # Event census of E7-21-44 (league) at 3,160M (2026-10-04)
 
+**Conclusion.** 1,600M more plain training moved 24 cards' event rates (Star Wars 34% to 86%, John
+Paul II 19% to 63%) and 360M of league 18 more; each window of training rewrites about a fifth of
+the census.
+
 Owner: repeat the events-vs-Ops analysis of
 [event_census_E7-02-44_E7-08-43.md](event_census_E7-02-44_E7-08-43.md) on E7-21-44's latest
 snapshot.

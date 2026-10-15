@@ -1,5 +1,10 @@
 # P30 stage A (2026-09-30): the trunk drops much of the present, but the critic is not short of it
 
+**Conclusion.** Trained trunks hold less of the present state than untrained ones (the best model
+recalls its own hand about a third of the time), but the critic is not short of it: a fresh value
+head on the frozen trunk matches the critic (AUC 0.808), and adding the whole raw observation gives
+nothing. Stage C cannot be justified by the critic; what remains is a policy-side case.
+
 Follow-up to [`P29_bet2_ownership_probes.md`](P29_bet2_ownership_probes.md). There, no trained trunk
 encoded more about the *final* board than its own random initialisation. Stage A asks, on frozen
 trunks, (1) whether the trunk holds the *present* state and (2), the gate, whether the critic is

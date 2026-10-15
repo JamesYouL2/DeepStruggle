@@ -1,5 +1,11 @@
 # P17: the same checkpoints score the same on both engines
 
+**Conclusion.** Old (pre-P17) checkpoints played through the `legacy:` adapter on the new engine
+score the same as natively on the old engine: 0 of 21 pairs significant over 50,400 games per
+engine (largest |z| 1.66), with 2,614 intended and 43 unexplained (Arab-Israeli War) divergences in
+~12.7M decisions. The P17 merge did not move playing strength. The lesson: validate a translation
+layer at the translation, not at the outcome.
+
 Plan §7's sanity check, finally run properly:
 **three checkpoints, 300 games per pair, T=0.1, old engine natively vs new engine through the
 adapter.**

@@ -1,5 +1,9 @@
 # Star Wars when the US is ahead in space: event or Ops, across E7-02-44 (2026-10-03)
 
+**Conclusion.** Ahead in space, the US plays Star Wars for Ops in a round 75-95% of the time from
+120M on; the event, when used, is almost always the headline, and that headline rate barely depends
+on whether the event works (+3.0 pp ahead against not ahead at 880-1,200M).
+
 Owner: for E7-02-44, at 40M snapshot intervals, how often the US, ahead in space with Star Wars in
 hand, plays it for the event versus for Ops. Follow-up: per snapshot, play until there are 1,000
 such plays, split into headline / Ops in an action round / event in an action round, with a plot.
@@ -392,4 +396,4 @@ By the side of the card taken: neutral 55%, us 42%, ussr 3%.
 
 **Not measured here:** whether the event would be worth more than the Ops in these positions. That
 depends on what is in the discard pile, and needs a counterfactual (play the event on a copy and
-compare the value head or game results). That is the natural next step if the owner wants it.
+compare the value head or game results).

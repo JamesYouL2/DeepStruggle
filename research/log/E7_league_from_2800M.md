@@ -1,5 +1,10 @@
 # The P24 league from the saturated E7 line (2026-10-04/05): 2,800 → 3,600M, with its control
 
+**Conclusion.** The P24 league from E7-20-44@2,800M added nothing measurable over its no-league
+control to 3,600M (+0.4 / -0.2 on matched windows, 50.5% head to head): the exploiter published once
+in 16 generations, so the pool was nearly empty. The plain line itself kept improving, so the 2,800M
+saturation call was premature.
+
 The owner asked to start league training once the E7 line clearly saturated; by the rule set in
 advance it did at 2,800M ([`E7_line_to_2000M.md`](E7_line_to_2000M.md)).
 

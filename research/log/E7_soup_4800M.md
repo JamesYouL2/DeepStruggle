@@ -1,5 +1,9 @@
 # A model soup at 4,800M from the plateaued E7 line (2026-10-06)
 
+**Conclusion.** Souping three 410M branches of the plateaued line at 4,800M gives the strongest
+model to date: 61% against its ingredient E7-20-44@4800M, 57.1% against the line's best SWA, 63.5%
+against the 1,200M soup, better in every seat. The branches themselves are level with the main line.
+
 The owner asked, once the pure E7 line had plateaued from ~3,700M
 ([`E7_line_to_2000M.md`](E7_line_to_2000M.md)), to "resume it from 4400 with two different seeds for
 400M, and check soup".

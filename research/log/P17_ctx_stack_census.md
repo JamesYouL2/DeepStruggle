@@ -1,5 +1,12 @@
 # What `ctx_stack` holds — derivation, with a census as a cross-check
 
+**Conclusion.** Derived from the card rules, the deepest legal chain (Five Year Plan → Star Wars →
+Missile Envy → Grain Sales → drawn card, event-first) reaches depth 5, exactly the 6-frame
+`ctx_stack` with zero margin; P17 §5's proposed Grain Sales child frame would have overflowed it
+into `abort()`. §5 shipped without nesting instead (`7057251`), so the stack stays at 6. Random play
+never exceeds depth 2, so the census is no evidence about the bound. The depth feature's `/ 3.0`
+normalisation (§6) is still in `observation.cpp` (`globals[58]`).
+
 Written because the Grain Sales restructure (P17 §5) broke on an unchecked assumption about the
 stack. **The depth bound below is derived from the card rules. The census is only a cross-check on
 what ordinary play exercises, and it is not evidence about the bound** — random play never reaches
@@ -64,10 +71,10 @@ must find Grain Sales as the USSR's highest-Ops card, Five Year Plan's discard i
 is not the probability. It is that the bound is currently derived from nothing, the margin is zero
 or one, and the failure mode is `abort()`.
 
-**Action for §5: raise `ctx_stack` to 8.** Two extra frames cost 256 bytes; `sizeof(GameState)`
-goes 1,536 → 1,792 against a 4,096 budget. Size it from this derivation plus margin rather than
-from observed play, and add a scripted deep chain to the engine tests plus a fuzz assertion on
-depth — 251k random decisions exercise none of it.
+**Proposed for §5 at the time: raise `ctx_stack` to 8.** Not needed in the end: §5 shipped with
+no child frame, so the bound never moved ([`P17_grain_sales_child_frame.md`](../archive/E3_ladder/plans/P17_grain_sales_child_frame.md)).
+A scripted deep chain in the engine tests is still the only coverage the bound can get — 251k
+random decisions exercise none of it.
 
 ## 3b. Only one extender has work left to do — the chain can be flattened
 
@@ -182,5 +189,5 @@ cannot report and silently misreads.
 
 ## Consequence for P17 §5
 
-See [P17_grain_sales_child_frame.md](../archive/E3_ladder/plans/P17_grain_sales_child_frame.md). The stack must be
-resized before §5 lands, not after.
+See [P17_grain_sales_child_frame.md](../archive/E3_ladder/plans/P17_grain_sales_child_frame.md). The child frame
+was abandoned and Grain Sales landed with no nesting, so no resize was needed.

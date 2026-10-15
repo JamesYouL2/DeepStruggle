@@ -1,5 +1,10 @@
 # P21 rung M2 — the per-entity lookup reaches the anchor
 
+**Conclusion.** M1 plus a per-entity logit correction (each country and card corrected from its own
+slots plus a 64-wide position summary) gained +362 Elo, the largest single mechanism on the ladder,
+and matched the late-E3 anchor with no attention, identity, pooling or graph: 38 Elo behind at
+matched steps, level at 65% of its wall clock. Side balance came out at +2–4 pp.
+
 **2026-09-19.** M2 is M1 plus exactly one mechanism: a shared MLP giving each country and card a
 logit *correction* computed from that entity's own raw slots plus a 64-wide summary of the
 position, added to the dense logit with a zero-initialised last layer so the network starts as M1
@@ -85,9 +90,9 @@ All arms clean: pool to capacity 12 and held, `kl_div` peaking at 0.042, no alar
 | **M2 lookup** | **2129 / 2101** | **+62** | **+2.4 pp** | **35,744** | **adopted, +362** |
 | anchor | 2167 | — | −2.1 pp | 11,732 | **reached** |
 
-## Next
+## Afterwards
 
-`M2d` and `M2e` split the +362 between `pe_country` and `pe_card`. The card-collision finding
-predicts `pe_country` carries most of it, since `pe_card` cannot distinguish 95 of 110 cards
-without identity. If that holds, the architecture simplifies again — and M2.5's identity vector
-becomes a card-side fix rather than a general one.
+`M2d` and `M2e` split the +362: `pe_country` carries essentially all of it and `pe_card` alone is
+worth nothing ([`P21_ladder_status.md`](P21_ladder_status.md)). The prediction held, but its stated
+reason (the card head cannot tell 95 of 110 cards apart without identity) was withdrawn, and M2.5's
+identity vector lost on both seeds ([`P21_identity_rungs.md`](P21_identity_rungs.md)).

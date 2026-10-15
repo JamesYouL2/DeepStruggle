@@ -1,22 +1,24 @@
 # Replayer Conversion — the log, the engine, and the hands behind it
 
+**Conclusion.** Every discrepancy between the human logs and the engine was traced: of 21 score
+disagreements in 282 games none was an engine error (the log's lagging score field, two log faults
+corrected by rule, or when the score is read), and the military-ops penalty explains the midgame
+cluster. The hands are solved as a constraint problem, but a quarter of the cards offered across
+33,511 human card decisions are not evidenced by the log's own hand list, so hand-conditioned
+measurements need the log-evidenced restriction. The corpus is 11% duplicates, and 4 held-out games
+leak.
+
 How the human ts-replayer corpus is turned into engine decisions, and every discrepancy found
 between the two while doing it. Split out of the main experiment log, which is about
 how well the agents play; this file is about whether the data they are measured against is read
-correctly. The rule the pipeline is held to is in `AGENTS.md` §4 invariant 11 and
+correctly. The rule the pipeline is held to is in `AGENTS.md` §4 invariant 12 and
 `tools/README.md` §6: a decision the log does not determine is a bug to diagnose, not a gap to
 fill.
 
-**Section numbers are the ones these entries were first written under**, in `experiments.md`.
-They are kept rather than renumbered so that every existing cross-reference -- twenty-one inside
-`experiments.md`, and several from source files -- still names the right entry. A gap in the
-numbering here is a section that stayed behind because it is about play rather than conversion.
-
-The maintenance rules are `experiments.md`'s: record what was compared, the numbers with their
-sample size, and what the measurement cannot tell you; revise rather than delete when a later
-finding invalidates an earlier one, and say what invalidated it. Instrument faults and what a
-measurement is reproducible to are in [`measurement_bugs.md`](measurement_bugs.md) and
-[`variance_and_noise.md`](variance_and_noise.md).
+Section numbers are the ones these entries were first written under, in the retired
+`experiments.md`, and are kept so that cross-references from source files still name the right
+entry. Instrument faults and what a measurement is reproducible to are in
+[`measurement_bugs.md`](measurement_bugs.md) and [`variance_and_noise.md`](variance_and_noise.md).
 
 ---
 
@@ -28,39 +30,14 @@ one of them turned out to be the log's bookkeeping, a known log fault, or a diff
 order, because the first measurement was wrong by a factor of thirty and the reason is
 instructive.
 
-### 8.6 Replay 259 is VP drift, not a card bug — and drift is corpus-wide — SUPERSEDED BY 8.7
+### 8.6 Replay 259 and corpus-wide "VP drift" — first reading, superseded by 8.7
 
-**The user's arithmetic was right and the engine's starting number was wrong.** At replay 259 the
-engine holds `victory_points = 18` when it labels the KAL-007 headline a win, and KAL takes it to
-20. The log records 17 at the end of turn 7 and **16** at the turn 8 headline, and it also shows
-KAL actually played at **AR1, not the headline**, moving the score 16 → 17. So the "win" rests on
-a starting VP two points above what the game had.
-
-**This is not specific to 259.** `Conversion.vp_drift` counts entries where the engine's score
-disagreed with the log's, and across the 282 converted games:
-
-| | |
-|:---|---:|
-| games with **zero** drift | 53 (18.8%) |
-| games with some drift | **229 (81.2%)** |
-| drift per game | mean 8.1, median 5, p90 20, max 56 |
-| `log_miscounts` / `scores_forced` across the corpus | 1 / 1 |
-
-`_reconcile_scalars` resyncs `state.victory_points` to the score the log narrates whenever an
-entry states one, so drift is corrected at entry boundaries and does not accumulate — which is why
-these games still convert cleanly. But **within** an entry the engine's VP is its own, and that is
-what a decision sample sees.
-
-**Consequence for §8, which is not yet resolved.** The human VP-by-turn arc — the whole basis for
-saying humans reproduce the US late-war recovery — is read from the engine's VP at decision time
-(`obs.vps`), not from the log's narrated score. Turn boundaries are taken at the first decision of
-turn T+1, which is close to a resync, so the arc may well survive; but "may well" is not
-"measured". **Re-derive the §8 arc from the log's own narrated scores before relying on it.** That
-is a cheap check and it is the one that matters, because §8 is currently the evidence that the
-engine is not USSR-biased.
-
-Separately, this is a second reason the forced-win metric cannot be trusted on human data (§8.5):
-a labelled win can rest on a VP the game never had.
+At replay 259 the engine held 18 VP where the log narrates 16 when it labelled a KAL-007 headline a
+win, and `Conversion.vp_drift` reported drift in 229 of 282 games (mean 8.1 per game). That counter
+compared the engine against the log's lagging `score` field rather than its narration; §8.7 below
+re-measures against the narration and finds 12 real disagreements in 7 games. It remains a reason
+the forced-win metric cannot be trusted on human data (§8.5): a labelled win can rest on a VP the
+game never had.
 
 
 ### 8.7 Most of the "VP drift" was the log's score field, not the engine — 8.6 corrected
@@ -295,8 +272,8 @@ The same measurement, applied to every card decision rather than to dominance pa
 | decisions offering at least one such card | 27,267 (**81.4%**) |
 
 Part of that is the solver padding hands the log underdetermines, and part is the log's own
-incompleteness — the 3.5% above proves the second exists and the two cannot be separated with what
-the log records. Either way, **the human corpus offers the policy a choice among cards there is no
+incompleteness — 3.5% of the cards humans are recorded *playing* are absent from that turn's hand
+list, which proves the second exists — and the two cannot be separated with what the log records. Either way, **the human corpus offers the policy a choice among cards there is no
 evidence the player held, at 81% of its card decisions**, and those cards are in the action masks
 the BC warmup trains against.
 

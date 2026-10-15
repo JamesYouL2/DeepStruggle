@@ -1,5 +1,10 @@
 # Critic calibration across a hand-over (2026-10-02)
 
+**Conclusion.** The shallow soup's critic is well calibrated overall (bias +0.002, ECE 0.006, AUC
+0.82) but slightly optimistic for whoever is moving (hand-over sum +0.012 to +0.015, rising +0.0087
+through each side's run of decisions), rates the USSR about 2 points too high, and is blind to
+DEFCON-1 endings (AUC 0.64).
+
 Owner: "check our current best soup for critic calibration. Particularly ... if difference between
 US and USSR critic on action boundary averages to 0 (check that it should)".
 

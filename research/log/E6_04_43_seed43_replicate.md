@@ -1,5 +1,10 @@
 # E6-04-43 — the adopted E6-04 recipe replicates on seed 43
 
+**Conclusion.** On seed 43 the E6-04 recipe (game-result setup credit, setup entropy floor, league,
+from E6-03-43@310M) beat its control by +6.9 ± 0.6 in the USSR seat and level in the US seat, 57%
+head to head on snapshots and SWAs: accepted, so the recipe is adopted on two seeds (seed 44 gained
+mostly as US).
+
 **Arm.** E6-04-44's arm exactly, at seed 43: E6-03-43 resumed at 310M to 560M, with game-result
 setup credit, the setup entropy floor 0.3, a 10M resume cadence and the league (main exploiter
 E6-05-43-g). `launch_flags --diff` against E6-04-44 shows only the seed and the league directory.

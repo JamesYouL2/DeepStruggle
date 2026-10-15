@@ -1,5 +1,11 @@
 # E6-03/E6-04 — E5-21's recipe on E6, seed 44: the result replicates
 
+**Conclusion.** E5-21's recipe (game-result setup credit plus the league from 310M) replicated on
+seed 44 and the corrected engine: 54.4% against the plain run, +10.0 ± 1.1 in the US seat and level
+in the USSR seat — accepted under the amended per-seat rule. The gain came from play after the
+setup and a calibrated critic, not from a different opening. Seed 43 replicated it
+([`E6_04_43_seed43_replicate.md`](E6_04_43_seed43_replicate.md)).
+
 **Question (owner, 2026-09-28/29).** A new baseline for E6 and E5-21's second seed in one arm:
 does game-result setup credit plus the league from 310M beat the plain run by the owner's
 per-seat rule, on a new seed and the corrected engine?
@@ -12,7 +18,7 @@ per-seat rule, on a new seed and the corrected engine?
 * **E6-04-44 (main agent) + E6-05-44-g (exploiter):** E5-21's recipe exactly, from E6-03-44's
   `resume_310050816steps.pt` to 560M. Its flag diff against E5-21-43 shows only the seed and the
   league directory.
-* **Commands:** `research/checkpoints.md`, *Replication recipe*.
+* **Commands:** `research/checkpoints.md`, *Replication recipe* (removed 2026-10-15; `git show e5e8a7c:research/checkpoints.md`).
 
 ## League
 
@@ -109,5 +115,5 @@ Opening check, 2,000 paired deals (`e6_0{3,4}_44_560m_setup_oracle_{us,ussr}.txt
 * **E6-04-44 is level with E5-21-43@560M:** 48.5–50.9%, with Elo 2422–2432 against 2427. It is
   the best E6-trained model. Seed 44's plain run is also stronger relative to its bars than seed
   43's was.
-* **Still open:** seed 43 on E6 (E6-03/04-43) would complete the pair, and would say whether the
-  E6-trained model beats E5-21-43 on its own seed.
+* **Seed 43 on E6** (E6-03/04-43) completed the pair: accepted again, 57.1% head to head
+  ([`E6_04_43_seed43_replicate.md`](E6_04_43_seed43_replicate.md)).

@@ -1,5 +1,11 @@
 # E7 — does the heads soup understand Cuban Missile Crisis? It does not
 
+**Conclusion.** The heads soup cancels its opponent's crisis almost never (right) but coups under it
+without the means to pay, losing 6.5% (USSR) / 3.0% (US) of the games the crisis is headlined in. A
+scripted US combo exploits it for +3.5 points as US; forcing the trap in training (R28) taught
+nothing, because the coup's logit leads by ~20-30 nats and the gradient vanishes
+([`E7_saturated_policy_and_caps.md`](E7_saturated_policy_and_caps.md) is the follow-up).
+
 **Question (owner, 2026-10-09):** "does model understands Cuban Missile Crisis. Make model headline
 it when it gets it, and check if 1) models cancel it or not; 2) when not cancelled (either by choice
 or because can't), model still coup. Especially check cases if US plays Cuban Missile Crisis on USSR,
@@ -280,3 +286,4 @@ What would let it learn: a cap on the policy logits (c·tanh(z/c)), so no gap sa
 survive; or a cross-entropy target towards a better policy (gradient target − π does not vanish at
 saturation), e.g. a Gumbel improved-policy target softmax(logits/T + sigma(Q)) with a softened root.
 An exploration floor alone does not: it reweights by pi_old / mu, which is ~0 for such an action.
+Both were tried next: [`E7_saturated_policy_and_caps.md`](E7_saturated_policy_and_caps.md).

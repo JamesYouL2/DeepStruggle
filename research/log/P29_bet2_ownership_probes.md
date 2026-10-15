@@ -1,5 +1,11 @@
 # P29 bet 2, mid-run (2026-09-30): the ownership target has not reached the trunk
 
+**Conclusion.** At 200M the auxiliary ownership head was the per-country prior, and the aux-trained,
+control and untrained trunks supported the same ownership probe (72.8 / 72.9 / 73.1%), below a probe
+on the raw observation (76.8%). A 0.1-weighted target read from the pooled vector is too weak to
+shape the representation. The owner stopped E6-11-44 at 301M on this result; it was never evaluated
+for strength.
+
 E6-11-44 (bet 2: E6-03-44's recipe plus `--aux-ownership 0.1 --aux-vp-margin 0.1`) was probed at
 100M and 200M, at the owner's question: does the ownership head know more than a per-country habit
 (Australia is the US's, North Korea the USSR's), and does it call the games where the habit fails?
@@ -81,5 +87,4 @@ E6-07-44@700M (the best raw model) reads 76.1 (33.4); the raw observation 79.5 (
 * **The online head underfits even its own trunk.** It is 3.9 points below a fresh probe on the
   same frozen vector, because one step per ~4k finished positions at weight 0.1 is too little.
 * **What this means for bet 2 as run.** A 0.1-weighted target read from the pooled vector is too
-  weak to shape the representation. The run's critic and strength readings at 560M will test the
-  heads' side effects, not ownership-shaped features.
+  weak to shape the representation. The run was stopped at 301M and not evaluated.

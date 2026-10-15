@@ -1,5 +1,9 @@
 # The comprehensive tournament on E7 (2026-09-30): the shared-start soup still leads; shallow SWAs sit just under the deep league SWAs
 
+**Conclusion.** On E7 the shared-start deep soup still led (2576-2578), ~42 Elo over the best SWA;
+at 560M the shallow SWAs sat just under the deep league SWAs while the shallow raw snapshots led.
+Superseded within a day by the shallow soup ([`E7_shallow_soup.md`](E7_shallow_soup.md)).
+
 The owner asked for the current best model in one field, with no cross-field inference. 20
 models on the E7 engine, greedy, 1,000 games per seat per pairing, anchored at HeuristicBot = 1500
 (`data/reports/e7_comprehensive.{md,json}`). E7 plays like E6 for these checkpoints
@@ -48,4 +52,5 @@ The raw soup against each of the top models:
     trunk (E6-13-44, 2496) closes half of that.
 * **Among raw 560M snapshots the shallow nets lead** (2415–2449 against E6-04-44@560M's 2409), as in
   every earlier comparison. The deep net gains more from averaging.
-* **Open:** nothing shallow has been trained past 560M or souped.
+* **Open at the time:** nothing shallow had been trained past 560M or souped. Both were done the
+  next day ([`E7_02_44_saturation.md`](E7_02_44_saturation.md), [`E7_shallow_soup.md`](E7_shallow_soup.md)).

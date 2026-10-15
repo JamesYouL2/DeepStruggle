@@ -1,5 +1,9 @@
 # E5-01: does the E4 → E5 rules change move training? 2026-09-26
 
+**Conclusion.** No measurable effect: retraining E4-61's recipe from scratch on E5 gives a late mean
+of +2 Elo over the pair (seeds −7 / +12) and 51.0% head to head. E4 and E5 numbers can be compared,
+labelled cross-engine.
+
 **Arms:** E5-01-43/44, E4-61-43/44's configuration exactly (E4-08 recipe, M2d, λ 0.98, pool 0.3/12, TF32,
 centred heads, `--block-lambda off`), trained from scratch to 240M on the E5 engine (`8d05d94`) as a
 pair. `launch_flags.py --diff` against E4-61 shows only `--train-steps`. Both finished without a pin,

@@ -1,5 +1,9 @@
 # P21 — M2a / M2b / M2c: what the country head actually needs
 
+**Conclusion.** Every part of the country head's input pulls weight: removing the trunk context
+costs 84–146 Elo, the per-type constants 40–73, and both together 87–189, on both seeds — none
+adopted, M2d's head stands. The 15 dynamic slots alone still carry 54–74% of the mechanism.
+
 One tournament, 17 entrants, 100 games per side at `temperature 0.0`, run 2026-09-21.
 `/workspace/data/reports/P21_M2abc.{json,md}`.
 Decomposes the mechanism measured in [`P21_ladder_status.md`](P21_ladder_status.md) as worth

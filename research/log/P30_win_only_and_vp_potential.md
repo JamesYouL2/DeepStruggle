@@ -1,5 +1,11 @@
 # P30 (2026-10-03): two reward simplifications from scratch -- win only, and a small VP potential
 
+**Conclusion.** Neither reward simplification passes the owner's rule against E7-02-44 at 1,200M.
+Win only (`--reward-scheme terminal --no-blunder-window`) is 45% head to head and below in both
+seats, but the unchanged recipe on seed 43 is just as far below (43%), so the blunder-aware
+reward's contribution cannot be told from seed spread. A 0.01 VP potential is level on the SWA and
+slightly below on snapshots: no gain.
+
 **Arms** ([`../runs.md`](../runs.md)), both E7-01/02-44's shallow recipe from scratch, seed 44, to
 1,200M, two at a time:
 
@@ -63,49 +69,11 @@ head against it.
 
 E7-01-44 is 1476 at 80M, 1502 at 160M, 1498 at 240M, 1553 at 320M, 1567 at 400M, 1565 at 480M and 1578 at 560M; E7-02-44 is 1583 at 640M, 1607 at 720M, 1623 at 800M, 1639 at 880M, 1636 at 960M, 1627 at 1,040M and 1646 at 1,120M in the same fields (`data/reports/e7_15_16_<M>M.{md,json}`).
 
-At 80M the seed alone moves a run by more than either arm does, so nothing is readable yet.
-
-At 160M win only is behind in the US seat (−6.8, 3.6 SE) and head to head (43.1%), and the VP
-potential has closed most of its 80M gap. Both are still within the seed's range (E7-08-43 moved
-from 37.2% to 53.1% between 80M and 160M).
-
-At 240M all three are level with the control: every head-to-head within 51.6–56.9%, every seat
-difference within 2 SE. The VP potential is at the top of the field (1526).
-
-At 320M win only is level with the control in every column. The VP potential is below it against
-the panel in both seats (−7, about 4 SE) but level head to head (49.0%); seed 43 shows a panel gap
-of the same size in one seat (US −6.0), so this is still inside the run-to-run range.
-
-At 400M all three runs sit 10–30 Elo under E7-01-44, the arms no further than seed 43 (46.2–47.5%
-head to head).
-
-At 480M the four runs are within 6 Elo of each other (1561–1567), with the same per-seat pattern
-for all three against E7-01-44 (US about −4, USSR about +2).
-
-At 560M (E7-01-44's last snapshot; the control is E7-02-44 from here) the VP potential is top of
-the field (1584) and win only bottom (1564), 20 Elo apart, inside the seed range.
-
-At 640M (control E7-02-44) both arms lead the field by a few Elo (1594, 1590 against 1583), level
-within noise.
-
-At 720M E7-02-44 tops the field (1607); the VP potential is level with it per seat, win only
-slightly below against the panel (−4.6 / −3.8) but level head to head, and seed 43 lowest.
-
-At 800M E7-02-44 leads all three (1623 against 1595, 1595, 1579), as at 720M: the seed-44
-control is pulling ahead of every other run, the no-change seed 43 included.
-
-At 880M win only is below seed 43 for the first time (1574 against 1586; USSR −8.7 against −2.4
-against the panel), the VP potential above it (1606). E7-02-44 still leads all three.
-
-At 960M the order of 880M holds: E7-02-44, then the VP potential (level with it per seat within
-1 SE), then win only and seed 43 together.
-
-At 1,040M the VP potential is level with E7-02-44 head to head (49.6%) for the first time since
-640M; win only and seed 43 are together, a little below.
-
-At 1,120M all three lose to E7-02-44 head to head by the same margin (44.6–45.9%). Against the
-panel the VP potential is level with it in both seats; win only and seed 43 share a US-seat gap
-(−4.8, −5.1).
+**Reading the trace.** Through 560M all four runs stayed within the seed's range of each other
+(seed 43 alone moved from 37.2% to 53.1% head to head between 80M and 160M). From 720M on the
+seed-44 control E7-02-44 pulled ahead of every other run, the unchanged seed 43 included; the VP
+potential stayed level with it per seat within about 1 SE, while win only fell to seed 43's level
+(from 880M) and shared its US-seat gap.
 
 ## At saturation (1,200M): the owner's rule against E7-02-44
 

@@ -1,5 +1,10 @@
 # E7 shallow line to 2,000M (2026-10-04): strength every 40M
 
+**Conclusion.** The shallow seed-44 line kept gaining past 1B (+54 Elo from 1,200M to 2,000M, real
+against every fixed opponent), rose ~2 points per 400M against fixed references to ~3,700M, then
+held level to 4,800M; the 2,800M saturation call was premature. Its best checkpoints are the
+4,000-4,800M SWAs (~71% against E7-02-44@1000M, ~56% against the 1,200M soup).
+
 The owner asked how strength changes up to 2,000M steps, every 40M, after E7-17-44 continued
 E7-02-44 from 1,200M to 2,000M with its flags ([`../runs.md`](../runs.md)). The line is one run:
 E7-01-44 (0 → 560M), E7-02-44 (560 → 1,200M), E7-17-44 (1,200 → 2,000M), all seed 44, constant
@@ -65,8 +70,7 @@ Panel members in the same field: E6-03-44@80M 2067, @240M 2228, @550M 2358.
   1,840–2,000M 2563). Against the panel both seats rise from about 82/81% to 86/85%.
 * **The gain is slow and roughly steady, about 5–7 Elo per 100M, flattening from about 1,850M**
   (1,840–2,000M all within 2560–2566). Individual snapshots scatter by ±10–20 Elo, so only the
-  averaged trend is readable; the SWA/snapshot comparison by the owner's rule at 2,000M against
-  E7-02-44@1,200M is still to be run.
+  averaged trend is readable; the fixed-opponent comparison is the next section.
 * For the base-model question: at 1,200M the recipe is not at its ceiling. Arms judged at 1,200M
   (P30's protocol) are compared at a point where the control itself is still worth ~50 Elo more
   training, which leaves the comparison fair (same budget) but not "at saturation".

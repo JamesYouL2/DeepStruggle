@@ -1,5 +1,10 @@
 # Event census of E7-02-44 and E7-08-43 at 1,200M, against the soup (2026-10-03)
 
+**Conclusion.** About a fifth of the cards' event rates (20-22 of 109, mean difference 5-6 pp)
+differ between two seeds of one recipe, or between the soup and one of its ingredients, so a census
+rate describes one model, not the recipe. Quagmire is the one large seed difference (seed 44 ~90%,
+seed 43 16%).
+
 Owner: repeat the [soup's event census](event_census_soup.md) for E7-02-44 and E7-08-43.
 
 **Method.** `tools/scripts/event_play_census.py`, the same tool and size as the soup's census

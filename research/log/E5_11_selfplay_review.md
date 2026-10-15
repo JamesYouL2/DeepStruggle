@@ -1,5 +1,11 @@
 # E5-11-43@560M self-play review: three mistakes checked by playouts, a hand probe, and a realignment census
 
+**Conclusion.** Two of the owner's three named US mistakes are real (+7 to +8 points each by paired
+playouts), but neither is a missing representation: the policy already holds The Cambridge Five
+when a scoring card would be revealed (log-odds −6 to −7), and it has no "never realign" collapse.
+Forced realignment where the policy declines loses 3–5 points on average, even in the owner's
+textbook DEFCON-2 spot, so at this strength realignment is not a lever.
+
 The owner read four greedy self-play games of E5-11-43@560M (`data/replays/e5_11_43_560M_selfplay_seed{1..4}.tslog.json`,
 2026-09-27) and named three US decisions as mistakes. The owner asked two questions: are they
 evidence for an architecture that plans with cards (cross-card signals such as "I hold no scoring
@@ -71,14 +77,10 @@ are in `data/reports/play_mode_census/`.
 Two of the three named mistakes are real, at +7 to +8 points each. Neither points to a missing
 representation. The Cambridge Five conjunction is computed, and realignment is still sampled. What
 fails is judging *when* a known move is right in a particular position. Here a one-move search with
-playouts found the better move in both genuine cases. Two next steps are cheaper than an
-architecture change:
-
-1. **A realignment oracle** in the style of P27, over many positions where realignment is legal and
-   the policy gives it little weight. It would show whether under-realignment is systematic,
-   especially at DEFCON 3+.
-2. **Rating a playout search over the policy's top card-and-mode choices** against the raw policy.
-   A large gain would argue for training on search targets.
+playouts found the better move in both genuine cases. Two cheaper steps than an architecture
+change were proposed: a realignment oracle (the follow-ups below) and rating a playout search over
+the policy's top choices (later measured as search headroom,
+[`P30_search_headroom_e7.md`](P30_search_headroom_e7.md)).
 
 Card-to-card attention (P21 M3, blocked) stays available.
 

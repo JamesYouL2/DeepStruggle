@@ -1,5 +1,11 @@
 # E5-21 — game-result setup credit plus the league, from E5-11-43@310M: the best arm so far
 
+**Conclusion.** Game-result setup credit plus the league, from E5-11-43@310M, repaired the US
+opening for good and kept the USSR seat level (−0.8 ± 2.6 against its bar, +11.8 as US), 54.6% head
+to head and +22..+47 Elo over E5-11 at 480–560M: accepted under the owner's amended per-seat rule.
+Continued to 720M it plateaued from 560M and the lead closed (50.7%). Replicated on E6 as E6-04
+([`E6_04_league_seed44.md`](E6_04_league_seed44.md)).
+
 **Question.** E5-16 showed that game-result setup credit repairs the locked opening, but its USSR
 lost the punishment of weak US setups (−5.1 per seat). E5-17 showed the league keeps weaknesses
 punished and countered, but it cannot repair a setup and was level overall. Do the two together
@@ -45,9 +51,9 @@ self-play at each step.
 
 E5-11 is at 2293 / 2303 / 2297 at the same steps, so E5-21 leads by +22, +37 and +47, growing.
 
-**Accepted under the owner's amended rule (2026-09-29):** above the bar in one seat, not significantly below it in the other. Under the original wording, above both bars, it was not accepted:
-**By the letter of the rule, not accepted.** The USSR seat is 0.8 below its bar, a third of a
-standard error. The US seat is 4.5 standard errors above its bar. Overall it is +4.6 points
+**Accepted under the owner's amended rule (2026-09-29):** above the bar in one seat, not
+significantly below it in the other. Under the original wording (above both bars) it was not: the
+USSR seat is 0.8 below its bar, a third of a standard error. The US seat is 4.5 standard errors above its bar. Overall it is +4.6 points
 (about +32 Elo) against E5-11 and +5.1 against E5-17. It is the first arm that neither loses the
 USSR seat nor stays level.
 

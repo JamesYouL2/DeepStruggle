@@ -1,5 +1,10 @@
 # Policy or critic? The counterfactual rounds, and what the finished 160M run was worth
 
+**Conclusion.** Whether policy or critic is at fault differs by card: on Decolonization the critic
+is right and the policy ignores it; on De-Stalinization the critic is over-pessimistic about human
+boards by 7-10 win-rate points. The finished 160M run tied `dec_turns40` head to head (50.8%) with
+3.7 points more human agreement (37.4% against 33.7%): agreement is not a proxy for strength.
+
 Records §15–§18 of the original `experiments.md`, the second half of the diagnosis run against
 `run_v2_20260907_long160M` (snapshots to 160M; provenance in
 [`critic_positional_value.md`](critic_positional_value.md) §12.0), post-E1 engine, legacy

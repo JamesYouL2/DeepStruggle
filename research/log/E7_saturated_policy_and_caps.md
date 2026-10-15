@@ -1,5 +1,11 @@
 # E7 — a saturated policy cannot learn, and a logit cap cannot fix it by its gradient alone
 
+**Conclusion.** A saturated softmax (P(coup) = 1 in float32) gets no policy gradient, so plain RL
+cannot unlearn the Cuban Missile Crisis trap. Logit caps that leak a gradient the forward pass does
+not match drift the network, and the tanh cap's own gradient vanishes; a loss on the logit gaps at
+1e-3 (R33) is stable and with the trap seeded makes it learnable (suicides 87% to 59%). Without the
+scenario the same gap loss (R34) is a greedy gain (55.5% head to head) and became the next recipe.
+
 **Question (owner, 2026-10-09):** the heads soup walks into a Cuban Missile Crisis trap
 ([`E7_cuban_missile_crisis_probe.md`](E7_cuban_missile_crisis_probe.md)): under the US's crisis, after the
 US plays Lone Gunman, the USSR coups without the 2 Influence in Cuba to pay and loses on the spot, ~87%

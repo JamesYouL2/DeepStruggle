@@ -1,5 +1,11 @@
 # E4-29..33 — training-dynamics changes applied only after 160M
 
+**Conclusion.** Resumed from E4-08-03@160M with one change each, a slow π_ref (5M) was the only
+change that helped on both seeds (+78 to +108 at 240M on seed 3, switching at 80M as good as at
+160M; +91 at 200M on seed 5), but it delayed rather than prevented the seed-5 collapse. Loosening
+the update late (λ 0.99, π_ref 100k, η 0.05) brought on collapses; λ 0.97 was +39..+66 on one seed.
+All legs ran on a drained pool (correction below), so the collapses are not properties of the recipe.
+
 > **Correction, 2026-09-24: every arm here ran on a drained opponent pool.** A resume recorded the
 > restored pool at step 0, so spacing eviction drained the "10-member pool" to its two oldest
 > survivors plus the leg's recent snapshots (fixed in `4eb58df`). The arms were drained in the same
@@ -17,10 +23,10 @@ else, and every arm restores the same 10-member opponent pool. That leg is the s
 | arm | change | directory |
 |:---|:---|:---|
 | E4-29-03 | `--gae-lambda 0.99` | `E4-29-03_20260923_070934` |
-| E4-30-03 | `--gae-lambda 0.97` | queued |
+| E4-30-03 | `--gae-lambda 0.97` | `E4-30-03_20260923_*` |
 | E4-31-03 | `--ref-update-freq 5000000` | `E4-31-03_20260923_070934` |
-| E4-32-03 | `--ref-update-freq 100000` | queued |
-| E4-33-03 | `--eta 0.05` (KL coefficient, default 0.1) | queued |
+| E4-32-03 | `--ref-update-freq 100000` | `E4-32-03_20260923_*` |
+| E4-33-03 | `--eta 0.05` (KL coefficient, default 0.1) | `E4-33-03_20260923_*` |
 | E4-08-03-160M.11 | no change, seed 11: a second same-config baseline | `E4-08-03-160M.11_20260923_072049` |
 
 **Read against the 160M start, not the control.** The control leg dips at 200M below its own start
@@ -157,7 +163,7 @@ Against the seed-11 baseline at matched steps:
   63% as US), and its lead shrinks from 200M to 240M. One seed; not a result to adopt on.
 * **The slow π_ref is the only late change with a clean lead.** It beats both baselines on both
   seats at 240M. The seed-5 replicate (`E4-31-05`) and the earlier switch point (`E4-34-03`, from
-  80M) are running.
+  80M) are in the full field below.
 
 ## The switch at 80M: E4-34-03, interim at 160M
 
@@ -178,8 +184,7 @@ so it is a fair baseline.
 **+42.5 at 120M and +51.3 at 160M** against the plain leg at matched steps, about the size of the
 160M switch at the same distance from its switch point (+38 at 40M in). At 160M the head-to-head is
 split by seat: 60% as USSR, 36% as US. The 80M switch is not clearly better or worse than the
-160M one. It continues to 240M, and whether the gain keeps growing, as the 160M switch's did,
-decides between them.
+160M one. At 240M the two tie (full field below).
 
 ## Seed 5: the plain continuation collapses on its own
 

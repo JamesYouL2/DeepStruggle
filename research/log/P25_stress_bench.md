@@ -1,8 +1,16 @@
 # P25 stress bench: anti-collapse levers on the λ 0.99 recipe
 
-> **Step 3b (WoLF seat weights, E4-38) is at the end.** It is the only lever with no collapse on either seed, but as built it fails on strength on seed 5 (−105), because it held the policy's entropy up.
+**Conclusion.** No anti-collapse lever passed both halves (no pin, and a strength gain) on more
+than the seeds it was tuned on. Seat balancing helped on one seed of two; seven WoLF seat-weight
+variants (E4-38..47) traded braking against sharpening and failed on new seeds; per-seat advantage
+normalisation collapsed earlier. The λ 0.99 bench itself pins in only ~1 run in 5, and *whether* a
+run pins is a draw (a 1e-9 rounding change moved a collapse by 25M), so a two- or four-seed bench
+cannot show prevention. P25 was closed on 2026-09-24 with no lever adopted: on the production
+recipe a collapse is a recoverable delay, and every permanent stall came from the pool resume bug
+(*Closing P25*, at the end). Fixed-probe entropy correlates −0.74 with strength across
+seat-symmetric runs.
 
-**2026-09-23. No lever passes on both seeds with a real gain.** Seat balancing is the only one that
+**2026-09-23, first round. No lever passes on both seeds with a real gain.** Seat balancing is the only one that
 helped at all: on seed 5 it both held the collapse off and was much stronger, +151, but on seed 3
 it only kept the collapse just under the threshold, at no gain in strength. Slow π_ref from scratch
 kept seed 3's self-play balanced without making it stronger, and did nothing on seed 5.

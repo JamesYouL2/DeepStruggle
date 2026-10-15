@@ -1,5 +1,9 @@
 # Clean M2d replicates to 240M (E4-08-36, E4-08-37), 2026-09-24
 
+**Conclusion.** On a correct (never-resumed) opponent pool, M2d keeps growing to 240M: E4-08-36
+reached 2294, the strongest plain M2d, and E4-08-37 2114. The 180-Elo seed spread exceeds every
+recipe lever measured, and E4-08-37's chronic USSR lean (never pinned) cost it two ~40M stalls.
+
 Two E4-08 replicates (M2d, λ 0.98, opponent pool 0.3/12) on new seeds, 36 and 37. Each ran from
 scratch straight to 240M in a single run. Nothing resumed, so the drained-pool confound
 ([`P25_pool_resume_bug.md`](P25_pool_resume_bug.md)) that affected every earlier E4-08 leg past
