@@ -116,21 +116,30 @@ end. A13+R48's SWA.
 * **Weighted by the population the gain is smaller** (42.8% and 48.7% wrong): it sits in the strata the
   bank over-samples, so the effect on typical play will be smaller than the unweighted figures.
 
-### And in play? The rollout root stopping at the later of 4 boundaries and the turn's end
+### And in play? The rollout root stopping at the turn's end
 
-The R34 soup under the rollout root with `stop=later` (the later of 4 boundaries and the end of the
-decision's turn) against the soup under today's root (`stop=boundaries`), both k = 4, 16 worlds, z2;
-1,000 deals a side, 8 parts of one 125-pairing batch each, pooled (`data/reports/later_soup_later_vs_soup.json`).
+The R34 soup under the rollout root with a different stop against the soup under today's root
+(`stop=boundaries`, 4 boundaries), both k = 4, 16 worlds, z2; 1,000 deals a side, 8 parts of one
+125-pairing batch each, pooled (`data/reports/{turn,later}_soup_*_vs_soup.json`). `turn` stops at the
+first position of the next turn (shorter than 4 boundaries late in a turn, longer early); `later` at the
+later of the two.
 
-| | score | as US | as USSR |
-|:---|---:|---:|---:|
-| soup + later root vs soup + today's root | **47.8%** | 52.3% | 43.2% |
-| the searched soup's own self-play bar | — | 54.1% | 45.9% |
+| stop vs today's root | score | as US | as USSR | US − bar | USSR − bar |
+|:---|---:|---:|---:|---:|---:|
+| `turn` (CUDA graphs on both sides) | **51.3%** | 55.3% | 47.3% | +1.2 | +1.4 |
+| `later` | 47.8% | 52.3% | 43.2% | −1.8 | −2.7 |
+| the searched soup's own self-play bar | — | 54.1% | 45.9% | | |
 
-* **Playing longer is slightly worse in games:** −1.8 and −2.7 points against the bars, about 2 SE
-  below level. The turn-end read ranks the leak pairs better (above), but at 16 worlds the longer
-  greedy playouts add more noise per world than signal. A longer stop may need more worlds to pay;
-  untested.
+* **Stopping at the turn's end is level to slightly better** (+1.2 / +1.4, each under 1 SE; pooled
+  ~1.2 SE): positive in both seats, not significant. The play-time root does not lose by reading the
+  critic at the turn boundary instead of 4 boundaries ahead.
+* **Stopping at the later of the two is worse** (−1.8 / −2.7, ~2 SE): the extra plies beyond 4
+  boundaries early in a turn cost more in per-world noise than they add. The difference between the
+  two is the late-turn decisions, where `turn` stops sooner and reads the critic at a turn boundary --
+  the position the critic is best at (it is the start of a turn, not the middle of one).
+* For R52: a turn-end leaf is at least as good as today's in play, at 16 worlds, without training.
+  A critic trained toward turn-end values has the noise averaged out, which a single search
+  decision cannot do.
 
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 

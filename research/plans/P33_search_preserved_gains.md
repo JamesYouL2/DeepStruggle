@@ -4,7 +4,7 @@
 the critic is the channel the search keeps (P33a), it is calibrated on greedy play (P33b) but at
 chance on the decisive leak pairs (P33c), and only a lookahead to the turn's end sees them (card
 choice and play mode, not placement). R49, R50, R55 dropped. Next: R52 (turn-end value targets) and
-its control, proposed to the owner; a turn-end rollout root as a play-time check is running.
+its control, proposed to the owner; a turn-end rollout root is level to slightly better in play (51.3%).
 
 **Goal.** Improve the raw checkpoint in ways the rollout root keeps, so that the deployed player
 (network + `rollout(k=4,worlds=16,horizon=4,rule=z2)`) gets stronger when the network does. The
@@ -421,9 +421,9 @@ over several turns — the same fault R49 and R52 target — and R43 is re-run a
   channel; arms are read by their critic under the root.
 * **The rollout root with a longer stop, in play (eval only):** `stop=later` (the later of 4
   boundaries and the turn's end) against today's root on the R34 soup, 16 worlds: 47.8%, −1.8 / −2.7
-  against the seat bars. `stop=turn` against today's root: running. The play-time read does not
-  decide R52: a training target averages the playout noise over many positions, a 16-world search
-  decision cannot.
+  against the seat bars; `stop=turn` (the turn's end, whether sooner or later than 4 boundaries):
+  **51.3%, +1.2 / +1.4** -- level to slightly better, under 1 SE per seat. A turn-end leaf holds up in
+  play without training; R52 trains the critic toward it with the noise averaged out.
 * **R52 built** (`--search-value-beta 0.5 --search-rollout-horizon 4 --search-rollout-stop turn`,
   π_ref's greedy continuation to the turn's end, k = 1): proposed with an unchanged A13+R48
   control from 12,000M, 400M each; awaiting the owner.
