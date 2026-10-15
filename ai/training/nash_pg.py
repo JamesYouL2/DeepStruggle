@@ -414,20 +414,20 @@ class BaseNashPGTrainer:
         # combined until it learns the other view -- refused here rather than mis-targeted.
         self.merged_influence = bool(merged_influence)
         # R49 (P33): the rollout root's greedy-continuation value as v_win's target, with no policy target.
-        rollout_values = search_rollout_horizon > 0 and search_value_beta > 0.0 and search_ce_coef <= 0.0
+        rollout_values = search_rollout_horizon != 0 and search_value_beta > 0.0 and search_ce_coef <= 0.0
         if rollout_values and (search_gumbel_k > 0 or search_workers > 0 or search_teacher_policy):
             raise ValueError("rollout-root value targets (--search-value-beta with --search-rollout-horizon) "
                              "take no --search-gumbel-k, --search-workers or --search-teacher-policy")
-        if search_rollout_horizon > 0 and not rollout_values and (
+        if search_rollout_horizon != 0 and not rollout_values and (
                 search_gumbel_k > 0 or search_ce_coef <= 0.0 or search_value_beta > 0.0):
             raise ValueError("rollout-root targets (--search-rollout-horizon) replace the Gumbel root: policy targets "
                              "need --search-ce-coef > 0 and neither --search-gumbel-k nor --search-value-beta; value "
                              "targets (R49) need --search-value-beta > 0 and --search-ce-coef 0")
         if search_teacher_policy and (search_teacher_net is None or search_ce_coef <= 0.0 or search_gumbel_k > 0
-                                      or search_rollout_horizon > 0 or search_workers > 0):
+                                      or search_rollout_horizon != 0 or search_workers > 0):
             raise ValueError("--search-teacher-policy targets a frozen teacher's raw policy: it needs "
                              "--search-teacher-checkpoint and --search-ce-coef > 0, and no other searcher")
-        if search_workers > 0 and (search_rollout_horizon <= 0 or search_teacher_net is None):
+        if search_workers > 0 and (search_rollout_horizon == 0 or search_teacher_net is None):
             raise ValueError("--search-workers prices rollout-root targets of a frozen teacher: it needs "
                              "--search-rollout-horizon > 0 and --search-teacher-checkpoint")
         if search_value_beta > 0.0 and search_gumbel_k <= 0 and not rollout_values:
@@ -492,7 +492,7 @@ class BaseNashPGTrainer:
                 # The control for the rollout teacher: the teacher's own policy, no search.
                 self._searcher = TeacherPolicyTargets(search_teacher_net, device=self.device,
                                                       subsample=search_subsample, node_filter=search_node_filter)
-            elif search_rollout_horizon > 0:
+            elif search_rollout_horizon != 0:
                 # The rollout root as the teacher's search (R32's mechanics, another searcher): its
                 # candidates' rollout values give the improved policy (ai/search/rollout_root.py).
                 self._searcher = RolloutTeacher(
@@ -520,7 +520,7 @@ class BaseNashPGTrainer:
             print(f"[X4b] search CE on: coef {self.search_ce_coef}, {search_sims} sims, "
                   f"{search_node_filter}, subsample {search_subsample}"
                   + (f", rollout-root targets k={search_rollout_k}, {search_rollout_worlds} worlds, horizon "
-                     f"{search_rollout_horizon}" if search_rollout_horizon > 0 else
+                     f"{search_rollout_horizon}" if search_rollout_horizon != 0 else
                      f", Gumbel improved-policy targets k={search_gumbel_k}, root T={search_prior_temperature}"
                      if search_gumbel_k > 0 else ", visit-count targets"), flush=True)
         self.search_gumbel_k = int(search_gumbel_k)
@@ -2077,7 +2077,7 @@ class BaseNashPGTrainer:
                 res = [got.get(j, ([], _np.zeros(0))) for j in range(len(queue))]
             for s0 in range(0, len(queue) if self._search_pool is None else 0, SEARCH_CHUNK):
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
-                if self.search_gumbel_k > 0 or self.search_rollout_horizon > 0 or self.search_teacher_policy:
+                if self.search_gumbel_k > 0 or self.search_rollout_horizon != 0 or self.search_teacher_policy:
                     res.extend(self._searcher.improved_policies(chunk))
                     # The Gumbel root keeps its values on its root; ContinuationValues (R49) on itself.
                     root = getattr(self._searcher, "_gumbel", self._searcher)

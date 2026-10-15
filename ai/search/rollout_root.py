@@ -53,11 +53,16 @@ _MAX_ROLLOUT_STEPS = 400
 _ROWS = 4096
 
 
+#: `RolloutConfig.horizon` for playouts to the end of the decision's turn (the engine's
+#: `rollout::kTurnEnd`): each stops at the first position of the next turn.
+TURN_END = -1
+
+
 @dataclass
 class RolloutConfig:
     k: int = 4
     worlds: int = 16
-    horizon: int = 4
+    horizon: int = 4            # action-round boundaries; TURN_END (-1) = to the end of the turn
     rule: str = "z2"
     seed: int = 0
 
@@ -404,4 +409,5 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
                         horizon=int(field(4) or d.horizon), rule=field(5) or d.rule)
     parse_rule(cfg.rule)
-    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}-h{cfg.horizon}-{cfg.rule}"
+    horizon = "turn" if cfg.horizon == TURN_END else str(cfg.horizon)
+    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}-h{horizon}-{cfg.rule}"

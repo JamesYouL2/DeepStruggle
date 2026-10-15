@@ -48,7 +48,10 @@ This directory contains the Python native extension module (`ts_engine`) built w
   headline forgotten); `RolloutBatch` holds the worlds of one or more decisions -- each candidate
   move in each sampled world, one dice stream per world with `shared_dice` -- and plays them
   greedily to a horizon of action-round boundaries with the DEFCON-2 suicide guard, marking terminal
-  rows with their result and rows at the horizon as leaves. The network stays outside: the caller
+  rows with their result and rows at the horizon as leaves. `horizon = kTurnEnd` (-1, 2026-10-15)
+  plays instead to the end of the decision's turn: a row stops at the first position whose turn
+  differs from the decision's, however many action rounds the turn turns out to have (P33: what the
+  critic misses at the searched player's leaks is visible by the turn's end, not within 4 boundaries). The network stays outside: the caller
   loops `fill_live` -> logits -> `step` until `all_done`, then `fill_leaves` -> critic ->
   `set_leaf_values`, then reads `values`. The root's choice is here too: `top_candidates` (the k
   most probable legal moves from the root's logits), `parse_rule` (argmax / z<x> / kl<t>) and

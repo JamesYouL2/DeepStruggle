@@ -9,7 +9,8 @@
 // candidates' values in a world differ only by the move. A world in which any candidate is illegal
 // (The Cambridge Five can change the legal set) is dropped for every candidate. Each row then plays
 // greedily -- both sides the network's argmax -- through `horizon` action-round boundaries (a change
-// of turn, action round, phasing side or phase; 0 reads the position the move leads to), with the
+// of turn, action round, phasing side or phase; 0 reads the position the move leads to; kTurnEnd, -1,
+// plays to the end of the turn the decision is in and reads the first position of the next), with the
 // DEFCON-2 suicide guard when `guard` is set: at a play mode, an event branch or a coup's target,
 // a greedy move that ends the game against its own player on the spot is replaced by the next-best
 // of the top four that does not. A finished game is the row's value from the mover's side; a row
@@ -36,8 +37,13 @@ void determinize(GameState& s, Player me, uint64_t& rng) noexcept;
 // The side to act at `s`: the decision's player, else the phasing player (ai/search/pimcts.acting_player).
 Player acting_player(const GameState& s) noexcept;
 
+// `Config::horizon` for a playout to the end of the turn: a row stops at the first position whose
+// turn differs from the decision's (the next turn's start), wherever in the turn the decision was and
+// however many action rounds the turn turns out to have (North Sea Oil, the space race's eighth).
+constexpr int kTurnEnd = -1;
+
 struct Config {
-    int horizon = 4;            // action-round boundaries to play through; 0 = none
+    int horizon = 4;            // action-round boundaries to play through; 0 = none; kTurnEnd = to the turn's end
     bool shared_dice = true;    // one dice stream per world, every candidate
     bool guard = true;          // the DEFCON-2 suicide guard in the playouts
     uint32_t features = 0;      // obs_features bits the network reads (0: the base layout)
@@ -50,6 +56,7 @@ struct Row {
     uint16_t candidate;         // index into that decision's candidate list
     int32_t crossed;            // action-round boundaries crossed so far
     uint8_t turn, action_round; // the row's current key, with phasing and phase below
+    uint8_t start_turn;         // the decision's turn (kTurnEnd stops when the turn differs from it)
     Player phasing;
     Phase phase;
     bool done, terminal, leaf_valued, refused;

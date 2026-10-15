@@ -94,7 +94,7 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
-@pytest.mark.parametrize("seed,plies,horizon", [(21, 70, 2), (34, 150, 1), (47, 40, 0)])
+@pytest.mark.parametrize("seed,plies,horizon", [(21, 70, 2), (34, 150, 1), (47, 40, 0), (58, 90, -1)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int,
                                                                  tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and

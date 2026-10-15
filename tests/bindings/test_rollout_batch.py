@@ -1,7 +1,8 @@
 """bindings/rollout_batch.hpp through the Python module: the determinizer keeps every count and
 every seen card, the batch builds k x worlds rows and drops a world whole, a horizon of 0 is all
 leaves, a row stops exactly at its horizon, shared dice give a world's candidates one stream, the
-leaves are read from the mover's side, and an illegal candidate is refused."""
+leaves are read from the mover's side, an illegal candidate is refused, and a turn-end horizon (-1)
+stops every row at the first position of the next turn."""
 from __future__ import annotations
 
 from typing import List, Tuple
@@ -256,3 +257,22 @@ def test_decide_keeps_the_policys_move_without_a_clear_lead() -> None:
     assert d["lead"][1] == pytest.approx(0.025, abs=1e-6) and d["lead_se"][1] > 0.1
     assert d["pick"] == cands[0]                                   # not two standard errors clear
     assert ts.rollout_decide(b, 0, cands, logits, mask, "argmax")["pick"] == cands[1]
+
+
+def test_a_turn_end_horizon_stops_every_row_at_the_next_turns_first_position() -> None:
+    st = _position()
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=-1, shared_dice=True, guard=True, features=0, seed=17)
+    b.add(st, cands, 4)
+    assert b.rows() > 0
+    _play(b, seed=3)
+    assert b.refused() == 0
+    for r in range(b.rows()):
+        assert b.row_done()[r]
+        if not b.row_terminal()[r]:
+            assert int(b.row_state(r).turn) == int(st.turn) + 1      # stopped as soon as the turn changed
+
+
+def test_a_horizon_below_turn_end_is_refused() -> None:
+    with pytest.raises(ValueError):
+        ts.RolloutBatch(horizon=-2)

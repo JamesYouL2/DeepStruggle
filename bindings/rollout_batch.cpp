@@ -126,7 +126,7 @@ void RolloutBatch::settle_and_mark(Row& r) noexcept {
         ++r.crossed;
         record_key(r);
     }
-    if (r.crossed >= cfg_.horizon) r.done = true;
+    if (cfg_.horizon == kTurnEnd ? r.state.turn != r.start_turn : r.crossed >= cfg_.horizon) r.done = true;
 }
 
 size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds) {
@@ -161,6 +161,7 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
             r.position = position;
             r.world = world_index;
             r.candidate = static_cast<uint16_t>(c);
+            r.start_turn = base.turn;
             r.value = std::numeric_limits<float>::quiet_NaN();
             if (!Engine::step_flat(r.state, candidates[c])) {
                 r.refused = r.done = true;
@@ -174,7 +175,8 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
                 } else {
                     record_key(r);
                     r.crossed = 0;
-                    r.done = cfg_.horizon <= 0;
+                    // A move that ends the turn has already reached the next one: its row is a leaf.
+                    r.done = cfg_.horizon == kTurnEnd ? r.state.turn != r.start_turn : cfg_.horizon <= 0;
                 }
             }
             rows_.push_back(r);

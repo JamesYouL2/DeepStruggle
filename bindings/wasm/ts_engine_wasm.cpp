@@ -259,7 +259,7 @@ TS_API void ts_determinize(int player, uint32_t seed_lo, uint32_t seed_hi) {
 
 TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t features,
                             uint32_t seed_lo, uint32_t seed_hi) {
-    if (horizon < 0) { g_error = "horizon must be >= 0"; return 0; }
+    if (horizon < ts::rollout::kTurnEnd) { g_error = "horizon must be >= 0, or -1 for the end of the turn"; return 0; }
     if (features & ~ts::obs_features::ALL) { g_error = "unknown obs_features bit"; return 0; }
     const uint64_t seed = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
     g_rollout = std::make_unique<ts::rollout::RolloutBatch>(
