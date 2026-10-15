@@ -133,10 +133,18 @@ later of the two.
 * **Stopping at the turn's end is level to slightly better** (+1.2 / +1.4, each under 1 SE; pooled
   ~1.2 SE): positive in both seats, not significant. The play-time root does not lose by reading the
   critic at the turn boundary instead of 4 boundaries ahead.
-* **Stopping at the later of the two is worse** (−1.8 / −2.7, ~2 SE): the extra plies beyond 4
-  boundaries early in a turn cost more in per-world noise than they add. The difference between the
-  two is the late-turn decisions, where `turn` stops sooner and reads the critic at a turn boundary --
-  the position the critic is best at (it is the start of a turn, not the middle of one).
+* **Stopping at the later of the two is worse** (−1.8 / −2.7, ~2 SE).
+* **The two results split by position in the turn.** Where the turn's end lies beyond 4 boundaries
+  (early in a turn) `later` and `turn` are the same rule -- both play on to the turn's end. Where it
+  comes sooner (late in a turn) `later` is today's root and `turn` stops early, at the boundary. So
+  `later` − today = E, the effect of playing on to the turn's end early in a turn: **≈ −2.2 points**;
+  and `turn` − today = E + L, with L the effect of stopping at the turn's end late in a turn:
+  **L ≈ +3.5 points** (each ± ~1.6, from two 2,000-game matches). Read together: a leaf at the turn
+  boundary is worth having when it is nearer than 4 boundaries, not when reaching it costs extra
+  plies. The rule that takes only the good half -- the *earlier* of 4 boundaries and the turn's end --
+  is predicted at about +L over today's root; it is not built (a fourth `stop` value).
+* 4 boundaries beat 2 by +35 Elo on the soup ([`E7_search_depth_and_value.md`](E7_search_depth_and_value.md)),
+  so a shorter stop alone is not what helps: the leaf's position in the turn is.
 * For R52: a turn-end leaf is at least as good as today's in play, at 16 worlds, without training.
   A critic trained toward turn-end values has the noise averaged out, which a single search
   decision cannot do.
