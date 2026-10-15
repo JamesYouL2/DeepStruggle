@@ -130,6 +130,8 @@ later of the two.
 | `turn`, replicate on other deals (`--base-seed 20000`) | 51.1% | 53.9% | 48.4% | −0.2 | +2.5 |
 | `turn`, both (4,000 games) | **51.2%** | 54.6% | 47.9% | +0.5 | +2.0 |
 | `earlier` (the turn's end if within 4 boundaries) | **51.9%** | 56.6% | 47.2% | **+2.5** | **+1.3** |
+| `earlier`, replicate on other deals (`--base-seed 20000`) | 52.0% | 54.9% | 49.2% | +0.8 | +3.3 |
+| `earlier`, both (4,000 games) | **51.95%** | 55.8% | 48.2% | **+1.7** | **+2.3** |
 | `later` | 47.8% | 52.3% | 43.2% | −1.8 | −2.7 |
 | the searched soup's own self-play bar | — | 54.1% | 45.9% | | |
 
@@ -147,9 +149,10 @@ later of the two.
   boundary is worth having when it is nearer than 4 boundaries, not when reaching it costs extra
   plies. The rule that takes only the good half -- the *earlier* of 4 boundaries and the turn's end --
   is predicted at about +L over today's root.
-* **The earlier rule, measured** (`stop=earlier`, same deals): **51.9%, +2.5 / +1.3**, the best of the
-  four stops and above the bar in both seats; about 1.7 SE above level, against a prediction of ~+3.5
-  points (within its error). Consistent with the split: the leaf at the turn boundary helps when it is
+* **The earlier rule, measured** (`stop=earlier`): **51.9%, +2.5 / +1.3** on the first deals, 52.0%
+  (+0.8 / +3.3) on the replicate's; pooled over 4,000 games **51.95%, +1.7 / +2.3, ~2.5 SE above level
+  (~+14 Elo)**, above the bar in both seats in both runs -- the best of the four stops, against a
+  prediction of ~+3.5 points (within its error). Consistent with the split: the leaf at the turn boundary helps when it is
   nearer than 4 boundaries.
 * 4 boundaries beat 2 by +35 Elo on the soup ([`E7_search_depth_and_value.md`](E7_search_depth_and_value.md)),
   so a shorter stop alone is not what helps: the leaf's position in the turn is.

@@ -423,7 +423,8 @@ over several turns — the same fault R49 and R52 target — and R43 is re-run a
   boundaries and the turn's end) against today's root on the R34 soup, 16 worlds: 47.8%, −1.8 / −2.7
   against the seat bars; `stop=turn` (the turn's end, whether sooner or later than 4 boundaries):
   **51.3%, +1.2 / +1.4** (replicate on other deals 51.1%; pooled 51.2%, +0.5 / +2.0); `stop=earlier`
-  (the turn's end when it comes within 4 boundaries): **51.9%, +2.5 / +1.3**, the best of the four. A turn-end leaf holds up in
+  (the turn's end when it comes within 4 boundaries): **51.9%, +2.5 / +1.3**, replicate 52.0%; pooled
+  **51.95%, ~2.5 SE, ~+14 Elo** -- the best of the four, a play-time candidate (designation is the owner's). A turn-end leaf holds up in
   play without training; R52 trains the critic toward it with the noise averaged out.
 * **R52 built** (`--search-value-beta 0.5 --search-rollout-horizon 4 --search-rollout-stop turn`,
   π_ref's greedy continuation to the turn's end, k = 1): proposed with an unchanged A13+R48
