@@ -247,11 +247,11 @@ def annotate(a: argparse.Namespace) -> int:
     player: Any = None
     if a.player:
         head, _, rest = a.player.partition(":")
-        player = load_agent(f"{head}:{a.model}" + (f":{rest}" if rest else ""), device="cpu")
+        player = load_agent(f"{head}:{a.model}" + (f":{rest}" if rest else ""), device=a.device)
     searchers = []
     for label, sims, kk in budgets:
         spec = f"gumbel:{a.model}:{sims}:{kk}"
-        searchers.append((label, f"gumbel:{sims}:{kk}", load_agent(spec, device="cpu")))
+        searchers.append((label, f"gumbel:{sims}:{kk}", load_agent(spec, device=a.device)))
     t0 = time.time()
     total = 0
     for gi, g in enumerate(todo):
@@ -475,7 +475,13 @@ def playouts(a: argparse.Namespace) -> int:
         from tools.lib.player_agent import load_agent
         searcher = load_agent(f"gumbel:{a.model}:{a.continue_with}", device="cpu")
     t0 = time.time()
-    with gzip.open(a.out, "wt") as f:
+    # A row's pairs are seeded from its id alone, so a part cut short can be finished: --resume keeps
+    # the rows already written and plays only the rest, appending.
+    written = {r["id"] for r in read_rows([a.out])} if a.resume and os.path.exists(a.out) else set()
+    if written:
+        rows = [r for r in rows if r["id"] not in written]
+        print(f"resuming: {len(written)} rows already in {a.out}, {len(rows)} to play", file=sys.stderr, flush=True)
+    with gzip.open(a.out, "at" if a.resume else "wt") as f:
         for lo in range(0, len(rows), a.chunk):
             batch = rows[lo:lo + a.chunk]
             positions = [(state_from_token(r["pos"]), [int(m) for m in r["pmoves"]]) for r in batch]
@@ -1577,6 +1583,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="a searched player plays instead, e.g. rollout:4:32:4:z2 (on --model); rows study its move")
     an.add_argument("--budgets", nargs="+", default=list(DEFAULT_BUDGETS), help="label=sims:k")
     an.add_argument("--chunk", type=int, default=64, help="positions per search call")
+    an.add_argument("--device", default="cpu", help="where the player and searchers run the network (cpu, cuda)")
     an.add_argument("--out", required=True)
     an.add_argument("--resume", action="store_true")
     se = sub.add_parser("select", help="the stratified bank from annotated positions")
@@ -1619,6 +1626,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="play both sides on with Gumbel search of --model at SIMS evaluations and "
                          "K candidates (e.g. 16:4) instead of the raw network")
     pl.add_argument("--out", required=True)
+    pl.add_argument("--resume", action="store_true", help="skip the rows already in --out and append the rest")
     cs = sub.add_parser("china-select", help="the China Card bank: card choices with the China Card playable")
     cs.add_argument("--annotated", nargs="+", required=True)
     cs.add_argument("--cap", type=int, default=30, help="positions per stratum at most")
