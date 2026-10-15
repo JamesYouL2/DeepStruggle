@@ -92,7 +92,7 @@
     "description": "R48's plateau state (9,170M) widened in place to 512-wide grouped input projections (--resume-widen; A13), R48's recipe, trained to 12,000M (research/runs.md).",
     "old_names": [],
     "hf": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt",
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+R34_7200M+R48_9170M+A13_11920..12000M.md"
   },
   "E7-A8-R1-S44@6400M+R39@7120..7200M": {
     "file": "checkpoints/E7-A8-R1-S44@6400M+R39_20261011_145632/swa_7120-7200M.pt",
@@ -100,7 +100,7 @@
     "description": "R32's online improved-policy distillation with the rollout root as the teacher's search: the plain heads run from 6,400M taught by the frozen R34 soup (E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M) searched by the rollout root (k=4, 16 worlds, 4 boundaries), search CE 0.1 at 1 in 256 decisions, to 7,200M; SWA of its last 80M. Beats the raw R34 soup 54.4%",
     "old_names": [],
     "hf": "E7-A8-R1-S44@6400M+R39_20261011_145632/swa_7120-7200M.pt",
-    "report": null
+    "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+R39_7120..7200M.md"
   },
   "E7-A8-R1-S44@6720..6800M": {
     "file": "checkpoints/E7-A8-R1-S44_20261007_162257/swa_6720-6800M.pt",
