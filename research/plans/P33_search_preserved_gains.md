@@ -381,6 +381,12 @@ code R50) from 12,400M, ~1,350 park rows a rollout; control A13+R48 leg 4. **Bas
 critic, A13+R48 SWA 12,320–12,400M, 512 greedy games, 3,728 parks; `data/logs/temp/predeal_baseline_a13.out`):
 log loss 0.491 (US side) / 0.500 (USSR side) against 0.496 for the decider's reading over all decisions;
 v_US + v_USSR −0.043, mean |sum| 0.079 (0.138 at decisions) -- already about as good as at a decision.
+**In games the untrained critic is a poor pre-deal leaf** (the R34 soup, 1,000 deals a side, against the
+soup under `earlier`+own; `data/reports/predeal_base_*`): `stop=predeal` **41.6%** (40.3 / 43.0),
+`stop=earlier_predeal` **38.9%** (38.5 / 39.3). Calibrated on average, it does not resolve the differences
+between candidates' parks, a position it has never trained on; mixing park and 4-boundary leaves in one
+comparison is worse still. The trained arm has ~8 points (~60 Elo) to recover before the pre-deal root
+breaks even.
 
 **Reads.** (1) The critic at pre-deal states: both sides' log loss and sum, arm against control. (2) P33c's
 leak pairs read at the pre-deal state. (3) Searched: the arm's SWA under `stop=predeal` and under
