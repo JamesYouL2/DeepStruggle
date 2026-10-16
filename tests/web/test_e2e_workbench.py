@@ -201,7 +201,7 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     in a worker) against the same loop in Python with torch (ai/search/rollout_root.py), on the same
     position, the same candidates, the same worlds and the same seed. The engine's part is identical
     by construction; the networks differ only in onnxruntime's and torch's last bits."""
-    spec = "rollout:3:2:1:z2"
+    spec = "rollout:3:2:1:z2:earlier:own"
     page = _open(browser, server + f"/?search={spec}")
     _pick_local_model(page)
     assert page.input_value("#search-mode-select") == "rollout"
@@ -218,7 +218,7 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     state = ts.state_from_save_json(page.evaluate("window.__wb.engine.saveJson()"))
     seed = (page.evaluate("window.__wb.state.step_index") + 1) * 1_000_003
     model = NeuralAgent.from_checkpoint(checkpoint["path"], device="cpu").model
-    root = RolloutRoot(model, RolloutConfig(k=3, worlds=2, horizon=1, rule="z2"))
+    root = RolloutRoot(model, RolloutConfig(k=3, worlds=2, horizon=1, rule="z2", stop="earlier", leaf_side="own"))
     root.reseed(0)
     # RolloutRoot draws the batch's seed from its own stream; drive the batch directly instead.
     p = state.ctx().decision_player
@@ -228,7 +228,7 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
         logits = model(torch.from_numpy(obs), torch.from_numpy(mask[None]))[0].float().numpy()[0]
     cands = ts.rollout_candidates(np.ascontiguousarray(logits), mask, 3)
     assert cands == s["candidates"], "the page and Python rank the root's moves differently"
-    batch = ts.RolloutBatch(horizon=1, shared_dice=True, guard=True, features=0, seed=seed)
+    batch = ts.RolloutBatch(horizon=1, shared_dice=True, guard=True, features=0, seed=seed, stop="earlier", leaf="own")
     batch.add(state, cands, 2)
     root._playouts(batch)
     d = ts.rollout_decide(batch, 0, cands, np.ascontiguousarray(logits), mask, "z2")
