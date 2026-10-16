@@ -460,6 +460,8 @@ over several turns — the same fault R49 and R52 target — and R43 is re-run a
   (the turn's end when it comes within 4 boundaries): **51.9%, +2.5 / +1.3**, replicate 52.0%; pooled
   **51.95%, ~2.5 SE, ~+14 Elo** -- the best of the four, a play-time candidate (designation is the owner's). A turn-end leaf holds up in
   play without training; R52 trains the critic toward it with the noise averaged out.
-* **R52 built** (`--search-value-beta 0.5 --search-rollout-horizon 4 --search-rollout-stop turn`,
-  π_ref's greedy continuation to the turn's end, k = 1): proposed with an unchanged A13+R48
-  control from 12,000M, 400M each; awaiting the owner.
+* **R52 launched 2026-10-16 as recipe code R49** (`run_codes` gives the next free code; this plan's R49
+  approach was never launched): `…+A13@12010M+R49`, `--search-value-beta 0.5 --search-rollout-horizon 4
+  --search-rollout-stop turn --search-rollout-leaf-side own --search-subsample 0.0078125`, from the
+  12,010M state (the 12,000M one was overwritten by the control's first save), 400M; control: A13+R48
+  continued unchanged (leg 3, 12,000 → 12,400M). Approved by the owner.
