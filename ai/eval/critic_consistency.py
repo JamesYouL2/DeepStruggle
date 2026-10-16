@@ -16,6 +16,10 @@ a critic can be wrong *as a leaf evaluator* while being calibrated on average (P
 4. **The deal.** At turn boundaries the next turn's cards are dealt. From the last decision of a turn,
    the same move is replayed under many reseeded deals: the mean value after the deal should equal the
    value before it (from the same side, on-distribution where that side decides).
+6. **The turn-end park** (pre-deal): every env's position after a turn's last action, before the deal
+   (`VectorizedBatchRunner.set_capture_predeal`), read from both sides -- the rows the pre-deal critic
+   (`--predeal-value-coef`) trains on and the root's `stop=predeal` reads: log loss of each side's reading
+   against the result, and their sum.
 5. **The root's leaves** (`--bank`): per stop rule, the share of rollout-root leaves whose decider is the
    root mover (the reading the critic was trained on), and at the others how far the mover's reading is
    from the decider's sign-corrected one.
@@ -64,6 +68,8 @@ class Table:
     phase: List[str] = field(default_factory=list)
     v_dec: List[float] = field(default_factory=list)
     v_non: List[float] = field(default_factory=list)
+    #: The turn-end parks: (game, turn, v_US from the US side, v_USSR from the USSR side).
+    parks: List[Tuple[int, int, float, float]] = field(default_factory=list)
 
 
 def _values(model: Any, device: Any, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
@@ -79,6 +85,7 @@ def play(model: Any, device: Any, num_envs: int, seed: int, max_boundaries: int,
     runner = ts.VectorizedBatchRunner(num_envs, seed)
     if feats:
         runner.set_obs_features([feats] * num_envs, [feats] * num_envs)
+    runner.set_capture_predeal(True)
     tab = Table()
     done = np.zeros(num_envs, dtype=bool)
     bounds: List[Boundary] = []
@@ -109,6 +116,15 @@ def play(model: Any, device: Any, num_envs: int, seed: int, max_boundaries: int,
             tab.v_dec.append(float(v_dec[i]))
             tab.v_non.append(float(v_non[i]))
         runner.step_flat_all([int(a) for a in picks], auto_advance=True)
+        flags, pus, pussr = (np.array(x) for x in runner.get_predeal())
+        pe = np.flatnonzero(flags)
+        if pe.size:
+            zero = np.ones((pe.size, masks.shape[1]), dtype=masks.dtype)
+            vu = _values(model, device, np.ascontiguousarray(pus[pe], dtype=np.float32), zero)
+            vr = _values(model, device, np.ascontiguousarray(pussr[pe], dtype=np.float32), zero)
+            for j, i in enumerate(pe):
+                tab.parks.append((seed * 100_000 + int(i), int(states[int(i)].turn) if int(i) in states else 0,
+                                  float(vu[j]), float(vr[j])))
         if len(bounds) < max_boundaries:
             term = np.asarray(runner.get_terminals(), dtype=bool)
             for i in live:
@@ -238,6 +254,19 @@ def report(tab: Table, outcome: Dict[int, float], deal_rows: Optional[List[Tuple
             cells.append(f"{_ll((vd[sel] + 1) / 2, y[sel]).mean():9.4f}" if sel.sum() >= 200 else f"{'—':>9s}")
         out.append(f"   {name:12s}" + "".join(cells))
 
+    if tab.parks:
+        pg = np.asarray([p[0] for p in tab.parks])
+        pk = np.asarray([outcome.get(int(x), 0.0) != 0.0 for x in pg])
+        vu = np.asarray([p[2] for p in tab.parks])
+        vr = np.asarray([p[3] for p in tab.parks])
+        uw = np.asarray([1.0 if outcome.get(int(x), 0.0) > 0 else 0.0 for x in pg])
+        m, se = _clustered_mean((vu + vr)[pk], pg[pk])
+        out.append(f"\n6. The turn-end park (after the last action, before the deal): {int(pk.sum())} positions "
+                   f"in decided games")
+        out.append(f"   mean v_US + v_USSR {m:+.3f} ± {se:.3f}, mean |sum| {np.abs(vu + vr)[pk].mean():.3f}")
+        out.append(f"   log loss: the US side's reading {_ll((vu[pk] + 1) / 2, uw[pk]).mean():.4f}, the USSR side's "
+                   f"{_ll((vr[pk] + 1) / 2, 1 - uw[pk]).mean():.4f}, their average "
+                   f"{_ll((vu[pk] - vr[pk] + 2) / 4, uw[pk]).mean():.4f}")
     if deal_rows:
         out.append("\n4. The deal: mean value after reseeded deals minus the value before (the last mover's frame)")
         gd = np.asarray([r[0] for r in deal_rows])
