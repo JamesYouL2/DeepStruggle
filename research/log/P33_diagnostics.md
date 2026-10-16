@@ -285,6 +285,10 @@ mover's side: on the training distribution *and* with the mover's own hand. Same
   The rollout root with `stop=earlier, leaf=own` is the strongest searched player measured, at no
   extra network cost beyond the few plies of extension; designating it the deployed root is the owner's
   call. The leaf fix alone (today's stop) is worth ~+16 Elo.
+* **On the E7 leaderboard** (against the 7 main players, 1,000 deals a side each, engine cd152a19 after a
+  greedy and a rollout pairing replayed their records exactly): `…(R34,R34-S45,R34-S46)@7120..7200M~
+  rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)` **1804 ± 4**, the top searched player,
+  against 1791 for the same soup under today's root -- +13, a little under the +21 measured head to head.
 
 ## P33b — the critic on greedy against sampled games
 
