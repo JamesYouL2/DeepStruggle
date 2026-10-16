@@ -31,6 +31,7 @@ from typing import Any, Dict, Tuple, cast
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import ts_engine as ts
 
 from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
                                       ColdWarNetV2, static_input_mask)
@@ -93,6 +94,63 @@ class _LeakUp(torch.autograd.Function):
         return ctx.leak * weight * grad.clamp(max=0.0), None, None
 
 
+def region_bounds() -> list[tuple[int, int]]:
+    """The [lo, hi) country-id range of each region: the engine numbers countries region by region
+    (Europe 0-20, Middle East 21-30, Asia 31-45, Africa 46-63, Central America 64-73, South America
+    74-83), so a region is a slice. Raises if that ever stops being true."""
+    regs = [str(ts.MapData.get_country_info(i)["region"]) for i in range(84)]
+    bounds, start = [], 0
+    for i in range(1, 85):
+        if i == 84 or regs[i] != regs[start]:
+            bounds.append((start, i))
+            start = i
+    if len({regs[lo] for lo, _ in bounds}) != len(bounds):
+        raise RuntimeError("country ids are no longer contiguous by region; RegionAttention slices them")
+    return bounds
+
+
+class RegionAttention(nn.Module):
+    """Cell A (owner, 2026-10-16): the per-country head's inputs compared within their region before the
+    head reads them. Each country's input is joined with the mean of its map neighbours' (access across
+    region borders, one GEMM), then attends to the countries of its own region -- six slices of at most
+    21 -- and the result is added residually. The output projection starts at zero, so a network grown
+    with it plays as the one without it."""
+
+    def __init__(self, in_dim: int, dim: int, heads: int) -> None:
+        super().__init__()
+        if dim % heads:
+            raise ValueError(f"region attention width {dim} is not a multiple of its {heads} heads")
+        self.dim, self.heads = int(dim), int(heads)
+        self.bounds = region_bounds()
+        self.norm = nn.LayerNorm(2 * in_dim)
+        self.qkv = nn.Linear(2 * in_dim, 3 * dim)
+        self.out = nn.Linear(dim, in_dim)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+        nb = torch.zeros(84, 84)
+        for i in range(84):
+            js = [int(j) for j in ts.MapData.get_country_info(i)["neighbors"] if 0 <= int(j) < 84]
+            for j in js:
+                nb[i, j] = 1.0 / len(js)
+        # The map the layer was built with, and its head count, travel with the weights.
+        self.register_buffer("neighbour_mean", nb)
+        self.register_buffer("n_heads", torch.tensor(int(heads)))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, n, d = x.shape
+        nb_m = cast(torch.Tensor, self.neighbour_mean)
+        nb = (nb_m @ x.transpose(0, 1).reshape(n, b * d)).view(n, b, d).transpose(0, 1)
+        qkv = self.qkv(self.norm(torch.cat([x, nb], dim=-1)))             # (B, 84, 3 dim)
+        dh = self.dim // self.heads
+        outs = []
+        for lo, hi in self.bounds:
+            s = hi - lo
+            blk = qkv[:, lo:hi].reshape(b, s, 3, self.heads, dh).permute(2, 0, 3, 1, 4)   # (3, B, H, s, dh)
+            att = torch.softmax(blk[0] @ blk[1].transpose(-1, -2) * dh ** -0.5, dim=-1)
+            outs.append((att @ blk[2]).transpose(1, 2).reshape(b, s, self.dim))
+        return x + self.out(torch.cat(outs, dim=1))
+
+
 class LadderNet(ColdWarNetV2):
     """A P21 rung. All structural axes are explicit; see the module docstring."""
 
@@ -136,6 +194,8 @@ class LadderNet(ColdWarNetV2):
                  logit_cap_leak_up: float = 0.0,
                  token_layers: int = 0,
                  token_dim: int = 0,
+                 region_attn_dim: int = 0,
+                 region_attn_heads: int = 4,
                  **kwargs: Any) -> None:
         if input_mode not in INPUT_MODES:
             raise ValueError(f"input_mode must be one of {INPUT_MODES}; got {input_mode!r}")
@@ -375,6 +435,7 @@ class LadderNet(ColdWarNetV2):
             self.pe_country = (nn.Sequential(nn.Linear(tok_w + b_raw + ctx_w, k), nn.GELU(),
                                              nn.Linear(k, 1))
                                if self.head_entities in ("both", "country") else None)
+            self._country_head_in = tok_w + b_raw          # each country's input (context excluded)
             self.pe_card = (nn.Sequential(nn.Linear(tok_w + c_raw + ctx_w, k), nn.GELU(),
                                           nn.Linear(k, 1))
                             if self.head_entities in ("both", "card") else None)
@@ -508,6 +569,16 @@ class LadderNet(ColdWarNetV2):
             assert isinstance(out, nn.Linear)
             nn.init.zeros_(out.weight)
             nn.init.zeros_(out.bias)
+        # --ladder-region-attn-dim (Cell A, owner 2026-10-16): the per-country head's inputs attend to
+        # their region and neighbours before the head reads them. Registered last, so a state written
+        # without it resumes into it (generic_trainer.ADDABLE_HEADS) and plays as before: zero output.
+        self.region_attn_dim = int(region_attn_dim)
+        self.region_attn_heads = int(region_attn_heads)
+        self.region_attn: RegionAttention | None = None
+        if self.region_attn_dim:
+            if not self.per_entity_heads or self.pe_country is None:
+                raise ValueError("region attention feeds the per-country head; this network has none")
+            self.region_attn = RegionAttention(self._country_head_in, self.region_attn_dim, self.region_attn_heads)
 
     def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
         """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
@@ -652,6 +723,8 @@ class LadderNet(ColdWarNetV2):
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
+            **({"region_attn_dim": self.region_attn_dim, "region_attn_heads": self.region_attn_heads}
+               if self.region_attn_dim else {}),
         )
 
 
@@ -735,7 +808,10 @@ class LadderNet(ColdWarNetV2):
 
         card_corr = (self._entity_out(self.pe_card, torch.cat([h_cards, card_nodes], dim=-1), ctx)
                      if self.pe_card is not None else card_block * 0.0)
-        country_corr = (self._entity_out(self.pe_country, torch.cat([h_board, board_nodes], dim=-1), ctx)
+        country_in = torch.cat([h_board, board_nodes], dim=-1)
+        if self.region_attn is not None:
+            country_in = self.region_attn(country_in)
+        country_corr = (self._entity_out(self.pe_country, country_in, ctx)
                         if self.pe_country is not None else country_block * 0.0)
         return base + torch.cat([card_corr, gap_mid, country_corr, gap_end], dim=-1)
 
@@ -985,6 +1061,8 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         play_mode_head=any(k.startswith("play_mode_head_net.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
         **({"logit_cap": float(sd["logit_cap"])} if "logit_cap" in sd else {}),
+        **({"region_attn_dim": int(sd["region_attn.qkv.weight"].shape[0]) // 3,
+            "region_attn_heads": int(sd["region_attn.n_heads"])} if "region_attn.qkv.weight" in sd else {}),
     )
 
 def create_ladder_net(device: torch.device | str, **config: Any) -> LadderNet:

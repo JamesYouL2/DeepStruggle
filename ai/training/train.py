@@ -116,6 +116,10 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
            if args.ladder_token_layers else {}),
         # Owner 2026-10-06. Recorded only when on, as the token path.
         **({"branch_head": True} if getattr(args, "ladder_branch_head", False) else {}),
+        # Owner 2026-10-16 (Cell A). Recorded only when on.
+        **({"region_attn_dim": int(args.ladder_region_attn_dim),
+            "region_attn_heads": int(args.ladder_region_attn_heads)}
+           if getattr(args, "ladder_region_attn_dim", 0) else {}),
         **({"play_mode_head": True} if getattr(args, "ladder_play_mode_head", False) else {}),
         # Owner 2026-10-09. Recorded only when on.
         **({"logit_cap": float(args.ladder_logit_cap)} if getattr(args, "ladder_logit_cap", 0.0) else {}),
@@ -212,6 +216,12 @@ def build_parser() -> argparse.ArgumentParser:
                           "Scoring -- identical ops, era and is_scoring -- so a query returns an\n"
                           "average over the cards it needed to tell apart. Kept reachable as the\n"
                           "ablation that attributes the gain, not as a variant expected to work.")
+    lad.add_argument("--ladder-region-attn-dim", type=int, default=0,
+                     help="Cell A (P33): width of one masked attention layer over the per-country head's inputs, "
+                          "each country reading its region and map neighbours, zero-initialised so a resumed "
+                          "state plays as before. 0 = off.")
+    lad.add_argument("--ladder-region-attn-heads", type=int, default=4,
+                     help="Heads of the --ladder-region-attn-dim layer.")
     lad.add_argument("--ladder-token-layers", type=int, default=0,
                      help="P30 C1: transformer layers over card and country tokens (plus one\n"
                           "global token), beside the grouped projections; the global token joins\n"

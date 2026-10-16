@@ -70,6 +70,7 @@ _LADDER = {
     "branch_head": "ladder_branch_head", "play_mode_head": "ladder_play_mode_head",
     "logit_cap": "ladder_logit_cap", "logit_cap_grad": "ladder_logit_cap_grad",
     "logit_cap_leak": "ladder_logit_cap_leak", "logit_cap_leak_up": "ladder_logit_cap_leak_up",
+    "region_attn_dim": "ladder_region_attn_dim", "region_attn_heads": "ladder_region_attn_heads",
 }
 
 
@@ -160,6 +161,9 @@ def recorded(run_dir: str) -> dict:
             out.setdefault("ladder_logit_cap_grad", "tanh")
             out.setdefault("ladder_logit_cap_leak", 0.0)
             out.setdefault("ladder_logit_cap_leak_up", 0.0)
+            # Cell A's region attention (2026-10-16): recorded only when on
+            out.setdefault("ladder_region_attn_dim", 0)
+            out.setdefault("ladder_region_attn_heads", 4)
         elif k in dflt:
             out[k] = v
     # Before 2026-09-27 a run that took the default rollout bands recorded None, and the default
