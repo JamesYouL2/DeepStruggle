@@ -261,7 +261,7 @@ One Elo scale per engine epoch, kept as reviewed records in `leaderboard/` and f
 |:---|:---|
 | `networks.json` | each network: file (relative to `data/`), sha256, `hf` path once published, behaviour `report`, description, `old_names` |
 | `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`), description, its own `report` |
-| `epochs.json` | each engine epoch: accepted engine fingerprints, main players, anchor and rating |
+| `epochs.json` | each engine epoch: accepted engine fingerprints, main players, anchor and rating, and an optional `strong` tier of main players |
 | `matches/<epoch>.jsonl` | one line per pairing: both seats' w/l/d, base seed, engine, commit -- append-only |
 
 **A player is a network plus an inference spec**, spelled in its id: the bare network name is its
@@ -286,6 +286,13 @@ PYTHONPATH=. python tools/leaderboard.py validate                    # what test
 network whose sha256 changed, and uncommitted changes under `ai/ bot/ bindings/ engine/ tools/`.
 A pairing on record is skipped. Main players are the owner's choice (`epochs.json`). An engine
 change opens a new epoch unless a recorded pairing replays identically.
+
+**Strong newcomers play the strong tier** (`--strong`, owner 2026-10-16). A newcomer rated near or above
+the top of the main set plays only the epoch's `strong` main players. Against a much weaker opponent a
+game carries less information (p(1-p) at 85% is 0.13 against 0.21 at 70%), and the fit misses there:
+every strong player scored below its prediction against the weakest main players and above it against
+the strongest ([`P33_diagnostics.md`](../research/log/P33_diagnostics.md)), so weak pairings compress
+the differences at the top.
 
 **The page.** `tools/scripts/build_web.sh` runs `tools/leaderboard.py fit` into
 `web/ui/public/leaderboard.json` and builds `leaderboard.html`: each row links the player's report,

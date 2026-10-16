@@ -34,7 +34,7 @@ import math
 import pathlib
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, TypedDict
+from typing import Dict, Iterable, List, Mapping, NotRequired, Optional, Sequence, Set, Tuple, TypedDict
 
 from tools.lib.player_spec import (Inference, PlayerSpecError, Policy, kind_of, player_id, spec_from_dict)
 
@@ -77,6 +77,10 @@ class Epoch(TypedDict):
     anchor: str
     anchor_elo: float
     main: List[str]
+    #: Main players a strong newcomer plays instead of the whole main set (`leaderboard_play --strong`):
+    #: against a much weaker opponent a game carries less information and the fit's prediction misses
+    #: (owner, 2026-10-16; research/log/P33_diagnostics.md).
+    strong: NotRequired[List[str]]
 
 
 class Seat(TypedDict):
@@ -287,9 +291,12 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
     for name, ep in board.epochs.items():
         where = f"epochs.json[{name}]"
         want = {"description", "engines", "anchor", "anchor_elo", "main"}
-        if set(ep) != want:
-            errs.append(f"{where}: fields must be {sorted(want)}, got {sorted(ep)}")
+        if not want <= set(ep) <= want | {"strong"}:
+            errs.append(f"{where}: fields must be {sorted(want)} (and optionally strong), got {sorted(ep)}")
             continue
+        strong = ep.get("strong", [])
+        if any(pid not in ep["main"] for pid in strong) or len(set(strong)) != len(strong):
+            errs.append(f"{where}: the strong tier must be distinct main players")
         if not ep["engines"] or not all(isinstance(e, str) and _HEX64.match(e) for e in ep["engines"]):
             errs.append(f"{where}: engines must be a non-empty list of engine fingerprints")
         for pid in ep["main"]:

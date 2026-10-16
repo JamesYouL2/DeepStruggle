@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import pathlib
@@ -365,3 +366,14 @@ def test_a_rollout_players_stop_and_leaf_are_named_only_when_not_the_measured_ro
     assert load_spec(spec, "m.pt") == "rollout:m.pt:4:16:4:z2:earlier:own"
     with pytest.raises(PlayerSpecError):
         parse_player_id("E7-A8-R1-S44@6800M~rollout(stop=never)")
+
+
+
+def test_an_epochs_strong_tier_must_be_main_players() -> None:
+    """epochs.json's optional `strong` list: distinct main players, or validate reports it."""
+    board = lb.load()
+    ep = board.epochs["E7"]
+    good: lb.Epoch = {**ep, "strong": list(ep["main"][-2:])}
+    bad: lb.Epoch = {**ep, "strong": ["not-a-main-player"]}
+    assert not [e for e in lb.validate(dataclasses.replace(board, epochs={"E7": good})) if "strong" in e]
+    assert [e for e in lb.validate(dataclasses.replace(board, epochs={"E7": bad})) if "strong" in e]

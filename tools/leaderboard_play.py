@@ -5,8 +5,9 @@
         --epoch E7 --players <player-id> ... [--opponents <player-id> ... | --round-robin] \\
         --games-per-side 1000
 
-Every player plays every opponent (the epoch's main players unless --opponents is given), each
-pairing `--games-per-side` deals from both seats, through tools/tournament.py's batched path.
+Every player plays every opponent (the epoch's main players unless --opponents is given; `--strong`:
+the epoch's strong tier, for a newcomer rated near or above the top of the main set), each pairing
+`--games-per-side` deals from both seats, through tools/tournament.py's batched path.
 `--round-robin` plays every pairing among --players instead. A pairing already on record is
 skipped; to add games to it, pass a `--base-seed` it has not been played at (the same seed would
 replay the same deals). Each pairing is appended as it finishes, so a crash keeps what was done.
@@ -93,6 +94,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--players", nargs="+", required=True, help="player ids (leaderboard/players.json)")
     ap.add_argument("--opponents", nargs="+", default=None,
                     help="whom --players play (default: the epoch's main players)")
+    ap.add_argument("--strong", action="store_true",
+                    help="play the epoch's strong tier (epochs.json 'strong') instead of every main player: "
+                         "the protocol for a newcomer rated near or above the top of the main set")
     ap.add_argument("--round-robin", action="store_true", help="every pairing among --players instead")
     ap.add_argument("--games-per-side", type=int, default=1000)
     ap.add_argument("--base-seed", type=int, default=None,
@@ -103,8 +107,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-report", default=None, help="also write tournament.py's markdown report here")
     ap.add_argument("--dry-run", action="store_true", help="print the pairings and stop")
     a = ap.parse_args(argv)
-    if a.round_robin and a.opponents is not None:
-        ap.error("--round-robin and --opponents exclude each other")
+    if sum([a.round_robin, a.opponents is not None, a.strong]) > 1:
+        ap.error("--round-robin, --opponents and --strong exclude each other")
     try:
         return _run(a)
     except (LeaderboardError, PlayerSpecError) as e:
@@ -119,6 +123,10 @@ def _run(a: argparse.Namespace) -> int:
         raise LeaderboardError("the leaderboard records are inconsistent:\n  " + "\n  ".join(problems))
     if a.epoch not in board.epochs:
         raise LeaderboardError(f"no epoch {a.epoch!r}; epochs: {', '.join(board.epochs)}")
+    if a.strong:
+        if not board.epochs[a.epoch].get("strong"):
+            raise LeaderboardError(f"epoch {a.epoch} has no strong tier (epochs.json 'strong')")
+        a.opponents = list(board.epochs[a.epoch]["strong"])
     for pid in [*a.players, *(a.opponents or [])]:
         if pid not in board.players:
             raise LeaderboardError(f"player {pid!r} is not registered (tools/leaderboard.py add-player)")
