@@ -376,6 +376,12 @@ leaf with today's critic in games (`stop=predeal` against `earlier`+own), which 
 **The arm.** A13+R48 from 12,400M (the control's end) with R48's recipe plus `--predeal-value-coef 1.0`,
 400M; control: A13+R48 continued unchanged 12,400 → 12,800M. Two arms at once.
 
+**Launched 2026-10-16** (owner): bindings `2ff1f00`, trainer `11d9aae`, run `…+A13@12400M+R50` (recipe
+code R50) from 12,400M, ~1,350 park rows a rollout; control A13+R48 leg 4. **Baseline** (the untrained
+critic, A13+R48 SWA 12,320–12,400M, 512 greedy games, 3,728 parks; `data/logs/temp/predeal_baseline_a13.out`):
+log loss 0.491 (US side) / 0.500 (USSR side) against 0.496 for the decider's reading over all decisions;
+v_US + v_USSR −0.043, mean |sum| 0.079 (0.138 at decisions) -- already about as good as at a decision.
+
 **Reads.** (1) The critic at pre-deal states: both sides' log loss and sum, arm against control. (2) P33c's
 leak pairs read at the pre-deal state. (3) Searched: the arm's SWA under `stop=predeal` and under
 `earlier`+own against the control's SWA under its best root (`earlier`+own), per seat; raw head to head;
