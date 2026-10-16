@@ -274,7 +274,17 @@ mover's side: on the training distribution *and* with the mover's own hand. Same
   alone it is +2.3 points (~+16 Elo); with `earlier`, +3.3 (~+23 Elo), the best searched player measured.
 * Both halves matter: the decider's reading (on-distribution, without the mover's hand) and the
   mover's off-side reading (with the hand, off-distribution) are each worse than reading the mover's own
-  decision. Replicates of `earlier`+own and 4 boundaries+own on the second deal set are running.
+  decision.
+* **Replicated on the second deal set** (`--base-seed 20000`):
+
+  | | first deals | replicate | pooled, 4,000 games | per seat against the bars |
+  |:---|---:|---:|---:|---:|
+  | `earlier` + own | 53.3% | 52.8% (56.7 / 48.8) | **53.05%, ~3.9 SE, ~+21 Elo** | +4.2 / +1.9 |
+  | 4 boundaries + own | 52.3% | 52.4% (55.9 / 49.0) | **52.35%, ~3.0 SE, ~+16 Elo** | +1.8 / +3.1 |
+
+  The rollout root with `stop=earlier, leaf=own` is the strongest searched player measured, at no
+  extra network cost beyond the few plies of extension; designating it the deployed root is the owner's
+  call. The leaf fix alone (today's stop) is worth ~+16 Elo.
 
 ## P33b — the critic on greedy against sampled games
 
