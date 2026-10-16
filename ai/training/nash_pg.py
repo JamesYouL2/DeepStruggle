@@ -298,6 +298,7 @@ class BaseNashPGTrainer:
         search_rollout_worlds: int = 16,
         search_rollout_stop: str = "boundaries",   # where the rollout root's playouts stop (STOPS)
         search_rollout_leaf_side: str = "mover",   # whose side its leaves are read from (LEAF_SIDES)
+        predeal_value_coef: float = 0.0,  # P33: the critic on both sides at the turn-end park (0 = off)
         search_workers: int = 0,          # > 0: the rollout-root targets priced by worker processes
         search_teacher_policy: bool = False,   # the frozen teacher's raw policy as the target (no search)
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
@@ -548,6 +549,15 @@ class BaseNashPGTrainer:
         self._search_queue: List[Tuple[int, int, Any]] = []
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
+        #: P33, the pre-deal critic: each env's turn-end park (after a turn's last action, before the
+        #: deal; nobody's decision) is recorded from both sides by the runner, and joins the value loss
+        #: with that side's next-decision lambda-return as its target (the result where the game ends
+        #: first). _predeal_rows holds (buffer step, envs, US rows, USSR rows) until the update.
+        self.predeal_value_coef = float(predeal_value_coef)
+        self._predeal_on = False
+        self._predeal_rows: List[Tuple[int, np.ndarray, torch.Tensor, torch.Tensor]] = []
+        self._pd_obs: Optional[torch.Tensor] = None
+        self._pd_tgt: Optional[torch.Tensor] = None
         self.vp_coef = vp_coef
         self.value_dist_coef = value_dist_coef
         # P1 advantage filtering. Samples whose |advantage| falls below this quantile of the
@@ -1663,7 +1673,21 @@ class BaseNashPGTrainer:
             # collapsed two arms (entropy 1.03 -> 0.36, critic to chance) before it was found.
             self._queue_search_targets(self.buffer.step)
 
+            if self.predeal_value_coef > 0.0 and not self._predeal_on:
+                self.env.runner.set_capture_predeal(True)
+                self._predeal_on = True
+                print(f"[pre-deal] the critic on both sides at the turn-end park, coef "
+                      f"{self.predeal_value_coef}", flush=True)
             next_obs_np, next_masks_np, rewards_np, self._dones_np, self._info = self.env.step(actions_np)
+            if self._predeal_on:
+                _pf, _pus, _pussr = self.env.runner.get_predeal()
+                _pe = np.flatnonzero(np.asarray(_pf))
+                if _pe.size:
+                    _w = self.buffer.obs_dim
+                    self._predeal_rows.append((
+                        self.buffer.step, _pe,
+                        torch.from_numpy(np.array(np.asarray(_pus)[_pe, :_w])).to(self.device),
+                        torch.from_numpy(np.array(np.asarray(_pussr)[_pe, :_w])).to(self.device)))
 
             if self.setup_explore_frac > 0.0:
                 self._ep_decisions += 1
@@ -2210,6 +2234,43 @@ class BaseNashPGTrainer:
 class NashPGTrainer(BaseNashPGTrainer):
     """Standard NashPG Trainer for ColdWarNet V1, V2, and V3."""
 
+    def _build_predeal_targets(self) -> None:
+        """The pre-deal rows of this rollout with their targets, in _pd_obs / _pd_tgt. A side's target
+        is the lambda-return of its next decision in the same env (a learner row: the value targets
+        are the learner's), or the game's result if it ends first (a held scoring card or final
+        scoring at this turn end, or a win before that side moves again); a row whose next decision
+        falls outside the buffer, or is an opponent-pool snapshot's, is dropped."""
+        rows, self._predeal_rows = self._predeal_rows, []
+        self._pd_obs = self._pd_tgt = None
+        if not rows:
+            return
+        players = self.buffer.players.cpu().numpy()
+        dones = self.buffer.dones.cpu().numpy() > 0.5
+        rewards = self.buffer.rewards.float().cpu().numpy()
+        rets = self.buffer.returns_win.float().cpu().numpy()
+        learner = self.buffer.learner.float().cpu().numpy() > 0.5
+        horizon = self.buffer.buffer_size
+        obs: List[torch.Tensor] = []
+        tgt: List[float] = []
+        for t, envs, rows_us, rows_ussr in rows:
+            for j, e in enumerate(envs):
+                for side, row in ((1, rows_us[j]), (-1, rows_ussr[j])):
+                    target: Optional[float] = None
+                    for d in range(t, horizon):
+                        if dones[d, e]:
+                            target = float(np.clip(rewards[d, e] * players[d, e] * side, -1.0, 1.0))
+                            break
+                        if d + 1 < horizon and players[d + 1, e] == side:
+                            if learner[d + 1, e]:
+                                target = float(rets[d + 1, e])
+                            break
+                    if target is not None:
+                        obs.append(row)
+                        tgt.append(target)
+        if obs:
+            self._pd_obs = torch.stack(obs)
+            self._pd_tgt = torch.tensor(tgt, dtype=torch.float32, device=self.device)
+
     def _value_loss(self, cur_v_win, cur_v_vp, b_ret_win, b_ret_vp, value_logits):
         """MSE on the two scalars, or cross-entropy on the distribution.
 
@@ -2353,8 +2414,16 @@ class NashPGTrainer(BaseNashPGTrainer):
                                              _all_masks[i:i + self.batch_size])[0], dim=-1)
                     for i in range(0, _n_all, self.batch_size)])
         teacher_kl_t, teacher_rows_t = _z(), _z()
+        self._build_predeal_targets()
+        pd_loss_t, pd_batches = _z(), 0
+        _pd_rows = 0 if self._pd_tgt is None else int(self._pd_tgt.shape[0])
 
         for _ in range(self.num_epochs):
+            # Each minibatch of an epoch takes its share of the pre-deal rows, each row once an epoch.
+            _pd_chunks: List[torch.Tensor] = (
+                list(torch.tensor_split(torch.randperm(_pd_rows, device=self.device),
+                                        max(1, -(-_n_all // self.batch_size)))) if _pd_rows else [])
+            _mb = 0
             for (b_obs, b_mask, b_act, b_old_lp, b_adv, b_ret_win, b_ret_vp,
                  b_defcon_risk, b_learner, b_search_pi, b_has_search,
                  b_players, b_idx) in self.buffer.get_batches(
@@ -2626,6 +2695,16 @@ class NashPGTrainer(BaseNashPGTrainer):
                     loss = loss + self.defcon_coef * risk_loss
                     risk_loss_t += risk_loss.detach()
 
+                if _mb < len(_pd_chunks) and _pd_chunks[_mb].numel() and self._pd_obs is not None \
+                        and self._pd_tgt is not None:
+                    _sel = _pd_chunks[_mb]
+                    _pd_v = self.active_net(self._pd_obs.index_select(0, _sel), None)[1].squeeze(-1)
+                    _pd_loss = F.mse_loss(_pd_v.float(), self._pd_tgt.index_select(0, _sel))
+                    loss = loss + self.vf_coef * self.predeal_value_coef * _pd_loss
+                    pd_loss_t += _pd_loss.detach()
+                    pd_batches += 1
+                _mb += 1
+
                 self.optimizer.zero_grad()
                 if self.search_ce_coef > 0.0 and float(search_ce) != 0.0:
                     # One extra backward on the CE term alone, retaining the graph, to see what
@@ -2707,6 +2786,8 @@ class NashPGTrainer(BaseNashPGTrainer):
             "logit_gap_loss": float(gap_loss_t) / max(1, num_updates),
             "logit_gap_frac": float(gap_frac_t) / max(1, num_updates),
             "val_loss": val_loss_accum / max(1, num_updates),
+            **({"predeal_value_loss": float(pd_loss_t) / max(1, pd_batches), "predeal_rows": _pd_rows}
+               if self.predeal_value_coef > 0.0 else {}),
             "kl_div": kl_accum / max(1, num_updates),
             # 3l: per-seat approximate KL from the rollout policy (mean over minibatches), and
             # the share of minibatches in which the seat's policy terms were stopped.
