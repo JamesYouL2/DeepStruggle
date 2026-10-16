@@ -409,7 +409,8 @@ def test_a_batch_plays_the_same_rows_on_one_thread_and_on_many() -> None:
     independent and listed serially, so the observations, masks and values are bit-identical."""
     digests = []
     for threads in ("1", "8"):
-        env = {**os.environ, "OMP_NUM_THREADS": threads}
+        paths = [os.path.dirname(ts.__file__), os.environ.get("PYTHONPATH", "")]   # the engine this process imported
+        env = {**os.environ, "OMP_NUM_THREADS": threads, "PYTHONPATH": os.pathsep.join(p for p in paths if p)}
         out = subprocess.run([sys.executable, "-c", _THREADED], env=env, capture_output=True, text=True, check=True)
         digests.append(out.stdout.strip())
     assert digests[0] == digests[1] and len(digests[0]) == 64

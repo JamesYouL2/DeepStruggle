@@ -19,6 +19,7 @@ loads. So the rule is not about layouts: **no engine constant is read at import 
 `bindings.ts_env.obs_size()` is where it is read instead.
 """
 
+import os
 import subprocess
 import sys
 
@@ -50,7 +51,11 @@ print("OK")
 
 
 def test_importing_bindings_survives_an_engine_without_obs_size() -> None:
-    result = subprocess.run([sys.executable, "-c", _PROBE], capture_output=True, text=True)
+    # The child finds the engine this process imported (pytest.ini's pythonpath only reaches sys.path,
+    # not the environment a subprocess inherits).
+    paths = [os.path.dirname(ts_engine.__file__), os.getcwd(), os.environ.get("PYTHONPATH", "")]
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in paths if p)}
+    result = subprocess.run([sys.executable, "-c", _PROBE], capture_output=True, text=True, env=env)
     assert result.returncode == 0, (
         f"import chain broke against an older engine:\n{result.stderr[-2000:]}")
     assert "OK" in result.stdout
