@@ -73,6 +73,20 @@
     "description": "",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own)": {
+    "network": "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 32,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own"
+    },
+    "description": "The rollout root at 32 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
+    "report": "research/log/P33_diagnostics.md"
+  },
   "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M~rollout(k=4,worlds=64,horizon=4,rule=z2)": {
     "network": "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M",
     "inference": {
@@ -84,6 +98,20 @@
     },
     "description": "",
     "report": null
+  },
+  "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M~rollout(k=4,worlds=64,horizon=4,rule=z2,stop=earlier,leaf=own)": {
+    "network": "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 64,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own"
+    },
+    "description": "The rollout root at 64 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
+    "report": "research/log/P33_diagnostics.md"
   },
   "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M": {
     "network": "E7-A8-R1-S44@6400M+(S44,45,46)@6720..6800M",
@@ -205,6 +233,20 @@
     "description": "",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)": {
+    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 16,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own"
+    },
+    "description": "The rollout root at 16 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
+    "report": "research/log/P33_diagnostics.md"
+  },
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2)": {
     "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
     "inference": {
@@ -217,6 +259,20 @@
     "description": "",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own)": {
+    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 32,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own"
+    },
+    "description": "The rollout root at 32 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
+    "report": "research/log/P33_diagnostics.md"
+  },
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=64,horizon=4,rule=z2)": {
     "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
     "inference": {
@@ -228,6 +284,20 @@
     },
     "description": "",
     "report": null
+  },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=64,horizon=4,rule=z2,stop=earlier,leaf=own)": {
+    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 64,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own"
+    },
+    "description": "The rollout root at 64 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
+    "report": "research/log/P33_diagnostics.md"
   },
   "E7-A8-R1-S44@6400M+R39@7120..7200M": {
     "network": "E7-A8-R1-S44@6400M+R39@7120..7200M",
