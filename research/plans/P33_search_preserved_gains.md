@@ -332,6 +332,55 @@ in P32 -- rising past 0.5 inside a refresh period stops the arm. A positive R54 
 with a from-scratch cell (S = 256, the heads recipe), since it changes the training distribution
 itself.
 
+## The pre-deal critic: both sides at the turn's end, and a search that stops there (planned, 2026-10-16)
+
+**The owner's arm.** Train the critic for *both* sides at the turn's end -- after the last action, before
+the next deal -- and search with playouts that stop exactly there.
+
+**The point exists.** After a turn's last action the engine parks the game at a chance node
+(`StateMachine::begin_turn_cleanup`: no decider, `pending_roll = TURN_CLEANUP`); everything after it is
+deterministic (military-ops check, held-scoring check, China card, turn + 1, era cards, DEFCON + 1)
+except **the deal**. Auto-advance drains it, so today it is neither trained nor read. The observation
+already marks it -- decision type `ROLL_DIE` (7) has its one-hot slot (`observation.cpp`, globals
+`DECISION_TYPE + 7`) -- so no observation change is needed.
+
+**Why a leaf there should be better than anything measured.**
+* No decider, so neither side's reading is off-side once both are trained -- the problem `leaf=own` works
+  around by playing on.
+* The mover's reading keeps its own hand (held cards) and hides the opponent's, as at a decision.
+* **The deal is integrated by the critic, not sampled by the world.** Every leaf after the deal (today's
+  turn-end, `own` at a headline) carries the deal's randomness in each world; at the pre-deal state the
+  critic averages over it, removing that variance from the root's paired differences.
+* It is the turn boundary P33c found the critic needs: the turn-end read ranked the leak pairs 37.8% wrong
+  against ~47% at 4 boundaries.
+
+**Build (engine untouched; a bindings change, needs the owner).**
+1. *Runner:* during auto-advance, when an env reaches the `TURN_CLEANUP` park, record that state's
+   observation from **both** sides (and the env and step) into a side buffer the trainer reads each step,
+   then continue as today. The decision stream is unchanged.
+2. *Rollout batch:* `stop = predeal` -- a playout stops at the first `TURN_CLEANUP` park of the decision's
+   turn (or the game's end), read from the root mover's side -- and `stop = earlier_predeal`, the earlier
+   of the horizon's boundaries and that park. Both builds, parity cases, the agent string and
+   `--search-rollout-stop`.
+3. *Trainer:* `--predeal-value-coef w` (0 = off): each pre-deal row joins the value loss with the
+   λ-return of **that side's next decision** as its target (the opponent's row: the opponent's next
+   decision), the terminal result if the game ends at the turn's end (a held scoring card, final
+   scoring); a row whose next decision falls outside the rollout buffer is dropped. About 2 rows per env
+   per turn: +3% value rows.
+
+**Checks before the arm.** (a) The untrained critic at pre-deal states: log loss against the result for
+both sides and their sum (`critic_consistency`, a pre-deal section) -- the baseline; (b) the pre-deal
+leaf with today's critic in games (`stop=predeal` against `earlier`+own), which says what training must add.
+
+**The arm.** A13+R48 from 12,400M (the control's end) with R48's recipe plus `--predeal-value-coef 1.0`,
+400M; control: A13+R48 continued unchanged 12,400 → 12,800M. Two arms at once.
+
+**Reads.** (1) The critic at pre-deal states: both sides' log loss and sum, arm against control. (2) P33c's
+leak pairs read at the pre-deal state. (3) Searched: the arm's SWA under `stop=predeal` and under
+`earlier`+own against the control's SWA under its best root (`earlier`+own), per seat; raw head to head;
+the best on the leaderboard with `--strong`. **Adopt** if the arm's pre-deal root beats the control's
+best searched player by the per-seat rule with raw not lower by more than 1 SE.
+
 ## The critic on both sides (design, 2026-10-15; not built)
 
 **Why.** The trainer reads the critic only from a decision's decider; the rollout root reads leaves from
