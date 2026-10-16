@@ -388,6 +388,21 @@ between candidates' parks, a position it has never trained on; mixing park and 4
 comparison is worse still. The trained arm has ~8 points (~60 Elo) to recover before the pre-deal root
 breaks even.
 
+**Results (2026-10-16).**
+* **The critic at the park** (final SWAs 12,720–12,800M, 512 greedy games each): R50 log loss 0.449 / 0.449
+  (US / USSR side) against the control's 0.513 / 0.502; v_US + v_USSR +0.004 (|sum| 0.031) against −0.038
+  (0.088). R50's critic reads the park far better, and the two sides nearly agree there.
+* **The decision match** (R50 under `stop=predeal` vs the control under `earlier`+own, 2 × 2,000 games):
+  49.2% and 50.8%, **50.0% pooled -- level**. Training at the park closed the untrained critic's gap (41.6%)
+  but does not beat the best root.
+* **Is the training needed?** A separate head on R50's frozen trunk does not beat its main head at the park
+  (`park_head_probe`: 0.4588 against 0.4511; a correction gains 0.0035, < 1 SE) -- the trunk, not the head,
+  is the limit there. And the control with only its value head refitted at the park (frozen trunk, 117,884
+  rows, park log loss 0.4767 → 0.4664; `park_head_fit`) under `stop=predeal` scores **39.9%** (33.0 / 46.8)
+  against the control under `earlier`+own, against R50's 49.2% on the same deals. A head fitted afterwards
+  does not give the pre-deal search what joint training does: R50's training is needed to make the
+  pre-deal root viable, and with it the root is level with `earlier`+own, not better.
+
 **Reads.** (1) The critic at pre-deal states: both sides' log loss and sum, arm against control. (2) P33c's
 leak pairs read at the pre-deal state. (3) Searched: the arm's SWA under `stop=predeal` and under
 `earlier`+own against the control's SWA under its best root (`earlier`+own), per seat; raw head to head;
