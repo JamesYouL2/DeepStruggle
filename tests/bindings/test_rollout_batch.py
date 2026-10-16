@@ -368,6 +368,33 @@ def test_own_leaves_play_on_to_the_movers_next_decision() -> None:
             assert np.array_equal(obs[j], np.asarray(ts.extract_observation(s, ts.Player(mover)), dtype=np.float32))
 
 
+def test_predeal_leaves_are_the_turn_end_park_of_the_decisions_turn() -> None:
+    """stop="predeal": every non-terminal leaf is the turn-end park (nobody's decision, before the deal)
+    of the decision's own turn; "earlier_predeal": the park or the horizon, whichever came first."""
+    st = _position()
+    cands = _legal(st)[:3]
+    for stop, horizon in (("predeal", 4), ("earlier_predeal", 2), ("earlier_predeal", 30)):
+        b = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=41, stop=stop)
+        b.add(st, cands, 5)
+        _play(b, seed=9)
+        term = b.row_terminal()
+        parks = 0
+        for r in range(b.rows()):
+            if term[r]:
+                continue
+            s = b.row_state(r)
+            c = s.ctx()
+            parked = (int(c.decision_player) == 0 and c.decision_type == ts.DecisionType.ROLL_DIE
+                      and c.pending_roll_type == ts.RollType.TURN_CLEANUP)
+            if stop == "predeal" or horizon == 30:
+                assert parked and int(s.turn) == int(st.turn)
+            else:
+                assert parked or int(b.row_crossed()[r]) == horizon
+            parks += int(parked)
+        if stop == "predeal" or horizon == 30:
+            assert parks > 0                          # (2 boundaries come before this turn's end)
+
+
 def test_a_bad_horizon_or_stop_is_refused() -> None:
     with pytest.raises(ValueError):
         ts.RolloutBatch(horizon=-1)

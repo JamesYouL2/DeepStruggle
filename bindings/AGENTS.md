@@ -88,9 +88,14 @@ are cited from elsewhere; keep them.
   suicide guard, marking terminal rows with their result and stopped rows as leaves. `Config::stop`
   chooses where a playout stops: `kBoundaries` (the default and the measured root: a horizon of
   action-round boundaries), `kTurnEnd` (the first position in another turn), `kLater` (the later
-  of the two) or `kEarlier` (the earlier: the turn's end when it comes within the horizon; P33).
+  of the two), `kEarlier` (the earlier: the turn's end when it comes within the horizon), `kPredeal`
+  (the turn-end park after the last action, before the deal -- `at_turn_cleanup`, nobody's decision,
+  read from the mover's side) or `kEarlierPredeal` (the earlier of the horizon and that park; P33).
   Python: `RolloutBatch(..., stop="boundaries"|"turn"|"later"|"earlier")`; the page passes
-  `ts_rollout_reset`'s seventh argument (0 / 1 / 2 / 3). `Config::leaf` chooses whose side a leaf's
+  `ts_rollout_reset`'s seventh argument (0 / 1 / 2 / 3; 4 / 5 for the pre-deal stops, Python
+  `"predeal"` / `"earlier_predeal"`). The batch runner records the same park from both sides when
+  `set_capture_predeal(True)` (read with `get_predeal()` after each step) -- the rows P33's pre-deal
+  critic trains on; the decision stream is unchanged. `Config::leaf` chooses whose side a leaf's
   critic is read from: `kMover` (the default and the measured root: the root mover's at every leaf) or
   `kDecider` (the leaf's decider's, the side the critic is trained on, its value negated into the
   mover's frame where that is the opponent) or `kOwn` (past the stop, play on to the root mover's next

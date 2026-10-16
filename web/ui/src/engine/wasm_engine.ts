@@ -149,7 +149,8 @@ export class WasmEngine {
   }
 
   /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed, and
-   *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier). */
+   *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier, 4 the turn-end park before
+   *  the deal, 5 the earlier of the boundaries and that park). */
   rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true, stop = 0,
                leaf = 0): void {
     const ok = this.M._ts_rollout_reset(horizon, sharedDice ? 1 : 0, guard ? 1 : 0, features >>> 0,

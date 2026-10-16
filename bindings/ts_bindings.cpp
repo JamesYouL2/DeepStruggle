@@ -706,7 +706,10 @@ NB_MODULE(ts_engine, m) {
                      else if (stop == "turn") s = ts::rollout::Stop::kTurnEnd;
                      else if (stop == "later") s = ts::rollout::Stop::kLater;
                      else if (stop == "earlier") s = ts::rollout::Stop::kEarlier;
-                     else throw std::invalid_argument("stop must be 'boundaries', 'turn', 'later' or 'earlier'");
+                     else if (stop == "predeal") s = ts::rollout::Stop::kPredeal;
+                     else if (stop == "earlier_predeal") s = ts::rollout::Stop::kEarlierPredeal;
+                     else throw std::invalid_argument("stop must be 'boundaries', 'turn', 'later', 'earlier', "
+                                                      "'predeal' or 'earlier_predeal'");
                      ts::rollout::Leaf l;
                      if (leaf == "mover") l = ts::rollout::Leaf::kMover;
                      else if (leaf == "decider") l = ts::rollout::Leaf::kDecider;
@@ -973,6 +976,29 @@ NB_MODULE(ts_engine, m) {
             }
             obs_width = w;
             obs_buffer.assign(num_envs * obs_width, 0.0f);
+            alloc_predeal();
+        }
+        // P33, the pre-deal critic: with capture on, an env that passes the turn-end park during a
+        // step's auto-advance (ts::rollout::at_turn_cleanup) has that position's observation recorded
+        // from both sides, each in its side's feature set, zero-padded to obs_width. The decision stream
+        // is unchanged: the drain runs one chance node at a time and stops where it always stopped.
+        bool capture_predeal = false;
+        std::vector<uint8_t> predeal_flag;
+        std::vector<float> predeal_us, predeal_ussr;
+        void alloc_predeal() {
+            predeal_flag.assign(num_envs, 0);
+            predeal_us.assign(capture_predeal ? num_envs * obs_width : 0, 0.0f);
+            predeal_ussr.assign(capture_predeal ? num_envs * obs_width : 0, 0.0f);
+        }
+        void set_capture_predeal(bool on) { capture_predeal = on; alloc_predeal(); }
+        void record_predeal(size_t idx) {
+            for (int side = 0; side < 2; ++side) {
+                const ts::Player p = side == 0 ? ts::Player::US : ts::Player::USSR;
+                float* row = (side == 0 ? predeal_us.data() : predeal_ussr.data()) + idx * obs_width;
+                const size_t w = ts::extract_observation_features(st(idx), p, features_for(idx, p), row);
+                if (w < obs_width) std::memset(row + w, 0, (obs_width - w) * sizeof(float));
+            }
+            predeal_flag[idx] = 1;
         }
         void set_obs_features(const std::vector<uint32_t>& us, const std::vector<uint32_t>& ussr) {
             if (us.size() != num_envs || ussr.size() != num_envs)
@@ -998,7 +1024,7 @@ NB_MODULE(ts_engine, m) {
                 w = std::max(w, ts::OBS_SIZE_V23 + ts::obs_features::extra_width(feat_us[i]));
                 w = std::max(w, ts::OBS_SIZE_V23 + ts::obs_features::extra_width(feat_ussr[i]));
             }
-            if (w != before) { obs_width = w; obs_buffer.assign(num_envs * obs_width, 0.0f); refresh_all(); }
+            if (w != before) { obs_width = w; obs_buffer.assign(num_envs * obs_width, 0.0f); alloc_predeal(); refresh_all(); }
             else refresh_single(idx);
         }
 
@@ -1087,6 +1113,7 @@ NB_MODULE(ts_engine, m) {
             std::vector<int> results(num_envs, 0);
             const size_t act_count = actions.size();
             gomp_parallel_for(static_cast<int64_t>(num_envs), [&](int64_t i) {
+                if (capture_predeal) predeal_flag[i] = 0;
                 if (static_cast<size_t>(i) >= act_count) return;
                 if (st(i).current_phase == ts::Phase::GAME_OVER ||
                     st(i).victory_points >= 20 ||
@@ -1101,6 +1128,12 @@ NB_MODULE(ts_engine, m) {
                     actions[i], merged_for(static_cast<size_t>(i), decider(static_cast<size_t>(i))));
                 if (ok) {
                     if (auto_advance) {
+                        if (capture_predeal) {
+                            for (size_t k = 0; k < 256; ++k) {
+                                if (ts::rollout::at_turn_cleanup(st(i))) record_predeal(static_cast<size_t>(i));
+                                if (slots[i].auto_advance(1) == 0) break;
+                            }
+                        }
                         slots[i].auto_advance();
                     } else {
                         while (st(i).current_phase != ts::Phase::GAME_OVER &&
@@ -1305,6 +1338,20 @@ NB_MODULE(ts_engine, m) {
              nb::arg("env_index"), nb::arg("us"), nb::arg("ussr"),
              "P23 / E4.1: the same for one env; rebuilds only that env's cached mask.")
         .def("step_flat_all", &VectorizedBatchRunner::step_flat_all, nb::arg("actions"), nb::arg("auto_advance") = false)
+        .def("set_capture_predeal", &VectorizedBatchRunner::set_capture_predeal, nb::arg("on"),
+             "P33: record each env's turn-end park (after a turn's last action, before the deal) from both "
+             "sides during step_flat_all's auto-advance; read it with get_predeal after the step.")
+        .def("get_predeal", [](VectorizedBatchRunner& self) {
+                 if (!self.capture_predeal) throw std::runtime_error("get_predeal: capture is off (set_capture_predeal)");
+                 size_t shape[2] = { self.num_envs, self.obs_width };
+                 size_t fshape[1] = { self.num_envs };
+                 return nb::make_tuple(
+                     nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(self.predeal_flag.data(), 1, fshape, nb::handle()).cast(),
+                     nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.predeal_us.data(), 2, shape, nb::handle()).cast(),
+                     nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.predeal_ussr.data(), 2, shape, nb::handle()).cast());
+             },
+             "(flags, obs_us, obs_ussr) of the last step: per env, whether it passed its turn-end park, and "
+             "that position's observation from each side. Views into the runner: copy before the next step.")
         .def("get_observations", &VectorizedBatchRunner::get_observations, nb::rv_policy::reference_internal)
         .def("get_action_masks", &VectorizedBatchRunner::get_action_masks, nb::rv_policy::reference_internal)
         .def("get_decision_players", &VectorizedBatchRunner::get_decision_players)

@@ -98,7 +98,7 @@ BOTS: Final[Dict[str, Tuple[str, str]]] = {"heuristic": ("HeuristicBot", "heuris
 _NODE_FILTERS: Final = ("all", "card")
 _BACKENDS: Final = ("cpp", "python")
 #: ai.search.rollout_root's STOPS and LEAF_SIDES, without importing it (torch-free here).
-_STOPS: Final = ("boundaries", "turn", "later", "earlier")
+_STOPS: Final = ("boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal")
 _LEAVES: Final = ("mover", "decider", "own")
 #: Fields added to a kind after ids using it were published, with the value those ids meant. They are
 #: written into an id or a stored spec only when they differ from it.

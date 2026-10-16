@@ -55,7 +55,7 @@ _ROWS = 4096
 
 #: Where a playout stops (the engine's `rollout::Stop`): after `horizon` action-round boundaries (the
 #: measured root), at the end of the decision's turn, or at the later or the earlier of the two.
-STOPS = ("boundaries", "turn", "later", "earlier")
+STOPS = ("boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal")
 
 #: Whose side a leaf's critic is read from (the engine's `rollout::Leaf`): the root mover's at every leaf
 #: (the measured root), or the leaf's decider's -- the side the critic is trained on -- negated into the
@@ -524,7 +524,8 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
-    stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend", "earlier": "-untilturnend"}[cfg.stop]
-    horizon = "" if cfg.stop == "turn" else f"-h{cfg.horizon}"
+    stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend", "earlier": "-untilturnend",
+                  "predeal": "-predeal", "earlier_predeal": "-untilpredeal"}[cfg.stop]
+    horizon = "" if cfg.stop in ("turn", "predeal") else f"-h{cfg.horizon}"
     side_label = {"mover": "", "decider": "-dleaf", "own": "-ownleaf"}[cfg.leaf_side]
     return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}-{cfg.rule}"

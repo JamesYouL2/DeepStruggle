@@ -37,13 +37,27 @@ void determinize(GameState& s, Player me, uint64_t& rng) noexcept;
 // The side to act at `s`: the decision's player, else the phasing player (ai/search/pimcts.acting_player).
 Player acting_player(const GameState& s) noexcept;
 
+// The turn-end park: after a turn's last action the engine waits at a chance node
+// (StateMachine::begin_turn_cleanup) before the military-ops check, the China card, turn + 1 and the
+// deal. Nobody decides there and only the deal that follows is random -- the "pre-deal" position P33's
+// critic is trained on (the runner's capture) and searched to (Stop::kPredeal).
+inline bool at_turn_cleanup(const GameState& s) noexcept {
+    return s.current_phase != Phase::GAME_OVER && s.victory_points < 20 && s.victory_points > -20 &&
+           s.ctx().decision_player == Player::NONE && s.ctx().decision_type == DecisionType::ROLL_DIE &&
+           s.ctx().pending_roll == RollType::TURN_CLEANUP;
+}
+
 // Where a playout stops. kBoundaries: after `Config::horizon` action-round boundaries (the rollout
 // root as measured). kTurnEnd: at the first position whose turn differs from the decision's -- the next
 // turn's start, however many action rounds the turn turns out to have (North Sea Oil, the space race's
 // eighth); `horizon` is not read. kLater: at the later of the two, so at least `horizon` boundaries and
 // never inside the decision's turn. kEarlier: at the earlier of the two -- the turn's end when it comes
-// within `horizon` boundaries, else after `horizon` boundaries.
-enum class Stop : uint8_t { kBoundaries = 0, kTurnEnd = 1, kLater = 2, kEarlier = 3 };
+// within `horizon` boundaries, else after `horizon` boundaries. kPredeal: at the turn-end park of the
+// decision's turn (at_turn_cleanup: after the last action, before the deal), nobody's decision, read from
+// the root mover's side; `horizon` is not read. kEarlierPredeal: the earlier of `horizon` boundaries and
+// that park.
+enum class Stop : uint8_t { kBoundaries = 0, kTurnEnd = 1, kLater = 2, kEarlier = 3, kPredeal = 4,
+                            kEarlierPredeal = 5 };
 
 // Whose side a leaf's critic is read from. kMover: the root mover's, at every leaf (the root as measured).
 // kDecider: the leaf's own decider's -- the side the critic is trained on -- with the value negated into
@@ -72,6 +86,7 @@ struct Row {
     int32_t crossed;            // action-round boundaries crossed so far
     uint8_t turn, action_round; // the row's current key, with phasing and phase below
     uint8_t start_turn;         // the decision's turn (Stop::kTurnEnd / kLater / kEarlier read it)
+    bool parked = false;        // stopped at the turn-end park (Stop::kPredeal / kEarlierPredeal)
     Player phasing;
     Phase phase;
     bool done, terminal, leaf_valued, refused;
@@ -130,6 +145,8 @@ private:
     const char* error_ = "";
 
     void settle_and_mark(Row& r) noexcept;
+    // Auto-advance; under a pre-deal stop it halts at the turn-end park and marks the row parked.
+    void advance(Row& r) const noexcept;
     bool at_stop(const Row& r) const noexcept;   // a row at its stop under cfg_.horizon and cfg_.stop
     uint16_t guarded_choice(const GameState& s, const float* logits, const uint8_t* mask,
                             uint16_t argmax) const noexcept;

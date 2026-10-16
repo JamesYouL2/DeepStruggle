@@ -1065,6 +1065,16 @@ class VectorizedBatchRunner:
 
     def step_flat_all(self, actions: Sequence[int], auto_advance: bool = False) -> list[int]: ...
 
+    def set_capture_predeal(self, on: bool) -> None:
+        """
+        P33: record each env's turn-end park (after a turn's last action, before the deal) from both sides during step_flat_all's auto-advance; read it with get_predeal after the step.
+        """
+
+    def get_predeal(self) -> tuple:
+        """
+        (flags, obs_us, obs_ussr) of the last step: per env, whether it passed its turn-end park, and that position's observation from each side. Views into the runner: copy before the next step.
+        """
+
     def get_observations(self) -> Annotated[NDArray[numpy.float32], dict(shape=(None, None))]: ...
 
     def get_action_masks(self) -> Annotated[NDArray[numpy.uint8], dict(shape=(None, None))]: ...

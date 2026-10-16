@@ -35,7 +35,7 @@ if (mode === "rollout") {
   for (let a = 0; a < ACT && cands.length < spec.k; a++) if (mask[a]) cands.push(a);
   const candPtr = M._malloc(4 * cands.length);
   M.HEAP32.set(cands, candPtr >> 2);
-  const stop = { boundaries: 0, turn: 1, later: 2, earlier: 3 }[spec.stop ?? "boundaries"];
+  const stop = { boundaries: 0, turn: 1, later: 2, earlier: 3, predeal: 4, earlier_predeal: 5 }[spec.stop ?? "boundaries"];
   const leaf = { mover: 0, decider: 1, own: 2 }[spec.leaf ?? "mover"];
   if (!M._ts_rollout_reset(spec.horizon, 1, 1, 0, spec.batch_seed >>> 0, Math.floor(spec.batch_seed / 4294967296) >>> 0, stop, leaf)) {
     console.log(JSON.stringify({ error: M.UTF8ToString(M._ts_last_error()) }));

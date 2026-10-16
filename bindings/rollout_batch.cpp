@@ -127,15 +127,31 @@ bool RolloutBatch::at_stop(const Row& r) const noexcept {
         case Stop::kTurnEnd: stop = turn_over; break;
         case Stop::kLater: stop = boundaries && turn_over; break;
         case Stop::kEarlier: stop = boundaries || turn_over; break;
+        case Stop::kPredeal: stop = r.parked; break;
+        case Stop::kEarlierPredeal: stop = boundaries || r.parked; break;
         case Stop::kBoundaries: break;
     }
-    // kOwn: past the stop, only a position the root mover decides is a leaf.
-    if (stop && cfg_.leaf == Leaf::kOwn) stop = acting_player(r.state) == movers_[r.position];
+    // kOwn: past the stop, only a position the root mover decides is a leaf -- except the park, which
+    // is nobody's decision and is read from the mover's side.
+    if (stop && cfg_.leaf == Leaf::kOwn && !r.parked) stop = acting_player(r.state) == movers_[r.position];
     return stop;
 }
 
+void RolloutBatch::advance(Row& r) const noexcept {
+    if (cfg_.stop != Stop::kPredeal && cfg_.stop != Stop::kEarlierPredeal) {
+        Engine::auto_advance_step(r.state);
+        return;
+    }
+    // One chance node at a time, so the park is seen before it drains; it stops where the full drain
+    // would otherwise.
+    for (size_t k = 0; k < 256; ++k) {
+        if (at_turn_cleanup(r.state)) { r.parked = true; return; }
+        if (Engine::auto_advance_step(r.state, 1) == 0) return;
+    }
+}
+
 void RolloutBatch::settle_and_mark(Row& r) noexcept {
-    Engine::auto_advance_step(r.state);
+    advance(r);
     const Player mover = movers_[r.position];
     if (Engine::is_terminal(r.state)) {
         r.done = r.terminal = true;
@@ -188,7 +204,7 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
             } else {
                 // The move's own settling is not a boundary: a candidate that ends the action
                 // round settles into the next one, and the horizon counts from there.
-                Engine::auto_advance_step(r.state);
+                advance(r);
                 if (Engine::is_terminal(r.state)) {
                     r.done = r.terminal = true;
                     r.value = mover_value(r.state, mover);
@@ -293,7 +309,7 @@ size_t RolloutBatch::fill_leaves(float* obs, uint8_t* masks) {
     const int64_t n = static_cast<int64_t>(leaf_order_.size());
     for_rows(n, [&](int64_t j) {
         const Row& r = rows_[leaf_order_[j]];
-        const Player side = cfg_.leaf == Leaf::kDecider ? acting_player(r.state) : movers_[r.position];
+        const Player side = cfg_.leaf == Leaf::kDecider && !r.parked ? acting_player(r.state) : movers_[r.position];
         extract_observation_features(r.state, side, cfg_.features, obs + j * obs_width_);
         ActionMask::generate_flat_mask_212(r.state, masks + j * A);
     });
@@ -305,7 +321,7 @@ void RolloutBatch::set_leaf_values(const float* values) {
         Row& r = rows_[leaf_order_[j]];
         // A kDecider leaf was read from its decider's side: the opponent's value is negated into the
         // root mover's frame, which every row's value is in.
-        const bool flip = cfg_.leaf == Leaf::kDecider && acting_player(r.state) != movers_[r.position];
+        const bool flip = cfg_.leaf == Leaf::kDecider && !r.parked && acting_player(r.state) != movers_[r.position];
         r.value = flip ? -values[j] : values[j];
         r.leaf_valued = true;
     }
