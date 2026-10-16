@@ -229,12 +229,12 @@ def test_the_play_mode_question_describes_the_search_it_would_keep(browser: Any,
     page.wait_for_selector("#mode-dialog:not(.hidden)")
     assert page.inner_text("#mode-opponent-rollout-spec") == "its top 2 moves, each played out in 1 sampled world"
     page.click("#mode-choice-us")
-    page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout:2:1:1:z2'")
-    # Back on the policy, it offers the measured spec again.
+    page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout:2:1:1:z2:earlier:own'")
+    # Back on the policy, it offers the default spec again.
     page.select_option("#search-mode-select", "policy")
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
-    assert page.inner_text("#mode-opponent-rollout-spec") == "its top 4 moves, each played out in 16 sampled worlds"
+    assert page.inner_text("#mode-opponent-rollout-spec") == "its top 4 moves, each played out in 32 sampled worlds"
     page.close()
 
 
@@ -347,7 +347,7 @@ def test_the_play_mode_question_starts_one_search_at_a_time(browser: Any, server
     # The runner itself: a request still waiting when a newer one comes is superseded, never run;
     # one already running finishes, and the newest runs after it.
     outcomes = page.evaluate("""async () => { const wb = window.__wb, r = wb.runner, s = wb.engine.snapshot(),
-        spec = {k: 2, worlds: 1, horizon: 1, rule: 'z2'}, ask = () => r.search(s, wb.model, wb.modelKey, spec, 7);
+        spec = {k: 2, worlds: 1, horizon: 1, rule: 'z2', stop: 'earlier', leaf: 'own'}, ask = () => r.search(s, wb.model, wb.modelKey, spec, 7);
         const first = ask();
         await new Promise(res => setTimeout(res, 0));   // the first is running
         const all = await Promise.allSettled([first, ask(), ask()]);

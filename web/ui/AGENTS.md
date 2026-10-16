@@ -186,7 +186,7 @@ web/ui/
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
    - **Search.** The search select is the policy's argmax or the **rollout root** (`search=rollout`
-     in the URL, `search=rollout:k:worlds:horizon:rule` for another spec): the engine's own batch
+     in the URL, `search=rollout:k:worlds:horizon:rule[:stop][:leaf]` for another spec; the default is the leaderboard's best, 4:32:4:z2 with stop=earlier, leaf=own): the engine's own batch
      (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
      The panel shows each candidate's mean value and paired lead and marks the pick; the favourite

@@ -56,7 +56,7 @@
              analysis/rollout.ts), in a worker; `search=` in the URL carries it, a custom spec too. -->
         <label class="search-mode" title="How the model picks its move">
           Search
-          <select id="search-mode-select" class="analysis-select" title="Policy: the model's most likely move, one forward. Rollout root: its top 4 moves each played out by the model in 16 sampled worlds through 4 action-round boundaries, then the best only on a clear lead over the policy's move (the measured player; search=rollout:k:worlds:horizon:rule in the address for another).">
+          <select id="search-mode-select" class="analysis-select" title="Policy: the model's most likely move, one forward. Rollout root: its top 4 moves each played out by the model in 32 sampled worlds, to the earlier of 4 action-round boundaries and the turn-end park, the leaf read on from the mover's own next decision, then the best only on a clear lead over the policy's move (the best player on the leaderboard; search=rollout:k:worlds:horizon:rule[:stop][:leaf] in the address for another).">
             <option value="policy">Policy (greedy)</option>
             <option value="rollout">Rollout root</option>
           </select>
@@ -252,7 +252,7 @@
             <legend>When you play a side, the model plays with</legend>
             <label class="mode-opponent-option">
               <input type="radio" name="mode-opponent" value="rollout" id="mode-opponent-rollout">
-              <span><b>Rollout root</b> -- its strongest player: <span id="mode-opponent-rollout-spec">its top 4 moves, each played out in 16 sampled worlds</span>. A few seconds a move.</span>
+              <span><b>Rollout root</b> -- its strongest player: <span id="mode-opponent-rollout-spec">its top 4 moves, each played out in 32 sampled worlds</span>. A few seconds a move.</span>
             </label>
             <label class="mode-opponent-option">
               <input type="radio" name="mode-opponent" value="policy" id="mode-opponent-policy">

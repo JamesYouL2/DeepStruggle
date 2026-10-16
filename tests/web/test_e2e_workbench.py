@@ -208,7 +208,7 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.search", timeout=120000)
     a = page.evaluate("window.__wb.liveAnalysis")
     s = a["search"]
-    assert s["kind"] == "rollout" and s["spec"] == {"k": 3, "worlds": 2, "horizon": 1, "rule": "z2"}
+    assert s["kind"] == "rollout" and s["spec"] == {"k": 3, "worlds": 2, "horizon": 1, "rule": "z2", "stop": "earlier", "leaf": "own"}
     assert s["pick"] in s["candidates"] and s["candidates"][0] == a["policy"]["argmax_idx"]
     assert s["worlds"] == 2 and len(s["q"]) == len(s["candidates"]) == 3
     assert parse_qs(page.url.split("?", 1)[1]).get("search") == [spec]

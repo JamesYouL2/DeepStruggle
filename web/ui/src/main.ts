@@ -308,7 +308,7 @@ export class TSApp {
 
   /**
    * The search select (#search-mode-select): the policy's argmax, or the rollout root at the
-   * measured spec (another spec comes in through `search=rollout:k:worlds:horizon:rule` in the
+   * default spec (the leaderboard's best; another comes in through `search=rollout:k:worlds:horizon:rule[:stop][:leaf]` in the
    * URL and is kept while the select says rollout). A change re-reads the position on screen.
    */
   private setupSearchSelect() {

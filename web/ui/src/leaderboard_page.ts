@@ -191,7 +191,7 @@ class LeaderboardPage {
       const onnx = net.hf.replace(/\.pt$/, ".onnx");
       out.push(`<a href="https://huggingface.co/${esc(this.data.hf_repo)}/blob/main/${esc(net.hf)}" title="The weights on Hugging Face">weights</a>`);
       out.push(`<a href="./?model=${encodeURIComponent(`hf:${this.data.hf_repo}@main:${onnx}`)}"
-        title="Open the network in the engine workbench">analyse</a>`);
+        title="Open the network in the engine workbench">play</a>`);
     }
     return out.join("");
   }

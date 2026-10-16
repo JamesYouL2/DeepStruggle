@@ -6,8 +6,8 @@
  * the leaves, and the decision with its statistics. This file is the loop that feeds
  * onnxruntime's logits and values in -- the same loop the Python searcher runs with torch.
  *
- * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule` (`rollout` alone is the measured
- * player, 4:16:4:z2). The playouts are honest -- the candidates come from the real position, the
+ * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf]` (`rollout` alone is
+ * the best player there, 4:32:4:z2 with stop=earlier, leaf=own). The playouts are honest -- the candidates come from the real position, the
  * values from sampled worlds -- so the search never reads the other side's hand.
  */
 import { WasmEngine } from "../engine/wasm_engine";
@@ -18,16 +18,24 @@ export interface RolloutSpec {
   worlds: number;
   horizon: number;
   rule: string;
+  /** Where the playouts stop (the engine's rollout::Stop, by name). */
+  stop: string;
+  /** Whose side a leaf is read from (the engine's rollout::Leaf, by name). */
+  leaf: string;
 }
 
-/** The measured player (research/log/E7_search_depth_and_value.md section 4). */
-export const DEFAULT_ROLLOUT: RolloutSpec = { k: 4, worlds: 16, horizon: 4, rule: "z2" };
+/** The engine's codes, in the order of ai/search/rollout_root.py's STOPS and LEAF_SIDES. */
+export const STOPS = ["boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal"] as const;
+export const LEAVES = ["mover", "decider", "own"] as const;
 
-/** "rollout" or "rollout:k:worlds:horizon:rule", an omitted field the default's; null otherwise. */
+/** The best player on the leaderboard: rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own). */
+export const DEFAULT_ROLLOUT: RolloutSpec = { k: 4, worlds: 32, horizon: 4, rule: "z2", stop: "earlier", leaf: "own" };
+
+/** "rollout" or "rollout:k:worlds:horizon:rule[:stop][:leaf]", an omitted field the default's; null otherwise. */
 export function parseRolloutParam(s: string | null): RolloutSpec | null {
   if (!s) return null;
   const parts = s.split(":");
-  if (parts[0] !== "rollout" || parts.length > 5) return null;
+  if (parts[0] !== "rollout" || parts.length > 7) return null;
   const num = (i: number, d: number, min: number) => {
     if (parts.length <= i || parts[i] === "") return d;
     const v = Number(parts[i]);
@@ -36,7 +44,15 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
   const spec: RolloutSpec = {
     k: num(1, DEFAULT_ROLLOUT.k, 1), worlds: num(2, DEFAULT_ROLLOUT.worlds, 1),
     horizon: num(3, DEFAULT_ROLLOUT.horizon, 0), rule: parts.length > 4 && parts[4] ? parts[4] : DEFAULT_ROLLOUT.rule,
+    stop: DEFAULT_ROLLOUT.stop, leaf: DEFAULT_ROLLOUT.leaf,
   };
+  // The trailing fields are told apart by value, as the Python spec does.
+  for (const p of parts.slice(5)) {
+    if (!p) continue;
+    if ((STOPS as readonly string[]).includes(p)) spec.stop = p;
+    else if ((LEAVES as readonly string[]).includes(p)) spec.leaf = p;
+    else return null;
+  }
   if ([spec.k, spec.worlds, spec.horizon].some(v => Number.isNaN(v))) return null;
   if (!/^(argmax|z(\d+(\.\d+)?)?|kl(\d+(\.\d+)?)?)$/.test(spec.rule)) return null;
   return spec;
@@ -44,8 +60,9 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
 
 export function rolloutParam(spec: RolloutSpec): string {
   const d = DEFAULT_ROLLOUT;
-  if (spec.k === d.k && spec.worlds === d.worlds && spec.horizon === d.horizon && spec.rule === d.rule) return "rollout";
-  return `rollout:${spec.k}:${spec.worlds}:${spec.horizon}:${spec.rule}`;
+  if (spec.k === d.k && spec.worlds === d.worlds && spec.horizon === d.horizon && spec.rule === d.rule
+      && spec.stop === d.stop && spec.leaf === d.leaf) return "rollout";
+  return `rollout:${spec.k}:${spec.worlds}:${spec.horizon}:${spec.rule}:${spec.stop}:${spec.leaf}`;
 }
 
 /** What the root decided at one position, and the evidence (ts.rollout_decide's record). */
@@ -87,7 +104,8 @@ export async function rolloutRoot(engine: WasmEngine, model: Model, spec: Rollou
   const candidates = engine.rolloutCandidates(logits, mask, spec.k);
   if (candidates.length < 2) return null;
 
-  engine.rolloutReset(spec.horizon, model.obsFeatures, seed);
+  engine.rolloutReset(spec.horizon, model.obsFeatures, seed, true, true,
+                      STOPS.indexOf(spec.stop as typeof STOPS[number]), LEAVES.indexOf(spec.leaf as typeof LEAVES[number]));
   const width = engine.rolloutObsWidth();
   if (width !== model.meta.obsSize) {
     throw new Error(`the batch writes ${width} observation floats for this feature set; the model reads ${model.meta.obsSize}`);
