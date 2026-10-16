@@ -240,6 +240,27 @@ leaf the reading is off by ~0.10, against the 0.04–0.08 leads the root acts on
   Two fixes follow: read each leaf from its decider's side (play time, a bindings option), and train the
   critic on both perspectives (a recipe).
 
+### Reading each leaf from its decider's side (`leaf=decider`)
+
+The fix for probe 5: every leaf read from its decider's side, negated into the mover's frame where that is
+the opponent -- always on the critic's training distribution. Against today's root on the R34 soup, the
+first deal set, 2,000 games each (`data/reports/dleaf_*_vs_soup.json`):
+
+| stop | leaves read from the mover's side | from the decider's side |
+|:---|---:|---:|
+| 4 boundaries | 50% (today's root) | 50.5% (+0.7 / +0.4) |
+| `earlier` | **51.95%** (4,000 games) | 50.3% (−0.9 / +1.6) |
+| `turn` | 51.2% (4,000 games) | **48.4%** (−0.8 / −2.3) |
+
+* **On-distribution is not enough: the decider's reading loses what the mover knows.** Where the opponent
+  decides, its side's observation hides the mover's own hand -- the one thing the mover knows for
+  certain -- and shows the opponent's sampled one. The loss is largest at turn-end leaves (a headline
+  the US chooses first, so half the leaves; the mover's newly dealt hand is thrown away), as the owner
+  predicted, and it erases `earlier`'s gain.
+* So the off-side reading's bias (~0.08) costs less than the discarded hand. The owner's design --
+  play on to the mover's own next decision (`leaf=own`), on-distribution *and* with the mover's hand --
+  is measured next.
+
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 
 2,048 self-play games at each temperature per network; the critic's value at every decision against
