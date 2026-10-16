@@ -2927,6 +2927,10 @@ def train_pipeline(
             "loss": iteration_metrics["loss"],
             "policy_loss": iteration_metrics["policy_loss"],
             "value_loss": iteration_metrics["val_loss"],
+            # P33's pre-deal critic: its value loss on the turn-end park rows, and how many it had.
+            **({"predeal_value_loss": float(iteration_metrics["predeal_value_loss"]),
+                "predeal_rows": int(iteration_metrics["predeal_rows"])}
+               if "predeal_value_loss" in iteration_metrics else {}),
             "kl_div": iteration_metrics["kl_div"],
             "entropy": iteration_metrics["entropy"],
             "clip_frac": iteration_metrics.get("clip_frac", 0.0),

@@ -959,6 +959,18 @@
     "block_lambda": "off",
     "batch_size": 16384
    }
+  },
+  "R50": {
+   "description": "R48 plus the pre-deal critic: each turn-end park (after the last action, before the deal) joins the value loss from both sides, each with its own next decision's lambda-return as the target (--predeal-value-coef 1.0)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50_20261016_124309",
+   "flags": {
+    "predeal_value_coef": 1.0,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "logit_gap_coef": 0.001,
+    "block_lambda": "off",
+    "batch_size": 16384
+   }
   }
  },
  "overrides": {
@@ -1111,7 +1123,8 @@
   "E7-A8-R1-S44@6400M+A13_20261013_194024": "E7-A8-R1-S44@6400M+A13",
   "E7-A8-R1-S44@6400M+R34@7200M+R48_20261014_032219": "E7-A8-R1-S44@6400M+R34@7200M+R48",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13",
-  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12010M+R49_20261016_012132": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12010M+R49"
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12010M+R49_20261016_012132": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12010M+R49",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50_20261016_124309": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
