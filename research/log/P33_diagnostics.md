@@ -290,6 +290,36 @@ mover's side: on the training distribution *and* with the mover's own hand. Same
   rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)` **1804 ± 4**, the top searched player,
   against 1791 for the same soup under today's root -- +13, a little under the +21 measured head to head.
 
+## R52's approach (recipe code R49): turn-end value targets, 400M — null as built
+
+`…+A13@12010M+R49`: A13+R48 from 12,010M with v_win's target blended (β 0.5) with π_ref's greedy
+continuation to the turn's end, at 1 in 128 learner decisions, 16 worlds, leaves played on to the mover's
+own decision (`leaf=own`); control: A13+R48 continued unchanged (leg 3, 12,000 → 12,400M). Each window:
+both arms' SWA over the same 80M, greedy head to head, 1,000 deals a side, against the control's own
+self-play per seat; searched under today's root (`rollout(k=4,worlds=16,horizon=4,rule=z2)`) at 12,250
+and 12,400M, the bar the control's searched self-play averaged over both orientations.
+`data/reports/r49_vs_ctrl_*`, `ctrl_selfplay_*`.
+
+| window (M) | raw US − bar | raw USSR − bar | searched US − bar | searched USSR − bar |
+|:---|---:|---:|---:|---:|
+| 12,010–12,090 | −1.0 | −2.6 | | |
+| 12,090–12,170 | +2.1 | +0.8 | | |
+| 12,170–12,250 | −1.2 | −0.4 | +0.9 | +2.2 |
+| 12,250–12,330 | +2.6 | +0.9 | | |
+| 12,320–12,400 | −3.5 | −0.9 | +0.2 | +1.1 |
+
+The critic on the leak pairs (P33c's settled read, both arms' 12,320–12,400M SWAs): confirmed leaks ranked
+wrong 48.0 ± 1.5% (R52) against 48.8 ± 1.5% (control); card choice 53.3 / 55.0%; DEFCON-2 card choice
+51.4 / 55.0%; baseline pairs 20.4 / 20.1% (`data/logs/temp/p33c_r52.out`).
+
+* **Null by the plan's rule:** raw level (mean −0.2 / −0.4 over five windows, the last −3.5 / −0.9),
+  searched level to slightly positive (+0.2 to +2.2, within noise), and the critic's ranking of the leak
+  pairs unchanged -- the turn-end signal did not reach the bare critic.
+* **The likely reason is dose, not direction:** 1 in 128 decisions carry the turn-end target, so under 1%
+  of value samples, blended at β 0.5 -- about 0.4% of the value loss's signal. The turn-end read itself
+  ranks the leak pairs far better (37.8% wrong), so a denser form (1 in 16, or β 1.0 on the labelled
+  rows) is the next cell; its cost is ~8× this arm's search. Not launched (a new arm needs the owner).
+
 ## P33b — the critic on greedy against sampled games
 
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)

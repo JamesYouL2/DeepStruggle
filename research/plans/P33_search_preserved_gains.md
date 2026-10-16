@@ -1,5 +1,10 @@
 # P33 — base-checkpoint gains that survive search (2026-10-15)
 
+**Status (2026-10-16).** The leaf fix is the night's result: playouts read at the mover's own next
+decision (`leaf=own`, the owner's design) with `stop=earlier` beat today's root 53.05% over 4,000 games
+and rate 1804 on the E7 leaderboard (today's root on the soup: 1791). R52's approach (code R49) is null
+at 1 in 128 targets.
+
 **Status (2026-10-15).** Diagnostics done ([`../log/P33_diagnostics.md`](../log/P33_diagnostics.md)):
 the critic is the channel the search keeps (P33a), it is calibrated on greedy play (P33b) but at
 chance on the decisive leak pairs (P33c), and only a lookahead to the turn's end sees them (card
@@ -464,4 +469,6 @@ over several turns — the same fault R49 and R52 target — and R43 is re-run a
   approach was never launched): `…+A13@12010M+R49`, `--search-value-beta 0.5 --search-rollout-horizon 4
   --search-rollout-stop turn --search-rollout-leaf-side own --search-subsample 0.0078125`, from the
   12,010M state (the 12,000M one was overwritten by the control's first save), 400M; control: A13+R48
-  continued unchanged (leg 3, 12,000 → 12,400M). Approved by the owner.
+  continued unchanged (leg 3, 12,000 → 12,400M). Approved by the owner. **Null as built** (2026-10-16):
+  raw level, searched level to slightly positive, the critic's leak-pair ranking unchanged -- at 1 in
+  128 decisions the target is under 1% of the value signal; a denser cell (1 in 16) is the next step.
