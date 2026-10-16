@@ -257,9 +257,26 @@ first deal set, 2,000 games each (`data/reports/dleaf_*_vs_soup.json`):
   certain -- and shows the opponent's sampled one. The loss is largest at turn-end leaves (a headline
   the US chooses first, so half the leaves; the mover's newly dealt hand is thrown away), as the owner
   predicted, and it erases `earlier`'s gain.
-* So the off-side reading's bias (~0.08) costs less than the discarded hand. The owner's design --
-  play on to the mover's own next decision (`leaf=own`), on-distribution *and* with the mover's hand --
-  is measured next.
+* So the off-side reading's bias (~0.08) costs less than the discarded hand.
+
+### Playing on to the mover's own next decision (`leaf=own`, the owner's design)
+
+Past its stop, a playout plays on until the root mover decides, and the critic is read there from the
+mover's side: on the training distribution *and* with the mover's own hand. Same matches, same deals:
+
+| stop | mover's side (today) | decider's side | **own decision** |
+|:---|---:|---:|---:|
+| 4 boundaries | 50% | 50.5% | **52.3%** (55.8 / 48.9: +1.7 / +3.0) |
+| `earlier` | 51.95% | 50.3% | **53.3%** (59.9 / 46.8: +5.8 / +0.9) |
+| `turn` | 51.2% | 48.4% | **51.7%** (56.0 / 47.4: +1.9 / +1.5) |
+
+* **Best under every stop**, and above the bar in both seats in every cell. On today's 4-boundary stop
+  alone it is +2.3 points (~+16 Elo); with `earlier`, +3.3 (~+23 Elo), the best searched player measured.
+* Both halves matter: the decider's reading (on-distribution, without the mover's hand) and the
+  mover's off-side reading (with the hand, off-distribution) are each worse than reading the mover's own
+  decision. Replicates of `earlier`+own and 4 boundaries+own on the second deal set are running.
+
+## P33b — the critic on greedy against sampled games
 
 ## P33b — the critic on greedy against sampled games (`ai.eval.critic_boundary --temperatures 0 1`)
 
