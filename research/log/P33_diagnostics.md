@@ -353,7 +353,11 @@ self-play, population-weighted), the rank under the network of the move it picks
 | op mode | 3.4% | 0% |
 
 Above the plan's 25% line overall: channel 1 is open for placement and card choice, so k = 6 at play
-time and R51's recall objective qualify by the rule. A caution the rule does not price: with more
+time and R51's recall objective qualify by the rule. **In games it buys nothing** (2026-10-16): the soup
+with k = 6 against k = 4, both under `stop=earlier, leaf=own`, 16 worlds, 1,000 deals a side: **49.7%**
+(51.1% as US, 48.3% as USSR; `data/reports/k6_vs_k4_earlier_own_soup.json`) -- level, as the R39
+tuning's k = 6 at 32 worlds was offline. The ranks-5–8 departures are the seed noise the caution below
+names; the candidate channel is closed and R51 is dropped. A caution the rule does not price: with more
 candidates more departures can be the seed noise of 16 worlds (a winner's curse); a k = 6 against
 k = 4 games check settles the play-time half. The R39 tuning on JamesYouL2's branch found k = 6 at 32
 worlds level with k = 4 offline.

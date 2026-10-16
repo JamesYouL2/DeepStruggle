@@ -3,7 +3,8 @@
 **Status (2026-10-16).** The leaf fix is the night's result: playouts read at the mover's own next
 decision (`leaf=own`, the owner's design) with `stop=earlier` beat today's root 53.05% over 4,000 games
 and rate 1804 on the E7 leaderboard (today's root on the soup: 1791). R52's approach (code R49) is null
-at 1 in 128 targets.
+at 1 in 128 targets. k = 6 is level with k = 4 in play (49.7%): the candidate channel is closed, R51
+dropped. Next: the pre-deal critic (below).
 
 **Status (2026-10-15).** Diagnostics done ([`../log/P33_diagnostics.md`](../log/P33_diagnostics.md)):
 the critic is the channel the search keeps (P33a), it is calibrated on greedy play (P33b) but at
