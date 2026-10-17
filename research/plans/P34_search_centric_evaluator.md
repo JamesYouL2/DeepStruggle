@@ -289,10 +289,29 @@ keyed from now on.
    the rule below, step 3 is a baseline for step 4.
 2. **`D2` -- the sibling slice relabelled keyed** (50,000 positions × top 4 × 16 keyed worlds; the
    main labels are unchanged, keying moves no mean). ~45 min of GPU.
+   **Done:** 43,666 decisions, 2,794,624 rows in 11.5 min (`…~D2(seed=44,games=20000)`), each row's
+   leaf the rollout root's own (`--leaf-horizon 4`: stop=earlier, leaf=own) rather than the mover's next
+   decision -- the root reads card choices (71%) and headlines (27%) at its leaves, placement points
+   and play modes ~1% each, against 48% placement points in the main set.
 3. **The corrected refit** (a new R code: per-decision mean sibling loss, entry-decision weighting,
    KL reporting; fine-tuned from the RL weights, on D1's main set + D2's siblings). Under an hour.
    Read: held-out KL, the per-decision sibling sign agreement, `P34c`'s pairs, then the strong-tier
    root with `chance=keyed` against 1810.
+   **Fit:** `…+A13@12000M+A15-R54` (main rows weighted to the leaf distribution above: ×3.2 card
+   choice, ×7.1 headline; decision-mean sibling loss ×10 beside each leaf's own cross-entropy). On the
+   same held-out sets:
+
+   | evaluator | KL (leaf-weighted) | decision sign agreement | r with 16-world candidate means |
+   |:---|---:|---:|---:|
+   | the RL critic | 0.0327 (0.0323) | 0.599 | 0.637 |
+   | A15-R52 | 0.0278 (0.0280) | 0.595 | 0.633 |
+   | A15-R54 | 0.0279 (0.0279) | 0.598 | 0.637 |
+
+   The refit is A15-R52 again. **The sibling decisions are at their noise ceiling for every network**:
+   the split-half reliability of the centred 16-world candidate means is 0.41, so a perfect evaluator
+   correlates with them at most 0.64 -- where the untouched RL critic already is. Sixteen worlds of
+   greedy playouts cannot show a candidate difference the critic does not already rank, which is
+   `P34c`'s verdict from the other side. The games read follows.
 4. **`D3` -- the contested-position set.** Screen the 1.1M positions for the contested few percent
    using what exists: the label's across-world spread and the siblings' candidate means (~50k
    positions). Relabel them with a **stronger follow-up**: the sparse-searched player at 10–25% of the

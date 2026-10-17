@@ -102,6 +102,14 @@
     "hf": null,
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54_20261017_215302/value_fit_best.pt",
+    "sha256": "11b873d1e577188bc828c7d2ac57ad5f3d7fba1dbc8b14ee5bb06375af3eed5a",
+    "description": "P34 revision 2's corrected refit: A13+R48's SWA fine-tuned on D1's main labels weighted to the rollout root's leaf distribution plus D2's keyed siblings under the per-decision mean loss; a leaf network only (research/plans/P34_search_centric_evaluator.md)",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R39@7120..7200M": {
     "file": "checkpoints/E7-A8-R1-S44@6400M+R39_20261011_145632/swa_7120-7200M.pt",
     "sha256": "19d3008de140f2952f139aead8226936f1a36b7b1489e99c16f54dd23f1e32f0",

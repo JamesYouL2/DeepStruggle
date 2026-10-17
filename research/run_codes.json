@@ -1103,6 +1103,19 @@
     "value_reinit": true,
     "value_epochs": 40.0
    }
+  },
+  "R54": {
+   "description": "P34 revision 2's corrected value fit: R52 on D1's main labels weighted to the rollout root's leaf distribution, plus D2's keyed siblings under the per-decision mean loss x10 and each leaf's own cross-entropy x1",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54_20261017_215302",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "value_dataset": "/workspace/data/datasets/p34/A13R48-D1-s44-g20000",
+    "value_siblings": "/workspace/data/datasets/p34/A13R48-D2-s44-g20000",
+    "value_sibling_loss": "decision",
+    "value_leaf_coef": 1.0,
+    "value_leaf_weights": true
+   }
   }
  },
  "overrides": {
@@ -1262,7 +1275,8 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R52_20261017_142806": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R52",
   "E7-A15-R53-S44_20261017_142810": "E7-A15-R53-S44",
   "E7-A16-R53-S44_20261017_143306": "E7-A16-R53-S44",
-  "E7-A17-R53-S44_20261017_143314": "E7-A17-R53-S44"
+  "E7-A17-R53-S44_20261017_143314": "E7-A17-R53-S44",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54_20261017_215302": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
