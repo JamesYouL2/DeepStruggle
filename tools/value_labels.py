@@ -14,6 +14,11 @@ Three stages, each shardable with --part i/n (research/plans/P34_search_centric_
              worlds with its leaf (the mover's next decision) kept.
   merge      The parts joined into train / holdout files with the labels as means, a manifest with
              the D code, the generator, the engine, device, seed and sha256 of every file.
+  exact      The exact slice (CPU, after label): --exact positions of turn 10's last action rounds,
+             each solved exactly in the labeller's first --deals worlds (tools/scripts/blunder_bank.
+             exact_value: dice averaged, every later choice the mover's best and the opponent's best
+             reply). Against the playout label on the same positions it is the bias the labels
+             inherit from the generator's greedy follow-up. `merge` reports it when present.
 
     tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/value_labels.py \\
         positions --model <network or .pt> --games 20000 --out data/datasets/p34/<name>
@@ -46,6 +51,7 @@ from tools.lib.checkpoint_id import checkpoint_label
 from tools.lib.data_root import data_root
 from tools.lib.engine_fingerprint import fingerprint, staleness_reason
 from tools.lib.player_agent import NeuralAgent
+from tools.scripts.blunder_bank import Unprovable, exact_value
 from tools.scripts.run_codes import labelling_code
 
 A = 220
@@ -446,6 +452,74 @@ def run_label(a: argparse.Namespace) -> int:
     return 0
 
 
+# ---- exact -------------------------------------------------------------------------------------
+
+def exact_ids(pos: Dict[str, np.ndarray], n: int, seed: int, min_round: int) -> np.ndarray:
+    """The exact slice: n positions of turn 10 at action round >= min_round, from a fixed shuffle."""
+    rounds = np.asarray([ts.state_from_raw_bytes(b.tobytes()).action_round if t == 10 else 0
+                         for b, t in zip(pos["state"], pos["turn"])])
+    pool = pos["id"][(pos["turn"] == 10) & (rounds >= min_round)]
+    perm = np.random.default_rng([seed, 3]).permutation(pool.size)
+    return np.sort(pool[perm[:n]])
+
+
+def run_exact(a: argparse.Namespace) -> int:
+    engine_checked()
+    d = pathlib.Path(a.dir)
+    pos, pmeta = _load_positions(d)
+    part, parts = a.part
+    want = exact_ids(pos, a.exact, a.seed, a.min_round)
+    want = want[np.arange(want.size) % parts == part]
+    row_of = {int(i): r for r, i in enumerate(pos["id"].tolist())}
+    # The labeller's own worlds: world w of a position is a function of (seed, id, w) alone.
+    pl = ts.PlayoutLabels(worlds=a.deals, capacity=a.deals, seed=a.seed)
+    values = np.full((want.size, a.deals), np.nan, dtype=np.float32)
+    t0 = time.time()
+    for j, pid in enumerate(want.tolist()):
+        base = ts.state_from_raw_bytes(pos["state"][row_of[pid]].tobytes())
+        mover = ts.Player(int(pos["mover"][row_of[pid]]))
+        for w in range(a.deals):
+            world = pl.world(base, pid, w)
+            try:
+                values[j, w] = exact_value(world, mover, int(world.turn), [a.budget], "min")
+            except Unprovable:
+                pass
+        if (j + 1) % 50 == 0:
+            print(f"  {j + 1}/{want.size} positions, {time.time() - t0:.0f}s", flush=True)
+    file = d / f"exact_{part:03d}_of_{parts:03d}.npz"
+    np.savez(file, id=want, value=values)
+    meta = {"stage": "exact", "engine": pmeta["engine"], "part": f"{part}/{parts}", "seed": a.seed,
+            "exact": a.exact, "deals": a.deals, "budget": a.budget, "min_round": a.min_round,
+            "solved_worlds": int(np.isfinite(values).sum()), "seconds": round(time.time() - t0, 1)}
+    file.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"{file}: {want.size} positions, {meta['solved_worlds']} of {values.size} worlds solved")
+    return 0
+
+
+def exact_reads(d: pathlib.Path, pos: Dict[str, np.ndarray], score: np.ndarray) -> Optional[Dict[str, Any]]:
+    """The exact slice against the labels: the mean of (label - exact) over positions solved in every
+    world, overall and by side -- the bias of greedy follow-up play."""
+    files = sorted(d.glob("exact_*.npz"))
+    if not files:
+        return None
+    parts = [dict(np.load(f)) for f in files]
+    ids = np.concatenate([p["id"] for p in parts])
+    vals = np.concatenate([p["value"] for p in parts])
+    full = np.isfinite(vals).all(axis=1)
+    rows = np.searchsorted(pos["id"], ids)
+    gap = score[rows] - vals.mean(axis=1)
+    out: Dict[str, Any] = {"positions": int(ids.size), "solved": int(full.sum())}
+    if full.any():
+        out["bias"] = float(gap[full].mean())
+        out["bias_se"] = float(gap[full].std() / max(1.0, np.sqrt(full.sum() - 1)))
+        out["mean_abs_gap"] = float(np.abs(gap[full]).mean())
+        for side, name in ((int(ts.Player.US), "us"), (int(ts.Player.USSR), "ussr")):
+            m = full & (pos["mover"][rows] == side)
+            if m.any():
+                out[f"bias_{name}"] = float(gap[m].mean())
+    return out
+
+
 # ---- merge -------------------------------------------------------------------------------------
 
 def labelling_signature(pmeta: Dict[str, Any], lmeta: Dict[str, Any]) -> Dict[str, Any]:
@@ -521,6 +595,7 @@ def run_merge(a: argparse.Namespace) -> int:
                          "network_rows": int(sum(m["network_rows"] for m in lmetas))},
                 "label_seconds": round(sum(m["seconds"] for m in lmetas), 1),
                 "regions": list(REGIONS), "files": files,
+                "exact": exact_reads(d, pos, labels["score"]),
                 "reads": {"mean_score_se": float(labels["score_se"].mean()),
                           "failed_worlds": int(labels["failed"].sum()),
                           "holdout_games_in_train": int(np.isin(pos["id"][~pos["holdout"]] // PLY_SPAN,
@@ -563,6 +638,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     la.add_argument("--no-graphs", action="store_true", help="plain forwards instead of CUDA graphs")
     la.add_argument("--float-upload", action="store_true",
                     help="upload observations as float32 instead of their exact one-byte codes")
+    ex = sub.add_parser("exact", help="the exact slice: turn-10 last-round positions solved exactly (CPU)")
+    ex.add_argument("--dir", required=True)
+    ex.add_argument("--exact", type=int, default=2000, help="positions in the slice")
+    ex.add_argument("--deals", type=int, default=4, help="the labeller's first worlds, solved each")
+    ex.add_argument("--budget", type=int, default=300_000, help="search nodes per world")
+    ex.add_argument("--min-round", type=int, default=7,
+                    help="turn 10's action rounds from this one (from 6, most worlds exceed the budget)")
+    ex.add_argument("--seed", type=int, default=44, help="the label stage's seed (its worlds)")
+    ex.add_argument("--part", type=_part, default=(0, 1))
     me = sub.add_parser("merge", help="join the parts into train / holdout files and the manifest")
     me.add_argument("--dir", required=True)
     me.add_argument("--code", default=None,
@@ -572,6 +656,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_positions(a)
     if a.stage == "label":
         return run_label(a)
+    if a.stage == "exact":
+        return run_exact(a)
     return run_merge(a)
 
 

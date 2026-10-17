@@ -756,6 +756,13 @@ PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py label --dir <d
 PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py merge --dir <dir>
 ```
 
+`exact` (CPU, after `label`; `--part i/n` per process) solves the exact slice: 2,000 positions of turn
+10's last action rounds (7 on), each in the labeller's first 4 worlds, by
+`tools/scripts/blunder_bank.exact_value` (dice averaged, the opponent's best reply, a 300k-node
+budget a world). `merge` then reports `exact.bias`, the mean of (label - exact value) over positions
+solved in every world -- what the labels inherit from the generator's greedy follow-up -- with the
+solved count, since the solvable positions are the simpler ones.
+
 The D code is derived, not chosen: `merge` hands the labelling settings to
 `tools/scripts/run_codes.py`'s `labelling_code`, which finds their code under `labellings` in
 `research/run_codes.json` or assigns the next one (`--code D1` only checks it).
