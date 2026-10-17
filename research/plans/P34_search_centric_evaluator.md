@@ -173,5 +173,48 @@ names the evaluator. No generation counter is needed.
 
 ## Runs
 
-(filled in while running; evaluators mirror [`../runs.md`](../runs.md), datasets
-[`../datasets.md`](../datasets.md))
+(evaluators mirror [`../runs.md`](../runs.md), datasets [`../datasets.md`](../datasets.md))
+
+**What was built (2026-10-17).** The C++ labeller (`bindings/playout_labels.*`; every world equals a
+step-by-step Python `play_safe` playout of it) with region swings from the engine's `ScoringTap`;
+`tools/value_labels.py` (`positions` / `label` / `exact` / `merge`, D codes derived by
+`run_codes.py`); `tools/train.py --mode value-fit`; `leaf_net=` in the player grammar. The labeller
+runs at ~1.1M network rows/s on this machine (two labellers alternating, a CUDA graph, exact
+one-byte observation codes); the engine's observation extraction is the limit.
+
+**`P34a`, generation 1.** `…+A13@11920..12000M~D1(seed=44,games=20000)`: 1,115,626 positions from
+20,000 games (31 s), labelled in 2 h 22 min (9.4 × 10⁹ network rows); label standard error 0.064 at 32
+worlds; 2,794,624 sibling rows.
+
+* **Exact slice:** 925 of 2,000 turn-10 last-round positions solved in all 4 worlds; label − exact
+  **−1.3 ± 0.4 points** of win probability (US mover −2.1, USSR +1.5), mean |gap| 2.8, r = 0.96 --
+  under the 5-point rule, so the labels are used as they are. The solvable positions are mostly
+  decided (888 of 925); on the 37 contested ones greedy follow-up loses 16 points to exact play,
+  which is where the labels inherit the generator.
+
+**The fits** (held out by game: 56,193 positions; label noise, mean SE², 0.0050 of the 0.0925 label
+variance):
+
+| evaluator | held-out score MSE (excess over noise) | cross-entropy | sibling pair accuracy |
+|:---|---:|---:|---:|
+| the RL critic as it is (step 0) | 0.0111 (0.0061) | 0.5006 | 0.519 |
+| **`…+A13@12000M+A15-R52`**, fine-tuned | **0.0093 (0.0043)** | **0.4957** | 0.533 |
+| `E7-A15-R53-S44`, same shape from scratch | 0.0128 (0.0078) | 0.5059 | 0.528 |
+| `E7-A16-R53-S44`, deep (12.4M parameters) | 0.0127 (0.0078) | 0.5060 | 0.525 |
+| `E7-A17-R53-S44`, token layers | 0.0127 (0.0077) | 0.5054 | 0.515 |
+
+The RL critic already explains ~93% of the label variance net of noise; fine-tuning removes 30% of
+what is left. A million labels do not train an evaluator from scratch to the RL critic's level, and
+neither added capacity nor tokens helps there: **no capacity signal at this data size**. The
+sibling pair accuracy is near chance for all -- the siblings' single playouts share the deal but
+not their dice once the moves differ (correlation 0.22), so the paired target is mostly noise.
+
+**`P34b`.** A13+R48's root (16 worlds, `stop=earlier`, `leaf=own`) with its leaves read by the
+fine-tuned evaluator, strong tier: **1804 ± 4**, against **1794 ± 3** for the same root on its own
+critic -- +10, about two standard errors. Real and small, in line with the label fit.
+
+**Keyed chance** (`bindings/keyed_chance.hpp`, from this result): each world's dice and deals tied to
+the situation they are drawn in, so siblings stay paired longer. Within-world correlation of two
+candidates' results on 3,000 slice positions: 0.22 shared stream, 0.33 keyed dice, **0.39** keyed dice
+plus one deck order per world; the mean score unchanged. The keyed root's strong-tier read is the
+next result.
