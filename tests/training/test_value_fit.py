@@ -78,3 +78,42 @@ def test_value_arch_settings_are_typed_and_need_fresh_weights(tmp_path: pathlib.
     cfg = ValueFitConfig(dataset=str(tmp_path), init=str(init), arch={"hidden_dim": 96}, device="cpu")
     with pytest.raises(SystemExit, match="value-reinit"):
         run_value_fit(cfg, run_name=None, description=None, output_dir=str(tmp_path / "run"))
+
+
+def test_the_decision_sibling_loss_and_leaf_weights_run_and_report(tmp_path: pathlib.Path) -> None:
+    """P34 revision 2: siblings from another directory, the per-decision mean loss beside each leaf's
+    own, the main rows weighted to the root's leaf distribution; the run reports KL, the decision sign
+    agreement and its split-half ceiling."""
+    ds, sd2 = tmp_path / "ds", tmp_path / "d2"
+    ds.mkdir()
+    sd2.mkdir()
+    np.savez(ds / "train.npz", **_split(32, 3, 0.6))
+    np.savez(ds / "holdout.npz", **_split(12, 4, 0.6))
+    (ds / "manifest.json").write_text(json.dumps({"dataset": "x~D1(seed=1,games=1)", "engine": "e" * 64, "files": {}}))
+    k, w, n = 2, 4, 10
+    leaves = _states(n * k * w, 5)
+    cand, world, pid = np.meshgrid(np.arange(k), np.arange(w), np.arange(n), indexing="ij")
+    cand, world, pid = cand.ravel(), world.ravel(), pid.ravel()
+    rows = cand.size
+    meta = np.stack([cand, world, np.zeros(rows, int), np.ones(rows, int), np.zeros(rows, int)], axis=1).astype(np.int32)
+    score = np.where(cand == 0, 1.0, 0.0).astype(np.float32)     # candidate 0 always wins: a learnable lead
+    np.savez(sd2 / "siblings.npz", id=pid.astype(np.int64), meta=meta,
+             cols=np.stack([score, np.zeros(rows), np.zeros(rows), np.full(rows, 3.0)], axis=1).astype(np.float32),
+             swing=np.zeros((rows, 7), np.int32), leaf=leaves, holdout=pid >= 7)
+    (sd2 / "manifest.json").write_text(json.dumps({"dataset": "x~D2(seed=1,games=1)", "files": {}}))
+    init = tmp_path / "init.pt"
+    torch.save(create_ladder_net("cpu", **SHALLOW).state_dict(), init)
+    cfg = ValueFitConfig(dataset=str(ds), init=str(init), batch=16, lr=3e-3, warmup_steps=1, max_epochs=10,
+                         eval_every=5, patience=100, device="cpu", bf16=False, siblings=str(sd2),
+                         sibling_loss="decision", sibling_decisions=4, leaf_coef=1.0, leaf_weights=True)
+    run_dir = run_value_fit(cfg, run_name=None, description="test", output_dir=str(tmp_path / "run"))
+    lines = [json.loads(x) for x in (pathlib.Path(run_dir) / "value_fit_metrics.jsonl").read_text().splitlines()]
+    last = lines[-1]
+    for key in ("hold_kl", "hold_kl_leafw", "hold_dec_sign_agree", "hold_dec_sign_ceiling", "hold_dec_corr"):
+        assert key in last and np.isfinite(last[key])
+    assert last["hold_dec_sign_ceiling"] == 1.0            # every world agrees: candidate 0 wins
+    assert last["hold_dec_sign_agree"] >= lines[0]["hold_dec_sign_agree"]
+    assert last["train_sib"] >= 0 and last["train_leaf"] > 0
+    meta_out = json.loads((pathlib.Path(run_dir) / "metadata.json").read_text())
+    assert meta_out["siblings_dataset"] == "x~D2(seed=1,games=1)"
+

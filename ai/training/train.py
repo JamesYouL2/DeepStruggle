@@ -310,6 +310,16 @@ def build_parser() -> argparse.ArgumentParser:
     vf.add_argument("--value-aux-coef", type=float, default=0.1,
                     help="Weight of the auxiliary head (turn-end VP and DEFCON, region swings).")
     vf.add_argument("--value-eval-every", type=int, default=250, help="Steps between held-out evaluations.")
+    vf.add_argument("--value-siblings", type=str, default=None,
+                    help="The sibling slice from this dataset directory (e.g. a keyed relabel) instead of --value-dataset's.")
+    vf.add_argument("--value-sibling-loss", choices=["world", "decision"], default="world",
+                    help="world: the paired loss per (decision, world); decision: per decision, the mean over its shared "
+                         "worlds of each candidate's leaf value fitted to the mean of its results (P34 revision 2).")
+    vf.add_argument("--value-sibling-decisions", type=int, default=32, help="Decisions a step under --value-sibling-loss decision.")
+    vf.add_argument("--value-leaf-coef", type=float, default=0.0,
+                    help="Weight of each sibling leaf's own cross-entropy to its world's result.")
+    vf.add_argument("--value-leaf-weights", action="store_true", default=False,
+                    help="Weight the main rows by how often the rollout root reads their kind of decision at a leaf.")
     vf.add_argument("--value-patience", type=int, default=6,
                     help="Stop after this many evaluations without a better held-out loss.")
 
@@ -1284,6 +1294,9 @@ def main():
                            sibling_coef=args.value_sibling_coef, vp_coef=args.value_vp_coef,
                            aux_coef=args.value_aux_coef, lr=args.value_lr, max_epochs=args.value_epochs,
                            eval_every=args.value_eval_every, patience=args.value_patience,
+                           siblings=args.value_siblings, sibling_loss=args.value_sibling_loss,
+                           sibling_decisions=args.value_sibling_decisions, leaf_coef=args.value_leaf_coef,
+                           leaf_weights=args.value_leaf_weights,
                            seed=args.seed if args.seed is not None else 44, device=args.device),
             run_name=args.run_name, description=args.description, output_dir=args.output_dir,
             cli={k: v for k, v in vars(args).items()

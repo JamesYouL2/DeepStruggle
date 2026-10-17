@@ -39,6 +39,29 @@ from ai.training.generic_trainer import _resolve_run_dir
 #: Region order of the dataset's swing columns (tools/value_labels.REGIONS).
 N_REGIONS = 7
 
+#: The decisions the rollout root reads at its leaves (k=4, 16 worlds, stop=earlier, leaf=own,
+#: chance=keyed; A13+R48's SWA on 3,000 positions of P34's generation-1 set, 2026-10-17). The dataset,
+#: one decision in eight of self-play, holds them at 0.225 / 0.037 / 0.21 / 0.48 / 0.04: almost half
+#: of it is placement micro-states the root never reads.
+LEAF_SHARE: Dict[str, float] = {"SELECT_CARD": 0.708, "HEADLINE": 0.266, "SELECT_PLAY_MODE": 0.012,
+                                "POINT_NODE": 0.011, "CHOOSE_BRANCH": 0.002, "SELECT_OP_MODE": 0.001}
+
+
+def decision_kind(st: ts.GameState) -> str:
+    """LEAF_SHARE's kinds: the decision type, a card choice in the headline counted as HEADLINE."""
+    k = str(st.ctx().decision_type).split(".")[-1]
+    return "HEADLINE" if k == "SELECT_CARD" and st.current_phase == ts.Phase.HEADLINE else k
+
+
+def leaf_weights(states: np.ndarray, data_kinds: Optional[Dict[str, float]] = None) -> Tuple[np.ndarray, Dict[str, float]]:
+    """Per row, LEAF_SHARE[kind] / the set's own share of that kind, normalised to mean 1 (the shares
+    taken from `data_kinds` when given, so a held-out split is weighted by the training set's)."""
+    kinds = [decision_kind(ts.state_from_raw_bytes(b.tobytes())) for b in states]
+    u, inv = np.unique(np.asarray(kinds), return_inverse=True)
+    share = data_kinds or {str(k): float((inv == i).mean()) for i, k in enumerate(u)}
+    w = np.asarray([LEAF_SHARE.get(str(k), 0.0) / max(share.get(str(k), 1.0), 1e-9) for k in u])[inv]
+    return (w / max(float(w.mean()), 1e-12)).astype(np.float32), share
+
 
 @dataclass
 class ValueFitConfig:
@@ -63,6 +86,19 @@ class ValueFitConfig:
     seed: int = 44
     device: str = "cuda"
     bf16: bool = True
+    #: P34 revision 2. Siblings from another dataset directory (D2, the keyed slice) instead of the
+    #: main set's own.
+    siblings: Optional[str] = None
+    #: "world": the paired loss per (decision, world), as R52 trained; "decision": per decision, the
+    #: mean over its shared worlds of each candidate's leaf value against the mean of its results --
+    #: a single world's difference is a +/-1 coin with sd ~0.6, the 16-world mean is what carries the
+    #: move's effect.
+    sibling_loss: str = "world"
+    sibling_decisions: int = 32     # decisions a step under "decision" (x candidates x worlds leaves)
+    leaf_coef: float = 0.0          # each sibling leaf's own cross-entropy to its world's result
+    #: Weight the main rows by how often the rollout root reads their kind of decision at a leaf
+    #: (LEAF_SHARE) against how often the dataset holds it.
+    leaf_weights: bool = False
 
 
 class AuxHead(nn.Module):
@@ -157,6 +193,28 @@ def _sibling_groups(s: Dict[str, np.ndarray], holdout: bool) -> Tuple[np.ndarray
     return idx, s["cols"][idx, 0].astype(np.float32) if idx.size else np.zeros((0, k), np.float32)
 
 
+def sibling_decisions(s: Dict[str, np.ndarray], holdout: bool) -> Dict[str, np.ndarray]:
+    """The sibling slice as decisions: `row` (decisions x k x worlds, -1 where absent), `y` the result,
+    `leaf` whether that row kept a leaf, `ok` (decisions x worlds) the worlds every candidate finished.
+    A row without a leaf ended before its mover decided again: its result is its exact value."""
+    meta = s["meta"]
+    sel = np.flatnonzero(s["holdout"] == holdout)
+    if sel.size == 0:
+        z = np.zeros((0, 0, 0), np.int64)
+        return {"row": z, "y": z.astype(np.float32), "leaf": z.astype(bool), "ok": np.zeros((0, 0), bool)}
+    k = int(meta[:, 0].max()) + 1
+    w = int(meta[:, 1].max()) + 1
+    u, inv = np.unique(s["id"][sel], return_inverse=True)
+    row = np.full((u.size, k, w), -1, np.int64)
+    row[inv, meta[sel, 0], meta[sel, 1]] = sel
+    present = row >= 0
+    safe = np.where(present, row, 0)
+    failed = np.where(present, meta[safe, 2] == 1, True)
+    ok = (~failed).all(axis=1)
+    return {"row": row, "y": np.where(present, s["cols"][safe, 0], 0.0).astype(np.float32),
+            "leaf": present & (meta[safe, 3] == 1), "ok": ok}
+
+
 def parse_arch(items: Optional[List[str]]) -> Dict[str, Any]:
     """`key=value` ladder settings: integers, floats, true/false, else strings."""
     out: Dict[str, Any] = {}
@@ -219,19 +277,34 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
     codes = Codes(features, dev)
     train = _load_split(ds / "train.npz")
     hold = _load_split(ds / "holdout.npz")
-    x_train = codes.encode(train.pop("state"))
-    x_hold = codes.encode(hold.pop("state"))
+    train_states = train.pop("state")
+    hold_states = hold.pop("state")
+    x_train = codes.encode(train_states)
+    x_hold = codes.encode(hold_states)
     y_train, y_hold = _targets(train), _targets(hold)
-    sib_path = ds / "siblings.npz"
+    if cfg.leaf_weights:
+        w_train, kinds = leaf_weights(train_states)
+        w_hold, _ = leaf_weights(hold_states, kinds)
+    else:
+        w_train = np.ones(x_train.shape[0], np.float32)
+        w_hold = np.ones(x_hold.shape[0], np.float32)
+    sib_dir = pathlib.Path(cfg.siblings) if cfg.siblings else ds
+    sib_path = sib_dir / "siblings.npz"
     sib = _load_split(sib_path) if sib_path.exists() else None
+    sib_manifest = json.loads((sib_dir / "manifest.json").read_text()) if sib is not None else None
     if sib is not None:
         g_train, gy_train = _sibling_groups(sib, holdout=False)
         g_hold, gy_hold = _sibling_groups(sib, holdout=True)
+        dec_train, dec_hold = sibling_decisions(sib, holdout=False), sibling_decisions(sib, holdout=True)
     else:
         g_train = g_hold = np.zeros((0, 0), np.int64)
         gy_train = gy_hold = np.zeros((0, 0), np.float32)
+        dec_train = dec_hold = sibling_decisions({"meta": np.zeros((0, 5), np.int32), "holdout": np.zeros(0, bool),
+                                                  "id": np.zeros(0, np.int64), "cols": np.zeros((0, 4), np.float32)},
+                                                 holdout=False)
     print(f"value fit: {x_train.shape[0]:,} train / {x_hold.shape[0]:,} held-out positions, "
-          f"{g_train.shape[0]:,} / {g_hold.shape[0]:,} sibling groups, codebook {codes.book.size()}, "
+          f"{g_train.shape[0]:,} / {g_hold.shape[0]:,} sibling groups, {dec_train['row'].shape[0]:,} / "
+          f"{dec_hold['row'].shape[0]:,} sibling decisions (from {sib_dir.name}), codebook {codes.book.size()}, "
           f"loaded in {time.time() - t0:.0f}s", flush=True)
 
     aux = AuxHead(model.val_win_head[0].in_features).to(dev)   # type: ignore[index]
@@ -247,6 +320,8 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         return cfg.lr * (0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * min(1.0, frac))))
 
     y_dev = {k: torch.from_numpy(v).to(dev) for k, v in y_train.items()}
+    w_dev = torch.from_numpy(w_train).to(dev)
+    del train_states, hold_states
 
     def heads(obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=cfg.bf16 and dev.type == "cuda"):
@@ -266,6 +341,46 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         p = torch.sigmoid(2.0 * z)
         return (((p - p.mean(1, keepdim=True)) - (y - y.mean(1, keepdim=True))) ** 2).mean()
 
+    def decision_means(dec: Dict[str, np.ndarray], di: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """For decisions `di`: (P, T) the per-candidate means over the shared worlds of the leaf values
+        and of the results (decisions x k), the leaves' win logits and their results (for the per-leaf
+        loss). A leafless row's value is its result."""
+        row, y, leaf = dec["row"][di], dec["y"][di], dec["leaf"][di]
+        ok = np.broadcast_to(dec["ok"][di][:, None, :], row.shape)
+        use = leaf & ok
+        z_leaf = torch.zeros(0, device=dev)
+        if use.any():
+            z_leaf, _, _ = heads(leaf_obs(row[use]))
+        p = torch.from_numpy(y.copy()).to(dev)
+        mask_use = torch.from_numpy(use).to(dev)
+        p = p.masked_scatter(mask_use, torch.sigmoid(2.0 * z_leaf)) if use.any() else p
+        okt = torch.from_numpy(ok.astype(np.float32)).to(dev)
+        n = okt.sum(2).clamp(min=1.0)
+        yt = torch.from_numpy(y).to(dev)
+        return (p * okt).sum(2) / n, (yt * okt).sum(2) / n, z_leaf, yt[mask_use]
+
+    def centred_loss(pm: torch.Tensor, tm: torch.Tensor) -> torch.Tensor:
+        return (((pm - pm.mean(1, keepdim=True)) - (tm - tm.mean(1, keepdim=True))) ** 2).mean()
+
+    def split_half_ceiling(dec: Dict[str, np.ndarray]) -> float:
+        """Sign agreement of candidate differences between the even and the odd worlds' results: how
+        far the labels themselves agree on which candidate is better, the ceiling for the metric."""
+        ok = dec["ok"]
+        agree = total = 0
+        for half_a, half_b in ((0, 1),):
+            wa = np.zeros_like(ok); wa[:, half_a::2] = True
+            wb = np.zeros_like(ok); wb[:, half_b::2] = True
+            ta = (dec["y"] * (ok & wa)[:, None, :]).sum(2) / np.maximum((ok & wa).sum(1), 1)[:, None]
+            tb = (dec["y"] * (ok & wb)[:, None, :]).sum(2) / np.maximum((ok & wb).sum(1), 1)[:, None]
+            da = ta[:, :, None] - ta[:, None, :]
+            db = tb[:, :, None] - tb[:, None, :]
+            both = (da != 0) & (db != 0)
+            agree += int(((np.sign(da) == np.sign(db)) & both).sum())
+            total += int(both.sum())
+        return agree / max(1, total)
+
+    dec_ceiling = split_half_ceiling(dec_hold) if dec_hold["row"].shape[0] else float("nan")
+
     @torch.no_grad()
     def evaluate() -> Dict[str, float]:
         model.eval()
@@ -279,13 +394,36 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         vp = torch.cat(vps)
         y = torch.from_numpy(y_hold["score"]).to(dev)
         yv = torch.from_numpy(y_hold["vp"]).to(dev)
-        bce = F.binary_cross_entropy_with_logits(2.0 * z, y).item()
-        # The floor: the labels' own entropy -- a perfect fit of the 32-world means reaches it.
+        wh = torch.from_numpy(w_hold).to(dev)
+        bce_rows = F.binary_cross_entropy_with_logits(2.0 * z, y, reduction="none")
+        bce = bce_rows.mean().item()
+        # The floor: the labels' own entropy -- a perfect fit of the 32-world means reaches it. KL is
+        # what is left above it, comparable across slices whose labels are more or less decided.
         yc = y.clamp(1e-6, 1 - 1e-6)
-        floor = (-(yc * yc.log() + (1 - yc) * (1 - yc).log())).mean().item()
+        ent_rows = -(yc * yc.log() + (1 - yc) * (1 - yc).log())
+        floor = ent_rows.mean().item()
+        kl_rows = bce_rows - ent_rows
         out = {"hold_bce": bce, "hold_bce_floor": floor, "hold_vp_mse": F.mse_loss(vp, yv).item(),
+               "hold_kl": kl_rows.mean().item(), "hold_kl_leafw": ((kl_rows * wh).sum() / wh.sum()).item(),
+               "hold_vp_mse_leafw": (((vp - yv) ** 2 * wh).sum() / wh.sum()).item(),
                "hold_score_mse": F.mse_loss(torch.sigmoid(2.0 * z), y).item(),
                "hold_score_var": float(y.var().item())}
+        if dec_hold["row"].shape[0]:
+            n = min(dec_hold["row"].shape[0], 3000)
+            pms, tms = [], []
+            for lo in range(0, n, 64):
+                pm, tm, _, _ = decision_means(dec_hold, np.arange(lo, min(n, lo + 64)))
+                pms.append(pm)
+                tms.append(tm)
+            pm, tm = torch.cat(pms), torch.cat(tms)
+            dp = pm[:, :, None] - pm[:, None, :]
+            dt = tm[:, :, None] - tm[:, None, :]
+            decided = dt != 0
+            out["hold_dec_sign_agree"] = ((dp.sign() == dt.sign()) & decided).sum().item() / max(1, decided.sum().item())
+            out["hold_dec_sign_ceiling"] = dec_ceiling
+            out["hold_dec_centred_mse"] = centred_loss(pm, tm).item()
+            cp, ct = (pm - pm.mean(1, keepdim=True)).flatten(), (tm - tm.mean(1, keepdim=True)).flatten()
+            out["hold_dec_corr"] = float(torch.corrcoef(torch.stack([cp, ct]))[0, 1].item())
         if g_hold.shape[0]:
             n = min(g_hold.shape[0], 4000)
             zz = []
@@ -311,7 +449,9 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
     meta |= {"run_name": run_name, "mode": "value-fit", "description": description, "seed": cfg.seed,
             "git_commit": _git("rev-parse", "HEAD"), "git_dirty": bool(_git("status", "--porcelain", "--", "ai", "tools", "bindings", "engine")),
             "engine": engine, "dataset": manifest["dataset"], "dataset_dir": str(ds),
-            "dataset_files": manifest["files"], "init": cfg.init, "config": asdict(cfg),
+            "dataset_files": manifest["files"],
+            "siblings_dataset": sib_manifest["dataset"] if sib_manifest else None,
+            "siblings_files": sib_manifest["files"] if sib_manifest else None, "init": cfg.init, "config": asdict(cfg),
             "ladder_config": lcfg, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     (pathlib.Path(run_dir) / "metadata.json").write_text(json.dumps(meta, indent=2, default=str) + "\n")
     log = open(os.path.join(run_dir, "value_fit_metrics.jsonl"), "a", encoding="utf-8")
@@ -339,13 +479,24 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         obs = codes.decode(torch.from_numpy(x_train[idx]).to(dev, non_blocking=True))
         ti = torch.from_numpy(idx).to(dev)
         z, vp, a = heads(obs)
-        loss_win = F.binary_cross_entropy_with_logits(2.0 * z, y_dev["score"][ti])
-        loss_vp = F.mse_loss(vp, y_dev["vp"][ti])
-        w = y_dev["aux_w"][ti]
-        loss_aux = (w * (a - y_dev["aux"][ti]) ** 2).sum() / w.sum().clamp(min=1.0)
+        wr = w_dev[ti]
+        wsum = wr.sum().clamp(min=1e-6)
+        loss_win = (F.binary_cross_entropy_with_logits(2.0 * z, y_dev["score"][ti], reduction="none") * wr).sum() / wsum
+        loss_vp = (((vp - y_dev["vp"][ti]) ** 2) * wr).sum() / wsum
+        w = y_dev["aux_w"][ti] * wr[:, None]
+        loss_aux = (w * (a - y_dev["aux"][ti]) ** 2).sum() / w.sum().clamp(min=1e-6)
         loss = loss_win + cfg.vp_coef * loss_vp + cfg.aux_coef * loss_aux
         loss_sib = torch.zeros((), device=dev)
-        if g_train.shape[0] and cfg.sibling_coef > 0:
+        loss_leaf = torch.zeros((), device=dev)
+        if cfg.sibling_loss == "decision" and dec_train["row"].shape[0]:
+            di = rng.integers(0, dec_train["row"].shape[0], size=cfg.sibling_decisions)
+            pm, tm, z_leaf, y_leaf = decision_means(dec_train, di)
+            loss_sib = centred_loss(pm, tm)
+            loss = loss + cfg.sibling_coef * loss_sib
+            if cfg.leaf_coef > 0 and z_leaf.numel():
+                loss_leaf = F.binary_cross_entropy_with_logits(2.0 * z_leaf, y_leaf)
+                loss = loss + cfg.leaf_coef * loss_leaf
+        elif g_train.shape[0] and cfg.sibling_coef > 0:
             gi = rng.integers(0, g_train.shape[0], size=cfg.sibling_groups)
             zg, _, _ = heads(leaf_obs(g_train[gi]))
             loss_sib = paired(zg.view(len(gi), -1), torch.from_numpy(gy_train[gi]).to(dev))
@@ -357,15 +508,17 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         step += 1
         if step % cfg.eval_every == 0 or step == max_steps:
             ev = evaluate()
-            score = ev["hold_bce"] + cfg.vp_coef * ev["hold_vp_mse"]
+            score = (ev["hold_kl_leafw"] + cfg.vp_coef * ev["hold_vp_mse_leafw"] if cfg.leaf_weights
+                     else ev["hold_bce"] + cfg.vp_coef * ev["hold_vp_mse"])
             ev.update(step=step, epoch=round(step / steps_per_epoch, 2), lr=lr_at(step),
                       train_win=loss_win.item(), train_vp=loss_vp.item(), train_aux=loss_aux.item(),
-                      train_sib=loss_sib.item(), seconds=round(time.time() - t_fit, 1))
+                      train_sib=loss_sib.item(), train_leaf=loss_leaf.item(), seconds=round(time.time() - t_fit, 1))
             log.write(json.dumps(ev) + "\n")
             log.flush()
             better = score < best - 1e-5
-            print(f"  step {step} epoch {ev['epoch']}: held-out bce {ev['hold_bce']:.4f} (floor {ev['hold_bce_floor']:.4f}) "
-                  f"vp {ev['hold_vp_mse']:.4f} pair-acc {ev.get('hold_sibling_pair_acc', float('nan')):.3f}"
+            print(f"  step {step} epoch {ev['epoch']}: held-out KL {ev['hold_kl']:.4f} (leaf-weighted "
+                  f"{ev['hold_kl_leafw']:.4f}) vp {ev['hold_vp_mse']:.4f} decision sign agreement "
+                  f"{ev.get('hold_dec_sign_agree', float('nan')):.3f} (ceiling {ev.get('hold_dec_sign_ceiling', float('nan')):.3f})"
                   f"{'  *' if better else ''}", flush=True)
             if better:
                 best, best_step, bad = score, step, 0

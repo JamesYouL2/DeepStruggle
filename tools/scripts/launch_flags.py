@@ -86,7 +86,8 @@ UNCHECKED_BY_DESIGN = frozenset({
     # --mode value-fit's inputs: ai/training/value_fit.py records them in its own metadata.json
     "value_dataset", "value_reinit", "value_arch", "value_epochs", "value_lr", "value_batch",
     "value_sibling_groups", "value_sibling_coef", "value_vp_coef", "value_aux_coef", "value_eval_every",
-    "value_patience",
+    "value_patience", "value_siblings", "value_sibling_loss", "value_sibling_decisions", "value_leaf_coef",
+    "value_leaf_weights",
 })
 
 
