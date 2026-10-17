@@ -464,6 +464,32 @@ def test_a_rollout_players_stop_and_leaf_are_named_only_when_not_the_measured_ro
 
 
 
+def test_a_rollout_players_leaf_net_is_a_registered_network_named_only_when_set() -> None:
+    """P34's two-network root: `leaf_net` names the evaluator that reads the leaves. Ids without it
+    keep meaning the one-network root; with it the id, the stored spec and the agent string carry it,
+    the agent string as the leaf checkpoint rollout_root already reads, and validate refuses an
+    evaluator that is not registered."""
+    one = "E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)"
+    net, spec = parse_player_id(one)
+    assert isinstance(spec, Rollout) and spec.leaf_net == "" and player_id(net, spec) == one
+    two = one[:-1] + ",leaf_net=E7-A8-R1-S44@6800M+A15-R52)"
+    net, spec = parse_player_id(two)
+    assert isinstance(spec, Rollout) and spec.leaf_net == "E7-A8-R1-S44@6800M+A15-R52"
+    assert player_id(net, spec) == two
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt", "leaf.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:leaf.pt"
+    path, cfg, _ = rollout_spec_config(agent)
+    assert path == "m.pt" and (cfg.stop, cfg.leaf_side) == ("earlier", "own")
+    with pytest.raises(PlayerSpecError):
+        load_spec(spec, "m.pt")              # the evaluator's file is required
+    with pytest.raises(PlayerSpecError):
+        parse_player_id(one[:-1] + ",leaf_net=(S44,45,46)@6800M)")
+    board = lb.load()
+    board.players[two] = {"network": net, "inference": spec_to_dict(spec), "description": "", "report": None}
+    assert any("leaf_net" in e and "not in networks.json" in e for e in lb.validate(board))
+
+
 def test_an_epochs_strong_tier_must_be_main_players() -> None:
     """epochs.json's optional `strong` list: distinct main players, or validate reports it."""
     board = lb.load()

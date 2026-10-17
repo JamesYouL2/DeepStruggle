@@ -138,7 +138,8 @@ are cited from elsewhere; keep them.
   `take_siblings()`. Batching is continuous (a finished world frees its row, the queue refills it),
   the loops hand out row blocks from a shared counter (unequal cores), and `fill_live_codes` writes
   each observation float as its one-byte code in `codebook()` -- exact, a quarter of the upload --
-  for the GPU to decode. `world(base, id, w)` reproduces a world, which is how
+  for the GPU to decode (the table is `ObsCodebook`, also bound alone: `encode_raw(states)` codes
+  stored states' observations for the value fit). `world(base, id, w)` reproduces a world, which is how
   `tests/bindings/test_playout_labels.py` holds every world equal to a step-by-step Python
   `play_safe` playout of it.
 - [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).

@@ -267,7 +267,9 @@ One Elo scale per engine epoch, kept as reviewed records in `leaderboard/` and f
 **A player is a network plus an inference spec**, spelled in its id: the bare network name is its
 greedy policy; otherwise `<network>~<kind>(<field>=<value>,...)` with every field named, e.g.
 `...~gumbel(sims=256,k=8,fpu=0.2)`, `...~rollout(k=4,worlds=16,horizon=4,rule=z2)` (§7c),
-`...~search(...)`, `...~policy(temperature=0.5)`; bots are `HeuristicBot` / `RandomBot`.
+`...~search(...)`, `...~policy(temperature=0.5)`; bots are `HeuristicBot` / `RandomBot`. A rollout
+root whose leaves another network reads (P34's evaluator) names it: `...~rollout(...,leaf=own,leaf_net=<network>)`;
+the evaluator is a registered network like any other (its file and sha256 are checked the same way).
 
 **The fit** is Bradley-Terry with a US-seat term, draws half a win, in two stages: the main players
 among themselves (anchor pinned), then everyone else against them held fixed. Games without a main
@@ -751,7 +753,29 @@ is ~2 h. Labels are tied to the engine build (raw state bytes; `label` and `merg
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py \
   positions --model 'E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M' --games 20000 --out <dir>
 PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py label --dir <dir>
-PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py merge --dir <dir> --code D1
+PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py merge --dir <dir>
+```
+
+The D code is derived, not chosen: `merge` hands the labelling settings to
+`tools/scripts/run_codes.py`'s `labelling_code`, which finds their code under `labellings` in
+`research/run_codes.json` or assigns the next one (`--code D1` only checks it).
+
+**Fitting an evaluator on it** (`tools/train.py --mode value-fit`, `ai/training/value_fit.py`): the
+network of `--warmup-checkpoint`, fine-tuned (or with `--value-reinit` the same shape from fresh
+weights), `v_win` by cross-entropy toward the mean score, `v_vp` toward the final VP, a small
+auxiliary head (turn-end VP and DEFCON, region swings; saved beside, not in, the checkpoint), and
+a paired loss on the sibling slice's leaves at `--value-sibling-coef` 10. It evaluates on the held-out
+games every `--value-eval-every` steps -- cross-entropy against the labels' own entropy, VP error and
+sibling pair accuracy, starting with the initial network's (the RL critic's) numbers -- keeps the best
+and stops after `--value-patience` evaluations without a better one. `value_fit_best.pt` is an ordinary
+checkpoint: register it and play it as `leaf_net=`. Observations travel as exact one-byte codes
+(`ts.ObsCodebook`). A value fit takes its network's A code with `value_only` added and its R code
+from the value flags, the dataset among them (`run_codes.py`).
+
+```bash
+tools/scripts/check_engine_fresh.sh && TRITON_CACHE_DIR=.triton_cache PYTHONPATH=.:build/release \
+  .venv/bin/python tools/train.py --mode value-fit --value-dataset <dir> --warmup-checkpoint <rl.pt> \
+  --run-name '<RL model>+A<n>-R<n>' --description "..."
 ```
 
 ---

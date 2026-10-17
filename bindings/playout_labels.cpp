@@ -98,10 +98,7 @@ void for_rows(int64_t n, F body) {
 PlayoutLabels::PlayoutLabels(const Config& cfg, size_t capacity, uint64_t seed)
     : cfg_(cfg), capacity_(capacity), seed_(seed),
       obs_width_(OBS_SIZE_V23 + obs_features::extra_width(cfg.features)),
-      rows_(capacity), leaves_(capacity),
-      book_keys_(new std::atomic<uint32_t>[kSlots]), book_codes_(new uint8_t[kSlots]()) {
-    for (size_t i = 0; i < kSlots; ++i) book_keys_[i].store(kEmpty, std::memory_order_relaxed);
-    code_of(0u);   // code 0 is 0.0f
+      rows_(capacity), leaves_(capacity) {
     free_.reserve(capacity);
     for (size_t i = capacity; i-- > 0;) free_.push_back(static_cast<uint32_t>(i));
     live_.reserve(capacity);
@@ -231,34 +228,6 @@ void PlayoutLabels::update_guard(Row& r, const Entry& e) const noexcept {
     }
 }
 
-uint8_t PlayoutLabels::code_of(uint32_t bits) noexcept {
-    size_t h = (bits * 0x9E3779B1u) >> 21;   // 11 bits: kSlots = 2048
-    for (;;) {
-        const uint32_t k = book_keys_[h].load(std::memory_order_acquire);
-        if (k == bits) return book_codes_[h];
-        if (k == kEmpty) break;
-        h = (h + 1) & (kSlots - 1);
-    }
-    std::lock_guard<std::mutex> g(book_lock_);
-    h = (bits * 0x9E3779B1u) >> 21;
-    for (;;) {
-        const uint32_t k = book_keys_[h].load(std::memory_order_relaxed);
-        if (k == bits) return book_codes_[h];   // another thread added it meanwhile
-        if (k == kEmpty) break;
-        h = (h + 1) & (kSlots - 1);
-    }
-    const uint32_t code = book_size_.load(std::memory_order_relaxed);
-    if (code >= 256) {
-        book_full_.store(true, std::memory_order_relaxed);
-        return 0;
-    }
-    std::memcpy(&book_[code], &bits, sizeof(float));
-    book_codes_[h] = static_cast<uint8_t>(code);
-    book_keys_[h].store(bits, std::memory_order_release);
-    book_size_.store(code + 1, std::memory_order_release);
-    return static_cast<uint8_t>(code);
-}
-
 size_t PlayoutLabels::fill_live_codes(uint8_t* codes) {
     refill();
     live_.clear();
@@ -271,20 +240,70 @@ size_t PlayoutLabels::fill_live_codes(uint8_t* codes) {
         float row[OBS_SIZE_V23 + 64];
         const Row& r = rows_[live_[j]];
         extract_observation_features(r.state, rollout::acting_player(r.state), cfg_.features, row);
-        uint8_t* out = codes + j * width;
-        for (size_t i = 0; i < width; ++i) {
-            uint32_t bits;
-            std::memcpy(&bits, &row[i], sizeof(bits));
-            out[i] = bits == 0 ? 0 : code_of(bits);
-        }
+        book_.encode(row, width, codes + j * width);
     });
-    return book_full_.load(std::memory_order_relaxed) ? SIZE_MAX : static_cast<size_t>(n);
+    return book_.full() ? SIZE_MAX : static_cast<size_t>(n);
 }
 
-size_t PlayoutLabels::codebook(float* out) const noexcept {
-    const size_t n = book_size_.load(std::memory_order_acquire);
-    std::memcpy(out, book_, n * sizeof(float));
+size_t PlayoutLabels::codebook(float* out) const noexcept { return book_.values(out); }
+
+ObsCodebook::ObsCodebook() : keys_(new std::atomic<uint32_t>[kSlots]), codes_(new uint8_t[kSlots]()) {
+    for (size_t i = 0; i < kSlots; ++i) keys_[i].store(kEmpty, std::memory_order_relaxed);
+    code_of(0u);   // code 0 is 0.0f
+}
+
+uint8_t ObsCodebook::code_of(uint32_t bits) noexcept {
+    size_t h = (bits * 0x9E3779B1u) >> 21;   // 11 bits: kSlots = 2048
+    for (;;) {
+        const uint32_t k = keys_[h].load(std::memory_order_acquire);
+        if (k == bits) return codes_[h];
+        if (k == kEmpty) break;
+        h = (h + 1) & (kSlots - 1);
+    }
+    std::lock_guard<std::mutex> g(lock_);
+    h = (bits * 0x9E3779B1u) >> 21;
+    for (;;) {
+        const uint32_t k = keys_[h].load(std::memory_order_relaxed);
+        if (k == bits) return codes_[h];   // another thread added it meanwhile
+        if (k == kEmpty) break;
+        h = (h + 1) & (kSlots - 1);
+    }
+    const uint32_t code = size_.load(std::memory_order_relaxed);
+    if (code >= 256) {
+        full_.store(true, std::memory_order_relaxed);
+        return 0;
+    }
+    std::memcpy(&values_[code], &bits, sizeof(float));
+    codes_[h] = static_cast<uint8_t>(code);
+    keys_[h].store(bits, std::memory_order_release);
+    size_.store(code + 1, std::memory_order_release);
+    return static_cast<uint8_t>(code);
+}
+
+void ObsCodebook::encode(const float* row, size_t width, uint8_t* out) noexcept {
+    for (size_t i = 0; i < width; ++i) {
+        uint32_t bits;
+        std::memcpy(&bits, &row[i], sizeof(bits));
+        out[i] = bits == 0 ? 0 : code_of(bits);
+    }
+}
+
+size_t ObsCodebook::values(float* out) const noexcept {
+    const size_t n = size();
+    std::memcpy(out, values_, n * sizeof(float));
     return n;
+}
+
+bool encode_observations(const GameState* states, size_t n, uint32_t features, ObsCodebook& book,
+                         uint8_t* codes) {
+    const size_t width = OBS_SIZE_V23 + obs_features::extra_width(features);
+    for_rows(static_cast<int64_t>(n), [&](int64_t j) {
+        float row[OBS_SIZE_V23 + 64];
+        const GameState& s = states[j];
+        extract_observation_features(s, rollout::acting_player(s), features, row);
+        book.encode(row, width, codes + j * width);
+    });
+    return !book.full();
 }
 
 uint16_t PlayoutLabels::choose(Row& r, const float* lg) const {

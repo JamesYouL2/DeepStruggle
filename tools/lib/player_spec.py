@@ -12,6 +12,7 @@ network is a typed spec with named fields, and a player's id spells it out:
     E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)      Gumbel root search
     E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2)   rollout root
     E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)
+    E7-A8-R1-S44@6800M~rollout(k=4,...,leaf=own,leaf_net=<evaluator>)   two networks (P34)
     E7-A8-R1-S44@6800M~search(sims=128,determinize=true,node_filter=all,subsample=1,backend=cpp,fpu=0)
     HeuristicBot                                         a rule-based bot, no network
 
@@ -65,6 +66,8 @@ class Rollout:
     #: (LEAF_SIDES): "boundaries" and "mover" are the root every rollout id before them meant.
     stop: str = "boundaries"
     leaf: str = "mover"
+    #: The registered network that reads the leaves (P34's evaluator); "" = the root's own network.
+    leaf_net: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,7 +105,9 @@ _STOPS: Final = ("boundaries", "turn", "later", "earlier", "predeal", "earlier_p
 _LEAVES: Final = ("mover", "decider", "own")
 #: Fields added to a kind after ids using it were published, with the value those ids meant. They are
 #: written into an id or a stored spec only when they differ from it.
-LATE_FIELDS: Final[Dict[str, Dict[str, str]]] = {"rollout": {"stop": "boundaries", "leaf": "mover"}}
+LATE_FIELDS: Final[Dict[str, Dict[str, str]]] = {"rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": ""}}
+#: Characters a leaf_net name may not hold: the id grammar's own separators.
+_LEAF_NET_BAD: Final = frozenset("(),~:= ")
 #: ai.search.rollout_root.parse_rule's grammar, without importing it (torch-free here).
 _RULE_RE = re.compile(r"^(argmax|z(\d+(\.\d+)?)?|kl(\d+(\.\d+)?)?)$")
 _ID_RE = re.compile(r"^(?P<network>[^~]+?)(?:~(?P<kind>[a-z]+)(?:\((?P<args>[^()]*)\))?)?$")
@@ -143,6 +148,9 @@ def _check(spec: Inference) -> None:
             raise PlayerSpecError(f"stop must be one of {_STOPS}, got {spec.stop!r}")
         if spec.leaf not in _LEAVES:
             raise PlayerSpecError(f"leaf must be one of {_LEAVES}, got {spec.leaf!r}")
+        if set(spec.leaf_net) & _LEAF_NET_BAD:
+            raise PlayerSpecError(f"leaf_net may not contain any of {''.join(sorted(_LEAF_NET_BAD))!r} "
+                                  f"(register the evaluator under a plain name): {spec.leaf_net!r}")
     if isinstance(spec, Search):
         if spec.node_filter not in _NODE_FILTERS:
             raise PlayerSpecError(f"node_filter must be one of {_NODE_FILTERS}, got {spec.node_filter!r}")
@@ -258,9 +266,10 @@ def parse_player_id(pid: str) -> Tuple[Optional[str], Inference]:
     return network, spec
 
 
-def load_spec(spec: Inference, checkpoint: Optional[str]) -> str:
+def load_spec(spec: Inference, checkpoint: Optional[str], leaf_checkpoint: Optional[str] = None) -> str:
     """The `tools.lib.player_agent.load_agent` string that plays `spec` on `checkpoint`. A policy
-    pins its own temperature, so the tournament's shared --temperature cannot change it."""
+    pins its own temperature, so the tournament's shared --temperature cannot change it. A rollout
+    root with a `leaf_net` needs that network's file as `leaf_checkpoint`."""
     _check(spec)
     if isinstance(spec, Bot):
         return BOTS[spec.name][1]
@@ -274,6 +283,14 @@ def load_spec(spec: Inference, checkpoint: Optional[str]) -> str:
         return f"gumbel:{checkpoint}:{spec.sims}:{spec.k}:{_fmt(spec.fpu)}"
     if isinstance(spec, Rollout):
         tail = (f":{spec.stop}" if spec.stop != "boundaries" else "") + (f":{spec.leaf}" if spec.leaf != "mover" else "")
+        if spec.leaf_net:
+            if not leaf_checkpoint:
+                raise PlayerSpecError(f"leaf_net={spec.leaf_net} needs its checkpoint file")
+            if ":" in leaf_checkpoint:
+                raise PlayerSpecError(f"a leaf checkpoint path may not contain ':': {leaf_checkpoint!r}")
+            tail += f":{leaf_checkpoint}"
+        elif leaf_checkpoint:
+            raise PlayerSpecError("a leaf checkpoint was given for a spec without leaf_net")
         return f"rollout:{checkpoint}:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}{tail}"
     return (f"search:{checkpoint}:{spec.sims}:{'determinize' if spec.determinize else 'none'}:"
             f"{spec.node_filter}:{_fmt(spec.subsample)}:{spec.backend}:{_fmt(spec.fpu)}")

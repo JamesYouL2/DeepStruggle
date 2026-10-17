@@ -10,6 +10,7 @@ import torch
 
 from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
 from ai.training.generic_trainer import run_search_distillation
+from ai.training.value_fit import ValueFitConfig, run_value_fit
 from tools.lib.data_root import data_path
 from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR
 from tools.lib.player_agent import load_agent
@@ -264,10 +265,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Which per-entity heads exist. The card-collision finding predicts "
                           "`country` carries most of M2's gain (arms M2d/M2e).")
     parser.add_argument("--mode", type=str, default="train",
-                        choices=["train", "warmup", "eval", "curriculum", "distill"],
+                        choices=["train", "warmup", "eval", "curriculum", "distill", "value-fit"],
                         help="Execution mode. `distill` is P15-X4a: soft cross-entropy "
                              "toward a searcher's visit distribution, from a dataset made "
-                             "by tools/generate_search_targets.py.")
+                             "by tools/generate_search_targets.py. `value-fit` is P34's "
+                             "supervised evaluator on a tools/value_labels.py dataset "
+                             "(ai/training/value_fit.py), from --warmup-checkpoint's weights "
+                             "or, with --value-reinit, its shape.")
 
     # Warm-up / Checkpoint options
     parser.add_argument("--warmup-checkpoint", "--load-path", type=str, default=None, help="Path to pre-trained checkpoint")
@@ -288,6 +292,23 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Deliberately below BC's 1e-3: this bends a trained policy "
                              "rather than training one.")
     parser.add_argument("--bc-epochs", type=int, default=5, help="Number of epochs for BC warmup")
+    vf = parser.add_argument_group("value fit (--mode value-fit, P34)")
+    vf.add_argument("--value-dataset", type=str, default=None,
+                    help="A tools/value_labels.py dataset directory (train.npz, holdout.npz, siblings.npz, manifest.json).")
+    vf.add_argument("--value-reinit", action="store_true", default=False,
+                    help="Train --warmup-checkpoint's architecture from fresh weights instead of fine-tuning its weights.")
+    vf.add_argument("--value-epochs", type=float, default=20.0, help="At most this many passes over the training positions.")
+    vf.add_argument("--value-lr", type=float, default=2e-4)
+    vf.add_argument("--value-batch", type=int, default=4096, help="Positions per step.")
+    vf.add_argument("--value-sibling-groups", type=int, default=256,
+                    help="Sibling (position, world) groups per step for the paired loss.")
+    vf.add_argument("--value-sibling-coef", type=float, default=10.0, help="Weight of the paired sibling loss.")
+    vf.add_argument("--value-vp-coef", type=float, default=1.0, help="Weight of v_vp's squared error to the final VP (/20).")
+    vf.add_argument("--value-aux-coef", type=float, default=0.1,
+                    help="Weight of the auxiliary head (turn-end VP and DEFCON, region swings).")
+    vf.add_argument("--value-eval-every", type=int, default=250, help="Steps between held-out evaluations.")
+    vf.add_argument("--value-patience", type=int, default=6,
+                    help="Stop after this many evaluations without a better held-out loss.")
 
     # Budget & Snapshot parameters. Both are in env steps, deliberately: a wall-clock budget
     # cannot make two arms comparable, because steps/sec depends on the policy.
@@ -1249,6 +1270,20 @@ def main():
             lr=args.distill_lr,
             device=dev,
         )
+    elif args.mode == "value-fit":
+        if not args.value_dataset or not args.warmup_checkpoint:
+            raise SystemExit("--mode value-fit needs --value-dataset and --warmup-checkpoint (the weights to "
+                             "fine-tune, or with --value-reinit the shape to train from scratch)")
+        run_value_fit(
+            ValueFitConfig(dataset=args.value_dataset, init=args.warmup_checkpoint, reinit=args.value_reinit,
+                           batch=args.value_batch, sibling_groups=args.value_sibling_groups,
+                           sibling_coef=args.value_sibling_coef, vp_coef=args.value_vp_coef,
+                           aux_coef=args.value_aux_coef, lr=args.value_lr, max_epochs=args.value_epochs,
+                           eval_every=args.value_eval_every, patience=args.value_patience,
+                           seed=args.seed if args.seed is not None else 44, device=args.device),
+            run_name=args.run_name, description=args.description, output_dir=args.output_dir,
+            cli={k: v for k, v in vars(args).items()
+                 if k.startswith("value_") or k in ("mode", "warmup_checkpoint", "seed")})
     elif args.mode == "eval":
         if not args.warmup_checkpoint:
             print("Error: --warmup-checkpoint (or model path) required for mode=eval")

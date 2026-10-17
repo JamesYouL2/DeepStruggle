@@ -18,7 +18,7 @@ Three stages, each shardable with --part i/n (research/plans/P34_search_centric_
     tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/value_labels.py \\
         positions --model <network or .pt> --games 20000 --out data/datasets/p34/<name>
     ... label --dir data/datasets/p34/<name> [--part 0/1]
-    ... merge --dir data/datasets/p34/<name>
+    ... merge --dir data/datasets/p34/<name>     # the D code is derived (tools/scripts/run_codes.py)
 
 The labeller's network forward runs as a CUDA graph over a fixed batch, from page-locked buffers,
 with two labellers alternating so the engine steps one while the GPU evaluates the other.
@@ -46,6 +46,7 @@ from tools.lib.checkpoint_id import checkpoint_label
 from tools.lib.data_root import data_root
 from tools.lib.engine_fingerprint import fingerprint, staleness_reason
 from tools.lib.player_agent import NeuralAgent
+from tools.scripts.run_codes import labelling_code
 
 A = 220
 #: A position's id is game * PLY_SPAN + ply.
@@ -447,6 +448,16 @@ def run_label(a: argparse.Namespace) -> int:
 
 # ---- merge -------------------------------------------------------------------------------------
 
+def labelling_signature(pmeta: Dict[str, Any], lmeta: Dict[str, Any]) -> Dict[str, Any]:
+    """The labelling recipe: every setting that changes what a dataset holds, none of where or how
+    fast it was made. Its D code comes from tools/scripts/run_codes.py's `labellings`."""
+    return {"temperature": pmeta["temperature"], "keep": pmeta["keep"], "candidates": pmeta["candidates"],
+            "holdout": pmeta["holdout"], "worlds": lmeta["worlds"], "stop": "game", "safe": lmeta["safe"],
+            "siblings": lmeta["siblings"], "sibling_worlds": lmeta["sibling_worlds"],
+            "sibling_k": lmeta["sibling_k"], "leaf_horizon": lmeta["leaf_horizon"],
+            "labels": ["score", "final_vp", "turn_vp", "turn_defcon", "region_swing"]}
+
+
 def run_merge(a: argparse.Namespace) -> int:
     d = pathlib.Path(a.dir)
     pos, pmeta = _load_positions(d)
@@ -495,8 +506,13 @@ def run_merge(a: argparse.Namespace) -> int:
         np.savez(f, id=S["id"], meta=S["meta"], cols=S["cols"], swing=S["swing"], leaf=S["leaf"],
                  holdout=S["holdout"])
         files[f.name] = sha256(f)
-    name = f"{pmeta['generator']}~{a.code}(seed={pmeta['seed']},games={pmeta['games']})"
-    manifest = {"dataset": name, "code": a.code, "generator": pmeta["generator"],
+    code = labelling_code(labelling_signature(pmeta, lmetas[0]), update=True)
+    assert code is not None
+    if a.code and a.code != code:
+        raise SystemExit(f"the labelling settings are {code}'s, not {a.code}'s (tools/scripts/run_codes.py labellings)")
+    name = f"{pmeta['generator']}~{code}(seed={pmeta['seed']},games={pmeta['games']})"
+    manifest = {"dataset": name, "code": code, "labelling": labelling_signature(pmeta, lmetas[0]),
+                "generator": pmeta["generator"],
                 "generator_sha256": pmeta["generator_sha256"], "engine": pmeta["engine"],
                 "positions": {k: v for k, v in pmeta.items() if k not in ("part", "positions", "seconds")},
                 "label": {k: v for k, v in lmetas[0].items() if k not in ("part", "network_rows", "seconds")},
@@ -549,7 +565,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="upload observations as float32 instead of their exact one-byte codes")
     me = sub.add_parser("merge", help="join the parts into train / holdout files and the manifest")
     me.add_argument("--dir", required=True)
-    me.add_argument("--code", default="D1", help="the labelling recipe's D code")
+    me.add_argument("--code", default=None,
+                    help="the D code expected; refused if the one derived from the settings differs")
     a = ap.parse_args(argv)
     if a.stage == "positions":
         return run_positions(a)

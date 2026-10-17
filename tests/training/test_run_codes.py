@@ -127,3 +127,30 @@ def test_link_directories_alias_runs_without_becoming_runs(lineage: Dict[str, st
     names2, _ = rc.assign(runs2, {"architectures": {}, "recipes": {}, "overrides": {}}, True)
     newest = max(runs2, key=lambda r: r.ts)
     assert names2[newest.dir].text() == "E9-A1-R1-S44@150M+S45"   # a continuation keeps the name
+
+
+def test_a_labelling_recipe_gets_one_d_code_and_keeps_it(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """tools/value_labels.py's settings -> a D code: the same settings find the same code, new ones
+    the next, and nothing is assigned without `update`."""
+    codes = tmp_path / "run_codes.json"
+    codes.write_text(json.dumps({"architectures": {}, "recipes": {}, "overrides": {}, "runs": {}}))
+    monkeypatch.setattr(rc, "CODES_JSON", str(codes))
+    sig = {"temperature": 0.25, "keep": 8, "worlds": 32, "stop": "game"}
+    assert rc.labelling_code(sig, update=False) is None
+    assert rc.labelling_code(sig, update=True) == "D1"
+    assert rc.labelling_code(dict(reversed(list(sig.items()))), update=False) == "D1"
+    assert rc.labelling_code({**sig, "worlds": 64}, update=True) == "D2"
+    assert set(json.loads(codes.read_text())["labellings"]) == {"D1", "D2"}
+
+
+def test_a_value_fit_is_its_networks_shape_read_for_its_value(tmp_path: Any) -> None:
+    """A value fit's A code is its network's flags plus value_only, so it never shares a code with
+    the RL network it was fine-tuned from; its value-fit flags make its R code."""
+    root = str(tmp_path)
+    rl = _run(root, "E9-01-44")
+    vf = _run(root, "E9-02-44", parent=rl, mode="value-fit", value_dataset="/d/p34", value_lr=2e-4)
+    runs = {os.path.basename(r.dir): r for r in rc.load_runs(root)}
+    a_rl = rc.arch_sig(runs[os.path.basename(rl)])
+    a_vf = rc.arch_sig(runs[os.path.basename(vf)])
+    assert a_vf == {**a_rl, "value_only": True}
+    assert rc.recipe_sig(runs[os.path.basename(vf)], {}).get("value_dataset") == "/d/p34"

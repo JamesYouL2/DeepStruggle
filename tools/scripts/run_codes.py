@@ -17,6 +17,12 @@ times on the E4 ladder (CLAUDE.md, invariant 15).
     tools/scripts/run_codes.py --link          # a <new name>_<timestamp> directory of links for
                                                # every old-scheme run, and _models/<label> links
 
+A value fit (`--mode value-fit`, P34's evaluators) takes its network's A code with `value_only`
+added -- the same shape read only for its value is a different thing to name -- and its R code from
+the value-fit flags, the dataset among them. A labelling recipe (`D`, tools/value_labels.py) is the
+same idea for datasets: `labelling_code` maps a dataset's labelling settings to its code under
+`labellings`, assigning the next one for a new set.
+
 What a flag cannot show is recorded by hand under `overrides` in the JSON: a code change that
 altered training with the flags unchanged (E7-12-44 centred the setup credit), a league whose
 exploiter was not training, a run the registry voids. A recipe's description is written there
@@ -253,7 +259,10 @@ def load_runs(root: str) -> List[Run]:
 
 
 def arch_sig(r: Run) -> Dict[str, Any]:
-    return {k: v for k, v in r.flags.items() if category(k) == "A"}
+    sig = {k: v for k, v in r.flags.items() if category(k) == "A"}
+    if r.meta.get("mode") == "value-fit":
+        sig["value_only"] = True
+    return sig
 
 
 def _run_of(checkpoint: str) -> Optional[str]:
@@ -296,6 +305,21 @@ def load_codes() -> Dict[str, Any]:
         return {"architectures": {}, "recipes": {}, "overrides": {}, "runs": {}}
     with open(CODES_JSON, encoding="utf-8") as f:
         return json.load(f)
+
+
+def labelling_code(sig: Dict[str, Any], update: bool) -> Optional[str]:
+    """The D code of a labelling recipe (tools/value_labels.py's settings), or None. With `update` a
+    new recipe gets the next code, written to run_codes.json at once."""
+    codes = load_codes()
+    table = codes.setdefault("labellings", {})
+    code = _lookup(table, sig)
+    if code is None and update:
+        code = f"D{1 + max((int(c[1:]) for c in table), default=0)}"
+        table[code] = {"description": "", "flags": sig}
+        with open(CODES_JSON, "w", encoding="utf-8") as f:
+            json.dump(codes, f, indent=1, sort_keys=False, default=str)
+            f.write("\n")
+    return code
 
 
 def _lookup(table: Dict[str, Any], sig: Dict[str, Any]) -> Optional[str]:

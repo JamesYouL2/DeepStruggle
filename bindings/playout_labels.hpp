@@ -38,6 +38,37 @@ namespace ts::labels {
 constexpr size_t kRegions = ScoringTap::kSlots;   // Europe .. South America, then Southeast Asia
 constexpr size_t kMaxCandidates = 8;
 
+// Observation floats as one-byte codes: the observation takes few distinct values (about a hundred),
+// so a code table of 256 holds them all and a code decodes exactly. Thread-safe: a value's code is
+// looked up without a lock (stored before its key is published) and added under one. Codes are
+// assigned in the order values first appear, which depends on thread timing -- the decoding never does.
+class ObsCodebook {
+public:
+    ObsCodebook();
+    // The code of a float's bits; sets full() and returns 0 when a 257th value appears.
+    uint8_t code_of(uint32_t bits) noexcept;
+    // Encode one observation row.
+    void encode(const float* row, size_t width, uint8_t* out) noexcept;
+    size_t values(float* out) const noexcept;   // code -> value, code 0 = 0.0f
+    size_t size() const noexcept { return size_.load(std::memory_order_acquire); }
+    bool full() const noexcept { return full_.load(std::memory_order_relaxed); }
+
+private:
+    static constexpr size_t kSlots = 2048;
+    static constexpr uint32_t kEmpty = 0xFFFFFFFFu;   // a NaN pattern no observation holds
+    std::unique_ptr<std::atomic<uint32_t>[]> keys_;
+    std::unique_ptr<uint8_t[]> codes_;
+    float values_[256] = {};
+    std::atomic<uint32_t> size_{0};
+    std::atomic<bool> full_{false};
+    std::mutex lock_;
+};
+
+// Encode `n` raw states' observations, each from its acting side, into codes (n x width), across the
+// OpenMP team. Returns false if the codebook overflowed.
+bool encode_observations(const GameState* states, size_t n, uint32_t features, ObsCodebook& book,
+                         uint8_t* codes);
+
 struct Config {
     uint32_t features = 0;      // obs_features of the network that plays
     uint16_t worlds = 32;
@@ -183,18 +214,7 @@ private:
     std::vector<SiblingLabel> siblings_out_;
     std::vector<GameState> leaves_out_;
     uint64_t forced_ = 0, chosen_ = 0;
-
-    // The codebook: a value's float bits -> its code, open addressing over kSlots slots. Read
-    // without a lock (a slot's code is stored before its key is published); added under a lock.
-    static constexpr size_t kSlots = 2048;
-    static constexpr uint32_t kEmpty = 0xFFFFFFFFu;   // a NaN pattern no observation holds
-    std::unique_ptr<std::atomic<uint32_t>[]> book_keys_;
-    std::unique_ptr<uint8_t[]> book_codes_;
-    float book_[256] = {};
-    std::atomic<uint32_t> book_size_{0};
-    std::atomic<bool> book_full_{false};
-    std::mutex book_lock_;
-    uint8_t code_of(uint32_t bits) noexcept;
+    ObsCodebook book_;
 };
 
 }  // namespace ts::labels

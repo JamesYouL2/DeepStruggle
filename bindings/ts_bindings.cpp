@@ -680,6 +680,41 @@ NB_MODULE(ts_engine, m) {
           }, nb::arg("data"),
           "The inverse of GameState.raw_bytes(), for the SAME engine build only: the bytes are the "
           "struct's memory, so a dataset of them records the engine fingerprint it was written by.");
+    nb::class_<ts::labels::ObsCodebook>(m, "ObsCodebook",
+        "Observation floats as exact one-byte codes (bindings/playout_labels.hpp): encode_raw() "
+        "writes stored states' observations, each from its acting side, as codes; values()[codes] "
+        "decodes them. One codebook per dataset: codes only mean something with their own table.")
+        .def(nb::init<>())
+        .def("encode_raw", [](ts::labels::ObsCodebook& self,
+                              nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu> states,
+                              uint32_t features) {
+                 if (states.shape(1) != sizeof(ts::GameState))
+                     throw std::invalid_argument("encode_raw: rows of state_size() bytes");
+                 if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
+                 const size_t n = states.shape(0);
+                 const size_t width = ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features);
+                 std::vector<ts::GameState> st(n);
+                 if (n) std::memcpy(static_cast<void*>(st.data()), states.data(), n * sizeof(ts::GameState));
+                 uint8_t* codes = new uint8_t[std::max<size_t>(1, n * width)];
+                 nb::capsule own(codes, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+                 bool ok;
+                 {
+                     nb::gil_scoped_release release;
+                     ok = ts::labels::encode_observations(st.data(), n, features, self, codes);
+                 }
+                 if (!ok) throw std::runtime_error("encode_raw: more than 256 distinct observation values");
+                 size_t sh[2] = { n, width };
+                 return nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(codes, 2, sh, own);
+             }, nb::arg("states"), nb::arg("features") = 0u,
+             "(n, obs width) uint8 codes of raw states' observations, each from its acting side.")
+        .def("values", [](const ts::labels::ObsCodebook& self) {
+                 float* d = new float[256];
+                 const size_t n = self.values(d);
+                 nb::capsule own(d, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+                 size_t sh[1] = { n };
+                 return nb::ndarray<nb::numpy, float, nb::ndim<1>>(d, 1, sh, own);
+             }, "code -> value (code 0 = 0.0); it only grows.")
+        .def("size", &ts::labels::ObsCodebook::size);
     {
         using PL = ts::labels::PlayoutLabels;
         using RawStates = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;

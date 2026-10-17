@@ -43,7 +43,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, NotRequired, Optional, Sequence, Set, Tuple, TypedDict
 
-from tools.lib.player_spec import (Inference, PlayerSpecError, Policy, kind_of, player_id, spec_from_dict)
+from tools.lib.player_spec import (Inference, PlayerSpecError, Policy, Rollout, kind_of, player_id, spec_from_dict)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LEADERBOARD_DIR = ROOT / "leaderboard"
@@ -358,6 +358,9 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             errs.append(f"{where}: the canonical id of this network and inference is {canon!r}")
         if pl["network"] is not None and pl["network"] not in board.networks:
             errs.append(f"{where}: network {pl['network']!r} is not in networks.json")
+        leaf_net = spec.leaf_net if isinstance(spec, Rollout) else ""
+        if leaf_net and leaf_net not in board.networks:
+            errs.append(f"{where}: leaf_net {leaf_net!r} is not in networks.json")
     for name, ep in board.epochs.items():
         where = f"epochs.json[{name}]"
         want = {"description", "behaviour", "anchor", "anchor_elo", "main"}

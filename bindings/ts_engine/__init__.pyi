@@ -840,6 +840,23 @@ def state_from_raw_bytes(data: bytes) -> GameState:
     The inverse of GameState.raw_bytes(), for the SAME engine build only: the bytes are the struct's memory, so a dataset of them records the engine fingerprint it was written by.
     """
 
+class ObsCodebook:
+    """
+    Observation floats as exact one-byte codes (bindings/playout_labels.hpp): encode_raw() writes stored states' observations, each from its acting side, as codes; values()[codes] decodes them. One codebook per dataset: codes only mean something with their own table.
+    """
+
+    def __init__(self) -> None: ...
+
+    def encode_raw(self, states: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)], features: int = 0) -> Annotated[NDArray[numpy.uint8], dict(shape=(None, None))]:
+        """
+        (n, obs width) uint8 codes of raw states' observations, each from its acting side.
+        """
+
+    def values(self) -> Annotated[NDArray[numpy.float32], dict(shape=(None,))]:
+        """code -> value (code 0 = 0.0); it only grows."""
+
+    def size(self) -> int: ...
+
 class PlayoutLabels:
     """
     P34's playout labeller: queued positions dealt into `worlds` worlds from the mover's view, fresh dice each, played greedily to the game's end by the caller's network under the safe-playout rule, with outcome capture (bindings/playout_labels.hpp). Batching is continuous: fill_live(obs) -> logits -> step(logits) until idle(), collecting take_positions() / take_siblings() as they finish.

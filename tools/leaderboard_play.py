@@ -39,7 +39,7 @@ from tools.lib.engine_behaviour import measure
 from tools.lib.engine_fingerprint import fingerprint, staleness_reason
 from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, append_record, behaviour_id, behaviour_mismatch,
                                    fit_epoch, load, make_record, markdown_table, player_spec, validate, view)
-from tools.lib.player_spec import PlayerSpecError, load_spec
+from tools.lib.player_spec import PlayerSpecError, Rollout, load_spec
 from tools.tournament import run_massive_tournament
 
 #: Code whose changes can change a game; a record's commit must describe it.
@@ -169,18 +169,25 @@ def _run(a: argparse.Namespace) -> int:
     commit = _git("rev-parse", "HEAD")
 
     entrants = sorted({p for pr in pairs for p in pr})
+
+    def network_file(net: str) -> str:
+        entry = board.networks[net]
+        path = data_path(entry["file"])
+        got = _sha256(path)
+        if got != entry["sha256"]:
+            raise LeaderboardError(f"{path}: sha256 {got[:12]}… is not the registered "
+                                   f"{entry['sha256'][:12]}… for {net}")
+        return path
+
     specs = []
     for pid in entrants:
         net = board.players[pid]["network"]
-        path = None
-        if net is not None:
-            entry = board.networks[net]
-            path = data_path(entry["file"])
-            got = _sha256(path)
-            if got != entry["sha256"]:
-                raise LeaderboardError(f"{path}: sha256 {got[:12]}… is not the registered "
-                                       f"{entry['sha256'][:12]}… for {net}")
-        specs.append(load_spec(player_spec(board, pid), path))
+        spec = player_spec(board, pid)
+        path = network_file(net) if net is not None else None
+        # A two-network rollout root (P34): the evaluator that reads the leaves is a registered
+        # network too, checked the same way.
+        leaf = network_file(spec.leaf_net) if isinstance(spec, Rollout) and spec.leaf_net else None
+        specs.append(load_spec(spec, path, leaf))
     index = {pid: i for i, pid in enumerate(entrants)}
     matchups = [(min(index[x], index[y]), max(index[x], index[y])) for x, y in pairs]
     base_seed = 10000 if a.base_seed is None else a.base_seed
