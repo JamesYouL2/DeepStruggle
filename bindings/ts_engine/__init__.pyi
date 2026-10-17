@@ -918,10 +918,18 @@ class PlayoutLabels:
         The values the codes of fill_live_codes stand for (code 0 = 0.0); it only grows.
         """
 
-    def step(self, logits: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)]) -> None:
+    def step(self, logits: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)], forced: Annotated[NDArray[numpy.int32], dict(shape=(None,), order='C', device='cpu', writable=False)] | None = None) -> None:
         """
-        Advance the listed rows by the masked argmax of their logits rows (the first n), under the safe rule, and harvest the worlds that ended.
+        Advance the listed rows by the masked argmax of their logits rows (the first n), under the safe rule, and harvest the worlds that ended. `forced` (int32, -1 = the argmax) gives a row another player's action, taken unless the safe rule refuses it.
         """
+
+    def listed_info(self) -> Annotated[NDArray[numpy.int32], dict(shape=(None, None))]:
+        """
+        Per listed row: decision type, 1 if a headline card choice, its turn, its position's turn.
+        """
+
+    def listed_state(self, j: int) -> GameState:
+        """A copy of listed row j's position (rows in fill_live's order)."""
 
     def take_positions(self) -> dict:
         """

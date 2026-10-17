@@ -864,15 +864,32 @@ NB_MODULE(ts_engine, m) {
                      size_t sh[1] = { n };
                      return nb::ndarray<nb::numpy, float, nb::ndim<1>>(d, 1, sh, own);
                  }, "The values the codes of fill_live_codes stand for (code 0 = 0.0); it only grows.")
-            .def("step", [](PL& self, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> logits) {
+            .def("step", [](PL& self, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> logits,
+                            std::optional<nb::ndarray<const int32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>> forced) {
                      if (logits.shape(0) < self.listed() || logits.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
                          throw std::invalid_argument("step: logits must cover the rows of the last fill_live");
+                     if (forced && forced->shape(0) < self.listed())
+                         throw std::invalid_argument("step: one forced action (or -1) per listed row");
                      const float* lg = logits.data();
+                     const int32_t* fa = forced ? forced->data() : nullptr;
                      nb::gil_scoped_release release;
-                     self.step(lg);
-                 }, nb::arg("logits"),
+                     self.step(lg, fa);
+                 }, nb::arg("logits"), nb::arg("forced") = nb::none(),
                  "Advance the listed rows by the masked argmax of their logits rows (the first n), "
-                 "under the safe rule, and harvest the worlds that ended.")
+                 "under the safe rule, and harvest the worlds that ended. `forced` (int32, -1 = the "
+                 "argmax) gives a row another player's action, taken unless the safe rule refuses it.")
+            .def("listed_info", [](const PL& self) {
+                     const size_t n = self.listed();
+                     int32_t* d = new int32_t[std::max<size_t>(1, n * 4)];
+                     self.listed_info(d);
+                     nb::capsule own(d, [](void* p) noexcept { delete[] static_cast<int32_t*>(p); });
+                     size_t sh[2] = { n, 4 };
+                     return nb::ndarray<nb::numpy, int32_t, nb::ndim<2>>(d, 2, sh, own);
+                 }, "Per listed row: decision type, 1 if a headline card choice, its turn, its position's turn.")
+            .def("listed_state", [](const PL& self, size_t j) -> ts::GameState {
+                     if (j >= self.listed()) throw std::out_of_range("listed row");
+                     return self.listed_state(j);
+                 }, nb::arg("j"), "A copy of listed row j's position (rows in fill_live's order).")
             .def("take_positions", [f32, i64, i32](PL& self) {
                      const auto got = self.take_positions();
                      const size_t n = got.size(), R = ts::labels::kRegions;

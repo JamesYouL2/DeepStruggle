@@ -242,3 +242,28 @@ def test_keying_is_a_function_of_the_situation() -> None:
     other = _positions(1, seed=15)[0]
     assert ts.keyed_key(other, 99).rng_state != a.rng_state
 
+
+
+def test_forced_actions_override_the_argmax_only_where_given_and_legal() -> None:
+    """step(logits, forced): -1 (or an illegal action) leaves the argmax, so such a run labels exactly
+    as an unforced one; listed_info describes the listed rows."""
+    positions = _positions(4, seed=21)
+
+    def labels(forced_kind: str) -> List[float]:
+        pl = ts.PlayoutLabels(worlds=2, capacity=16, seed=8)
+        pl.enqueue(positions, list(range(len(positions))))
+        obs = np.zeros((pl.capacity(), pl.obs_width()), dtype=np.float32)
+        while not pl.idle():
+            n = pl.fill_live(obs)
+            info = pl.listed_info()
+            assert info.shape == (n, 4) and (info[:, 2] >= info[:, 3]).all()
+            forced = np.full(n, -1, dtype=np.int32)
+            if forced_kind == "illegal":
+                for j in range(n):
+                    mask = np.asarray(ActionEncoder.get_legal_mask(pl.listed_state(j)))
+                    forced[j] = int(np.flatnonzero(mask == 0)[0])
+            pl.step(np.ascontiguousarray(_logits(obs[:n])), None if forced_kind == "none" else forced)
+        got = pl.take_positions()
+        return sorted(got["sums"][:, 0].tolist())
+
+    assert labels("none") == labels("minus") == labels("illegal")

@@ -181,7 +181,13 @@ public:
     // The values the codes stand for, code 0 = 0.0f; grows as new values appear, never reorders.
     size_t codebook(float* out) const noexcept;
     // Each listed row takes the masked argmax of its logits row (under the safe rule), and settles.
-    void step(const float* logits);
+    // `forced`, if given, is one action per listed row (-1: the argmax): a stronger player's choice
+    // for that row (P34's D3 follow-up), taken unless the safe rule refuses it.
+    void step(const float* logits, const int32_t* forced = nullptr);
+    // What each listed row is deciding, for a caller choosing where to play something else:
+    // out is listed() x 4 = decision type, 1 if a headline card choice, the row's turn, its position's turn.
+    void listed_info(int32_t* out) const noexcept;
+    const GameState& listed_state(size_t j) const noexcept { return rows_[live_[j]].state; }
 
     // World w of position `id` as refill deals it (tests and diagnostics).
     GameState world(const GameState& base, int64_t id, uint16_t w) const noexcept;
@@ -200,7 +206,7 @@ private:
     void finish(Row& r, const Entry& e);
     void harvest();
     void update_guard(Row& r, const Entry& e) const noexcept;
-    uint16_t choose(Row& r, const float* logits) const;
+    uint16_t choose(Row& r, const float* logits, int32_t forced = -1) const;
 
     Config cfg_;
     size_t capacity_;

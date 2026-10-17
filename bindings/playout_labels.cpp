@@ -309,7 +309,7 @@ bool encode_observations(const GameState* states, size_t n, uint32_t features, O
     return !book.full();
 }
 
-uint16_t PlayoutLabels::choose(Row& r, const float* lg) const {
+uint16_t PlayoutLabels::choose(Row& r, const float* lg, int32_t forced) const {
     uint8_t mask[A];
     std::memcpy(mask, r.mask, A);
     int best = -1;
@@ -317,8 +317,13 @@ uint16_t PlayoutLabels::choose(Row& r, const float* lg) const {
         if (mask[a] && (best < 0 || lg[a] > lg[best])) best = static_cast<int>(a);
     }
     if (best < 0) return UINT16_MAX;
-    if (!r.guarding || r.state.defcon > 2) return static_cast<uint16_t>(best);
+    const bool guarded = r.guarding && r.state.defcon <= 2;
     const Player who = rollout::acting_player(r.state);
+    if (forced >= 0 && static_cast<size_t>(forced) < A && mask[forced] &&
+        !(guarded && loses_now(r.state, static_cast<uint16_t>(forced), who))) {
+        return static_cast<uint16_t>(forced);
+    }
+    if (!guarded) return static_cast<uint16_t>(best);
     // The masked argmax over the options that do not lose on the spot, when there are any: walk the
     // legal options best first and take the first safe one.
     if (!loses_now(r.state, static_cast<uint16_t>(best), who)) return static_cast<uint16_t>(best);
@@ -415,13 +420,24 @@ void PlayoutLabels::settle(uint32_t slot, const Entry& e) {
     }
 }
 
-void PlayoutLabels::step(const float* logits) {
+void PlayoutLabels::listed_info(int32_t* out) const noexcept {
+    for (size_t j = 0; j < live_.size(); ++j) {
+        const Row& r = rows_[live_[j]];
+        const auto& c = r.state.ctx();
+        out[j * 4 + 0] = static_cast<int32_t>(c.decision_type);
+        out[j * 4 + 1] = (c.decision_type == DecisionType::SELECT_CARD && r.state.current_phase == Phase::HEADLINE) ? 1 : 0;
+        out[j * 4 + 2] = r.state.turn;
+        out[j * 4 + 3] = entries_[r.entry].start_turn;
+    }
+}
+
+void PlayoutLabels::step(const float* logits, const int32_t* forced) {
     for_rows(static_cast<int64_t>(live_.size()), [&](int64_t j) {
         const uint32_t slot = live_[j];
         Row& r = rows_[slot];
         const Entry& e = entries_[r.entry];
         if (cfg_.keyed) keyed::key(r.state, r.world_key);   // the safe rule's probes see the same draws
-        if (!play(slot, e, choose(r, logits + j * A))) return;
+        if (!play(slot, e, choose(r, logits + j * A, forced ? forced[j] : -1))) return;
         ++r.chosen;
         settle(slot, e);
     });

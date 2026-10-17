@@ -44,6 +44,7 @@ import numpy as np
 import torch
 
 import ts_engine as ts
+from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from bindings.ts_env import model_obs_features
 from tools.lib import leaderboard
 from tools.lib.action_view import checkpoint_merged_influence
@@ -335,8 +336,38 @@ def sibling_ids(ids: np.ndarray, n: int, seed: int) -> np.ndarray:
     return np.sort(ids[perm[:n]])
 
 
-def _drive(labellers: Sequence[Any], policies: Sequence[GraphedPolicy], feed: Any, sink: Any) -> int:
-    """Run the labellers to idle, alternating so one steps while the other's batch is on the GPU."""
+class SearchFollow:
+    """D3's stronger follow-up: at each playout's entry decisions -- action-round card choices and
+    headline cards -- from the position's turn through `window` turns after it, the move is the keyed
+    rollout root's (k=4, `worlds`, 4 boundaries, stop=earlier, leaf=own) instead of the greedy argmax.
+    Elsewhere the playout stays greedy. `searched` counts the decisions it chose."""
+
+    SELECT_CARD = int(ts.DecisionType.SELECT_CARD)
+
+    def __init__(self, model: Any, device: torch.device, worlds: int, window: int, seed: int) -> None:
+        self.root = RolloutRoot(model, RolloutConfig(k=4, worlds=worlds, horizon=4, rule="z2", seed=seed,
+                                                     stop="earlier", leaf_side="own", keyed=True), device=device)
+        self.window = window
+        self.searched = 0
+
+    def __call__(self, pl: Any) -> Optional[np.ndarray]:
+        info = pl.listed_info()
+        if info.shape[0] == 0:
+            return None
+        want = np.flatnonzero((info[:, 0] == self.SELECT_CARD) & (info[:, 2] - info[:, 3] <= self.window))
+        if want.size == 0:
+            return None
+        picks = self.root.choose([pl.listed_state(int(j)) for j in want])
+        forced = np.full(info.shape[0], -1, dtype=np.int32)
+        forced[want] = np.asarray(picks, dtype=np.int32)
+        self.searched += int(want.size)
+        return forced
+
+
+def _drive(labellers: Sequence[Any], policies: Sequence[GraphedPolicy], feed: Any, sink: Any,
+           follow: Optional[SearchFollow] = None) -> int:
+    """Run the labellers to idle, alternating so one steps while the other's batch is on the GPU; with
+    `follow`, its choices override the greedy move of the rows it picks."""
     n = [0] * len(labellers)
     for j, (pl, pol) in enumerate(zip(labellers, policies)):
         feed(pl)
@@ -351,7 +382,8 @@ def _drive(labellers: Sequence[Any], policies: Sequence[GraphedPolicy], feed: An
                     continue
             logits = pol.wait()
             if n[j]:
-                pl.step(logits)
+                forced = follow(pl) if follow is not None else None
+                pl.step(logits, forced)
                 rows += n[j]
             sink(pl)
             feed(pl)
@@ -430,11 +462,12 @@ def run_label(a: argparse.Namespace) -> int:
         if got["id"].size:
             sib_out.append(got)
 
-    rows = 0 if a.no_main else _drive(labellers, policies, feed_main, sink_main)
+    follow = SearchFollow(model, device, a.search_worlds, a.search_window, a.seed) if a.follow == "search" else None
+    rows = 0 if a.no_main else _drive(labellers, policies, feed_main, sink_main, follow)
     t_main = time.time() - t0
     print(f"main labels: {ids.size} positions x {a.worlds} worlds, {rows} network rows in {t_main:.0f}s "
           f"({rows / max(t_main, 1e-9):,.0f} rows/s)", flush=True)
-    srows = _drive(sib_labellers, policies, feed_sib, sink_sib) if sib_rows.size else 0
+    srows = _drive(sib_labellers, policies, feed_sib, sink_sib, follow) if sib_rows.size else 0
     t_all = time.time() - t0
 
     def cat(chunks: List[Dict[str, np.ndarray]], key: str, width: Tuple[int, ...], dtype: Any) -> np.ndarray:
@@ -454,12 +487,73 @@ def run_label(a: argparse.Namespace) -> int:
             "main": not a.no_main, "safe": True,
             "siblings": a.siblings, "sibling_worlds": a.sibling_worlds, "sibling_k": a.sibling_k,
             "leaf_horizon": a.leaf_horizon, "keyed": a.keyed, "capacity": a.capacity, "device": str(device),
+            "follow": a.follow, "search_worlds": a.search_worlds, "search_window": a.search_window,
+            "searched_decisions": follow.searched if follow is not None else 0,
             "torch": torch.__version__, "cuda_graphs": not a.no_graphs, "code_upload": not a.float_upload,
             "network_rows": int(rows + srows), "seconds": round(t_all, 1)}
     # A siblings-only part (--no-main) has no labels file; its record goes beside the siblings.
     (sfile if a.no_main else file).with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"{file}: {sum(x['id'].size for x in main_out)} positions; {sfile}: "
           f"{sum(x['id'].size for x in sib_out)} sibling rows; {rows + srows} network rows in {t_all:.0f}s")
+    return 0
+
+
+# ---- select --------------------------------------------------------------------------------------
+
+def run_select(a: argparse.Namespace) -> int:
+    """A subset of a labelled set's positions as a positions file of its own, to be labelled again:
+    `contested` -- entry decisions (card choice, headline) whose label lies in [lo, hi], positions of
+    the sibling slice whose candidate means differ by --spread or more first, then a fixed shuffle --
+    or `exact`, the exact slice's positions."""
+    src = pathlib.Path(a.dir)
+    pos, pmeta = _load_positions(src)
+    out = pathlib.Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    if a.what == "exact":
+        files = sorted(src.glob("exact_*.npz"))
+        if not files:
+            raise SystemExit(f"{src}: no exact slice")
+        want = np.unique(np.concatenate([np.load(f)["id"] for f in files]))
+        for f in files:      # the exact values travel with their positions
+            (out / f.name).write_bytes(f.read_bytes())
+            if f.with_suffix(".json").exists():
+                (out / f.with_suffix(".json").name).write_bytes(f.with_suffix(".json").read_bytes())
+        params: Dict[str, Any] = {"what": "exact", "of": pmeta.get("dataset", src.name)}
+    else:
+        lab = [dict(np.load(f)) for f in sorted(src.glob("labels_*.npz"))]
+        if not lab:
+            raise SystemExit(f"{src}: no main labels")
+        L = {k: np.concatenate([x[k] for x in lab]) for k in lab[0]}
+        o = np.argsort(L["id"])
+        score = (L["sums"][o, 0] / np.maximum(L["count"][o, 0], 1)).astype(np.float64)
+        entry = np.asarray([ts.state_from_raw_bytes(b.tobytes()).ctx().decision_type == ts.DecisionType.SELECT_CARD
+                            for b in pos["state"]])
+        ok = entry & (score >= a.lo) & (score <= a.hi)
+        first = np.zeros(pos["id"].size, bool)
+        if a.siblings:
+            z = np.load(pathlib.Path(a.siblings) / "siblings.npz")
+            meta, ids, y = z["meta"], z["id"], z["cols"][:, 0]
+            u, inv = np.unique(ids, return_inverse=True)
+            sums = np.zeros((u.size, 4)); cnt = np.zeros((u.size, 4))
+            np.add.at(sums, (inv, meta[:, 0]), y)
+            np.add.at(cnt, (inv, meta[:, 0]), 1)
+            means = sums / np.maximum(cnt, 1)
+            spread = means.max(1) - means.min(1)
+            first = np.isin(pos["id"], u[spread >= a.spread])
+        rng = np.random.default_rng([a.seed, 4])
+        order = rng.permutation(pos["id"].size)
+        order = np.concatenate([order[(ok & first)[order]], order[(ok & ~first)[order]]])
+        want = np.sort(pos["id"][order[:a.n]])
+        params = {"what": "contested", "of": pmeta.get("dataset", src.name), "n": int(want.size), "lo": a.lo,
+                  "hi": a.hi, "spread": a.spread, "seed": a.seed, "eligible": int(ok.sum()), "first": int((ok & first).sum())}
+    sel = np.isin(pos["id"], want)
+    file = out / "positions_000_of_001.npz"
+    np.savez(file, state=pos["state"][sel], id=pos["id"][sel], mover=pos["mover"][sel], turn=pos["turn"][sel],
+             cand=pos["cand"][sel], game_score=pos["game_score"][sel], holdout=pos["holdout"][sel])
+    meta = dict(pmeta)
+    meta.update(part="0/1", positions=int(sel.sum()), subset=params)
+    file.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"{file}: {int(sel.sum())} positions ({params})")
     return 0
 
 
@@ -543,7 +637,12 @@ def labelling_signature(pmeta: Dict[str, Any], lmeta: Dict[str, Any]) -> Dict[st
             "labels": ["score", "final_vp", "turn_vp", "turn_defcon", "region_swing"],
             # keyed chance (bindings/keyed_chance.hpp); recorded only when on, so D1 keeps its code
             **({"chance": "keyed"} if lmeta.get("keyed") else {}),
-            **({"main": False} if lmeta.get("main") is False else {})}
+            **({"main": False} if lmeta.get("main") is False else {}),
+            # the follow-up: recorded only when not greedy, so D1 and D2 keep their codes
+            **({"follow": {"player": "rollout(k=4,stop=earlier,leaf=own,chance=keyed) at entry decisions",
+                           "worlds": lmeta["search_worlds"], "window_turns": lmeta["search_window"]}}
+               if lmeta.get("follow", "greedy") != "greedy" else {}),
+            **({"subset": pmeta["subset"]} if pmeta.get("subset") else {})}
 
 
 def merge_siblings_only(a: argparse.Namespace, d: pathlib.Path, pos: Dict[str, np.ndarray],
@@ -685,6 +784,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     la.add_argument("--sibling-k", type=int, default=4)
     la.add_argument("--leaf-horizon", type=int, default=0,
                     help="sibling leaves: boundaries before the mover's own decision is the leaf (0: the next one)")
+    la.add_argument("--follow", choices=["greedy", "search"], default="greedy",
+                    help="the playouts' player: greedy, or the keyed rollout root at entry decisions (card choices, "
+                         "headlines) in the position's turn and --search-window turns after it (D3)")
+    la.add_argument("--search-worlds", type=int, default=8, help="--follow search: the root's worlds")
+    la.add_argument("--search-window", type=int, default=0,
+                    help="--follow search: turns after the position's in which entry decisions are searched")
     la.add_argument("--no-main", action="store_true",
                     help="the sibling slice only: no main labels (a slice relabelled, e.g. keyed, beside an existing set)")
     la.add_argument("--keyed", action="store_true",
@@ -696,6 +801,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     la.add_argument("--no-graphs", action="store_true", help="plain forwards instead of CUDA graphs")
     la.add_argument("--float-upload", action="store_true",
                     help="upload observations as float32 instead of their exact one-byte codes")
+    se = sub.add_parser("select", help="a subset of a labelled set's positions, to label again")
+    se.add_argument("--dir", required=True)
+    se.add_argument("--out", required=True)
+    se.add_argument("--what", choices=["contested", "exact"], default="contested")
+    se.add_argument("--n", type=int, default=50000)
+    se.add_argument("--lo", type=float, default=0.25, help="contested: the label's lower bound")
+    se.add_argument("--hi", type=float, default=0.75, help="contested: the label's upper bound")
+    se.add_argument("--siblings", default=None, help="contested: a sibling slice whose decisions with spread go first")
+    se.add_argument("--spread", type=float, default=0.25, help="contested: candidate means differing by this much")
+    se.add_argument("--seed", type=int, default=44)
     ex = sub.add_parser("exact", help="the exact slice: turn-10 last-round positions solved exactly (CPU)")
     ex.add_argument("--dir", required=True)
     ex.add_argument("--exact", type=int, default=2000, help="positions in the slice")
@@ -716,6 +831,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_label(a)
     if a.stage == "exact":
         return run_exact(a)
+    if a.stage == "select":
+        return run_select(a)
     return run_merge(a)
 
 
