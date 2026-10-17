@@ -134,7 +134,8 @@ graph TD
 │   │                           # self_play.py (the replay writer), player_agent.py / player_spec.py,
 │   │                           # tournament_evaluator.py, batch_tournament.py, parallel_tournament.py,
 │   │                           # leaderboard.py, action_view.py, data_root.py, corpus_paths.py,
-│   │                           # engine_fingerprint.py, checkpoint_utils.py, ...
+│   │                           # engine_fingerprint.py (sources -> stale build), engine_behaviour.py
+│   │                           # (what the engine does -> leaderboard epoch), checkpoint_utils.py, ...
 │   └── scripts/                # check_engine_fresh.sh, launch_flags.py, run_codes.py, watch_run.py,
 │                               # build_web.sh, install_emsdk.sh, install_clang_userspace.sh,
 │                               # run_asan.sh, check_doc_links.py, cloud/ (remote GPU runs), probes

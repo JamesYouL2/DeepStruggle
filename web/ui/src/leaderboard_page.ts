@@ -48,7 +48,8 @@ interface Pair { a: string; b: string; a_as_us: Seat; a_as_ussr: Seat; records: 
 
 interface Epoch {
   description: string;
-  engines: string[];
+  /** The id of the epoch's engine behaviour digest (tools/lib/engine_behaviour.py). */
+  behaviour: string;
   anchor: string;
   anchor_elo: number;
   main: string[];

@@ -1,7 +1,14 @@
 {
   "E7": {
     "description": "The E7 engine (since the rules audit of 2026-09-30). The main players play each other and every newcomer 1,000 deals a side; greedy unless a player's id says otherwise. A newcomer rated near or above the top of the main set plays the strong tier only (leaderboard_play --strong; owner, 2026-10-16).",
-    "engines": [
+    "behaviour": {
+      "version": 1,
+      "runner": "406e2871aa59e9dbf92981a2e4f0e52ce23733646436e56f5f93a4390bbf8d29",
+      "state": "55987dca90cfa3d6c96bb201e95850370f03a2141b768dcee75ddb28fb84d613",
+      "rollout": "ab3bae7b7c6ae6add6b839d17688aa00d95dd6c90c4c0576b6a23621b7d21ac5",
+      "mcts": "6c14ef3a5be0ae8ae86b63ad98d37f2c3b52501e100ce7b67ae970179f682830"
+    },
+    "pre_digest_engines": [
       "6c036593786fa67c434cf671a66fc79124870a1ecd6045fb41183bf98b51f41b",
       "b670b258baf5845f056601d748e2fb141ec8e70e4e33f668baa98222ff3a564b",
       "cd152a19dcd61bbb09071dc6931f76c7c1c5c861e81044e3e24df89b644ef878",

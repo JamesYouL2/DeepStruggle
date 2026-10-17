@@ -6,10 +6,13 @@ Everything lives in `leaderboard/` at the repository root and is reviewed like c
   published on Hugging Face, its behaviour report, a description and any older names.
 * `players.json` -- a network plus the way it is run (tools/lib/player_spec.py), keyed by the
   player's canonical id; a bot has no network.
-* `epochs.json` -- one engine epoch per entry: the engine fingerprints whose games it accepts, the
-  main players, and the anchor that fixes the scale.
+* `epochs.json` -- one engine epoch per entry: the engine behaviour whose games it accepts (the
+  digest of tools/lib/engine_behaviour.py: any build that reproduces it plays the epoch's games,
+  whatever its sources), the main players, and the anchor that fixes the scale.
 * `matches/<epoch>.jsonl` -- one line per pairing played, append-only: both seats' wins, losses
-  and draws, the first deal seed, the engine and the commit. `.gitattributes` merges these files
+  and draws, the first deal seed, the engine (its source fingerprint), its behaviour digest's id
+  and the commit. Records from before epochs were defined by behaviour carry no behaviour; their
+  engine must be one of the epoch's `pre_digest_engines`, a frozen list. `.gitattributes` merges these files
   by union, so two branches that both appended merge cleanly; a record's `id` is a hash of its
   content, so a line that arrives twice is caught here.
 
@@ -51,6 +54,10 @@ ELO_SCALE = 400.0 / math.log(10.0)
 #: well under 0.1 Elo.
 PRIOR_SD = 1000.0
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+#: Of tools/lib/engine_behaviour.py's digest: bumped whenever what it hashes changes, so a digest
+#: taken one way is never compared with one taken another.
+BEHAVIOUR_VERSION = 1
+BEHAVIOUR_SECTIONS: Tuple[str, ...] = ("runner", "state", "rollout", "mcts")
 
 
 class Network(TypedDict):
@@ -71,9 +78,21 @@ class Player(TypedDict):
     report: Optional[str]
 
 
+class Behaviour(TypedDict):
+    """tools/lib/engine_behaviour.py's digest: a sha256 per section (`BEHAVIOUR_SECTIONS`)."""
+    version: int
+    runner: str
+    state: str
+    rollout: str
+    mcts: str
+
+
 class Epoch(TypedDict):
     description: str
-    engines: List[str]
+    behaviour: Behaviour
+    #: The source fingerprints of the builds the epoch's first records were played on, before
+    #: epochs were defined by behaviour: a frozen list that only validates those records.
+    pre_digest_engines: NotRequired[List[str]]
     anchor: str
     anchor_elo: float
     main: List[str]
@@ -97,6 +116,9 @@ class Record(TypedDict):
     a_as_ussr: Seat
     base_seed: int
     engine: str
+    #: `behaviour_id` of the epoch's behaviour, which the engine reproduced; absent from records
+    #: played before epochs were defined by behaviour.
+    behaviour: NotRequired[str]
     commit: str
     date: str
 
@@ -213,10 +235,25 @@ def record_id(rec: Mapping[str, object]) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def behaviour_id(b: Behaviour) -> str:
+    """One hash of a behaviour digest's sections and version, for a record to name."""
+    return hashlib.sha256(json.dumps(dict(b), sort_keys=True).encode()).hexdigest()
+
+
+def behaviour_mismatch(want: Behaviour, have: Behaviour) -> List[str]:
+    """The sections in which `have` differs from `want`; every section when the versions differ."""
+    if want["version"] != have["version"]:
+        return list(BEHAVIOUR_SECTIONS)
+    w: Mapping[str, object] = want
+    h: Mapping[str, object] = have
+    return [s for s in BEHAVIOUR_SECTIONS if w[s] != h[s]]
+
+
 def make_record(a: str, b: str, a_as_us: Seat, a_as_ussr: Seat, base_seed: int, engine: str,
-                commit: str, date: str) -> Record:
+                behaviour: str, commit: str, date: str) -> Record:
     body = {"a": a, "b": b, "a_as_us": dict(a_as_us), "a_as_ussr": dict(a_as_ussr),
-            "base_seed": int(base_seed), "engine": engine, "commit": commit, "date": date}
+            "base_seed": int(base_seed), "engine": engine, "behaviour": behaviour, "commit": commit,
+            "date": date}
     return {"id": record_id(body), **body}  # type: ignore[return-value]
 
 
@@ -290,15 +327,24 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             errs.append(f"{where}: network {pl['network']!r} is not in networks.json")
     for name, ep in board.epochs.items():
         where = f"epochs.json[{name}]"
-        want = {"description", "engines", "anchor", "anchor_elo", "main"}
-        if not want <= set(ep) <= want | {"strong"}:
-            errs.append(f"{where}: fields must be {sorted(want)} (and optionally strong), got {sorted(ep)}")
+        want = {"description", "behaviour", "anchor", "anchor_elo", "main"}
+        if not want <= set(ep) <= want | {"strong", "pre_digest_engines"}:
+            errs.append(f"{where}: fields must be {sorted(want)} (and optionally strong, "
+                        f"pre_digest_engines), got {sorted(ep)}")
             continue
         strong = ep.get("strong", [])
         if any(pid not in ep["main"] for pid in strong) or len(set(strong)) != len(strong):
             errs.append(f"{where}: the strong tier must be distinct main players")
-        if not ep["engines"] or not all(isinstance(e, str) and _HEX64.match(e) for e in ep["engines"]):
-            errs.append(f"{where}: engines must be a non-empty list of engine fingerprints")
+        beh = ep["behaviour"]
+        fields: Mapping[str, object] = beh if isinstance(beh, dict) else {}
+        if (set(fields) != {"version", *BEHAVIOUR_SECTIONS} or not isinstance(fields["version"], int)
+                or not all(isinstance(v, str) and _HEX64.match(v) for v in (fields[s] for s in BEHAVIOUR_SECTIONS))):
+            errs.append(f"{where}: behaviour must be {{version, {', '.join(BEHAVIOUR_SECTIONS)}}}, "
+                        f"each section a sha256 (tools/lib/engine_behaviour.py)")
+            continue
+        legacy = ep.get("pre_digest_engines", [])
+        if not all(isinstance(e, str) and _HEX64.match(e) for e in legacy):
+            errs.append(f"{where}: pre_digest_engines must be engine fingerprints")
         for pid in ep["main"]:
             if pid not in board.players:
                 errs.append(f"{where}: main player {pid!r} is not in players.json")
@@ -311,8 +357,8 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
         for n, rec in enumerate(board.matches.get(name, []), 1):
             at = f"matches/{name}.jsonl:{n}"
             want_r = {"id", "a", "b", "a_as_us", "a_as_ussr", "base_seed", "engine", "commit", "date"}
-            if not isinstance(rec, dict) or set(rec) != want_r:
-                errs.append(f"{at}: fields must be {sorted(want_r)}")
+            if not isinstance(rec, dict) or not want_r <= set(rec) <= want_r | {"behaviour"}:
+                errs.append(f"{at}: fields must be {sorted(want_r)} and behaviour")
                 continue
             if rec["a"] == rec["b"]:
                 errs.append(f"{at}: a player against itself")
@@ -323,8 +369,13 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
                 errs.append(f"{at}: a_as_us / a_as_ussr must be {{w, l, d}} of non-negative integers")
             elif sum(int(s[k]) for s in (rec["a_as_us"], rec["a_as_ussr"]) for k in ("w", "l", "d")) == 0:
                 errs.append(f"{at}: no games")
-            if rec["engine"] not in ep["engines"]:
-                errs.append(f"{at}: engine {rec['engine'][:12]}… is not one of {name}'s")
+            if "behaviour" in rec:
+                if rec["behaviour"] != behaviour_id(beh):
+                    errs.append(f"{at}: played on an engine of behaviour {str(rec['behaviour'])[:12]}…, "
+                                f"not {name}'s")
+            elif rec["engine"] not in legacy:
+                errs.append(f"{at}: a record with no behaviour, on engine {rec['engine'][:12]}…, which "
+                            f"is not one of {name}'s pre_digest_engines")
             if rec["id"] != record_id(rec):
                 errs.append(f"{at}: id {rec['id']} does not match its content ({record_id(rec)}); "
                             f"records are never edited")
@@ -626,7 +677,7 @@ def site_data(board: Board, commit: Optional[str] = None) -> Dict[str, object]:
                     acc[tgt][k] += src[k]  # type: ignore[index]
             acc["records"].append(r["id"])  # type: ignore[union-attr]
         epochs[name] = {
-            "description": ep["description"], "engines": ep["engines"], "anchor": ep["anchor"],
+            "description": ep["description"], "behaviour": behaviour_id(ep["behaviour"]), "anchor": ep["anchor"],
             "anchor_elo": ep["anchor_elo"], "main": ep["main"], "seat_us": round(fit.seat_us, 2),
             "seat_us_se": round(fit.seat_us_se, 2), "unrated": fit.unrated,
             "ratings": [{"player": r.player, "elo": round(r.elo, 1), "se": round(r.se, 1),

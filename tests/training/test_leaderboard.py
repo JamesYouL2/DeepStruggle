@@ -10,9 +10,11 @@ import subprocess
 import sys
 from typing import Dict, List, Tuple, cast
 
+import numpy as np
 import pytest
 
 import tools.publish_hf as publish
+from tools.lib import engine_behaviour
 from tools.lib import leaderboard as lb
 from tools.lib.player_agent import search_spec_config
 from tools.lib.player_spec import (Bot, Gumbel, Policy, PlayerSpecError, Rollout, Search, load_spec,
@@ -98,6 +100,9 @@ def test_a_policy_pins_its_own_temperature() -> None:
 # ---- the fit ----------------------------------------------------------------------------------
 
 ENGINE = "e" * 64
+BEHAVIOUR: lb.Behaviour = {"version": lb.BEHAVIOUR_VERSION, "runner": "1" * 64, "state": "2" * 64,
+                           "rollout": "3" * 64, "mcts": "4" * 64}
+BEHAVIOUR_ID = lb.behaviour_id(BEHAVIOUR)
 
 
 def _board(tmp_path: pathlib.Path, mains: List[str], others: List[str]) -> lb.Board:
@@ -105,7 +110,7 @@ def _board(tmp_path: pathlib.Path, mains: List[str], others: List[str]) -> lb.Bo
                             "hf": None, "report": None} for p in mains + others}
     players = {f"{p}@1M": {"network": f"{p}@1M", "inference": {"kind": "policy", "temperature": 0.0},
                            "description": "", "report": None} for p in mains + others}
-    epochs = {"T": {"description": "", "engines": [ENGINE], "anchor": f"{mains[0]}@1M",
+    epochs = {"T": {"description": "", "behaviour": dict(BEHAVIOUR), "anchor": f"{mains[0]}@1M",
                     "anchor_elo": 1500.0, "main": [f"{p}@1M" for p in mains]}}
     (tmp_path / "matches").mkdir(exist_ok=True)
     board = lb.Board(networks, players, epochs, {"T": []}, tmp_path)  # type: ignore[arg-type]
@@ -126,7 +131,7 @@ def _play(board: lb.Board, truth: Dict[str, float], pairs: List[Tuple[str, str]]
           n: int = 20000, seed: int = 10000) -> None:
     for a, b in pairs:
         us, ussr = _expected(truth[a], truth[b], seat, n)
-        lb.append_record(board, "T", lb.make_record(f"{a}@1M", f"{b}@1M", us, ussr, seed, ENGINE, "c", "d"))
+        lb.append_record(board, "T", lb.make_record(f"{a}@1M", f"{b}@1M", us, ussr, seed, ENGINE, BEHAVIOUR_ID, "c", "d"))
 
 
 def test_the_fit_recovers_known_ratings_and_the_seat_term(tmp_path: pathlib.Path) -> None:
@@ -239,12 +244,63 @@ def test_a_search_player_never_links_its_networks_greedy_report(tmp_path: pathli
 def test_site_data_aggregates_a_pair_from_the_first_players_side(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B"], [])
     lb.append_record(board, "T", lb.make_record("B@1M", "A@1M", {"w": 7, "l": 3, "d": 0},
-                                                {"w": 6, "l": 3, "d": 1}, 1, ENGINE, "c", "d"))
+                                                {"w": 6, "l": 3, "d": 1}, 1, ENGINE, BEHAVIOUR_ID, "c", "d"))
     pair = lb.site_data(board)["epochs"]["T"]["pairs"][0]  # type: ignore[index]
     assert (pair["a"], pair["b"]) == ("A@1M", "B@1M")
     # A as US is B as USSR (B won 6, lost 3): A won 3, lost 6.
     assert pair["a_as_us"] == {"w": 3, "l": 6, "d": 1}
     assert pair["a_as_ussr"] == {"w": 3, "l": 7, "d": 0}
+
+
+def test_a_record_is_of_its_epoch_by_behaviour_or_by_a_frozen_pre_digest_engine(tmp_path: pathlib.Path) -> None:
+    board = _board(tmp_path, ["A", "B"], [])
+    win: lb.Seat = {"w": 1, "l": 0, "d": 0}
+    board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, BEHAVIOUR_ID, "c", "d")]
+    assert lb.validate(board) == []
+    # Another engine's behaviour is another epoch, whatever the engine's sources.
+    other = lb.behaviour_id({**BEHAVIOUR, "mcts": "5" * 64})
+    board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, other, "c", "d")]
+    assert any("not T's" in e for e in lb.validate(board))
+    # A record from before behaviour digests is held to the epoch's frozen list of engines.
+    old = {k: v for k, v in lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, "", "c", "d").items()
+           if k not in ("id", "behaviour")}
+    board.matches["T"] = [cast(lb.Record, {"id": lb.record_id(old), **old})]
+    assert any("pre_digest_engines" in e for e in lb.validate(board))
+    board.epochs["T"]["pre_digest_engines"] = [ENGINE]
+    assert lb.validate(board) == []
+    # An epoch's behaviour names every section.
+    board.epochs["T"]["behaviour"] = cast(lb.Behaviour, {k: v for k, v in BEHAVIOUR.items() if k != "mcts"})
+    assert any("behaviour must be" in e for e in lb.validate(board))
+
+
+def test_a_digest_of_another_version_differs_in_every_section() -> None:
+    assert lb.behaviour_mismatch(BEHAVIOUR, BEHAVIOUR) == []
+    assert lb.behaviour_mismatch(BEHAVIOUR, {**BEHAVIOUR, "state": "9" * 64}) == ["state"]
+    assert lb.behaviour_mismatch(BEHAVIOUR, {**BEHAVIOUR, "version": 0}) == list(lb.BEHAVIOUR_SECTIONS)
+
+
+def test_the_stand_in_network_is_a_function_of_each_row_alone() -> None:
+    rng = np.random.default_rng(0)
+    obs = rng.standard_normal((3, 40)).astype(np.float32)
+    masks = (rng.random((3, 12)) < 0.5).astype(np.uint8)
+    masks[:, 0] = 1
+    logits, probs, values = engine_behaviour.stand_in(obs, masks)
+    # A row's answer does not depend on the rows beside it.
+    one = engine_behaviour.stand_in(obs[1:2], masks[1:2])
+    assert np.array_equal(one[0][0], logits[1]) and np.array_equal(one[1][0], probs[1]) and one[2][0] == values[1]
+    # Integer logits, exact in float32; probabilities on the legal moves only, summing to one.
+    assert np.array_equal(logits, np.round(logits)) and logits.max() < 2 ** 24
+    assert np.all(probs[masks == 0] == 0) and np.allclose(probs.sum(axis=1), 1.0)
+    assert np.all(np.abs(values) <= 1)
+    # Any change to a row changes its answer.
+    obs[1, 7] += 1.0
+    assert not np.array_equal(engine_behaviour.stand_in(obs[1:2], masks[1:2])[0][0], logits[1])
+
+
+def test_the_behaviour_digest_is_the_same_every_time_it_is_taken() -> None:
+    first = engine_behaviour.measure()
+    assert set(first) == {"version", *lb.BEHAVIOUR_SECTIONS} and first["version"] == lb.BEHAVIOUR_VERSION
+    assert engine_behaviour.measure() == first
 
 
 def test_a_network_is_trained_under_the_last_code_of_each_kind_in_its_name() -> None:

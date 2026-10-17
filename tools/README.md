@@ -261,8 +261,8 @@ One Elo scale per engine epoch, kept as reviewed records in `leaderboard/` and f
 |:---|:---|
 | `networks.json` | each network: file (relative to `data/`), sha256, `hf` path once published, behaviour `report`, description, `old_names` |
 | `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`), description, its own `report` |
-| `epochs.json` | each engine epoch: accepted engine fingerprints, main players, anchor and rating, and an optional `strong` tier of main players |
-| `matches/<epoch>.jsonl` | one line per pairing: both seats' w/l/d, base seed, engine, commit -- append-only |
+| `epochs.json` | each engine epoch: its engine `behaviour` digest, main players, anchor and rating, an optional `strong` tier of main players, and the frozen `pre_digest_engines` of records played before digests |
+| `matches/<epoch>.jsonl` | one line per pairing: both seats' w/l/d, base seed, engine (source fingerprint), behaviour digest id, commit -- append-only |
 
 **A player is a network plus an inference spec**, spelled in its id: the bare network name is its
 greedy policy; otherwise `<network>~<kind>(<field>=<value>,...)` with every field named, e.g.
@@ -282,10 +282,24 @@ PYTHONPATH=. python tools/leaderboard.py show --main-only            # or --line
 PYTHONPATH=. python tools/leaderboard.py validate                    # what tests/training checks
 ```
 
-`leaderboard_play.py` refuses a stale build, an engine fingerprint the epoch does not list, a
-network whose sha256 changed, and uncommitted changes under `ai/ bot/ bindings/ engine/ tools/`.
-A pairing on record is skipped. Main players are the owner's choice (`epochs.json`). An engine
-change opens a new epoch unless a recorded pairing replays identically.
+`leaderboard_play.py` refuses a stale build, an engine that does not reproduce the epoch's
+behaviour digest, a network whose sha256 changed, and uncommitted changes under
+`ai/ bot/ bindings/ engine/ tools/`. A pairing on record is skipped. Main players are the owner's
+choice (`epochs.json`).
+
+**An epoch is defined by what the engine does, not by its sources.** `tools/lib/engine_behaviour.py`
+plays seeded random games (passing over a move that ends the game at once or takes DEFCON to 2, so
+they reach the Late War) and hashes every observation, legal mask and action, in four sections:
+`runner` (the batch runner leaderboard games are played on, under both action views and both
+feature sets for each side), `state` (the single-position API), `rollout` (`RolloutBatch` under each
+stop and leaf setting) and `mcts` (`BatchedSearch`), the searches driven by a stand-in network that
+is a hash of the rows it is shown. It takes about 5 seconds. Any build that reproduces an epoch's
+digest plays its games -- a refactor, a comment or a change to the web page needs nothing done --
+and one that does not is refused, naming the sections that differ: a new epoch if the change is
+meant, a bug if not. A new epoch's `behaviour` is what
+`PYTHONPATH=.:build/release python tools/lib/engine_behaviour.py` prints; bump
+`BEHAVIOUR_VERSION` (`tools/lib/leaderboard.py`) whenever what the digest hashes changes, and
+re-take every epoch's digest on one of its engines.
 
 **Strong newcomers play the strong tier** (`--strong`, owner 2026-10-16). A newcomer rated near or above
 the top of the main set plays only the epoch's `strong` main players. Against a much weaker opponent a

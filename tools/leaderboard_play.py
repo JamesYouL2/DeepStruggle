@@ -12,9 +12,13 @@ the epoch's strong tier, for a newcomer rated near or above the top of the main 
 skipped; to add games to it, pass a `--base-seed` it has not been played at (the same seed would
 replay the same deals). Each pairing is appended as it finishes, so a crash keeps what was done.
 
-Refuses to play on an engine whose fingerprint the epoch does not list, on a stale build, on
-network files whose sha256 is not the registered one, or from a checkout with uncommitted changes
-to the code that plays (each record names the commit it was played at).
+Refuses to play on an engine that does not reproduce the epoch's behaviour digest
+(tools/lib/engine_behaviour.py: seeded games through every path a player takes -- the batch runner,
+the single-position API, the rollout batch and the search tree -- with every observation, mask and
+action hashed; about a minute), on a stale build, on network files whose sha256 is not the
+registered one, or from a checkout with uncommitted changes to the code that plays (each record
+names the commit it was played at). Any build that reproduces the digest plays the epoch's games,
+whatever its sources, so a change that moves no game needs nothing done here.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import json
 import subprocess
 import sys
 from typing import Dict, List, Optional, Sequence, Set, Tuple
@@ -30,9 +35,10 @@ import ts_engine as ts
 
 from tools.lib.batch_tournament import MatchupResult
 from tools.lib.data_root import data_path
+from tools.lib.engine_behaviour import measure
 from tools.lib.engine_fingerprint import fingerprint, staleness_reason
-from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, append_record, fit_epoch, load,
-                                   make_record, markdown_table, player_spec, validate, view)
+from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, append_record, behaviour_id, behaviour_mismatch,
+                                   fit_epoch, load, make_record, markdown_table, player_spec, validate, view)
 from tools.lib.player_spec import PlayerSpecError, load_spec
 from tools.tournament import run_massive_tournament
 
@@ -146,11 +152,17 @@ def _run(a: argparse.Namespace) -> int:
     if reason:
         raise LeaderboardError(reason)
     engine = fingerprint()
-    if engine not in board.epochs[a.epoch]["engines"]:
+    want = board.epochs[a.epoch]["behaviour"]
+    print(f"leaderboard_play: measuring the engine's behaviour (tools/lib/engine_behaviour.py) ...", flush=True)
+    have = measure()
+    differ = behaviour_mismatch(want, have)
+    if differ:
         raise LeaderboardError(
-            f"engine {engine} is not one of epoch {a.epoch}'s. If it plays the same games as the "
-            f"epoch's engine, add it to epochs.json after checking that a recorded pairing replays "
-            f"identically; if it does not, it is a new epoch.")
+            f"this engine does not play epoch {a.epoch}'s games: its {', '.join(differ)} stream differs "
+            f"from the epoch's (digest version {have['version']}, the epoch's {want['version']}). "
+            f"If the difference is meant, it is a new epoch; if not, it is a bug. This engine's "
+            f"behaviour:\n{json.dumps(have, indent=2)}")
+    behaviour = behaviour_id(want)
     dirty = _git("status", "--porcelain", "--", *_CODE_PATHS)
     if dirty:
         raise LeaderboardError(f"uncommitted changes to the code that plays; commit them first:\n{dirty}")
@@ -179,7 +191,7 @@ def _run(a: argparse.Namespace) -> int:
             name_a, name_b,
             {"w": m["a_wins_as_us"], "l": m["a_losses_as_us"], "d": m["a_draws_as_us"]},
             {"w": m["a_wins_as_ussr"], "l": m["a_losses_as_ussr"], "d": m["a_draws_as_ussr"]},
-            base_seed, engine, commit, date)
+            base_seed, engine, behaviour, commit, date)
         append_record(board, a.epoch, rec)
 
     anchor = board.epochs[a.epoch]["anchor"]
