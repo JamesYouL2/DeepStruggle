@@ -6,6 +6,7 @@ choice, and the Gumbel root's diagnostic hooks leave its play unchanged.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 from pathlib import Path
 from typing import List, Sequence
@@ -21,9 +22,11 @@ from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import load_policy, state_from_token
+from tools.scripts.checkpoint_report import check_leak, leak_section
 from tools.search_bank import (CHINA, EVENT, SPACE, _paired_scores, china_select, china_verdict, confirm_select,
                                event_moves, event_select, event_verdict, is_china_decision, is_event_decision,
-                               is_subs_decision, kind_bootstrap, leak_analysis, legal_actions, main, mover_of,
+                               is_subs_decision, kind_bootstrap, leak_analysis, leak_summary, legal_actions, main,
+                               mover_of,
                                parse_budgets, playout_select, raw_rank, read_rows, screen_select, select, solve,
                                stratum, subs_select)
 
@@ -184,6 +187,40 @@ def test_leak_weights_each_rows_paired_gain_back_to_the_population() -> None:
            "b": {"turn": 9, "ar": 3, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}}}
     md = leak_analysis([row], bank_weight=100.0, decisions_per_game=50.0)
     assert "| AR card choice | 1 | 10.00% | +100.0 ± 0.0 | +50.0 ± 0.0 |" in md
+
+
+def _leak_row(i: int, kind: str, gain: float, escalated: bool) -> dict:
+    return {"id": str(i), "w": 10.0, "regret": 0.0, "gain": (gain, 0.0001), "g256": (0.0, 0.0), "kind": kind,
+            "side": "USSR", "turn": 5, "defcon": 3, "sub": "", "raw_card": "A", "best_card": "B",
+            "b": {"turn": 5, "ar": 2, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}, "escalated": escalated}}
+
+
+def test_leak_summary_carries_the_census_identity_and_checkpoint_report_checks_and_renders_it(
+        tmp_path: Path) -> None:
+    # Screened census (large 0): one escalated row per kind, one row not escalated (no loss); bank 100,
+    # 50 decisions a game, so a row of weight 10 gaining 0.2 is +100.0 a game.
+    rows = [_leak_row(0, "AR card choice", 0.2, True), _leak_row(1, "headline", 0.1, True),
+            _leak_row(2, "headline", 0.0, False)]
+    pt = tmp_path / "net.pt"
+    pt.write_bytes(b"weights")
+    sha = hashlib.sha256(b"weights").hexdigest()
+    meta = {"model": "net.pt", "model_sha256": sha, "player": "rollout:4:32:4:z2:earlier:own", "games": 1500}
+    lk = leak_summary(rows, bank_weight=100.0, decisions_per_game=50.0, large=0, meta=meta)
+    assert lk["census"] == "screened" and lk["player"] == meta["player"] and lk["games"] == 1500
+    assert abs(lk["found_share"] - 0.2) < 1e-9 and abs(lk["total"]["leak"] - 150.0) < 1e-9
+    assert [k["kind"] for k in lk["kinds"]] == ["AR card choice", "headline"]
+    assert abs(lk["kinds"][0]["share"] - 2 / 3) < 1e-9 and not lk["bootstrap"]
+    assert lk["top"][0]["played"] == "A" and abs(lk["top"][0]["a_game"] - 100.0) < 1e-9
+    agent = f"rollout:{pt}:4:32:4:z2:earlier:own"
+    assert check_leak(lk, str(pt), agent) is None
+    assert "studied player" in str(check_leak(lk, str(pt), None))           # the greedy network's report
+    assert "studied player" in str(check_leak(lk, str(pt), f"rollout:{pt}:4:64:4:z2:earlier:own"))
+    other = tmp_path / "other.pt"
+    other.write_bytes(b"other weights")
+    assert "census ran on" in str(check_leak(lk, str(other), agent.replace(str(pt), str(other))))
+    md = leak_section(json.loads(json.dumps(lk)))            # as the records dump stores it
+    assert "loses **+150.0 ± " in md and "| AR card choice | +100.0 ± " in md
+    assert "| T5 AR2 | USSR | 3 | AR card choice | A | B | +20.0 ± 1.0 | +100.00 |" in md
 
 
 def _play_mode_row(i: int, card: int, side: str, legal: List[int], logits: List[float]) -> dict:

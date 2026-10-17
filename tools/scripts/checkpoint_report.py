@@ -22,11 +22,20 @@ One pass of greedy self-play per checkpoint feeds every section:
 9. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
    same logic (one count per holding where the owner could have played the event).
 
+With `--leak`, a searched-leak census of the same network under the same player
+(`tools/search_bank.py` leak's `<out>.json`) goes first: where the player loses, in points of win
+probability a game, by decision kind, and the positions that cost it the most. It is not played
+here -- the census takes CI hours -- so `--games 0` writes it alone, and `--load` adds it to a report
+already played.
+
     PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
         --checkpoints <pt> [<pt> ...] --games 16384
     # or a leaderboard player -- a network under a search plays its own self-play games:
     PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
         --players '<network>~rollout(k=4,worlds=16,horizon=4,rule=z2)'
+    # the census alone, for a player too slow to play 16,384 games:
+    PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
+        --players '<player>' --games 0 --leak <leak.md.json>
 
 Each checkpoint gets `research/log/per_checkpoint/<run>_<step>M.md` (and the raw records in
 `data/eval/per_checkpoint/`); the directory's `README.md` index is rewritten to list every report.
@@ -53,7 +62,7 @@ import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
-from tools.lib.data_root import data_path
+from tools.lib.data_root import data_path, data_root
 from tools.lib.leaderboard import REPORT_DIR, load as load_leaderboard, player_spec
 from tools.lib.player_agent import NeuralAgent, load_agent
 from tools.lib.player_spec import Policy, kind_of, load_spec
@@ -93,7 +102,7 @@ OPEC_COUNTRIES = [int(_MAP[n]["id"]) for n in
                   ("Egypt", "Iran", "Libya", "Saudi Arabia", "Iraq", "Gulf States", "Venezuela")]
 ALLIANCE_COUNTRIES = [int(c["id"]) for c in _MAP.values()
                       if c["battleground"] and c["region"] in ("Central America", "South America")]
-DATA_DIR = "/workspace/data/eval/per_checkpoint"
+DATA_DIR = data_path("eval", "per_checkpoint")
 
 
 def _side(card: int) -> str:
@@ -1324,6 +1333,65 @@ def endings_section(endings: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+def _census_player(agent_spec: Optional[str], path: str) -> Optional[str]:
+    """The searched-leak census's `--player` for a report's agent: its load_spec string without the
+    checkpoint path (`rollout:<pt>:4:32:...` -> `rollout:4:32:...`); None for the greedy network."""
+    return None if agent_spec is None else agent_spec.replace(f"{path}:", "", 1)
+
+
+def check_leak(lk: Dict[str, Any], path: str, agent_spec: Optional[str]) -> Optional[str]:
+    """Why the census `lk` (search_bank.py leak's `<out>.json`) does not describe this checkpoint
+    under this agent, or None when it does: the census's network must be the file (sha256) and its
+    player the report's."""
+    if lk.get("schema") != 1:
+        return f"leak schema {lk.get('schema')!r}, this report reads 1"
+    if lk.get("model_sha256") != _sha(path):
+        return (f"the census ran on {lk.get('model')} (sha256 {str(lk.get('model_sha256'))[:12]}), "
+                f"not {path} -- pass search_bank.py leak --annotate-meta")
+    want = _census_player(agent_spec, path)
+    if lk.get("player") != want:
+        return f"the census studied player {lk.get('player')!r}, this report plays {want!r}"
+    return None
+
+
+def leak_section(lk: Dict[str, Any]) -> str:
+    """The searched-leak census (tools/search_bank.py's leak stage): where the player loses, in points
+    of win probability a game, by decision kind, and the positions that cost it the most."""
+    who = f"the player `{lk['player']}`" if lk.get("player") else "the greedy network"
+    tot = lk["total"]
+    screened = lk["census"] == "screened"
+    out = ["## Where it loses: the searched-leak census", "",
+           f"{who[0].upper() + who[1:]} loses **{tot['leak']:+.1f} ± {tot['se']:.1f}** points of win probability "
+           f"a game, both sides' decisions summed ({lk['decisions_per_game']:.1f} decisions with two or more legal "
+           f"moves a game). {lk['positions']:,} positions from {lk['games']:,} of its own self-play games "
+           "(`tools/search_bank.py annotate --player`), each judged by paired full-game playouts: "
+           + ("the best of its move, the network's most probable and Gumbel k=8 @256's is chosen on a screen's "
+              "pairs and its gain over the player's move measured again on fresh pairs. Where the screen found no "
+              "better move the decision counts as no loss, so this is a lower bound: what a full-playout judge "
+              f"finds, at {100 * lk['found_share']:.1f}% of decisions."
+              if screened else
+              f"the gain counted where a search-valued regret is large ({100 * lk['found_share']:.1f}% of decisions).")
+           + " Method and the earlier players: [E7_searched_leak_R39](../E7_searched_leak_R39.md), "
+             "[E7_searched_leak_A13_R48](../E7_searched_leak_A13_R48.md).", "",
+           "| decision kind | leak a game | share | leaks the most in |", "|:---|---:|---:|---:|"]
+    for k in lk["kinds"]:
+        share = f"{100 * k['share']:.0f}%" if k["share"] is not None else ""
+        most = f"{100 * k['largest']:.0f}% of resamples" if k.get("largest") is not None else ""
+        out.append(f"| {k['kind']} | {k['leak']:+.1f} ± {k['se']:.1f} | {share} | {most} |")
+    out += [f"| **all** | **{tot['leak']:+.1f} ± {tot['se']:.1f}** | | |", "",
+            ("The ± is a stratified bootstrap over positions (sampling and playout noise); 'leaks the most in' is "
+             "the share of resamples in which that kind is the largest." if lk["bootstrap"] else
+             "The ± is the playout noise alone (no bootstrap over positions)."), ""]
+    if lk["top"]:
+        out += ["### The positions that cost it the most", "",
+                "| turn/AR | side | DEFCON | kind | played | better | gain a decision | a game |",
+                "|:---|:---|---:|:---|:---|:---|---:|---:|"]
+        for t in lk["top"]:
+            out.append(f"| T{t['turn']} AR{t['ar']} | {t['side']} | {t['defcon']} | {t['kind']} | {t['played']} | "
+                       f"{t['best']} | {t['gain']:+.1f} ± {t['gain_se']:.1f} | {t['a_game']:+.2f} |")
+    return "\n".join(out)
+
+
 def _sha(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -1386,22 +1454,26 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     except (OSError, ValueError):
         pass
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-    holdings = [load_holding(r) for r in d["holdings"]]
-    rel = os.path.relpath(path, "/workspace")
+    home = os.path.dirname(data_root())      # paths print as data/..., on any machine
+    rel = os.path.relpath(path, home)
     out = [f"# {title}: behaviour report", "",
            f"Generated {datetime.date.today().isoformat()} by `tools/scripts/checkpoint_report.py` (commit {commit}).", "",
            "## The checkpoint", "",
            f"* **File:** `{rel}` (sha256 `{_sha(path)[:12]}…`)",
            f"* **Run:** {note or meta.get('description', '(no metadata.json description)')}"]
     if meta.get("resumed_from"):
-        out.append(f"* **Resumed from:** `{os.path.relpath(str(meta['resumed_from']), '/workspace')}`")
-    out += [f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}",
-            f"* **Games:** {d['games']:,} " + (f"self-play games of the leaderboard player `{d['player']}` -- this "
+        out.append(f"* **Resumed from:** `{os.path.relpath(str(meta['resumed_from']), home)}`")
+    out.append(f"* **Action view:** {'merged influence (E4.1)' if merged else 'E4'}; observation feature bits: {feats}")
+    leak = [leak_section(d["leak"]), ""] if d.get("leak") else []
+    if not d["games"]:                       # --games 0: the census alone, no self-play sections
+        return _with_contents("\n".join(out + ["", CONTENTS, ""] + leak)) + "\n"
+    holdings = [load_holding(r) for r in d["holdings"]]
+    out += [f"* **Games:** {d['games']:,} " + (f"self-play games of the leaderboard player `{d['player']}` -- this "
             f"network under that search at every decision, both sides --" if d.get("player")
             else "greedy self-play games of the checkpoint") + " against itself, seed "
             f"{d['seed']:,}, batches of {d['batch']}. Every section reads the same games. Decisions with a single "
             "legal answer are played by the engine and never seen by the observers (a forced last card, say).", "",
-            CONTENTS, "",
+            CONTENTS, ""] + leak + [
             endings_section(d.get("endings", [])), "",
             setup_section(d.get("setups", [])), "",
             star_wars_section(d["star_wars"]), "",
@@ -1447,7 +1519,8 @@ def write_index() -> None:
         "# Per-checkpoint behaviour reports\n\nGenerated by `tools/scripts/checkpoint_report.py`: for one "
         "checkpoint, greedy self-play and from it the event census (events vs Ops), Star Wars plays and "
         "retrievals, and when and with what hand the USSR plays Five Year Plan and the US plays Aldrich Ames "
-        "Remix.\n\n" + "\n".join(rows) + "\n")
+        "Remix; with `--leak`, first, the searched-leak census (where the player loses, by decision kind; "
+        "`tools/search_bank.py`).\n\n" + "\n".join(rows) + "\n")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -1457,7 +1530,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     src.add_argument("--players", nargs="+",
                      help="leaderboard player ids (leaderboard/players.json): the network registered for each, "
                           "played as the player plays -- under its search, if it has one")
-    ap.add_argument("--games", type=int, default=16384)
+    ap.add_argument("--games", type=int, default=16384,
+                    help="self-play games; 0 plays none and writes the --leak census alone")
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--seed", type=int, default=55_000)
     ap.add_argument("--load", action="store_true", help="rebuild the reports from the saved records")
@@ -1471,6 +1545,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "needed for a checkpoint outside a run directory, such as an SWA or a soup")
     ap.add_argument("--notes", nargs="+", default=None,
                     help="a description per checkpoint, in place of its run's metadata.json description")
+    ap.add_argument("--leak", nargs="+", default=None,
+                    help="a searched-leak census per checkpoint (tools/search_bank.py leak's <out>.json, - for none): "
+                         "it must be of this network (sha256) under this player; kept in the records, so --load "
+                         "adds it to an existing report without replaying")
     a = ap.parse_args(argv)
     # A player brings its network's file, its search and its description, all from the registry.
     agents: List[Optional[str]] = []
@@ -1497,8 +1575,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         a.notes = a.notes or notes
     else:
         agents = [None] * len(a.checkpoints)
-    if a.labels and len(a.labels) != len(a.checkpoints) or a.notes and len(a.notes) != len(a.checkpoints):
-        ap.error("--labels and --notes need one entry per checkpoint")
+    if any(x and len(x) != len(a.checkpoints) for x in (a.labels, a.notes, a.leak)):
+        ap.error("--labels, --notes and --leak need one entry per checkpoint")
+    leaks: List[Optional[Dict[str, Any]]] = [None if not a.leak or f == "-" else json.load(open(f))
+                                             for f in (a.leak or a.checkpoints)]
+    for k, lk in enumerate(leaks):
+        why = check_leak(lk, a.checkpoints[k], agents[k]) if lk is not None else None
+        if why:
+            ap.error(f"--leak {(a.leak or [])[k]}: {why}")
+    if a.games <= 0 and not a.load and not any(leaks):
+        ap.error("--games 0 writes the --leak census alone; give one")
     os.makedirs(a.output_dir, exist_ok=True)
     os.makedirs(a.data_dir, exist_ok=True)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1512,12 +1598,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         feats = model_obs_features(model)
         if a.load:
             d = json.load(open(dump))
-            if "setups" not in d:            # records from before the setup section: replay the setups
+            if d["games"] and "setups" not in d:   # records from before the setup section: replay the setups
                 d["setups"] = play_setups(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
                 json.dump(d, open(dump, "w"))
-            if "endings" not in d:           # ... and before the endings section: replay the games
+            if d["games"] and "endings" not in d:  # ... and before the endings section: replay the games
                 d["endings"] = play_endings(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
                 json.dump(d, open(dump, "w"))
+        elif a.games <= 0:
+            if os.path.exists(dump):
+                raise SystemExit(f"{dump} exists: --load adds the census to its records")
+            d = {"games": 0, "seed": a.seed, "batch": a.batch,
+                 "player": a.labels[k] if agents[k] is not None else None}
         else:
             agent_spec = agents[k]
             player = a.labels[k] if agent_spec is not None else None
@@ -1530,6 +1621,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             else:
                 agent = load_agent(agent_spec, device=dev) if agent_spec is not None else None
                 d = play(model, merged, a.games, a.seed, a.batch, agent=agent, player=player)
+            json.dump(d, open(dump, "w"))
+        if leaks[k] is not None:
+            d["leak"] = leaks[k]
             json.dump(d, open(dump, "w"))
         md = report(path, d, merged, feats, label, note)
         out = os.path.join(a.output_dir, f"{stem}.md")
