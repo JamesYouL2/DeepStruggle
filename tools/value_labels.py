@@ -422,7 +422,7 @@ def run_label(a: argparse.Namespace) -> int:
         if got["id"].size:
             sib_out.append(got)
 
-    rows = _drive(labellers, policies, feed_main, sink_main)
+    rows = 0 if a.no_main else _drive(labellers, policies, feed_main, sink_main)
     t_main = time.time() - t0
     print(f"main labels: {ids.size} positions x {a.worlds} worlds, {rows} network rows in {t_main:.0f}s "
           f"({rows / max(t_main, 1e-9):,.0f} rows/s)", flush=True)
@@ -433,20 +433,23 @@ def run_label(a: argparse.Namespace) -> int:
         return np.concatenate([c[key] for c in chunks]) if chunks else np.zeros((0,) + width, dtype)
 
     file = d / f"labels_{part:03d}_of_{parts:03d}.npz"
-    np.savez(file, id=cat(main_out, "id", (), np.int64), count=cat(main_out, "count", (2,), np.int32),
-             sums=cat(main_out, "sums", (5,), np.float32), swing_sum=cat(main_out, "swing_sum", (7,), np.float32),
-             swing_n=cat(main_out, "swing_n", (7,), np.int32))
+    if not a.no_main:
+        np.savez(file, id=cat(main_out, "id", (), np.int64), count=cat(main_out, "count", (2,), np.int32),
+                 sums=cat(main_out, "sums", (5,), np.float32), swing_sum=cat(main_out, "swing_sum", (7,), np.float32),
+                 swing_n=cat(main_out, "swing_n", (7,), np.int32))
     sfile = d / f"siblings_{part:03d}_of_{parts:03d}.npz"
     np.savez(sfile, id=cat(sib_out, "id", (), np.int64), meta=cat(sib_out, "meta", (5,), np.int32),
              cols=cat(sib_out, "cols", (4,), np.float32), swing=cat(sib_out, "swing", (7,), np.int32),
              leaf=cat(sib_out, "leaf", (ts.state_size(),), np.uint8))
     meta = {"stage": "label", "labeller": model_id, "labeller_sha256": sha256(pathlib.Path(path)),
-            "engine": engine, "part": f"{part}/{parts}", "seed": a.seed, "worlds": a.worlds, "safe": True,
+            "engine": engine, "part": f"{part}/{parts}", "seed": a.seed, "worlds": 0 if a.no_main else a.worlds,
+            "main": not a.no_main, "safe": True,
             "siblings": a.siblings, "sibling_worlds": a.sibling_worlds, "sibling_k": a.sibling_k,
             "leaf_horizon": a.leaf_horizon, "keyed": a.keyed, "capacity": a.capacity, "device": str(device),
             "torch": torch.__version__, "cuda_graphs": not a.no_graphs, "code_upload": not a.float_upload,
             "network_rows": int(rows + srows), "seconds": round(t_all, 1)}
-    file.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
+    # A siblings-only part (--no-main) has no labels file; its record goes beside the siblings.
+    (sfile if a.no_main else file).with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"{file}: {sum(x['id'].size for x in main_out)} positions; {sfile}: "
           f"{sum(x['id'].size for x in sib_out)} sibling rows; {rows + srows} network rows in {t_all:.0f}s")
     return 0
@@ -526,17 +529,58 @@ def labelling_signature(pmeta: Dict[str, Any], lmeta: Dict[str, Any]) -> Dict[st
     """The labelling recipe: every setting that changes what a dataset holds, none of where or how
     fast it was made. Its D code comes from tools/scripts/run_codes.py's `labellings`."""
     return {"temperature": pmeta["temperature"], "keep": pmeta["keep"], "candidates": pmeta["candidates"],
-            "holdout": pmeta["holdout"], "worlds": lmeta["worlds"], "stop": "game", "safe": lmeta["safe"],
+            "holdout": pmeta["holdout"], "worlds": lmeta["worlds"] if lmeta.get("main", True) else 0, "stop": "game", "safe": lmeta["safe"],
             "siblings": lmeta["siblings"], "sibling_worlds": lmeta["sibling_worlds"],
             "sibling_k": lmeta["sibling_k"], "leaf_horizon": lmeta["leaf_horizon"],
             "labels": ["score", "final_vp", "turn_vp", "turn_defcon", "region_swing"],
             # keyed chance (bindings/keyed_chance.hpp); recorded only when on, so D1 keeps its code
-            **({"chance": "keyed"} if lmeta.get("keyed") else {})}
+            **({"chance": "keyed"} if lmeta.get("keyed") else {}),
+            **({"main": False} if lmeta.get("main") is False else {})}
+
+
+def merge_siblings_only(a: argparse.Namespace, d: pathlib.Path, pos: Dict[str, np.ndarray],
+                        pmeta: Dict[str, Any]) -> int:
+    """A dataset of the sibling slice alone (label --no-main): siblings.npz with each row's split, the
+    manifest and the ledger row."""
+    sfiles = sorted(d.glob("siblings_*.npz"))
+    smetas = [json.loads(f.with_suffix(".json").read_text()) for f in sfiles]
+    if not sfiles or len(sfiles) != int(smetas[0]["part"].split("/")[1]):
+        raise SystemExit(f"{d}: the sibling parts are incomplete")
+    for m in smetas:
+        if m["engine"] != pmeta["engine"]:
+            raise SystemExit("a sibling part was written by another engine than the positions")
+    sib = [dict(np.load(f)) for f in sfiles]
+    S = {k: np.concatenate([x[k] for x in sib]) for k in sib[0]}
+    hold_games = np.unique(pos["id"][pos["holdout"]] // PLY_SPAN)
+    S["holdout"] = np.isin(S["id"] // PLY_SPAN, hold_games)
+    f = d / "siblings.npz"
+    np.savez(f, id=S["id"], meta=S["meta"], cols=S["cols"], swing=S["swing"], leaf=S["leaf"], holdout=S["holdout"])
+    files = {f.name: sha256(f)}
+    sig = labelling_signature(pmeta, smetas[0])
+    code = labelling_code(sig, update=True)
+    assert code is not None
+    if a.code and a.code != code:
+        raise SystemExit(f"the labelling settings are {code}'s, not {a.code}'s (tools/scripts/run_codes.py labellings)")
+    name = f"{pmeta['generator']}~{code}(seed={pmeta['seed']},games={pmeta['games']})"
+    manifest = {"dataset": name, "code": code, "labelling": sig, "generator": pmeta["generator"],
+                "generator_sha256": pmeta["generator_sha256"], "engine": pmeta["engine"],
+                "positions": {k: v for k, v in pmeta.items() if k not in ("part", "positions", "seconds")},
+                "label": {k: v for k, v in smetas[0].items() if k not in ("part", "network_rows", "seconds")},
+                "rows": {"sibling_rows": int(S["id"].size), "sibling_positions": int(np.unique(S["id"]).size),
+                         "network_rows": int(sum(m["network_rows"] for m in smetas))},
+                "label_seconds": round(sum(m["seconds"] for m in smetas), 1), "files": files}
+    (d / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    print(json.dumps(manifest["rows"]))
+    print(f"| `{name}` | {manifest['rows']['sibling_positions']:,} (sibling slice only) | "
+          f"{manifest['rows']['network_rows']:,} | {smetas[0]['device']} | siblings.npz {files['siblings.npz'][:12]} | |")
+    return 0
 
 
 def run_merge(a: argparse.Namespace) -> int:
     d = pathlib.Path(a.dir)
     pos, pmeta = _load_positions(d)
+    if not list(d.glob("labels_*.npz")):
+        return merge_siblings_only(a, d, pos, pmeta)
     lfiles = sorted(d.glob("labels_*.npz"))
     lmetas = [json.loads(f.with_suffix(".json").read_text()) for f in lfiles]
     if not lfiles or len(lfiles) != int(lmetas[0]["part"].split("/")[1]):
@@ -633,6 +677,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     la.add_argument("--sibling-k", type=int, default=4)
     la.add_argument("--leaf-horizon", type=int, default=0,
                     help="sibling leaves: boundaries before the mover's own decision is the leaf (0: the next one)")
+    la.add_argument("--no-main", action="store_true",
+                    help="the sibling slice only: no main labels (a slice relabelled, e.g. keyed, beside an existing set)")
     la.add_argument("--keyed", action="store_true",
                     help="keyed chance: each world's dice and deals tied to their situation, so siblings draw alike")
     la.add_argument("--capacity", type=int, default=16384, help="rows per labeller batch")
