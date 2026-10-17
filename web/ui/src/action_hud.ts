@@ -248,20 +248,28 @@ export class ActionHud {
 
       case 2: // SELECT_PLAY_MODE
         const cardName = ctx.pending_op_card_name || `Card #${ctx.pending_op_card}`;
-        promptText = `<strong>${player}:</strong> Choose how to play <em>${cardName}</em>:`;
+        // Grain Sales to Soviets resolves the card it drew on this node: play it, or hand it back to
+        // the USSR and conduct Grain Sales' own 2 Ops. The engine offers the return as CONFIRM_DONE
+        // (allow_early_stop), outside the play modes in valid_ids -- so without the button below the
+        // page could only play the drawn card.
+        const grainSales = (ctx.resolving_card || 0) === 67;
+        promptText = grainSales
+          ? `<strong>${player}:</strong> <em>Grain Sales to Soviets</em> drew <em>${cardName}</em> from the USSR hand. Play it, or return it and conduct Grain Sales' 2 Ops:`
+          : `<strong>${player}:</strong> Choose how to play <em>${cardName}</em>:`;
         // Resolution, NOT the retired PlayMode. Source of truth: `enum class Resolution` in
         // engine/include/ts/types.hpp, mirrored by `mode_names` in bindings/action_encoder.py.
         // P17 merged PlayMode -> CHOOSE_TIMING_BRANCH -> SELECT_OP_MODE into this one decision,
         // and these labels were left on the old enum: 1/2/3 named the wrong action entirely and
         // 4 had no label, so an opponent card rendered as
         // "Event / Space Race / Pass-Discard / Mode 4" for EVENT / INFLUENCE / COUP / REALIGN.
-        const ops = ctx.pending_ops_value;
+        // The Ops are known only once granted; at Grain Sales' node the drawn card has none yet.
+        const ops = ctx.pending_ops_value > 0 ? `${ctx.pending_ops_value} Ops` : "the card's Ops";
         const modeLabels: Record<number, { title: string; desc: string; class: string }> = {
           0: { title: "Resolve the Event", desc: "Trigger the printed event. On an opponent's card this is the event-first branch — you choose how to spend the Ops afterwards.", class: "btn-primary" },
-          1: { title: "Space Race Attempt", desc: `Discard the card to attempt an advance on the Space Race track (${ops} Ops).`, class: "btn-secondary" },
-          2: { title: "Operations: Place Influence", desc: `Spend ${ops} Ops placing influence.`, class: "btn-success" },
-          3: { title: "Operations: Coup Attempt", desc: `Spend ${ops} Ops on a coup — rolls a die.`, class: "btn-danger" },
-          4: { title: "Operations: Realignment", desc: `Spend ${ops} Ops on realignment rolls — opposed dice.`, class: "btn-warning" }
+          1: { title: "Space Race Attempt", desc: `Discard the card to attempt an advance on the Space Race track (${ops}).`, class: "btn-secondary" },
+          2: { title: "Operations: Place Influence", desc: `Spend ${ops} placing influence.`, class: "btn-success" },
+          3: { title: "Operations: Coup Attempt", desc: `Spend ${ops} on a coup — rolls a die.`, class: "btn-danger" },
+          4: { title: "Operations: Realignment", desc: `Spend ${ops} on realignment rolls — opposed dice.`, class: "btn-warning" }
         };
         validIds.forEach(m => {
           // Loud, not bland. A silent `Mode ${m}` is what let this drift sit unnoticed; anything
@@ -283,6 +291,15 @@ export class ActionHud {
         // enum, so the manual die input appeared for influence and was missing for coups.
         if ([9, 11].includes(ctx.pending_op_card) || validIds.some(m => m === 1 || m === 3 || m === 4)) {
           showDieSelector = true;
+        }
+        if (grainSales && allowEarlyStop) {
+          // The engine's own decoding of this node's CONFIRM_DONE: primary 255, the done flag.
+          buttonsHtml += `
+            <button class="btn btn-warning btn-block btn-hud-action" data-primary="255" data-flags="128" style="margin-top: 4px; text-align: left; padding: 8px 12px;">
+              <div style="font-weight: bold; font-size: 13px;">↩ Return ${cardName} to the USSR</div>
+              <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Hand the card back (the USSR knows you saw it) and conduct Grain Sales' 2 Ops instead.</div>
+            </button>
+          `;
         }
         break;
 

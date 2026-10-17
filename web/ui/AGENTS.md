@@ -101,7 +101,13 @@ web/ui/
      hand tab: Our Man in Tehran's five drawn cards (`PEEKED_TEMP`, "Drawn"), Star Wars' and SALT
      Negotiations' discard pile. The pass button appears whenever the mask offers card 0, labelled
      for what it means there (Done / Take no card / No card can be chosen).
-     `tests/web/test_e2e_card_choices.py` plays all three from the US hand.
+   - Grain Sales to Soviets resolves the card it drew on a play-mode node (`resolving_card` 67,
+     the drawn card in `pending_op_card`): the HUD names both, offers the play modes, and adds
+     *Return … to the USSR* -- the engine's CONFIRM_DONE there (primary 255, flag 128; signalled by
+     `allow_early_stop`, outside `valid_ids`), which hands the card back for Grain Sales' 2 Ops.
+     Without it the page could only play the drawn card. Ops not yet granted read "the card's Ops",
+     not "0 Ops".
+   - `tests/web/test_e2e_card_choices.py` plays all of these from the US hand.
 5. **Deluxe Space Race Track & Modal Inspector (`tracks_view.ts`)**:
    - Renders the 9-step ladder (0..8) in the top status bar with US and USSR marker tokens and turn attempt counters (`Attempts: used/max`).
    - Clicking the widget opens the full modal: all 9 boxes, required Ops, success rolls, 1st/2nd VP awards, and special ongoing privileges.

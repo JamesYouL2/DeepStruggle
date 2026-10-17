@@ -4,7 +4,9 @@ Our Man in Tehran shows the US five cards drawn from the deck and lets it discar
 Star Wars and SALT Negotiations pick from the discard pile. None of those cards is in a hand the
 page shows, and the HUD used to list no cards for an event's card choice at all -- so the US
 could neither see the drawn cards (the display state also reported them as UNAVAILABLE) nor
-click any of the offered ones. Each event is played here the way a person does it: click the card
+click any of the offered ones. Grain Sales to Soviets draws a USSR card the US may play or hand back
+for Grain Sales' own 2 Ops; the hand-back is the engine's CONFIRM_DONE at the play-mode node, outside
+the play modes the HUD listed, so the page could only play the drawn card. Each event is played here the way a person does it: click the card
 in the US hand, click Event, then choose from what the HUD offers.
 
 Positions are real mid-game positions from the engine, with the event card put into the US hand
@@ -29,7 +31,8 @@ import ts_engine as ts
 from tests.web.test_e2e_workbench import DIST, HF_BLOCKED
 from tools.lib.game_step import drain_chance
 
-OUR_MAN_IN_TEHRAN, STAR_WARS, SALT, NATO = 108, 85, 43, 21
+OUR_MAN_IN_TEHRAN, STAR_WARS, SALT, NATO, GRAIN_SALES = 108, 85, 43, 21, 67
+CONFIRM_DONE_INDEX = 208
 US_HAND = (ts.CardLocation.HAND_US_UNKNOWN, ts.CardLocation.HAND_US_KNOWN)
 
 
@@ -192,3 +195,22 @@ def test_star_wars_with_nothing_triggerable_can_be_passed_from_the_page(browser:
     assert "No card can be chosen" in page.inner_text("#decision-body")
     page.click("#decision-body button[data-flags='128']")
     page.wait_for_function(f"window.__wb.state.decision_context.resolving_card !== {STAR_WARS}")
+
+
+def test_grain_sales_lets_the_us_hand_the_drawn_card_back(browser: Any, site: str) -> None:
+    page = _play_event_as_us(browser, site, _position(GRAIN_SALES, lambda s: s), GRAIN_SALES)
+    ctx = page.evaluate("window.__wb.state.decision_context")
+    assert ctx["decision_type_name"] == "SELECT_PLAY_MODE", "the drawn card is resolved on a play-mode node"
+    drawn = int(ctx["pending_op_card"])
+    name = page.evaluate(f"window.__wb.engine.cardName({drawn})")
+    body = page.inner_text("#decision-body")
+    assert "Grain Sales" in body and name in body
+    assert "0 Ops" not in body, "the drawn card's Ops are not known on this node"
+    assert page.evaluate(f"!!window.__wb.engine.mask(false)[{CONFIRM_DONE_INDEX}]"), "the engine offers the return"
+
+    page.click("#decision-body button[data-flags='128']")   # Return the card to the USSR
+    page.wait_for_function("window.__wb.state.decision_context.decision_type_name === 'SELECT_OP_MODE'")
+    st = page.evaluate("window.__wb.state")
+    assert st["card_locations"][str(drawn)] == "HAND_USSR_KNOWN", "handed back, and the USSR knows the US saw it"
+    assert st["decision_context"]["pending_op_card"] == GRAIN_SALES and st["decision_context"]["pending_ops_value"] == 2
+    assert f"returns {name}" in page.inner_text("#action-log-stream")

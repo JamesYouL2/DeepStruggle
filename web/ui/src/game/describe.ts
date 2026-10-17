@@ -13,6 +13,8 @@ import { GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
 
 const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE: 5, CHOOSE_BRANCH: 6 };
+/** Grain Sales to Soviets: its node offers the drawn card back (a CONFIRM_DONE) for its own 2 Ops. */
+const GRAIN_SALES = 67;
 
 function isConfirmDone(a: Required<MicroAction>): boolean {
   return (a.flags & 0x80) !== 0 || a.primary_id === 255;
@@ -99,7 +101,11 @@ export function describeActionAndDeltas(
       0: "EVENT", 1: "SPACE RACE", 2: "OPERATIONS - INFLUENCE PLACEMENT",
       3: "OPERATIONS - COUP ATTEMPT", 4: "OPERATIONS - REALIGNMENT",
     };
-    if (primary === 1) {
+    if (isConfirmDone(action) && (ctx?.resolving_card ?? 0) === GRAIN_SALES) {
+      // The decline at Grain Sales' node: the drawn card goes back, Grain Sales' own Ops are taken.
+      const drawn = ctx?.pending_op_card ?? 0;
+      logs.push(`${p} returns ${engine.cardName(drawn)} (#${drawn}) to the USSR hand and conducts Grain Sales' 2 Ops`);
+    } else if (primary === 1) {
       const rollInfo = secondary > 0 ? ` (Input Roll: ${secondary})` : "";
       logs.push(`${p} attempts Space Race with pending card${rollInfo}`);
     } else {
