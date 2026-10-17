@@ -18,6 +18,7 @@ disposed of through that card's own exit.
 
 | plan | what | status |
 |:---|:---|:---|
+| **[P34](P34_search_centric_evaluator.md)** | **the step change (owner, 2026-10-17):** a second network read only at the rollout root's leaves, trained supervised on positions labelled by 32-world playouts (unbiased for the greedy value, ~30× the information of a game outcome), compared across architectures on one dataset, measured under the root, iterated by generation with a reverse curriculum from exact turn-10 values and distilled back into the RL critic. New nomenclature: `D` labelling recipes, datasets `<model>~D1(…)`, evaluators as A+R pairs, `leaf_net=` in the search spec ([`../datasets.md`](../datasets.md)) | proposed; the C++ game-end stop with outcome capture waits on the owner |
 | **[P33](P33_search_preserved_gains.md)** | base-checkpoint gains the rollout root keeps; the critic as the main track, every arm read raw **and** under `rollout(4,16,4,z2)` | diagnostics done ([`../log/P33_diagnostics.md`](../log/P33_diagnostics.md)); R52 proposed |
 
 ## Shelved or done, kept for a sizing or a design
@@ -73,7 +74,8 @@ disposed of through that card's own exit.
    trains nothing is `P<n>a`, `P<n>b`, …; one that trains a model takes a recipe code `R<nn>` or an
    architecture code `A<nn>`, reserved in the plan and registered in
    [`../architectures_and_recipes.md`](../architectures_and_recipes.md) at launch. `E` is the
-   engine revision only.
+   engine revision only. A labelling recipe is a `D<nn>` code and a dataset is a model under one,
+   `<model>~D<nn>(…)`, ledgered in [`../datasets.md`](../datasets.md) (owner, 2026-10-17).
 
 Budgets, seed counts and error bars are not repeated here: see
 [`../method/measurement_pitfalls.md`](../method/measurement_pitfalls.md),

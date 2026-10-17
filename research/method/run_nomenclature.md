@@ -29,6 +29,22 @@ ideas is `P<n>` (`research/plans/`); an experiment under it that trains nothing 
 approach, an `A` for an architecture -- reserved in the plan and registered here at launch. `E`
 is never an experiment label.
 
+**Datasets, evaluators and two-network players** (owner, 2026-10-17; [P34](../plans/P34_search_centric_evaluator.md)):
+
+- **`D`** -- a **labelling recipe**, the one letter added: the flag set of the labelling tool
+  (source temperature, decisions kept, worlds, stop, label columns, device), registered like an
+  R code ([`../datasets.md`](../datasets.md) until `run_codes.py` reads it).
+- A **dataset** is a model under a labelling recipe, spelled like a player under a search:
+  `<generator model>~D1(seed=44,games=20000)`. The generator played the positions and the
+  playouts, so the generation is in the name.
+- An **evaluator** -- a value-only network trained on a dataset -- is an ordinary run name: an `A`
+  code for its shape, an `R` code for the supervised recipe, which pins the dataset the way R32
+  pins a teacher checkpoint. From scratch `E7-A<n>-R<n>-S44`; fine-tuned from an RL network's
+  weights `<RL model>+A<n>-R<n>`.
+- A **two-network player** names its leaf network inside the search spec:
+  `<policy model>~rollout(…,leaf=own,leaf_net=<evaluator model>)` -- `leaf=` is the side the leaf is
+  read from, `leaf_net=` the network that reads it.
+
 **A code is a set of flags, not a description.** `tools/scripts/run_codes.py` reads each run's
 `metadata.json`, splits its non-default `tools/train.py` flags into architecture, recipe and
 bookkeeping (output, cadence, evals, budget, seeds), and gives each distinct set a code --
