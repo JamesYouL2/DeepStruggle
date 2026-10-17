@@ -409,6 +409,16 @@ leak pairs read at the pre-deal state. (3) Searched: the arm's SWA under `stop=p
 the best on the leaderboard with `--strong`. **Adopt** if the arm's pre-deal root beats the control's
 best searched player by the per-seat rule with raw not lower by more than 1 SE.
 
+## Cell A: region attention before the per-country head (2026-10-16/17)
+
+The owner's suspicion: much of the placement leak ("the wrong country in the right region") is the network
+unable to compare countries within a region -- each country's head reads only its own row and one shared
+64-number context. **Build** (`06c40e1`, architecture code A14): each country's head input joined with its
+map neighbours' mean, attending within its region (country ids are contiguous by region, so six slices),
+added through a zero-initialised projection; grown in place on A13+R48 at 12,400M, R48's recipe, to 12,800M
+(~31k steps/s against ~41k). **Result:** level with A13+R48's leg 4 -- SWA 12,720–12,800M raw 50.2%,
+searched under `earlier`+own 49.4%. Not measured: whether the layer moved the placement decisions at all.
+
 ## The critic on both sides (design, 2026-10-15; not built)
 
 **Why.** The trainer reads the critic only from a decision's decider; the rollout root reads leaves from
