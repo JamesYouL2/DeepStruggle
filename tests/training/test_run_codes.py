@@ -165,3 +165,22 @@ def test_a_run_started_from_a_swa_branches_where_its_window_ends(tmp_path: Any) 
     child = next(r for r in runs if r.parent is not None)
     assert child.branch_step == 12_000_000_000
 
+
+def test_a_value_fits_name_carries_its_seed_and_its_branch(tmp_path: Any) -> None:
+    """A value fit records one seed; fine-tuned from its parent's SWA it is named as a branch with
+    its own A and R codes, from scratch as a root."""
+    root = str(tmp_path)
+    rl = _run(root, "E9-01-44", steps=12_800_000_000)
+    fits = [_run(root, "E9-02-44", parent=rl, resume="swa_11920-12000M.pt", mode="value-fit", value_dataset="/d"),
+            _run(root, "E9-03-44", mode="value-fit", value_dataset="/d", value_reinit=True)]
+    for d in fits:                     # `seed` is the helper's own argument: written here
+        path = os.path.join(d, "metadata.json")
+        with open(path) as f:
+            meta = json.load(f)
+        meta["seed"] = 44
+        with open(path, "w") as f:
+            json.dump(meta, f)
+    names, missing = rc.assign(rc.load_runs(root), {"architectures": {}, "recipes": {}, "overrides": {}}, update=True)
+    got = sorted(p.text() for p in names.values())
+    assert got == ["E9-A1-R1-S44", "E9-A1-R1-S44@12000M+A2-R2", "E9-A2-R3-S44"]
+

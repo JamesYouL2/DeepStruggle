@@ -142,6 +142,8 @@ class Run:
 
     @property
     def seed(self) -> str:
+        if self.meta.get("mode") == "value-fit":
+            return str(self.meta.get("seed"))      # a supervised fit has one seed
         s = {self.meta.get(k) for k in ("seed_env", "seed_sampling", "seed_pool")}
         if len(s) != 1:
             raise ValueError(f"{self.dir}: env/sampling/pool seeds differ {s}; S cannot name one")

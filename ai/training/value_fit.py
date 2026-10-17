@@ -308,7 +308,7 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
     meta: Dict[str, Any] = dict(cli or {})
     if not cfg.reinit:
         meta["resumed_from"] = cfg.init      # the lineage: a fine-tune branches from its RL network
-    meta |= {"run_name": run_name, "mode": "value-fit", "description": description,
+    meta |= {"run_name": run_name, "mode": "value-fit", "description": description, "seed": cfg.seed,
             "git_commit": _git("rev-parse", "HEAD"), "git_dirty": bool(_git("status", "--porcelain", "--", "ai", "tools", "bindings", "engine")),
             "engine": engine, "dataset": manifest["dataset"], "dataset_dir": str(ds),
             "dataset_files": manifest["files"], "init": cfg.init, "config": asdict(cfg),
