@@ -218,27 +218,66 @@ def test_a_non_canonical_player_id_is_caught(tmp_path: pathlib.Path) -> None:
     assert any("canonical id" in e for e in lb.validate(board))
 
 
+def _report(root: pathlib.Path, subject: str, generated: bool = True) -> str:
+    """A behaviour report on `subject`, as tools/scripts/checkpoint_report.py heads one, under `root`."""
+    rel = f"{lb.REPORT_DIR}/{''.join(c if c.isalnum() else '_' for c in subject)}.md"
+    (root / lb.REPORT_DIR).mkdir(parents=True, exist_ok=True)
+    by = " by `tools/scripts/checkpoint_report.py` (commit abc1234)" if generated else ""
+    (root / rel).write_text(f"# {subject}: behaviour report\n\nGenerated 2026-10-17{by}.\n", encoding="utf-8")
+    return rel
+
+
 def test_a_search_player_never_links_its_networks_greedy_report(tmp_path: pathlib.Path) -> None:
     """A network's report is of its greedy play: the greedy player links it, a search or a sampled
     policy of the same weights does not -- only a report of its own, once there is one."""
     board = _board(tmp_path, ["A"], [])
-    board.networks["A@1M"]["report"] = "README.md"
+    net_report = _report(tmp_path, "A@1M")
+    board.networks["A@1M"]["report"] = net_report
     search = player_id("A@1M", Gumbel())
     board.players[search] = {"network": "A@1M", "inference": spec_to_dict(Gumbel()), "description": "",
                              "report": None}
     sampled = player_id("A@1M", Policy(temperature=0.5))
     board.players[sampled] = {"network": "A@1M", "inference": spec_to_dict(Policy(temperature=0.5)),
                               "description": "", "report": None}
-    assert lb.validate(board) == []
-    assert lb.player_report(board, "A@1M") == "README.md"
+    assert lb.validate(board, tmp_path) == []
+    assert lb.player_report(board, "A@1M") == net_report
     assert lb.player_report(board, search) is None and lb.player_report(board, sampled) is None
-    board.players[search]["report"] = "AGENTS.md"
-    assert lb.player_report(board, search) == "AGENTS.md"
+    own = _report(tmp_path, search)
+    board.players[search]["report"] = own
+    assert lb.validate(board, tmp_path) == []
+    assert lb.player_report(board, search) == own
     # The page's data carries the same link.
     players = cast(Dict[str, Dict[str, object]], lb.site_data(board)["players"])
-    assert players[search]["report"] == "AGENTS.md" and players["A@1M"]["report"] == "README.md"
-    board.players[search]["report"] = "no/such/report.md"
-    assert any("does not exist" in e for e in lb.validate(board))
+    assert players[search]["report"] == own and players["A@1M"]["report"] == net_report
+    board.players[search]["report"] = f"{lb.REPORT_DIR}/no_such_report.md"
+    assert any("does not exist" in e for e in lb.validate(board, tmp_path))
+
+
+def test_a_report_link_is_the_scripts_behaviour_report_on_that_network_or_player(tmp_path: pathlib.Path) -> None:
+    board = _board(tmp_path, ["A", "B"], [])
+    search = player_id("A@1M", Gumbel())
+    board.players[search] = {"network": "A@1M", "inference": spec_to_dict(Gumbel()), "description": "",
+                             "report": None}
+    # A plan or a research log that mentions the network is not its report.
+    (tmp_path / "research" / "log").mkdir(parents=True)
+    (tmp_path / "research" / "log" / "P33_plan.md").write_text("# P33: the plan\n", encoding="utf-8")
+    board.players[search]["report"] = "research/log/P33_plan.md"
+    assert any("not a behaviour report from tools/scripts/checkpoint_report.py" in e
+               for e in lb.validate(board, tmp_path))
+    # Nor is the report on another player -- here, its network's greedy play -- or on another network.
+    board.players[search]["report"] = _report(tmp_path, "A@1M")
+    assert any("not a report on" in e for e in lb.validate(board, tmp_path))
+    board.players[search]["report"] = None
+    board.networks["A@1M"]["report"] = _report(tmp_path, "B@1M")
+    assert any("not a report on A@1M" in e for e in lb.validate(board, tmp_path))
+    # A file in the directory that the script did not write is not one either.
+    board.networks["A@1M"]["report"] = _report(tmp_path, "A@1M", generated=False)
+    assert any("does not say it was generated" in e for e in lb.validate(board, tmp_path))
+    # A report written under a network's earlier name stays its report.
+    board.networks["A@1M"]["old_names"] = ["A-old@1M"]
+    board.networks["A@1M"]["report"] = _report(tmp_path, "A-old@1M")
+    board.players[search]["report"] = _report(tmp_path, player_id("A-old@1M", Gumbel()))
+    assert lb.validate(board, tmp_path) == []
 
 
 def test_site_data_aggregates_a_pair_from_the_first_players_side(tmp_path: pathlib.Path) -> None:

@@ -284,7 +284,11 @@ PYTHONPATH=. python tools/leaderboard.py validate                    # what test
 
 `leaderboard_play.py` refuses a stale build, an engine that does not reproduce the epoch's
 behaviour digest, a network whose sha256 changed, and uncommitted changes under
-`ai/ bot/ bindings/ engine/ tools/`. A pairing on record is skipped. Main players are the owner's
+`ai/ bot/ bindings/ engine/ tools/`. A report link (a network's or a player's) is always the
+behaviour report `tools/scripts/checkpoint_report.py` generated for that exact network or player,
+in `research/log/per_checkpoint/` and titled with its id -- never the plan or log it was made for;
+`validate` refuses anything else, and with no report yet the link stays null (a greedy player then
+shows its network's). A pairing on record is skipped. Main players are the owner's
 choice (`epochs.json`).
 
 **An epoch is defined by what the engine does, not by its sources.** `tools/lib/engine_behaviour.py`

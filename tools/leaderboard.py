@@ -101,8 +101,6 @@ def cmd_add_network(a: argparse.Namespace) -> int:
     root = os.path.realpath(data_root())
     if os.path.commonpath([path, root]) != root:
         raise LeaderboardError(f"{a.file} is not inside the shared data tree {root}")
-    if a.report and not (ROOT / a.report).is_file():
-        raise LeaderboardError(f"report {a.report} does not exist")
     # The path as given, not resolved: a name under data/checkpoints/_models/ is the readable
     # one, and the symlink it may be stays part of the record.
     rel = os.path.relpath(os.path.abspath(a.file), os.path.abspath(data_root()))
@@ -125,8 +123,6 @@ def cmd_add_player(a: argparse.Namespace) -> int:
         raise LeaderboardError(f"player {pid!r} is already registered (--replace to overwrite)")
     if network is not None and network not in board.networks:
         raise LeaderboardError(f"network {network!r} is not registered (add-network first)")
-    if a.report and not (ROOT / a.report).is_file():
-        raise LeaderboardError(f"report {a.report} does not exist")
     # Replacing keeps what is not given again: attaching a report must not wipe the description.
     description = a.description if a.description is not None else (old["description"] if old else "")
     report = a.report if a.report is not None else (old["report"] if old else None)
@@ -159,7 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file", help="the .pt file, inside the shared data tree")
     p.add_argument("--description", required=True)
     p.add_argument("--old-name", nargs="+", default=None, help="names it went by before")
-    p.add_argument("--report", default=None, help="its behaviour report, a path in the repository")
+    p.add_argument("--report", default=None,
+                   help="its behaviour report from tools/scripts/checkpoint_report.py (research/log/per_checkpoint/)")
     p.add_argument("--hf", default=None, help="its path in the Hugging Face repo, once published")
     p.add_argument("--replace", action="store_true")
     p.set_defaults(fn=cmd_add_network)
@@ -167,8 +164,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("player", help="a player id, e.g. E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)")
     p.add_argument("--description", default=None)
     p.add_argument("--report", default=None,
-                   help="a report on this player's play, a path in the repository -- for a search, of the "
-                        "search; a greedy policy without one links its network's report")
+                   help="the behaviour report tools/scripts/checkpoint_report.py --players generated for this "
+                        "player (research/log/per_checkpoint/); a greedy policy without one links its network's")
     p.add_argument("--replace", action="store_true", help="update a registered player (unset fields are kept)")
     p.set_defaults(fn=cmd_add_player)
     return ap

@@ -253,6 +253,13 @@ PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 # then open http://localhost:8000/ -- or publish web/ui/dist (GitHub Pages: .github/workflows/pages.yml)
 ```
 
+**A leaderboard report link is the checkpoint analysis, never a plan.** The `report` of a network
+or a player in `leaderboard/` is the behaviour report `tools/scripts/checkpoint_report.py` generated
+for exactly that network (`--checkpoints`) or player (`--players`) -- openings, how games end, events
+against Ops for every card -- in `research/log/per_checkpoint/`. The plan or research log the
+checkpoint was made for is not its report; until a report is generated, leave the link null.
+`tools/leaderboard.py validate` (run by `tests/training`) refuses anything else.
+
 Other `tools/` CLIs: `generate_dataset.py` and `build_human_dataset.py` (demonstration datasets),
 `inspect_checkpoints.py` (architecture detected from the weights), `download_ts_replayer.py`
 (cached fetch of the human corpus), `behavioral_test.py` (scripted probes). Full flag reference in

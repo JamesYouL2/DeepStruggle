@@ -54,7 +54,7 @@ from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.data_root import data_path
-from tools.lib.leaderboard import load as load_leaderboard, player_spec
+from tools.lib.leaderboard import REPORT_DIR, load as load_leaderboard, player_spec
 from tools.lib.player_agent import NeuralAgent, load_agent
 from tools.lib.player_spec import Policy, kind_of, load_spec
 from tools.scripts.event_play_census import (EVENT, SCORING, Holding, HoldingTracker, dump_holding,
@@ -93,7 +93,6 @@ OPEC_COUNTRIES = [int(_MAP[n]["id"]) for n in
                   ("Egypt", "Iran", "Libya", "Saudi Arabia", "Iraq", "Gulf States", "Venezuela")]
 ALLIANCE_COUNTRIES = [int(c["id"]) for c in _MAP.values()
                       if c["battleground"] and c["region"] in ("Central America", "South America")]
-REPORT_DIR = "research/log/per_checkpoint"
 DATA_DIR = "/workspace/data/eval/per_checkpoint"
 
 
