@@ -221,18 +221,21 @@ void Scoring::score_region(GameState& state, Region r) noexcept {
     // ending cannot be classified afterwards. Analytics only -- see effect_bits.
     if (r == Region::EUROPE) {
         if (summary.us_status == RegionalStatus::CONTROL) {
+            if (scoring_tap) scoring_tap->report(0, 20);
             state.victory_points = 20;
             state.set_flag(effect_bits::EUROPE_CONTROL_WIN);
             state.current_phase = Phase::GAME_OVER;
             return;
         }
         if (summary.ussr_status == RegionalStatus::CONTROL) {
+            if (scoring_tap) scoring_tap->report(0, -20);
             state.victory_points = -20;
             state.set_flag(effect_bits::EUROPE_CONTROL_WIN);
             state.current_phase = Phase::GAME_OVER;
             return;
         }
     }
+    if (scoring_tap) scoring_tap->report(static_cast<uint8_t>(r), summary.net_delta);
 
     // If Shuttle Diplomacy was active and this was ME or Asia, clear flag and move card to discard pile
     if ((r == Region::MIDDLE_EAST || r == Region::ASIA) && state.has_flag(effect_bits::SHUTTLE_DIPLOMACY_ACTIVE)) {
@@ -269,6 +272,7 @@ void Scoring::score_southeast_asia(GameState& state) noexcept {
     if (thai_ctrl == Player::US) us_pts += 2;
     else if (thai_ctrl == Player::USSR) ussr_pts += 2;
 
+    if (scoring_tap) scoring_tap->report(ScoringTap::kSoutheastAsia, static_cast<int16_t>(us_pts - ussr_pts));
     int32_t new_vp = static_cast<int32_t>(state.victory_points) + (us_pts - ussr_pts);
     new_vp = std::clamp(new_vp, -20, 20);
     state.victory_points = static_cast<int8_t>(new_vp);
@@ -310,6 +314,10 @@ void Scoring::evaluate_military_ops(GameState& state) noexcept {
 
 void Scoring::execute_final_scoring(GameState& state) noexcept {
     if (state.current_phase == Phase::GAME_OVER) return;
+    if (scoring_tap) {
+        scoring_tap->final_scoring = 1;
+        scoring_tap->vp_before_final = state.victory_points;
+    }
 
     // 1. Europe Control Instant Victory check. The flag matters here for the same reason it
     // does in score_region: this leaves +/-20 and GAME_OVER, indistinguishable afterwards from
@@ -317,12 +325,14 @@ void Scoring::execute_final_scoring(GameState& state) noexcept {
     // Control win, not a 20 VP one.
     auto europe_summary = evaluate_region(state, Region::EUROPE);
     if (europe_summary.us_status == RegionalStatus::CONTROL) {
+        if (scoring_tap) scoring_tap->report(0, 20);
         state.victory_points = 20;
         state.set_flag(effect_bits::EUROPE_CONTROL_WIN);
         state.current_phase = Phase::GAME_OVER;
         return;
     }
     if (europe_summary.ussr_status == RegionalStatus::CONTROL) {
+        if (scoring_tap) scoring_tap->report(0, -20);
         state.victory_points = -20;
         state.set_flag(effect_bits::EUROPE_CONTROL_WIN);
         state.current_phase = Phase::GAME_OVER;
@@ -355,6 +365,15 @@ void Scoring::execute_final_scoring(GameState& state) noexcept {
     // South America
     auto sa_summary = evaluate_region(state, Region::SOUTH_AMERICA);
     total_vp += sa_summary.net_delta;
+
+    if (scoring_tap) {
+        scoring_tap->report(static_cast<uint8_t>(Region::EUROPE), europe_summary.net_delta);
+        scoring_tap->report(static_cast<uint8_t>(Region::ASIA), asia_summary.net_delta);
+        scoring_tap->report(static_cast<uint8_t>(Region::MIDDLE_EAST), me_summary.net_delta);
+        scoring_tap->report(static_cast<uint8_t>(Region::AFRICA), africa_summary.net_delta);
+        scoring_tap->report(static_cast<uint8_t>(Region::CENTRAL_AMERICA), ca_summary.net_delta);
+        scoring_tap->report(static_cast<uint8_t>(Region::SOUTH_AMERICA), sa_summary.net_delta);
+    }
 
     if (state.has_flag(effect_bits::SHUTTLE_DIPLOMACY_ACTIVE)) {
         state.clear_flag(effect_bits::SHUTTLE_DIPLOMACY_ACTIVE);

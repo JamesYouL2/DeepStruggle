@@ -39,7 +39,8 @@ engine/
 │   ├── prng.hpp                // SplitMix64 PRNG
 │   ├── map_data.hpp            // 84 countries, adjacency as 128-bit masks
 │   ├── card_data.hpp           // 110 cards (Ops, side, era, asterisk, scoring)
-│   ├── scoring.hpp             // region scoring (Presence/Domination/Control), victory checks
+│   ├── scoring.hpp             // region scoring (Presence/Domination/Control), victory checks;
+│   │                           // ScoringTap: a thread-local report of each region's scoring (P34's labeller)
 │   ├── ops.hpp                 // influence, coups, realignments, dynamic costs
 │   ├── defcon.hpp              // DEFCON-1 game end, provoked/unprovoked classification
 │   ├── space_race.hpp          // space race tracks, rewards, abilities

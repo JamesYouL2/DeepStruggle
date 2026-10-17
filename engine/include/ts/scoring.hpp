@@ -26,6 +26,29 @@ struct RegionScoreSummary {
     int16_t        net_delta; // us_score - ussr_score
 };
 
+// Every regional scoring on a thread, reported as it happens, for P34's playout labeller
+// (bindings/playout_labels.*), which labels a position with each region's swing at its next
+// scoring. Inert unless a caller points `scoring_tap` at one, which the engine itself never does:
+// the score, the state and every game are the same with or without it. Only the first scoring of
+// each region after a reset is kept. Slot = Region (Europe 0 .. South America 5), 6 = Southeast Asia.
+struct ScoringTap {
+    static constexpr uint8_t kSlots = 7;
+    static constexpr uint8_t kSoutheastAsia = 6;
+    uint8_t scored = 0;           // bit per slot: scored since the reset
+    uint8_t final_scoring = 0;    // 1 once Final Scoring ran
+    int8_t  vp_before_final = 0;  // the VP track as Final Scoring began
+    int16_t swing[kSlots] = {};   // the slot's first scoring: US points minus USSR points, unclamped
+                                  // (a Europe Control win reads +/-20)
+
+    void report(uint8_t slot, int16_t delta) noexcept {
+        const uint8_t bit = static_cast<uint8_t>(1u << slot);
+        if (scored & bit) return;
+        scored |= bit;
+        swing[slot] = delta;
+    }
+};
+inline thread_local ScoringTap* scoring_tap = nullptr;
+
 class Scoring {
 public:
     static Player get_country_control(const GameState& state, uint8_t country_id) noexcept;

@@ -29,7 +29,9 @@
 #include "selftest.hpp"
 #include "batched_search.hpp"
 #include "rollout_batch.hpp"
+#include "playout_labels.hpp"
 #include <nanobind/stl/pair.h>
+#include <nanobind/stl/optional.h>
 
 #include "gomp_parallel.hpp"  // gomp_parallel_for: the one OpenMP pool, shared with torch
 
@@ -665,6 +667,227 @@ NB_MODULE(ts_engine, m) {
           "(digest, steps) over `games` whole games (bindings/selftest.hpp). The WebAssembly "
           "build exports the same function, so equal numbers mean the two engines play the same "
           "games, position, observation and legal mask alike.");
+
+    // ---- P34's playout labeller (bindings/playout_labels.hpp; native only) ----
+    m.def("state_size", []() { return sizeof(ts::GameState); },
+          "Bytes of one GameState: the row width of raw_bytes() arrays.");
+    m.def("state_from_raw_bytes", [](nb::bytes b) {
+              if (b.size() != sizeof(ts::GameState))
+                  throw std::invalid_argument("raw state: expected " + std::to_string(sizeof(ts::GameState)) + " bytes");
+              ts::GameState s;
+              std::memcpy(&s, b.c_str(), sizeof(ts::GameState));
+              return s;
+          }, nb::arg("data"),
+          "The inverse of GameState.raw_bytes(), for the SAME engine build only: the bytes are the "
+          "struct's memory, so a dataset of them records the engine fingerprint it was written by.");
+    {
+        using PL = ts::labels::PlayoutLabels;
+        using RawStates = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+        using Ids = nb::ndarray<const int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+        using Cands = nb::ndarray<const int32_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+        auto f32 = [](size_t n, size_t w, const std::vector<float>& v) {
+            float* d = new float[std::max<size_t>(1, n * w)];
+            std::copy(v.begin(), v.end(), d);
+            nb::capsule own(d, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+            size_t sh[2] = { n, w };
+            return nb::ndarray<nb::numpy, float, nb::ndim<2>>(d, 2, sh, own);
+        };
+        auto i64 = [](const std::vector<int64_t>& v) {
+            int64_t* d = new int64_t[std::max<size_t>(1, v.size())];
+            std::copy(v.begin(), v.end(), d);
+            nb::capsule own(d, [](void* p) noexcept { delete[] static_cast<int64_t*>(p); });
+            size_t sh[1] = { v.size() };
+            return nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(d, 1, sh, own);
+        };
+        auto i32 = [](size_t n, size_t w, const std::vector<int32_t>& v) {
+            int32_t* d = new int32_t[std::max<size_t>(1, n * w)];
+            std::copy(v.begin(), v.end(), d);
+            nb::capsule own(d, [](void* p) noexcept { delete[] static_cast<int32_t*>(p); });
+            size_t sh[2] = { n, w };
+            return nb::ndarray<nb::numpy, int32_t, nb::ndim<2>>(d, 2, sh, own);
+        };
+        nb::class_<PL>(m, "PlayoutLabels",
+            "P34's playout labeller: queued positions dealt into `worlds` worlds from the mover's "
+            "view, fresh dice each, played greedily to the game's end by the caller's network under "
+            "the safe-playout rule, with outcome capture (bindings/playout_labels.hpp). Batching is "
+            "continuous: fill_live(obs) -> logits -> step(logits) until idle(), collecting "
+            "take_positions() / take_siblings() as they finish.")
+            .def("__init__", [](PL* self, uint32_t features, int worlds, size_t capacity, uint64_t seed,
+                                bool safe, int leaf_horizon, uint32_t max_plies) {
+                     if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
+                     if (worlds <= 0 || worlds > 65535) throw std::invalid_argument("worlds must be in 1..65535");
+                     if (capacity == 0) throw std::invalid_argument("capacity must be positive");
+                     if (leaf_horizon < 0 || leaf_horizon > 255) throw std::invalid_argument("leaf_horizon must be in 0..255");
+                     ts::labels::Config cfg;
+                     cfg.features = features;
+                     cfg.worlds = static_cast<uint16_t>(worlds);
+                     cfg.safe = safe;
+                     cfg.leaf_horizon = leaf_horizon;
+                     cfg.max_plies = max_plies;
+                     new (self) PL(cfg, capacity, seed);
+                 }, nb::arg("features") = 0u, nb::arg("worlds") = 32, nb::arg("capacity") = 16384,
+                 nb::arg("seed") = 0ull, nb::arg("safe") = true, nb::arg("leaf_horizon") = 0,
+                 nb::arg("max_plies") = 8000u)
+            .def("enqueue_raw", [](PL& self, RawStates states, Ids ids, std::optional<Cands> candidates) {
+                     const size_t n = states.shape(0);
+                     if (states.shape(1) != sizeof(ts::GameState))
+                         throw std::invalid_argument("enqueue_raw: rows of state_size() bytes");
+                     if (ids.shape(0) != n) throw std::invalid_argument("enqueue_raw: one id per state");
+                     std::vector<ts::GameState> st(n);
+                     if (n) std::memcpy(static_cast<void*>(st.data()), states.data(), n * sizeof(ts::GameState));
+                     std::vector<uint16_t> c;
+                     size_t k = 0;
+                     if (candidates) {
+                         if (candidates->shape(0) != n) throw std::invalid_argument("enqueue_raw: one candidate row per state");
+                         k = candidates->shape(1);
+                         c.resize(n * k);
+                         for (size_t i = 0; i < n * k; ++i) {
+                             const int32_t a = candidates->data()[i];
+                             if (a < 0 || a >= static_cast<int32_t>(ts::FLAT_ACTION_SPACE_SIZE))
+                                 throw std::invalid_argument("a candidate is outside the flat action space");
+                             c[i] = static_cast<uint16_t>(a);
+                         }
+                     }
+                     const std::string err = self.enqueue(st.data(), ids.data(), n, k ? c.data() : nullptr, k);
+                     if (!err.empty()) throw std::invalid_argument(err);
+                 }, nb::arg("states"), nb::arg("ids"), nb::arg("candidates") = nb::none(),
+                 "Queue positions: `states` is (n, state_size()) uint8 of GameState.raw_bytes() from "
+                 "this engine build, `ids` (n,) int64, and `candidates`, if given, (n, k) int32 flat "
+                 "actions legal at each position -- the sibling slice. Nothing is queued on an error.")
+            .def("enqueue", [](PL& self, const std::vector<ts::GameState>& states, const std::vector<int64_t>& ids,
+                               const std::vector<std::vector<int>>& candidates) {
+                     if (ids.size() != states.size()) throw std::invalid_argument("enqueue: one id per state");
+                     const size_t k = candidates.empty() ? 0 : candidates[0].size();
+                     if (!candidates.empty() && candidates.size() != states.size())
+                         throw std::invalid_argument("enqueue: one candidate list per state, or none");
+                     std::vector<uint16_t> c;
+                     for (const auto& row : candidates) {
+                         if (row.size() != k) throw std::invalid_argument("enqueue: every position needs the same number of candidates");
+                         for (int a : row) {
+                             if (a < 0 || a >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE))
+                                 throw std::invalid_argument("a candidate is outside the flat action space");
+                             c.push_back(static_cast<uint16_t>(a));
+                         }
+                     }
+                     const std::string err = self.enqueue(states.data(), ids.data(), states.size(), k ? c.data() : nullptr, k);
+                     if (!err.empty()) throw std::invalid_argument(err);
+                 }, nb::arg("states"), nb::arg("ids"), nb::arg("candidates") = std::vector<std::vector<int>>{},
+                 "enqueue_raw for GameState objects.")
+            .def("world", [](const PL& self, const ts::GameState& base, int64_t id, int w) {
+                     if (w < 0 || w > 65535) throw std::invalid_argument("world index");
+                     return self.world(base, id, static_cast<uint16_t>(w));
+                 }, nb::arg("base"), nb::arg("id"), nb::arg("w"),
+                 "World `w` of position `id` exactly as the labeller deals it: the mover's unseen "
+                 "cards redealt and the world's dice, from the (seed, id) stream.")
+            .def("forced", &PL::forced, "Decisions of finished rows with one legal option, played without the network.")
+            .def("chosen", &PL::chosen, "Decisions of finished rows the network chose.")
+            .def("queued", &PL::queued)
+            .def("occupied", &PL::occupied)
+            .def("capacity", &PL::capacity)
+            .def("obs_width", &PL::obs_width)
+            .def("idle", &PL::idle)
+            .def("fill_live", [](PL& self, nb::ndarray<float, nb::ndim<2>, nb::c_contig, nb::device::cpu> obs) {
+                     if (obs.shape(0) < self.capacity() || obs.shape(1) != self.obs_width())
+                         throw std::invalid_argument("fill_live: obs must be (capacity, obs_width) float32");
+                     float* out = obs.data();
+                     nb::gil_scoped_release release;
+                     return self.fill_live(out);
+                 }, nb::arg("obs"),
+                 "Refill free rows from the queue and write the live rows' observations, each from "
+                 "its acting side, into the first n rows of `obs`. Returns n, step()'s row count.")
+            .def("fill_live_codes", [](PL& self, nb::ndarray<uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu> codes) {
+                     if (codes.shape(0) < self.capacity() || codes.shape(1) != self.obs_width())
+                         throw std::invalid_argument("fill_live_codes: codes must be (capacity, obs_width) uint8");
+                     uint8_t* out = codes.data();
+                     size_t n;
+                     {
+                         nb::gil_scoped_release release;
+                         n = self.fill_live_codes(out);
+                     }
+                     if (n == SIZE_MAX) throw std::runtime_error("fill_live_codes: more than 256 distinct observation values");
+                     return n;
+                 }, nb::arg("codes"),
+                 "fill_live with each observation float written as its uint8 code in codebook(): "
+                 "decode as codebook()[codes]. Exact.")
+            .def("codebook", [](const PL& self) {
+                     float* d = new float[256];
+                     const size_t n = self.codebook(d);
+                     nb::capsule own(d, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+                     size_t sh[1] = { n };
+                     return nb::ndarray<nb::numpy, float, nb::ndim<1>>(d, 1, sh, own);
+                 }, "The values the codes of fill_live_codes stand for (code 0 = 0.0); it only grows.")
+            .def("step", [](PL& self, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> logits) {
+                     if (logits.shape(0) < self.listed() || logits.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
+                         throw std::invalid_argument("step: logits must cover the rows of the last fill_live");
+                     const float* lg = logits.data();
+                     nb::gil_scoped_release release;
+                     self.step(lg);
+                 }, nb::arg("logits"),
+                 "Advance the listed rows by the masked argmax of their logits rows (the first n), "
+                 "under the safe rule, and harvest the worlds that ended.")
+            .def("take_positions", [f32, i64, i32](PL& self) {
+                     const auto got = self.take_positions();
+                     const size_t n = got.size(), R = ts::labels::kRegions;
+                     std::vector<int64_t> id(n);
+                     std::vector<int32_t> cnt(n * 2), swn(n * R);
+                     std::vector<float> sums(n * 5), sw(n * R);
+                     for (size_t i = 0; i < n; ++i) {
+                         const auto& p = got[i];
+                         id[i] = p.id;
+                         cnt[i * 2] = static_cast<int32_t>(p.n);
+                         cnt[i * 2 + 1] = static_cast<int32_t>(p.failed);
+                         const float s[5] = { p.score, p.score_sq, p.final_vp, p.turn_vp, p.turn_defcon };
+                         std::copy(s, s + 5, sums.begin() + static_cast<std::ptrdiff_t>(i * 5));
+                         for (size_t g = 0; g < R; ++g) {
+                             sw[i * R + g] = p.swing[g];
+                             swn[i * R + g] = static_cast<int32_t>(p.swing_n[g]);
+                         }
+                     }
+                     nb::dict d;
+                     d["id"] = i64(id);
+                     d["count"] = i32(n, 2, cnt);
+                     d["sums"] = f32(n, 5, sums);
+                     d["swing_sum"] = f32(n, R, sw);
+                     d["swing_n"] = i32(n, R, swn);
+                     return d;
+                 }, "The main-label positions finished since the last call: id (n,); count (n, 2) = "
+                    "worlds finished, worlds failed; sums (n, 5) over the finished worlds of score, "
+                    "score^2, final VP, turn-end VP, turn-end DEFCON (mover's side); swing_sum / swing_n "
+                    "(n, 7) per region (Europe, Asia, Middle East, Africa, Central America, South "
+                    "America, Southeast Asia): summed swing at the next scoring and worlds that scored it.")
+            .def("take_siblings", [f32, i64, i32](PL& self) {
+                     std::vector<ts::GameState> leaves;
+                     const auto got = self.take_siblings(leaves);
+                     const size_t n = got.size(), R = ts::labels::kRegions;
+                     std::vector<int64_t> id(n);
+                     std::vector<int32_t> meta(n * 5), swing(n * R);
+                     std::vector<float> cols(n * 4);
+                     for (size_t i = 0; i < n; ++i) {
+                         const auto& s = got[i];
+                         id[i] = s.id;
+                         const int32_t m5[5] = { s.candidate, s.world, s.failed ? 1 : 0, s.has_leaf ? 1 : 0, s.out.scored };
+                         std::copy(m5, m5 + 5, meta.begin() + static_cast<std::ptrdiff_t>(i * 5));
+                         const float c4[4] = { s.out.score, static_cast<float>(s.out.final_vp),
+                                               static_cast<float>(s.out.turn_vp), static_cast<float>(s.out.turn_defcon) };
+                         std::copy(c4, c4 + 4, cols.begin() + static_cast<std::ptrdiff_t>(i * 4));
+                         for (size_t g = 0; g < R; ++g) swing[i * R + g] = s.out.swing[g];
+                     }
+                     uint8_t* raw = new uint8_t[std::max<size_t>(1, n * sizeof(ts::GameState))];
+                     if (n) std::memcpy(raw, static_cast<const void*>(leaves.data()), n * sizeof(ts::GameState));
+                     nb::capsule own(raw, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+                     size_t sh[2] = { n, sizeof(ts::GameState) };
+                     nb::dict d;
+                     d["id"] = i64(id);
+                     d["meta"] = i32(n, 5, meta);
+                     d["cols"] = f32(n, 4, cols);
+                     d["swing"] = i32(n, R, swing);
+                     d["leaf"] = nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(raw, 2, sh, own);
+                     return d;
+                 }, "The sibling rows finished since the last call: id (n,); meta (n, 5) = candidate "
+                    "index, world, failed, has_leaf, scored-region bits; cols (n, 4) = score, final VP, "
+                    "turn-end VP, turn-end DEFCON; swing (n, 7); leaf (n, state_size()) raw states, "
+                    "zeros where has_leaf is 0.");
+    }
 
     // ---- the rollout root's playouts (bindings/rollout_batch.hpp, shared with the browser) ----
     m.def("determinize", [](const ts::GameState& s, ts::Player me, uint64_t seed) {

@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include <cstring>
 #include "ts/scoring.hpp"
 #include "ts/constants.hpp"
 
@@ -207,4 +208,85 @@ TEST(ScoringTest, ShuttleDiplomacyDoesNotApplyToFinalScoring) {
     auto during = ts::Scoring::evaluate_region(state, ts::Region::MIDDLE_EAST, false);
     auto final_ = ts::Scoring::evaluate_region(state, ts::Region::MIDDLE_EAST, true);
     ASSERT_LT(during.ussr_score, final_.ussr_score);
+}
+
+// ---- ScoringTap (P34's playout labeller) ----------------------------------------------------------
+
+// A tapped scoring reports the region's unclamped swing, keeps only each region's first scoring,
+// and leaves the state exactly as an untapped one does.
+TEST(ScoringTest, TapReportsEachRegionsFirstScoringAndChangesNothing) {
+    ts::GameState state{};
+    state.current_phase = ts::Phase::ACTION_ROUND;
+    state.countries[ts::countries::ISRAEL].us_influence = 4;
+    state.countries[ts::countries::EGYPT].us_influence = 2;
+    state.countries[ts::countries::LEBANON].us_influence = 1;
+    state.countries[ts::countries::IRAQ].ussr_influence = 3;
+    state.victory_points = 18;   // +3 clamps at 20: the swing is the region's, not the track's
+    ts::GameState plain = state;
+    ts::Scoring::score_region(plain, ts::Region::MIDDLE_EAST);
+
+    ts::ScoringTap tap;
+    ts::scoring_tap = &tap;
+    ts::Scoring::score_region(state, ts::Region::MIDDLE_EAST);
+    ts::scoring_tap = nullptr;
+    ASSERT_EQ(std::memcmp(&state, &plain, sizeof(ts::GameState)), 0);
+    ASSERT_EQ(tap.scored, 1u << static_cast<int>(ts::Region::MIDDLE_EAST));
+    ASSERT_EQ(tap.swing[static_cast<int>(ts::Region::MIDDLE_EAST)], 3);
+
+    // A second Middle East scoring is not the next one.
+    state.current_phase = ts::Phase::ACTION_ROUND;
+    state.victory_points = 0;
+    state.countries[ts::countries::IRAQ].ussr_influence = 0;
+    ts::scoring_tap = &tap;
+    ts::Scoring::score_region(state, ts::Region::MIDDLE_EAST);
+    ts::scoring_tap = nullptr;
+    ASSERT_EQ(tap.swing[static_cast<int>(ts::Region::MIDDLE_EAST)], 3);
+}
+
+TEST(ScoringTest, TapReportsSoutheastAsiaAndAEuropeControlWin) {
+    ts::GameState state{};
+    state.current_phase = ts::Phase::ACTION_ROUND;
+    state.countries[ts::countries::THAILAND].ussr_influence = 2;
+    state.countries[ts::countries::BURMA].us_influence = 2;
+    ts::ScoringTap tap;
+    ts::scoring_tap = &tap;
+    ts::Scoring::score_southeast_asia(state);
+    ASSERT_EQ(tap.scored, 1u << ts::ScoringTap::kSoutheastAsia);
+    ASSERT_EQ(tap.swing[ts::ScoringTap::kSoutheastAsia], -1);   // Burma +1, Thailand -2
+
+    state.countries[ts::countries::WEST_GERMANY].ussr_influence = 4;
+    state.countries[ts::countries::FRANCE].ussr_influence = 3;
+    state.countries[ts::countries::ITALY].ussr_influence = 2;
+    state.countries[ts::countries::EAST_GERMANY].ussr_influence = 3;
+    state.countries[ts::countries::POLAND].ussr_influence = 3;
+    state.countries[ts::countries::UNITED_KINGDOM].ussr_influence = 5;
+    ts::Scoring::score_region(state, ts::Region::EUROPE);
+    ts::scoring_tap = nullptr;
+    ASSERT_EQ(state.victory_points, -20);
+    ASSERT_EQ(tap.swing[0], -20);
+}
+
+// Final Scoring reports every region it scores and the track as it began.
+TEST(ScoringTest, TapReportsFinalScoringRegionByRegion) {
+    ts::GameState state{};
+    state.current_phase = ts::Phase::END_TURN;
+    state.victory_points = 5;
+    state.countries[ts::countries::IRAQ].ussr_influence = 3;      // Middle East: USSR presence
+    state.countries[ts::countries::JAPAN].us_influence = 4;       // Asia: US presence
+    ts::GameState plain = state;
+    ts::Scoring::execute_final_scoring(plain);
+
+    ts::ScoringTap tap;
+    ts::scoring_tap = &tap;
+    ts::Scoring::execute_final_scoring(state);
+    ts::scoring_tap = nullptr;
+    ASSERT_EQ(std::memcmp(&state, &plain, sizeof(ts::GameState)), 0);
+    ASSERT_EQ(tap.final_scoring, 1);
+    ASSERT_EQ(tap.vp_before_final, 5);
+    ASSERT_EQ(tap.scored, 0x3Fu);   // the six regions; Southeast Asia is not part of it
+    int sum = 0;
+    for (int g = 0; g < 6; ++g) sum += tap.swing[g];
+    ASSERT_EQ(5 + sum, state.victory_points);   // no China card held, nothing clamped
+    ASSERT_EQ(tap.swing[static_cast<int>(ts::Region::MIDDLE_EAST)],
+              ts::Scoring::evaluate_region(plain, ts::Region::MIDDLE_EAST, true).net_delta);
 }

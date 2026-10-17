@@ -727,6 +727,35 @@ PYTHONPATH=.:build/release .venv/bin/python tools/search_bank.py leak --bank ban
 
 ---
 
+## 7f. Playout-labelled positions (`tools/value_labels.py`, P34)
+
+The dataset P34's leaf evaluator is fitted on ([plan](../research/plans/P34_search_centric_evaluator.md),
+ledger [`research/datasets.md`](../research/datasets.md)). Stages, each shardable with `--part i/n`:
+`positions` (self-play of the generator at `--temperature` 0.25, one decision in `--keep` 8, the
+raw state, the generator's top 4 legal moves and its own game result; 5% of games held out, by game),
+`label` (every position's 32 worlds to the game's end under the safe rule, plus the sibling slice --
+`--siblings` 50,000 positions x 4 candidates x 16 shared worlds with each row's leaf -- through
+`ts.PlayoutLabels`) and `merge` (`train.npz`, `holdout.npz`, `siblings.npz` and `manifest.json` with
+the D code, generator, engine fingerprint, device, seed and sha256s; it prints the ledger row).
+Label columns, the mover's side: `score` (mean of 1 / ½ / 0) and `score_se`, `final_vp` and
+`turn_vp` (/20), `turn_defcon`, `swing` (per region, Europe .. South America then Southeast Asia, the
+mean swing at its next scoring; NaN where no world scored it) and `swing_frac`.
+
+Throughput (RTX 4090, i9-12900KF, A13+R48's SWA): ~1.5M network rows/s steady -- two labellers
+alternate so one steps while the GPU evaluates the other, the forward is a CUDA graph over a fixed
+16,384-row batch, and observations travel as exact one-byte codes. The engine's observation
+extraction is the limit. A label costs ~7,900 rows, so generation 1 (1.1M positions plus the slice)
+is ~2 h. Labels are tied to the engine build (raw state bytes; `label` and `merge` refuse a mismatch).
+
+```bash
+tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py \
+  positions --model 'E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M' --games 20000 --out <dir>
+PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py label --dir <dir>
+PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py merge --dir <dir> --code D1
+```
+
+---
+
 ## 8. Other CLIs and the shared library
 
 | CLI | what it is for |

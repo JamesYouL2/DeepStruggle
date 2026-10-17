@@ -832,6 +832,82 @@ def selftest_digest(games: int) -> tuple[int, int]:
     (digest, steps) over `games` whole games (bindings/selftest.hpp). The WebAssembly build exports the same function, so equal numbers mean the two engines play the same games, position, observation and legal mask alike.
     """
 
+def state_size() -> int:
+    """Bytes of one GameState: the row width of raw_bytes() arrays."""
+
+def state_from_raw_bytes(data: bytes) -> GameState:
+    """
+    The inverse of GameState.raw_bytes(), for the SAME engine build only: the bytes are the struct's memory, so a dataset of them records the engine fingerprint it was written by.
+    """
+
+class PlayoutLabels:
+    """
+    P34's playout labeller: queued positions dealt into `worlds` worlds from the mover's view, fresh dice each, played greedily to the game's end by the caller's network under the safe-playout rule, with outcome capture (bindings/playout_labels.hpp). Batching is continuous: fill_live(obs) -> logits -> step(logits) until idle(), collecting take_positions() / take_siblings() as they finish.
+    """
+
+    def __init__(self, features: int = 0, worlds: int = 32, capacity: int = 16384, seed: int = 0, safe: bool = True, leaf_horizon: int = 0, max_plies: int = 8000) -> None: ...
+
+    def enqueue_raw(self, states: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)], ids: Annotated[NDArray[numpy.int64], dict(shape=(None,), order='C', device='cpu', writable=False)], candidates: Annotated[NDArray[numpy.int32], dict(shape=(None, None), order='C', device='cpu', writable=False)] | None = None) -> None:
+        """
+        Queue positions: `states` is (n, state_size()) uint8 of GameState.raw_bytes() from this engine build, `ids` (n,) int64, and `candidates`, if given, (n, k) int32 flat actions legal at each position -- the sibling slice. Nothing is queued on an error.
+        """
+
+    def enqueue(self, states: Sequence[GameState], ids: Sequence[int], candidates: Sequence[Sequence[int]] = []) -> None:
+        """enqueue_raw for GameState objects."""
+
+    def world(self, base: GameState, id: int, w: int) -> GameState:
+        """
+        World `w` of position `id` exactly as the labeller deals it: the mover's unseen cards redealt and the world's dice, from the (seed, id) stream.
+        """
+
+    def forced(self) -> int:
+        """
+        Decisions of finished rows with one legal option, played without the network.
+        """
+
+    def chosen(self) -> int:
+        """Decisions of finished rows the network chose."""
+
+    def queued(self) -> int: ...
+
+    def occupied(self) -> int: ...
+
+    def capacity(self) -> int: ...
+
+    def obs_width(self) -> int: ...
+
+    def idle(self) -> bool: ...
+
+    def fill_live(self, obs: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu')]) -> int:
+        """
+        Refill free rows from the queue and write the live rows' observations, each from its acting side, into the first n rows of `obs`. Returns n, step()'s row count.
+        """
+
+    def fill_live_codes(self, codes: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu')]) -> int:
+        """
+        fill_live with each observation float written as its uint8 code in codebook(): decode as codebook()[codes]. Exact.
+        """
+
+    def codebook(self) -> Annotated[NDArray[numpy.float32], dict(shape=(None,))]:
+        """
+        The values the codes of fill_live_codes stand for (code 0 = 0.0); it only grows.
+        """
+
+    def step(self, logits: Annotated[NDArray[numpy.float32], dict(shape=(None, None), order='C', device='cpu', writable=False)]) -> None:
+        """
+        Advance the listed rows by the masked argmax of their logits rows (the first n), under the safe rule, and harvest the worlds that ended.
+        """
+
+    def take_positions(self) -> dict:
+        """
+        The main-label positions finished since the last call: id (n,); count (n, 2) = worlds finished, worlds failed; sums (n, 5) over the finished worlds of score, score^2, final VP, turn-end VP, turn-end DEFCON (mover's side); swing_sum / swing_n (n, 7) per region (Europe, Asia, Middle East, Africa, Central America, South America, Southeast Asia): summed swing at the next scoring and worlds that scored it.
+        """
+
+    def take_siblings(self) -> dict:
+        """
+        The sibling rows finished since the last call: id (n,); meta (n, 5) = candidate index, world, failed, has_leaf, scored-region bits; cols (n, 4) = score, final VP, turn-end VP, turn-end DEFCON; swing (n, 7); leaf (n, state_size()) raw states, zeros where has_leaf is 0.
+        """
+
 def determinize(state: GameState, me: Player, seed: int) -> GameState:
     """
     A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck -- reshuffled between those two places from SplitMix64 state `seed`, every count kept, every seen card left; an unrevealed opposing headline is forgotten. The C++ port of ai.search.dmcts.determinize that the rollout root uses in both builds.

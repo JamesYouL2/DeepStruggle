@@ -122,6 +122,25 @@ are cited from elsewhere; keep them.
   arithmetic. Held bit-identical across builds by `tests/web/test_wasm_engine.py`, covered by
   `tests/bindings/test_rollout_batch.py`, and the page's loop is checked against Python's by
   `tests/web/test_e2e_workbench.py`.
+- [`playout_labels.hpp`](playout_labels.hpp) / [`playout_labels.cpp`](playout_labels.cpp): **P34's
+  playout labeller** (native only; `tools/value_labels.py` drives it). `PlayoutLabels` takes queued
+  positions (raw `GameState` bytes, `state_size()` each, with `ts.state_from_raw_bytes` the inverse
+  for the same build), deals each into `worlds` worlds from the mover's view (`rollout::determinize`,
+  fresh dice per world, from a stream seeded by (seed, id) so a position's labels do not depend on
+  the batch around it), and plays every world greedily to the game's end under
+  `paired_playouts.play_safe`'s rule (in the position's own action round, at DEFCON 2 or below, no
+  option that loses on the spot while another exists). Per world, from the mover's side: the score,
+  the VP track at the end, VP and DEFCON as the position's turn ends, and each region's swing at its
+  next scoring through `ts::ScoringTap` (engine, `scoring.hpp`: a thread-local, inert unless set).
+  `take_positions()` returns the sums per position. Queued with candidates (the sibling slice) each
+  candidate plays in the same worlds on the same dice and the row's leaf -- the mover's next
+  decision, or with `leaf_horizon` the rollout root's stop=earlier, leaf=own -- comes back raw from
+  `take_siblings()`. Batching is continuous (a finished world frees its row, the queue refills it),
+  the loops hand out row blocks from a shared counter (unequal cores), and `fill_live_codes` writes
+  each observation float as its one-byte code in `codebook()` -- exact, a quarter of the upload --
+  for the GPU to decode. `world(base, id, w)` reproduces a world, which is how
+  `tests/bindings/test_playout_labels.py` holds every world equal to a step-by-step Python
+  `play_safe` playout of it.
 - [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).
 - [`settle.py`](settle.py): `SettleMode`, the one rule for how far past decisions nobody controls
   the engine is advanced. Settlers that stop at different depths put two components on different

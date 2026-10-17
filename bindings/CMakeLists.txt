@@ -68,7 +68,7 @@ if(NOT nanobind_FOUND)
 endif()
 
 if(nanobind_FOUND)
-    nanobind_add_module(ts_engine ts_bindings.cpp)
+    nanobind_add_module(ts_engine ts_bindings.cpp playout_labels.cpp)
     target_include_directories(ts_engine PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
     target_link_libraries(ts_engine PRIVATE ts_engine_core ts_state_json ts_rollout_batch)
     # GCC's OpenMP runtime, linked by exact file rather than `-fopenmp`: the batch runner calls

@@ -95,6 +95,7 @@ graph TD
 │   ├── ts_bindings.cpp         # module: ts_engine, VectorizedBatchRunner, BatchedSearch, RolloutBatch
 │   ├── batched_search.hpp      # C++ MCTS tree for ai/search/batched_mcts.py
 │   ├── rollout_batch.{hpp,cpp} # the rollout root's worlds and playouts, shared with the WebAssembly build
+│   ├── playout_labels.{hpp,cpp} # P34's labeller: positions played to the game's end in N worlds, outcomes captured
 │   ├── gomp_parallel.hpp       # gomp_parallel_for: the one OpenMP pool, shared with torch
 │   ├── state_json.{hpp,cpp}    # display state + save as JSON, shared with the WebAssembly build
 │   ├── selftest.hpp            # whole-game digest compiled into both builds (parity check)
