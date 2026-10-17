@@ -94,6 +94,13 @@ def sha256(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+def same_games(a: str, b: str) -> bool:
+    """Two engine builds play the same games: equal, or both accepted by one leaderboard epoch (an epoch
+    takes a new fingerprint only once a recorded pairing replays identically on it). The raw state
+    bytes a dataset stores are then read the same way by both."""
+    return a == b or any(a in ep["engines"] and b in ep["engines"] for ep in leaderboard.load().epochs.values())
+
+
 def engine_checked() -> str:
     why = staleness_reason(str(ts.__file__))
     if why:
@@ -357,8 +364,9 @@ def run_label(a: argparse.Namespace) -> int:
     engine = engine_checked()
     d = pathlib.Path(a.dir)
     pos, pmeta = _load_positions(d)
-    if pmeta["engine"] != engine:
-        raise SystemExit(f"positions were written by engine {pmeta['engine'][:8]}, this is {engine[:8]}")
+    if not same_games(pmeta["engine"], engine):
+        raise SystemExit(f"positions were written by engine {pmeta['engine'][:8]}, this is {engine[:8]}, and no "
+                         "leaderboard epoch lists both")
     device = torch.device(a.device)
     path, model_id = resolve_model(a.model) if a.model else (pmeta["generator_file"], pmeta["generator"])
     if sha256(pathlib.Path(path)) != pmeta["generator_sha256"] and not a.model:
@@ -442,7 +450,7 @@ def run_label(a: argparse.Namespace) -> int:
              cols=cat(sib_out, "cols", (4,), np.float32), swing=cat(sib_out, "swing", (7,), np.int32),
              leaf=cat(sib_out, "leaf", (ts.state_size(),), np.uint8))
     meta = {"stage": "label", "labeller": model_id, "labeller_sha256": sha256(pathlib.Path(path)),
-            "engine": engine, "part": f"{part}/{parts}", "seed": a.seed, "worlds": 0 if a.no_main else a.worlds,
+            "engine": engine, "positions_engine": pmeta["engine"], "part": f"{part}/{parts}", "seed": a.seed, "worlds": 0 if a.no_main else a.worlds,
             "main": not a.no_main, "safe": True,
             "siblings": a.siblings, "sibling_worlds": a.sibling_worlds, "sibling_k": a.sibling_k,
             "leaf_horizon": a.leaf_horizon, "keyed": a.keyed, "capacity": a.capacity, "device": str(device),
@@ -547,7 +555,7 @@ def merge_siblings_only(a: argparse.Namespace, d: pathlib.Path, pos: Dict[str, n
     if not sfiles or len(sfiles) != int(smetas[0]["part"].split("/")[1]):
         raise SystemExit(f"{d}: the sibling parts are incomplete")
     for m in smetas:
-        if m["engine"] != pmeta["engine"]:
+        if not same_games(m["engine"], pmeta["engine"]):
             raise SystemExit("a sibling part was written by another engine than the positions")
     sib = [dict(np.load(f)) for f in sfiles]
     S = {k: np.concatenate([x[k] for x in sib]) for k in sib[0]}
@@ -586,7 +594,7 @@ def run_merge(a: argparse.Namespace) -> int:
     if not lfiles or len(lfiles) != int(lmetas[0]["part"].split("/")[1]):
         raise SystemExit(f"{d}: the label parts are incomplete")
     for m in lmetas:
-        if m["engine"] != pmeta["engine"]:
+        if not same_games(m["engine"], pmeta["engine"]):
             raise SystemExit("a label part was written by another engine than the positions")
     lab = [dict(np.load(f)) for f in lfiles]
     L = {k: np.concatenate([x[k] for x in lab]) for k in lab[0]}
