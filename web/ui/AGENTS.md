@@ -102,10 +102,16 @@ web/ui/
    - **The roll tray** (`#map-rolls`, `roll_tray.ts`) shows the latest action round's dice at the
      top right of the map -- coup, realignment, Space Race, war, Olympics, Summit, trap escape --
      as die faces in the roller's colour with modifier, total, target and outcome, and the
-     country rolled in carries the die above its box (`.rolled`, `data-roll`). The engine clears
-     `die_roll` at every step, so the rolls come from the steps' snapshots (`game/rolls.ts`,
-     attached by `renderState` as `recent_rolls`, in replays too) and show only during the half
-     action round they were made in and the next (the reply); after that they are the log's.
+     country a coup, realignment or war rolled in carries the die above its box (`.rolled`,
+     `data-roll`; a Space Race roll's `country_id` is its box, not a country). The engine clears
+     `die_roll` at every step, so the rolls come from the steps (`game/rolls.ts`, attached by
+     `renderState` as `recent_rolls`, in replays too): a live step carries every die its click
+     rolled (`ReplayStep.rolls`, from `clickRolls` -- one click can roll twice, and the cleanup
+     after a turn's last action round clears the roll from the state it ends on), a replay file's
+     step only its snapshot's roll. They show during the half action round they were made in and
+     the next (the reply; the next turn's headline follows the last action round), after that
+     they are the log's. The Olympic Games record holds the sponsor's roll with its +2 in
+     (`roll1` = die + 2, `mod1` = 2), so the tray draws `roll1 - mod1` as the die.
    - **This turn's effects** (`#map-turn-effects`, `CardsView.renderTurnEffects`) run across the
      top of the map: every flag whose `EFFECT_INFO_MAP` duration is `TURN`, the card's text on
      hover. Permanent and conditional effects, and the Space Race attempt flags, stay in the
@@ -370,13 +376,14 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_wasm_engine.py` | the WebAssembly engine is the native one: 200 whole games, and display JSON / save JSON / observations / masks at every step of games driven by clicks |
 | `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's and Terrorism's random discards are their own lines, with whether Five Year Plan's event fires; Missile Envy's exchange says the card taken and how it resolves; Chernobyl's options are region names in the HUD and the log |
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
-| `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included), an empty influence space blank with the US marker left and the controlling one flipped, the hover card's control arithmetic and neighbour highlight, the `NO COUPS` chip on the regions DEFCON closes, and the roll tray and the rolled country's die (no roll from an earlier turn) |
+| `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included), an empty influence space blank with the US marker left and the controlling one flipped, the hover card's control arithmetic and neighbour highlight, the `NO COUPS` chip on the regions DEFCON closes, and the roll tray and the rolled country's die (no roll from an earlier turn; a Space Race roll marks no country), a redraw putting a tapped country's card away, a drag whose release was outside the window ending, the space perks named as their boxes |
 | `test_e2e_mobile.py` | in Chromium at 390px with touch: one column with the map first and nothing wider than the screen, the region buttons clear of the zoom buttons and framing their region, a tap showing a non-target country's card and a tap on open map closing it, a badge opening the region's scoring summary with the right rows, and the space pills' next Ops and roll |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
 | `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen; the play-mode question sets the search for a side (rollout root by default) and leaves it alone for Developer, describes the spec it would keep, and its Escape takes back no move; Show analysis follows the view and the toggle; with a model, the player's own decisions show no readout, no badges and no favourite and are not searched until Show analysis is on, a change of view keeps the search already made, the question starts one search at a time (the runner supersedes a waiting request), a failed search is reported in a player's view, and a change of view drops a move armed for the old auto side |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
+| `test_recent_rolls.py` | `game/rolls.ts` and `roll_tray.ts` under node: the turn's last coup shown in the next headline and gone a half round later, every die of one click, a replay file's snapshot roll, the Olympic sponsor's die without its +2 |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |
 

@@ -10,6 +10,11 @@ const STANDING_NAME: Record<RegionScoreAudit["usStatus"], string> = {
   NONE: "None", PRESENCE: "Presence", DOMINATION: "Domination", CONTROL: "Control",
 };
 
+/** The same, as a map badge has room for. */
+export const STANDING_SHORT: Record<RegionScoreAudit["usStatus"], string> = {
+  NONE: "\u2014", PRESENCE: "Pres", DOMINATION: "Dom", CONTROL: "Ctrl",
+};
+
 /** The card's own terms, per region id (Europe's Control wins the game outright). */
 const TERMS: Record<number, string> = {
   0: "Presence 3 · Domination 7 · Control wins the game",
@@ -22,13 +27,16 @@ const TERMS: Record<number, string> = {
 
 const title = (s: string): string => s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 
-/** "+3 USSR", "+2 US", "even", or who wins outright. */
-export function regionNet(a: RegionScoreAudit): { text: string; side: "us" | "ussr" | "even" } {
-  if (a.isInstantWinUs) return { text: "US wins the game", side: "us" };
-  if (a.isInstantWinUssr) return { text: "USSR wins the game", side: "ussr" };
-  if (a.netVpUs > 0) return { text: `+${a.netVpUs} US`, side: "us" };
-  if (a.netVpUs < 0) return { text: `+${-a.netVpUs} USSR`, side: "ussr" };
-  return { text: "even", side: "even" };
+export type NetSide = "us" | "ussr" | "even";
+
+/** "+3 USSR", "+2 US", "even", or who wins outright -- in full, and as short as a map badge needs. */
+export function regionNet(a: RegionScoreAudit): { text: string; short: string; side: NetSide } {
+  if (a.isInstantWinUs) return { text: "US wins the game", short: "US WINS", side: "us" };
+  if (a.isInstantWinUssr) return { text: "USSR wins the game", short: "USSR WINS", side: "ussr" };
+  const vp = (text: string, side: NetSide) => ({ text, short: text, side });
+  if (a.netVpUs > 0) return vp(`+${a.netVpUs} US`, "us");
+  if (a.netVpUs < 0) return vp(`+${-a.netVpUs} USSR`, "ussr");
+  return vp("even", "even");
 }
 
 function row(label: string, us: string, ussr: string, cls = ""): string {

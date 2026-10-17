@@ -1,6 +1,6 @@
-import { GameState, LastTurn, LastTurnCountry, MapMetadata, RecentRoll } from "./types";
+import { GameState, LastTurnCountry, MapMetadata, RecentRoll } from "./types";
 import { renderRollTray } from "./roll_tray";
-import { regionSummaryHtml } from "./region_summary";
+import { NetSide, regionNet, regionSummaryHtml, STANDING_SHORT } from "./region_summary";
 import { MAP_METADATA } from "./metadata";
 
 export interface RegionScoreAudit {
@@ -120,6 +120,12 @@ function regionStyle(region: string, subregions?: string[]): { band: string; acc
 }
 
 /** A region's scoring badge, in map units; its position is chosen clear of every country box. */
+/** The rolls made in a country, which mark it; a Space Race roll's country_id is the box it went for. */
+const ROLLED_IN_A_COUNTRY = new Set(["COUP", "REALIGNMENT", "WAR_EVENT"]);
+
+/** A badge's net VP, in the colour of the side it favours. */
+const NET_COLOR: Record<NetSide, string> = { us: "#60A5FA", ussr: "#F87171", even: "#CBD5E1" };
+
 const REGION_BADGE_W = 104;
 const REGION_BADGE_H = 34;
 
@@ -336,11 +342,22 @@ export class MapView {
       }
     });
 
+    const release = (e: PointerEvent) => {
+      this.pointers.delete(e.pointerId);
+      // After the click this release may cause (same task), a drag is over: the next click counts.
+      if (!this.pointers.size && this.dragged) setTimeout(() => { if (!this.pointers.size) this.dragged = false; }, 0);
+    };
+
     // A real mouse moving brings hover back on a device with both (emulated hover makes no pointer event).
     this.svg.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") this.lastPointer = "mouse"; });
     window.addEventListener("pointermove", (e) => {
       const prev = this.pointers.get(e.pointerId);
       if (!prev) return;
+      // A mouse released outside the window sent no pointerup here: it comes back with no button down.
+      if (e.pointerType === "mouse" && e.buttons === 0) {
+        release(e);
+        return;
+      }
       if (!this.dragged) {
         if (Math.hypot(e.clientX - this.pressedAt.x, e.clientY - this.pressedAt.y) < DRAG_SLOP) return;
         this.dragged = true;
@@ -364,11 +381,6 @@ export class MapView {
       this.updateViewBox();
     });
 
-    const release = (e: PointerEvent) => {
-      this.pointers.delete(e.pointerId);
-      // After the click this release may cause (same task), a drag is over: the next click counts.
-      if (!this.pointers.size && this.dragged) setTimeout(() => { if (!this.pointers.size) this.dragged = false; }, 0);
-    };
     window.addEventListener("pointerup", release);
     window.addEventListener("pointercancel", release);
 
@@ -618,6 +630,9 @@ export class MapView {
     const countryMap = new Map<string, any>();
     countries.forEach(c => countryMap.set(c.name, c));
 
+    // The nodes a hover lit are about to go: the hover goes with them (on a phone, until the next tap).
+    this.svg.classList.remove("country-hovering");
+    this.hideRegionTooltip();
     this.svg.innerHTML = "";
 
     // 1. Connection Adjacency Lines
@@ -735,7 +750,9 @@ export class MapView {
     const tray = document.getElementById("map-rolls");
     if (tray) renderRollTray(tray, rolls);
     const rolledIn = new Map<number, RecentRoll>();
-    for (const r of rolls) if ((r.country_id ?? 255) < 84) rolledIn.set(r.country_id!, r);
+    for (const r of rolls) {
+      if (ROLLED_IN_A_COUNTRY.has(r.type) && (r.country_id ?? 255) < 84) rolledIn.set(r.country_id!, r);
+    }
 
     const changed = this.influenceChanges(state);
     countries.forEach(c => {
@@ -814,7 +831,7 @@ export class MapView {
       g.appendChild(influenceMarker("ussr", ussrInf, ussrX, markerY, controlledBy === "USSR"));
 
       const lc = lastTurn.get(c.id);
-      if (lc && state.last_turn) this.markLastTurn(g, lc, state.last_turn, x, y, ussrX, usX);
+      if (lc) this.markLastTurn(g, lc, x, y, ussrX, usX);
       const roll = rolledIn.get(c.id);
       if (roll) markRoll(g, roll, left, top);
 
@@ -854,8 +871,7 @@ export class MapView {
    * Mark a country the other side's latest turn touched: a dashed ring around it and the signed
    * change under each influence marker (the hover card says it in words).
    */
-  private markLastTurn(g: SVGGElement, lc: LastTurnCountry, _lt: LastTurn, x: number, y: number,
-                       ussrX: number, usX: number) {
+  private markLastTurn(g: SVGGElement, lc: LastTurnCountry, x: number, y: number, ussrX: number, usX: number) {
     g.classList.add("last-turn");
     g.insertBefore(svgEl("rect", {
       class: "last-turn-ring", x: x - BOX_W / 2 - 1.6, y: y - BOX_H / 2 - 1.6,
@@ -965,9 +981,6 @@ export class MapView {
     if (!audits.length) return;
 
     const overlayGroup = svgEl("g", { id: "regional-scoring-overlay" });
-    const STANDING: Record<RegionScoreAudit["usStatus"], string> = {
-      NONE: "\u2014", PRESENCE: "Pres", DOMINATION: "Dom", CONTROL: "Ctrl",
-    };
 
     audits.forEach(audit => {
       const g = svgEl("g", { class: "svg-region-badge", "data-region": audit.regionName });
@@ -995,22 +1008,16 @@ export class MapView {
         title.setAttribute("lengthAdjust", "spacingAndGlyphs");
       }
       g.appendChild(title);
-      let vpText: string;
-      let vpColor: string;
-      if (audit.isInstantWinUs) { vpText = "US WINS"; vpColor = "#60A5FA"; }
-      else if (audit.isInstantWinUssr) { vpText = "USSR WINS"; vpColor = "#F87171"; }
-      else if (audit.netVpUs > 0) { vpText = `+${audit.netVpUs} US`; vpColor = "#60A5FA"; }
-      else if (audit.netVpUs < 0) { vpText = `+${-audit.netVpUs} USSR`; vpColor = "#F87171"; }
-      else { vpText = "even"; vpColor = "#CBD5E1"; }
-      g.appendChild(svgText(vpText, {
-        class: "region-badge-vp", x: right - 3.5, y: top + 9.4, "text-anchor": "end", fill: vpColor,
+      const net = regionNet(audit);
+      g.appendChild(svgText(net.short, {
+        class: "region-badge-vp", x: right - 3.5, y: top + 9.4, "text-anchor": "end", fill: NET_COLOR[net.side],
         "font-size": 6.6, "font-weight": 900,
       }));
 
       // Row 2: each side's standing and its total (Southeast Asia has no standings, only VP).
       const se = audit.regionId === 6;
-      const usLine = se ? `US ${audit.usTotalVp} VP` : `US ${STANDING[audit.usStatus]} ${audit.usTotalVp}`;
-      const ussrLine = se ? `USSR ${audit.ussrTotalVp} VP` : `USSR ${STANDING[audit.ussrStatus]} ${audit.ussrTotalVp}`;
+      const usLine = se ? `US ${audit.usTotalVp} VP` : `US ${STANDING_SHORT[audit.usStatus]} ${audit.usTotalVp}`;
+      const ussrLine = se ? `USSR ${audit.ussrTotalVp} VP` : `USSR ${STANDING_SHORT[audit.ussrStatus]} ${audit.ussrTotalVp}`;
       g.appendChild(svgText(usLine, {
         class: "region-badge-us", x: left + 6, y: top + 18.6, fill: "#93C5FD", "font-size": 4.9, "font-weight": 700,
       }));

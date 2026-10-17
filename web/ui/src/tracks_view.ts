@@ -27,7 +27,7 @@ export const SPACE_RACE_BOXES: SpaceBoxMetadata[] = [
 /** What the next box asks, as the app's "NEXT PROJECT: 2 OPS: Roll 1-3": a card of N Ops, a roll. */
 function nextProject(at: number): string {
   const next = SPACE_RACE_BOXES[at + 1];
-  if (!next) return `<span class="pill-next" title="The space race is won">landed</span>`;
+  if (!next) return `<span class="pill-next" title="The last box, the Space Station: the space race is over">done</span>`;
   return `<span class="pill-next" title="Box ${next.box}, ${next.name}: a card of ${next.minOps}+ Ops, then a roll of 1-${next.maxRoll}">`
     + `next ${next.minOps} Ops · 1–${next.maxRoll}</span>`;
 }
