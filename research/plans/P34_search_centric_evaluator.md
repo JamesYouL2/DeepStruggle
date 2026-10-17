@@ -216,5 +216,6 @@ critic -- +10, about two standard errors. Real and small, in line with the label
 **Keyed chance** (`bindings/keyed_chance.hpp`, from this result): each world's dice and deals tied to
 the situation they are drawn in, so siblings stay paired longer. Within-world correlation of two
 candidates' results on 3,000 slice positions: 0.22 shared stream, 0.33 keyed dice, **0.39** keyed dice
-plus one deck order per world; the mean score unchanged. The keyed root's strong-tier read is the
-next result.
+plus one deck order per world; the mean score unchanged. **The keyed root** (A13+R48, 16 worlds,
+`earlier`+own, `chance=keyed`), strong tier: **1810 ± 4** against 1794 ± 3 on the shared stream --
++16, about three standard errors, at the same cost (32 worlds on the shared stream are 1832).
