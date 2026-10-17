@@ -1,4 +1,5 @@
-import { GameState, LastTurn, LastTurnCountry, MapMetadata } from "./types";
+import { GameState, LastTurn, LastTurnCountry, MapMetadata, RecentRoll } from "./types";
+import { renderRollTray } from "./roll_tray";
 import { MAP_METADATA } from "./metadata";
 
 export interface RegionScoreAudit {
@@ -66,12 +67,153 @@ const SCORING_CARD_TAG: Record<ScoringCardWhereabouts["status"], { text: string;
   later: { text: "NOT YET", fill: "rgba(15, 23, 42, 0.90)", stroke: "#475569", ink: "#64748B" },
 };
 
+const NS = "http://www.w3.org/2000/svg";
+
+/** A country's box on the map, in map units, and its parts. */
+const BOX_W = 38;
+const BOX_H = 22;
+const BAND_H = 7.4;
+const STAB_W = 6.4;
+const NAME_FONT = 4.4;
+const MARKER_W = 12.2;
+const MARKER_H = 12.2;
+/** More countries than this changing at once is a jump (a new game, a link), not a move. */
+const MAX_FLASHED = 12;
+
+/** Names too long for the band even squeezed; the hover card gives the full one. */
+const SHORT_NAMES: Record<string, string> = {
+  "United Kingdom": "UK",
+  "West Germany": "W. Germany",
+  "East Germany": "E. Germany",
+  "Czechoslovakia": "Czechoslov.",
+  "West African States": "W. African St.",
+  "SE African States": "SE African St.",
+  "Dominican Rep": "Dominican R.",
+};
+
+/**
+ * Each region's colour: a dark `band` behind a country's name, and the brighter `accent` its
+ * scoring badge is outlined in. None of them is the sides' blue and red or the battlegrounds'
+ * purple, so a colour on the map always means one thing.
+ */
+export const REGION_STYLE: Record<string, { band: string; accent: string }> = {
+  "Europe": { band: "#475569", accent: "#94A3B8" },
+  "Middle East": { band: "#0E7490", accent: "#22D3EE" },
+  "Asia": { band: "#C2410C", accent: "#FB923C" },
+  "Southeast Asia": { band: "#7C2D12", accent: "#F59E0B" },
+  "Africa": { band: "#A16207", accent: "#FACC15" },
+  "Central America": { band: "#15803D", accent: "#4ADE80" },
+  "South America": { band: "#065F46", accent: "#34D399" },
+};
+
+function regionStyle(region: string, subregions?: string[]): { band: string; accent: string } {
+  if (subregions?.includes("Southeast Asia")) return REGION_STYLE["Southeast Asia"];
+  return REGION_STYLE[region] ?? REGION_STYLE["Europe"];
+}
+
+/** A region's scoring badge, in map units; its position is chosen clear of every country box. */
+const REGION_BADGE_W = 104;
+const REGION_BADGE_H = 34;
+
+/** `calculateRegionalScoring`'s region ids, as map.json names the regions. */
+const REGION_KEY: Record<number, string> = {
+  0: "Europe", 1: "Asia", 2: "Middle East", 3: "Africa", 4: "Central America", 5: "South America",
+};
+
+/** The regions DEFCON closes to coups and realignments: Europe at 4, Asia at 3, the Middle East at 2. */
+export function coupBlockedAt(region: string, defcon: number): boolean {
+  return (region === "Europe" && defcon <= 4) || (region === "Asia" && defcon <= 3)
+    || (region === "Middle East" && defcon <= 2);
+}
+
+/**
+ * What it takes `side` to control a country (or break the other side's control), in influence and
+ * in Ops: a point placed in a country the other side controls costs 2 Ops until control breaks.
+ */
+export function controlLine(side: "US" | "USSR", own: number, opp: number, stability: number,
+                            controlledBy: string): string {
+  const tag = `<span class="ct-${side.toLowerCase()}">${side}</span>`;
+  if (controlledBy === side) {
+    const spare = own - opp - stability;
+    return `${tag} controls${spare > 0 ? `, ${spare} to spare` : ", with nothing to spare"}`;
+  }
+  const control = Math.max(0, opp + stability - own);
+  if (controlledBy === "NONE") return `${tag} controls with +${control} (${control} Op${control === 1 ? "" : "s"})`;
+  const brk = opp - stability - own + 1;
+  const breakOps = 2 * brk;
+  const controlOps = breakOps + (control - brk);
+  return `${tag} breaks with +${brk} (${breakOps} Ops), controls with +${control} (${controlOps} Ops)`;
+}
+
+type SvgAttrs = Record<string, string | number | null | undefined>;
+
+function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: SvgAttrs): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v !== null && v !== undefined) el.setAttribute(k, String(v));
+  }
+  return el;
+}
+
+function svgText(text: string, attrs: SvgAttrs): SVGTextElement {
+  const t = svgEl("text", attrs);
+  t.textContent = text;
+  return t;
+}
+
+/**
+ * A country a recent roll was made in (a coup, a realignment, a war): its die just above the box,
+ * in the roller's colour -- both dice for a realignment, US first. The roll tray says the rest.
+ */
+function markRoll(g: SVGGElement, r: RecentRoll, left: number, top: number) {
+  g.classList.add("rolled");
+  g.setAttribute("data-roll", r.type);
+  const dice: Array<[number, string]> = r.type === "REALIGNMENT"
+    ? [[r.roll1 ?? 0, "us"], [r.roll2 ?? 0, "ussr"]]
+    : [[r.roll1 ?? 0, (r.roller ?? "").toLowerCase()]];
+  dice.forEach(([v, side], i) => {
+    const x = left + i * 8.4;
+    const y = top - 8.6;
+    const die = svgEl("g", { class: `roll-die ${side}` });
+    die.appendChild(svgEl("rect", { x, y, width: 7.6, height: 7.6, rx: 1.6 }));
+    die.appendChild(svgText(String(v), { x: x + 3.8, y: y + 5.8, "text-anchor": "middle" }));
+    g.appendChild(die);
+  });
+}
+
+/**
+ * One side's influence space. With influence it is a marker: its number in the side's colour on
+ * white, or -- flipped, when that influence controls the country -- white on the side's colour,
+ * outlined in white. Empty, it is a faint dashed space with no number.
+ */
+function influenceMarker(side: "us" | "ussr", inf: number, x: number, y: number, controls: boolean): SVGGElement {
+  const colour = side === "us" ? "#2563EB" : "#DC2626";
+  const ink = side === "us" ? "#1D4ED8" : "#B91C1C";
+  const g = svgEl("g", { class: `inf-marker inf-marker-${side}` });
+  g.appendChild(svgEl("rect", {
+    class: `inf-box inf-${side}${inf > 0 ? "" : " empty"}`, x, y, width: MARKER_W, height: MARKER_H, rx: 1.4,
+    fill: inf === 0 ? "rgba(148, 163, 184, 0.06)" : controls ? colour : "#F8FAFC",
+    stroke: controls ? "#FFFFFF" : inf > 0 ? colour : "rgba(148, 163, 184, 0.35)",
+    "stroke-width": controls ? 1.1 : inf > 0 ? 0.9 : 0.5,
+    "stroke-dasharray": inf === 0 ? "1.2,1" : null,
+  }));
+  if (inf > 0) {
+    g.appendChild(svgText(inf.toString(), {
+      class: `inf-num inf-num-${side}`, x: x + MARKER_W / 2, y: y + MARKER_H / 2 + 3.3, "text-anchor": "middle",
+      fill: controls ? "#FFFFFF" : ink, "font-size": inf >= 10 ? 7.6 : 9.2, "font-weight": 900,
+    }));
+  }
+  return g;
+}
+
 export class MapView {
   private svg: SVGSVGElement;
   private mapData: MapMetadata | null = null;
   private lastState: GameState | null = null;
   private onCountryClick: (countryId: number) => void;
   private tooltipEl: HTMLElement | null = null;
+  /** Each country's "us/ussr" influence at the last render, to flash what changed. */
+  private lastInfluence: Map<number, string> | null = null;
 
   // Pan and zoom state
   private viewBox = { x: 0, y: 0, w: 1000, h: 650 };
@@ -171,12 +313,12 @@ export class MapView {
       pos: [number, number];
       baseVps: { PRESENCE: number; DOMINATION: number; CONTROL: number };
     }> = [
-      { id: 0, name: "EUROPE", cardName: "Europe Scoring (#2)", cardId: 2, color: "#3B82F6", pos: [440, 24], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 0 } },
-      { id: 1, name: "ASIA", cardName: "Asia Scoring (#1)", cardId: 1, color: "#EA580C", pos: [830, 180], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 9 } },
-      { id: 2, name: "MIDDLE EAST", cardName: "Middle East Scoring (#3)", cardId: 3, color: "#0284C7", pos: [630, 230], baseVps: { PRESENCE: 3, DOMINATION: 5, CONTROL: 7 } },
-      { id: 3, name: "AFRICA", cardName: "Africa Scoring (#79)", cardId: 79, color: "#D97706", pos: [425, 535], baseVps: { PRESENCE: 1, DOMINATION: 4, CONTROL: 6 } },
-      { id: 4, name: "CENTRAL AMERICA", cardName: "Central America Scoring (#37)", cardId: 37, color: "#16A34A", pos: [115, 260], baseVps: { PRESENCE: 1, DOMINATION: 3, CONTROL: 5 } },
-      { id: 5, name: "SOUTH AMERICA", cardName: "South America Scoring (#81)", cardId: 81, color: "#059669", pos: [232, 465], baseVps: { PRESENCE: 2, DOMINATION: 5, CONTROL: 6 } },
+      { id: 0, name: "EUROPE", cardName: "Europe Scoring (#2)", cardId: 2, color: REGION_STYLE["Europe"].accent, pos: [288, 29], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 0 } },
+      { id: 1, name: "ASIA", cardName: "Asia Scoring (#1)", cardId: 1, color: REGION_STYLE["Asia"].accent, pos: [830, 179], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 9 } },
+      { id: 2, name: "MIDDLE EAST", cardName: "Middle East Scoring (#3)", cardId: 3, color: REGION_STYLE["Middle East"].accent, pos: [640, 221], baseVps: { PRESENCE: 3, DOMINATION: 5, CONTROL: 7 } },
+      { id: 3, name: "AFRICA", cardName: "Africa Scoring (#79)", cardId: 79, color: REGION_STYLE["Africa"].accent, pos: [424, 535], baseVps: { PRESENCE: 1, DOMINATION: 4, CONTROL: 6 } },
+      { id: 4, name: "CENTRAL AMERICA", cardName: "Central America Scoring (#37)", cardId: 37, color: REGION_STYLE["Central America"].accent, pos: [130, 263], baseVps: { PRESENCE: 1, DOMINATION: 3, CONTROL: 5 } },
+      { id: 5, name: "SOUTH AMERICA", cardName: "South America Scoring (#81)", cardId: 81, color: REGION_STYLE["South America"].accent, pos: [270, 441], baseVps: { PRESENCE: 2, DOMINATION: 5, CONTROL: 6 } },
     ];
 
     const audits: RegionScoreAudit[] = [];
@@ -351,8 +493,8 @@ export class MapView {
     audits.push({
       regionId: 6,
       regionName: "SOUTHEAST ASIA",
-      badgePos: [875, 485],
-      color: "#F59E0B",
+      badgePos: [894, 433],
+      color: REGION_STYLE["Southeast Asia"].accent,
       scoringCardName: "Southeast Asia Scoring (#38)",
       scoringCard: scoringCardWhereabouts(state, 38),
       totalBattlegrounds: 1,
@@ -414,6 +556,9 @@ export class MapView {
         drawnEdges.add(edgeKey);
 
         const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("class", "adj-line");
+        line.setAttribute("data-a", c.name);
+        line.setAttribute("data-b", n.name);
         line.setAttribute("x1", c.pos[0].toString());
         line.setAttribute("y1", c.pos[1].toString());
         line.setAttribute("x2", n.pos[0].toString());
@@ -502,45 +647,31 @@ export class MapView {
     // A player's view: the countries the other side's latest turn changed or targeted.
     const lastTurn = new Map((state.last_turn?.countries || []).map(lc => [lc.id, lc]));
     this.renderLastTurnSummary(state);
+    const rolls = state.recent_rolls ?? [];
+    const tray = document.getElementById("map-rolls");
+    if (tray) renderRollTray(tray, rolls);
+    const rolledIn = new Map<number, RecentRoll>();
+    for (const r of rolls) if ((r.country_id ?? 255) < 84) rolledIn.set(r.country_id!, r);
 
+    const changed = this.influenceChanges(state);
     countries.forEach(c => {
       const stateC = state.countries ? state.countries[c.name] : null;
       const usInf = stateC ? stateC.us_influence : 0;
       const ussrInf = stateC ? stateC.ussr_influence : 0;
       const controlledBy = stateC ? stateC.controlled_by : "NONE";
       const isLegal = legalNodes.has(c.id);
-
-      const boxW = 34;
-      const boxH = 19;
       const x = c.pos[0];
       const y = c.pos[1];
+      const left = x - BOX_W / 2;
+      const top = y - BOX_H / 2;
 
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.setAttribute("class", `svg-country-node ${isLegal ? "legal-target" : ""}`);
-      g.setAttribute("data-id", c.id.toString());
-      g.setAttribute("data-name", c.name);
-      g.setAttribute("data-control", controlledBy);
-
-      // Card Background
-      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("class", "country-card-bg");
-      rect.setAttribute("x", (x - boxW/2).toString());
-      rect.setAttribute("y", (y - boxH/2).toString());
-      rect.setAttribute("width", boxW.toString());
-      rect.setAttribute("height", boxH.toString());
-      rect.setAttribute("rx", "2.5");
-
-      // Base border depending on Battleground & Control
-      let borderColor = c.battleground ? "#A855F7" : "#334155";
-      let strokeWidth = c.battleground ? "1.8" : "1.0";
-
-      if (controlledBy === "US") {
-        borderColor = "#3B82F6";
-        strokeWidth = "2.4";
-      } else if (controlledBy === "USSR") {
-        borderColor = "#EF4444";
-        strokeWidth = "2.4";
-      }
+      const g = svgEl("g", {
+        class: `svg-country-node${isLegal ? " legal-target" : ""}${c.battleground ? " battleground" : ""}`
+          + (changed.has(c.id) ? " inf-changed" : ""),
+        "data-id": c.id,
+        "data-name": c.name,
+        "data-control": controlledBy,
+      });
 
       // Control is carried by the fill, not only the border: a country that is a legal target has
       // its border overridden by the pulsing highlight (style.css), which is exactly when it
@@ -548,117 +679,72 @@ export class MapView {
       const fill = controlledBy === "US" ? "#1E40AF"
         : controlledBy === "USSR" ? "#991B1B"
         : c.battleground ? "#1E1B4B" : "#0F172A";
-      rect.setAttribute("fill", fill);
-      rect.setAttribute("stroke", borderColor);
-      rect.setAttribute("stroke-width", strokeWidth);
-      g.appendChild(rect);
+      const border = controlledBy === "US" ? "#3B82F6"
+        : controlledBy === "USSR" ? "#EF4444"
+        : c.battleground ? "#A855F7" : "#475569";
+      g.appendChild(svgEl("rect", {
+        class: "country-card-bg", x: left, y: top, width: BOX_W, height: BOX_H, rx: 2.5,
+        fill, stroke: border, "stroke-width": controlledBy !== "NONE" ? 2.2 : c.battleground ? 1.6 : 1.0,
+      }));
 
-      // Battleground Purple Top Stripe
-      if (c.battleground) {
-        const bgBanner = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        bgBanner.setAttribute("x", (x - boxW/2 + 0.8).toString());
-        bgBanner.setAttribute("y", (y - boxH/2 + 0.8).toString());
-        bgBanner.setAttribute("width", (boxW - 1.6).toString());
-        bgBanner.setAttribute("height", "3.0");
-        bgBanner.setAttribute("rx", "1.2");
-        bgBanner.setAttribute("fill", "#7C3AED");
-        g.appendChild(bgBanner);
+      // The name band, in the region's colour, as the board colours its regions.
+      const r = 2.2, bl = left + 0.6, br = left + BOX_W - 0.6, bt = top + 0.6, bb = top + BAND_H;
+      g.appendChild(svgEl("path", {
+        class: "country-band",
+        d: `M ${bl} ${bb} V ${bt + r} Q ${bl} ${bt} ${bl + r} ${bt} H ${br - r} Q ${br} ${bt} ${br} ${bt + r} V ${bb} Z`,
+        fill: regionStyle(c.region, c.subregions).band,
+      }));
+
+      // Stability, at the band's right end: solid purple on a battleground.
+      const stabX = left + BOX_W - STAB_W - 1.2;
+      const stabY = top + 1.2;
+      g.appendChild(svgEl("rect", {
+        class: "country-stability", x: stabX, y: stabY, width: STAB_W, height: BAND_H - 1.8, rx: 1.0,
+        fill: c.battleground ? "#7C3AED" : "#E2E8F0",
+        stroke: c.battleground ? "#DDD6FE" : "none", "stroke-width": 0.5,
+      }));
+      g.appendChild(svgText(c.stability.toString(), {
+        x: stabX + STAB_W / 2, y: stabY + (BAND_H - 1.8) / 2 + 1.75, "text-anchor": "middle",
+        fill: c.battleground ? "#FFFFFF" : "#0F172A", "font-size": 5.0, "font-weight": 900,
+      }));
+
+      // The name, squeezed rather than cut when it is long.
+      const label = SHORT_NAMES[c.name] ?? c.name;
+      const room = stabX - (left + 1.6) - 0.8;
+      const name = svgText(label, {
+        class: "country-name", x: left + 1.6, y: top + BAND_H / 2 + 1.75,
+        fill: "#FFFFFF", "font-size": NAME_FONT, "font-weight": 800,
+      });
+      if (label.length * NAME_FONT * 0.56 > room) {
+        name.setAttribute("textLength", room.toString());
+        name.setAttribute("lengthAdjust", "spacingAndGlyphs");
       }
+      g.appendChild(name);
 
-      // Stability Badge (Upper Right Corner)
-      const badgeW = 6.2, badgeH = 5.2;
-      const badgeX = x + boxW/2 - badgeW - 0.8;
-      const badgeY = y - boxH/2 + 0.8;
-      const stabRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      stabRect.setAttribute("x", badgeX.toString());
-      stabRect.setAttribute("y", badgeY.toString());
-      stabRect.setAttribute("width", badgeW.toString());
-      stabRect.setAttribute("height", badgeH.toString());
-      stabRect.setAttribute("rx", "1.2");
-      stabRect.setAttribute("fill", c.battleground ? "#5B21B6" : "#1E293B");
-      stabRect.setAttribute("stroke", c.battleground ? "#A855F7" : "#475569");
-      stabRect.setAttribute("stroke-width", "0.6");
-      g.appendChild(stabRect);
-
-      const stabText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      stabText.setAttribute("x", (badgeX + badgeW/2).toString());
-      stabText.setAttribute("y", (badgeY + badgeH/2 + 1.2).toString());
-      stabText.setAttribute("text-anchor", "middle");
-      stabText.setAttribute("fill", "#FFFFFF");
-      stabText.setAttribute("font-size", "3.6");
-      stabText.setAttribute("font-weight", "bold");
-      stabText.textContent = c.stability.toString();
-      g.appendChild(stabText);
-
-      // Country Name Text
-      const nameText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      nameText.setAttribute("x", (x - boxW/2 + 1.6).toString());
-      nameText.setAttribute("y", (y - boxH/2 + (c.battleground ? 7.2 : 5.4)).toString());
-      nameText.setAttribute("fill", c.battleground ? "#FAF5FF" : "#F1F5F9");
-      nameText.setAttribute("font-size", c.name.length > 12 ? "2.8" : "3.2");
-      nameText.setAttribute("font-weight", "bold");
-      nameText.textContent = c.name.length > 13 ? c.name.substring(0, 11) + ".." : c.name;
-      g.appendChild(nameText);
-
-      // Influence Counters (Bottom Bar)
-      // USSR (Red) Box on Left
-      const infBoxW = 8.8, infBoxH = 5.6;
-      const ussrBoxX = x - boxW/2 + 1.6;
-      const ussrBoxY = y + boxH/2 - infBoxH - 1.2;
-      // The controller's own box is outlined in white: the influence that holds the country.
-      const ussrRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      ussrRect.setAttribute("class", "inf-box inf-ussr");
-      ussrRect.setAttribute("x", ussrBoxX.toString());
-      ussrRect.setAttribute("y", ussrBoxY.toString());
-      ussrRect.setAttribute("width", infBoxW.toString());
-      ussrRect.setAttribute("height", infBoxH.toString());
-      ussrRect.setAttribute("rx", "1.0");
-      ussrRect.setAttribute("fill", ussrInf > 0 ? "#DC2626" : "#0F172A");
-      ussrRect.setAttribute("stroke", controlledBy === "USSR" ? "#FFFFFF" : "#EF4444");
-      ussrRect.setAttribute("stroke-width", controlledBy === "USSR" ? "1.1" : ussrInf > 0 ? "1.0" : "0.6");
-      g.appendChild(ussrRect);
-
-      const ussrText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      ussrText.setAttribute("x", (ussrBoxX + infBoxW/2).toString());
-      ussrText.setAttribute("y", (ussrBoxY + infBoxH/2 + 1.2).toString());
-      ussrText.setAttribute("text-anchor", "middle");
-      ussrText.setAttribute("fill", "#FFFFFF");
-      ussrText.setAttribute("font-size", "3.4");
-      ussrText.setAttribute("font-weight", "bold");
-      ussrText.textContent = ussrInf.toString();
-      g.appendChild(ussrText);
-
-      // US (Blue) Box on Right of bottom
-      const usBoxX = ussrBoxX + infBoxW + 2.0;
-      const usBoxY = ussrBoxY;
-      const usRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      usRect.setAttribute("class", "inf-box inf-us");
-      usRect.setAttribute("x", usBoxX.toString());
-      usRect.setAttribute("y", usBoxY.toString());
-      usRect.setAttribute("width", infBoxW.toString());
-      usRect.setAttribute("height", infBoxH.toString());
-      usRect.setAttribute("rx", "1.0");
-      usRect.setAttribute("fill", usInf > 0 ? "#2563EB" : "#0F172A");
-      usRect.setAttribute("stroke", controlledBy === "US" ? "#FFFFFF" : "#3B82F6");
-      usRect.setAttribute("stroke-width", controlledBy === "US" ? "1.1" : usInf > 0 ? "1.0" : "0.6");
-      g.appendChild(usRect);
-
-      const usText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      usText.setAttribute("x", (usBoxX + infBoxW/2).toString());
-      usText.setAttribute("y", (usBoxY + infBoxH/2 + 1.2).toString());
-      usText.setAttribute("text-anchor", "middle");
-      usText.setAttribute("fill", "#FFFFFF");
-      usText.setAttribute("font-size", "3.4");
-      usText.setAttribute("font-weight", "bold");
-      usText.textContent = usInf.toString();
-      g.appendChild(usText);
+      // Influence: US left, USSR right, as on the board. A marker that controls the country is
+      // flipped -- white on its colour -- and an empty space shows no number at all.
+      const markerY = top + BAND_H + (BOX_H - BAND_H - MARKER_H) / 2;
+      const usX = left + 1.4;
+      const ussrX = usX + MARKER_W + 0.9;
+      g.appendChild(influenceMarker("us", usInf, usX, markerY, controlledBy === "US"));
+      g.appendChild(influenceMarker("ussr", ussrInf, ussrX, markerY, controlledBy === "USSR"));
 
       const lc = lastTurn.get(c.id);
-      if (lc && state.last_turn) this.markLastTurn(g, lc, state.last_turn, x, y, boxW, boxH, ussrBoxX, usBoxX, infBoxW);
+      if (lc && state.last_turn) this.markLastTurn(g, lc, state.last_turn, x, y, ussrX, usX);
+      const roll = rolledIn.get(c.id);
+      if (roll) markRoll(g, roll, left, top);
 
-      // Click Event Handler
       g.addEventListener("click", () => {
         this.onCountryClick(c.id);
+      });
+      g.addEventListener("mouseenter", (e) => {
+        this.focusCountry(c.name, c.neighbours || []);
+        this.showCountryTooltip(e, c, stateC, state, lc);
+      });
+      g.addEventListener("mousemove", (e) => this.placeTooltip(e));
+      g.addEventListener("mouseleave", () => {
+        this.focusCountry(null, []);
+        this.hideRegionTooltip();
       });
 
       nodesGroup.appendChild(g);
@@ -668,36 +754,91 @@ export class MapView {
   }
 
   /**
-   * Mark a country the other side's latest turn touched: a dashed ring around it, the signed
-   * change over each influence box, and the change in its hover title.
+   * Mark a country the other side's latest turn touched: a dashed ring around it and the signed
+   * change under each influence marker (the hover card says it in words).
    */
-  private markLastTurn(g: SVGGElement, lc: LastTurnCountry, lt: LastTurn, x: number, y: number,
-                       boxW: number, boxH: number, ussrBoxX: number, usBoxX: number, infBoxW: number) {
-    const NS = "http://www.w3.org/2000/svg";
+  private markLastTurn(g: SVGGElement, lc: LastTurnCountry, _lt: LastTurn, x: number, y: number,
+                       ussrX: number, usX: number) {
     g.classList.add("last-turn");
-    const ring = document.createElementNS(NS, "rect");
-    ring.setAttribute("class", "last-turn-ring");
-    ring.setAttribute("x", (x - boxW/2 - 2.2).toString());
-    ring.setAttribute("y", (y - boxH/2 - 2.2).toString());
-    ring.setAttribute("width", (boxW + 4.4).toString());
-    ring.setAttribute("height", (boxH + 4.4).toString());
-    ring.setAttribute("rx", "3.5");
-    g.insertBefore(ring, g.firstChild);
+    g.insertBefore(svgEl("rect", {
+      class: "last-turn-ring", x: x - BOX_W / 2 - 1.6, y: y - BOX_H / 2 - 1.6,
+      width: BOX_W + 3.2, height: BOX_H + 3.2, rx: 3.5,
+    }), g.firstChild);
     const chip = (delta: number, boxX: number, side: "us" | "ussr") => {
       if (!delta) return;
-      const t = document.createElementNS(NS, "text");
-      t.setAttribute("class", `last-turn-delta ${side}`);
-      t.setAttribute("x", (boxX + infBoxW/2).toString());
-      t.setAttribute("y", (y + boxH/2 + 7.4).toString());
-      t.setAttribute("text-anchor", "middle");
-      t.textContent = delta > 0 ? `+${delta}` : `\u2212${-delta}`;
-      g.appendChild(t);
+      g.appendChild(svgText(delta > 0 ? `+${delta}` : `\u2212${-delta}`, {
+        class: `last-turn-delta ${side}`, x: boxX + MARKER_W / 2, y: y + BOX_H / 2 + 5.4, "text-anchor": "middle",
+      }));
     };
-    chip(lc.ussr, ussrBoxX, "ussr");
-    chip(lc.us, usBoxX, "us");
-    const title = document.createElementNS(NS, "title");
-    title.textContent = `${lt.player}'s last turn (${lt.label}): ${lc.name} ${describeLastTurnCountry(lc)}`;
-    g.appendChild(title);
+    chip(lc.ussr, ussrX, "ussr");
+    chip(lc.us, usX, "us");
+  }
+
+  /** What changed since the last render: the countries to flash (none on a jump). */
+  private influenceChanges(state: GameState): Set<number> {
+    const now = new Map<number, string>();
+    for (const c of this.mapData?.countries || []) {
+      const sc = state.countries?.[c.name];
+      now.set(c.id, `${sc?.us_influence ?? 0}/${sc?.ussr_influence ?? 0}`);
+    }
+    const before = this.lastInfluence;
+    this.lastInfluence = now;
+    const changed = new Set<number>();
+    if (!before) return changed;
+    now.forEach((v, id) => { if (before.get(id) !== v) changed.add(id); });
+    // A new game, a loaded link or a long jump in a replay moves too much to point at.
+    return changed.size <= MAX_FLASHED ? changed : new Set();
+  }
+
+  /** Light a country and its neighbours (and the lines between them); `null` clears it. */
+  private focusCountry(name: string | null, neighbours: string[]) {
+    this.svg.querySelectorAll(".hover-focus, .hover-neighbour, .hover-edge").forEach(el =>
+      el.classList.remove("hover-focus", "hover-neighbour", "hover-edge"));
+    this.svg.classList.toggle("country-hovering", name !== null);
+    if (name === null) return;
+    const node = (n: string) => this.svg.querySelector(`.svg-country-node[data-name="${CSS.escape(n)}"]`);
+    node(name)?.classList.add("hover-focus");
+    neighbours.forEach(n => node(n)?.classList.add("hover-neighbour"));
+    this.svg.querySelectorAll(`line.adj-line[data-a="${CSS.escape(name)}"], line.adj-line[data-b="${CSS.escape(name)}"]`)
+      .forEach(l => l.classList.add("hover-edge"));
+  }
+
+  /**
+   * A country's card on hover: its standing, what it takes each side to control it or break the
+   * other's control (in influence and in Ops, at 2 Ops a point while the other side controls it),
+   * the coup number, its neighbours, and what the other side's latest turn did there.
+   */
+  private showCountryTooltip(e: MouseEvent, c: MapMetadata["countries"][number],
+                             sc: { us_influence: number; ussr_influence: number; controlled_by: string } | null,
+                             state: GameState, lc: LastTurnCountry | undefined) {
+    if (!this.tooltipEl) return;
+    const us = sc?.us_influence ?? 0, ussr = sc?.ussr_influence ?? 0;
+    const ctrl = sc?.controlled_by ?? "NONE";
+    const lines = [controlLine("US", us, ussr, c.stability, ctrl), controlLine("USSR", ussr, us, c.stability, ctrl)];
+    const blocked = coupBlockedAt(c.region, state.defcon);
+    const adjacent = [...(c.neighbours || [])];
+    if (c.superpower_adjacent) adjacent.push(c.superpower_adjacent === "USA" ? "the US" : "the USSR");
+    const standing = ctrl === "US" ? `<b class="ct-us">US controls</b>` : ctrl === "USSR" ? `<b class="ct-ussr">USSR controls</b>` : "Uncontrolled";
+    this.tooltipEl.innerHTML = `
+      <div class="ct-head"><span class="ct-name">${c.name}</span>${c.battleground ? `<span class="ct-bg">Battleground</span>` : ""}</div>
+      <div class="ct-sub">${[c.region, ...(c.subregions || [])].join(" \u00b7 ")} \u00b7 stability ${c.stability}</div>
+      <div class="ct-inf"><span class="ct-us">US ${us}</span><span class="ct-ussr">USSR ${ussr}</span><span>${standing}</span></div>
+      <div class="ct-rows">${lines.map(l => `<div>${l}</div>`).join("")}
+        <div>Coup: die + Ops must beat <b>${2 * c.stability}</b>${blocked ? ` <span class="ct-warn">\u2014 none at DEFCON ${state.defcon}</span>` : ""}</div>
+        ${lc && state.last_turn ? `<div class="ct-last">${state.last_turn.player}'s last turn: ${describeLastTurnCountry(lc)}</div>` : ""}
+      </div>
+      <div class="ct-adj">Adjacent: ${adjacent.join(", ") || "none"}</div>`;
+    this.tooltipEl.classList.remove("hidden");
+    this.placeTooltip(e);
+  }
+
+  private placeTooltip(e: MouseEvent) {
+    if (!this.tooltipEl || this.tooltipEl.classList.contains("hidden")) return;
+    const box = this.tooltipEl.getBoundingClientRect();
+    const x = e.clientX + 16 + box.width > window.innerWidth ? e.clientX - box.width - 12 : e.clientX + 16;
+    const y = Math.min(window.innerHeight - box.height - 8, e.clientY + 14);
+    this.tooltipEl.style.left = `${Math.max(4, x)}px`;
+    this.tooltipEl.style.top = `${Math.max(4, y)}px`;
   }
 
   /** The line under the map naming what the other side's latest turn did. */
@@ -717,132 +858,110 @@ export class MapView {
     el.textContent = `${lt.player}'s last turn (${lt.label}): ${what}`;
   }
 
+  /**
+   * One badge per scoring region, in the region's colour: what the scoring card would give now
+   * (net VP and each side's standing), whether the card can still come this cycle, and whether
+   * DEFCON has closed the region to coups and realignments.
+   */
   private renderRegionalScoringBadges(state: GameState) {
     const audits = this.calculateRegionalScoring(state);
     if (!audits.length) return;
 
-    const overlayGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    overlayGroup.setAttribute("id", "regional-scoring-overlay");
+    const overlayGroup = svgEl("g", { id: "regional-scoring-overlay" });
+    const STANDING: Record<RegionScoreAudit["usStatus"], string> = {
+      NONE: "\u2014", PRESENCE: "Pres", DOMINATION: "Dom", CONTROL: "Ctrl",
+    };
 
     audits.forEach(audit => {
-      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      g.setAttribute("class", "svg-region-badge");
-      g.setAttribute("data-region", audit.regionName);
+      const g = svgEl("g", { class: "svg-region-badge", "data-region": audit.regionName });
       g.style.cursor = "pointer";
+      const [x, y] = audit.badgePos;
+      const left = x - REGION_BADGE_W / 2;
+      const top = y - REGION_BADGE_H / 2;
+      const right = left + REGION_BADGE_W;
+      const accent = audit.color;
 
-      const x = audit.badgePos[0];
-      const y = audit.badgePos[1];
-      const badgeW = 76;
-      const badgeH = 22;
+      g.appendChild(svgEl("rect", {
+        class: "region-badge-bg", x: left, y: top, width: REGION_BADGE_W, height: REGION_BADGE_H,
+        rx: 3, fill: "rgba(15, 23, 42, 0.92)", stroke: accent, "stroke-width": 1,
+        filter: "drop-shadow(0px 2px 4px rgba(0,0,0,0.5))",
+      }));
+      g.appendChild(svgEl("rect", { x: left + 1.2, y: top + 1.2, width: 2.6, height: REGION_BADGE_H - 2.4, rx: 1.2, fill: accent }));
 
-      // Card Background
-      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("x", (x - badgeW/2).toString());
-      rect.setAttribute("y", (y - badgeH/2).toString());
-      rect.setAttribute("width", badgeW.toString());
-      rect.setAttribute("height", badgeH.toString());
-      rect.setAttribute("rx", "3.5");
-      rect.setAttribute("fill", "rgba(15, 23, 42, 0.90)");
-      rect.setAttribute("stroke", audit.color);
-      rect.setAttribute("stroke-width", "1.2");
-      rect.setAttribute("filter", "drop-shadow(0px 2px 4px rgba(0,0,0,0.5))");
-      g.appendChild(rect);
-
-      // Region Title text
-      const titleText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      titleText.setAttribute("x", (x - badgeW/2 + 4).toString());
-      titleText.setAttribute("y", (y - badgeH/2 + 6.5).toString());
-      titleText.setAttribute("fill", "#94A3B8");
-      titleText.setAttribute("font-size", "3.6");
-      titleText.setAttribute("font-weight", "800");
-      titleText.setAttribute("letter-spacing", "0.5");
-      titleText.textContent = audit.regionName;
-      g.appendChild(titleText);
-
-      // Value Pill / Net VP for US
-      let vpText = `${audit.netVpUs > 0 ? "+" + audit.netVpUs : audit.netVpUs} VP`;
-      let vpColor = "#94A3B8";
-      if (audit.isInstantWinUs) {
-        vpText = "★ US WIN";
-        vpColor = "#3B82F6";
-      } else if (audit.isInstantWinUssr) {
-        vpText = "★ USSR WIN";
-        vpColor = "#EF4444";
-      } else if (audit.netVpUs > 0) {
-        vpText = `+${audit.netVpUs} (US)`;
-        vpColor = "#60A5FA";
-      } else if (audit.netVpUs < 0) {
-        vpText = `${audit.netVpUs} (USSR)`;
-        vpColor = "#F87171";
-      } else {
-        vpText = "0 VP (Tie)";
-        vpColor = "#CBD5E1";
+      // Row 1: the region and what its scoring card is worth to whom, right now.
+      const title = svgText(audit.regionName, {
+        class: "region-badge-title", x: left + 6, y: top + 9.2, fill: accent,
+        "font-size": 6, "font-weight": 800, "letter-spacing": 0.3,
+      });
+      if (audit.regionName.length * 6 * 0.68 > 62) {
+        title.setAttribute("textLength", "62");
+        title.setAttribute("lengthAdjust", "spacingAndGlyphs");
       }
+      g.appendChild(title);
+      let vpText: string;
+      let vpColor: string;
+      if (audit.isInstantWinUs) { vpText = "US WINS"; vpColor = "#60A5FA"; }
+      else if (audit.isInstantWinUssr) { vpText = "USSR WINS"; vpColor = "#F87171"; }
+      else if (audit.netVpUs > 0) { vpText = `+${audit.netVpUs} US`; vpColor = "#60A5FA"; }
+      else if (audit.netVpUs < 0) { vpText = `+${-audit.netVpUs} USSR`; vpColor = "#F87171"; }
+      else { vpText = "even"; vpColor = "#CBD5E1"; }
+      g.appendChild(svgText(vpText, {
+        class: "region-badge-vp", x: right - 3.5, y: top + 9.4, "text-anchor": "end", fill: vpColor,
+        "font-size": 6.6, "font-weight": 900,
+      }));
 
-      const valText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      valText.setAttribute("x", (x + badgeW/2 - 4).toString());
-      valText.setAttribute("y", (y - badgeH/2 + 6.5).toString());
-      valText.setAttribute("text-anchor", "end");
-      valText.setAttribute("fill", vpColor);
-      valText.setAttribute("font-size", "4.0");
-      valText.setAttribute("font-weight", "900");
-      valText.textContent = vpText;
-      g.appendChild(valText);
+      // Row 2: each side's standing and its total (Southeast Asia has no standings, only VP).
+      const se = audit.regionId === 6;
+      const usLine = se ? `US ${audit.usTotalVp} VP` : `US ${STANDING[audit.usStatus]} ${audit.usTotalVp}`;
+      const ussrLine = se ? `USSR ${audit.ussrTotalVp} VP` : `USSR ${STANDING[audit.ussrStatus]} ${audit.ussrTotalVp}`;
+      g.appendChild(svgText(usLine, {
+        class: "region-badge-us", x: left + 6, y: top + 18.6, fill: "#93C5FD", "font-size": 4.9, "font-weight": 700,
+      }));
+      g.appendChild(svgText(ussrLine, {
+        class: "region-badge-ussr", x: right - 3.5, y: top + 18.6, "text-anchor": "end", fill: "#FCA5A5",
+        "font-size": 4.9, "font-weight": 700,
+      }));
 
-      // Sub-row: US standing vs USSR standing
-      const subText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      subText.setAttribute("x", x.toString());
-      subText.setAttribute("y", (y + badgeH/2 - 3.5).toString());
-      subText.setAttribute("text-anchor", "middle");
-      subText.setAttribute("fill", "#E2E8F0");
-      subText.setAttribute("font-size", "3.2");
-      subText.setAttribute("font-weight", "600");
-      subText.textContent = `US: ${audit.usStatus.substring(0,4)} (${audit.usTotalVp}) | USSR: ${audit.ussrStatus.substring(0,4)} (${audit.ussrTotalVp})`;
-      g.appendChild(subText);
-
-      // Middle row: can the region's scoring card still come this cycle? Inside the badge,
-      // because country nodes are drawn over the badges and would hide anything sticking out.
+      // Row 3: can the region's scoring card still come this cycle? Inside the badge, because
+      // country nodes are drawn over the badges and would hide anything sticking out.
       const tag = SCORING_CARD_TAG[audit.scoringCard.status];
-      const tagW = tag.text.length * 2.4 + 4;
-      const tagH = 5.2;
-      const tagX = x + badgeW / 2 - tagW - 3;
-      const tagY = y - tagH / 2 - 0.4;
-      const tagG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      tagG.setAttribute("class", "svg-region-card-tag");
-      tagG.setAttribute("data-status", audit.scoringCard.status);
-      const tagLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      tagLabel.setAttribute("x", (x - badgeW / 2 + 4).toString());
-      tagLabel.setAttribute("y", (tagY + tagH / 2 + 1.0).toString());
-      tagLabel.setAttribute("fill", "#64748B");
-      tagLabel.setAttribute("font-size", "2.8");
-      tagLabel.setAttribute("font-weight", "700");
-      tagLabel.setAttribute("letter-spacing", "0.4");
-      tagLabel.textContent = "SCORING CARD";
-      tagG.appendChild(tagLabel);
-      const tagRect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      tagRect.setAttribute("x", tagX.toString());
-      tagRect.setAttribute("y", tagY.toString());
-      tagRect.setAttribute("width", tagW.toString());
-      tagRect.setAttribute("height", tagH.toString());
-      tagRect.setAttribute("rx", "1.6");
-      tagRect.setAttribute("fill", tag.fill);
-      tagRect.setAttribute("stroke", tag.stroke);
-      tagRect.setAttribute("stroke-width", "0.6");
+      const tagH = 6;
+      const tagY = top + REGION_BADGE_H - tagH - 2.6;
+      const tagG = svgEl("g", { class: "svg-region-card-tag", "data-status": audit.scoringCard.status });
+      tagG.appendChild(svgText("SCORING", {
+        x: left + 6, y: tagY + tagH / 2 + 1.4, fill: "#64748B", "font-size": 3.8, "font-weight": 800, "letter-spacing": 0.4,
+      }));
+      const tagX = left + 28;
+      const tagW = tag.text.length * 2.9 + 4.4;
+      const tagRect = svgEl("rect", {
+        x: tagX, y: tagY, width: tagW, height: tagH, rx: 1.6,
+        fill: tag.fill, stroke: tag.stroke, "stroke-width": 0.6,
+      });
       if (audit.scoringCard.status === "later") tagRect.setAttribute("stroke-dasharray", "1,0.8");
       tagG.appendChild(tagRect);
-      const tagText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      tagText.setAttribute("x", (tagX + tagW / 2).toString());
-      tagText.setAttribute("y", (tagY + tagH / 2 + 1.2).toString());
-      tagText.setAttribute("text-anchor", "middle");
-      tagText.setAttribute("fill", tag.ink);
-      tagText.setAttribute("font-size", "3.4");
-      tagText.setAttribute("font-weight", "800");
-      tagText.setAttribute("letter-spacing", "0.3");
-      tagText.textContent = tag.text;
-      tagG.appendChild(tagText);
+      tagG.appendChild(svgText(tag.text, {
+        x: tagX + tagW / 2, y: tagY + tagH / 2 + 1.5, "text-anchor": "middle", fill: tag.ink,
+        "font-size": 4.2, "font-weight": 800, "letter-spacing": 0.3,
+      }));
       g.appendChild(tagG);
 
-      // Hover / Tooltip listeners
+      // DEFCON: a region closed to coups and realignments says so (Southeast Asia is in Asia).
+      const region = audit.regionId === 6 ? "Asia" : REGION_KEY[audit.regionId];
+      if (region && coupBlockedAt(region, state.defcon)) {
+        const text = "NO COUPS";
+        const w = text.length * 2.9 + 4.4;
+        const chip = svgEl("g", { class: "svg-region-defcon", "data-defcon": state.defcon });
+        chip.appendChild(svgEl("rect", {
+          x: right - 3.5 - w, y: tagY, width: w, height: tagH, rx: 1.6,
+          fill: "rgba(127, 29, 29, 0.9)", stroke: "#F87171", "stroke-width": 0.6,
+        }));
+        chip.appendChild(svgText(text, {
+          x: right - 3.5 - w / 2, y: tagY + tagH / 2 + 1.5, "text-anchor": "middle", fill: "#FECACA",
+          "font-size": 4.2, "font-weight": 800, "letter-spacing": 0.3,
+        }));
+        g.appendChild(chip);
+      }
+
       g.addEventListener("mouseenter", (e) => this.showRegionTooltip(e, audit));
       g.addEventListener("mouseleave", () => this.hideRegionTooltip());
 

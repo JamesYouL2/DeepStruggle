@@ -1084,7 +1084,7 @@ body.player-view .view-select {
   pointer-events: none;
 }
 .svg-country-node .last-turn-delta {
-  font-size: 4.2px;
+  font-size: 5px;
   font-weight: 900;
   paint-order: stroke;
   stroke: #020617;
@@ -1111,6 +1111,30 @@ body.player-view .view-select {
 }
 .svg-country-node:hover {
   filter: brightness(1.25);
+}
+
+/* Hovering a country lights it and its neighbours, and the lines between them. */
+#ts-map-svg.country-hovering .svg-country-node:not(.hover-focus):not(.hover-neighbour) {
+  opacity: 0.55;
+}
+#ts-map-svg.country-hovering line.adj-line:not(.hover-edge) { opacity: 0.35; }
+#ts-map-svg line.adj-line.hover-edge {
+  stroke: #FDE68A;
+  stroke-width: 1.8;
+  stroke-dasharray: none;
+}
+.svg-country-node.hover-neighbour rect.country-card-bg {
+  stroke: #FDE68A;
+  stroke-width: 1.6px;
+}
+
+/* A country whose influence just changed flashes once (a move, a replay step). */
+.svg-country-node.inf-changed rect.country-card-bg {
+  animation: inf-changed-flash 1.6s ease-out 1;
+}
+@keyframes inf-changed-flash {
+  0%, 30% { filter: drop-shadow(0 0 6px rgba(253, 230, 138, 1)); stroke: #FDE68A; stroke-width: 2.6px; }
+  100% { filter: none; }
 }
 
 .svg-country-node.legal-target {
@@ -1544,6 +1568,22 @@ body.player-view .view-select {
   pointer-events: none;
 }
 .card-tooltip.hidden { display: none; }
+
+/* The country hover card (map_view.ts showCountryTooltip). */
+.card-tooltip .ct-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+.card-tooltip .ct-name { font-weight: 800; font-size: 14px; color: #F8FAFC; }
+.card-tooltip .ct-bg {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase;
+  color: #EDE9FE; background: #6D28D9; border-radius: 3px; padding: 1px 5px;
+}
+.card-tooltip .ct-sub { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+.card-tooltip .ct-inf { display: flex; gap: 10px; font-size: 12px; margin-bottom: 6px; color: #E2E8F0; }
+.card-tooltip .ct-us { color: #60A5FA; font-weight: 700; }
+.card-tooltip .ct-ussr { color: #F87171; font-weight: 700; }
+.card-tooltip .ct-rows { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #CBD5E1; line-height: 1.35; }
+.card-tooltip .ct-warn { color: #FBBF24; }
+.card-tooltip .ct-last { color: #67E8F9; }
+.card-tooltip .ct-adj { margin-top: 6px; font-size: 10.5px; color: var(--text-dim); line-height: 1.35; }
 
 /* ==========================================================================
    DIE ROLL SELECTOR & ALL CARDS DIRECTORY STYLES
@@ -2349,3 +2389,70 @@ span.trace-choice-badge.played {
 .status-badge.stale { background: rgba(245, 158, 11, 0.18); color: var(--warning); border: 1px solid var(--warning); }
 /* A model file being dragged over the page. */
 body.drop-target #map-container { outline: 3px dashed var(--warning); outline-offset: -6px; }
+
+/* The roll tray (roll_tray.ts): the latest action round's dice, top right of the map. */
+.map-rolls {
+  position: absolute;
+  top: 44px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(340px, calc(100% - 80px));
+  pointer-events: none;
+}
+.roll-row {
+  padding: 6px 10px 7px;
+  border: 1px solid #334155;
+  border-left: 3px solid #64748B;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.88);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  color: #E2E8F0;
+  animation: roll-in 0.35s ease-out;
+}
+.roll-row.roll-ok { border-left-color: #4ADE80; }
+.roll-row.roll-fail { border-left-color: #F87171; }
+.roll-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.roll-kind { font-weight: 800; letter-spacing: 0.3px; }
+.roll-where { color: #CBD5E1; }
+.roll-when { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+.roll-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.roll-mod { color: #CBD5E1; font-weight: 700; }
+.roll-eq, .roll-vs, .roll-arrow { color: var(--text-dim); font-size: 11px; }
+.roll-result { font-weight: 700; color: #F1F5F9; white-space: nowrap; }
+.roll-result .roll-arrow { margin-right: 4px; }
+.die { flex: none; }
+.die rect { stroke-width: 1.2; }
+.die circle { fill: #FFFFFF; }
+.die text { fill: #FFFFFF; font-size: 11px; font-weight: 900; }
+.die.die-us rect { fill: #2563EB; stroke: #93C5FD; }
+.die.die-ussr rect { fill: #DC2626; stroke: #FCA5A5; }
+.die.die-neutral rect { fill: #475569; stroke: #94A3B8; }
+@keyframes roll-in {
+  from { opacity: 0; transform: translateY(-6px) rotate(-1.5deg); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .roll-row { animation: none; }
+}
+
+/* A country a recent roll was made in: its die on the corner (map_view.ts markRoll). */
+.svg-country-node .roll-die rect { stroke: #FFFFFF; stroke-width: 0.6; }
+.svg-country-node .roll-die.us rect { fill: #2563EB; }
+.svg-country-node .roll-die.ussr rect { fill: #DC2626; }
+.svg-country-node .roll-die text { fill: #FFFFFF; font-size: 5.6px; font-weight: 900; pointer-events: none; }
