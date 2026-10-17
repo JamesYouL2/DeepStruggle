@@ -322,6 +322,32 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A14": {
+   "description": "A13 plus Cell A: each country's input to the per-country head joined with its map neighbours' mean and compared within its region by attention (width 64, 4 heads), added through a zero-initialised projection; grown in place",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A14_20261017_002157",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_region_attn_dim": 64,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1124,7 +1150,8 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48_20261014_032219": "E7-A8-R1-S44@6400M+R34@7200M+R48",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12010M+R49_20261016_012132": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12010M+R49",
-  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50_20261016_124309": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50"
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50_20261016_124527": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R50",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A14_20261017_002157": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A14"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
