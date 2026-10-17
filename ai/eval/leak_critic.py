@@ -177,10 +177,11 @@ def settle(model: Any, device: Any, states: List[ts.GameState], keys: Sequence[T
 
 
 def critic_differences(model: Any, device: Any, pairs: Sequence[LeakPair], dice: int, seed: int = 31337,
-                       settled: bool = False) -> np.ndarray:
+                       settled: bool = False, settle_model: Any = None) -> np.ndarray:
     """Per pair: the critic's mean value after `best` minus after `played`, mover's side, over `dice`
     draws of the chance the moves roll (the same draws for both moves); with `settled`, read once the
-    move's action round has been played out greedily (`settle`), not at the decision that follows it."""
+    move's action round has been played out greedily (`settle`), not at the decision that follows it --
+    by `settle_model` when given (a value-only network, P34's evaluator, is read but not played)."""
     rng = random.Random(seed)
     seeds = [[rng.getrandbits(64) for _ in range(dice)] for _ in pairs]
     states: List[ts.GameState] = []
@@ -193,7 +194,7 @@ def critic_differences(model: Any, device: Any, pairs: Sequence[LeakPair], dice:
                 movers.append(p.mover)
                 keys.append(ar_key(p.state))
     if settled:
-        settle(model, device, states, keys)
+        settle(settle_model if settle_model is not None else model, device, states, keys)
     v = mover_values(model, device, states, movers).reshape(len(pairs), 2, dice).mean(axis=2)
     return v[:, 0] - v[:, 1]
 
@@ -345,6 +346,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--screen-max", type=int, default=0, help="score at most this many baseline pairs (a random draw)")
     ap.add_argument("--settled", action="store_true",
                     help="read the critic once the move's action round is played out greedily, not right after it")
+    ap.add_argument("--settle-with", default=None,
+                    help="with --settled: the checkpoint whose greedy play settles the action round, for every "
+                         "--checkpoint (P34's evaluators are read, not played); default each checkpoint itself")
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pairs = load_pairs(a.bank, a.playouts)
@@ -354,17 +358,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     how = (f" (greedy to the turn's end, {a.worlds} worlds)" if a.turn_end else
            f" (the rollout continuation: {a.horizon} boundaries, {a.worlds} worlds)" if a.horizon > 0 else
            " (settled: the move's action round played out greedily)" if a.settled else "")
+    settler = NeuralAgent.from_checkpoint(a.settle_with, device=str(dev)).model.eval() if a.settle_with else None
+    if settler is not None:
+        how += f", settled by {a.settle_with}"
     for ck in a.checkpoint:
         model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
         diff = (turn_end_differences(model, dev, pairs, a.worlds) if a.turn_end else
                 continuation_differences(model, dev, pairs, a.worlds, a.horizon) if a.horizon > 0
-                else critic_differences(model, dev, pairs, a.dice, settled=a.settled))
+                else critic_differences(model, dev, pairs, a.dice, settled=a.settled, settle_model=settler))
         print(summarise(f"{ck} -- the confirmed leaks{how}", pairs, diff))
         print()
         if screen:
             sdiff = (turn_end_differences(model, dev, screen, a.worlds) if a.turn_end else
                      continuation_differences(model, dev, screen, a.worlds, a.horizon) if a.horizon > 0
-                     else critic_differences(model, dev, screen, a.dice, settled=a.settled))
+                     else critic_differences(model, dev, screen, a.dice, settled=a.settled, settle_model=settler))
             print(summarise(f"{ck} -- baseline: screened pairs signed at |z| >= {a.min_z}{how}", screen, sdiff))
             print()
     return 0

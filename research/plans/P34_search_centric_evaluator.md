@@ -281,7 +281,12 @@ keyed from now on.
 
 1. **`P34c` -- the leak-pair read of the first evaluator** (`ai/eval/leak_critic.py`, settled read,
    on A15-R52's `value_fit_best.pt`, against the RL critic's 47.4% wrong on the confirmed pairs).
-   Minutes. It decides whether uniform greedy labels see the leaks at all. Not run yet.
+   Minutes. It decides whether uniform greedy labels see the leaks at all. **Result: 47.4% ± 1.5
+   wrong for A15-R52 against 47.4% ± 1.5 for its generator's critic** read in the same run (each
+   move's round settled by the generator's greedy play, `leak_critic.py --settle-with`, so the
+   evaluator is read and never played); card choice 51.4 vs 53.1, the label ≥ 5 points 43.6 vs 46.4;
+   on the screened baseline pairs 20.5 vs 19.9. **Uniform greedy labels do not see the leaks**: by
+   the rule below, step 3 is a baseline for step 4.
 2. **`D2` -- the sibling slice relabelled keyed** (50,000 positions × top 4 × 16 keyed worlds; the
    main labels are unchanged, keying moves no mean). ~45 min of GPU.
 3. **The corrected refit** (a new R code: per-decision mean sibling loss, entry-decision weighting,
