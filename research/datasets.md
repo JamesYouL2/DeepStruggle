@@ -13,10 +13,10 @@ A `D` code is a flag set of the labelling tool, like an R code of the trainer. U
 
 | code | what it is | flags (intended) | datasets |
 |:---|:---|:---|:---|
-| **D1** | P34 generation-1 labels: greedy self-play positions at temperature 0.25, one decision in eight; 32 worlds from the mover's view, both sides greedy to the game's end under the safe-playout rule; columns: the mover's score, VP margin at the end, VP and DEFCON at the turn's end, each region's VP swing at its next scoring | `--temperature 0.25 --keep 1/8 --worlds 32 --stop game --labels score,vp,turn_vp,turn_defcon,region_swing` | (none yet) |
+| **D1** | P34 generation-1 labels: greedy self-play positions at temperature 0.25, one decision in eight, 5% of games held out; 32 worlds from the mover's view, fresh dice each, both sides greedy to the game's end under the safe-playout rule; columns: the mover's score, VP at the end, VP and DEFCON at the turn's end, each region's swing at its next scoring; sibling slice: 50,000 positions x the top 4 candidates x 16 shared worlds, each row's leaf the mover's next decision | `tools/value_labels.py` defaults (`labellings.D1` in [`run_codes.json`](run_codes.json)) | A13+R48 below |
 
 ## Datasets
 
 | dataset | positions | rows spent | device | files (sha256) | used by |
 |:---|---:|---:|:---|:---|:---|
-| (none yet) | | | | | |
+| `E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~D1(seed=44,games=20000)` | 1,115,626 (1,059,433 train / 56,193 held out; 2,794,624 sibling rows) | 9,444,677,177 (2 h 22 min, RTX 4090) | cuda, engine 040b1617 | `data/datasets/p34/A13R48-D1-s44-g20000/`: train.npz bca65c978a61, holdout.npz 954a7e2b622d, siblings.npz ae9350e568ca | |

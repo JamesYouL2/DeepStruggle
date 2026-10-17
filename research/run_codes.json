@@ -1252,5 +1252,30 @@
   "_soups/shared_start_E6-06+07+08_swa680-760M.pt": "E6-A1-R1-S44@310M+R2@560M+(R4,R5,R6)@680..760M",
   "_soups/soup_E7-20-44+4390M.45+4390M.46_4800M.pt": "E7-A4-R1-S44@4390M+(S44,45,46)@4800M",
   "_soups/soup_E7-20-44+4390M.45+4390M.46_swa4720-4800M.pt": "E7-A4-R1-S44@4390M+(S44,45,46)@4720..4800M"
+ },
+ "labellings": {
+  "D1": {
+   "description": "P34 generation-1 labels: generator self-play at temperature 0.25, one decision in eight, 5% of games held out; 32 worlds from the mover's view, both sides greedy to the game's end under the safe-playout rule; sibling slice 50,000 positions x top-4 candidates x 16 shared worlds, leaf = the mover's next decision",
+   "flags": {
+    "temperature": 0.25,
+    "keep": 8,
+    "candidates": 4,
+    "holdout": 0.05,
+    "worlds": 32,
+    "stop": "game",
+    "safe": true,
+    "siblings": 50000,
+    "sibling_worlds": 16,
+    "sibling_k": 4,
+    "leaf_horizon": 0,
+    "labels": [
+     "score",
+     "final_vp",
+     "turn_vp",
+     "turn_defcon",
+     "region_swing"
+    ]
+   }
+  }
  }
 }
