@@ -16,7 +16,7 @@ import pytest
 from ai.training.run_name import parse_label, parse_run_name
 from tools.scripts import run_codes as rc
 
-TS = iter(f"20261007_{h:02d}0000" for h in range(24))
+TS = iter(f"2026100{7 + h // 24}_{h % 24:02d}0000" for h in range(72))
 
 
 def _run(root: str, name: str, parent: Optional[str] = None, resume: str = "resume_state.pt",
@@ -154,3 +154,14 @@ def test_a_value_fit_is_its_networks_shape_read_for_its_value(tmp_path: Any) -> 
     a_vf = rc.arch_sig(runs[os.path.basename(vf)])
     assert a_vf == {**a_rl, "value_only": True}
     assert rc.recipe_sig(runs[os.path.basename(vf)], {}).get("value_dataset") == "/d/p34"
+
+
+def test_a_run_started_from_a_swa_branches_where_its_window_ends(tmp_path: Any) -> None:
+    """A value fit fine-tuned from `swa_11920-12000M.pt` is named as a branch at 12,000M."""
+    root = str(tmp_path)
+    rl = _run(root, "E9-01-44", steps=12_800_000_000)
+    _run(root, "E9-02-44", parent=rl, resume="swa_11920-12000M.pt", mode="value-fit", value_lr=2e-4)
+    runs = rc.load_runs(root)
+    child = next(r for r in runs if r.parent is not None)
+    assert child.branch_step == 12_000_000_000
+

@@ -108,6 +108,8 @@ _GATE_ALSO: Dict[str, Tuple[str, Any]] = {"search_ce_coef": ("search_value_beta"
 
 _RUN_DIR_RE = re.compile(r"^(?P<name>[^_]+)_(?P<ts>\d{8}_\d{6})(?P<void>_VOID)?$")
 _RESUME_STEP_RE = re.compile(r"resume(?:_paused)?_(\d+)steps\.pt$")
+#: A run started from a SWA of its parent (a P34 value fit): it branches where the window ends.
+_SWA_STEP_RE = re.compile(r"swa_\d+-(\d+)M\.pt$")
 
 
 def category(dest: str) -> str:
@@ -253,7 +255,8 @@ def load_runs(root: str) -> List[Run]:
             raise ValueError(f"{r.dir} resumed from {src}, which is not a run directory here")
         r.parent = parent
         m = _RESUME_STEP_RE.search(src_file)
-        r.branch_step = int(m.group(1)) if m else parent.end_step
+        swa = _SWA_STEP_RE.search(src_file)
+        r.branch_step = int(m.group(1)) if m else int(swa.group(1)) * 1_000_000 if swa else parent.end_step
     runs.sort(key=lambda r: r.ts)
     return runs
 
