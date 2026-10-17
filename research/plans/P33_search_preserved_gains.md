@@ -440,8 +440,16 @@ ordinary pairs worse (25.4% against 20.4% wrong) and the confirmed leaks no bett
 value loss rose (0.052 → 0.072). **Reading:** the searched rows train the head PPO uses as its baseline,
 with ±1 game results far noisier than its lambda-returns, each row at ~30x a decision row's weight -- the
 critic degraded on the network's own positions, the advantages with it, and the search reads the damaged
-critic at every leaf. A separate value head for searched-game values (read only by the root), or the same
-rows at ~1/16 the weight, would separate the conflict from the dose.
+critic at every leaf.
+**Sanity check -- memorisation, not a bug** (`ai/eval/searched_value_probe.py`): on 514 fresh searched games
+(the control's SWA as the searcher, 224k decisions) R51's critic predicts the results *worse* than the
+control's -- MSE 0.788 against 0.653, log loss **0.684 (chance 0.693)** against 0.488 -- although on its
+training rows its loss was ~0.40. Each game gave ~446 consecutive positions with one shared label, the store
+held ~590 games at a time, and positions of one game are recognisable (discards, board history): the head
+learned which games were won, not which positions win -- the overfitting AlphaGo's value network met on
+successive positions of one game, fixed there by one position per game. A working form needs a few
+positions per game (1–8, the workers make ~75 games/min), a decision row's weight at most, and preferably a
+separate head so PPO's baseline is untouched.
 
 ## The critic on both sides (design, 2026-10-15; not built)
 
