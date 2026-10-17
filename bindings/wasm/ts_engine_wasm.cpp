@@ -43,6 +43,18 @@ namespace {
 namespace sj = ts::state_json;
 
 ts::GameState g_state{};
+// What the last click itself did: the state after its action, or after its last die roll if it
+// rolled one -- before the chance nodes that follow without a roll. The turn's cleanup is one: an
+// action round that ends the turn stops on it, and resolving it (final VP, the military-ops reset,
+// DEFCON, the next deal) is an engine step, and every engine step clears the roll record -- so read
+// from the end state, the realignment or coup that ended the turn had no dice in the page's log, and
+// the turn's end read as part of it. The page describes the click from here and the rest apart.
+// Display only: the game is g_state, stepped exactly as before.
+ts::GameState g_settled{};
+// Every die the last click rolled, in order, as the display state writes a roll ("die_roll"). One
+// click can roll more than once -- a realignment with the opponent's war card, whose event fires in
+// the same click and rolls too -- and each engine step keeps only its own roll.
+std::vector<sj::Value> g_rolls;
 uint8_t g_mask[ts::FLAT_ACTION_SPACE_SIZE];
 float g_obs[ts::OBS_SIZE_V23];
 int32_t g_decoded[4];
@@ -56,11 +68,24 @@ const char* keep(std::string s) {
 
 // Resolve the chance nodes the game is sitting on, as tools.lib.game_step.drain_chance does:
 // `forced_die` 0 rolls from the state's RNG, 1..6 forces the face (the workbench's manual die).
-bool drain(ts::GameState& s, int forced_die) {
+// The roll a state's last step made, as the display state writes it.
+void keep_roll(const ts::GameState& s) {
+    if (s.last_roll.type == ts::RollType::NONE) return;
+    const sj::Value display = sj::display_state(s);   // held: find() points into it
+    if (const sj::Value* r = display.find("die_roll")) g_rolls.push_back(*r);
+}
+
+// `settled`, if given, takes the state after each step that rolled a die (see g_settled), and that
+// step's roll joins g_rolls.
+bool drain(ts::GameState& s, int forced_die, ts::GameState* settled = nullptr) {
     while (!ts::Engine::is_terminal(s) && s.ctx().decision_player == ts::Player::NONE &&
            s.ctx().decision_type == ts::DecisionType::ROLL_DIE) {
         const ts::MicroAction roll{ts::DecisionType::ROLL_DIE, static_cast<uint8_t>(forced_die), 0, 0};
         if (!ts::Engine::step(s, roll)) return false;
+        if (settled && s.last_roll.type != ts::RollType::NONE) {
+            *settled = s;
+            keep_roll(s);
+        }
     }
     return true;
 }
@@ -75,7 +100,10 @@ int apply(const ts::MicroAction& action, int forced_die) {
         g_error = "the engine refused the action";
         return 0;
     }
-    if (!drain(g_state, forced_die)) {
+    g_settled = g_state;
+    g_rolls.clear();
+    keep_roll(g_state);
+    if (!drain(g_state, forced_die, &g_settled)) {
         g_state = before;
         g_error = "the engine refused the die roll";
         return 0;
@@ -152,6 +180,15 @@ TS_API int ts_state_size() { return static_cast<int>(sizeof(ts::GameState)); }
 TS_API uint8_t* ts_state_ptr() { return reinterpret_cast<uint8_t*>(&g_state); }
 
 TS_API const char* ts_display_json() { return keep(sj::display_state(g_state).dump()); }
+// The display state of what the last click itself did, before the roll-less chance steps after it
+// (g_settled): its die roll, and the board before the turn's end.
+TS_API const char* ts_settled_display_json() { return keep(sj::display_state(g_settled).dump()); }
+// Every die the last click rolled, in order (g_rolls): a JSON array of display-state rolls.
+TS_API const char* ts_click_rolls_json() {
+    sj::Value a = sj::Value::array();
+    for (const sj::Value& r : g_rolls) a.push(r);
+    return keep(a.dump());
+}
 TS_API const char* ts_save_json() { return keep(sj::save(g_state).dump()); }
 
 // Open a saved position (a shared link). Returns 1, or 0 with ts_last_error() -- and a save

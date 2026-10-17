@@ -128,6 +128,12 @@ web/ui/
      the game as a `.tslog.json` (*Export Replay*). A composed E4.1 action is applied as its two E4
      steps. `game/describe.ts` writes the action log -- a line-for-line port of the old Python
      session, pinned by a golden (`tests/web/test_describe_golden.py`).
+   - A click is described from the engine's settled state (`WasmEngine.settledDisplay`: after its
+     action or last die roll), with a dice line for every roll it made (`clickRolls`, in order).
+     When the click carried into the turn's end -- an action round that ends the turn stops on the
+     turn's cleanup, resolved in the same click -- the turn's end (final VP, the military-ops reset,
+     DEFCON, the next deal) is its own `TURN_END` entry, "End of turn N". Read from the end state,
+     the turn's last realignment or coup used to lose its dice and wear the turn's end as its own.
    - `refresh()` in `main.ts` is the one place a change of position lands: render, then (async,
      versioned so a stale result is dropped) the link token, the model's readout, and auto-play.
 8. **Live model analysis (`analysis/`, `analysis_view.ts`)**:
@@ -294,6 +300,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | test | holds |
 |:---|:---|
 | `test_wasm_engine.py` | the WebAssembly engine is the native one: 200 whole games, and display JSON / save JSON / observations / masks at every step of games driven by clicks |
+| `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice |
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
 | `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |

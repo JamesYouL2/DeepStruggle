@@ -9,7 +9,7 @@
  */
 import { ActionLogItem, GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
-import { describeActionAndDeltas } from "./describe";
+import { describeActionAndDeltas, describeDeltas, describeRoll } from "./describe";
 import { ReplayStep } from "../replay_controls";
 
 const MAX_UNDO = 300;
@@ -100,15 +100,36 @@ export class GameSession {
 
     this.stepIndex += 1;
     const after = this.engine.display();
-    const lines = describeActionAndDeltas(this.engine, before, after, a);
+    // What the click itself did is the engine's settled state: after the action, or after its last
+    // die roll. When an action round ends the turn, the engine stops on the turn's cleanup, and
+    // resolving it -- final VP, the military-ops reset, DEFCON, the next deal -- clears the roll
+    // record: read from the end state, the turn's last realignment or coup lost its dice, and the
+    // turn's end read as part of it. So the click is described up to the settled state, and the
+    // turn's end, when the click carried into it, gets its own entry.
+    const settled = this.engine.settledDisplay();
+    const crossed = settled.turn !== after.turn || settled.current_phase_name !== after.current_phase_name;
+    const end = crossed ? settled : after;
+    // The dice: every roll the click made, in order, not only the last one a state keeps.
+    const lines = describeActionAndDeltas(this.engine, before, { ...end, die_roll: undefined }, a);
+    const mover = before.decision_context?.decision_player ?? "NONE";
+    for (const r of this.engine.clickRolls()) lines.push(...describeRoll(this.engine, before, r, mover));
     const main = lines[0] ?? `Action type=${a.decision_type}`;
     const phase = before.current_phase_name ?? "ACTION";
     const ar = phase === "HEADLINE" || phase === "SETUP" ? 0 : before.action_round;
     const player = before.decision_context?.decision_player ?? "NONE";
     this.logs.push({
       step_index: this.stepIndex, turn: before.turn, ar, phase, player, text: main,
-      details: lines.slice(1), vp_delta: (after.victory_points ?? 0) - (before.victory_points ?? 0),
+      details: lines.slice(1), vp_delta: (end.victory_points ?? 0) - (before.victory_points ?? 0),
     });
+    if (crossed) {
+      const rest = describeDeltas(this.engine, settled, after, "SYSTEM");
+      const text = after.turn !== settled.turn || after.current_phase_name === "GAME_OVER"
+        ? `End of turn ${settled.turn}` : `${settled.current_phase_name ?? ""} ends`;
+      this.logs.push({
+        step_index: this.stepIndex, turn: settled.turn, ar: settled.action_round, phase: "TURN_END", player: "SYSTEM",
+        text, details: rest, vp_delta: (after.victory_points ?? 0) - (settled.victory_points ?? 0),
+      });
+    }
     this.steps.push({
       step_index: this.stepIndex, turn: before.turn, ar, phase, player,
       action: { decision_type: a.decision_type, primary_id: a.primary_id, secondary_id: a.secondary_id, flags: a.flags },

@@ -76,7 +76,11 @@ are cited from elsewhere; keep them.
   new game, raw-bytes undo snapshots, display/save JSON, loading a save (refused unless it
   round-trips), stepping with the workbench's forced-die drain, masks in both action views, decode,
   observations, names, debug setters, the action layout, the engine fingerprint baked in at build,
-  and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`).
+  and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`). For the page's action log, a
+  click also keeps what it did before the roll-less chance steps after it (`ts_settled_display_json`:
+  the state after its action or its last die roll -- the turn's cleanup, resolved in the same click,
+  clears the roll record) and every die it rolled, in order (`ts_click_rolls_json`). Display only:
+  the game is stepped exactly as before.
 - [`selftest.hpp`](selftest.hpp): one whole-game digest (full save, both observations, the mask,
   every position) compiled into both builds; `tests/web/test_wasm_engine.py` compares them.
 - [`rollout_batch.hpp`](rollout_batch.hpp) / [`rollout_batch.cpp`](rollout_batch.cpp): **the rollout

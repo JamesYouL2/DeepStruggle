@@ -9,7 +9,7 @@
  * Iteration order matters for a multi-line diff: countries are walked by id and cards 1..110, as
  * the Python dicts were built; the JSON the page reads has its keys sorted by name instead.
  */
-import { GameState, MicroAction } from "../types";
+import { DieRollState, GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
 
 const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE: 5, CHOOSE_BRANCH: 6 };
@@ -121,6 +121,17 @@ export function describeActionAndDeltas(
     logs.push(`${p} action: type=${d} primary=${primary} secondary=${secondary} flags=${flags}`);
   }
 
+  logs.push(...describeDeltas(engine, before, after, p));
+  return logs;
+}
+
+/**
+ * What changed from `before` to `after`: influence, the tracks, effects, cards that moved, and the
+ * die roll `after` records. The deltas half of `describeActionAndDeltas`; on its own it is how the
+ * session logs the changes a step made after the action itself (the turn's end).
+ */
+export function describeDeltas(engine: WasmEngine, before: GameState, after: GameState, p: string): string[] {
+  const logs: string[] = [];
   // 2. Influence
   const oldCountries = before.countries || {};
   for (const c of countriesById(after)) {
@@ -170,7 +181,17 @@ export function describeActionAndDeltas(
   }
 
   // 5. The die roll, if one happened
-  const r = after.die_roll || ({} as NonNullable<GameState["die_roll"]>);
+  logs.push(...describeRoll(engine, before, after.die_roll, p));
+  return logs;
+}
+
+/**
+ * The dice line for one roll, as the display state writes a roll (`die_roll`); `before` is the
+ * position the roll was made from (a coup's defence reads its stability). Nothing for no roll.
+ */
+export function describeRoll(engine: WasmEngine, before: GameState, roll: DieRollState | undefined, p: string): string[] {
+  const logs: string[] = [];
+  const r = roll || ({} as DieRollState);
   const type = r.type ?? "NONE";
   const cname = () => r.country_name || ((r.country_id ?? 255) < 84 ? engine.countryName(r.country_id ?? 0) : "");
   const sgn = (v: number) => (v >= 0 ? "+" : "");

@@ -7,7 +7,7 @@
  * the two builds bit for bit. Everything returned is a copy: the module's memory can move when it
  * grows, and a view into it would silently change under the caller.
  */
-import { GameState, MicroAction } from "../types";
+import { DieRollState, GameState, MicroAction } from "../types";
 
 /** The flat action space's layout, from the engine itself (never a hand-kept copy). */
 export interface ActionLayout {
@@ -82,6 +82,21 @@ export class WasmEngine {
 
   display(): GameState {
     return JSON.parse(this.str(this.M._ts_display_json()));
+  }
+
+  /**
+   * What the last `step` itself did: the display state after its action, or after its last die
+   * roll -- before the roll-less chance steps that follow (the turn's cleanup, when an action round
+   * ends the turn), which clear the roll record. `display()` is the state after all of them.
+   */
+  settledDisplay(): GameState {
+    return JSON.parse(this.str(this.M._ts_settled_display_json()));
+  }
+
+  /** Every die the last `step` rolled, in order: one click can roll more than once (a realignment
+   * with the opponent's war card rolls, then its event does), and each engine step keeps only its own. */
+  clickRolls(): DieRollState[] {
+    return JSON.parse(this.str(this.M._ts_click_rolls_json()));
   }
 
   saveJson(): string {
