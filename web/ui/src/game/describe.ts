@@ -244,7 +244,9 @@ export function describeRoll(engine: WasmEngine, before: GameState, roll: DieRol
     logs.push(`  🎲 ${card} Roll${target}: ${r.roller || p} rolls ${roll1} (${sgn(mod1)}${mod1} mod = ${tot1}) -> ${status}`);
   } else if (type === "OLYMPIC_GAMES") {
     const sponsor = r.roller || p;
-    const sr = r.roll1 ?? 0, st = r.total1 ?? sr + 2;
+    // The engine records the sponsor's roll with its +2 already in (roll1 = die + 2, mod1 = 2), so
+    // roll1 is the sponsor's total and total1 counts the +2 twice.
+    const st = r.roll1 ?? 0, sr = st - (r.mod1 ?? 2);
     const or = r.roll2 ?? 0, ot = r.total2 ?? or;
     const opp = sponsor === "USSR" ? "US" : "USSR";
     const res = st > ot ? `Sponsor ${sponsor} wins by +${st - ot} (+2 VP)` : ot > st ? `Opponent ${opp} wins` : "Tie (No VP)";

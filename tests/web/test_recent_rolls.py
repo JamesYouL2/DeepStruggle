@@ -5,7 +5,7 @@ side's reply) -- across a turn's end too: the turn's last action round and the n
 headline are as adjacent as any two half rounds. The live session's steps carry every die their
 click rolled (`ReplayStep.rolls`): one click can roll more than once, and the turn's cleanup clears
 the roll record from the state the click ends on. Checked here on the page's own TypeScript
-(game/rolls.ts, roll_tray.ts) under node, on steps built for each case.
+(game/rolls.ts, roll_tray.ts, and the log's dice lines in game/describe.ts) under node, on steps built for each case.
 """
 from __future__ import annotations
 
@@ -77,6 +77,9 @@ def test_the_olympic_sponsors_die_is_the_die(tmp_path: Any) -> None:
     olympics = {"type": "OLYMPIC_GAMES", "roller": "US", "country_id": 255, "roll1": 7, "mod1": 2,
                 "total1": 9, "roll2": 4, "mod2": 0, "success": True}
     ar = _state(1, "ACTION_ROUND", 1, "US")
-    view = _run(tmp_path, ar, [], ar, [olympics])["tray"][0]
+    out = _run(tmp_path, ar, [], ar, [olympics])
+    view = out["tray"][0]
     assert 'aria-label="US rolls 5"' in view["dice"]
     assert "<b>7</b>" in view["dice"] and "<b>9</b>" not in view["dice"]
+    assert out["log"][0] == ["  🎲 Olympic Games Competition: Sponsor (US) rolls 5 (+2 = 7), "
+                             "Opponent (USSR) rolls 4 -> Sponsor US wins by +3 (+2 VP)"]
