@@ -883,7 +883,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--searched-games-envs", type=int, default=32,
                         help="Games each --searched-games-workers process plays at once.")
     parser.add_argument("--searched-value-coef", type=float, default=0.0,
-                        help="Weight (times --vf-coef) of the value loss on searched games' decisions, a sample of 1,024 from their replay store per minibatch.")
+                        help="Weight (times --vf-coef) of the value loss on searched games' decisions, a sample of --searched-value-batch from their replay store per minibatch.")
+    parser.add_argument("--searched-value-batch", type=int, default=1024,
+                        help="Searched-game rows sampled from the replay store per minibatch.")
     parser.add_argument("--predeal-value-coef", type=float, default=0.0,
                         help="P33, the pre-deal critic: weight (times --vf-coef) of a value loss on each env's turn-end park -- after a turn's last action, before the deal, nobody's decision -- read from both sides, each with its own next decision's lambda-return as the target (the result where the game ends first). The rollout root's stop=predeal reads the critic there. 0 = off.")
     parser.add_argument("--search-rollout-leaf-side", choices=["mover", "decider", "own"], default="mover",
@@ -1067,6 +1069,7 @@ def main():
             searched_games_workers=args.searched_games_workers,
             searched_games_envs=args.searched_games_envs,
             searched_value_coef=args.searched_value_coef,
+            searched_value_batch=args.searched_value_batch,
             search_workers=args.search_workers,
             search_teacher_policy=args.search_teacher_policy,
             resume_weights=args.resume_weights,
