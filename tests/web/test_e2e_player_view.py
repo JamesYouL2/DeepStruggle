@@ -119,10 +119,14 @@ def test_the_other_sides_decision_is_hidden_and_refused(browser: Any, static_sit
 
 
 #: Random legal moves from a fixed stream (an LCG), a new game whenever one ends, until `stop`.
+#: Play seeded random games, from seeded deals, until `stop(state)` holds. The page's own new game
+#: has a random seed, and its New game button asks how to play instead of dealing, so neither would
+#: make the walk the same on every run.
 _PLAY_RANDOM_UNTIL = """stop => { const wb = window.__wb, until = new Function('s', 'return ' + stop);
     let x = 12345; const rnd = n => { x = (x * 1103515245 + 12345) % 2147483648; return x % n; };
+    let seed = 7000; wb.session.newGame(seed); wb.refresh();
     for (let n = 0; n < 20000 && !until(wb.state); n++) {
-        if (wb.state.is_terminal) { document.getElementById('btn-new-game').click(); continue; }
+        if (wb.state.is_terminal) { wb.session.newGame(++seed); wb.refresh(); continue; }
         const m = wb.engine.mask(false), legal = [];
         m.forEach((ok, i) => { if (ok) legal.push(i); });
         wb.sendFlatAction(legal[rnd(legal.length)], 0, true);
