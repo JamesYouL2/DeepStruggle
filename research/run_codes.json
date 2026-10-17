@@ -1372,6 +1372,31 @@
      "region_swing"
     ]
    }
+  },
+  "D2": {
+   "description": "P34 revision 2: D1's sibling slice alone, relabelled under keyed chance (bindings/keyed_chance.hpp): the same 50,000 positions x top-4 candidates x 16 keyed worlds, each row's leaf the rollout root's own (stop=earlier, leaf=own, 4 boundaries); no main labels",
+   "flags": {
+    "temperature": 0.25,
+    "keep": 8,
+    "candidates": 4,
+    "holdout": 0.05,
+    "worlds": 0,
+    "stop": "game",
+    "safe": true,
+    "siblings": 50000,
+    "sibling_worlds": 16,
+    "sibling_k": 4,
+    "leaf_horizon": 4,
+    "labels": [
+     "score",
+     "final_vp",
+     "turn_vp",
+     "turn_defcon",
+     "region_swing"
+    ],
+    "chance": "keyed",
+    "main": false
+   }
   }
  }
 }
