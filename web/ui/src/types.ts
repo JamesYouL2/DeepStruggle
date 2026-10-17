@@ -124,6 +124,13 @@ export interface GameState {
   view_hidden_decision?: boolean;
   /** A player's view: what the other side's latest turn did to the map (game/last_turn.ts). */
   last_turn?: LastTurn | null;
+  /** The latest action round's die rolls while still recent (game/rolls.ts, set by main.ts). */
+  recent_rolls?: RecentRoll[];
+}
+
+/** A die roll and when it was made ("T3 AR4", "T2 Headline"). */
+export interface RecentRoll extends DieRollState {
+  when: string;
 }
 
 /** One country the other side's latest turn changed (influence deltas) or targeted. */
@@ -160,6 +167,7 @@ export interface MapMetadata {
     stability: number;
     battleground: boolean;
     region: string;
+    subregions?: string[];
     superpower_adjacent: string | null;
     neighbours: string[];
     pos: [number, number];

@@ -25,6 +25,7 @@ import { DEFAULT_ROLLOUT, RolloutSpec, parseRolloutParam, rolloutParam } from ".
 import { RolloutRunner } from "./analysis/rollout_runner";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 import { lastTurnOf } from "./game/last_turn";
+import { recentRolls } from "./game/rolls";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
@@ -639,6 +640,9 @@ export class TSApp {
     // A player's view marks what the other side's latest turn did to the map.
     const opp = opponentOf(this.view);
     if (opp && !this.isReplayMode && this.session) shown.last_turn = lastTurnOf(this.session.start, this.session.steps, opp);
+    // The dice of the latest action round, while recent (the engine keeps only the last step's).
+    if (this.isReplayMode) shown.recent_rolls = recentRolls(null, this.replaySteps, this.replayCurrentStep + 1, shown);
+    else if (this.session) shown.recent_rolls = recentRolls(this.session.start, this.session.steps, this.session.steps.length, shown);
     this.shown = shown;
     this.tracksView.render(shown);
     this.mapView.render(shown);

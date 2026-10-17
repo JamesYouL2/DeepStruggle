@@ -1,8 +1,11 @@
-"""What the board says at a glance: the effects that last for this turn, and who controls what.
+"""What the board says at a glance: the effects that last for this turn, who controls what, what
+each region would score, and the latest dice.
 
 The turn's effects sit on top of the map, where they stay in view; the side panel still lists
 everything. A country's controller is carried by the card's fill, because a country that can be
-chosen has its border replaced by the pulsing highlight -- the moment control matters most.
+chosen has its border replaced by the pulsing highlight -- the moment control matters most. Its
+influence markers follow the physical board: US on the left, USSR on the right, a controlling
+marker flipped (white on the side's colour), an empty space blank.
 """
 from __future__ import annotations
 
@@ -97,4 +100,84 @@ def test_the_iranian_hostage_crisis_is_named(browser: Any, site: str) -> None:
     save["persistent_effects"] |= int(ts.EffectBits.IRANIAN_HOSTAGE_CRISIS_PLAY)
     page = _open(browser, site, f"pos={_token(ts.state_from_save_dict(save))}")
     assert "Iranian Hostage Crisis" in page.inner_text("#active-flags-container")
+    page.close()
+
+
+def test_an_empty_space_is_blank_and_the_us_is_on_the_left(browser: Any, site: str, mid_game_token: str) -> None:
+    page = _open(browser, site, f"pos={mid_game_token}")
+    g = ".svg-country-node[data-name='East Germany']"
+    us = page.locator(f"{g} rect.inf-us")
+    ussr = page.locator(f"{g} rect.inf-ussr")
+    assert "empty" in (us.get_attribute("class") or "")
+    assert "empty" not in (ussr.get_attribute("class") or "")
+    assert float(us.get_attribute("x") or 0) < float(ussr.get_attribute("x") or 0)
+    # One number, the USSR's 3, white on red: the marker that controls is flipped.
+    assert page.locator(f"{g} .inf-num").all_text_contents() == ["3"]
+    assert ussr.get_attribute("fill") == "#DC2626"
+    page.close()
+
+
+def test_the_hover_card_says_what_control_costs(browser: Any, site: str, mid_game_token: str) -> None:
+    """East Germany, USSR 3 against stability 3: the US breaks control with 1 point at 2 Ops."""
+    page = _open(browser, site, f"pos={mid_game_token}")
+    page.hover(".svg-country-node[data-name='East Germany'] rect.country-card-bg", force=True)
+    text = page.inner_text("#card-tooltip")
+    assert "USSR controls, with nothing to spare" in text
+    assert "US breaks with +1 (2 Ops), controls with +6 (7 Ops)" in text
+    assert "Adjacent:" in text and "Poland" in text
+    # The neighbours light up and everything else steps back.
+    assert "country-hovering" in (page.get_attribute("#ts-map-svg", "class") or "")
+    assert "hover-neighbour" in (page.get_attribute(".svg-country-node[data-name='Poland']", "class") or "")
+    page.close()
+
+
+def test_a_region_closed_by_defcon_says_no_coups(browser: Any, site: str) -> None:
+    """DEFCON 3 closes Europe and Asia (Southeast Asia with it), not the Middle East."""
+    save = _us_action_round(7).to_save_dict()
+    save["defcon"] = 3
+    page = _open(browser, site, f"pos={_token(ts.state_from_save_dict(save))}")
+    closed = page.eval_on_selector_all(
+        ".svg-region-badge", "gs => gs.filter(g => g.querySelector('.svg-region-defcon')).map(g => g.dataset.region)")
+    assert sorted(closed) == ["ASIA", "EUROPE", "SOUTHEAST ASIA"]
+    page.close()
+
+
+#: From a fixed deal, play random legal moves (a fixed sequence) until a coup has been rolled.
+_PLAY_TO_COUP = """seed => { const wb = window.__wb; let x = seed;
+    wb.session.newGame(seed); wb.refresh();
+    const rnd = () => { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; };
+    for (let n = 0; n < 5000 && !wb.state.is_terminal; n++) {
+        const m = wb.engine.mask(false), legal = [];
+        m.forEach((v, i) => v && legal.push(i));
+        wb.sendFlatAction(legal[Math.floor(rnd() * legal.length)], 0, true);
+        const coup = (wb.shown.recent_rolls || []).find(r => r.type === 'COUP');
+        if (coup) return coup;
+    }
+    return null; }"""
+
+
+def test_the_latest_dice_are_on_the_map(browser: Any, site: str) -> None:
+    """The engine keeps only the last step's roll; the tray reads the rolls from the game's steps."""
+    page = _open(browser, site, "")
+    coup = page.evaluate(_PLAY_TO_COUP, 4242)
+    assert coup, "random play from this deal rolls a coup"
+    row = page.locator("#map-rolls .roll-row[data-type='COUP']").last
+    assert row.is_visible()
+    assert row.locator(".roll-where").inner_text() == coup["country_name"]
+    body = row.locator(".roll-body").inner_text()
+    assert f"= {coup['total1']}" in body.replace("\n", " ") and str(coup["mod2"]) in body
+    assert page.locator(f"#map-rolls .die[aria-label='{coup['roller']} rolls {coup['roll1']}']").count() >= 1
+    node = f".svg-country-node[data-name='{coup['country_name']}']"
+    assert page.get_attribute(node, "data-roll") == "COUP"
+    # Rolls are recent only for their half action round and the next: a turn later, none is older.
+    turn = page.evaluate("window.__wb.state.turn")
+    page.evaluate("""turn => { const wb = window.__wb;
+        for (let n = 0; n < 5000 && !wb.state.is_terminal && wb.state.turn === turn; n++) {
+            const m = wb.engine.mask(false); wb.sendFlatAction(m.findIndex(x => x), 0, true);
+        } }""", turn)
+    now = page.evaluate("window.__wb.state.turn")
+    whens = page.evaluate("(window.__wb.shown.recent_rolls || []).map(r => r.when)")
+    assert all(w.startswith(f"T{now} ") for w in whens), whens
+    if not whens:
+        assert page.locator("#map-rolls").get_attribute("class").split().count("hidden") == 1
     page.close()

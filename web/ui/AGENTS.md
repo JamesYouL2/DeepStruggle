@@ -23,14 +23,17 @@ web/ui/
 │   │                           # names.ts (flat action names), position.ts (link tokens),
 │   │                           # branches.ts (what an event's branch choice means: HUD and log),
 │   │                           # view.ts (the US / USSR player views: what the other side hides),
-│   │                           # last_turn.ts (what the other side's latest turn did to the map)
+│   │                           # last_turn.ts (what the other side's latest turn did to the map),
+│   │                           # rolls.ts (the latest action round's dice, from the steps)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen),
 │   │                           # rollout.ts / rollout_runner.ts / rollout_worker.ts (the rollout root
 │   │                           # in a worker with its own engine and model; bindings/rollout_batch.hpp)
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
-│   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
+│   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence markers, region
+│   │                           # scoring badges, hover card, pan/zoom)
+│   ├── roll_tray.ts            # The map's roll tray: dice faces, modifiers, totals and outcomes
 │   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
 │   ├── tracks_view.ts          # Turn, Action Round, DEFCON, Mil Ops, Space Race, and Victory Points tracks
 │   ├── action_hud.ts           # Decision HUD (branch choices worded by game/branches.ts) and dice selector
@@ -62,19 +65,42 @@ web/ui/
 ## 3. Key Frontend Features & Capabilities
 
 1. **Interactive SVG Deluxe Map (`map_view.ts`)**:
-   - Renders all 84 countries with regional color coding, battleground badges, stability indicators, and US/USSR influence counts.
+   - Each country is a 38x22 box: a band in its region's colour (`REGION_STYLE`; Southeast Asia
+     from `subregions`) with the name and the stability (purple for a battleground), over two
+     **influence markers as on the physical board**: US left, USSR right; a number in the side's
+     colour on white, *flipped* (white on the side's colour, `rect.inf-box` stroked white) when
+     that influence controls the country; an empty space is a faint dashed outline with no
+     number (`influenceMarker`). Long names are shortened (`SHORT_NAMES`) or squeezed.
    - **Control is the card's fill**: blue for a US-controlled country, red for a USSR one, the
      controller's influence box outlined in white (`data-control` on the node). Not the border
      alone, because a legal target's border is replaced by the pulsing highlight.
+   - **Hovering a country** dims the rest of the map, lights its neighbours and the lines to them,
+     and opens a card (`showCountryTooltip`): region, subregions, stability, influence, what each
+     side needs (`controlLine`: control with +n at n Ops; against the other side's control, break
+     with +b at 2b Ops, then control with +c at 2b+(c-b)), the coup target (2x stability) and
+     whether DEFCON closes the region (`coupBlockedAt`), the last turn's change and the
+     neighbours. Influence that changed since the last render flashes once (`.inf-changed`; not
+     on the first render, nor when more than 12 countries changed -- a new position, not a move).
    - Highlights valid country targets with dynamic glowing borders when a `POINT_NODE` decision is active.
-   - Each region's scoring badge has a **scoring-card row** (`scoringCardWhereabouts`, from
+   - Each region's **scoring badge** (104x34 map units, in the region's accent colour, placed
+     clear of every country box and of the turn-effects strip) gives the net VP the scoring card
+     would award now, each side's standing (Pres / Dom / Ctrl and its VP; Southeast Asia has VP
+     only), a `NO COUPS` chip when DEFCON closes the region (`.svg-region-defcon`; Southeast Asia
+     closes with Asia), and a **scoring-card row** (`scoringCardWhereabouts`, from
      `state.card_locations`): `LIVE` while the card is in the draw deck or a hand (or headlined,
      or peeked), `OUT` once discarded or removed, `NOT YET` for a Mid War card before Mid War;
-     the hover tooltip says where exactly. It sits inside the badge because country nodes are
-     drawn over the badges.
+     the hover tooltip says where exactly.
    - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge right of
-     the influence boxes, placed from `rect.inf-us`, so it never covers a number (the HTML badge's
-     CSS stays scoped to `span.trace-choice-badge`, or it reaches the SVG text).
+     the rightmost influence marker, so it never covers a number; its font is sized to fit (not
+     `textLength`, which leaves the measured box at the natural width). The HTML badge's CSS
+     stays scoped to `span.trace-choice-badge`, or it reaches the SVG text.
+   - **The roll tray** (`#map-rolls`, `roll_tray.ts`) shows the latest action round's dice at the
+     top right of the map -- coup, realignment, Space Race, war, Olympics, Summit, trap escape --
+     as die faces in the roller's colour with modifier, total, target and outcome, and the
+     country rolled in carries the die above its box (`.rolled`, `data-roll`). The engine clears
+     `die_roll` at every step, so the rolls come from the steps' snapshots (`game/rolls.ts`,
+     attached by `renderState` as `recent_rolls`, in replays too) and show only during the half
+     action round they were made in and the next (the reply); after that they are the log's.
    - **This turn's effects** (`#map-turn-effects`, `CardsView.renderTurnEffects`) run across the
      top of the map: every flag whose `EFFECT_INFO_MAP` duration is `TURN`, the card's text on
      hover. Permanent and conditional effects, and the Space Race attempt flags, stay in the
@@ -322,7 +348,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_wasm_engine.py` | the WebAssembly engine is the native one: 200 whole games, and display JSON / save JSON / observations / masks at every step of games driven by clicks |
 | `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's and Terrorism's random discards are their own lines, with whether Five Year Plan's event fires; Missile Envy's exchange says the card taken and how it resolves; Chernobyl's options are region names in the HUD and the log |
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
-| `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included) |
+| `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included), an empty influence space blank with the US marker left and the controlling one flipped, the hover card's control arithmetic and neighbour highlight, the `NO COUPS` chip on the regions DEFCON closes, and the roll tray and the rolled country's die (no roll from an earlier turn) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
