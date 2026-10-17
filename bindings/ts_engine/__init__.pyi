@@ -832,6 +832,11 @@ def selftest_digest(games: int) -> tuple[int, int]:
     (digest, steps) over `games` whole games (bindings/selftest.hpp). The WebAssembly build exports the same function, so equal numbers mean the two engines play the same games, position, observation and legal mask alike.
     """
 
+def keyed_key(state: GameState, world_key: int) -> GameState:
+    """
+    A copy of `state` keyed for its next engine step (bindings/keyed_chance.hpp): rng_state set to hash(world_key, situation) and, at the turn's end, the next deal forced from the world's deck order. What the batches' keyed=True does before every step; a reference playout calls it the same way.
+    """
+
 def state_size() -> int:
     """Bytes of one GameState: the row width of raw_bytes() arrays."""
 
@@ -862,7 +867,10 @@ class PlayoutLabels:
     P34's playout labeller: queued positions dealt into `worlds` worlds from the mover's view, fresh dice each, played greedily to the game's end by the caller's network under the safe-playout rule, with outcome capture (bindings/playout_labels.hpp). Batching is continuous: fill_live(obs) -> logits -> step(logits) until idle(), collecting take_positions() / take_siblings() as they finish.
     """
 
-    def __init__(self, features: int = 0, worlds: int = 32, capacity: int = 16384, seed: int = 0, safe: bool = True, leaf_horizon: int = 0, max_plies: int = 8000) -> None: ...
+    def __init__(self, features: int = 0, worlds: int = 32, capacity: int = 16384, seed: int = 0, safe: bool = True, leaf_horizon: int = 0, max_plies: int = 8000, keyed: bool = False) -> None:
+        """
+        keyed=True ties every draw to the situation it is made in (bindings/keyed_chance.hpp): a world's candidates draw the same dice and cards wherever they reach the same situation.
+        """
 
     def enqueue_raw(self, states: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)], ids: Annotated[NDArray[numpy.int64], dict(shape=(None,), order='C', device='cpu', writable=False)], candidates: Annotated[NDArray[numpy.int32], dict(shape=(None, None), order='C', device='cpu', writable=False)] | None = None) -> None:
         """
@@ -935,7 +943,7 @@ class RolloutBatch:
     The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries (stop='boundaries', the default), to the end of the decision's turn ('turn'), or to the later of the two ('later'), and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).
     """
 
-    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0, stop: str = 'boundaries', leaf: str = 'mover') -> None: ...
+    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0, stop: str = 'boundaries', leaf: str = 'mover', keyed: bool = False) -> None: ...
 
     def add(self, base: GameState, candidates: Sequence[int], worlds: int) -> int:
         """

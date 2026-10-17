@@ -372,10 +372,10 @@ def run_label(a: argparse.Namespace) -> int:
     cand = pos["cand"][mine]
     t0 = time.time()
 
-    labellers = [ts.PlayoutLabels(features=features, worlds=a.worlds, capacity=a.capacity, seed=a.seed)
-                 for _ in range(2)]
+    labellers = [ts.PlayoutLabels(features=features, worlds=a.worlds, capacity=a.capacity, seed=a.seed,
+                                  keyed=a.keyed) for _ in range(2)]
     sib_labellers = [ts.PlayoutLabels(features=features, worlds=a.sibling_worlds, capacity=a.capacity,
-                                      seed=a.seed + 1, leaf_horizon=a.leaf_horizon) for _ in range(2)]
+                                      seed=a.seed + 1, leaf_horizon=a.leaf_horizon, keyed=a.keyed) for _ in range(2)]
     streams = policy_streams(device) if device.type == "cuda" else None
     policies = [GraphedPolicy(model, a.capacity, labellers[0].obs_width(), device, graphs=not a.no_graphs,
                               streams=streams, codes=not a.float_upload) for _ in range(2)]
@@ -443,7 +443,7 @@ def run_label(a: argparse.Namespace) -> int:
     meta = {"stage": "label", "labeller": model_id, "labeller_sha256": sha256(pathlib.Path(path)),
             "engine": engine, "part": f"{part}/{parts}", "seed": a.seed, "worlds": a.worlds, "safe": True,
             "siblings": a.siblings, "sibling_worlds": a.sibling_worlds, "sibling_k": a.sibling_k,
-            "leaf_horizon": a.leaf_horizon, "capacity": a.capacity, "device": str(device),
+            "leaf_horizon": a.leaf_horizon, "keyed": a.keyed, "capacity": a.capacity, "device": str(device),
             "torch": torch.__version__, "cuda_graphs": not a.no_graphs, "code_upload": not a.float_upload,
             "network_rows": int(rows + srows), "seconds": round(t_all, 1)}
     file.with_suffix(".json").write_text(json.dumps(meta, indent=2) + "\n")
@@ -529,7 +529,9 @@ def labelling_signature(pmeta: Dict[str, Any], lmeta: Dict[str, Any]) -> Dict[st
             "holdout": pmeta["holdout"], "worlds": lmeta["worlds"], "stop": "game", "safe": lmeta["safe"],
             "siblings": lmeta["siblings"], "sibling_worlds": lmeta["sibling_worlds"],
             "sibling_k": lmeta["sibling_k"], "leaf_horizon": lmeta["leaf_horizon"],
-            "labels": ["score", "final_vp", "turn_vp", "turn_defcon", "region_swing"]}
+            "labels": ["score", "final_vp", "turn_vp", "turn_defcon", "region_swing"],
+            # keyed chance (bindings/keyed_chance.hpp); recorded only when on, so D1 keeps its code
+            **({"chance": "keyed"} if lmeta.get("keyed") else {})}
 
 
 def run_merge(a: argparse.Namespace) -> int:
@@ -631,6 +633,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     la.add_argument("--sibling-k", type=int, default=4)
     la.add_argument("--leaf-horizon", type=int, default=0,
                     help="sibling leaves: boundaries before the mover's own decision is the leaf (0: the next one)")
+    la.add_argument("--keyed", action="store_true",
+                    help="keyed chance: each world's dice and deals tied to their situation, so siblings draw alike")
     la.add_argument("--capacity", type=int, default=16384, help="rows per labeller batch")
     la.add_argument("--seed", type=int, default=44)
     la.add_argument("--part", type=_part, default=(0, 1))

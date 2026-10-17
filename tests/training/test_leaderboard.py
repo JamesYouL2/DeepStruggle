@@ -490,6 +490,25 @@ def test_a_rollout_players_leaf_net_is_a_registered_network_named_only_when_set(
     assert any("leaf_net" in e and "not in networks.json" in e for e in lb.validate(board))
 
 
+def test_a_rollout_players_chance_is_named_only_when_keyed() -> None:
+    """`chance=keyed` (bindings/keyed_chance.hpp) is spelled in the id and the agent string, and the
+    rollout root reads it; ids without it keep meaning the shared-stream root."""
+    one = "E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own)"
+    net, spec = parse_player_id(one)
+    assert isinstance(spec, Rollout) and spec.chance == "shared" and player_id(net, spec) == one
+    keyed = one[:-1] + ",chance=keyed)"
+    net, spec = parse_player_id(keyed)
+    assert isinstance(spec, Rollout) and spec.chance == "keyed" and player_id(net, spec) == keyed
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed"
+    path, cfg, label = rollout_spec_config(agent)
+    assert cfg.keyed and path == "m.pt" and "keyed" in label
+    assert not rollout_spec_config(load_spec(parse_player_id(one)[1], "m.pt"))[1].keyed
+    with pytest.raises(PlayerSpecError):
+        parse_player_id(one[:-1] + ",chance=fresh)")
+
+
 def test_an_epochs_strong_tier_must_be_main_players() -> None:
     """epochs.json's optional `strong` list: distinct main players, or validate reports it."""
     board = lb.load()

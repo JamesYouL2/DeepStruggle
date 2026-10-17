@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstring>
 
+#include "keyed_chance.hpp"
 #include "rollout_batch.hpp"   // determinize, acting_player
 #include "ts/action_mask.hpp"
 #include "ts/engine.hpp"
@@ -143,15 +144,17 @@ void PlayoutLabels::start_row(uint32_t slot, const Entry& e, const GameState& wo
     r.candidate = c;
     r.occupied = true;
     r.guarding = cfg_.safe;
+    r.world_key = world.rng_state;
     if (candidate != nullptr) {
         // The candidate is forced, not chosen: the safe rule applies from the next decision on, as
         // play_safe does after paired_playouts.apply_move.
         Tapped tap(r.tap);
+        if (cfg_.keyed) keyed::key(r.state, r.world_key);
         if (!Engine::step_flat(r.state, *candidate)) {
             r.failed = r.done = true;
             return;
         }
-        Engine::auto_advance_step(r.state);
+        advance(r);
     }
     r.key_turn = r.state.turn;
     r.key_round = r.state.action_round;
@@ -372,13 +375,19 @@ void PlayoutLabels::finish(Row& r, const Entry& e) {
     r.done = true;
 }
 
+void PlayoutLabels::advance(Row& r) const noexcept {
+    if (cfg_.keyed) keyed::advance(r.state, r.world_key);
+    else Engine::auto_advance_step(r.state);
+}
+
 bool PlayoutLabels::play(uint32_t slot, const Entry& e, uint16_t a) {
     Row& r = rows_[slot];
     bool ok = a != UINT16_MAX;
     if (ok) {
         Tapped tap(r.tap);
+        if (cfg_.keyed) keyed::key(r.state, r.world_key);
         ok = Engine::step_flat(r.state, a);
-        if (ok) Engine::auto_advance_step(r.state);
+        if (ok) advance(r);
     }
     if (!ok || ++r.plies > cfg_.max_plies) {
         r.failed = r.done = true;
@@ -411,6 +420,7 @@ void PlayoutLabels::step(const float* logits) {
         const uint32_t slot = live_[j];
         Row& r = rows_[slot];
         const Entry& e = entries_[r.entry];
+        if (cfg_.keyed) keyed::key(r.state, r.world_key);   // the safe rule's probes see the same draws
         if (!play(slot, e, choose(r, logits + j * A))) return;
         ++r.chosen;
         settle(slot, e);

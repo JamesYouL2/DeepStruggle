@@ -75,6 +75,7 @@ struct Config {
     bool safe = true;           // the safe-playout rule in the position's own action round
     int leaf_horizon = 0;       // sibling leaves: boundaries before the mover's own decision is the leaf
     uint32_t max_plies = 8000;  // a world still running after this many decisions is a failure
+    bool keyed = false;         // keyed chance (keyed_chance.hpp): a world's candidates draw alike
 };
 
 // One world's labels, from the mover's side.
@@ -93,6 +94,7 @@ struct Row {
     uint16_t world = 0;
     uint16_t candidate = 0;
     uint32_t plies = 0;
+    uint64_t world_key = 0;     // keyed chance: the world's key
     uint8_t crossed = 0;        // action-round boundaries since the candidate (leaf horizon)
     uint8_t key_turn = 0, key_round = 0;
     Player key_phasing = Player::NONE;
@@ -192,6 +194,7 @@ private:
     void start_row(uint32_t slot, const Entry& e, const GameState& world, uint32_t entry, uint16_t w, uint16_t c,
                    const uint16_t* candidate);
     bool play(uint32_t slot, const Entry& e, uint16_t action);
+    void advance(Row& r) const noexcept;
     void settle(uint32_t slot, const Entry& e);
     void after_step(uint32_t slot, const Entry& e);
     void finish(Row& r, const Entry& e);

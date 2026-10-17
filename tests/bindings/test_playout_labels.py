@@ -59,14 +59,19 @@ def _drive(pl: ts.PlayoutLabels) -> None:
         assert steps < 20000
 
 
-def _reference(base: ts.GameState, world: ts.GameState) -> Tuple[float, int, int, int, ts.GameState]:
-    """One world played the way play_safe plays it, recording what the labeller records."""
+def _reference(base: ts.GameState, world: ts.GameState,
+               keyed: bool = False) -> Tuple[float, int, int, int, ts.GameState]:
+    """One world played the way play_safe plays it, recording what the labeller records. With `keyed`
+    every engine step is keyed first (ts.keyed_key, the world's rng_state its key), as keyed=True does."""
     mover = decider(base)
     key = ar_key(base)
     st = world.clone()
+    world_key = int(world.rng_state)
     guarding = True
     turn: Optional[Tuple[int, int]] = None
     while not ts.Engine.is_terminal(st):
+        if keyed:
+            st = ts.keyed_key(st, world_key)
         mask = np.asarray(ActionEncoder.get_legal_mask(st)).copy()
         if guarding:
             if ar_key(st) != key or decider(st) != mover:
@@ -80,7 +85,13 @@ def _reference(base: ts.GameState, world: ts.GameState) -> Tuple[float, int, int
         obs = np.asarray(ts.extract_observation(st, decider(st)))[None]
         a = int(_act(obs, mask[None])[0])
         ts.Engine.step_flat(st, a)
-        ts.Engine.auto_advance_step(st)
+        if keyed:
+            while not ts.Engine.is_terminal(st):
+                st = ts.keyed_key(st, world_key)
+                if ts.Engine.auto_advance_step(st, 1) == 0:
+                    break
+        else:
+            ts.Engine.auto_advance_step(st)
         if turn is None and (ts.Engine.is_terminal(st) or st.turn != base.turn):
             turn = (int(st.victory_points), int(st.defcon))
     assert turn is not None
@@ -193,3 +204,41 @@ def test_a_terminal_position_or_an_illegal_candidate_is_refused() -> None:
     with pytest.raises(ValueError):
         pl.enqueue([base], [0], [[illegal]])
     assert pl.queued() == 0
+
+
+def test_a_keyed_world_is_the_keyed_python_playout_of_it_and_deals_cleanly(capfd: pytest.CaptureFixture[str]) -> None:
+    """keyed=True: every world equals a Python playout that keys each engine step the same way, and
+    the deals forced from the world's deck order never name a card the deck lacks (the engine would
+    report an anomaly) -- across whole games, turn ends and era changes included."""
+    positions = _positions(6, seed=12)
+    worlds = 3
+    pl = ts.PlayoutLabels(worlds=worlds, capacity=8, seed=5, keyed=True)
+    pl.enqueue(positions, list(range(len(positions))))
+    _drive(pl)
+    got = pl.take_positions()
+    for row, pid in enumerate(got["id"].tolist()):
+        base = positions[pid]
+        ref = [_reference(base, pl.world(base, pid, w), keyed=True) for w in range(worlds)]
+        s = got["sums"][row]
+        assert s[0] == pytest.approx(sum(r[0] for r in ref))
+        assert s[2] == pytest.approx(sum(r[1] for r in ref))
+        assert s[3] == pytest.approx(sum(r[2] for r in ref))
+    sib = ts.PlayoutLabels(worlds=8, capacity=64, seed=3, keyed=True)
+    for i, st in enumerate(_positions(4, seed=13)):
+        legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
+        if legal.size >= 2:
+            sib.enqueue([st], [i], [[int(legal[0]), int(legal[1])]])
+    _drive(sib)
+    assert sib.take_siblings()["id"].size > 0
+    assert "anomaly" not in capfd.readouterr().err
+
+
+def test_keying_is_a_function_of_the_situation() -> None:
+    """Two copies of one position key to the same stream; another world key, or another situation, does not."""
+    st = _positions(1, seed=14)[0]
+    a, b = ts.keyed_key(st, 99), ts.keyed_key(st.clone(), 99)
+    assert a.rng_state == b.rng_state
+    assert ts.keyed_key(st, 98).rng_state != a.rng_state
+    other = _positions(1, seed=15)[0]
+    assert ts.keyed_key(other, 99).rng_state != a.rng_state
+

@@ -68,6 +68,9 @@ class Rollout:
     leaf: str = "mover"
     #: The registered network that reads the leaves (P34's evaluator); "" = the root's own network.
     leaf_net: str = ""
+    #: How a world's randomness is shared by its candidates: "shared" (one dice stream, the measured
+    #: root) or "keyed" (each draw tied to its situation, bindings/keyed_chance.hpp).
+    chance: str = "shared"
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,9 @@ _STOPS: Final = ("boundaries", "turn", "later", "earlier", "predeal", "earlier_p
 _LEAVES: Final = ("mover", "decider", "own")
 #: Fields added to a kind after ids using it were published, with the value those ids meant. They are
 #: written into an id or a stored spec only when they differ from it.
-LATE_FIELDS: Final[Dict[str, Dict[str, str]]] = {"rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": ""}}
+LATE_FIELDS: Final[Dict[str, Dict[str, str]]] = {"rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "",
+                                                            "chance": "shared"}}
+_CHANCES: Final = ("shared", "keyed")
 #: Characters a leaf_net name may not hold: the id grammar's own separators.
 _LEAF_NET_BAD: Final = frozenset("(),~:= ")
 #: ai.search.rollout_root.parse_rule's grammar, without importing it (torch-free here).
@@ -148,6 +153,8 @@ def _check(spec: Inference) -> None:
             raise PlayerSpecError(f"stop must be one of {_STOPS}, got {spec.stop!r}")
         if spec.leaf not in _LEAVES:
             raise PlayerSpecError(f"leaf must be one of {_LEAVES}, got {spec.leaf!r}")
+        if spec.chance not in _CHANCES:
+            raise PlayerSpecError(f"chance must be one of {_CHANCES}, got {spec.chance!r}")
         if set(spec.leaf_net) & _LEAF_NET_BAD:
             raise PlayerSpecError(f"leaf_net may not contain any of {''.join(sorted(_LEAF_NET_BAD))!r} "
                                   f"(register the evaluator under a plain name): {spec.leaf_net!r}")
@@ -283,6 +290,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str], leaf_checkpoint: Optio
         return f"gumbel:{checkpoint}:{spec.sims}:{spec.k}:{_fmt(spec.fpu)}"
     if isinstance(spec, Rollout):
         tail = (f":{spec.stop}" if spec.stop != "boundaries" else "") + (f":{spec.leaf}" if spec.leaf != "mover" else "")
+        tail += ":keyed" if spec.chance == "keyed" else ""
         if spec.leaf_net:
             if not leaf_checkpoint:
                 raise PlayerSpecError(f"leaf_net={spec.leaf_net} needs its checkpoint file")

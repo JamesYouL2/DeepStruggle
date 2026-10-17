@@ -142,6 +142,16 @@ are cited from elsewhere; keep them.
   stored states' observations for the value fit). `world(base, id, w)` reproduces a world, which is how
   `tests/bindings/test_playout_labels.py` holds every world equal to a step-by-step Python
   `play_safe` playout of it.
+- [`keyed_chance.hpp`](keyed_chance.hpp): **keyed chance**, both batches' `keyed=True` (off by
+  default; the rollout player's `chance=keyed`). Before every engine step `rng_state` is set to
+  hash(world key, situation) -- turn, action round, phasing side, phase, decision, staged roll with
+  its target and roller, steps left, resolving card -- so a world's candidates draw the same dice and
+  event cards wherever they reach the same situation; at the turn's end the next deal is forced
+  (the engine's forced-deal slots) from one card priority order per world, with one card in reserve
+  per hand for the Space Walk discard. A single continuation plays the same game distribution; only
+  the coupling between continuations changes. Measured on P34's sibling slice: two candidates'
+  results in one world correlate at 0.39 keyed against 0.22 with the shared stream.
+  `ts.keyed_key(state, key)` is the keying step, for references and tests.
 - [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).
 - [`settle.py`](settle.py): `SettleMode`, the one rule for how far past decisions nobody controls
   the engine is advanced. Settlers that stop at different depths put two components on different

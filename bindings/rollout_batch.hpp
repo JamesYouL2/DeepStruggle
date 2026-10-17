@@ -76,6 +76,10 @@ struct Config {
     uint32_t features = 0;      // obs_features bits the network reads (0: the base layout)
     Stop stop = Stop::kBoundaries;
     Leaf leaf = Leaf::kMover;
+    // Keyed chance (keyed_chance.hpp): every draw tied to the situation it is made in, so a world's
+    // candidates draw the same dice and cards wherever they reach the same situation. Implies one
+    // key per world for every candidate (shared_dice is then not read).
+    bool keyed = false;
 };
 
 struct Row {
@@ -89,6 +93,7 @@ struct Row {
     bool parked = false;        // stopped at the turn-end park (Stop::kPredeal / kEarlierPredeal)
     Player phasing;
     Phase phase;
+    uint64_t world_key = 0;     // keyed chance: the world's key
     bool done, terminal, leaf_valued, refused;
     float value;                // from the mover's side, once terminal or valued
 };

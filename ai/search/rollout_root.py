@@ -78,6 +78,10 @@ class RolloutConfig:
     #: searcher's measurement), so the search is not bit-identical to the eager one. What it buys is
     #: the time to launch ~20 small kernels per ply on the one thread every ply waits for.
     cuda_graphs: bool = False
+    #: Keyed chance (bindings/keyed_chance.hpp): each world's dice and deals tied to the situation they
+    #: are drawn in, so its candidates draw alike wherever they reach the same one -- a tighter paired
+    #: lead for the same worlds. The measured root shares one dice stream per world instead.
+    keyed: bool = False
 
 
 class _GraphedForward:
@@ -133,12 +137,14 @@ class _GraphedForward:
         return logits[:k].cpu().numpy(), values[:k].cpu().numpy()
 
 
-def _stop_kw(cfg: RolloutConfig) -> Dict[str, str]:
+def _stop_kw(cfg: RolloutConfig) -> Dict[str, Any]:
     """The batch's `stop` and `leaf` arguments, each passed only when it is not the default -- so an
     engine build from before they existed still runs the measured root."""
-    kw = {} if cfg.stop == "boundaries" else {"stop": cfg.stop}
+    kw: Dict[str, Any] = {} if cfg.stop == "boundaries" else {"stop": cfg.stop}
     if cfg.leaf_side != "mover":
         kw["leaf"] = cfg.leaf_side
+    if cfg.keyed:
+        kw["keyed"] = True
     return kw
 
 
@@ -492,6 +498,8 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             continue                                   # rollout_spec_config reads the leaf side
         elif p == "graphs":
             graphs = True
+        elif p == "keyed":
+            continue                                   # rollout_spec_config reads it
         else:
             leaf = p
     return stop, leaf, graphs
@@ -504,7 +512,7 @@ def rollout_spec_leaf(spec: str) -> Optional[str]:
 
 
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:graphs][:leaf checkpoint]]]]] ->
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed][:graphs][:leaf checkpoint]]]]] ->
     (checkpoint, config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries,
     the mover's side), the stop one of STOPS, `decider` reads each leaf from its decider's side, `own`
     plays on to the mover's next decision, and the leaf checkpoint is `rollout_spec_leaf`'s."""
@@ -520,7 +528,7 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     side = next((p for p in parts[6:] if p in LEAF_SIDES), "mover")
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
                         horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs,
-                        leaf_side=side)
+                        leaf_side=side, keyed="keyed" in parts[6:])
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
@@ -528,4 +536,5 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
                   "predeal": "-predeal", "earlier_predeal": "-untilpredeal"}[cfg.stop]
     horizon = "" if cfg.stop in ("turn", "predeal") else f"-h{cfg.horizon}"
     side_label = {"mover": "", "decider": "-dleaf", "own": "-ownleaf"}[cfg.leaf_side]
-    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}-{cfg.rule}"
+    keyed = "-keyed" if cfg.keyed else ""
+    return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}{keyed}-{cfg.rule}"

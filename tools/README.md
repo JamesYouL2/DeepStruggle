@@ -270,6 +270,8 @@ greedy policy; otherwise `<network>~<kind>(<field>=<value>,...)` with every fiel
 `...~search(...)`, `...~policy(temperature=0.5)`; bots are `HeuristicBot` / `RandomBot`. A rollout
 root whose leaves another network reads (P34's evaluator) names it: `...~rollout(...,leaf=own,leaf_net=<network>)`;
 the evaluator is a registered network like any other (its file and sha256 are checked the same way).
+`chance=keyed` ties each world's dice and deals to the situation they are drawn in
+(`bindings/keyed_chance.hpp`), so the candidates' playouts stay paired longer than on one shared stream.
 
 **The fit** is Bradley-Terry with a US-seat term, draws half a win, in two stages: the main players
 among themselves (anchor pinned), then everyone else against them held fixed. Games without a main
@@ -762,6 +764,10 @@ PYTHONPATH=.:build/release .venv/bin/python tools/value_labels.py merge --dir <d
 budget a world). `merge` then reports `exact.bias`, the mean of (label - exact value) over positions
 solved in every world -- what the labels inherit from the generator's greedy follow-up -- with the
 solved count, since the solvable positions are the simpler ones.
+
+`label --keyed` plays the worlds under keyed chance (`bindings/keyed_chance.hpp`): the sibling
+slice's candidates then correlate at 0.39 within a world instead of 0.22. It is part of the labelling
+recipe, so it takes its own D code.
 
 The D code is derived, not chosen: `merge` hands the labelling settings to
 `tools/scripts/run_codes.py`'s `labelling_code`, which finds their code under `labellings` in

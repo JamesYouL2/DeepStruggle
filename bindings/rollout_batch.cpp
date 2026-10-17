@@ -11,6 +11,7 @@
 #include <string>
 #include <utility>
 
+#include "keyed_chance.hpp"
 #include "ts/action_mask.hpp"
 #include "ts/engine.hpp"
 #include "ts/observation.hpp"
@@ -139,13 +140,15 @@ bool RolloutBatch::at_stop(const Row& r) const noexcept {
 
 void RolloutBatch::advance(Row& r) const noexcept {
     if (cfg_.stop != Stop::kPredeal && cfg_.stop != Stop::kEarlierPredeal) {
-        Engine::auto_advance_step(r.state);
+        if (cfg_.keyed) keyed::advance(r.state, r.world_key);
+        else Engine::auto_advance_step(r.state);
         return;
     }
     // One chance node at a time, so the park is seen before it drains; it stops where the full drain
     // would otherwise.
     for (size_t k = 0; k < 256; ++k) {
         if (at_turn_cleanup(r.state)) { r.parked = true; return; }
+        if (cfg_.keyed) keyed::key(r.state, r.world_key);
         if (Engine::auto_advance_step(r.state, 1) == 0) return;
     }
 }
@@ -183,7 +186,7 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
     for (size_t w = 0; w < worlds; ++w) {
         GameState world = base;
         if (!Engine::is_terminal(world)) determinize(world, mover, rng_);
-        if (cfg_.shared_dice) world.rng_state = Prng::next_u64(rng_);
+        if (cfg_.shared_dice || cfg_.keyed) world.rng_state = Prng::next_u64(rng_);
         uint8_t wm[A];
         ActionMask::generate_flat_mask_212(world, wm);
         bool all_legal = true;
@@ -193,12 +196,14 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
         for (size_t c = 0; c < k; ++c) {
             Row r{};
             r.state = world;
-            if (!cfg_.shared_dice) r.state.rng_state = Prng::next_u64(rng_);
+            if (!cfg_.shared_dice && !cfg_.keyed) r.state.rng_state = Prng::next_u64(rng_);
             r.position = position;
             r.world = world_index;
             r.candidate = static_cast<uint16_t>(c);
             r.start_turn = base.turn;
             r.value = std::numeric_limits<float>::quiet_NaN();
+            r.world_key = world.rng_state;
+            if (cfg_.keyed) keyed::key(r.state, r.world_key);
             if (!Engine::step_flat(r.state, candidates[c])) {
                 r.refused = r.done = true;
             } else {
@@ -293,6 +298,7 @@ void RolloutBatch::step(const float* logits) {
             if (mask[a] && (best < 0 || lg[a] > lg[best])) best = static_cast<int>(a);
         }
         if (best < 0) { r.refused = r.done = true; return; }
+        if (cfg_.keyed) keyed::key(r.state, r.world_key);   // the guard's probes see the same draws
         const uint16_t a = guarded_choice(r.state, lg, mask, static_cast<uint16_t>(best));
         if (!Engine::step_flat(r.state, a)) { r.refused = r.done = true; return; }
         settle_and_mark(r);

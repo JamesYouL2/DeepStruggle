@@ -321,8 +321,7 @@ def leaf_perspective(model: Any, device: Any, states: Sequence[ts.GameState], ch
             part = list(states[lo:lo + chunk])
             lg, masks, _ = root._forward(part)
             lg = np.ascontiguousarray(lg, dtype=np.float32)
-            kw = {} if stop == "boundaries" else {"stop": stop}
-            batch = ts.RolloutBatch(horizon=4, shared_dice=True, guard=True, features=feats, seed=11 + lo, **kw)
+            batch = ts.RolloutBatch(horizon=4, shared_dice=True, guard=True, features=feats, seed=11 + lo, stop=stop)
             movers: List[int] = []
             for i, st in enumerate(part):
                 c = ts.rollout_candidates(lg[i], masks[i], 4)
