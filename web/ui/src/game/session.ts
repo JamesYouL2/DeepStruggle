@@ -112,7 +112,8 @@ export class GameSession {
     // The dice: every roll the click made, in order, not only the last one a state keeps.
     const lines = describeActionAndDeltas(this.engine, before, { ...end, die_roll: undefined }, a);
     const mover = before.decision_context?.decision_player ?? "NONE";
-    for (const r of this.engine.clickRolls()) lines.push(...describeRoll(this.engine, before, r, mover));
+    const rolls = this.engine.clickRolls();
+    for (const r of rolls) lines.push(...describeRoll(this.engine, before, r, mover));
     const main = lines[0] ?? `Action type=${a.decision_type}`;
     const phase = before.current_phase_name ?? "ACTION";
     const ar = phase === "HEADLINE" || phase === "SETUP" ? 0 : before.action_round;
@@ -133,7 +134,7 @@ export class GameSession {
     this.steps.push({
       step_index: this.stepIndex, turn: before.turn, ar, phase, player,
       action: { decision_type: a.decision_type, primary_id: a.primary_id, secondary_id: a.secondary_id, flags: a.flags },
-      description: main, state_snapshot: after,
+      description: main, state_snapshot: after, rolls,
     });
 
     if (this.engine.isTerminal()) {

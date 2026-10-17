@@ -341,17 +341,18 @@ export function htmlBadge(p: number, mark: BadgeMark, note?: string): HTMLElemen
 }
 
 /**
- * A country's probability, small, in the free corner right of its influence boxes: placed from
- * the US box (`rect.inf-us`, the rightmost one, map_view.ts) so it can never cover a number.
+ * A country's probability, small, in the free corner right of its influence markers: placed from
+ * the rightmost marker (`rect.inf-box`, map_view.ts) so it can never cover a number.
  */
 export function svgBadge(g: Element, p: number, played: boolean, note?: string): void {
   const rect = g.querySelector("rect.country-card-bg");
-  const inf = g.querySelector("rect.inf-us");
-  if (!rect || !inf) return;
+  const boxes = [...g.querySelectorAll("rect.inf-box")];
+  if (!rect || !boxes.length) return;
   const num = (e: Element, a: string) => parseFloat(e.getAttribute(a) || "0");
-  const right = num(rect, "x") + num(rect, "width") - 1.0;
-  const x = num(inf, "x") + num(inf, "width") + 1.4;
-  const w = right - x, h = 4.4;
+  const inf = boxes.reduce((a, b) => (num(b, "x") > num(a, "x") ? b : a));
+  const right = num(rect, "x") + num(rect, "width") - 0.9;
+  const x = num(inf, "x") + num(inf, "width") + 1.0;
+  const w = right - x, h = 5.6;
   const y = num(inf, "y") + (num(inf, "height") - h) / 2;
 
   const NS = "http://www.w3.org/2000/svg";
@@ -370,12 +371,14 @@ export function svgBadge(g: Element, p: number, played: boolean, note?: string):
   const text = document.createElementNS(NS, "text");
   text.setAttribute("class", "trace-choice-badge");
   text.setAttribute("x", (x + w / 2).toString());
-  text.setAttribute("y", (y + h / 2 + 0.9).toString());
+  text.setAttribute("y", (y + h / 2 + 1.15).toString());
   text.setAttribute("text-anchor", "middle");
   text.setAttribute("fill", played ? "#FDE68A" : "#E2E8F0");
-  text.setAttribute("font-size", "2.6");
-  text.setAttribute("font-weight", "bold");
   text.textContent = fmtP(p);
+  // As large as fits: bold digits run to about 0.62 em. (Not textLength, which squeezes the glyphs
+  // but leaves the text's measured box at its natural width.)
+  text.setAttribute("font-size", Math.min(3.1, (w - 0.4) / (text.textContent.length * 0.62)).toFixed(2));
+  text.setAttribute("font-weight", "bold");
   if (note) {
     const title = document.createElementNS(NS, "title");
     title.textContent = `${fmtP(p)} -- ${note}`;

@@ -1,4 +1,4 @@
-import { GameState } from "./types";
+import { DieRollState, GameState } from "./types";
 
 /** One legal action and the probability the policy put on it. */
 export interface PolicyChoice {
@@ -51,6 +51,8 @@ export interface ReplayStep {
   action: any;
   description: string;
   state_snapshot: GameState;
+  /** Every die the step rolled, in order (the live session's; a replay file's step has only its snapshot). */
+  rolls?: DieRollState[];
   policy?: PolicyTrace;
   critic?: CriticTrace;
 }
