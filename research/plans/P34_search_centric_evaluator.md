@@ -318,7 +318,12 @@ keyed from now on.
    playout's moves, or the rollout root for the first decisions of each playout then greedy, at 64
    keyed worlds; ~100× a greedy label, about half a day of GPU. The exact slice re-run under D3 is
    the direct check that the follow-up gap (16 points) closed. Fit on D1 + D3 with the contested
-   rows weighted; read as in 3.
+   rows weighted; read as in 3. **Worlds are set by reliability, not by cost** (from step 3's
+   finding): the split-half reliability of D2's centred candidate means is 0.41 at 16 keyed worlds,
+   so no evaluator can correlate with them above 0.64, where the RL critic already sits. By
+   Spearman–Brown 64 keyed worlds give ~0.74 (ceiling 0.86) and 128 give ~0.85 (ceiling 0.92).
+   D3 reports its split-half reliability and uses enough worlds for a ceiling of at least 0.85, so
+   that a follow-up effect is not hidden under world noise the way the sibling slice's was.
 5. **Judge the direction on step 4.** The leak-pair ranking moves and the searched rating beats the
    keyed root by clearly more than +10 → the generation loop runs, and the capacity question is
    re-asked cheaply with a deep variant **grown from the RL trunk at identity** (new residual blocks
