@@ -362,11 +362,13 @@ class SearchFollow:
 
     SELECT_CARD = int(ts.DecisionType.SELECT_CARD)
 
-    def __init__(self, model: Any, device: torch.device, worlds: int, window: int, seed: int) -> None:
-        self.root = RolloutRoot(model, RolloutConfig(k=4, worlds=worlds, horizon=4, rule="z2", seed=seed,
+    def __init__(self, model: Any, device: torch.device, worlds: int, window: int, seed: int,
+                 rule: str = "z2") -> None:
+        self.root = RolloutRoot(model, RolloutConfig(k=4, worlds=worlds, horizon=4, rule=rule, seed=seed,
                                                      stop="earlier", leaf_side="own", keyed=True), device=device)
         self.window = window
         self.searched = 0
+        self.deviated = 0       # searched decisions where the root's move is not the network's own
 
     def __call__(self, pl: Any) -> Optional[np.ndarray]:
         info = pl.listed_info()
@@ -376,6 +378,8 @@ class SearchFollow:
         if want.size == 0:
             return None
         picks = self.root.choose([pl.listed_state(int(j)) for j in want])
+        self.deviated += sum(1 for p, st in zip(picks, self.root.last_stats)
+                             if st["candidates"] and p != st["candidates"][0])
         forced = np.full(info.shape[0], -1, dtype=np.int32)
         forced[want] = np.asarray(picks, dtype=np.int32)
         self.searched += int(want.size)
@@ -480,7 +484,8 @@ def run_label(a: argparse.Namespace) -> int:
         if got["id"].size:
             sib_out.append(got)
 
-    follow = SearchFollow(model, device, a.search_worlds, a.search_window, a.seed) if a.follow == "search" else None
+    follow = (SearchFollow(model, device, a.search_worlds, a.search_window, a.seed, a.search_rule)
+              if a.follow == "search" else None)
     rows = 0 if a.no_main else _drive(labellers, policies, feed_main, sink_main, follow)
     t_main = time.time() - t0
     print(f"main labels: {ids.size} positions x {a.worlds} worlds, {rows} network rows in {t_main:.0f}s "
@@ -507,6 +512,7 @@ def run_label(a: argparse.Namespace) -> int:
             "leaf_horizon": a.leaf_horizon, "keyed": a.keyed, "capacity": a.capacity, "device": str(device),
             "follow": a.follow, "search_worlds": a.search_worlds, "search_window": a.search_window,
             "searched_decisions": follow.searched if follow is not None else 0,
+            "search_rule": a.search_rule, "deviated_decisions": follow.deviated if follow is not None else 0,
             "torch": torch.__version__, "cuda_graphs": not a.no_graphs, "code_upload": not a.float_upload,
             "network_rows": int(rows + srows), "seconds": round(t_all, 1)}
     # A siblings-only part (--no-main) has no labels file; its record goes beside the siblings.
@@ -658,7 +664,8 @@ def labelling_signature(pmeta: Dict[str, Any], lmeta: Dict[str, Any]) -> Dict[st
             **({"main": False} if lmeta.get("main") is False else {}),
             # the follow-up: recorded only when not greedy, so D1 and D2 keep their codes
             **({"follow": {"player": "rollout(k=4,stop=earlier,leaf=own,chance=keyed) at entry decisions",
-                           "worlds": lmeta["search_worlds"], "window_turns": lmeta["search_window"]}}
+                           "worlds": lmeta["search_worlds"], "window_turns": lmeta["search_window"],
+                           "rule": lmeta.get("search_rule", "z2")}}
                if lmeta.get("follow", "greedy") != "greedy" else {}),
             **({"subset": pmeta["subset"]} if pmeta.get("subset") else {})}
 
@@ -806,6 +813,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="the playouts' player: greedy, or the keyed rollout root at entry decisions (card choices, "
                          "headlines) in the position's turn and --search-window turns after it (D3)")
     la.add_argument("--search-worlds", type=int, default=8, help="--follow search: the root's worlds")
+    la.add_argument("--search-rule", default="z2", help="--follow search: the root's rule (z2, argmax, kl<t>)")
     la.add_argument("--search-window", type=int, default=0,
                     help="--follow search: turns after the position's in which entry decisions are searched")
     la.add_argument("--no-main", action="store_true",
