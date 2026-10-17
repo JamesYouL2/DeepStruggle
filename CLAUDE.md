@@ -96,6 +96,11 @@ WebAssembly, and `tests/web/test_wasm_engine.py` proves that build still plays t
 | `research/**` | `tests/docs` (fast, no build needed) — every relative link must resolve |
 | any `.py` | **also** `tests/lint` (fast, no build needed) — no new import inside a function or class; the per-file baseline only goes down |
 
+**A branch that changes the web is named `web/<topic>`, and its tests run on CI.** A push to
+`web/**` runs the `web` workflow (`tools/scripts/build_web.sh`, then the whole of `tests/web` under
+Playwright) and `typecheck`; read the result there (`gh run list --branch web/<topic>`) rather than
+running `tests/web` locally.
+
 ### The ts-replayer corpus
 
 `tests/replayer` (and a few tests in `tests/engine_logic`) run against the **real** human corpus,

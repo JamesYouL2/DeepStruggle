@@ -1,11 +1,12 @@
 # tests/web: the local server, the page under Playwright, and -- the part that matters for engine
 # changes -- test_wasm_engine.py, which holds the WebAssembly engine bit-identical to the native one.
 # Needs both engine builds, Emscripten, node and a browser.
+# A push to a web/* branch (the prefix for every branch that changes the web) runs it too.
 name: web
 
 on:
   push:
-    branches: [main]
+    branches: [main, "web/**"]
   pull_request:
   workflow_dispatch:
 

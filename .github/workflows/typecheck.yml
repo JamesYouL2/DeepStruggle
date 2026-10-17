@@ -5,7 +5,7 @@ name: typecheck
 
 on:
   push:
-    branches: [main]
+    branches: [main, "web/**"]
   pull_request:
   workflow_dispatch:
 
