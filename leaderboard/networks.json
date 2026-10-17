@@ -94,6 +94,14 @@
     "hf": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt",
     "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+R34_7200M+R48_9170M+A13_11920..12000M.md"
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R52": {
+    "file": "checkpoints/E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R52_20261017_142806/value_fit_best.pt",
+    "sha256": "7436723ebcff2713f899c3ee3f3f1dab788c2d083fab13d74cd82949e6fdeb22",
+    "description": "P34 evaluator, generation 1: A13+R48's SWA fine-tuned on its own D1 playout labels (1.06M positions, 32 worlds to the game's end); a leaf network only, its policy heads are not meant to be played (research/plans/P34_search_centric_evaluator.md)",
+    "old_names": [],
+    "hf": null,
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R39@7120..7200M": {
     "file": "checkpoints/E7-A8-R1-S44@6400M+R39_20261011_145632/swa_7120-7200M.pt",
     "sha256": "19d3008de140f2952f139aead8226936f1a36b7b1489e99c16f54dd23f1e32f0",
