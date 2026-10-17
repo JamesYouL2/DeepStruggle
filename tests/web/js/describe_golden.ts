@@ -16,9 +16,10 @@ const golden = JSON.parse(gunzipSync(readFileSync(goldenPath)).toString("utf8"))
 // - a card chosen while an event resolves read as a play, or in the headline as a headline commit
 //   with a "Headlines Simultaneously Revealed" pair for it; the port says what happened to the card,
 //   so for those steps the action's own lines are left out of the comparison;
-// - the port notes Five Year Plan's random discard on the card's line (after " — ").
+// - the port says Five Year Plan's and Terrorism's random discards on lines of their own ("  ✂ "),
+//   and Missile Envy's exchange with how the taken card resolves ("  ⇄ ").
 const comparable = (lines: string[], eventChoice: boolean) => {
-  let out = lines.filter(l => !l.includes(" MilOps: ")).map(l => l.startsWith("  • Card #") ? l.split(" — ")[0] : l);
+  let out = lines.filter(l => !l.includes(" MilOps: ") && !l.startsWith("  ✂ ") && !l.startsWith("  ⇄ "));
   if (eventChoice) out = out.slice(1).filter(l => !l.startsWith("  ★ "));
   return out;
 };

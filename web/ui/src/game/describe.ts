@@ -19,6 +19,7 @@ const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE:
 const GRAIN_SALES = 67;
 /** The cards whose card choices the log words by name (see eventCardChoice), and Space Walk's id. */
 const STAR_WARS = 85, SALT = 43, UN_INTERVENTION = 32, MISSILE_ENVY = 49, FIVE_YEAR_PLAN = 5, SPACE_WALK = 250;
+const TERRORISM = 92;
 const SIDE = new Map(CARDS_METADATA.map(c => [c.id, c.side]));
 
 function isConfirmDone(a: Required<MicroAction>): boolean {
@@ -188,8 +189,12 @@ export function describeDeltas(engine: WasmEngine, before: GameState, after: Gam
     const o = oldLocs[String(cid)];
     const n = newLocs[String(cid)];
     if (n === undefined) continue;
-    if (o && o !== n) logs.push(`  • Card #${cid} (${engine.cardName(cid)}) moved: ${o} -> ${n}` + fiveYearPlanNote(before, after, cid, o, n, chosen));
+    if (o && o !== n) logs.push(`  • Card #${cid} (${engine.cardName(cid)}) moved: ${o} -> ${n}`);
   }
+
+  // 4.5 The random discards events make, said as discards; Missile Envy's exchange, as one
+  logs.push(...randomDiscards(engine, before, after, chosen));
+  logs.push(...missileEnvyExchange(engine, before, after));
 
   // 5. The die roll, if one happened
   logs.push(...describeRoll(engine, before, after.die_roll, p));
@@ -296,23 +301,64 @@ function eventCardChoice(engine: WasmEngine, before: GameState, after: GameState
 }
 
 /**
- * Five Year Plan has the USSR discard a card at random, and a US event discarded so fires. Its
- * discard is no choice, so it is only a card line: say there what moved it and whether the event
- * fires. Read where Five Year Plan resolves in this step -- played for the event (its play mode),
- * or leaving play here (a headline, or played for Ops).
+ * The events that discard at random -- Five Year Plan (the USSR discards one; a US event discarded
+ * so fires) and Terrorism (the player's opponent discards one, the US two once Iranian Hostage
+ * Crisis is in play) -- make no choice, so their discards were only card-move lines. Each gets its
+ * own line here: "✂ USSR discards Decolonization (#30) at random (Five Year Plan)". Read where the
+ * event resolves in this step: played for the event (its play mode), or leaving play here (a
+ * headline, or an opponent's card played for Ops); the step's own played and headline cards leave
+ * a hand too and are not the event's discards.
  */
-function fiveYearPlanNote(before: GameState, after: GameState, cid: number, o: string, n: string, chosen: number): string {
-  if (cid === FIVE_YEAR_PLAN || !o.startsWith("HAND_USSR_") || (n !== "DISCARD_PILE" && n !== "REMOVED_FROM_GAME")) return "";
+function randomDiscards(engine: WasmEngine, before: GameState, after: GameState, chosen: number): string[] {
+  const lines: string[] = [];
   const c = before.decision_context;
-  // A card played in this step leaves the hand too: the USSR's own headline or the card it plays.
   const ownPlay = [chosen, c?.pending_op_card, before.headline_us_card, before.headline_ussr_card,
                    after.headline_us_card, after.headline_ussr_card];
-  if (ownPlay.includes(cid)) return "";
-  const played = c?.decision_type_name === "SELECT_PLAY_MODE" && c.pending_op_card === FIVE_YEAR_PLAN;
-  const fyp = String(FIVE_YEAR_PLAN);
-  const leaves = before.card_locations?.[fyp] !== after.card_locations?.[fyp];
-  if (!played && !leaves) return "";
-  return SIDE.get(cid) === "us"
-    ? " — discarded at random by Five Year Plan; a US event, so its event fires"
-    : " — discarded at random by Five Year Plan";
+  const events: Array<[number, string[]]> = [[FIVE_YEAR_PLAN, ["USSR"]], [TERRORISM, ["US", "USSR"]]];
+  for (const [event, victims] of events) {
+    const played = c?.decision_type_name === "SELECT_PLAY_MODE" && c.pending_op_card === event;
+    const leaves = before.card_locations?.[String(event)] !== after.card_locations?.[String(event)];
+    if (!played && !leaves) continue;
+    for (let cid = 1; cid <= 110; cid++) {
+      if (cid === event || ownPlay.includes(cid)) continue;
+      const o = before.card_locations?.[String(cid)] ?? "";
+      const n = after.card_locations?.[String(cid)] ?? "";
+      const side = victims.find(v => o.startsWith(`HAND_${v}_`));
+      if (!side || (n !== "DISCARD_PILE" && n !== "REMOVED_FROM_GAME")) continue;
+      const fires = event === FIVE_YEAR_PLAN && SIDE.get(cid) === "us" ? " — a US event, so its event fires" : "";
+      lines.push(`  ✂ ${side} discards ${engine.cardName(cid)} (#${cid}) at random (${engine.cardName(event)})${fires}`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Missile Envy's exchange: the player takes the opponent's highest-Ops card and hands Missile Envy
+ * over. The taken card's event fires if it is the taker's own or both sides' event; an opponent's
+ * event is played for its Ops instead, without the event. The giver must play Missile Envy for Ops in
+ * its next action round. With one card of the highest Ops the exchange is no choice, so it was only
+ * card-move lines (the taken card often straight to the discard pile, its event already played).
+ * The engine marks the exchange: Missile Envy becomes the giver's forced card (`forced_card_id`,
+ * `forced_card_player`) -- not merely Missile Envy reaching a hand, which a deal does too.
+ */
+function missileEnvyExchange(engine: WasmEngine, before: GameState, after: GameState): string[] {
+  const forced = after.forced_card_id === MISSILE_ENVY && after.forced_card_player !== "NONE";
+  const already = before.forced_card_id === MISSILE_ENVY && before.forced_card_player === after.forced_card_player;
+  if (!forced || already) return [];
+  const giver = after.forced_card_player, taker = giver === "US" ? "USSR" : "US";
+  const headlines = [before.headline_us_card, before.headline_ussr_card, after.headline_us_card, after.headline_ussr_card];
+  const lines: string[] = [];
+  for (let cid = 1; cid <= 110; cid++) {
+    if (cid === MISSILE_ENVY || headlines.includes(cid)) continue;
+    const was = before.card_locations?.[String(cid)] ?? "";
+    const now = after.card_locations?.[String(cid)] ?? "";
+    if (!was.startsWith(`HAND_${giver}_`) || now.startsWith(`HAND_${giver}_`)) continue;
+    const side = SIDE.get(cid);
+    const how = side === giver.toLowerCase()
+      ? `a ${giver} event, so the ${taker} uses its ${engine.cardOps(cid)} Ops and the event does not fire`
+      : `${side === "neutral" ? "an event for both sides" : `a ${taker} event`}, so its event fires for the ${taker}`;
+    lines.push(`  ⇄ The ${taker} takes ${engine.cardName(cid)} (#${cid}) from the ${giver} hand (Missile Envy) — ${how}`);
+  }
+  lines.push(`  ⇄ Missile Envy goes to the ${giver} hand: the ${giver} must play it for Ops in its next action round`);
+  return lines;
 }

@@ -24,7 +24,7 @@ from tests.web.test_e2e_card_choices import _give_us, _token, _us_action_round
 from tests.web.test_e2e_workbench import _open, browser, static_site  # noqa: F401 -- fixtures
 from tools.lib.game_step import drain_chance
 
-ALDRICH_AMES, FIVE_YEAR_PLAN, CHERNOBYL = 98, 5, 94
+ALDRICH_AMES, FIVE_YEAR_PLAN, CHERNOBYL, TERRORISM, MISSILE_ENVY = 98, 5, 94, 92, 49
 USSR_HAND = (ts.CardLocation.HAND_USSR_UNKNOWN, ts.CardLocation.HAND_USSR_KNOWN)
 _CARDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "rules", "cards.json")
 SIDE = {int(c["id"]): c["side"] for c in json.load(open(_CARDS))}
@@ -141,10 +141,24 @@ def test_five_year_plans_random_discard_is_noted_with_whether_its_event_fires(br
     page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {FIVE_YEAR_PLAN}, secondary_id: 0, flags: 0}})")
     page.evaluate("window.__wb.sendAction({decision_type: 2, primary_id: 0, secondary_id: 0, flags: 0})")   # the event
     lines = [d for e in page.evaluate("window.__wb.session.logs") for d in (e.get("details") or [])]
-    noted = [d for d in lines if "discarded at random by Five Year Plan" in d]
+    noted = [d for d in lines if d.startswith("  ✂ USSR discards") and "at random (Five Year Plan)" in d]
     assert len(noted) == 1, lines
-    cid = int(noted[0].split("Card #")[1].split(" ")[0])
+    cid = int(noted[0].split("(#")[1].split(")")[0])
     assert ("its event fires" in noted[0]) == (SIDE[cid] == "us"), noted[0]
+    page.close()
+
+
+def test_terrorisms_random_discard_is_its_own_line(browser: Any, static_site: str) -> None:
+    s = _us_action_round(7)
+    _give_us(s, TERRORISM)
+    page = _open(browser, f"{static_site}/?model=off&pos={_token(s)}")
+    page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {TERRORISM}, secondary_id: 0, flags: 0}})")
+    page.evaluate("window.__wb.sendAction({decision_type: 2, primary_id: 0, secondary_id: 0, flags: 0})")   # the event
+    lines = [d for e in page.evaluate("window.__wb.session.logs") for d in (e.get("details") or [])]
+    noted = [d for d in lines if d.startswith("  ✂ USSR discards") and d.endswith("at random (Terrorism)")]
+    assert len(noted) == 1, lines
+    cid = int(noted[0].split("(#")[1].split(")")[0])
+    assert page.evaluate(f"window.__wb.state.card_locations['{cid}']") == "DISCARD_PILE"
     page.close()
 
 
@@ -165,5 +179,26 @@ def test_chernobyls_options_are_regions_in_the_hud_and_the_log(browser: Any, sta
     page.wait_for_function(f"window.__wb.state.decision_context.resolving_card !== {CHERNOBYL}")
     texts = [e["text"] for e in page.evaluate("window.__wb.session.logs")]
     assert "US designates Africa (Chernobyl)" in texts, texts[-3:]
+    assert page.errors == []
+    page.close()
+
+
+def test_missile_envys_exchange_says_what_is_taken_and_how_it_resolves(browser: Any, static_site: str) -> None:
+    s = _us_action_round(7)
+    _give_us(s, MISSILE_ENVY)
+    page = _open(browser, f"{static_site}/?model=off&pos={_token(s)}")
+    page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {MISSILE_ENVY}, secondary_id: 0, flags: 0}})")
+    page.evaluate("window.__wb.sendAction({decision_type: 2, primary_id: 0, secondary_id: 0, flags: 0})")   # the event
+    ctx = page.evaluate("window.__wb.state.decision_context")
+    if ctx.get("resolving_card") == MISSILE_ENVY and ctx.get("decision_type_name") == "SELECT_CARD":
+        pick = page.evaluate("window.__wb.state.legal_actions.valid_ids.find(i => i >= 1 && i <= 110)")
+        page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {pick}, secondary_id: 0, flags: 0}})")
+    lines = [d for e in page.evaluate("window.__wb.session.logs") for d in (e.get("details") or [])]
+    taken = [d for d in lines if d.startswith("  ⇄ The US takes")]
+    assert len(taken) == 1, lines
+    cid = int(taken[0].split("(#")[1].split(")")[0])
+    fires = SIDE[cid] in ("us", "neutral")
+    assert ("so its event fires for the US" in taken[0]) == fires and ("uses its" in taken[0]) == (not fires), taken[0]
+    assert "  ⇄ Missile Envy goes to the USSR hand: the USSR must play it for Ops in its next action round" in lines
     assert page.errors == []
     page.close()

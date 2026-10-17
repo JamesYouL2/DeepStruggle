@@ -148,8 +148,12 @@ web/ui/
      with UN Intervention, given away (Missile Envy) -- never as a play, nor, in the headline, as a
      headline commit with a "Headlines Simultaneously Revealed" pair, which is how the Python
      original logged them (the golden leaves those action lines out of its comparison). Five Year
-     Plan's random discard has no choice; its card line says so and, for a US event, that the
-     event fires.
+     Plan's and Terrorism's random discards make no choice; each discarded card gets its own line
+     ("✂ USSR discards Decolonization (#30) at random (Five Year Plan)"; for Five Year Plan, "— a US
+     event, so its event fires" when it is one). Missile Envy's exchange is said in full (`⇄`
+     lines): the card taken from whose hand and whether it resolves as its event or for its Ops,
+     and that Missile Envy goes to the giver for its next round -- read from the engine marking
+     Missile Envy the giver's forced card, not from a card reaching a hand, which a deal also does.
    - `refresh()` in `main.ts` is the one place a change of position lands: render, then (async,
      versioned so a stale result is dropped) the link token, the model's readout, and auto-play.
 8. **Live model analysis (`analysis/`, `analysis_view.ts`)**:
@@ -316,7 +320,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | test | holds |
 |:---|:---|
 | `test_wasm_engine.py` | the WebAssembly engine is the native one: 200 whole games, and display JSON / save JSON / observations / masks at every step of games driven by clicks |
-| `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's random discard is noted, with whether its event fires; Chernobyl's options are region names in the HUD and the log |
+| `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's and Terrorism's random discards are their own lines, with whether Five Year Plan's event fires; Missile Envy's exchange says the card taken and how it resolves; Chernobyl's options are region names in the HUD and the log |
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
 | `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
