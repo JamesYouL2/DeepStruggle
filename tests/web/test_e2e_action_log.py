@@ -24,7 +24,7 @@ from tests.web.test_e2e_card_choices import _give_us, _token, _us_action_round
 from tests.web.test_e2e_workbench import _open, browser, static_site  # noqa: F401 -- fixtures
 from tools.lib.game_step import drain_chance
 
-ALDRICH_AMES, FIVE_YEAR_PLAN = 98, 5
+ALDRICH_AMES, FIVE_YEAR_PLAN, CHERNOBYL = 98, 5, 94
 USSR_HAND = (ts.CardLocation.HAND_USSR_UNKNOWN, ts.CardLocation.HAND_USSR_KNOWN)
 _CARDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "rules", "cards.json")
 SIDE = {int(c["id"]): c["side"] for c in json.load(open(_CARDS))}
@@ -145,4 +145,25 @@ def test_five_year_plans_random_discard_is_noted_with_whether_its_event_fires(br
     assert len(noted) == 1, lines
     cid = int(noted[0].split("Card #")[1].split(" ")[0])
     assert ("its event fires" in noted[0]) == (SIDE[cid] == "us"), noted[0]
+    page.close()
+
+
+def test_chernobyls_options_are_regions_in_the_hud_and_the_log(browser: Any, static_site: str) -> None:
+    """An event's branch is shown by what it means (web/ui/src/game/branches.ts), not its number:
+    Chernobyl's six are the regions it can close, and the log names the one chosen."""
+    s = _us_action_round(7)
+    _give_us(s, CHERNOBYL)
+    page = _open(browser, f"{static_site}/?model=off&pos={_token(s)}")
+    page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {CHERNOBYL}, secondary_id: 0, flags: 0}})")
+    page.evaluate("window.__wb.sendAction({decision_type: 2, primary_id: 0, secondary_id: 0, flags: 0})")   # the event
+    page.wait_for_function(f"window.__wb.state.decision_context.resolving_card === {CHERNOBYL}")
+    titles = page.eval_on_selector_all("#decision-body .btn-choice-card",
+                                       "els => els.map(e => e.querySelector('div').innerText.trim())")
+    assert titles == ["Europe", "Asia", "Middle East", "Africa", "Central America", "South America"], titles
+    assert "Option" not in page.inner_text("#decision-body")
+    page.click("#decision-body .btn-choice-card[data-primary='3']")   # Africa
+    page.wait_for_function(f"window.__wb.state.decision_context.resolving_card !== {CHERNOBYL}")
+    texts = [e["text"] for e in page.evaluate("window.__wb.session.logs")]
+    assert "US designates Africa (Chernobyl)" in texts, texts[-3:]
+    assert page.errors == []
     page.close()

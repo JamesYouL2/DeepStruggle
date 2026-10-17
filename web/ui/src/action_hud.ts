@@ -1,5 +1,6 @@
 import { GameState, MicroAction } from "./types";
 import { CARDS_METADATA } from "./metadata";
+import { branchMeta } from "./game/branches";
 
 const CARD_META = new Map(CARDS_METADATA.map(c => [c.id, c]));
 
@@ -42,100 +43,6 @@ function cardChoiceButtons(state: GameState, ids: number[]): string {
       </button>`;
   }).join("");
 }
-
-interface BranchMeta {
-  title: string;
-  desc: string;
-}
-
-const CARD_BRANCHES: Record<number, Record<number, BranchMeta>> = {
-  16: { // Warsaw Pact Formed
-    0: { title: "Remove US Influence", desc: "Remove all US influence from up to 4 countries in Eastern Europe." },
-    1: { title: "Add USSR Influence", desc: "Add 5 USSR influence in Eastern Europe (max 2 per country)." }
-  },
-  20: { // Olympic Games
-    0: { title: "Participate in Olympic Games", desc: "Contest the Olympics with 1d6 roll (+1 modifier for sponsor). Highest roll receives 2 VP." },
-    1: { title: "Boycott Olympic Games", desc: "Boycott: Sponsor receives +2 VP, DEFCON degrades by 1, and sponsor conducts 4 Operations." }
-  },
-  22: { // Independent Reds
-    0: { title: "Match Influence", desc: "Add Influence to Yugoslavia, Romania, Bulgaria, Hungary, or Czechoslovakia equal to USSR influence." },
-    1: { title: "Remove USSR Influence", desc: "Remove all USSR Influence from Yugoslavia, Romania, Bulgaria, Hungary, or Czechoslovakia." }
-  },
-  7: { // Socialist Governments
-    0: { title: "Remove US Influence", desc: "Remove 3 US influence total from Western Europe (max 2 per country)." }
-  },
-  23: { // Marshall Plan
-    0: { title: "Place Influence", desc: "Add 1 US influence in each of 7 Western European countries (non-USSR controlled)." }
-  },
-  28: { // Suez Crisis
-    0: { title: "Remove US Influence", desc: "Remove 4 US influence total from UK, France, and Israel (max 2 per country)." }
-  },
-  30: { // Decolonization
-    0: { title: "Place Influence", desc: "Add 1 USSR influence in each of any 4 countries in Africa and/or SE Asia." }
-  },
-  33: { // De-Stalinization
-    0: { title: "Redeploy Influence", desc: "Remove up to 4 USSR influence and redeploy to non-US controlled countries (max 2 per country)." }
-  },
-  40: { // Cuban Missile Crisis
-    0: { title: "Cancel Crisis", desc: "Remove 2 influence from Cuba (USSR) or W. Germany/Turkey (US) to cancel crisis." }
-  },
-  43: { // SALT Negotiations
-    0: { title: "Retrieve Discarded Card", desc: "Search the discard pile and retrieve 1 card into hand." }
-  },
-  45: { // Summit
-    0: { title: "Improve DEFCON (+1)", desc: "Improve the DEFCON track by 1 level." },
-    1: { title: "Degrade DEFCON (-1)", desc: "Degrade the DEFCON track by 1 level." },
-    2: { title: "Keep DEFCON Unchanged", desc: "Do not alter the DEFCON track." }
-  },
-  46: { // How I Learned to Stop Worrying
-    1: { title: "Set DEFCON to 1 (Warning: Loss)", desc: "Set DEFCON track to 1 (triggers DEFCON suicide loss for phasing player!)." },
-    2: { title: "Set DEFCON to 2", desc: "Set DEFCON track to 2." },
-    3: { title: "Set DEFCON to 3", desc: "Set DEFCON track to 3." },
-    4: { title: "Set DEFCON to 4", desc: "Set DEFCON track to 4." },
-    5: { title: "Set DEFCON to 5 (Peace)", desc: "Reset DEFCON track to 5." }
-  },
-  47: { // Junta
-    0: { title: "Place 2 Influence", desc: "Add 2 Influence in Central America or South America." },
-    1: { title: "Free Coup / Realignment", desc: "Conduct a free Coup or Realignment in Central or South America using 2 Ops." }
-  },
-  74: { // Voice of America
-    0: { title: "Remove USSR Influence", desc: "Remove 4 USSR influence from non-European countries (max 2 per country)." }
-  },
-  77: { // Ask Not What Your Country Can Do For You
-    0: { title: "Discard and Redraw Hand", desc: "Discard selected cards from hand and draw replacements from the draw deck." },
-    1: { title: "Keep Current Hand (Pass)", desc: "Do not discard any cards; retain full hand." }
-  },
-  80: { // One Small Step
-    0: { title: "Advance Space Track (+2)", desc: "Advance 2 spaces on the Space Race track." }
-  },
-  86: { // North Sea Oil
-    0: { title: "Gain 8th Action Round", desc: "Grants US an extra 8th Action Round for this turn." }
-  },
-  90: { // Glasnost
-    0: { title: "Gain 2 VP & 4 Ops", desc: "Gain 2 VP and conduct 4 Operations (The Reformer active)." }
-  },
-  91: { // Ortega Elected in Nicaragua
-    0: { title: "Free Coup in Neighbor", desc: "Conduct a free Coup with 2 Ops in a country adjacent to Nicaragua." }
-  },
-  96: { // Tear Down This Wall
-    0: { title: "Free Coup / Realignment in Europe", desc: "Conduct a free Coup or Realignment in Europe with 3 Ops." }
-  },
-  100: { // Wargames
-    0: { title: "End Game (Give Opponent 6 VP)", desc: "Award opponent 6 VP and immediately terminate the game with current score." },
-    1: { title: "Cancel / Continue Play", desc: "Do not trigger victory condition; continue normal play." }
-  },
-  104: { // Cambridge Five
-    0: { title: "Reveal US Hand & Place Influence", desc: "Reveal US hand and add 1 USSR influence in a region from a revealed scoring card." },
-    1: { title: "Pass / No Scoring Cards", desc: "No scoring cards held in US hand." }
-  },
-  105: { // Special Relationship
-    0: { title: "Add 1 Influence & Gain 2 VP (NATO)", desc: "Add 1 US influence in adjacent country and score 2 VP (NATO active)." },
-    1: { title: "Add 2 Influence (No NATO)", desc: "Add 2 US influence in adjacent country (NATO inactive)." }
-  },
-  107: { // Che
-    0: { title: "Free Coup in Non-Battleground", desc: "Conduct free Coup in non-battleground country in CA, SA, or Africa." }
-  }
-};
 
 export class ActionHud {
   private container: HTMLElement;
@@ -445,20 +352,25 @@ export class ActionHud {
       case 6: // CHOOSE_BRANCH
         const resolvingCardId = ctx.resolving_card || ctx.pending_op_card;
         const resolvingCardName = ctx.resolving_card_name || (resolvingCardId ? `Card #${resolvingCardId}` : "Event");
-        promptText = `<strong>${player}:</strong> Choose option for <em>${resolvingCardName}</em>:`;
+        // What each branch means comes from game/branches.ts (a region for Chernobyl, the DEFCON level
+        // for Summit and How I Learned...), the same text the action log uses -- never a bare number.
+        const ask: Record<number, string> = {
+          94: `designate a region: the USSR may not place influence there with Ops for the rest of the turn`,
+          45: `set DEFCON (the Summit winner may move it by 1, or leave it)`,
+          46: `set DEFCON to any level`,
+        };
+        promptText = `<strong>${player}:</strong> <em>${resolvingCardName}</em>: ${ask[resolvingCardId] ?? "choose an option"}:`;
         const actionLabels = legal.valid_action_labels || {};
 
         validIds.forEach(b => {
-          const branchMeta = CARD_BRANCHES[resolvingCardId]?.[b];
-          const branchTitle = branchMeta ? branchMeta.title : (actionLabels[b.toString()] || `Option ${b + 1}`);
-          const branchDesc = branchMeta ? branchMeta.desc : "";
+          const meta = branchMeta(resolvingCardId, b, state);
+          // An event this page has no words for still shows the engine's own label, never just "Option N".
+          const branchTitle = meta ? meta.title : `${actionLabels[b.toString()] || "Option"} ${b}`;
+          const branchDesc = meta ? meta.desc : "";
 
           buttonsHtml += `
             <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card" data-primary="${b}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: bold; font-size: 13px;">Branch ${b}: ${branchTitle}</span>
-                <span class="badge" style="font-size: 10px; background: rgba(255,255,255,0.15);">#${b}</span>
-              </div>
+              <div style="font-weight: bold; font-size: 13px;">${branchTitle}</div>
               ${branchDesc ? `<div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${branchDesc}</div>` : ""}
             </button>
           `;

@@ -12,6 +12,7 @@
  */
 import { WasmEngine, PLAYER_US, PLAYER_USSR } from "../engine/wasm_engine";
 import { actionName } from "../game/names";
+import { GameState } from "../types";
 import { Model } from "./model";
 import { CriticTrace, PolicyTrace } from "../replay_controls";
 import { AnalysisChoice, LiveAnalysis } from "../analysis_view";
@@ -64,6 +65,11 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
     if (q > p.get(argmax)!) argmax = i;
   }
 
+  // An event's branch is named by what it means, which needs the position (game/branches.ts); read
+  // it only for such a choice.
+  let shown: GameState | undefined;
+  const branchState = () => (shown ??= engine.display());
+
   const policy: PolicyTrace = {
     source: "analysis", temperature: 1, n_legal: legal.length, chosen_idx: argmax,
     p_chosen: r6(p.get(argmax)!), p_chosen_sampled: 1, argmax_idx: argmax, p_max: r6(p.get(argmax)!),
@@ -97,7 +103,7 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
     entry.decision_type = ma.decision_type;
     entry.primary_id = ma.primary_id;
     entry.flags = ma.flags;
-    entry.name = actionName(engine, idx);
+    entry.name = actionName(engine, idx, branchState());
     return entry;
   });
   choices.sort((a, b) => b.p - a.p);

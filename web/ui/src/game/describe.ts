@@ -11,6 +11,7 @@
  */
 import { DieRollState, GameState, MicroAction } from "../types";
 import { CARDS_METADATA } from "../metadata";
+import { branchMeta } from "./branches";
 import { WasmEngine } from "../engine/wasm_engine";
 
 const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE: 5, CHOOSE_BRANCH: 6 };
@@ -121,7 +122,10 @@ export function describeActionAndDeltas(
     const opModes: Record<number, string> = { 0: "INFLUENCE PLACEMENT", 1: "COUP ATTEMPT", 2: "REALIGNMENT" };
     logs.push(`${p} chooses Op mode: ${opModes[primary] ?? String(primary)}`);
   } else if (d === DT.CHOOSE_BRANCH) {
+    const card = ctx?.resolving_card ?? 0;
+    const meta = isConfirmDone(action) ? null : branchMeta(card, primary, before);
     if (isConfirmDone(action)) logs.push(`${p} confirms / passes option.`);
+    else if (meta) logs.push(`${p} ${meta.verb} (${engine.cardName(card)})`);
     else logs.push(`${p} chooses option: ${primary}`);
   } else {
     logs.push(`${p} action: type=${d} primary=${primary} secondary=${secondary} flags=${flags}`);

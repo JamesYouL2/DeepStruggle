@@ -34,7 +34,9 @@ for (const g of golden.games) {
     const refused = engine.step(action, 0);
     if (refused) throw new Error(`seed ${g.seed} step ${i}: engine refused (${refused})`);
     const ctx = before.decision_context;
-    const eventChoice = action.decision_type === 1 && (ctx?.resolving_card ?? 0) !== 0 && ctx?.resolving_card !== 250;
+    // ... and an event's branch choice, which it logged as "chooses option: N" (game/branches.ts).
+    const eventChoice = (action.decision_type === 1 && (ctx?.resolving_card ?? 0) !== 0 && ctx?.resolving_card !== 250)
+      || action.decision_type === 6;
     const got = comparable(describeActionAndDeltas(engine, before, engine.display(), action), eventChoice);
     const want = comparable(g.lines[i] as string[], eventChoice);
     steps += 1;

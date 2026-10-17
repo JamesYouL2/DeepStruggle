@@ -21,6 +21,7 @@ web/ui/
 │   ├── engine/wasm_engine.ts   # the WebAssembly engine (public/engine/, built by build_web.sh)
 │   ├── game/                   # session.ts (stepping, undo, log, export), describe.ts (log text),
 │   │                           # names.ts (flat action names), position.ts (link tokens),
+│   │                           # branches.ts (what an event's branch choice means: HUD and log),
 │   │                           # view.ts (the US / USSR player views: what the other side hides),
 │   │                           # last_turn.ts (what the other side's latest turn did to the map)
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
@@ -32,7 +33,7 @@ web/ui/
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence badges, pan/zoom)
 │   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
 │   ├── tracks_view.ts          # Turn, Action Round, DEFCON, Mil Ops, Space Race, and Victory Points tracks
-│   ├── action_hud.ts           # Decision HUD, human-readable branch catalog (CARD_BRANCHES), and dice selector
+│   ├── action_hud.ts           # Decision HUD (branch choices worded by game/branches.ts) and dice selector
 │   ├── replay_controls.ts      # Replay timeline scrubber, playback engine, and server replay picker
 │   ├── trace_view.ts           # Replay trace: value ribbon, log chips, readout panel, probability badges;
 │   │                           # the critic display (which reading is calibrated) shared with analysis_view
@@ -95,7 +96,14 @@ web/ui/
 3. **Active Continuous Effects Panel (`cards_view.ts`)**:
    - `EFFECT_INFO_MAP` describes every persistent continuous-effect and state bit (e.g. *Containment*, *Brezhnev Doctrine*, *Red Scare/Purge*, *Quagmire*, *Bear Trap*, *Flower Power*, *Willy Brandt*, *NORAD*, *NATO*, Space Race bonuses) with side tags (`US`, `USSR`, `Both`, `Neutral`), duration badges (`Turn Only`, `Permanent`, `Conditional`, `Space Perk`), and rule summaries. Add an entry here whenever the engine gains an effect bit.
 4. **Descriptive Branch Choice HUD (`action_hud.ts`)**:
-   - `CARD_BRANCHES` translates numeric branch IDs into readable options (e.g. *Branch 0: Award 2 VP / Branch 1: Conduct 4 Ops* for Olympic Games; *Branch 0: Remove all US Influence / Branch 1: Add 5 USSR Influence* for Warsaw Pact).
+   - `game/branches.ts` says what each branch of an event's CHOOSE_BRANCH means -- the engine asks
+     for one in six events: Warsaw Pact Formed, Olympic Games, Wargames, Chernobyl (a region),
+     Summit and How I Learned to Stop Worrying (the DEFCON level to set, marked unchanged / improve /
+     degrade against the current one; Summit offers the current level and one either side). The
+     HUD's buttons, the action log ("US designates Africa (Chernobyl)", "USSR sets DEFCON to 4
+     (improve) (Summit)") and the analysis panel's choice names (`game/names.ts`) all read it, so
+     no option shows as a bare number. It replaced `CARD_BRANCHES`, whose Summit entries described
+     the pre-P17 +1/-1 branches and whose other entries were for cards that ask no branch.
    - An event's card choice (`SELECT_CARD` with a `resolving_card`) lists every offered card as a
      button in the HUD -- name, ops, side and where it is -- because those cards are mostly in no
      hand tab: Our Man in Tehran's five drawn cards (`PEEKED_TEMP`, "Drawn"), Star Wars' and SALT
@@ -308,7 +316,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | test | holds |
 |:---|:---|
 | `test_wasm_engine.py` | the WebAssembly engine is the native one: 200 whole games, and display JSON / save JSON / observations / masks at every step of games driven by clicks |
-| `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's random discard is noted, with whether its event fires |
+| `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's random discard is noted, with whether its event fires; Chernobyl's options are region names in the HUD and the log |
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
 | `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included) |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
