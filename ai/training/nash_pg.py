@@ -38,6 +38,7 @@ from .mode_cf import ModeCounterfactual, mode_cf_loss  # noqa: E402
 from .turn_credit import TurnCredit  # noqa: E402
 from ai.search.rollout_root import ContinuationValues, RolloutConfig, RolloutTeacher, TeacherPolicyTargets  # noqa: E402
 from .search_workers import SearchWorkers  # noqa: E402
+from .searched_games import SearchedGames  # noqa: E402
 from .forced_openings import OpeningSeeder  # noqa: E402
 from .critic_tracker import CriticTracker
 from .graphed_forward import GraphCache
@@ -299,6 +300,11 @@ class BaseNashPGTrainer:
         search_rollout_stop: str = "boundaries",   # where the rollout root's playouts stop (STOPS)
         search_rollout_leaf_side: str = "mover",   # whose side its leaves are read from (LEAF_SIDES)
         predeal_value_coef: float = 0.0,  # P33: the critic on both sides at the turn-end park (0 = off)
+        searched_games_workers: int = 0,  # P33: worker processes playing whole games with the rollout root
+        searched_games_envs: int = 32,    # games each of them plays at once
+        searched_value_coef: float = 0.0,  # weight of the value loss on those games' decisions
+        searched_value_buffer: int = 262144,  # their replay store, in rows (float16, on the CPU)
+        searched_value_batch: int = 1024,  # rows of it sampled per minibatch
         search_workers: int = 0,          # > 0: the rollout-root targets priced by worker processes
         search_teacher_policy: bool = False,   # the frozen teacher's raw policy as the target (no search)
         teacher_net: Optional[nn.Module] = None,  # P32: a frozen policy to distil, one seat
@@ -558,6 +564,21 @@ class BaseNashPGTrainer:
         self._predeal_rows: List[Tuple[int, np.ndarray, torch.Tensor, torch.Tensor]] = []
         self._pd_obs: Optional[torch.Tensor] = None
         self._pd_tgt: Optional[torch.Tensor] = None
+        #: P33, the critic on searched games (ai/training/searched_games.py): workers playing whole games
+        #: with the rollout root (stop=earlier, leaf=own, the measured best) on pi_ref, both sides; each
+        #: decision with the game's result from its decider's side trains the value head only.
+        self.searched_games_workers = int(searched_games_workers)
+        self.searched_games_envs = int(searched_games_envs)
+        self.searched_value_coef = float(searched_value_coef)
+        self.searched_value_batch = int(searched_value_batch)
+        self._sg: Optional[SearchedGames] = None
+        self._sg_cap = int(searched_value_buffer)
+        self._sg_obs: Optional[torch.Tensor] = None
+        self._sg_tgt: Optional[torch.Tensor] = None
+        self._sg_size = 0
+        self._sg_next = 0
+        if self.searched_games_workers > 0 and self.searched_value_coef <= 0.0:
+            raise ValueError("--searched-games-workers needs --searched-value-coef > 0 (the rows train nothing else)")
         self.vp_coef = vp_coef
         self.value_dist_coef = value_dist_coef
         # P1 advantage filtering. Samples whose |advantage| falls below this quantile of the
@@ -1042,6 +1063,8 @@ class BaseNashPGTrainer:
         self.reference_net.load_state_dict(self.active_net.state_dict())
         self.reference_net.to(self.device)
         self.reference_net.eval()
+        if self._sg is not None:
+            self._sg.refresh(self.reference_net)
         print(f"\n[NashPG Outer Loop] Updated reference policy π_ref at {self.total_env_steps:,} total steps (Round {self.total_iterations})", flush=True)
 
     def _side_views(self, env_idx: int) -> Tuple[bool, bool]:
@@ -2234,6 +2257,39 @@ class BaseNashPGTrainer:
 class NashPGTrainer(BaseNashPGTrainer):
     """Standard NashPG Trainer for ColdWarNet V1, V2, and V3."""
 
+    def _ingest_searched_games(self) -> int:
+        """Start the searched-games workers on first use; move the decisions they have finished into the
+        replay store. Returns the rows added."""
+        if self.searched_games_workers <= 0:
+            return 0
+        if self._sg is None:
+            self._sg = SearchedGames(self.searched_games_workers, self.reference_net,
+                                     RolloutConfig(k=4, worlds=16, horizon=4, rule="z2", stop="earlier",
+                                                   leaf_side="own"),
+                                     self.device, envs=self.searched_games_envs)
+            print(f"[searched games] {self.searched_games_workers} worker(s) x {self.searched_games_envs} games, "
+                  f"rollout root k=4, 16 worlds, stop=earlier, leaf=own, on pi_ref; value coef "
+                  f"{self.searched_value_coef}", flush=True)
+            return 0
+        got = self._sg.drain()
+        if got is None:
+            return 0
+        obs, tgt, _games = got
+        if self._sg_obs is None:
+            self._sg_obs = torch.zeros((self._sg_cap, obs.shape[1]), dtype=torch.float16)
+            self._sg_tgt = torch.zeros(self._sg_cap, dtype=torch.float32)
+        assert self._sg_obs is not None and self._sg_tgt is not None
+        w = min(obs.shape[1], self._sg_obs.shape[1])
+        for lo in range(0, obs.shape[0], self._sg_cap):
+            o, t = obs[lo:lo + self._sg_cap], tgt[lo:lo + self._sg_cap]
+            idx = (self._sg_next + np.arange(o.shape[0])) % self._sg_cap
+            ii = torch.from_numpy(idx)
+            self._sg_obs[ii, :w] = torch.from_numpy(o[:, :w]).to(torch.float16)
+            self._sg_tgt[ii] = torch.from_numpy(t)
+            self._sg_next = int((self._sg_next + o.shape[0]) % self._sg_cap)
+            self._sg_size = min(self._sg_cap, self._sg_size + o.shape[0])
+        return int(obs.shape[0])
+
     def _build_predeal_targets(self) -> None:
         """The pre-deal rows of this rollout with their targets, in _pd_obs / _pd_tgt. A side's target
         is the lambda-return of its next decision in the same env (a learner row: the value targets
@@ -2416,6 +2472,8 @@ class NashPGTrainer(BaseNashPGTrainer):
         teacher_kl_t, teacher_rows_t = _z(), _z()
         self._build_predeal_targets()
         pd_loss_t, pd_batches = _z(), 0
+        sg_added = self._ingest_searched_games()
+        sg_loss_t, sg_batches = _z(), 0
         _pd_rows = 0 if self._pd_tgt is None else int(self._pd_tgt.shape[0])
 
         for _ in range(self.num_epochs):
@@ -2704,6 +2762,13 @@ class NashPGTrainer(BaseNashPGTrainer):
                     pd_loss_t += _pd_loss.detach()
                     pd_batches += 1
                 _mb += 1
+                if self._sg_size and self._sg_obs is not None and self._sg_tgt is not None:
+                    _si = torch.randint(self._sg_size, (self.searched_value_batch,))
+                    _sv = self.active_net(self._sg_obs[_si].to(self.device, torch.float32), None)[1].squeeze(-1)
+                    _sl = F.mse_loss(_sv.float(), self._sg_tgt[_si].to(self.device))
+                    loss = loss + self.vf_coef * self.searched_value_coef * _sl
+                    sg_loss_t += _sl.detach()
+                    sg_batches += 1
 
                 self.optimizer.zero_grad()
                 if self.search_ce_coef > 0.0 and float(search_ce) != 0.0:
@@ -2788,6 +2853,9 @@ class NashPGTrainer(BaseNashPGTrainer):
             "val_loss": val_loss_accum / max(1, num_updates),
             **({"predeal_value_loss": float(pd_loss_t) / max(1, pd_batches), "predeal_rows": _pd_rows}
                if self.predeal_value_coef > 0.0 else {}),
+            **({"searched_value_loss": float(sg_loss_t) / max(1, sg_batches), "searched_rows": self._sg_size,
+                "searched_rows_added": sg_added, "searched_games": 0 if self._sg is None else self._sg.games}
+               if self.searched_games_workers > 0 else {}),
             "kl_div": kl_accum / max(1, num_updates),
             # 3l: per-seat approximate KL from the rollout policy (mean over minibatches), and
             # the share of minibatches in which the seat's policy terms were stopped.

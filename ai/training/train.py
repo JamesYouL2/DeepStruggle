@@ -878,6 +878,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Rollout-root search: playouts of this many action-round boundaries (0 = off; where they stop is --search-rollout-stop). With --search-ce-coef > 0 it replaces the Gumbel root of the search-CE targets (ai/search/rollout_root.py): the target is softmax(logit + sigma(completed Q)) with the candidates' rollout values, and needs no --search-gumbel-k. With --search-value-beta > 0 and no CE it gives value targets instead (P33's critic track): the greedy continuation's mean leaf value, blended into v_win's target.")
     parser.add_argument("--search-rollout-stop", choices=["boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal"], default="boundaries",
                         help="Where the rollout root's playouts stop: after --search-rollout-horizon boundaries (the default, the measured root), at the end of the decision's turn, or at the later or the earlier of the two.")
+    parser.add_argument("--searched-games-workers", type=int, default=0,
+                        help="P33: worker processes playing whole games with the rollout root (k=4, 16 worlds, stop=earlier, leaf=own) on pi_ref for both sides; each decision, with the game's result from its decider's side, trains the value head only (--searched-value-coef). 0 = off.")
+    parser.add_argument("--searched-games-envs", type=int, default=32,
+                        help="Games each --searched-games-workers process plays at once.")
+    parser.add_argument("--searched-value-coef", type=float, default=0.0,
+                        help="Weight (times --vf-coef) of the value loss on searched games' decisions, a sample of 1,024 from their replay store per minibatch.")
     parser.add_argument("--predeal-value-coef", type=float, default=0.0,
                         help="P33, the pre-deal critic: weight (times --vf-coef) of a value loss on each env's turn-end park -- after a turn's last action, before the deal, nobody's decision -- read from both sides, each with its own next decision's lambda-return as the target (the result where the game ends first). The rollout root's stop=predeal reads the critic there. 0 = off.")
     parser.add_argument("--search-rollout-leaf-side", choices=["mover", "decider", "own"], default="mover",
@@ -1058,6 +1064,9 @@ def main():
             search_rollout_stop=args.search_rollout_stop,
             search_rollout_leaf_side=args.search_rollout_leaf_side,
             predeal_value_coef=args.predeal_value_coef,
+            searched_games_workers=args.searched_games_workers,
+            searched_games_envs=args.searched_games_envs,
+            searched_value_coef=args.searched_value_coef,
             search_workers=args.search_workers,
             search_teacher_policy=args.search_teacher_policy,
             resume_weights=args.resume_weights,
