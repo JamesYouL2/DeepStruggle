@@ -91,14 +91,22 @@ src_moved=0
 cached_cxx="$(cached CMAKE_CXX_COMPILER)"
 compiler_missing=0
 [[ -n "$cached_cxx" && "$cached_cxx" == /* && ! -x "$cached_cxx" ]] && compiler_missing=1
+# And the Python headers it was pointed at, the same way: a userspace copy of python3-dev that has
+# gone (the headers came to be installed system-wide) fails every build with 'Python.h' not found.
+cached_pyinc="$(cached Python_INCLUDE_DIR)"
+headers_missing=0
+[[ -n "$cached_pyinc" && ! -d "$cached_pyinc" ]] && headers_missing=1
 if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_missing == 1 || $src_moved == 1
-                                          || $compiler_missing == 1 ) ]]; then
+                                          || $compiler_missing == 1 || $headers_missing == 1 ) ]]; then
     if [[ $src_moved == 1 ]]; then
         echo "check_engine_fresh: $BUILD_DIR was configured for $cached_src;" \
              "reconfiguring it for $ROOT" >&2
     elif [[ $compiler_missing == 1 ]]; then
         echo "check_engine_fresh: $BUILD_DIR names a compiler that does not exist here" \
              "($cached_cxx); reconfiguring it with the clang found now" >&2
+    elif [[ $headers_missing == 1 ]]; then
+        echo "check_engine_fresh: $BUILD_DIR names Python headers that do not exist here" \
+             "($cached_pyinc); reconfiguring it to find them" >&2
     elif [[ "$compiler_id" != *Clang* ]]; then
         echo "check_engine_fresh: $BUILD_DIR was configured with ${compiler_id:-an unknown compiler};" \
              "reconfiguring it with clang" >&2
@@ -114,6 +122,8 @@ if [[ -f "$BUILD_DIR/CMakeCache.txt" && ( "$compiler_id" != *Clang* || $python_m
     fi
     for var in CMAKE_BUILD_TYPE CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS Python_INCLUDE_DIR; do
         value="$(cached "$var")"
+        # A header directory that has gone is what this reconfigure is for: let CMake find them.
+        [[ "$var" == Python_INCLUDE_DIR && ! -d "$value" ]] && continue
         [[ -n "$value" ]] && fresh_args+=("-D$var=$value")
     done
     if ! env -u CXX cmake "${fresh_args[@]}" >&2; then
