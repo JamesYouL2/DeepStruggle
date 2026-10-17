@@ -429,6 +429,20 @@ searched under `earlier`+own 49.4%.
   slower: the layer is ~6.5x the network's forward+backward, and the updates dominate at that speed). The
   controls and R50 of 12,000–12,800M ran at 30–60k only because evaluation matches shared the GPU.
 
+## The critic on searched games (R51, 2026-10-17): harmful as built
+
+**Build** (`e4d9bd0`, recipe code R51): worker processes play whole games with the rollout root (`earlier`+own,
+16 worlds) on pi_ref for both sides; each decision, with its game's result from the decider's side, goes to a
+replay store that trains the value head only. A13+R48 from 12,400M, 4 workers x 32 games, coefficient 0.5,
+256 rows a minibatch; 10,448 games, 4.66M decisions in 400M steps. **Result** against A13+R48's leg 4 (SWAs
+12,720–12,800M): raw **37.1%**, searched under `earlier`+own **19.5%**; the critic on the leak bank ranks
+ordinary pairs worse (25.4% against 20.4% wrong) and the confirmed leaks no better (48.8 / 47.1%); its own
+value loss rose (0.052 → 0.072). **Reading:** the searched rows train the head PPO uses as its baseline,
+with ±1 game results far noisier than its lambda-returns, each row at ~30x a decision row's weight -- the
+critic degraded on the network's own positions, the advantages with it, and the search reads the damaged
+critic at every leaf. A separate value head for searched-game values (read only by the root), or the same
+rows at ~1/16 the weight, would separate the conflict from the dose.
+
 ## The critic on both sides (design, 2026-10-15; not built)
 
 **Why.** The trainer reads the critic only from a decision's decider; the rollout root reads leaves from
