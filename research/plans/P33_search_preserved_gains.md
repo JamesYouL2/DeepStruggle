@@ -417,7 +417,17 @@ unable to compare countries within a region -- each country's head reads only it
 map neighbours' mean, attending within its region (country ids are contiguous by region, so six slices),
 added through a zero-initialised projection; grown in place on A13+R48 at 12,400M, R48's recipe, to 12,800M
 (~31k steps/s against ~41k). **Result:** level with A13+R48's leg 4 -- SWA 12,720–12,800M raw 50.2%,
-searched under `earlier`+own 49.4%. Not measured: whether the layer moved the placement decisions at all.
+searched under `earlier`+own 49.4%.
+* **The layer is active** (`ai/eval/placement_probe.py`, the leak bank's 430 placement positions): on against
+  bypassed, mean |logit change| 0.49 (legal logits' spread 2.28), KL 0.077, the top choice changes at 14%.
+* **It barely moves them toward the better country:** on the 250 confirmed placement leaks the better
+  country's rank is 5.98 against the control's 6.51 (same-region leaks 4.99 against 5.74), P(better) 0.143
+  against 0.134, and it is the top choice equally often (15.2%); the screened pairs agree (6.56 against 6.96).
+  Right direction, within noise; the played move's probability rose too -- the layer sharpens the
+  network's preferences more than it corrects them.
+* **Cost:** A13+R48 trained at ~105,000 steps/s up to 11,800M; Cell A, alone on the GPU, at ~31,000 (3.4x
+  slower: the layer is ~6.5x the network's forward+backward, and the updates dominate at that speed). The
+  controls and R50 of 12,000–12,800M ran at 30–60k only because evaluation matches shared the GPU.
 
 ## The critic on both sides (design, 2026-10-15; not built)
 
