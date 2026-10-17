@@ -311,7 +311,8 @@ keyed from now on.
    the split-half reliability of the centred 16-world candidate means is 0.41, so a perfect evaluator
    correlates with them at most 0.64 -- where the untouched RL critic already is. Sixteen worlds of
    greedy playouts cannot show a candidate difference the critic does not already rank, which is
-   `P34c`'s verdict from the other side. The games read follows.
+   `P34c`'s verdict from the other side. **Games:** the keyed root with A15-R54 at its leaves, strong
+   tier, **1817 ± 4** against 1810 ± 4 on its own critic -- +7, within noise.
 4. **`D3` -- the contested-position set.** Screen the 1.1M positions for the contested few percent
    using what exists: the label's across-world spread and the siblings' candidate means (~50k
    positions). Relabel them with a **stronger follow-up**: the sparse-searched player at 10–25% of the
