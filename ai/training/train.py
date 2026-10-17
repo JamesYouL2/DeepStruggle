@@ -10,7 +10,7 @@ import torch
 
 from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
 from ai.training.generic_trainer import run_search_distillation
-from ai.training.value_fit import ValueFitConfig, run_value_fit
+from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
 from tools.lib.data_root import data_path
 from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR
 from tools.lib.player_agent import load_agent
@@ -297,6 +297,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="A tools/value_labels.py dataset directory (train.npz, holdout.npz, siblings.npz, manifest.json).")
     vf.add_argument("--value-reinit", action="store_true", default=False,
                     help="Train --warmup-checkpoint's architecture from fresh weights instead of fine-tuning its weights.")
+    vf.add_argument("--value-arch", nargs="+", default=None, metavar="KEY=VALUE",
+                    help="With --value-reinit: change the network's ladder settings, e.g. hidden_dim=768 "
+                         "num_res_blocks=8 (A3's deep shape) or token_layers=2 token_dim=128 (A6's tokens).")
     vf.add_argument("--value-epochs", type=float, default=20.0, help="At most this many passes over the training positions.")
     vf.add_argument("--value-lr", type=float, default=2e-4)
     vf.add_argument("--value-batch", type=int, default=4096, help="Positions per step.")
@@ -1276,6 +1279,7 @@ def main():
                              "fine-tune, or with --value-reinit the shape to train from scratch)")
         run_value_fit(
             ValueFitConfig(dataset=args.value_dataset, init=args.warmup_checkpoint, reinit=args.value_reinit,
+                           arch=parse_arch(args.value_arch),
                            batch=args.value_batch, sibling_groups=args.value_sibling_groups,
                            sibling_coef=args.value_sibling_coef, vp_coef=args.value_vp_coef,
                            aux_coef=args.value_aux_coef, lr=args.value_lr, max_epochs=args.value_epochs,

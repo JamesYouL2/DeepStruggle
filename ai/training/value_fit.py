@@ -45,6 +45,10 @@ class ValueFitConfig:
     dataset: str
     init: str                       # an RL checkpoint: its weights (fine-tune) or its shape (--value-reinit)
     reinit: bool = False
+    #: Changes to the init network's ladder config (LadderNet keyword -> value), with reinit only:
+    #: the deep shape is {"hidden_dim": 768, "num_res_blocks": 8} (A3's), the token shape
+    #: {"token_layers": 2, "token_dim": 128} (A6's).
+    arch: Optional[Dict[str, Any]] = None
     batch: int = 4096
     sibling_groups: int = 256       # (position, world) groups of k leaves per step
     sibling_coef: float = 10.0
@@ -153,6 +157,27 @@ def _sibling_groups(s: Dict[str, np.ndarray], holdout: bool) -> Tuple[np.ndarray
     return idx, s["cols"][idx, 0].astype(np.float32) if idx.size else np.zeros((0, k), np.float32)
 
 
+def parse_arch(items: Optional[List[str]]) -> Dict[str, Any]:
+    """`key=value` ladder settings: integers, floats, true/false, else strings."""
+    out: Dict[str, Any] = {}
+    for item in items or []:
+        key, sep, raw = item.partition("=")
+        if not sep:
+            raise SystemExit(f"--value-arch takes key=value, got {item!r}")
+        value: Any = raw
+        if raw in ("true", "false"):
+            value = raw == "true"
+        else:
+            for conv in (int, float):
+                try:
+                    value = conv(raw)
+                    break
+                except ValueError:
+                    pass
+        out[key] = value
+    return out
+
+
 def _git(*args: str) -> str:
     try:
         return subprocess.check_output(["git", *args], text=True).strip()
@@ -169,18 +194,24 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
     torch.manual_seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
     ds = pathlib.Path(cfg.dataset)
-    manifest = json.loads((ds / "manifest.json").read_text())
-    engine = manifest["engine"]
-
     sd = torch.load(cfg.init, map_location="cpu", weights_only=True)
     sd.pop("keep_idx", None)
     lcfg = ladder_config_from_state_dict(sd)
     if lcfg is None:
         raise SystemExit(f"{cfg.init}: value fit takes a LadderNet checkpoint")
+    if cfg.arch:
+        if not cfg.reinit:
+            raise SystemExit("a changed architecture (--value-arch) trains from fresh weights: add --value-reinit")
+        unknown = sorted(set(cfg.arch) - set(lcfg))
+        if unknown:
+            raise SystemExit(f"--value-arch: not ladder settings: {unknown}")
+        lcfg = {**lcfg, **cfg.arch}
     model = create_ladder_net(dev, **lcfg)
     if not cfg.reinit:
         model.load_state_dict(sd, strict=True)
     model.train()
+    manifest = json.loads((ds / "manifest.json").read_text())
+    engine = manifest["engine"]
     features = int(getattr(model, "obs_feature_bits", 0))
     width = model.TOTAL_OBS_SIZE
 

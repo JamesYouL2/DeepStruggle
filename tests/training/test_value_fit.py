@@ -9,11 +9,12 @@ import pathlib
 from typing import Any, Dict
 
 import numpy as np
+import pytest
 import torch
 
 import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net
-from ai.training.value_fit import ValueFitConfig, run_value_fit
+from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
 from tests.training.test_ladder_tokens import SHALLOW
 from tools.lib.player_agent import NeuralAgent
 
@@ -67,3 +68,13 @@ def test_a_value_fit_runs_end_to_end(tmp_path: pathlib.Path) -> None:
     assert meta["resumed_from"] == str(init)
     agent = NeuralAgent.from_checkpoint(str(pathlib.Path(run_dir) / "value_fit_best.pt"), device="cpu")
     assert agent.model is not None
+
+
+def test_value_arch_settings_are_typed_and_need_fresh_weights(tmp_path: pathlib.Path) -> None:
+    assert parse_arch(["hidden_dim=768", "num_res_blocks=8", "head_center=true", "logit_cap=2.5"]) == {
+        "hidden_dim": 768, "num_res_blocks": 8, "head_center": True, "logit_cap": 2.5}
+    init = tmp_path / "init.pt"
+    torch.save(create_ladder_net("cpu", **SHALLOW).state_dict(), init)
+    cfg = ValueFitConfig(dataset=str(tmp_path), init=str(init), arch={"hidden_dim": 96}, device="cpu")
+    with pytest.raises(SystemExit, match="value-reinit"):
+        run_value_fit(cfg, run_name=None, description=None, output_dir=str(tmp_path / "run"))
