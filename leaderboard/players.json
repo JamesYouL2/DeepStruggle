@@ -247,6 +247,21 @@
     "description": "The rollout root at 16 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed)": {
+    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 16,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own",
+      "chance": "keyed"
+    },
+    "description": "",
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own,leaf_net=E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R52)": {
     "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
     "inference": {
