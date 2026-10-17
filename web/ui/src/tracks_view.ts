@@ -11,17 +11,26 @@ export interface SpaceBoxMetadata {
   abilityShort: string;
 }
 
+/** As the engine has them (engine/src/space_race.cpp): rolls alternate 1-3 / 1-4 up to box 7. */
 export const SPACE_RACE_BOXES: SpaceBoxMetadata[] = [
   { box: 0, name: "Start / Launchpad", minOps: 0, maxRoll: 0, vpFirst: 0, vpSecond: 0, ability: "None", abilityShort: "None" },
   { box: 1, name: "Earth Satellite", minOps: 2, maxRoll: 3, vpFirst: 2, vpSecond: 1, ability: "None", abilityShort: "None" },
   { box: 2, name: "Animal in Space", minOps: 2, maxRoll: 4, vpFirst: 0, vpSecond: 0, ability: "May attempt Space Race twice per turn", abilityShort: "2 Attempts / Turn" },
-  { box: 3, name: "Man in Orbit", minOps: 2, maxRoll: 4, vpFirst: 2, vpSecond: 0, ability: "None", abilityShort: "None" },
-  { box: 4, name: "Man in Space", minOps: 2, maxRoll: 3, vpFirst: 0, vpSecond: 0, ability: "Opponent must select & reveal headline first", abilityShort: "Opponent Reveals Headline 1st" },
-  { box: 5, name: "Lunar Probe", minOps: 3, maxRoll: 4, vpFirst: 3, vpSecond: 1, ability: "None", abilityShort: "None" },
-  { box: 6, name: "Space Walk", minOps: 3, maxRoll: 3, vpFirst: 0, vpSecond: 0, ability: "May discard 1 held card at end of turn", abilityShort: "Discard Held Card at Turn End" },
-  { box: 7, name: "Space Station", minOps: 3, maxRoll: 4, vpFirst: 4, vpSecond: 2, ability: "None", abilityShort: "None" },
-  { box: 8, name: "Eagle / Bear Landed", minOps: 4, maxRoll: 2, vpFirst: 2, vpSecond: 0, ability: "May play 8 Action Rounds per turn", abilityShort: "8th Action Round" }
+  { box: 3, name: "Man in Space", minOps: 2, maxRoll: 3, vpFirst: 2, vpSecond: 0, ability: "None", abilityShort: "None" },
+  { box: 4, name: "Man in Earth Orbit", minOps: 2, maxRoll: 4, vpFirst: 0, vpSecond: 0, ability: "Opponent must select & reveal headline first", abilityShort: "Opponent Reveals Headline 1st" },
+  { box: 5, name: "Lunar Orbit", minOps: 3, maxRoll: 3, vpFirst: 3, vpSecond: 1, ability: "None", abilityShort: "None" },
+  { box: 6, name: "Eagle / Bear Has Landed", minOps: 3, maxRoll: 4, vpFirst: 0, vpSecond: 0, ability: "May discard 1 held card at end of turn", abilityShort: "Discard Held Card at Turn End" },
+  { box: 7, name: "Space Shuttle", minOps: 3, maxRoll: 3, vpFirst: 4, vpSecond: 2, ability: "None", abilityShort: "None" },
+  { box: 8, name: "Space Station", minOps: 4, maxRoll: 2, vpFirst: 2, vpSecond: 0, ability: "May play 8 Action Rounds per turn", abilityShort: "8th Action Round" }
 ];
+
+/** What the next box asks, as the app's "NEXT PROJECT: 2 OPS: Roll 1-3": a card of N Ops, a roll. */
+function nextProject(at: number): string {
+  const next = SPACE_RACE_BOXES[at + 1];
+  if (!next) return `<span class="pill-next" title="The space race is won">landed</span>`;
+  return `<span class="pill-next" title="Box ${next.box}, ${next.name}: a card of ${next.minOps}+ Ops, then a roll of 1-${next.maxRoll}">`
+    + `next ${next.minOps} Ops · 1–${next.maxRoll}</span>`;
+}
 
 export class TracksView {
   private container: HTMLElement;
@@ -135,6 +144,7 @@ export class TracksView {
             <span class="pill-side">USSR:</span>
             <span class="pill-box-num">#${ussrSpace}</span>
             <span class="pill-attempts">(${ussrTurnsUsed}/${maxUssrAttempts})</span>
+            ${nextProject(ussrSpace)}
           </div>
 
           <!-- Mini Progress Ladder (Boxes 0 to 8) -->
@@ -165,6 +175,7 @@ export class TracksView {
             <span class="pill-side">US:</span>
             <span class="pill-box-num">#${usSpace}</span>
             <span class="pill-attempts">(${usTurnsUsed}/${maxUsAttempts})</span>
+            ${nextProject(usSpace)}
           </div>
 
           <!-- Expand Icon Button -->

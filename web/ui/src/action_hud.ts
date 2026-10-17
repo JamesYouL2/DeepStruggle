@@ -120,8 +120,8 @@ export class ActionHud {
           promptText = `<strong>${player}:</strong> <em>Ask Not What Your Country Can Do For You</em>: Select cards from hand to discard:`;
         } else if (resolvingCard === 92) { // Terrorism
           promptText = `<strong>${player}:</strong> <em>Terrorism</em>: Select a card from hand to discard:`;
-        } else if (resolvingCard === 250) { // Space Walk (Box 6)
-          promptText = `<strong>${player}:</strong> <em>Space Walk (Space Race Box 6)</em>: You may discard 1 card from hand at turn end (or click Pass to retain full hand):`;
+        } else if (resolvingCard === 250) { // Eagle / Bear Has Landed (Box 6)
+          promptText = `<strong>${player}:</strong> <em>Eagle / Bear Has Landed (Space Race Box 6)</em>: You may discard 1 card from hand at turn end (or click Pass to retain full hand):`;
         } else if (resolvingCard > 0) {
           promptText = `<strong>${player}:</strong> Resolving Event (Card #${resolvingCard}): Select a card:`;
         } else if (phaseName === "HEADLINE") {

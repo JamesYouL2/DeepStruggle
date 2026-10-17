@@ -173,6 +173,16 @@
           <button id="btn-zoom-reset" class="btn-icon" title="Reset View">⟲</button>
           <div class="map-legend-toggle" id="map-legend"></div>
         </div>
+        <!-- Frame one region (map_view.ts zoomToRegion), like the region buttons of the app. -->
+        <nav class="map-region-jump" id="map-region-jump" aria-label="Zoom to a region">
+          <button data-region="Europe" title="Europe">Eu</button>
+          <button data-region="Asia" title="Asia">As</button>
+          <button data-region="Southeast Asia" title="Southeast Asia">SE</button>
+          <button data-region="Middle East" title="Middle East">ME</button>
+          <button data-region="Africa" title="Africa">Af</button>
+          <button data-region="Central America" title="Central America">CA</button>
+          <button data-region="South America" title="South America">SA</button>
+        </nav>
         <!-- A player's view: what the other side's latest turn did (map_view.ts renderLastTurnSummary). -->
         <div class="map-last-turn hidden" id="map-last-turn"></div>
         <!-- The latest action round's dice while recent (roll_tray.ts, from game/rolls.ts). -->

@@ -163,20 +163,22 @@ def test_space_race_modal_interaction_and_content(browser_context, server_url):
     assert "Animal in Space" in box2.inner_text()
     assert "May attempt Space Race twice per turn" in box2.inner_text()
     
-    # Verify Box 4 (Man in Space)
+    # Verify Box 4 (Man in Earth Orbit) -- the rolls alternate 1-3 / 1-4, as engine/src/space_race.cpp has them
     box4 = page.locator('.space-box-card[data-box="4"]')
-    assert "Man in Space" in box4.inner_text()
+    assert "Man in Earth Orbit" in box4.inner_text()
+    assert "1–4" in box4.inner_text()
     assert "Opponent must select & reveal headline first" in box4.inner_text()
     
-    # Verify Box 6 (Space Walk)
+    # Verify Box 6 (Eagle / Bear Has Landed)
     box6 = page.locator('.space-box-card[data-box="6"]')
-    assert "Space Walk" in box6.inner_text()
+    assert "Eagle / Bear Has Landed" in box6.inner_text()
+    assert "1–4" in box6.inner_text()
     assert "≥ 3 Ops" in box6.inner_text()
     assert "May discard 1 held card at end of turn" in box6.inner_text()
     
-    # Verify Box 8 (Eagle / Bear Landed)
+    # Verify Box 8 (Space Station)
     box8 = page.locator('.space-box-card[data-box="8"]')
-    assert "Eagle / Bear Landed" in box8.inner_text()
+    assert "Space Station" in box8.inner_text()
     assert "≥ 4 Ops" in box8.inner_text()
     assert "1–2" in box8.inner_text()
     assert "May play 8 Action Rounds per turn" in box8.inner_text()

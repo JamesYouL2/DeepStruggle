@@ -32,7 +32,8 @@ web/ui/
 │   │                           # in a worker with its own engine and model; bindings/rollout_batch.hpp)
 │   ├── metadata.ts             # rules/map.json and rules/cards.json, bundled
 │   ├── map_view.ts             # SVG Deluxe Map renderer (84 countries, lines, influence markers, region
-│   │                           # scoring badges, hover card, pan/zoom)
+│   │                           # scoring badges, hover card, pan/pinch/zoom, region jump)
+│   ├── region_summary.ts       # A region's scoring summary, the two sides side by side
 │   ├── roll_tray.ts            # The map's roll tray: dice faces, modifiers, totals and outcomes
 │   ├── cards_view.ts           # Hand tabs + Card Explorer (left column), Active Continuous Effects panel (EFFECT_INFO_MAP)
 │   ├── tracks_view.ts          # Turn, Action Round, DEFCON, Mil Ops, Space Race, and Victory Points tracks
@@ -88,8 +89,12 @@ web/ui/
      only), a `NO COUPS` chip when DEFCON closes the region (`.svg-region-defcon`; Southeast Asia
      closes with Asia), and a **scoring-card row** (`scoringCardWhereabouts`, from
      `state.card_locations`): `LIVE` while the card is in the draw deck or a hand (or headlined,
-     or peeked), `OUT` once discarded or removed, `NOT YET` for a Mid War card before Mid War;
-     the hover tooltip says where exactly.
+     or peeked), `OUT` once discarded or removed, `NOT YET` for a Mid War card before Mid War.
+     Hovering a badge shows, and clicking or tapping it opens in the modal, the region's
+     **scoring summary** (`region_summary.ts`, after the Playdek app's scoring screen): the US on
+     the left, the USSR on the right, rows for standing, battlegrounds, other countries, countries
+     next to the enemy superpower and the total, who controls what, the card's terms and where the
+     card is.
    - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge right of
      the rightmost influence marker, so it never covers a number; its font is sized to fit (not
      `textLength`, which leaves the measured box at the natural width). The HTML badge's CSS
@@ -105,7 +110,16 @@ web/ui/
      top of the map: every flag whose `EFFECT_INFO_MAP` duration is `TURN`, the card's text on
      hover. Permanent and conditional effects, and the Space Race attempt flags, stay in the
      right rail's effects panel.
-   - Mouse pan and zoom, with metadata loaded autonomously and re-rendered on arrival.
+   - Pan and zoom through Pointer Events, one path for mouse and touch: drag to pan, two fingers
+     to pinch (`zoomAt` keeps the point between them fixed), the wheel zooms at the cursor. A
+     press that moves more than `DRAG_SLOP` (6px) is a pan and the click after it is swallowed in
+     the capture phase, so a pan never chooses a country. `#map-region-jump` (Eu/As/SE/ME/Af/CA/SA,
+     as the Playdek app's side buttons) frames a region (`zoomToRegion`); the reset button shows
+     the whole map.
+   - **Touch has no hover.** A tap on a country that is not a target shows its card (on a phone
+     a bottom sheet) and lights its neighbours; a tap on open map puts it away; a target is still
+     chosen by the tap. On touch, mouseenter/mouseleave are ignored (`lastPointer`): Chromium's
+     compatibility mouse events after a tap fire a mouseleave elsewhere and would close the card.
 2. **Layout: cards on the left, the board, the HUD rail on the right (`index.html`, `style.css`)**:
    - The top of the page is three blocks: the disclaimer; the technical bar (engine badge, play
      mode with New Game, the active model with *Change* opening `#model-chooser`, the search select,
@@ -117,6 +131,11 @@ web/ui/
      the middle, and the right rail with the Decision HUD, model analysis / replay readout and
      active effects. Below 1280px the side columns narrow; below 960px it becomes one scrolling
      column: map, HUD rail, cards.
+   - **Phones (720px and narrower)**: the whole page scrolls, nothing is wider than the screen.
+     The bars wrap, the map is `clamp(380px, 65vw + 150px, 72svh)` tall with the zoom buttons in
+     a row at its top left and the region buttons along its bottom, the action log and replay bar
+     stack below, and the modal fills the width. `(pointer: coarse)` enlarges the buttons on any
+     touch screen.
    - The *All* tab lists each card's name and where it is -- no era/side line and no hover
      description (the hand tabs keep their tooltip); a click opens the card's text.
 3. **Active Continuous Effects Panel (`cards_view.ts`)**:
@@ -144,6 +163,9 @@ web/ui/
    - `tests/web/test_e2e_card_choices.py` plays all of these from the US hand.
 5. **Deluxe Space Race Track & Modal Inspector (`tracks_view.ts`)**:
    - Renders the 9-step ladder (0..8) in the top status bar with US and USSR marker tokens and turn attempt counters (`Attempts: used/max`).
+     Each side's pill says what its next attempt needs (`.pill-next`, "next 2 Ops · 1–3", the
+     Playdek app's *NEXT PROJECT*). `SPACE_RACE_BOXES` follows `engine/src/space_race.cpp`: the
+     rolls alternate 1–3 / 1–4 up to box 7 (Man in Space is box 3, Man in Earth Orbit box 4).
    - Clicking the widget opens the full modal: all 9 boxes, required Ops, success rolls, 1st/2nd VP awards, and special ongoing privileges.
 6. **Interactive Action Stream & Replay Timeline (`replay_controls.ts`, `main.ts`)**:
    - Timeline scrubber with play/pause, step forward/backward, and server replay loading.
@@ -349,6 +371,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_e2e_action_log.py` | in Chromium: the turn's last realignment keeps its dice and the turn's end is its own entry; a click that rolls twice (a realignment with the opponent's war card) logs both dice; the card Aldrich Ames has the US discard in the headline is a discard, not a headline; Five Year Plan's and Terrorism's random discards are their own lines, with whether Five Year Plan's event fires; Missile Envy's exchange says the card taken and how it resolves; Chernobyl's options are region names in the HUD and the log |
 | `test_describe_golden.py` | the TypeScript action log writes what the Python session wrote (1,098 steps); after an engine change refuses a recorded action, re-record with `fixtures/make_describe_golden.py` |
 | `test_e2e_board_display.py` | in Chromium: this turn's effects on top of the map (not permanent ones, not Space Race attempts), control as the country's fill (a highlighted target included), an empty influence space blank with the US marker left and the controlling one flipped, the hover card's control arithmetic and neighbour highlight, the `NO COUPS` chip on the regions DEFCON closes, and the roll tray and the rolled country's die (no roll from an earlier turn) |
+| `test_e2e_mobile.py` | in Chromium at 390px with touch: one column with the map first and nothing wider than the screen, the region buttons clear of the zoom buttons and framing their region, a tap showing a non-target country's card and a tap on open map closing it, a badge opening the region's scoring summary with the right rows, and the space pills' next Ops and roll |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
 | `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |

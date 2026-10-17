@@ -1109,6 +1109,8 @@ export class TSApp {
     document.getElementById("btn-zoom-in")?.addEventListener("click", () => this.mapView.zoom(0.85));
     document.getElementById("btn-zoom-out")?.addEventListener("click", () => this.mapView.zoom(1.15));
     document.getElementById("btn-zoom-reset")?.addEventListener("click", () => this.mapView.resetView());
+    document.querySelectorAll<HTMLButtonElement>("#map-region-jump [data-region]").forEach(b =>
+      b.addEventListener("click", () => this.mapView.zoomToRegion(b.dataset.region ?? "")));
 
     // New Game: ask how to play, then a fresh seed in that mode (askMode -> newGame).
     document.getElementById("btn-new-game")?.addEventListener("click", () => {

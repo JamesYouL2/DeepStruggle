@@ -58,9 +58,9 @@ export function describeActionAndDeltas(
       logs.push(eventCardChoice(engine, before, after, action, p, resolving));
     } else if (resolving === SPACE_WALK) {
       if (isConfirmDone(action) || primary === 0) {
-        logs.push(`${p} passes Space Walk (Box 6) turn-end discard opportunity.`);
+        logs.push(`${p} passes Eagle / Bear Has Landed (Box 6) turn-end discard opportunity.`);
       } else {
-        logs.push(`${p} discards ${cardName} (#${primary}) via Space Walk (Box 6 privilege).`);
+        logs.push(`${p} discards ${cardName} (#${primary}) via Eagle / Bear Has Landed (Box 6 privilege).`);
       }
     } else if (phase === "HEADLINE") {
       const usBefore = before.headline_us_card ?? 0;

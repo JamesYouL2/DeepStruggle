@@ -1,5 +1,6 @@
 import { GameState, LastTurn, LastTurnCountry, MapMetadata, RecentRoll } from "./types";
 import { renderRollTray } from "./roll_tray";
+import { regionSummaryHtml } from "./region_summary";
 import { MAP_METADATA } from "./metadata";
 
 export interface RegionScoreAudit {
@@ -26,7 +27,9 @@ export interface RegionScoreAudit {
   netVpUs: number;
   isInstantWinUs?: boolean;
   isInstantWinUssr?: boolean;
-  details: string[];
+  /** The countries each side controls there, a battleground starred. */
+  usControlled: string[];
+  ussrControlled: string[];
 }
 
 /**
@@ -79,6 +82,11 @@ const MARKER_W = 12.2;
 const MARKER_H = 12.2;
 /** More countries than this changing at once is a jump (a new game, a link), not a move. */
 const MAX_FLASHED = 12;
+/** The view's width bounds in map units: 8x in, half out. */
+const MIN_VIEW_W = 125;
+const MAX_VIEW_W = 2000;
+/** CSS pixels a press may move and still be a click. */
+const DRAG_SLOP = 6;
 
 /** Names too long for the band even squeezed; the hover card gives the full one. */
 const SHORT_NAMES: Record<string, string> = {
@@ -217,8 +225,13 @@ export class MapView {
 
   // Pan and zoom state
   private viewBox = { x: 0, y: 0, w: 1000, h: 650 };
-  private isPanning = false;
-  private startPoint = { x: 0, y: 0 };
+  /** The pointers pressed on the map, by id, at their latest position. */
+  private pointers = new Map<number, { x: number; y: number }>();
+  private pressedAt = { x: 0, y: 0 };
+  /** The current press has moved: it is a pan or a pinch, and its click is not a click. */
+  private dragged = false;
+  /** The latest press's pointer type: "mouse" hovers, "touch" and "pen" tap to see a card. */
+  private lastPointer = "mouse";
 
   constructor(svgElement: SVGSVGElement, onCountryClick: (countryId: number) => void) {
     this.svg = svgElement;
@@ -252,14 +265,29 @@ export class MapView {
     );
   }
 
-  public zoom(factor: number) {
-    const cx = this.viewBox.x + this.viewBox.w / 2;
-    const cy = this.viewBox.y + this.viewBox.h / 2;
-    this.viewBox.w *= factor;
-    this.viewBox.h *= factor;
-    this.viewBox.x = cx - this.viewBox.w / 2;
-    this.viewBox.y = cy - this.viewBox.h / 2;
+  /** A client point (CSS pixels) in map units, through the SVG's own transform, letterboxing included. */
+  private toMap(clientX: number, clientY: number): { x: number; y: number } {
+    const m = this.svg.getScreenCTM();
+    if (!m) return { x: this.viewBox.x + this.viewBox.w / 2, y: this.viewBox.y + this.viewBox.h / 2 };
+    const p = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
+  }
+
+  /** Zoom by `factor` (below 1 is in) about the map point under a client point, which stays put. */
+  private zoomAt(factor: number, clientX: number, clientY: number) {
+    const p = this.toMap(clientX, clientY);
+    const w = Math.min(MAX_VIEW_W, Math.max(MIN_VIEW_W, this.viewBox.w * factor));
+    const f = w / this.viewBox.w;
+    this.viewBox = {
+      x: p.x - (p.x - this.viewBox.x) * f, y: p.y - (p.y - this.viewBox.y) * f,
+      w, h: this.viewBox.h * f,
+    };
     this.updateViewBox();
+  }
+
+  public zoom(factor: number) {
+    const r = this.svg.getBoundingClientRect();
+    this.zoomAt(factor, r.left + r.width / 2, r.top + r.height / 2);
   }
 
   public resetView() {
@@ -267,31 +295,100 @@ export class MapView {
     this.updateViewBox();
   }
 
+  /**
+   * Frame a region: "Europe", "Asia", ..., or "Southeast Asia" (a subregion). The box is its
+   * countries' and its scoring badge's, padded; the SVG letterboxes it to the map's shape.
+   */
+  public zoomToRegion(region: string) {
+    const cs = (this.mapData?.countries ?? []).filter(c => c.region === region || (c.subregions ?? []).includes(region));
+    if (!cs.length) return;
+    const xs = cs.map(c => c.pos[0]), ys = cs.map(c => c.pos[1]);
+    const pad = 34;
+    let x0 = Math.min(...xs) - BOX_W / 2 - pad, x1 = Math.max(...xs) + BOX_W / 2 + pad;
+    let y0 = Math.min(...ys) - BOX_H / 2 - pad, y1 = Math.max(...ys) + BOX_H / 2 + pad;
+    // The view keeps the map's aspect, so zooming in and out from here does not stretch.
+    const w = Math.max(x1 - x0, (y1 - y0) * (1000 / 650)), h = w * (650 / 1000);
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    this.viewBox = { x: cx - w / 2, y: cy - h / 2, w, h };
+    this.updateViewBox();
+  }
+
+  /** The two fingers' distance and midpoint, while pinching. */
+  private pinch(): { span: number; x: number; y: number } {
+    const [a, b] = [...this.pointers.values()];
+    return { span: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  /**
+   * Pan by dragging, with a mouse or a finger and from anywhere, a country included: zoomed in on
+   * a phone the map is mostly countries. A press that moves less than DRAG_SLOP is a click (a
+   * tap); one that moved is a pan, and its click is swallowed before it reaches a country. Two
+   * fingers pinch-zoom about their midpoint; the wheel zooms about the cursor.
+   */
   private setupPanAndZoom() {
-    this.svg.addEventListener("mousedown", (e) => {
-      if ((e.target as HTMLElement).closest(".svg-country-node") || (e.target as HTMLElement).closest(".svg-region-badge")) return;
-      this.isPanning = true;
-      this.startPoint = { x: e.clientX, y: e.clientY };
+    this.svg.addEventListener("pointerdown", (e) => {
+      this.lastPointer = e.pointerType;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pointers.size === 1) {
+        this.dragged = false;
+        this.pressedAt = { x: e.clientX, y: e.clientY };
+      }
     });
 
-    window.addEventListener("mousemove", (e) => {
-      if (!this.isPanning) return;
-      const dx = ((e.clientX - this.startPoint.x) / this.svg.clientWidth) * this.viewBox.w;
-      const dy = ((e.clientY - this.startPoint.y) / this.svg.clientHeight) * this.viewBox.h;
-      this.viewBox.x -= dx;
-      this.viewBox.y -= dy;
-      this.startPoint = { x: e.clientX, y: e.clientY };
+    // A real mouse moving brings hover back on a device with both (emulated hover makes no pointer event).
+    this.svg.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") this.lastPointer = "mouse"; });
+    window.addEventListener("pointermove", (e) => {
+      const prev = this.pointers.get(e.pointerId);
+      if (!prev) return;
+      if (!this.dragged) {
+        if (Math.hypot(e.clientX - this.pressedAt.x, e.clientY - this.pressedAt.y) < DRAG_SLOP) return;
+        this.dragged = true;
+        this.hideRegionTooltip();
+      }
+      if (this.pointers.size === 2) {
+        const before = this.pinch();
+        this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const after = this.pinch();
+        const a = this.toMap(before.x, before.y), b = this.toMap(after.x, after.y);
+        this.viewBox.x -= b.x - a.x;
+        this.viewBox.y -= b.y - a.y;
+        this.updateViewBox();
+        this.zoomAt(before.span / after.span, after.x, after.y);
+        return;
+      }
+      const a = this.toMap(prev.x, prev.y), b = this.toMap(e.clientX, e.clientY);
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.viewBox.x -= b.x - a.x;
+      this.viewBox.y -= b.y - a.y;
       this.updateViewBox();
     });
 
-    window.addEventListener("mouseup", () => {
-      this.isPanning = false;
+    const release = (e: PointerEvent) => {
+      this.pointers.delete(e.pointerId);
+      // After the click this release may cause (same task), a drag is over: the next click counts.
+      if (!this.pointers.size && this.dragged) setTimeout(() => { if (!this.pointers.size) this.dragged = false; }, 0);
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+
+    // Capture: runs before the country's own click handler, so a pan never selects a country.
+    this.svg.addEventListener("click", (e) => {
+      if (this.dragged) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+    // A tap on the open map puts a tapped country's card away.
+    this.svg.addEventListener("click", (e) => {
+      if (this.lastPointer === "mouse" || (e.target as Element).closest(".svg-country-node, .svg-region-badge")) return;
+      this.focusCountry(null, []);
+      this.hideRegionTooltip();
     });
 
     this.svg.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
-      this.zoom(zoomFactor);
+      this.zoomAt(e.deltaY > 0 ? 1.1 : 0.9, e.clientX, e.clientY);
     }, { passive: false });
   }
 
@@ -425,15 +522,6 @@ export class MapView {
         netVp = usTotal - ussrTotal;
       }
 
-      const details: string[] = [
-        `📊 ${cfg.name} SCORING BREAKDOWN (${cfg.cardName})`,
-        `• Total Regional Battlegrounds: ${totalBg}`,
-        `• US Controlled (${usCountries} total, ${usBg} BG): ${usControlledList.length ? usControlledList.join(", ") : "None"}`,
-        `• USSR Controlled (${ussrCountries} total, ${ussrBg} BG): ${ussrControlledList.length ? ussrControlledList.join(", ") : "None"}`,
-        `• US Standing: ${usStatus} -> Base: ${usBase} VP + ${usBg} BGs${usSpAdj > 0 ? ` + ${usSpAdj} Superpower Adj` : ""} = ${usTotal} VP`,
-        `• USSR Standing: ${ussrStatus} -> Base: ${ussrBase} VP + ${ussrBg} BGs${ussrSpAdj > 0 ? ` + ${ussrSpAdj} Superpower Adj` : ""} = ${ussrTotal} VP`,
-        `• Current Net VP for US: ${netVp > 0 ? "+" + netVp : netVp} VP ${isInstantWinUs ? "(US INSTANT WIN)" : (isInstantWinUssr ? "(USSR INSTANT WIN)" : "")}`
-      ];
 
       audits.push({
         regionId: cfg.id,
@@ -458,7 +546,8 @@ export class MapView {
         netVpUs: netVp,
         isInstantWinUs,
         isInstantWinUssr,
-        details
+        usControlled: usControlledList,
+        ussrControlled: ussrControlledList,
       });
     });
 
@@ -473,20 +562,20 @@ export class MapView {
       const cState = state.countries ? state.countries[cName] : null;
       if (cState?.controlled_by === "US") {
         seUsVp += 1;
-        seUsList.push(`${cName} (1 VP)`);
+        seUsList.push(cName);
       } else if (cState?.controlled_by === "USSR") {
         seUssrVp += 1;
-        seUssrList.push(`${cName} (1 VP)`);
+        seUssrList.push(cName);
       }
     });
 
     const thaiState = state.countries ? state.countries["Thailand"] : null;
     if (thaiState?.controlled_by === "US") {
       seUsVp += 2;
-      seUsList.push("★ Thailand (2 VP)");
+      seUsList.push("Thailand ★");
     } else if (thaiState?.controlled_by === "USSR") {
       seUssrVp += 2;
-      seUssrList.push("★ Thailand (2 VP)");
+      seUssrList.push("Thailand ★");
     }
 
     const seNetVp = seUsVp - seUssrVp;
@@ -511,13 +600,8 @@ export class MapView {
       usTotalVp: seUsVp,
       ussrTotalVp: seUssrVp,
       netVpUs: seNetVp,
-      details: [
-        "📊 SOUTHEAST ASIA SCORING BREAKDOWN (Card #38)",
-        "• 1 VP each for Burma, Laos/Cambodia, Vietnam, Malaysia, Indonesia, Philippines. 2 VP for Thailand.",
-        `• US Controlled: ${seUsList.length ? seUsList.join(", ") : "None"} (${seUsVp} VP)`,
-        `• USSR Controlled: ${seUssrList.length ? seUssrList.join(", ") : "None"} (${seUssrVp} VP)`,
-        `• Current Net VP for US: ${seNetVp > 0 ? "+" + seNetVp : seNetVp} VP`
-      ]
+      usControlled: seUsList,
+      ussrControlled: seUssrList,
     });
 
     return audits;
@@ -734,15 +818,28 @@ export class MapView {
       const roll = rolledIn.get(c.id);
       if (roll) markRoll(g, roll, left, top);
 
-      g.addEventListener("click", () => {
+      g.addEventListener("click", (e) => {
+        // A finger has no hover: tapping a country that is not a choice shows its card instead.
+        // (The browser's emulated hover around a tap is ignored: the taps alone open and close it.)
+        if (this.lastPointer !== "mouse") {
+          if (!legalNodes.has(c.id)) {
+            this.focusCountry(c.name, c.neighbours || []);
+            this.showCountryTooltip(e, c, stateC, state, lc);
+            return;
+          }
+          this.focusCountry(null, []);
+          this.hideRegionTooltip();
+        }
         this.onCountryClick(c.id);
       });
       g.addEventListener("mouseenter", (e) => {
+        if (this.lastPointer !== "mouse") return;
         this.focusCountry(c.name, c.neighbours || []);
         this.showCountryTooltip(e, c, stateC, state, lc);
       });
       g.addEventListener("mousemove", (e) => this.placeTooltip(e));
       g.addEventListener("mouseleave", () => {
+        if (this.lastPointer !== "mouse") return;
         this.focusCountry(null, []);
         this.hideRegionTooltip();
       });
@@ -962,8 +1059,9 @@ export class MapView {
         g.appendChild(chip);
       }
 
-      g.addEventListener("mouseenter", (e) => this.showRegionTooltip(e, audit));
-      g.addEventListener("mouseleave", () => this.hideRegionTooltip());
+      g.addEventListener("mouseenter", (e) => { if (this.lastPointer === "mouse") this.showRegionTooltip(e, audit); });
+      g.addEventListener("mouseleave", () => { if (this.lastPointer === "mouse") this.hideRegionTooltip(); });
+      g.addEventListener("click", () => this.openRegionSummary(audit));
 
       overlayGroup.appendChild(g);
     });
@@ -973,32 +1071,29 @@ export class MapView {
 
   private showRegionTooltip(e: MouseEvent, audit: RegionScoreAudit) {
     if (!this.tooltipEl) return;
-
-    this.tooltipEl.innerHTML = `
-      <div style="font-weight: bold; font-size: 13px; color: #F8FAFC; margin-bottom: 4px;">
-        ${audit.scoringCardName}
-      </div>
-      <div style="font-size: 11px; color: ${SCORING_CARD_TAG[audit.scoringCard.status].stroke}; margin-bottom: 4px;">
-        Scoring card ${audit.scoringCard.where}
-      </div>
-      <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 8px;">
-        CURRENT US NET VALUE: <strong style="color: ${audit.netVpUs > 0 ? '#60A5FA' : (audit.netVpUs < 0 ? '#F87171' : '#CBD5E1')}; font-size: 12px;">${audit.netVpUs > 0 ? '+' + audit.netVpUs : audit.netVpUs} VP</strong>
-      </div>
-      <div style="font-size: 11px; color: #E2E8F0; line-height: 1.4; display: flex; flex-direction: column; gap: 3px;">
-        ${audit.details.map(d => `<div>${d}</div>`).join("")}
-      </div>
-    `;
-
+    this.tooltipEl.innerHTML = regionSummaryHtml(audit);
+    this.tooltipEl.classList.add("region-tip");
     this.tooltipEl.classList.remove("hidden");
-    const x = Math.min(window.innerWidth - 340, e.clientX + 15);
-    const y = Math.min(window.innerHeight - 250, e.clientY + 15);
-    this.tooltipEl.style.left = `${x}px`;
-    this.tooltipEl.style.top = `${y}px`;
+    this.placeTooltip(e);
+  }
+
+  /** The region's scoring summary, pinned in the modal: what a click (or a tap) on a badge opens. */
+  private openRegionSummary(audit: RegionScoreAudit) {
+    this.hideRegionTooltip();
+    const container = document.getElementById("modal-container");
+    const title = document.getElementById("modal-title");
+    const body = document.getElementById("modal-body");
+    if (!container || !title || !body) return;
+    container.querySelector(".modal-content")?.classList.remove("modal-lg");
+    title.textContent = audit.scoringCardName;
+    body.innerHTML = regionSummaryHtml(audit);
+    container.classList.remove("hidden");
   }
 
   private hideRegionTooltip() {
     if (!this.tooltipEl) return;
     this.tooltipEl.classList.add("hidden");
+    this.tooltipEl.classList.remove("region-tip");
   }
 }
 
