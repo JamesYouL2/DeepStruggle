@@ -83,6 +83,10 @@ UNCHECKED_BY_DESIGN = frozenset({
     "post_tournament_models", "post_tournament_games", "bc_epochs", "distill_dataset",
     "distill_epochs", "distill_lr", "warmup_dataset", "run_name", "description",
     "curriculum_switch_fraction", "new_directory",
+    # --mode value-fit's inputs: ai/training/value_fit.py records them in its own metadata.json
+    "value_dataset", "value_reinit", "value_arch", "value_epochs", "value_lr", "value_batch",
+    "value_sibling_groups", "value_sibling_coef", "value_vp_coef", "value_aux_coef", "value_eval_every",
+    "value_patience",
 })
 
 
