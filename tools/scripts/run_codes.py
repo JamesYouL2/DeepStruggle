@@ -68,6 +68,8 @@ BOOKKEEPING = frozenset({
     "seed_env", "seed_pool", "warmup_checkpoint", "warmup_dataset", "distill_dataset",
     "distill_epochs", "distill_lr", "bc_epochs", "curriculum_switch_fraction", "no_cuda_graphs",
     "merged_influence", "new_directory", "turn_credit_workers", "search_workers", "resume_widen",
+    # a value fit's shape change: the network it builds is recorded as ladder_config, the A code's
+    "value_arch",
 })
 #: Settings that do nothing while their switch is off: dropped then, so a stray value cannot make
 #: two identical recipes look different. (switch, its off value, the settings it gates)
