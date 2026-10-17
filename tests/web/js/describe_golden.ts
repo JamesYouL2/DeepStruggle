@@ -11,9 +11,17 @@ const [publicDir, goldenPath] = process.argv.slice(2);
 const engine = await WasmEngine.load(pathToFileURL(publicDir).href);
 const golden = JSON.parse(gunzipSync(readFileSync(goldenPath)).toString("utf8"));
 
-// The Python session never logged MilOps (it read keys the display state does not have); the
-// port does. Those lines are the one intended difference.
-const comparable = (lines: string[]) => lines.filter(l => !l.includes(" MilOps: "));
+// Intended differences from the Python session, which the port corrects:
+// - it never logged MilOps (it read keys the display state does not have);
+// - a card chosen while an event resolves read as a play, or in the headline as a headline commit
+//   with a "Headlines Simultaneously Revealed" pair for it; the port says what happened to the card,
+//   so for those steps the action's own lines are left out of the comparison;
+// - the port notes Five Year Plan's random discard on the card's line (after " — ").
+const comparable = (lines: string[], eventChoice: boolean) => {
+  let out = lines.filter(l => !l.includes(" MilOps: ")).map(l => l.startsWith("  • Card #") ? l.split(" — ")[0] : l);
+  if (eventChoice) out = out.slice(1).filter(l => !l.startsWith("  ★ "));
+  return out;
+};
 
 let steps = 0;
 let mismatches = 0;
@@ -25,8 +33,10 @@ for (const g of golden.games) {
     const before = engine.display();
     const refused = engine.step(action, 0);
     if (refused) throw new Error(`seed ${g.seed} step ${i}: engine refused (${refused})`);
-    const got = comparable(describeActionAndDeltas(engine, before, engine.display(), action));
-    const want = g.lines[i] as string[];
+    const ctx = before.decision_context;
+    const eventChoice = action.decision_type === 1 && (ctx?.resolving_card ?? 0) !== 0 && ctx?.resolving_card !== 250;
+    const got = comparable(describeActionAndDeltas(engine, before, engine.display(), action), eventChoice);
+    const want = comparable(g.lines[i] as string[], eventChoice);
     steps += 1;
     if (JSON.stringify(got) !== JSON.stringify(want)) {
       mismatches += 1;

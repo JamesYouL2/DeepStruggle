@@ -10,11 +10,15 @@
  * the Python dicts were built; the JSON the page reads has its keys sorted by name instead.
  */
 import { DieRollState, GameState, MicroAction } from "../types";
+import { CARDS_METADATA } from "../metadata";
 import { WasmEngine } from "../engine/wasm_engine";
 
 const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE: 5, CHOOSE_BRANCH: 6 };
 /** Grain Sales to Soviets: its node offers the drawn card back (a CONFIRM_DONE) for its own 2 Ops. */
 const GRAIN_SALES = 67;
+/** The cards whose card choices the log words by name (see eventCardChoice), and Space Walk's id. */
+const STAR_WARS = 85, SALT = 43, UN_INTERVENTION = 32, MISSILE_ENVY = 49, FIVE_YEAR_PLAN = 5, SPACE_WALK = 250;
+const SIDE = new Map(CARDS_METADATA.map(c => [c.id, c.side]));
 
 function isConfirmDone(a: Required<MicroAction>): boolean {
   return (a.flags & 0x80) !== 0 || a.primary_id === 255;
@@ -48,7 +52,9 @@ export function describeActionAndDeltas(
     const resolving = ctx?.resolving_card ?? 0;
     const cardName = primary >= 1 && primary <= 110 ? engine.cardName(primary) : `#${primary}`;
     const phase = before.current_phase_name ?? "";
-    if (resolving === 250) {
+    if (resolving !== 0 && resolving !== SPACE_WALK) {
+      logs.push(eventCardChoice(engine, before, after, action, p, resolving));
+    } else if (resolving === SPACE_WALK) {
       if (isConfirmDone(action) || primary === 0) {
         logs.push(`${p} passes Space Walk (Box 6) turn-end discard opportunity.`);
       } else {
@@ -121,7 +127,7 @@ export function describeActionAndDeltas(
     logs.push(`${p} action: type=${d} primary=${primary} secondary=${secondary} flags=${flags}`);
   }
 
-  logs.push(...describeDeltas(engine, before, after, p));
+  logs.push(...describeDeltas(engine, before, after, p, d === DT.SELECT_CARD ? primary : 0));
   return logs;
 }
 
@@ -130,7 +136,8 @@ export function describeActionAndDeltas(
  * die roll `after` records. The deltas half of `describeActionAndDeltas`; on its own it is how the
  * session logs the changes a step made after the action itself (the turn's end).
  */
-export function describeDeltas(engine: WasmEngine, before: GameState, after: GameState, p: string): string[] {
+export function describeDeltas(engine: WasmEngine, before: GameState, after: GameState, p: string,
+                               chosen = 0): string[] {
   const logs: string[] = [];
   // 2. Influence
   const oldCountries = before.countries || {};
@@ -177,7 +184,7 @@ export function describeDeltas(engine: WasmEngine, before: GameState, after: Gam
     const o = oldLocs[String(cid)];
     const n = newLocs[String(cid)];
     if (n === undefined) continue;
-    if (o && o !== n) logs.push(`  • Card #${cid} (${engine.cardName(cid)}) moved: ${o} -> ${n}`);
+    if (o && o !== n) logs.push(`  • Card #${cid} (${engine.cardName(cid)}) moved: ${o} -> ${n}` + fiveYearPlanNote(before, after, cid, o, n, chosen));
   }
 
   // 5. The die roll, if one happened
@@ -244,4 +251,64 @@ export function describeRoll(engine: WasmEngine, before: GameState, roll: DieRol
     logs.push(`  🎲 Trap Escape Roll: ${r.roller || p} rolls ${r.roll1 ?? 0} (Needed 1–4) -> ${status}`);
   }
   return logs;
+}
+
+/** Where a card was, for "from the US hand" and the like ("" where it says nothing). */
+function from(loc: string | undefined): string {
+  if (!loc) return "";
+  if (loc.startsWith("HAND_US_")) return " from the US hand";
+  if (loc.startsWith("HAND_USSR_")) return " from the USSR hand";
+  if (loc === "DISCARD_PILE") return " from the discard pile";
+  if (loc === "PEEKED_TEMP") return " from the cards drawn";
+  return "";
+}
+
+/**
+ * A card chosen while an event resolves (`resolving_card`), said as what happened to it -- never as
+ * a play or a headline commit, which is what these choices were logged as: the card the USSR has the
+ * US discard with Aldrich Ames read as the USSR's headline, with a "Headlines Simultaneously
+ * Revealed" line for it.
+ */
+function eventCardChoice(engine: WasmEngine, before: GameState, after: GameState, action: Required<MicroAction>,
+                         p: string, resolving: number): string {
+  const event = engine.cardName(resolving);
+  const id = action.primary_id;
+  if (isConfirmDone(action) || id === 0) return `${p} chooses no (further) card (${event})`;
+  const card = `${engine.cardName(id)} (#${id})`;
+  const opp = p === "US" ? "USSR" : "US";
+  const src = before.card_locations?.[String(id)];
+  const dst = after.card_locations?.[String(id)];
+  if (resolving === STAR_WARS) return `${p} takes ${card} from the discard pile and plays its event (${event})`;
+  if (resolving === SALT) return `${p} takes ${card} back into hand from the discard pile (${event})`;
+  if (resolving === UN_INTERVENTION) return `${p} plays ${card} with ${event}: its event is cancelled, ${p} uses its Ops`;
+  if (resolving === MISSILE_ENVY) return `${p} gives ${card} to the ${opp} (${event})`;
+  if (resolving === GRAIN_SALES && id === UN_INTERVENTION) {
+    return `${p} plays UN Intervention on the card ${event} drew: its event is cancelled, ${p} uses its Ops`;
+  }
+  const verb = dst === "DISCARD_PILE" ? "discards" : dst === "REMOVED_FROM_GAME" ? "removes"
+    : dst === "DRAW_DECK" ? "returns to the draw deck" : dst?.startsWith(`HAND_${p}_`) ? "takes"
+    : dst?.startsWith(`HAND_${opp}_`) ? `gives the ${opp}` : "chooses";
+  return `${p} ${verb} ${card}${from(src)} (${event})`;
+}
+
+/**
+ * Five Year Plan has the USSR discard a card at random, and a US event discarded so fires. Its
+ * discard is no choice, so it is only a card line: say there what moved it and whether the event
+ * fires. Read where Five Year Plan resolves in this step -- played for the event (its play mode),
+ * or leaving play here (a headline, or played for Ops).
+ */
+function fiveYearPlanNote(before: GameState, after: GameState, cid: number, o: string, n: string, chosen: number): string {
+  if (cid === FIVE_YEAR_PLAN || !o.startsWith("HAND_USSR_") || (n !== "DISCARD_PILE" && n !== "REMOVED_FROM_GAME")) return "";
+  const c = before.decision_context;
+  // A card played in this step leaves the hand too: the USSR's own headline or the card it plays.
+  const ownPlay = [chosen, c?.pending_op_card, before.headline_us_card, before.headline_ussr_card,
+                   after.headline_us_card, after.headline_ussr_card];
+  if (ownPlay.includes(cid)) return "";
+  const played = c?.decision_type_name === "SELECT_PLAY_MODE" && c.pending_op_card === FIVE_YEAR_PLAN;
+  const fyp = String(FIVE_YEAR_PLAN);
+  const leaves = before.card_locations?.[fyp] !== after.card_locations?.[fyp];
+  if (!played && !leaves) return "";
+  return SIDE.get(cid) === "us"
+    ? " — discarded at random by Five Year Plan; a US event, so its event fires"
+    : " — discarded at random by Five Year Plan";
 }

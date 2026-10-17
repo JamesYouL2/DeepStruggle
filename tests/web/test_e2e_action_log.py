@@ -12,9 +12,22 @@ Needs web/ui/dist (tools/scripts/build_web.sh) and a Playwright Chromium.
 """
 from __future__ import annotations
 
+import json
+import os
+import random
 from typing import Any, Dict, List
 
+import numpy as np
+import ts_engine as ts
+
+from tests.web.test_e2e_card_choices import _give_us, _token, _us_action_round
 from tests.web.test_e2e_workbench import _open, browser, static_site  # noqa: F401 -- fixtures
+from tools.lib.game_step import drain_chance
+
+ALDRICH_AMES, FIVE_YEAR_PLAN = 98, 5
+USSR_HAND = (ts.CardLocation.HAND_USSR_UNKNOWN, ts.CardLocation.HAND_USSR_KNOWN)
+_CARDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "rules", "cards.json")
+SIDE = {int(c["id"]): c["side"] for c in json.load(open(_CARDS))}
 
 #: Seeded random legal play (realignment, flat 114, whenever legal from round 6), until the first
 #: realignment target choice for which `want(entries, before, after)` holds; returns that click's
@@ -71,4 +84,65 @@ def test_a_click_that_rolls_twice_logs_both_dice(browser: Any, static_site: str)
     dice = [d for d in details if "🎲" in d]
     assert len(dice) == 2 and "Realignment" in dice[0] and "War Roll" in dice[1], dice
     assert page.errors == []
+    page.close()
+
+
+def _ussr_late_headline() -> ts.GameState:
+    """A headline where the USSR is choosing its card, Aldrich Ames Remix swapped into its hand (any era:
+    the card is put there, not drawn)."""
+    for s0 in range(30, 80):
+        s = ts.GameState()
+        ts.Engine.init_game(s, s0)
+        drain_chance(s)
+        rng = random.Random(s0)
+        for _ in range(4000):
+            c = s.ctx()
+            if (s.current_phase == ts.Phase.HEADLINE and s.turn >= 2 and c.decision_type == ts.DecisionType.SELECT_CARD
+                    and c.decision_player == ts.Player.USSR and c.resolving_card == 0):
+                held = [i for i in range(1, 111) if s.get_card_location(i) in USSR_HAND and i not in (6, ALDRICH_AMES)]
+                old = s.get_card_location(ALDRICH_AMES)
+                s.set_card_location(held[0], old if old not in USSR_HAND else ts.CardLocation.DISCARD_PILE)
+                s.set_card_location(ALDRICH_AMES, ts.CardLocation.HAND_USSR_KNOWN)
+                return s
+            if ts.Engine.is_terminal(s):
+                break
+            legal = [int(i) for i in np.nonzero(ts.get_flat_action_mask(s, False))[0]]
+            ts.Engine.step_flat(s, rng.choice(legal))
+            drain_chance(s)
+    raise AssertionError("no USSR headline choice found")
+
+
+def test_a_card_aldrich_ames_discards_in_the_headline_is_a_discard_not_a_headline(browser: Any, static_site: str) -> None:
+    page = _open(browser, f"{static_site}/?model=off&pos={_token(_ussr_late_headline())}")
+    page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {ALDRICH_AMES}, secondary_id: 0, flags: 0}})")
+    # The US's headline, then whatever resolves before Aldrich Ames asks the USSR for a US card.
+    for _ in range(40):
+        ctx = page.evaluate("window.__wb.state.decision_context")
+        if ctx.get("resolving_card") == ALDRICH_AMES and ctx.get("decision_type_name") == "SELECT_CARD":
+            break
+        page.evaluate("window.__wb.sendFlatAction(window.__wb.engine.mask(false).findIndex(x => x), 0, true)")
+    else:
+        raise AssertionError("Aldrich Ames never asked the USSR for a card")
+    pick = page.evaluate("window.__wb.state.legal_actions.valid_ids.find(i => i >= 1 && i <= 110)")
+    name = page.evaluate(f"window.__wb.engine.cardName({pick})")
+    page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {pick}, secondary_id: 0, flags: 0}})")
+    last = page.evaluate("window.__wb.session.logs.at(-1)")
+    assert last["text"] == f"USSR discards {name} (#{pick}) from the US hand (Aldrich Ames Remix)", last["text"]
+    log = page.inner_text("#action-log-stream")
+    assert f"commits Headline Card: {name}" not in log, "the discarded card is not a headline"
+    assert page.errors == []
+    page.close()
+
+
+def test_five_year_plans_random_discard_is_noted_with_whether_its_event_fires(browser: Any, static_site: str) -> None:
+    s = _us_action_round(7)
+    _give_us(s, FIVE_YEAR_PLAN)
+    page = _open(browser, f"{static_site}/?model=off&pos={_token(s)}")
+    page.evaluate(f"window.__wb.sendAction({{decision_type: 1, primary_id: {FIVE_YEAR_PLAN}, secondary_id: 0, flags: 0}})")
+    page.evaluate("window.__wb.sendAction({decision_type: 2, primary_id: 0, secondary_id: 0, flags: 0})")   # the event
+    lines = [d for e in page.evaluate("window.__wb.session.logs") for d in (e.get("details") or [])]
+    noted = [d for d in lines if "discarded at random by Five Year Plan" in d]
+    assert len(noted) == 1, lines
+    cid = int(noted[0].split("Card #")[1].split(" ")[0])
+    assert ("its event fires" in noted[0]) == (SIDE[cid] == "us"), noted[0]
     page.close()
