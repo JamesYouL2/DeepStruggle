@@ -219,3 +219,94 @@ candidates' results on 3,000 slice positions: 0.22 shared stream, 0.33 keyed dic
 plus one deck order per world; the mean score unchanged. **The keyed root** (A13+R48, 16 worlds,
 `earlier`+own, `chance=keyed`), strong tier: **1810 ± 4** against 1794 ± 3 on the shared stream --
 +16, about three standard errors, at the same cost (32 worlds on the shared stream are 1832).
+
+## Revision 2 (2026-10-17, evening): what generation 1 says, five corrections, and the next steps
+
+**The reading.** The RL critic already explains ~93% of the label variance net of noise; the
+fine-tuned evaluator removes 30% of the rest and is worth +10 under the root. The from-scratch fits
+never reach the RL critic at any shape, so the **capacity test is inconclusive, not negative**: a
+million labels is too little to train a representation from nothing. The exact slice is the number
+that matters: the labels are accurate where the game is already decided (888 of 925 solvable
+positions) and **on the 37 contested ones greedy follow-up loses 16 points to exact play**. The RL
+critic is, to a good approximation, the greedy-play value function already (27M sampled games), so
+playout labels beat it only where they carry what it lacks -- a better follow-up at contested
+positions -- and that is exactly where these labels inherit the generator. **Refitting on uniform
+greedy labels, however the loss is corrected, cannot be the step change; the labels on contested
+positions have to change.**
+
+**Five corrections from the owner's review (2026-10-17), all accepted:**
+
+* **(A) The sibling loss and its metric move to the per-decision mean over the shared worlds.** As
+  built (`ai/training/value_fit.py`), the paired loss groups the k leaves of one (position, world)
+  and fits their centred single-outcome differences at 10× weight; with a within-world candidate
+  correlation of 0.22 the per-world difference has a standard deviation near 0.6, so the 10× term is
+  mostly noise and the pair-accuracy metric sits at its noise floor (0.52–0.53 for every fit, the RL
+  critic included) -- it says nothing about the models. The 10× weight was carried over from the value
+  probe, where the paired labels were 256-pair *averages*. Fix: for each decision, the mean over its 16
+  worlds of (V(leaf_k) − V(leaf_m)) fitted to the mean of (z_k − z_m) -- no new playouts, the
+  common-random-numbers reduction kept, 16× less target variance, and exactly the functional the
+  root computes when it ranks candidates. The per-leaf absolute loss stays beside it. The metric
+  is the same mean difference's sign agreement on held-out decisions.
+* **(B) Entry decisions, not micro-decisions.** With `stop=earlier, leaf=own` a leaf is almost always
+  the mover's card choice at the start of its round or a headline; the built set is uniform over
+  decisions, so 41% of its rows are placement micro-states (a 4-Ops placement weighs four times a
+  card choice). Now: weight or filter to entry decisions at fit time (the set still holds ~300k card
+  choices and headlines). Next labelling pass: sample by the leaf rule itself. The sibling slice's
+  leaves are entry states by construction.
+* **(C) The curriculum reads after the deal**, at the mover's first decision of turn t in each world
+  (what `leaf=own` does in play), not at the pre-deal park -- the evaluator's training distribution.
+  And the bootstrap has a real bias the plan must name: a game-end playout carries the opponent's
+  held cards through each world, while a value read at turn t conditions on the observation alone
+  and forgets what the previous turn's play implied. The 100k game-end anchor sample exists to
+  measure that bias each generation; it is not optional.
+* **(D) Feeding the RL side.** Initialising the RL critic's head and resuming is the weak route (R44's
+  snap-back; a shallow head on a frozen trunk has no capacity, an updated trunk shifts under the
+  policy) -- last cell or dropped. The distillation term stands. A third route is added: the frozen
+  evaluator inside the GAE residuals, V_mix = (1 − α)·V_RL + α·V_eval, which avoids the shared trunk
+  entirely; priced honestly, it needs the evaluator's forward on every rollout position (or every
+  entry decision), and at λ = 0.98 the advantage is still mostly the Monte Carlo return, so
+  "playout-grade advantages" need a lower λ too -- a recipe change with its own risk; and the
+  evaluator predicts greedy-play values while rollouts sample at temperature 1, a mismatch to
+  measure. One cell beside the distillation term, not instead of it. None of this runs until an
+  evaluator is worth feeding back (+10 is not).
+* **(E) Report KL, not BCE, on soft targets**: BCE against a 32-world mean has minimum H(y) > 0;
+  KL = BCE − H(y) is zero-anchored and comparable across slices (turn 10 against turn 3). The
+  gradient and the stopping point on one set are unchanged.
+
+**Keyed chance is adopted** (+16 at 16 worlds for free; correlation 0.22 → 0.39): the play-time
+root carries `chance=keyed` from here (designation the owner's), and every sibling label is drawn
+keyed from now on.
+
+**Next steps, in order** (codes assigned at launch by `run_codes.py`; cells named here):
+
+1. **`P34c` -- the leak-pair read of the first evaluator** (`ai/eval/leak_critic.py`, settled read,
+   on A15-R52's `value_fit_best.pt`, against the RL critic's 47.4% wrong on the confirmed pairs).
+   Minutes. It decides whether uniform greedy labels see the leaks at all. Not run yet.
+2. **`D2` -- the sibling slice relabelled keyed** (50,000 positions × top 4 × 16 keyed worlds; the
+   main labels are unchanged, keying moves no mean). ~45 min of GPU.
+3. **The corrected refit** (a new R code: per-decision mean sibling loss, entry-decision weighting,
+   KL reporting; fine-tuned from the RL weights, on D1's main set + D2's siblings). Under an hour.
+   Read: held-out KL, the per-decision sibling sign agreement, `P34c`'s pairs, then the strong-tier
+   root with `chance=keyed` against 1810.
+4. **`D3` -- the contested-position set.** Screen the 1.1M positions for the contested few percent
+   using what exists: the label's across-world spread and the siblings' candidate means (~50k
+   positions). Relabel them with a **stronger follow-up**: the sparse-searched player at 10–25% of the
+   playout's moves, or the rollout root for the first decisions of each playout then greedy, at 64
+   keyed worlds; ~100× a greedy label, about half a day of GPU. The exact slice re-run under D3 is
+   the direct check that the follow-up gap (16 points) closed. Fit on D1 + D3 with the contested
+   rows weighted; read as in 3.
+5. **Judge the direction on step 4.** The leak-pair ranking moves and the searched rating beats the
+   keyed root by clearly more than +10 → the generation loop runs, and the capacity question is
+   re-asked cheaply with a deep variant **grown from the RL trunk at identity** (new residual blocks
+   zero-initialised, the A13 / Cell A pattern) and fine-tuned, which escapes the data limit the
+   from-scratch fits hit. Neither moves → direction 1's ceiling is the follow-up's quality and the
+   remaining strength is search at play time; recorded as such.
+6. **Owner's option:** the turn-10 solver as a playout tail -- exact play in the last round where the
+   budget allows, replacing greedy play exactly where the exact slice shows it losing 16 points
+   (bindings work).
+
+**Decision rules for these steps.** `P34c` at ~47% → uniform labels do not see the leaks; step 3 is
+read only as a baseline for step 4. Step 3's refit is adopted as the leaf only by the per-seat rule
+against the keyed root. D3's exact-slice gap must fall from 16 points on the contested positions
+for its labels to count as a stronger follow-up; if it does not, the follow-up is not stronger where
+it matters and the cell is re-designed before any fit.
