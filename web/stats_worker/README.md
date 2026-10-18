@@ -36,10 +36,50 @@ to the build; locally, `TS_STATS_ENDPOINT=<url> tools/scripts/build_web.sh`. A b
 shows the dialog with *Download record* only. `ALLOWED_ORIGINS` in `wrangler.toml` lists the
 page's origins (GitHub Pages and the local servers); add any other place the page is served from.
 
+## Testing locally
+
+`wrangler dev` runs the Worker on this machine with its own local D1 (in `.wrangler/`, git-ignored)
+and local secrets from `.dev.vars` (git-ignored), so nothing reaches the deployed database:
+
+```bash
+# terminal 1, in web/stats_worker/
+echo "IP_SALT=local-test" > .dev.vars
+npx wrangler d1 execute ts-game-stats --local --file schema.sql   # once
+npx wrangler dev                                                  # http://localhost:8787
+
+# terminal 2, in web/ui/: the page, pointed at it (localhost:5173 is in ALLOWED_ORIGINS)
+TS_STATS_ENDPOINT=http://localhost:8787 npm run dev
+```
+
+Open `http://localhost:5173/`, play a game to its end, and add it from the dialog. To get to the end
+quickly, finish the game from the browser console with first legal moves (the model's side as
+auto-play, yours as clicks):
+
+```js
+const wb = __wb;
+for (let n = 0; n < 5000 && !wb.state.is_terminal; n++) {
+  const i = wb.engine.mask(false).findIndex(x => x), p = wb.engine.decisionPlayer();
+  if ((p > 0 ? "US" : "USSR") === wb.analysisPanel.autoSide) wb.sendFlatAction(i, 0, true);
+  else wb.sendAction(wb.engine.decodeFlat(i));
+}
+```
+
+Then look at what arrived:
+
+```bash
+npx wrangler d1 execute ts-game-stats --local --command "SELECT id, playdek_login, clean FROM games"
+PYTHONPATH=.:build/release python tools/game_stats.py fetch --local --output /tmp/local_games.json   # from the repo root
+PYTHONPATH=.:build/release python tools/game_stats.py verify /tmp/local_games.json
+```
+
+The deployed Worker can be tried the same way (`TS_STATS_ENDPOINT=https://ts-game-stats.<subdomain>.workers.dev
+npm run dev`): those games go into the real table. Remove them afterwards with
+`npx wrangler d1 execute ts-game-stats --remote --command "DELETE FROM games WHERE playdek_login = '<the login you typed>'"`.
+
 ## Reading it
 
 ```bash
-PYTHONPATH=. python tools/game_stats.py fetch --output data/game_stats/games.json
+PYTHONPATH=.:build/release python tools/game_stats.py fetch --output data/game_stats/games.json
 npx wrangler d1 execute ts-game-stats --remote --command \
     "SELECT received_at, playdek_login, playdek_rating, human_side, model_label, search, winner, clean FROM games"
 ```

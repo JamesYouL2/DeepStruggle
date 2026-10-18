@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Games people played against the models in the web workbench: fetch, check, rate.
 
-    PYTHONPATH=. python tools/game_stats.py fetch --output data/game_stats/games.json
-    PYTHONPATH=. python tools/game_stats.py show data/game_stats/games.json
+    PYTHONPATH=.:build/release python tools/game_stats.py fetch --output data/game_stats/games.json [--local]
+    PYTHONPATH=.:build/release python tools/game_stats.py show data/game_stats/games.json
     tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/game_stats.py \\
         verify data/game_stats/games.json [--write-replays]
     PYTHONPATH=.:build/release python tools/game_stats.py rating data/game_stats/games.json \\
@@ -40,9 +40,10 @@ DATABASE = "ts-game-stats"
 
 
 def cmd_fetch(a: argparse.Namespace) -> int:
-    """Every submission in the remote database, as wrangler's JSON (needs `wrangler login`)."""
+    """Every submission in the database, as wrangler's JSON: the remote one (needs `wrangler login`),
+    or with --local the one `wrangler dev` keeps in web/stats_worker/.wrangler/."""
     out = subprocess.run(
-        ["npx", "wrangler", "d1", "execute", DATABASE, "--remote", "--json",
+        ["npx", "wrangler", "d1", "execute", DATABASE, "--local" if a.local else "--remote", "--json",
          "--command", "SELECT body FROM games ORDER BY received_at"],
         cwd=WORKER_DIR, capture_output=True, text=True)
     if out.returncode != 0:
@@ -163,6 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("fetch", help="export the remote database with wrangler")
     p.add_argument("--output", required=True, help="where to write the export (JSON)")
+    p.add_argument("--local", action="store_true", help="the local database of `wrangler dev`, not the deployed one")
     p.set_defaults(fn=cmd_fetch)
     p = sub.add_parser("show", help="list the games and how each was played")
     p.add_argument("export")

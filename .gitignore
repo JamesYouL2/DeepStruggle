@@ -43,6 +43,9 @@ web/ui/dist/
 web/ui/public/engine/
 # The leaderboard page's data, fitted from leaderboard/ by tools/scripts/build_web.sh.
 web/ui/public/leaderboard.json
+# The stats Worker's local state (wrangler dev's D1) and its local secrets (IP_SALT for wrangler dev).
+web/stats_worker/.wrangler/
+web/stats_worker/.dev.vars
 dist/
 frontend/.vite/
 

@@ -350,8 +350,8 @@ model's suggestion, auto-play), whether the model's readout was on screen, and t
 force. The full replay is rebuilt from it, not stored.
 
 ```bash
-PYTHONPATH=. python tools/game_stats.py fetch --output data/game_stats/games.json   # needs wrangler login
-PYTHONPATH=. python tools/game_stats.py show data/game_stats/games.json
+PYTHONPATH=.:build/release python tools/game_stats.py fetch --output data/game_stats/games.json   # needs wrangler login; --local: wrangler dev
+PYTHONPATH=.:build/release python tools/game_stats.py show data/game_stats/games.json
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/game_stats.py \
     verify data/game_stats/games.json --write-replays
 PYTHONPATH=.:build/release python tools/game_stats.py rating data/game_stats/games.json \
