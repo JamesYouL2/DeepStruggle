@@ -42,9 +42,15 @@ export class WasmEngine {
     this.stateSize = M._ts_state_size();
   }
 
-  /** Load the module from `<base>engine/ts_engine.mjs`. */
+  /**
+   * Load the module from `<base>engine/ts_engine.mjs`. The URL is made absolute first: Vite's dev
+   * server rewrites a dynamic import of a path ("/engine/...") to "...?import", which it refuses for
+   * a file in public/ (a 500), so `npm run dev` could not load the engine. An absolute URL is
+   * fetched as it is, in dev and in a build alike.
+   */
   static async load(base: string = import.meta.env.BASE_URL): Promise<WasmEngine> {
-    const url = `${base}engine/ts_engine.mjs`;
+    const here = globalThis.location?.href;
+    const url = here ? new URL(`${base}engine/ts_engine.mjs`, here).href : `${base}engine/ts_engine.mjs`;
     let createModule: (opts?: object) => Promise<Module>;
     try {
       createModule = (await import(/* @vite-ignore */ url)).default;
