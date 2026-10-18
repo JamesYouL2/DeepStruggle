@@ -331,6 +331,29 @@ keyed from now on.
    zero-initialised, the A13 / Cell A pattern) and fine-tuned, which escapes the data limit the
    from-scratch fits hit. Neither moves → direction 1's ceiling is the follow-up's quality and the
    remaining strength is search at play time; recorded as such.
+   **Before D3 (2026-10-18): the probes, and the leaks under a stronger follow-up.**
+   * *The exact slice cannot check a follow-up.* On its 37 contested positions the search follow-up's
+     labels equal the greedy ones but for two (−16 points under both): the last rounds are nearly
+     deterministic, the root departs from greedy at 2.7% of their decisions even under `argmax`, and
+     the exact value is a perfect-information solve -- part of the gap is omniscience, which no player
+     closes.
+   * *A stronger follow-up moves labels but not their mean.* On 300 contested positions (16 keyed
+     worlds, the same worlds for each): the root departs from greedy at 15% of entry decisions under
+     `z2`, 49% under `argmax`; labels change by ~0.10 a position with mean ~0 (both sides get
+     stronger), and 8 against 16 search worlds differ as much. Cost ~7× greedy at this scale: the full
+     D3 ~10–11 h.
+   * **The confirmed leaks do not survive a stronger follow-up** (`ai/eval/leak_followup.py`: the
+     1,122 pairs, both moves in the same 64 keyed worlds, A13+R48 playing): the better move's lead is
+     +2.97 in the bank's labels (R39's greedy playouts, the best of 8 screened moves), **+1.47 ± 0.23**
+     under A13+R48's greedy follow-up (population-weighted +0.34; 7.4% of pairs still significant, 3.1%
+     flipped), **+1.08 ± 0.25** with the `argmax` root at entry decisions for the rest of the turn
+     (weighted **+0.02**) and +1.01 through the next turn (weighted +0.03); the correlation with the
+     bank's labels falls to 0.23 and 0.20, with the greedy relabel to 0.46 and 0.39. So most of what
+     P33c counted as leaks the critic misses is the bank's own follow-up (R39's greedy play),
+     selection and noise, not a value the critic fails to see -- and the 47.4% "at chance" on those
+     pairs is not evidence of an evaluator ceiling. The probe's search runs printed the engine's
+     forced-deal anomaly inside the search's own redealt worlds (a random card instead; the labels are
+     valid); `determinize` now drops a forced deal.
 6. **Owner's option:** the turn-10 solver as a playout tail -- exact play in the last round where the
    budget allows, replacing greedy play exactly where the exact slice shows it losing 16 points
    (bindings work).
