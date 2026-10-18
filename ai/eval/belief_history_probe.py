@@ -185,9 +185,10 @@ def world_at(d: Decision, opp: int, held: np.ndarray) -> ts.GameState:
 
 
 def posterior(model: torch.nn.Module, device: torch.device, s: Sample, worlds: int, temperature: float,
-              rng: np.random.Generator) -> Tuple[np.ndarray, int]:
+              rng: np.random.Generator, all_decisions: bool = False) -> Tuple[np.ndarray, int]:
     """The policy-likelihood posterior over the opponent's unseen hand at `s`, and how many of the
-    opponent's decisions it conditioned on (0: the uniform prior)."""
+    opponent's decisions it conditioned on (0: the uniform prior). `all_decisions` conditions on every
+    one of the opponent's decisions this turn, targets and branches included, not only CHOICES."""
     opp = 3 - s.decider
     h = int(s.label.sum())
     hands = np.stack([rng.choice(np.flatnonzero(s.pool > 0.5), size=h, replace=False) for _ in range(worlds)])
@@ -197,7 +198,7 @@ def posterior(model: torch.nn.Module, device: torch.device, s: Sample, worlds: i
     used = 0
     feats = model_obs_features(model)
     for d in s.turn_log:
-        if d.decider != opp or int(d.state.ctx().decision_type) not in CHOICES:
+        if d.decider != opp or (not all_decisions and int(d.state.ctx().decision_type) not in CHOICES):
             continue
         left = left_since(d, s)
         if left is None:
@@ -232,6 +233,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--worlds", type=int, default=256, help="hands drawn per position for the posterior")
     ap.add_argument("--posterior-positions", type=int, default=4000,
                     help="held-out positions (and as many validation ones) the posterior is computed for")
+    ap.add_argument("--all-decisions", action="store_true",
+                    help="condition the posterior on every opponent decision this turn, not only card and play-mode choices")
     ap.add_argument("--seed", type=int, default=9091)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -247,7 +250,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     te = [te[i] for i in sorted(rng.choice(len(te), size=min(a.posterior_positions, len(te)), replace=False))]
     va_post = [va[i] for i in sorted(rng.choice(len(va), size=min(a.posterior_positions, len(va)), replace=False))]
     for s in te + va_post:
-        s.post, s.used = posterior(model, dev, s, a.worlds, a.temperature, rng)
+        s.post, s.used = posterior(model, dev, s, a.worlds, a.temperature, rng, a.all_decisions)
 
     def stack(ss: List[Sample]) -> Dict[str, torch.Tensor]:
         pub = torch.from_numpy(np.stack([s.pub for s in ss])).to(dev)
