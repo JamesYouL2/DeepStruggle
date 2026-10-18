@@ -215,4 +215,32 @@ exact knowledge is more than any belief can have, and the playout opponent (the 
 plays almost exactly as the real one does. What a belief can recover is the share of +7.6 that its
 posterior's sharpness allows -- P35a's probe measures that sharpness, 3b measures the recovery.
 
+**P35a, the belief probe (2026-10-18): passes, by the policy-likelihood posterior.**
+`ai/eval/belief_history_probe.py` on A13+R48's SWA (12,730–12,800M), 1,024 self-play games at T = 1, read on
+held-out games. Besides P33f's predictors, two from the public record: a *history probe* (P33f's input plus
+per card the turn it entered the hidden pool and the opponent's draws since) and the *policy-likelihood
+posterior* -- uniform hands of the opponent's unseen size from the decider's hidden pool, each weighted by
+the network's probability of the opponent's actual decisions this turn, every past position rebuilt with
+the hand (exact for the true hand, tested; 99.86% of hypothesised worlds keep the actual move legal, the
+rest are excluded by the rules, e.g. an unplayable held scoring card).
+
+| predictor (log loss; prior 0.3839 on these 1,000 positions) | all positions | with an opponent decision this turn |
+|:---|---:|---:|
+| public probe (P33f) | 0.3707 (+3.5%) | 0.3633 |
+| history probe | 0.3720 (+3.1%) | 0.3644 |
+| posterior, card and play-mode choices, 256 hands (4,000 positions, own prior 0.3945) | 0.3645 (+7.6%) | 0.3502 |
+| posterior, every opponent decision, 256 hands | 0.3530 (+8.1%) | 0.3446 |
+| **posterior, every opponent decision, 2,048 hands** | **0.3363 (+12.4%)** | **0.3272** |
+
+* **The history is in the opponent's choices, not in the timing arithmetic** (the history probe adds
+  nothing). Conditioning on every decision -- where it coups, realigns and places influence -- is the
+  owner's point (the board at each choice); with 256 hands it barely showed (+7.8% against +7.6%) because
+  the estimate was sampling-limited: effective hands median 47 of 256 (13% of positions below 10), 369 of
+  2,048. With 2,048 the posterior gains 3.6× the public probe's -- **past the rule (≤ ~0.35): 3b and 3c open**
+  (3c is the owner's decision).
+* Not converged: more hands or a particle filter (resample and perturb after each opponent decision)
+  should sharpen it further, and the posterior uses this turn only -- before the opponent's first move
+  (4% of positions) it is the prior. Carrying the particles across the deal (held cards) extends it.
+* The learned combination (history probe + posterior logit, fitted on ~2,000 positions) overfit; not read.
+
 **Pair 2, item 1.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
