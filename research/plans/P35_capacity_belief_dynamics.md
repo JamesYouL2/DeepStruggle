@@ -201,4 +201,18 @@ Against the control's self-play bar (US 41.5 / USSR 58.0) each arm is about +5 a
 
 **Pair 2, item 6 (PFSP, R57): level, slightly above.** Raw 51.3 / 49.9 / 49.4 / 49.8 / 51.1% over the five windows; the last window US 49.0 / USSR 53.3 (+7.5 / −4.7 against the control's self-play), under the keyed root 51.1% (US 48.1 / USSR 54.2, about +1 SE). Both seats hold, so by the rule it may be adopted, but nothing here shows it gains: the predicted harm is absent, the gain unmeasured at this size.
 
+**Item 3's ceiling, the oracle root (2026-10-18, owner's request).** A13+R48's SWA (12,730–12,800M)
+under the keyed root (k 4, 16 worlds, `earlier`+own) with the oracle's worlds -- every world keeps the
+opponent's true hand, only the deck is reshuffled; deck order, dice and an unrevealed headline stay
+unknown, and the leaves are read honestly from the mover's side (`rollout:...:keyed:oracle`, bindings
+`cf09dc5`) -- against the same network under the honest keyed root, 1,000 deals a side: **57.6%** (US 52.6
+/ USSR 62.6; ±1.1, about 7 SE; `data/reports/p35_oracle_root_vs_keyed.json`). So the opponent's hand is
+worth **+7.6 points (~+53 Elo) to the root**, against +1.5 / +3.1 for perfect-information MCTS on the E7
+shallow models (`../log/P30_search_headroom_e7.md`) and +0.002 AUC to a critic
+(`../log/P30_oracle_critic_auc.md`): little for predicting the result, a good deal for choosing the move,
+because the honest worlds deal the hand **uniformly** from the unseen cards. The ceiling is loose upward:
+exact knowledge is more than any belief can have, and the playout opponent (the same network, true hand)
+plays almost exactly as the real one does. What a belief can recover is the share of +7.6 that its
+posterior's sharpness allows -- P35a's probe measures that sharpness, 3b measures the recovery.
+
 **Pair 2, item 1.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
