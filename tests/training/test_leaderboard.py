@@ -509,6 +509,14 @@ def test_a_rollout_players_chance_is_named_only_when_keyed() -> None:
         parse_player_id(one[:-1] + ",chance=fresh)")
 
 
+def test_the_oracle_root_is_a_tournament_spec_only() -> None:
+    """`oracle` (the opponent's true hand in every world, P35 item 3's ceiling) is read from a rollout
+    agent string and labelled; it is not a leaderboard player, so no player id spells it."""
+    path, cfg, label = rollout_spec_config("rollout:m.pt:4:16:4:z2:earlier:own:keyed:oracle")
+    assert cfg.oracle and cfg.keyed and label.endswith("-keyed-oracle-z2") and path == "m.pt"
+    assert not rollout_spec_config("rollout:m.pt:4:16:4:z2:earlier:own:keyed")[1].oracle
+
+
 def test_an_epochs_strong_tier_must_be_main_players() -> None:
     """epochs.json's optional `strong` list: distinct main players, or validate reports it."""
     board = lb.load()

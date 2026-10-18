@@ -152,6 +152,11 @@ are cited from elsewhere; keep them.
   the coupling between continuations changes. Measured on P34's sibling slice: two candidates'
   results in one world correlate at 0.39 keyed against 0.22 with the shared stream.
   `ts.keyed_key(state, key)` is the keying step, for references and tests.
+- **The oracle's worlds** (`RolloutBatch(oracle=True)`, `ts.determinize(..., keep_hand=True)`; the
+  rollout agent string's `:oracle`): every world keeps the opponent's true hand and reshuffles only
+  the draw deck, so the deck order, the dice and an unrevealed headline stay unknown. Not a
+  deployable player -- the ceiling on what any belief over the opponent's hand could give the root
+  (P35 item 3). Python-only; the browser build constructs the default (honest) worlds.
 - [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).
 - [`settle.py`](settle.py): `SettleMode`, the one rule for how far past decisions nobody controls
   the engine is advanced. Settlers that stop at different depths put two components on different

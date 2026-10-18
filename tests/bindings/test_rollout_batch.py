@@ -75,6 +75,32 @@ def test_determinize_keeps_every_count_and_every_seen_card(me: ts.Player) -> Non
         assert _locations(ts.determinize(st, me, 43)) != after or True   # may coincide; never raises
 
 
+@pytest.mark.parametrize("me", [ts.Player.US, ts.Player.USSR])
+def test_the_oracles_world_moves_no_card(me: ts.Player) -> None:
+    """keep_hand: the opponent's hand stays as it is and the deck is only reordered -- and a card
+    location is a place, not a position in the deck, so every location is unchanged."""
+    st = _position()
+    assert _locations(ts.determinize(st, me, 42, keep_hand=True)) == _locations(st)
+
+
+def test_an_oracle_batch_plays_every_world_with_the_opponents_true_hand() -> None:
+    st = _position()
+    cands = _legal(st)[:2]
+    me = decider(st)
+    opp_unknown = ts.CardLocation.HAND_USSR_UNKNOWN if me == ts.Player.US else ts.CardLocation.HAND_US_UNKNOWN
+    hand = sorted(c for c, loc in enumerate(_locations(st), 1) if loc == opp_unknown)
+    for oracle in (True, False):
+        b = ts.RolloutBatch(horizon=0, seed=5, oracle=oracle, keyed=True)
+        n = b.add(st, cands, 8)
+        assert n > 0
+        hands = {tuple(sorted(c for c, loc in enumerate(_locations(b.row_state(r)), 1) if loc == opp_unknown))
+                 for r in range(n)}
+        if oracle:
+            assert hands == {tuple(hand)}
+        elif len(hand) > 0:
+            assert len(hands) > 1                   # the honest worlds redeal the hand
+
+
 def test_rows_are_candidates_by_worlds_and_live_until_their_horizon() -> None:
     st = _position()
     cands = _legal(st)[:3]

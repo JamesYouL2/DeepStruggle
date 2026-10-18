@@ -79,7 +79,7 @@ Player acting_player(const GameState& s) noexcept {
     return d != Player::NONE ? d : s.phasing_player;
 }
 
-void determinize(GameState& s, Player me, uint64_t& rng) noexcept {
+void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand) noexcept {
     // A forced next deal (a replay's, or keyed chance's deck order -- keyed_chance.hpp) names cards by
     // where they were; once the unseen cards are redealt those names need not be in the deck, so the
     // redealt world deals at random instead.
@@ -93,7 +93,7 @@ void determinize(GameState& s, Player me, uint64_t& rng) noexcept {
         me == Player::US ? CardLocation::HAND_USSR_UNKNOWN : CardLocation::HAND_US_UNKNOWN;
     uint8_t pool[110];
     size_t n = 0, n_hand = 0;
-    for (uint8_t cid = 1; cid <= 110; ++cid) {
+    for (uint8_t cid = 1; cid <= 110 && !keep_hand; ++cid) {
         if (s.card_locations[cid] == opp_unknown) { pool[n++] = cid; ++n_hand; }
     }
     for (uint8_t cid = 1; cid <= 110; ++cid) {
@@ -190,7 +190,7 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
     size_t added = 0;
     for (size_t w = 0; w < worlds; ++w) {
         GameState world = base;
-        if (!Engine::is_terminal(world)) determinize(world, mover, rng_);
+        if (!Engine::is_terminal(world)) determinize(world, mover, rng_, cfg_.oracle);
         if (cfg_.shared_dice || cfg_.keyed) world.rng_state = Prng::next_u64(rng_);
         uint8_t wm[A];
         ActionMask::generate_flat_mask_212(world, wm);

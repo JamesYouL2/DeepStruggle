@@ -82,6 +82,9 @@ class RolloutConfig:
     #: are drawn in, so its candidates draw alike wherever they reach the same one -- a tighter paired
     #: lead for the same worlds. The measured root shares one dice stream per world instead.
     keyed: bool = False
+    #: The oracle's worlds: the opponent's true hand kept, only the draw deck reshuffled. Not a
+    #: deployable player -- the ceiling on what a belief over the opponent's hand could give the root.
+    oracle: bool = False
 
 
 class _GraphedForward:
@@ -145,6 +148,8 @@ def _stop_kw(cfg: RolloutConfig) -> Dict[str, Any]:
         kw["leaf"] = cfg.leaf_side
     if cfg.keyed:
         kw["keyed"] = True
+    if cfg.oracle:
+        kw["oracle"] = True
     return kw
 
 
@@ -498,8 +503,8 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             continue                                   # rollout_spec_config reads the leaf side
         elif p == "graphs":
             graphs = True
-        elif p == "keyed":
-            continue                                   # rollout_spec_config reads it
+        elif p in ("keyed", "oracle"):
+            continue                                   # rollout_spec_config reads them
         else:
             leaf = p
     return stop, leaf, graphs
@@ -512,10 +517,11 @@ def rollout_spec_leaf(spec: str) -> Optional[str]:
 
 
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed][:graphs][:leaf checkpoint]]]]] ->
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed][:oracle][:graphs][:leaf checkpoint]]]]] ->
     (checkpoint, config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries,
     the mover's side), the stop one of STOPS, `decider` reads each leaf from its decider's side, `own`
-    plays on to the mover's next decision, and the leaf checkpoint is `rollout_spec_leaf`'s."""
+    plays on to the mover's next decision, `oracle` keeps the opponent's true hand in every world, and the
+    leaf checkpoint is `rollout_spec_leaf`'s."""
     parts = spec.split(":")
     if parts[0].lower() != "rollout" or len(parts) < 2:
         raise ValueError(f"not a rollout spec: {spec!r}")
@@ -528,7 +534,7 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     side = next((p for p in parts[6:] if p in LEAF_SIDES), "mover")
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
                         horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs,
-                        leaf_side=side, keyed="keyed" in parts[6:])
+                        leaf_side=side, keyed="keyed" in parts[6:], oracle="oracle" in parts[6:])
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
@@ -536,5 +542,5 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
                   "predeal": "-predeal", "earlier_predeal": "-untilpredeal"}[cfg.stop]
     horizon = "" if cfg.stop in ("turn", "predeal") else f"-h{cfg.horizon}"
     side_label = {"mover": "", "decider": "-dleaf", "own": "-ownleaf"}[cfg.leaf_side]
-    keyed = "-keyed" if cfg.keyed else ""
+    keyed = ("-keyed" if cfg.keyed else "") + ("-oracle" if cfg.oracle else "")
     return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}{keyed}-{cfg.rule}"

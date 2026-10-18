@@ -941,9 +941,9 @@ class PlayoutLabels:
         The sibling rows finished since the last call: id (n,); meta (n, 5) = candidate index, world, failed, has_leaf, scored-region bits; cols (n, 4) = score, final VP, turn-end VP, turn-end DEFCON; swing (n, 7); leaf (n, state_size()) raw states, zeros where has_leaf is 0.
         """
 
-def determinize(state: GameState, me: Player, seed: int) -> GameState:
+def determinize(state: GameState, me: Player, seed: int, keep_hand: bool = False) -> GameState:
     """
-    A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck -- reshuffled between those two places from SplitMix64 state `seed`, every count kept, every seen card left; an unrevealed opposing headline is forgotten. The C++ port of ai.search.dmcts.determinize that the rollout root uses in both builds.
+    A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck -- reshuffled between those two places from SplitMix64 state `seed`, every count kept, every seen card left; an unrevealed opposing headline is forgotten. The C++ port of ai.search.dmcts.determinize that the rollout root uses in both builds. keep_hand=True keeps the opponent's true hand and reshuffles only the draw deck (the oracle's world).
     """
 
 class RolloutBatch:
@@ -951,7 +951,7 @@ class RolloutBatch:
     The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries (stop='boundaries', the default), to the end of the decision's turn ('turn'), or to the later of the two ('later'), and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).
     """
 
-    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0, stop: str = 'boundaries', leaf: str = 'mover', keyed: bool = False) -> None: ...
+    def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0, stop: str = 'boundaries', leaf: str = 'mover', keyed: bool = False, oracle: bool = False) -> None: ...
 
     def add(self, base: GameState, candidates: Sequence[int], worlds: int) -> int:
         """

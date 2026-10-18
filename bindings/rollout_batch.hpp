@@ -32,7 +32,9 @@ namespace ts::rollout {
 // from the hand it dealt. `rng` is a SplitMix64 state, advanced. The port of
 // ai/search/dmcts.determinize; the Python one draws from random.Random, so the two draw different
 // worlds from one seed, by design -- this one is what the rollout root uses in both builds.
-void determinize(GameState& s, Player me, uint64_t& rng) noexcept;
+// `keep_hand` (the oracle's world, Config::oracle) leaves the opponent's hand as it truly is and
+// reshuffles only the draw deck: the hand is known, the deck order and the forgotten headline are not.
+void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand = false) noexcept;
 
 // The side to act at `s`: the decision's player, else the phasing player (ai/search/pimcts.acting_player).
 Player acting_player(const GameState& s) noexcept;
@@ -80,6 +82,10 @@ struct Config {
     // candidates draw the same dice and cards wherever they reach the same situation. Implies one
     // key per world for every candidate (shared_dice is then not read).
     bool keyed = false;
+    // The oracle's worlds: the opponent's true hand kept, only the draw deck reshuffled
+    // (determinize's keep_hand). Not a deployable searcher -- the ceiling on what any belief over the
+    // opponent's hand could give the root (P35 item 3).
+    bool oracle = false;
 };
 
 struct Row {
