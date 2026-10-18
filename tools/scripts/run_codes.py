@@ -73,6 +73,8 @@ BOOKKEEPING = frozenset({
     "value_arch",
     # two arms taking turns on one machine: the wall clock, not the training
     "phase_lock",
+    # the token path in checkpointed passes: memory, not the function
+    "token_chunk",
 })
 #: Settings that do nothing while their switch is off: dropped then, so a stray value cannot make
 #: two identical recipes look different. (switch, its off value, the settings it gates)

@@ -68,3 +68,21 @@ def test_adams_grown_state_loads_and_steps() -> None:
     st = opt2.state_dict()["state"]
     fusion_idx = names.index("fusion_in.0.weight")
     assert st[fusion_idx]["exp_avg"].shape == new.fusion_in[0].weight.shape
+
+
+def test_the_chunked_token_path_is_the_same_function_with_the_same_gradients() -> None:
+    torch.manual_seed(2)
+    net = create_ladder_net("cpu", **SHALLOW, token_layers=1, token_dim=16)
+    _randomise(net)
+    obs = torch.randn(10, ts.OBS_SIZE) * 0.5
+    grads = []
+    outs = []
+    for chunk in (0, 4):
+        net.token_chunk = chunk
+        net.zero_grad()
+        logits, v, vp = net(obs, None)
+        (logits.square().mean() + v.square().mean() + vp.square().mean()).backward()
+        outs.append(torch.cat([logits.flatten(), v.flatten(), vp.flatten()]).detach())
+        grads.append(torch.cat([p.grad.flatten() for p in net.parameters() if p.grad is not None]))
+    assert torch.allclose(outs[0], outs[1], atol=1e-5)
+    assert torch.allclose(grads[0], grads[1], atol=1e-5)

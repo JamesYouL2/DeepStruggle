@@ -852,6 +852,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Two arms on one machine take turns: the rollout under PATH.rollout, the update under "
                              "PATH.update (flock), so one collects while the other updates. Each arm stays exactly "
                              "serial; only the wall clock changes. Give both arms the same PATH.")
+    parser.add_argument("--ladder-token-chunk", type=int, default=0, metavar="ROWS",
+                        help="Run the token path in passes of ROWS rows, each checkpointed under autograd "
+                             "(recomputed in the backward, not held): the same function at a fraction of the "
+                             "memory, for --ladder-token-layers at a large --batch-size (A18 at 16,384 needs "
+                             "~20 GB without it). 0 (default): one pass.")
     parser.add_argument("--z-loss-coef", type=float, default=0.0,
                         help="z-loss: coef * mean(logsumexp(policy logits)^2) in the update (PaLM uses "
                              "1e-4). Bounds the logits' level, which the softmax leaves free and which "
@@ -1237,6 +1242,7 @@ def main():
             logit_gap_coef=args.logit_gap_coef,
             logit_gap=args.logit_gap,
             phase_lock=args.phase_lock,
+            token_chunk=args.ladder_token_chunk,
             cuda_graphs=not args.no_cuda_graphs,
             blunder_window=not args.no_blunder_window,
             gamma=args.gamma,

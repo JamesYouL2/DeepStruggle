@@ -31,6 +31,7 @@ from typing import Any, Dict, Tuple, cast
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 import ts_engine as ts
 
 from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
@@ -398,6 +399,11 @@ class LadderNet(ColdWarNetV2):
         # global token's output joins the fusion input, and each per-entity head reads its own
         # contextualised token. Canonical 0/0 when off, so the config is recovered from weights.
         self.token_layers = int(token_layers)
+        #: Rows per pass of the token path when a batch is larger (--ladder-token-chunk), each pass
+        #: checkpointed under autograd, so its activations are recomputed in the backward instead of
+        #: held. The path is per-sample, so the function is unchanged; 0 = one pass. Set by the
+        #: trainer, not part of the configuration.
+        self.token_chunk = 0
         self.token_dim = int(token_dim) if self.token_layers else 0
         if self.token_layers:
             t = self.token_dim
@@ -640,7 +646,24 @@ class LadderNet(ColdWarNetV2):
     def _token_path(self, board_raw: torch.Tensor, card_raw: torch.Tensor, glob: torch.Tensor,
                     b: int) -> torch.Tensor:
         """(B, 1 + 84 + 110, token_dim): the global token, then countries, then cards, after
-        `token_layers` of full self-attention."""
+        `token_layers` of full self-attention; in passes of `token_chunk` rows when set."""
+        n = self.token_chunk
+        if n <= 0 or b <= n:
+            return self._token_pass(board_raw, card_raw, glob, b)
+        parts: list[torch.Tensor] = []
+        for i in range(0, b, n):
+            m = min(n, b - i)
+            args = (board_raw[i:i + m], card_raw[i:i + m], glob[i:i + m], m)
+            if torch.is_grad_enabled():
+                out = checkpoint(self._token_pass, *args, use_reentrant=False)
+                assert isinstance(out, torch.Tensor)
+                parts.append(out)
+            else:
+                parts.append(self._token_pass(*args))
+        return torch.cat(parts)
+
+    def _token_pass(self, board_raw: torch.Tensor, card_raw: torch.Tensor, glob: torch.Tensor,
+                    b: int) -> torch.Tensor:
         # bf16 on the GPU: the 195-token attention is the dominant cost of the whole network
         # (~3.5x faster than TF32 measured at batch 4096), and its output re-enters fp32 at the
         # fusion. Off the GPU (CPU tournaments, ONNX export) it runs in fp32.

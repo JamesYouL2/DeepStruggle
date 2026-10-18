@@ -1763,6 +1763,7 @@ def train_pipeline(
     setup_block_lambda: bool = False,
     block_lambda: str = "off",
     phase_lock: Optional[str] = None,
+    token_chunk: int = 0,
     inject_setup_only: bool = False,
     cuda_graphs: bool = True,
     start_pool_frac: float = 0.0,
@@ -2107,6 +2108,7 @@ def train_pipeline(
         "logit_gap_coef": float(logit_gap_coef),
         "logit_gap": float(logit_gap),
         "phase_lock": phase_lock,
+        "token_chunk": int(token_chunk),
         "setup_block_lambda": bool(setup_block_lambda),
         "block_lambda": str(block_lambda),
         "inject_setup_only": bool(inject_setup_only),
@@ -2163,6 +2165,10 @@ def train_pipeline(
                                   **{**ladder_config, "aux_heads": _aux, "card_aux": aux_card_coef > 0.0,
                                      "opp_legal_aux": aux_opp_legality > 0.0,
                                      "obs_features": int(obs_features)})
+        if token_chunk:
+            if not getattr(model, "token_layers", 0):
+                raise ValueError("--ladder-token-chunk needs --ladder-token-layers")
+            setattr(model, "token_chunk", int(token_chunk))
     elif arch == "mlp":
         from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
         model = create_coldwar_net_mlp(dev, categorical_value=categorical_value,
