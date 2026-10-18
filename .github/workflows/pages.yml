@@ -47,6 +47,8 @@ jobs:
           # The page is served under /<repository>/ on Pages.
           TS_WEB_BASE: /${{ github.event.repository.name }}/
           TS_PYTHON: python3
+          # The stats database's Worker (web/stats_worker/README.md); unset, games are not submitted.
+          TS_STATS_ENDPOINT: ${{ vars.TS_STATS_ENDPOINT }}
         run: tools/scripts/build_web.sh
 
       - uses: actions/configure-pages@v6

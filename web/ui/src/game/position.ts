@@ -10,13 +10,13 @@
 /** Inflated tokens are refused past this: a real save is under 8 KB. */
 const MAX_SAVE_BYTES = 64 * 1024;
 
-function toBase64Url(bytes: Uint8Array): string {
+export function toBase64Url(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function fromBase64Url(token: string): Uint8Array {
+export function fromBase64Url(token: string): Uint8Array {
   const b64 = token.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (token.length % 4)) % 4);
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -34,7 +34,7 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
     total += value.length;
     if (total > limit) {
       await reader.cancel();
-      throw new Error("position token inflates past the size limit");
+      throw new Error("inflates past the size limit");
     }
     chunks.push(value);
   }
@@ -44,9 +44,18 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
   return out;
 }
 
+/** zlib (the browser's "deflate"), as Python's zlib reads it. */
+export function deflateBytes(bytes: Uint8Array): Promise<Uint8Array> {
+  return pipe(bytes, new CompressionStream("deflate"), Number.MAX_SAFE_INTEGER);
+}
+
+/** Inflate zlib bytes, refusing more than `limit` bytes out. */
+export function inflateBytes(packed: Uint8Array, limit: number): Promise<Uint8Array> {
+  return pipe(packed, new DecompressionStream("deflate"), limit);
+}
+
 export async function encodePosition(saveJson: string): Promise<string> {
-  const packed = await pipe(new TextEncoder().encode(saveJson), new CompressionStream("deflate"), Number.MAX_SAFE_INTEGER);
-  return toBase64Url(packed);
+  return toBase64Url(await deflateBytes(new TextEncoder().encode(saveJson)));
 }
 
 /** The save JSON a token holds. Throws on anything that is not one. */
@@ -58,7 +67,7 @@ export async function decodePosition(token: string): Promise<string> {
     throw new Error("not a position token (bad base64)");
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(await pipe(packed, new DecompressionStream("deflate"), MAX_SAVE_BYTES));
+    return new TextDecoder("utf-8", { fatal: true }).decode(await inflateBytes(packed, MAX_SAVE_BYTES));
   } catch (e) {
     throw new Error(`not a position token (${e instanceof Error ? e.message : e})`);
   }

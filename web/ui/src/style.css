@@ -804,6 +804,43 @@ body {
 .mode-opponent-option b { color: var(--text-main); }
 .mode-opponent-option input { margin-top: 2px; }
 
+/* Game over (index.html #result-dialog, result_dialog.ts). */
+.result-dialog-content { max-width: 520px; }
+.result-dialog-body { gap: 10px; font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.result-outcome { margin: 0; font-size: 14px; color: var(--text-main); }
+.result-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+.result-facts:empty { display: none; }
+.result-facts dt { color: var(--text-dim); }
+.result-facts dd { margin: 0; color: var(--text-main); overflow-wrap: anywhere; }
+.result-notes p { margin: 0; }
+.result-notes ul { margin: 4px 0 0; padding-left: 18px; }
+.result-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+.result-form p { margin: 0; }
+.result-fields { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.result-fields label, .result-note-label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; font-weight: 600; flex: 1 1 160px; }
+.result-form input, .result-form textarea {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-main);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.result-form textarea { resize: vertical; }
+.result-privacy { font-size: 10px; color: var(--text-dim); }
+.result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.result-status { min-height: 1em; font-size: 11px; }
+.result-status.ok { color: var(--success); }
+.result-status.error { color: var(--danger); }
+
 /* The two badges one above the other, to leave the buttons the width. */
 .session-info {
   display: flex;

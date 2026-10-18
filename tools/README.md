@@ -339,6 +339,49 @@ way appear after `index`.
 
 ---
 
+## 2d. Games against people (`tools/game_stats.py`)
+
+When a game ends in the workbench the page offers to add it to the stats database, with the
+player's Playdek login and rating (`web/ui/AGENTS.md` §3.11; the Worker and its setup:
+[`web/stats_worker/README.md`](../web/stats_worker/README.md)). A row is the page's submission as
+sent: the result, the build's commit and engine fingerprint, the models by sha256, and the compact
+log -- seed plus 7 bytes a step, the MicroAction, forced die, who made the move (a click, the
+model's suggestion, auto-play), whether the model's readout was on screen, and the settings in
+force. The full replay is rebuilt from it, not stored.
+
+```bash
+PYTHONPATH=. python tools/game_stats.py fetch --output data/game_stats/games.json   # needs wrangler login
+PYTHONPATH=. python tools/game_stats.py show data/game_stats/games.json
+tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/game_stats.py \
+    verify data/game_stats/games.json --write-replays
+PYTHONPATH=.:build/release python tools/game_stats.py rating data/game_stats/games.json \
+    --ussr-advantage 0 --json data/game_stats/fit.json
+```
+
+* `verify` re-drives each game played on this build's engine and checks it reaches the submitted
+  final position (`final_hash`), result and summary; `--write-replays` writes the full
+  `.tslog.json` (flat in `data/replays/`, each step's description prefixed with who made it). A
+  game from another engine is reported with its commit: check that out to verify it. Nothing in
+  the database is trusted for being there -- the checks are against accidents and bugs, and
+  anyone can post anything.
+* **Clean** (recomputed from the log by `tools/lib/game_stats.summarize`, never read from the row):
+  one model with one search auto-played one side all game; the human played the other, always in a
+  player view, never for the model, never with the model's readout on screen or its suggestion;
+  no forced dice, no debug overrides, not from a loaded position. Take-backs are counted
+  (`--max-undos` to leave them out), not disqualifying.
+* `rating` fits each **model player** -- model file and search -- on the clean games: Elo's
+  logistic on a 400-point scale against each human's self-reported Playdek rating, with
+  `--ussr-advantage` the USSR's edge between equal players (not fitted; the default 0 assumes
+  none). Playdek does not publish its formula; the 400-point Elo scale is what players report it
+  follows. A weak normal prior (`--prior-sd 400` around the mean opponent) keeps a perfect score
+  finite. The standard error is about `350 / sqrt(games)` against even opposition and grows when
+  the model wins most games; the 95% interval is a bootstrap over the players, so one person's
+  many games count as one person's evidence. The ratings people type are noisy and the games
+  people choose to submit are not a random sample of the games played -- read a fit with both in
+  mind.
+
+---
+
 ## 3. `tools/play_match.py` (Unified Match Runner & Replay Generator)
 
 Plays any pair of agents, including interactive terminal play, and writes `.tslog.json` replays

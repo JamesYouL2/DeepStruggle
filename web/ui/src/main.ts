@@ -26,6 +26,10 @@ import { RolloutRunner } from "./analysis/rollout_runner";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 import { lastTurnOf } from "./game/last_turn";
 import { recentRolls } from "./game/rolls";
+import { MoveHow, buildSubmission, sha256Hex, summarize } from "./game/record";
+import { loadStoredGame, storeGame } from "./game/saved_game";
+import { ResultDialog } from "./result_dialog";
+import { BUILD_COMMIT, BUILD_DIRTY } from "./build_info";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
@@ -83,6 +87,11 @@ export class TSApp {
   private urlSearch = false;
   private runner: RolloutRunner | null = null;
   private searchRuns = 0;
+  /** sha256 of the loaded model's file: the model's identity in the game's record. */
+  private modelSha = "";
+  private resultDialog: ResultDialog;
+  /** The board showed a finished game at the last refresh: the dialog opens when a game ends. */
+  private wasOver = false;
 
   constructor() {
     this.parseQueryParams();
@@ -120,6 +129,14 @@ export class TSApp {
     this.analysisPanel.setAutoSide(this.urlAuto);
     this.analysisPanel.show(!this.isReplayMode);
     this.actionHud.onRerender = () => this.redecorate();
+    this.resultDialog = new ResultDialog(
+      (playdek, note) => this.submission(playdek, note),
+      () => {
+        if (!this.session) return;
+        this.session.submitted = true;
+        this.storeGame();
+      },
+    );
 
     this.setReadoutShown(this.view === "DEV");
     this.setupAnalysisToggle();
@@ -152,12 +169,14 @@ export class TSApp {
     setActionSpace(this.engine.layout);
     this.runner = new RolloutRunner(this.engine);
     this.session = new GameSession(this.engine);
-    this.session.newGame(Math.floor(Math.random() * 1_000_000));
-    if (this.urlPosition) {
-      try {
-        this.session.loadPosition(await decodePosition(this.urlPosition), this.urlPosition);
-      } catch (e) {
-        window.alert(`Could not open the position in the link -- starting a new game instead.\n\n${e}`);
+    if (!this.urlPosition || !(await this.resumeStoredGame(this.urlPosition))) {
+      this.session.newGame(Math.floor(Math.random() * 1_000_000));
+      if (this.urlPosition) {
+        try {
+          this.session.loadPosition(await decodePosition(this.urlPosition), this.urlPosition);
+        } catch (e) {
+          window.alert(`Could not open the position in the link -- starting a new game instead.\n\n${e}`);
+        }
       }
     }
     this.checkEngineFreshness();
@@ -175,6 +194,90 @@ export class TSApp {
     // A fresh open with nothing decided by the link: ask how to play. A link that names a
     // position, a replay or a view has decided already.
     if (!this.urlPosition && !this.isReplayMode && !this.urlView) this.askMode("open");
+  }
+
+  /**
+   * A reload: the link names the position this browser's stored game (game/saved_game.ts) is at,
+   * so that game is played over again from its seed -- history, undo and record intact -- rather
+   * than opened as a new game from a loaded position. False, with the board to be set up
+   * afresh, when it is another position or the stored game no longer plays to it.
+   */
+  private async resumeStoredGame(token: string): Promise<boolean> {
+    const stored = loadStoredGame();
+    if (!stored || !this.session || !this.engine) return false;
+    try {
+      const target = await decodePosition(token);
+      const start = stored.record.start_position ? await decodePosition(stored.record.start_position) : null;
+      this.session.replayRecord(stored.record, start, stored.submitted);
+      if (this.engine.saveJson() === target) {
+        // A game that had ended has had its dialog: reopening the page does not offer it again.
+        this.wasOver = !!this.session.result;
+        return true;
+      }
+    } catch (e) {
+      console.warn("The stored game did not play back:", e);
+    }
+    return false;
+  }
+
+  /** This browser's copy of the game on the board, for a reload (game/saved_game.ts). */
+  private storeGame() {
+    if (!this.session) return;
+    storeGame({ record: this.session.record(), submitted: this.session.submitted });
+  }
+
+  /** The settings a move is made under, for the game's record: called just before each move. */
+  private noteSettings() {
+    if (!this.session) return;
+    const m = this.model;
+    this.session.setSettings({
+      view: this.view,
+      auto: this.analysisPanel.autoSide,
+      model: m ? this.modelSha : "",
+      search: this.searchSpec ? rolloutParam(this.searchSpec) : "policy",
+    }, m ? { label: m.meta.label, source: sourceToParam(m.source) ?? "", checkpoint: m.meta.checkpoint } : undefined);
+  }
+
+  /** How a move by the side to move is made: who made it, and whether the readout was on screen. */
+  private moveHow(source: MoveHow["source"]): MoveHow {
+    if (source === "auto" || !this.engine || !this.model) return { source, analysis: false };
+    const p = this.engine.decisionPlayer();
+    const mover = p > 0 ? "US" : p < 0 ? "USSR" : null;
+    return { source, analysis: mover !== null && this.analysisPanel.showsReadoutFor(mover) };
+  }
+
+  /** The game's record for the stats database, with the result dialog's Playdek fields. */
+  private submission(playdek: { login: string; rating: number }, note: string) {
+    const s = this.session;
+    if (!s || !s.result || !this.engine) return Promise.reject(new Error("the game is not over"));
+    return buildSubmission(s.record(), s.result, this.engine.saveJson(),
+      { commit: BUILD_COMMIT, dirty: BUILD_DIRTY, engine_fingerprint: this.engine.fingerprint }, playdek, note);
+  }
+
+  /** The result dialog for the game on the board, which must be over. */
+  private openResult() {
+    const s = this.session;
+    if (!s || !s.result) return;
+    const summary = summarize(s.record(), true);
+    const model = summary.models.length === 1 ? s.models[summary.models[0]] : undefined;
+    const search = summary.searches.length === 1 ? summary.searches[0] : "";
+    this.resultDialog.open({
+      winner: s.result.winner, margin: s.result.margin, endTurn: s.result.end_turn, reason: s.result.reason,
+      summary, submitted: s.submitted,
+      model: model ? `${model.label}${search ? ` (${search === "policy" ? "policy" : `rollout root ${search.replace(/^rollout:/, "")}`})` : ""}` : "",
+    });
+  }
+
+  /** After a change of position: the Result button, and the dialog when the game has just ended. */
+  private offerResult() {
+    const s = this.session;
+    const over = !!s?.result && !this.isReplayMode;
+    document.getElementById("btn-game-result")?.classList.toggle("hidden", !over);
+    // Once per ending: a refresh of the same finished board does not reopen it, an undo and a new
+    // ending does.
+    const ended = over && !this.wasOver;
+    this.wasOver = over;
+    if (ended) this.openResult();
   }
 
   /**
@@ -518,6 +621,8 @@ export class TSApp {
       this.state = this.liveState;
       this.renderState();
     }
+    this.storeGame();
+    this.offerResult();
     encodePosition(this.engine!.saveJson()).then(token => {
       if (version !== this.version) return;
       this.positionToken = token;
@@ -562,6 +667,7 @@ export class TSApp {
     if (!pick) {
       this.model = null;
       this.modelKey = "";
+      this.modelSha = "";
       this.runner?.setModel(null, "");
       this.analysisPanel.setOff();
       this.renderState();
@@ -571,8 +677,11 @@ export class TSApp {
     this.analysisPanel.setLoading(pick.source);
     try {
       const m = await Model.fetch(pick.source, this.engine!.obsSize, this.engine!.actionSize, pick.bytes);
+      // The file's own hash names the model in a game's record: a revision like `main` moves.
+      const sha = await sha256Hex(m.bytes).catch(() => "");
       if (load !== this.modelLoads) return;   // another pick superseded this one
       this.model = m;
+      this.modelSha = sha;
       this.modelKey = `m${load}`;
       this.runner?.setModel(m, this.modelKey);
       const fp = m.meta.engineFingerprint;
@@ -590,6 +699,7 @@ export class TSApp {
       if (load !== this.modelLoads) return;
       this.model = null;
       this.modelKey = "";
+      this.modelSha = "";
       this.analysisPanel.setError(e instanceof Error ? e.message : String(e));
     }
     this.syncUrl();
@@ -962,12 +1072,23 @@ export class TSApp {
       this.refused(`it is ${opponentOf(this.view)}'s move -- the model plays that side in this view`);
       return;
     }
-    const why = this.session.apply(action, action.secondary_id ?? 0);
+    this.noteSettings();
+    const forcedDie = action.secondary_id ?? 0;
+    const why = this.session.apply(action, forcedDie, this.moveHow("human"));
     if (why) {
       this.refused(why);
       return;
     }
+    this.afterOwnMove(forcedDie);
     this.refresh();
+  }
+
+  /**
+   * A forced die is for one roll: once a move of yours has rolled with it, the selector is back on
+   * Auto -- otherwise one click on a face would force every roll after it, unnoticed.
+   */
+  private afterOwnMove(forcedDie: number) {
+    if (forcedDie > 0 && this.session?.tags[this.session.tags.length - 1]?.rolled) this.actionHud.selectedDieRoll = 0;
   }
 
   /**
@@ -981,11 +1102,14 @@ export class TSApp {
       this.refused(`it is ${opponentOf(this.view)}'s move -- the model plays that side in this view`);
       return;
     }
-    const why = this.session.applyFlat(flatIdx, this.model?.meta.mergedInfluence ?? false, forcedDie);
+    this.noteSettings();
+    const how = this.moveHow(auto ? "auto" : "suggested");
+    const why = this.session.applyFlat(flatIdx, this.model?.meta.mergedInfluence ?? false, forcedDie, how);
     if (why) {
       this.refused(why);
       return;
     }
+    if (!auto) this.afterOwnMove(forcedDie);
     this.refresh();
   }
 
@@ -1086,10 +1210,15 @@ export class TSApp {
     });
 
     // Global keyboard shortcuts (Ctrl+Z / Cmd+Z / Escape for undo). None while the play-mode
-    // question is open: its Escape keeps the game as it is, and must not also take back a move.
+    // question or the result dialog is open: their Escape closes them, and must not also take
+    // back a move.
     window.addEventListener("keydown", (e) => {
       const question = document.getElementById("mode-dialog");
       if (question && !question.classList.contains("hidden")) return;
+      if (this.resultDialog.isOpen) {
+        if (e.key === "Escape") this.resultDialog.close();
+        return;
+      }
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable);
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !typing) {
@@ -1117,6 +1246,7 @@ export class TSApp {
       if (!this.session) return;
       this.askMode("new");
     });
+    document.getElementById("btn-game-result")?.addEventListener("click", () => this.openResult());
 
     // The model chooser: the source controls, dropped down from the technical bar by Change,
     // closed by Change again, a click elsewhere, or Escape.

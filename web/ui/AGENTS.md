@@ -14,7 +14,8 @@ web/ui/
 ├── index.html                  # Workbench layout (Top Bar; cards | SVG Map | HUD rail; Bottom Drawer)
 ├── leaderboard.html            # The Elo leaderboard page (src/leaderboard_page.ts, src/leaderboard.css)
 ├── package.json                # Dependencies and build scripts
-├── vite.config.ts              # base path (TS_WEB_BASE, for Pages), /api proxy, the two pages
+├── vite.config.ts              # base path (TS_WEB_BASE, for Pages), /api proxy, the two pages,
+│                               # the build's commit and the stats endpoint (TS_STATS_ENDPOINT)
 ├── tsconfig.json
 ├── src/
 │   ├── main.ts                 # TSApp coordinator: boot, refresh(), links, auto-play, Action Stream
@@ -24,7 +25,11 @@ web/ui/
 │   │                           # branches.ts (what an event's branch choice means: HUD and log),
 │   │                           # view.ts (the US / USSR player views: what the other side hides),
 │   │                           # last_turn.ts (what the other side's latest turn did to the map),
-│   │                           # rolls.ts (the latest action round's dice, from the steps)
+│   │                           # rolls.ts (the latest action round's dice, from the steps),
+│   │                           # record.ts (a game for the stats database: log, tags, summary),
+│   │                           # saved_game.ts (the game kept in the browser, for a reload)
+│   ├── result_dialog.ts        # Game over: the result, how it was played, submit to the stats database
+│   ├── build_info.ts           # the commit the page was built from, the stats endpoint
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen),
@@ -345,6 +350,41 @@ web/ui/
    - `rules/map.json` and `rules/cards.json` are imported at build time, so the page needs no
      server to draw the board. The flat action layout comes from the engine
      (`WasmEngine.layout`), never from a hand-kept copy.
+11. **Games against people: the record and the stats database (`game/record.ts`,
+    `result_dialog.ts`, `game/saved_game.ts`, `web/stats_worker/`)**:
+   - **The record.** `GameSession` tags every step (`tags`, aligned with `steps` and cut back with
+     them on undo): who made it (`human` click, `suggested` -- the model's move played from the
+     readout, F or a panel row -- or `auto`-play), whether the model's readout was on screen for
+     the mover (`showsReadoutFor`), the mover, the forced die and whether the step rolled, and an
+     index into `settings` -- the view, auto side, model (its file's sha256) and search in force,
+     noted by `TSApp.noteSettings()` just before each move. Settings travel per step, not as a
+     timeline, because undo would make a timeline name the wrong setting for steps played again.
+     `events` keeps take-backs, debug overrides, a loaded position and reloads. Nothing is
+     refused for being recorded; the reader filters.
+   - **The log** (`encodeLog`): seed, then 7 bytes a step (MicroAction, forced die, tags), zlib +
+     base64url -- about 2 KB a game where the replay is megabytes. `tools/lib/game_stats.py`
+     decodes the same bytes, re-drives the game in the Python engine (`init_game` + `drain_chance`
+     with each step's forced die) and checks `final_hash`, the sha256 of the save JSON at the end.
+     `summarize()` (clean = one model and search on one side, the human the other in a player
+     view, no moves for the model, no hints, no forced dice, no debug, not from a loaded position;
+     take-backs counted, not disqualifying) has a Python twin that must agree --
+     `tests/web/test_game_stats.py` holds the two to it.
+   - **Game over** opens `#result-dialog` once per ending (`offerResult`, from `refresh`), and the
+     *Result* button again: the result, the summary's notes in words, and the offer to add the
+     game with a Playdek login and rating (remembered in localStorage). The submission
+     (`buildSubmission`, record.ts `Submission`) goes to `${TS_STATS_ENDPOINT}/games` -- the
+     Cloudflare Worker in `web/stats_worker/`, keeping it in D1. A build without the endpoint
+     offers *Download record* only. While the dialog is open the keyboard shortcuts are off.
+   - **Reloads keep the game.** After every move the record is stored in localStorage
+     (`saved_game.ts`). On boot, a `pos=` link whose position the stored game plays to is that
+     game, played back from its seed (`replayRecord`) -- id, history and undo intact -- rather
+     than a new game from a loaded position, which could not be re-driven from the seed.
+   - **The forced die is for one roll.** The HUD's die selector goes back to Auto once a move of
+     yours has rolled with it (`afterOwnMove`): one click on a face no longer forces every roll
+     after it. Auto-play always rolls.
+   - **The build.** `vite.config.ts` writes the commit (`git rev-parse HEAD`) and whether tracked
+     files differed from it (`dirty`) into `build_info.ts`, so a submitted game names what to
+     rebuild it at; the engine fingerprint comes from the engine itself.
 
 ---
 
@@ -386,6 +426,8 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_recent_rolls.py` | `game/rolls.ts`, `roll_tray.ts` and the log's dice lines (`game/describe.ts`) under node: the turn's last coup shown in the next headline and gone a half round later, every die of one click, a replay file's snapshot roll, the Olympic sponsor's die without its +2 (tray and log) |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |
+| `test_game_stats.py` | `game/record.ts` and the stats Worker under node: two games played in the page's `GameSession` (a clean one, one with every mark) re-drive in the Python engine to the submitted final position, the page's summary is Python's, the log is under 7 bytes a step, a stored record plays back as a reload does, and the Worker keeps a game once, refuses another origin, a game without a login and the fourth an hour |
+| `test_e2e_game_stats.py` | in Chromium: a finished game opens the result dialog once with its notes (download only without an endpoint), Escape closes it without a take-back, the Result button reopens it; a forced die goes back to Auto once it has rolled; a reload plays the stored game back (same id, steps and undo) |
 
 The TypeScript under test in node (`tests/web/js/*.ts`) is bundled with the esbuild that ships
 with Vite (`tests/web/js_runner.py`).

@@ -120,7 +120,8 @@ graph TD
 │
 ├── web/
 │   ├── ui/                     # the browser workbench and the leaderboard page (web/ui/AGENTS.md)
-│   └── server/                 # local files server + replay writer (web/server/AGENTS.md)
+│   ├── server/                 # local files server + replay writer (web/server/AGENTS.md)
+│   └── stats_worker/           # Cloudflare Worker + D1: games people played against the models
 ├── deploy/web/                 # Dockerfile (+ compose, README) deploying the workbench from GitHub
 │
 ├── tools/                      # CLIs (tools/README.md)
@@ -227,6 +228,14 @@ to ONNX, a Hugging Face repo, or a dropped `.onnx`; policy argmax or the rollout
 one side against the model with the other side's private information hidden. The address bar is
 the share link. Details: [`web/ui/AGENTS.md`](web/ui/AGENTS.md). Deployment: GitHub Pages with no
 server (`.github/workflows/pages.yml`), or `deploy/web/Dockerfile` (`deploy/web/README.md`).
+
+A finished game can be submitted to the **stats database** with the player's Playdek login and
+rating: the page sends the game's compact record (seed, steps, who made each move and under which
+settings, the build's commit) to a Cloudflare Worker that keeps it in D1
+([`web/stats_worker/README.md`](web/stats_worker/README.md)). The page is the only writer; nothing
+is hosted here. `tools/game_stats.py` exports the table, re-drives each game in the engine, and
+fits each model player's rating on Playdek's scale from the clean games
+([`tools/README.md`](tools/README.md) §2d).
 
 ### 3.4 CLIs
 

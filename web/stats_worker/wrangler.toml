@@ -1,0 +1,15 @@
+# The stats database's Worker (README.md). `database_id` is filled in once, from the output of
+# `npx wrangler d1 create ts-game-stats`.
+name = "ts-game-stats"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+# The page's origins: GitHub Pages, and the local dev and files servers.
+ALLOWED_ORIGINS = "https://mihaild.github.io,http://localhost:5173,http://localhost:8000"
+RATE_PER_HOUR = "30"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ts-game-stats"
+database_id = "65b134ef-24dc-41a8-a393-3fd35a41d756"

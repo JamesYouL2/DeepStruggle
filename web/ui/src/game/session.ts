@@ -1,6 +1,7 @@
 /**
  * One game, in the page: stepping, dice, undo, the action log, debug overrides, loading a shared
- * position, and a replay of the game so far for export.
+ * position, a replay of the game so far for export, and its record for the stats database
+ * (game/record.ts): every step tagged with who made it and the settings in force.
  *
  * The port of web/server/session.py's GameSession, which ran on the server until the workbench
  * moved into the browser. Two things it now does that the server did not: undo restores the log
@@ -11,6 +12,7 @@ import { ActionLogItem, GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
 import { describeActionAndDeltas, describeDeltas, describeRoll } from "./describe";
 import { ReplayStep } from "../replay_controls";
+import { GameRecordData, ModelInfo, MoveHow, RecordEvent, RecordEventKind, Settings, StepTag } from "./record";
 
 const MAX_UNDO = 300;
 
@@ -28,7 +30,23 @@ export interface GameResult {
   reason: string;
 }
 
+const HUMAN: MoveHow = { source: "human", analysis: false };
+
+function newGameId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function sameSettings(a: Settings, b: Settings): boolean {
+  return a.view === b.view && a.auto === b.auto && a.model === b.model && a.search === b.search;
+}
+
 export class GameSession {
+  /** This game's id in the stats database; a new one per deal or loaded position. */
+  id = newGameId();
+  startedAt = new Date().toISOString();
+  /** The game's record was added to the stats database. */
+  submitted = false;
   seed = 0;
   stepIndex = 0;
   logs: ActionLogItem[] = [];
@@ -38,6 +56,13 @@ export class GameSession {
   startPosition: string | null = null;
   /** The display state before the first of `steps` (the "before" of step 0). */
   start: GameState | null = null;
+  /** Per step of `steps`: who made it and how (game/record.ts). */
+  tags: StepTag[] = [];
+  /** Every distinct setting a step was made under; a tag names one by index. */
+  settings: Settings[] = [];
+  models: Record<string, ModelInfo> = {};
+  events: RecordEvent[] = [];
+  private setting = 0;
   private history: UndoEntry[] = [];
 
   constructor(readonly engine: WasmEngine) {}
@@ -50,6 +75,7 @@ export class GameSession {
     this.steps = [];
     this.result = null;
     this.startPosition = null;
+    this.resetRecord();
     const s = this.engine.display();
     this.start = s;
     this.logs = [{
@@ -69,6 +95,74 @@ export class GameSession {
     return s;
   }
 
+  /** A new game's record: a fresh id, no steps, the settings in force kept for its first move. */
+  private resetRecord(): void {
+    const current = this.settings[this.setting];
+    this.id = newGameId();
+    this.startedAt = new Date().toISOString();
+    this.submitted = false;
+    this.tags = [];
+    this.events = [];
+    this.settings = current ? [current] : [];
+    this.setting = 0;
+    const model = current?.model;
+    this.models = model && this.models[model] ? { [model]: this.models[model] } : {};
+  }
+
+  /** The settings the page moves under from now on: the view, auto side, model and search. */
+  setSettings(s: Settings, model?: ModelInfo): void {
+    if (model && s.model) this.models[s.model] = model;
+    let i = this.settings.findIndex(x => sameSettings(x, s));
+    if (i < 0) {
+      if (this.settings.length >= 255) return;   // a byte per step names it; past that, the last one stays
+      i = this.settings.push({ ...s }) - 1;
+    }
+    this.setting = i;
+  }
+
+  private event(kind: RecordEventKind, text: string): void {
+    this.events.push({ step: this.steps.length, kind, text });
+  }
+
+  /** The record of the game so far (game/record.ts). */
+  record(): GameRecordData {
+    return {
+      id: this.id,
+      started_at: this.startedAt,
+      seed: this.seed,
+      start_position: this.startPosition,
+      steps: this.steps.map((s, i) => ({ action: s.action as Required<MicroAction>, tag: this.tags[i] })),
+      settings: this.settings,
+      models: this.models,
+      events: this.events,
+    };
+  }
+
+  /**
+   * Play a saved record over again (a page reload): the same deal or position, then every step
+   * with its forced die and tags. Its id, settings and events come back with it. Throws, leaving a
+   * half-played game, if the engine refuses a step -- the caller then starts afresh.
+   */
+  replayRecord(rec: GameRecordData, saveJson: string | null, submitted: boolean): void {
+    this.newGame(rec.seed);
+    if (rec.start_position) {
+      if (!saveJson) throw new Error("the record starts from a position that was not given");
+      this.loadPosition(saveJson, rec.start_position);
+    }
+    this.settings = rec.settings.map(s => ({ ...s }));
+    this.models = { ...rec.models };
+    this.events = rec.events.map(e => ({ ...e }));
+    rec.steps.forEach((s, i) => {
+      this.setting = s.tag.setting;
+      const why = this.apply(s.action, s.tag.forcedDie, { source: s.tag.source, analysis: s.tag.analysis });
+      if (why) throw new Error(`step ${i + 1} of the saved game was refused: ${why}`);
+    });
+    this.id = rec.id;
+    this.startedAt = rec.started_at;
+    this.submitted = submitted;
+    this.event("resume", "page reloaded");
+  }
+
   get canUndo(): boolean {
     return this.history.length > 0;
   }
@@ -82,9 +176,9 @@ export class GameSession {
 
   /**
    * Apply one MicroAction (a click) and resolve its dice. Returns null, or why the engine
-   * refused -- in which case nothing changed.
+   * refused -- in which case nothing changed. `how` is who made the move, for the record.
    */
-  apply(action: MicroAction, forcedDie = 0): string | null {
+  apply(action: MicroAction, forcedDie = 0, how: MoveHow = HUMAN): string | null {
     if (this.engine.isTerminal()) return "the game is over";
     const a: Required<MicroAction> = {
       decision_type: action.decision_type, primary_id: action.primary_id,
@@ -114,6 +208,10 @@ export class GameSession {
     const mover = before.decision_context?.decision_player ?? "NONE";
     const rolls = this.engine.clickRolls();
     for (const r of rolls) lines.push(...describeRoll(this.engine, before, r, mover));
+    this.tags.push({
+      source: how.source, analysis: how.analysis, mover: mover === "US" || mover === "USSR" ? mover : "",
+      forcedDie, rolled: rolls.length > 0, setting: this.setting,
+    });
     const main = lines[0] ?? `Action type=${a.decision_type}`;
     const phase = before.current_phase_name ?? "ACTION";
     const ar = phase === "HEADLINE" || phase === "SETUP" ? 0 : before.action_round;
@@ -155,7 +253,7 @@ export class GameSession {
    * exactly as Engine::step_flat composes it, each logged and undoable like a click; if the
    * second is refused the first is taken back too.
    */
-  applyFlat(idx: number, merged: boolean, forcedDie = 0): string | null {
+  applyFlat(idx: number, merged: boolean, forcedDie = 0, how: MoveHow = HUMAN): string | null {
     const mask = this.engine.mask(merged);
     if (!(idx >= 0 && idx < mask.length && mask[idx])) {
       return `flat action ${idx} is not legal here (${merged ? "E4.1" : "E4"} view)`;
@@ -163,27 +261,33 @@ export class GameSession {
     if (merged && this.engine.isMergedInfluenceAction(idx)) {
       const L = this.engine.layout;
       const first = this.engine.decodeFlat(L.ops_influence_index);
-      const refused = this.apply(first, 0);
+      const refused = this.apply(first, 0, how);
       if (refused) return refused;
       if (this.engine.isTerminal()) return null;
       const secondSlot = idx === L.ops_influence_index ? L.confirm_done_index : idx;
-      const refused2 = this.apply(this.engine.decodeFlat(secondSlot), forcedDie);
+      const refused2 = this.apply(this.engine.decodeFlat(secondSlot), forcedDie, how);
       if (refused2) {
         this.undo(false);
         return refused2;
       }
       return null;
     }
-    return this.apply(this.engine.decodeFlat(idx), forcedDie);
+    return this.apply(this.engine.decodeFlat(idx), forcedDie, how);
   }
 
   /** Take back the last step. `announce` adds the "cancelled" line to the log. */
   undo(announce = true): boolean {
     const e = this.history.pop();
     if (!e) return false;
+    // A debug override has no step of its own: taking one back is not a move taken back.
+    if (announce && e.steps < this.steps.length) {
+      const t = this.tags[e.steps];
+      this.event("undo", `${t?.mover || "?"} ${t?.source ?? "?"} move taken back`);
+    }
     this.engine.restore(e.snapshot);
     this.logs.length = e.logs;
     this.steps.length = e.steps;
+    this.tags.length = e.steps;
     this.stepIndex = e.stepIndex;
     this.result = null;
     if (announce) {
@@ -207,6 +311,7 @@ export class GameSession {
     }
     const s = this.engine.display();
     this.logs.push({ step_index: this.stepIndex, turn: s.turn, ar: s.action_round, phase: "DEBUG", player: "DEBUG", text });
+    this.event("debug", text);
     return null;
   }
 
@@ -235,7 +340,9 @@ export class GameSession {
     this.steps = [];
     this.stepIndex = 0;
     this.result = null;
+    this.resetRecord();
     this.startPosition = token;
+    this.event("load", "position loaded from a link");
     const s = this.engine.display();
     this.start = s;
     this.logs = [{

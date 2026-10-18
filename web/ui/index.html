@@ -42,6 +42,8 @@
           <option value="USSR">Play as USSR</option>
         </select>
         <button id="btn-new-game" class="btn btn-secondary btn-sm" title="A new game with a fresh deal; asks for the play mode first">New Game</button>
+        <!-- Shown once the game is over: the result dialog, and its offer of the stats database. -->
+        <button id="btn-game-result" class="btn btn-primary btn-sm hidden" title="The result, and adding the game to the stats database">Result</button>
       </div>
 
       <div class="tech-group tech-model" id="tech-model">
@@ -284,6 +286,37 @@
             <span class="mode-choice-text">The US's hand and headline stay hidden; the model plays the US. No hints: its win chances and move probabilities stay off unless you turn on Show analysis.</span>
           </button>
           <p class="mode-dialog-note" id="mode-dialog-note"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Game over (result_dialog.ts): the result, how the game was played, and the offer to add it
+         to the stats database. Shown when a game ends and from the Result button. -->
+    <div id="result-dialog" class="modal-backdrop result-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="result-dialog-title">
+      <div class="modal-content result-dialog-content">
+        <div class="modal-header">
+          <h2 id="result-dialog-title">Game over</h2>
+          <button id="result-dialog-close" class="btn-icon" title="Close (Esc)">✕</button>
+        </div>
+        <div class="modal-body result-dialog-body">
+          <p id="result-dialog-outcome" class="result-outcome"></p>
+          <dl id="result-dialog-facts" class="result-facts"></dl>
+          <div id="result-dialog-notes" class="result-notes"></div>
+          <form id="result-form" class="result-form" novalidate>
+            <p class="result-form-intro">Add this game to the stats database? With your Playdek rating, games like it estimate the models' strength on Playdek's scale.</p>
+            <div class="result-fields">
+              <label>Playdek login <input id="result-login" type="text" autocomplete="username" maxlength="64" spellcheck="false"></label>
+              <label>Playdek rating <input id="result-rating" type="number" inputmode="numeric" min="1" max="5000" step="1"></label>
+            </div>
+            <label class="result-note-label">Note (optional) <textarea id="result-note" maxlength="500" rows="2"></textarea></label>
+            <p class="result-privacy">Stored privately: your login and rating, the game's moves, the model and how it played, and this page's version. Nothing is sent unless you press Add.</p>
+            <div class="result-actions">
+              <button type="submit" id="result-submit" class="btn btn-primary btn-sm">Add to database</button>
+              <button type="button" id="result-download" class="btn btn-secondary btn-sm" title="The record as the database would get it, as a .json file">Download record</button>
+              <button type="button" id="result-skip" class="btn btn-secondary btn-sm">Not now</button>
+            </div>
+            <p id="result-status" class="result-status" role="status"></p>
+          </form>
         </div>
       </div>
     </div>
