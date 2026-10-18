@@ -34,6 +34,7 @@ onnxruntime -- so the two searchers cannot drift apart in anything but the netwo
 from __future__ import annotations
 
 import random
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -41,6 +42,7 @@ import numpy as np
 import torch
 
 import ts_engine as ts
+from ai.search.belief import BeliefTracker
 from ai.search.gumbel_root import sigma_completed
 from ai.search.pimcts import acting_player
 from bindings.action_encoder import ActionEncoder
@@ -85,6 +87,10 @@ class RolloutConfig:
     #: The oracle's worlds: the opponent's true hand kept, only the draw deck reshuffled. Not a
     #: deployable player -- the ceiling on what a belief over the opponent's hand could give the root.
     oracle: bool = False
+    #: P35 3b: the worlds dealt from the policy-likelihood belief over the opponent's hand
+    #: (ai/search/belief.py) with this many importance-sampled hands; 0 = uniform redeals. Needs the
+    #: tournament's game hooks (`RolloutRootAgent.observe`), since the belief reads the opponent's moves.
+    belief: int = 0
 
 
 class _GraphedForward:
@@ -239,7 +245,9 @@ class RolloutRoot:
             _lg, v = self._net(np.ascontiguousarray(obs), np.ascontiguousarray(masks), self.leaf_model)
             batch.set_leaf_values(np.ascontiguousarray(v, dtype=np.float32))
 
-    def choose(self, states: Sequence[ts.GameState]) -> List[int]:
+    def choose(self, states: Sequence[ts.GameState], hands: Optional[Sequence[Optional[np.ndarray]]] = None) -> List[int]:
+        """The root's move at each position; `hands[i]`, when given and not None, is position i's
+        worlds' opposing hands (worlds x 110 uint8, a belief's) instead of uniform redeals."""
         states = list(states)
         self.rows = 0
         lg, masks, _ = self._forward(states)
@@ -251,7 +259,11 @@ class RolloutRoot:
         for i, st in enumerate(states):
             if len(cands[i]) >= 2 and not ts.Engine.is_terminal(st):
                 position_of[i] = batch.positions()
-                batch.add(st, cands[i], self.cfg.worlds)
+                h = None if hands is None else hands[i]
+                if h is not None:
+                    batch.add(st, cands[i], self.cfg.worlds, hands=h)
+                else:
+                    batch.add(st, cands[i], self.cfg.worlds)
         if batch.rows():
             self._playouts(batch)
         picks: List[int] = []
@@ -393,13 +405,38 @@ class RolloutRootAgent:
         self.model = model
         self.name = name
         self.root = RolloutRoot(model, config, device=device, leaf_model=leaf_model)
+        self.belief: Optional[BeliefTracker] = (
+            BeliefTracker(model, self.root.device, particles=config.belief, seed=config.seed)
+            if config.belief else None)
 
     def reseed(self, seed: int) -> None:
         self.root.reseed(seed)
+        if self.belief is not None:
+            self.belief.reseed(seed)
+
+    # The tournament's game hooks (tools/lib/batch_tournament.py), for the belief's record.
+    def new_games(self) -> None:
+        if self.belief is not None:
+            self.belief.new_games()
+
+    def observe(self, games: Sequence[int], states: Sequence[ts.GameState], actions: Sequence[int],
+                players: Sequence[int]) -> None:
+        if self.belief is not None:
+            self.belief.observe(games, states, actions, players)
+
+    def select_actions_games(self, games: Sequence[int], states: Sequence[ts.GameState]) -> List[int]:
+        """`select_actions_batch` with each position's game, which the belief keys its record by."""
+        states = list(states)
+        hands = None if self.belief is None else self.belief.worlds(list(games), states, self.root.cfg.worlds)
+        return self._checked(states, self.root.choose(states, hands))
 
     def select_actions_batch(self, states: Sequence[ts.GameState]) -> List[int]:
+        if self.belief is not None:
+            raise RuntimeError("a belief root needs its games: call select_actions_games (the tournament's hook)")
         states = list(states)
-        picks = self.root.choose(states)
+        return self._checked(states, self.root.choose(states))
+
+    def _checked(self, states: List[ts.GameState], picks: List[int]) -> List[int]:
         for i, (st, a) in enumerate(zip(states, picks)):
             if not np.asarray(ActionEncoder.get_legal_mask(st))[a]:
                 raise RuntimeError(f"rollout root returned an illegal action {a}")
@@ -503,11 +540,20 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             continue                                   # rollout_spec_config reads the leaf side
         elif p == "graphs":
             graphs = True
-        elif p in ("keyed", "oracle"):
+        elif p in ("keyed", "oracle") or re.fullmatch(r"belief\d*", p):
             continue                                   # rollout_spec_config reads them
         else:
             leaf = p
     return stop, leaf, graphs
+
+
+def _belief_particles(tail: Sequence[str]) -> int:
+    """`belief` (2,048 hands) or `belief<n>` in a rollout spec's tail -> the particle count, else 0."""
+    for p in tail:
+        m = re.fullmatch(r"belief(\d*)", p)
+        if m:
+            return int(m.group(1) or 2048)
+    return 0
 
 
 def rollout_spec_leaf(spec: str) -> Optional[str]:
@@ -534,7 +580,8 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     side = next((p for p in parts[6:] if p in LEAF_SIDES), "mover")
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
                         horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs,
-                        leaf_side=side, keyed="keyed" in parts[6:], oracle="oracle" in parts[6:])
+                        leaf_side=side, keyed="keyed" in parts[6:], oracle="oracle" in parts[6:],
+                        belief=_belief_particles(parts[6:]))
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
     parse_rule(cfg.rule)
@@ -542,5 +589,6 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
                   "predeal": "-predeal", "earlier_predeal": "-untilpredeal"}[cfg.stop]
     horizon = "" if cfg.stop in ("turn", "predeal") else f"-h{cfg.horizon}"
     side_label = {"mover": "", "decider": "-dleaf", "own": "-ownleaf"}[cfg.leaf_side]
-    keyed = ("-keyed" if cfg.keyed else "") + ("-oracle" if cfg.oracle else "")
+    keyed = ("-keyed" if cfg.keyed else "") + ("-oracle" if cfg.oracle else "") + (
+        f"-belief{cfg.belief}" if cfg.belief else "")
     return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}{keyed}-{cfg.rule}"

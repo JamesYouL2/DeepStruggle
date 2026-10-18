@@ -157,6 +157,13 @@ are cited from elsewhere; keep them.
   the draw deck, so the deck order, the dice and an unrevealed headline stay unknown. Not a
   deployable player -- the ceiling on what any belief over the opponent's hand could give the root
   (P35 item 3). Python-only; the browser build constructs the default (honest) worlds.
+- **A belief's worlds** (P35 3b, `ai/search/belief.py`): `ts.place_hand(state, me, held)` splits
+  `me`'s hidden pool as a 110-byte mask says (opponent's unknown hand / deck), `RolloutBatch.add(...,
+  hands=)` deals each world's opposing hand from a worlds x 110 array instead of at random (with
+  determinize's forgetting of forced deals and an unrevealed headline), and
+  `ts.hypothesis_rows(state, me, held, features)` builds a past opposing decision's observation and
+  mask under n hypothesised hands in one parallel call -- the policy-likelihood belief's inner loop,
+  held equal to the Python rebuild by `tests/training/test_belief.py`.
 - [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).
 - [`settle.py`](settle.py): `SettleMode`, the one rule for how far past decisions nobody controls
   the engine is advanced. Settlers that stop at different depths put two components on different

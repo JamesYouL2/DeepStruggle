@@ -35,6 +35,7 @@ import torch
 import ts_engine as ts
 from ai.eval.belief_probe import (CARD_OFFSET, CARD_WIDTH, GLOBAL_OFFSET, GLOBAL_WIDTH, fit_probe, prior_logit,
                                   scores)
+from ai.search.belief import Decision
 from bindings.ts_env import model_obs_features
 from tools.lib.player_agent import NeuralAgent
 
@@ -51,16 +52,6 @@ CHOICES = {int(ts.DecisionType.SELECT_CARD), int(ts.DecisionType.SELECT_PLAY_MOD
 
 def _player(code: int) -> ts.Player:
     return ts.Player.US if code == 1 else ts.Player.USSR
-
-
-@dataclass
-class Decision:
-    """One decision of the current turn: the position before it, who decided, what they chose, and
-    every card's location then."""
-    state: ts.GameState
-    decider: int             # 1 US, 2 USSR
-    action: int
-    locs: np.ndarray
 
 
 @dataclass

@@ -79,16 +79,33 @@ Player acting_player(const GameState& s) noexcept {
     return d != Player::NONE ? d : s.phasing_player;
 }
 
-void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand) noexcept {
-    // A forced next deal (a replay's, or keyed chance's deck order -- keyed_chance.hpp) names cards by
-    // where they were; once the unseen cards are redealt those names need not be in the deck, so the
-    // redealt world deals at random instead.
+namespace {
+// What `me` cannot know of a world it deals: a forced next deal (a replay's, or keyed chance's deck
+// order -- keyed_chance.hpp) names cards by where they were, and once the unseen cards are redealt
+// those names need not be in the deck, so the world deals at random instead; and an opposing headline
+// chosen but not revealed is forgotten, so the world asks it again from the hand it dealt.
+void forget_unseen(GameState& s, Player me) noexcept {
     s.forced_deal_us_count = s.forced_deal_ussr_count = 0;
     s.forced_deal_us_pos = s.forced_deal_ussr_pos = 0;
     if (s.current_phase == Phase::HEADLINE && s.headline_stage == 0) {
         if (me == Player::USSR && s.headline_us_card) s.headline_us_card = 0;
         else if (me == Player::US && s.headline_ussr_card) s.headline_ussr_card = 0;
     }
+}
+}  // namespace
+
+void place_hand(GameState& s, Player me, const uint8_t* held) noexcept {
+    const CardLocation opp_unknown =
+        me == Player::US ? CardLocation::HAND_USSR_UNKNOWN : CardLocation::HAND_US_UNKNOWN;
+    for (uint8_t cid = 1; cid <= 110; ++cid) {
+        const CardLocation l = s.card_locations[cid];
+        if (l == opp_unknown || l == CardLocation::DRAW_DECK)
+            s.card_locations[cid] = held[cid - 1] ? opp_unknown : CardLocation::DRAW_DECK;
+    }
+}
+
+void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand) noexcept {
+    forget_unseen(s, me);
     const CardLocation opp_unknown =
         me == Player::US ? CardLocation::HAND_USSR_UNKNOWN : CardLocation::HAND_US_UNKNOWN;
     uint8_t pool[110];
@@ -173,7 +190,8 @@ void RolloutBatch::settle_and_mark(Row& r) noexcept {
     if (at_stop(r)) r.done = true;
 }
 
-size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds) {
+size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds,
+                         const uint8_t* hands) {
     error_ = "";
     uint8_t base_mask[A];
     ActionMask::generate_flat_mask_212(base, base_mask);
@@ -190,7 +208,13 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
     size_t added = 0;
     for (size_t w = 0; w < worlds; ++w) {
         GameState world = base;
-        if (!Engine::is_terminal(world)) determinize(world, mover, rng_, cfg_.oracle);
+        if (Engine::is_terminal(world)) {
+        } else if (hands != nullptr) {
+            forget_unseen(world, mover);
+            place_hand(world, mover, hands + w * 110);
+        } else {
+            determinize(world, mover, rng_, cfg_.oracle);
+        }
         if (cfg_.shared_dice || cfg_.keyed) world.rng_state = Prng::next_u64(rng_);
         uint8_t wm[A];
         ActionMask::generate_flat_mask_212(world, wm);
@@ -251,6 +275,18 @@ void for_rows(int64_t n, F body) {
     for (int64_t j = 0; j < n; ++j) body(j);
 }
 }  // namespace
+
+void hypothesis_rows(const GameState& s, Player me, const uint8_t* held, size_t n, uint32_t features,
+                     float* obs, uint8_t* masks) {
+    const size_t width = OBS_SIZE_V23 + obs_features::extra_width(features);
+    const Player opp = me == Player::US ? Player::USSR : Player::US;
+    for_rows(static_cast<int64_t>(n), [&](int64_t j) {
+        GameState w = s;
+        place_hand(w, me, held + j * 110);
+        extract_observation_features(w, opp, features, obs + j * width);
+        ActionMask::generate_flat_mask_212(w, masks + j * A);
+    });
+}
 
 size_t RolloutBatch::fill_live(float* obs, uint8_t* masks) {
     live_order_.clear();

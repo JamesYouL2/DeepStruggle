@@ -36,6 +36,21 @@ namespace ts::rollout {
 // reshuffles only the draw deck: the hand is known, the deck order and the forgotten headline are not.
 void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand = false) noexcept;
 
+// `me`'s hidden pool -- the opponent's unknown hand and the draw deck -- split as `held` says: card
+// `cid` in the opponent's unknown hand where held[cid - 1] is set, in the deck otherwise. Nothing else
+// changes. With determinize's forgetting (forced deals, an unrevealed opposing headline) this is a
+// belief's world (`add`'s `hands`); without it, a past position rebuilt under a hypothesised hand
+// (`hypothesis_rows`).
+void place_hand(GameState& s, Player me, const uint8_t* held) noexcept;
+
+// `n` copies of `s`, copy j with `me`'s hidden pool split by held[j * 110 .. j * 110 + 109]
+// (place_hand), each copy's observation from the opponent's side in feature set `features` and its
+// legal mask, row-major into caller buffers of n * obs_size_for(features) floats and
+// n * FLAT_ACTION_SPACE_SIZE bytes: the network's view of a past decision of the opponent's under each
+// hypothesised hand (ai/search/belief.py).
+void hypothesis_rows(const GameState& s, Player me, const uint8_t* held, size_t n, uint32_t features,
+                     float* obs, uint8_t* masks);
+
 // The side to act at `s`: the decision's player, else the phasing player (ai/search/pimcts.acting_player).
 Player acting_player(const GameState& s) noexcept;
 
@@ -111,7 +126,11 @@ public:
     // Add one decision: `base` at a decision of `mover()`, `k` flat candidate actions, `worlds`
     // worlds. Returns the rows added (k times the worlds kept). Every candidate must be legal at
     // `base`; a caller passing one that is not gets 0 rows and `last_error()`.
-    size_t add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds);
+    // `hands` (worlds x 110 bytes), when given, deals each world's opposing unknown hand from its row
+    // (place_hand) instead of redealing it at random -- a belief's worlds; the deck is the rest of the
+    // hidden pool either way.
+    size_t add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds,
+               const uint8_t* hands = nullptr);
 
     size_t positions() const noexcept { return movers_.size(); }
     Player mover(size_t position) const noexcept { return movers_[position]; }

@@ -467,3 +467,27 @@ def test_a_batch_plays_the_same_rows_on_one_thread_and_on_many() -> None:
         out = subprocess.run([sys.executable, "-c", _THREADED], env=env, capture_output=True, text=True, check=True)
         digests.append(out.stdout.strip())
     assert digests[0] == digests[1] and len(digests[0]) == 64
+
+
+def test_place_hand_with_the_true_hand_changes_nothing_and_add_deals_the_given_hands() -> None:
+    st = _position()
+    me = decider(st)
+    opp_unknown = ts.CardLocation.HAND_USSR_UNKNOWN if me == ts.Player.US else ts.CardLocation.HAND_US_UNKNOWN
+    locs = _locations(st)
+    true = np.asarray([loc == opp_unknown for loc in locs], dtype=np.uint8)
+    assert _locations(ts.place_hand(st, me, true)) == locs
+    pool = [c for c, loc in enumerate(locs) if loc in (opp_unknown, ts.CardLocation.DRAW_DECK)]
+    rng = np.random.default_rng(1)
+    hands = np.zeros((3, 110), dtype=np.uint8)
+    for w in range(3):
+        hands[w, rng.choice(pool, size=int(true.sum()), replace=False)] = 1
+    b = ts.RolloutBatch(horizon=0, seed=5, keyed=True)
+    cands = _legal(st)[:2]
+    n = b.add(st, cands, 3, hands=hands)
+    assert n == 2 * b.worlds_used(0)
+    for r in range(n):
+        got = np.asarray([loc == opp_unknown for loc in _locations(b.row_state(r))], dtype=np.uint8)
+        played = np.asarray([loc != l0 for loc, l0 in zip(_locations(b.row_state(r)), locs)])
+        # the row has played its candidate: compare only the cards it did not move
+        w = b.row_world()[r]
+        assert np.array_equal(got[~played], hands[w][~played])

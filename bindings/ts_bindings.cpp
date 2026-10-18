@@ -966,6 +966,36 @@ NB_MODULE(ts_engine, m) {
           "every seen card left; an unrevealed opposing headline is forgotten. The C++ port of "
           "ai.search.dmcts.determinize that the rollout root uses in both builds. keep_hand=True keeps the "
           "opponent's true hand and reshuffles only the draw deck (the oracle's world).");
+    using Hands = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+    m.def("place_hand", [](const ts::GameState& s, ts::Player me, nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> held) {
+              if (held.shape(0) != 110) throw std::invalid_argument("held must have 110 entries");
+              ts::GameState out = s;
+              ts::rollout::place_hand(out, me, held.data());
+              return out;
+          }, nb::arg("state"), nb::arg("me"), nb::arg("held"),
+          "A clone with `me`'s hidden pool (the opponent's unknown hand and the deck) split by `held` "
+          "(110 bytes, card c at c - 1): set -> the opponent's unknown hand, else the deck.");
+    m.def("hypothesis_rows", [](const ts::GameState& s, ts::Player me, Hands held, uint32_t features) {
+              if (held.shape(1) != 110) throw std::invalid_argument("held must be n x 110");
+              if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
+              const size_t n = held.shape(0);
+              const size_t width = ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features);
+              size_t so[2] = { n, width }, sm[2] = { n, ts::FLAT_ACTION_SPACE_SIZE };
+              float* obs = new float[std::max<size_t>(1, n * width)];
+              uint8_t* masks = new uint8_t[std::max<size_t>(1, n * ts::FLAT_ACTION_SPACE_SIZE)];
+              nb::capsule own_o(obs, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+              nb::capsule own_m(masks, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+              {
+                  nb::gil_scoped_release release;
+                  ts::rollout::hypothesis_rows(s, me, held.data(), n, features, obs, masks);
+              }
+              return nb::make_tuple(nb::ndarray<nb::numpy, float, nb::ndim<2>>(obs, 2, so, own_o),
+                                    nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(masks, 2, sm, own_m));
+          }, nb::arg("state"), nb::arg("me"), nb::arg("held"), nb::arg("features") = 0u,
+          "A past decision of `me`'s opponent at `state` under n hypothesised hands: for each row of `held` "
+          "(n x 110) the position with `me`'s hidden pool split by it (place_hand), its observation from the "
+          "opponent's side and its legal mask -> (obs n x width, masks n x 220). The policy-likelihood "
+          "belief's inner loop (ai/search/belief.py).");
     {
         using RB = ts::rollout::RolloutBatch;
         auto arrays = [](size_t n, size_t width) {
@@ -1008,19 +1038,24 @@ NB_MODULE(ts_engine, m) {
                  }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
                  nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries",
                  nb::arg("leaf") = "mover", nb::arg("keyed") = false, nb::arg("oracle") = false)
-            .def("add", [](RB& self, const ts::GameState& base, const std::vector<int>& candidates, size_t worlds) {
+            .def("add", [](RB& self, const ts::GameState& base, const std::vector<int>& candidates, size_t worlds,
+                           std::optional<Hands> hands) {
                      std::vector<uint16_t> c;
                      for (int a : candidates) {
                          if (a < 0 || a >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE))
                              throw std::invalid_argument("a candidate is outside the flat action space");
                          c.push_back(static_cast<uint16_t>(a));
                      }
-                     const size_t n = self.add(base, c.data(), c.size(), worlds);
+                     if (hands && (hands->shape(0) != worlds || hands->shape(1) != 110))
+                         throw std::invalid_argument("hands must be worlds x 110");
+                     const size_t n = self.add(base, c.data(), c.size(), worlds, hands ? hands->data() : nullptr);
                      if (n == 0 && self.last_error()[0]) throw std::invalid_argument(self.last_error());
                      return n;
-                 }, nb::arg("base"), nb::arg("candidates"), nb::arg("worlds"),
+                 }, nb::arg("base"), nb::arg("candidates"), nb::arg("worlds"), nb::arg("hands") = nb::none(),
                  "One decision: `base` with the mover's flat `candidates` (all legal there), in "
-                 "`worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept.")
+                 "`worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept. "
+                 "`hands` (uint8, worlds x 110), when given, is each world's opposing unknown hand "
+                 "(a belief's worlds, ai/search/belief.py) instead of a random redeal.")
             .def("positions", &RB::positions)
             .def("mover", [](const RB& self, size_t p) {
                      if (p >= self.positions()) throw std::out_of_range("position");

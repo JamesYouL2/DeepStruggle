@@ -946,6 +946,16 @@ def determinize(state: GameState, me: Player, seed: int, keep_hand: bool = False
     A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck -- reshuffled between those two places from SplitMix64 state `seed`, every count kept, every seen card left; an unrevealed opposing headline is forgotten. The C++ port of ai.search.dmcts.determinize that the rollout root uses in both builds. keep_hand=True keeps the opponent's true hand and reshuffles only the draw deck (the oracle's world).
     """
 
+def place_hand(state: GameState, me: Player, held: Annotated[NDArray[numpy.uint8], dict(shape=(None,), order='C', device='cpu', writable=False)]) -> GameState:
+    """
+    A clone with `me`'s hidden pool (the opponent's unknown hand and the deck) split by `held` (110 bytes, card c at c - 1): set -> the opponent's unknown hand, else the deck.
+    """
+
+def hypothesis_rows(state: GameState, me: Player, held: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)], features: int = 0) -> tuple:
+    """
+    A past decision of `me`'s opponent at `state` under n hypothesised hands: for each row of `held` (n x 110) the position with `me`'s hidden pool split by it (place_hand), its observation from the opponent's side and its legal mask -> (obs n x width, masks n x 220). The policy-likelihood belief's inner loop (ai/search/belief.py).
+    """
+
 class RolloutBatch:
     """
     The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries (stop='boundaries', the default), to the end of the decision's turn ('turn'), or to the later of the two ('later'), and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).
@@ -953,9 +963,9 @@ class RolloutBatch:
 
     def __init__(self, horizon: int = 4, shared_dice: bool = True, guard: bool = True, features: int = 0, seed: int = 0, stop: str = 'boundaries', leaf: str = 'mover', keyed: bool = False, oracle: bool = False) -> None: ...
 
-    def add(self, base: GameState, candidates: Sequence[int], worlds: int) -> int:
+    def add(self, base: GameState, candidates: Sequence[int], worlds: int, hands: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)] | None = None) -> int:
         """
-        One decision: `base` with the mover's flat `candidates` (all legal there), in `worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept.
+        One decision: `base` with the mover's flat `candidates` (all legal there), in `worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept. `hands` (uint8, worlds x 110), when given, is each world's opposing unknown hand (a belief's worlds, ai/search/belief.py) instead of a random redeal.
         """
 
     def positions(self) -> int: ...

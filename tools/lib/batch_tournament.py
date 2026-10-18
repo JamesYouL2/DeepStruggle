@@ -152,6 +152,26 @@ def apply_pricing(agent: PlayerAgent, indices: npt.NDArray[np.int64], runner: "t
             stats["switched"] += 1
 
 
+def _observers(agents: Sequence[Any]) -> List[Any]:
+    """The agents that follow every decision of their games (`observe`, `new_games`: a belief root,
+    ai/search/belief.py), each once however many seats it holds."""
+    seen: Dict[int, Any] = {}
+    for ag in agents:
+        if hasattr(ag, "observe") and id(ag) not in seen:
+            seen[id(ag)] = ag
+    return list(seen.values())
+
+
+def _report_decisions(observer: Any, rows: npt.NDArray[np.int64], runner: "ts.VectorizedBatchRunner",
+                      actions: npt.NDArray[np.int32], d_players: npt.NDArray[Any]) -> None:
+    """Show `observer` the decisions about to be applied in its games `rows`: each position before the
+    move, the move, and who made it."""
+    rows = rows[d_players[rows] != 0]
+    if len(rows):
+        observer.observe([int(i) for i in rows], [runner.get_state(int(i)) for i in rows],
+                         [int(a) for a in actions[rows]], [int(p) for p in d_players[rows]])
+
+
 def _choose_actions(
     agent: PlayerAgent,
     indices: npt.NDArray[np.int64],
@@ -186,7 +206,9 @@ def _choose_actions(
         # rather than one call per game. Measured at 64 simulations, a batch of
         # 256 roots runs at 103 decisions/s against roughly 0.4/s one at a time.
         sel_states = [runner.get_state(int(idx)) for idx in indices]
-        picks = agent.select_actions_batch(sel_states)
+        games_hook = getattr(agent, "select_actions_games", None)
+        picks = (games_hook([int(i) for i in indices], sel_states) if games_hook is not None
+                 else agent.select_actions_batch(sel_states))
         for idx, a in zip(indices, picks):
             actions[idx] = a
     else:
@@ -602,6 +624,9 @@ class BatchMatchRunner:
                                         [int(x) for x in np.where(first, fa, fb)])
             active = np.ones(cur_games, dtype=bool)
             steps = 0
+            observers = _observers([agent_a, agent_b])
+            for ob in observers:
+                ob.new_games()
             open_a = getattr(agent_a, "forced_opening", None)
             open_b = getattr(agent_b, "forced_opening", None)
             setup_override = ScriptedSetupOverride(cur_games) if (open_a or open_b) else None
@@ -700,6 +725,8 @@ class BatchMatchRunner:
                         setup_override.apply(actions, obs, masks, d_players, np.where(is_a_turn)[0], open_a)
                     if open_b:
                         setup_override.apply(actions, obs, masks, d_players, np.where(is_b_turn)[0], open_b)
+                for ob in observers:
+                    _report_decisions(ob, np.where(active)[0], runner, actions, d_players)
                 step_results = runner.step_flat_all(actions.tolist(),
                                                     auto_advance=auto_advance)
                 # 0 = refused. A refused action here means a game silently did not advance and the
@@ -853,6 +880,9 @@ class BatchMatchRunner:
             runner.set_obs_features([int(x) for x in fv[us_agent]], [int(x) for x in fv[ussr_agent]])
 
         temps = [_agent_temperature(ag, temperature, deterministic) for ag in agents]
+        observers = _observers(agents)
+        for ob in observers:
+            ob.new_games()
         openings = [getattr(ag, "forced_opening", None) for ag in agents]
         setup_override = ScriptedSetupOverride(n) if any(openings) else None
         active = np.ones(n, dtype=bool)
@@ -922,6 +952,9 @@ class BatchMatchRunner:
                     if op:
                         setup_override.apply(actions, obs, masks, d_players,
                                              np.where(active & (actor == ai))[0], op)
+            for ob in observers:
+                ai = index[id(ob)]
+                _report_decisions(ob, np.where(active & ((a_idx == ai) | (b_idx == ai)))[0], runner, actions, d_players)
             step_results = runner.step_flat_all(actions.tolist(), auto_advance=auto_advance)
             if 0 in step_results:
                 bad = step_results.index(0)
