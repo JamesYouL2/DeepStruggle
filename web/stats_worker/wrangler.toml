@@ -3,6 +3,10 @@
 name = "ts-game-stats"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
+# Served at https://ts-game-stats.<account subdomain>.workers.dev -- the page's TS_STATS_ENDPOINT.
+workers_dev = true
+# No per-version preview URLs: each would be another public address writing to the same database.
+preview_urls = false
 
 [vars]
 # The page's origins: GitHub Pages, and the local dev and files servers.
