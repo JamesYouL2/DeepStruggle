@@ -996,6 +996,20 @@ NB_MODULE(ts_engine, m) {
           "(n x 110) the position with `me`'s hidden pool split by it (place_hand), its observation from the "
           "opponent's side and its legal mask -> (obs n x width, masks n x 220). The policy-likelihood "
           "belief's inner loop (ai/search/belief.py).");
+    m.def("hypothesis_masks", [](const ts::GameState& s, ts::Player me, Hands held) {
+              if (held.shape(1) != 110) throw std::invalid_argument("held must be n x 110");
+              const size_t n = held.shape(0);
+              size_t sm[2] = { n, ts::FLAT_ACTION_SPACE_SIZE };
+              uint8_t* masks = new uint8_t[std::max<size_t>(1, n * ts::FLAT_ACTION_SPACE_SIZE)];
+              nb::capsule own_m(masks, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+              {
+                  nb::gil_scoped_release release;
+                  ts::rollout::hypothesis_masks(s, me, held.data(), n, masks);
+              }
+              return nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(masks, 2, sm, own_m);
+          }, nb::arg("state"), nb::arg("me"), nb::arg("held"),
+          "hypothesis_rows' legal masks alone (n x 220): the observations differ only in each hidden "
+          "card's own-hand / deck slot, which the belief sets on the device (ai/search/belief.py).");
     {
         using RB = ts::rollout::RolloutBatch;
         auto arrays = [](size_t n, size_t width) {

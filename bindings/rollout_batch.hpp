@@ -50,6 +50,10 @@ void place_hand(GameState& s, Player me, const uint8_t* held) noexcept;
 // hypothesised hand (ai/search/belief.py).
 void hypothesis_rows(const GameState& s, Player me, const uint8_t* held, size_t n, uint32_t features,
                      float* obs, uint8_t* masks);
+// hypothesis_rows' masks alone: from the opponent's side the hypotheses differ in the observation
+// only in each hidden card's MY_HAND / DECK_OR_HIDDEN slot (the counts are fixed by the hand size), so
+// a caller can build one row and set those slots itself; the legal masks it cannot.
+void hypothesis_masks(const GameState& s, Player me, const uint8_t* held, size_t n, uint8_t* masks);
 
 // The side to act at `s`: the decision's player, else the phasing player (ai/search/pimcts.acting_player).
 Player acting_player(const GameState& s) noexcept;

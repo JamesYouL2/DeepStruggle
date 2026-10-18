@@ -956,6 +956,11 @@ def hypothesis_rows(state: GameState, me: Player, held: Annotated[NDArray[numpy.
     A past decision of `me`'s opponent at `state` under n hypothesised hands: for each row of `held` (n x 110) the position with `me`'s hidden pool split by it (place_hand), its observation from the opponent's side and its legal mask -> (obs n x width, masks n x 220). The policy-likelihood belief's inner loop (ai/search/belief.py).
     """
 
+def hypothesis_masks(state: GameState, me: Player, held: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)]) -> Annotated[NDArray[numpy.uint8], dict(shape=(None, None))]:
+    """
+    hypothesis_rows' legal masks alone (n x 220): the observations differ only in each hidden card's own-hand / deck slot, which the belief sets on the device (ai/search/belief.py).
+    """
+
 class RolloutBatch:
     """
     The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries (stop='boundaries', the default), to the end of the decision's turn ('turn'), or to the later of the two ('later'), and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).

@@ -12,7 +12,8 @@ import torch
 import ts_engine as ts
 from ai.eval.belief_history_probe import collect, world_at
 from ai.models.ladder_net import create_ladder_net
-from ai.search.belief import (BeliefTracker, Now, UNKNOWN, log_weights, player, record, sample_hands, side)
+from ai.search.belief import (DECK, UNKNOWN, BeliefTracker, Now, _hypothesis_obs, log_weights, player, record,
+                              sample_hands, side)
 from ai.search.rollout_root import RolloutConfig, RolloutRootAgent, rollout_spec_config
 from bindings.ts_env import model_obs_features
 from tests.training.test_ladder_tokens import SHALLOW
@@ -53,6 +54,20 @@ def test_the_c_rows_are_the_python_rebuild() -> None:
                 assert np.array_equal(np.asarray([int(w.get_card_location(c)) for c in range(1, 111)]),
                                       np.asarray([int(x.get_card_location(c)) for c in range(1, 111)
                                                   for x in [ts.place_hand(d.state, player(now.me), held[k])]]))
+
+
+def test_the_device_rows_are_the_engines_rows_exactly() -> None:
+    model = _model()
+    for now, hands, rec in _jobs(model)[:3]:
+        opp = 3 - now.me
+        for d, left in rec[:4]:
+            held = np.ascontiguousarray(hands | left.astype(np.uint8)[None, :])
+            want_obs, want_masks = ts.hypothesis_rows(d.state, player(now.me), held, 0)
+            pool = np.flatnonzero((d.locs == DECK) | (d.locs == UNKNOWN[opp]))
+            base = torch.from_numpy(np.asarray(ts.extract_observation_features(d.state, player(opp), 0)))
+            got = _hypothesis_obs(base, torch.from_numpy(held), torch.from_numpy(pool)).numpy()
+            assert np.array_equal(got, want_obs)
+            assert np.array_equal(ts.hypothesis_masks(d.state, player(now.me), held), want_masks)
 
 
 def test_log_weights_are_the_slow_computation() -> None:

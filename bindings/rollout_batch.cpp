@@ -288,6 +288,14 @@ void hypothesis_rows(const GameState& s, Player me, const uint8_t* held, size_t 
     });
 }
 
+void hypothesis_masks(const GameState& s, Player me, const uint8_t* held, size_t n, uint8_t* masks) {
+    for_rows(static_cast<int64_t>(n), [&](int64_t j) {
+        GameState w = s;
+        place_hand(w, me, held + j * 110);
+        ActionMask::generate_flat_mask_212(w, masks + j * A);
+    });
+}
+
 size_t RolloutBatch::fill_live(float* obs, uint8_t* masks) {
     live_order_.clear();
     for (uint32_t i = 0; i < rows_.size(); ++i) {
