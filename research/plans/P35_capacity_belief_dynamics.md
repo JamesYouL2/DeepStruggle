@@ -199,4 +199,6 @@ form; the league; human cloning from the uncurated corpus; more search compute a
 
 Against the control's self-play bar (US 41.5 / USSR 58.0) each arm is about +5 as US and −5 as USSR: level, not a seat shift. Neither arm was unstable (entropy 0.74 / 0.78; 4b's KL 0.016, no domination). By the decision rule, 4a level means the KL term is not earning its place at the plateau, so the from-scratch runs would use annealed reverse-KL damping instead (owner's call before it changes a recipe); 4b level means the slow reference is not adopted as a late switch.
 
-**Pair 2.** Item 6 (PFSP, R57) runs under MPS; item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
+**Pair 2, item 6 (PFSP, R57): level, slightly above.** Raw 51.3 / 49.9 / 49.4 / 49.8 / 51.1% over the five windows; the last window US 49.0 / USSR 53.3 (+7.5 / −4.7 against the control's self-play), under the keyed root 51.1% (US 48.1 / USSR 54.2, about +1 SE). Both seats hold, so by the rule it may be adopted, but nothing here shows it gains: the predicted harm is absent, the gain unmeasured at this size.
+
+**Pair 2, item 1.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
