@@ -267,3 +267,23 @@ def test_forced_actions_override_the_argmax_only_where_given_and_legal() -> None
         return sorted(got["sums"][:, 0].tolist())
 
     assert labels("none") == labels("minus") == labels("illegal")
+
+
+def test_a_redealt_world_drops_a_forced_deal() -> None:
+    """keyed chance forces the next deal at the turn's end from the world's deck order; a world whose
+    unseen cards are then redealt (ts.determinize, the search's worlds) cannot honour those names, so
+    it deals at random -- the engine would otherwise report a card that is not in the deck."""
+    st = _positions(1, seed=31)[0]
+    runner_rng = np.random.default_rng(31)
+    while not (st.ctx().decision_player == ts.Player.NONE and st.ctx().pending_roll_type == ts.RollType.TURN_CLEANUP):
+        assert not ts.Engine.is_terminal(st)
+        if st.ctx().decision_player == ts.Player.NONE:
+            ts.Engine.auto_advance_step(st, 1)
+            continue
+        legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
+        ts.Engine.step_flat(st, int(runner_rng.choice(legal)))
+    keyed = ts.keyed_key(st, 5)
+    assert keyed.get_forced_deal_remaining(ts.Player.US) + keyed.get_forced_deal_remaining(ts.Player.USSR) > 0
+    redealt = ts.determinize(keyed, ts.Player.US, 9)
+    assert redealt.get_forced_deal_remaining(ts.Player.US) == 0
+    assert redealt.get_forced_deal_remaining(ts.Player.USSR) == 0

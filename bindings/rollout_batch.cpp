@@ -80,6 +80,11 @@ Player acting_player(const GameState& s) noexcept {
 }
 
 void determinize(GameState& s, Player me, uint64_t& rng) noexcept {
+    // A forced next deal (a replay's, or keyed chance's deck order -- keyed_chance.hpp) names cards by
+    // where they were; once the unseen cards are redealt those names need not be in the deck, so the
+    // redealt world deals at random instead.
+    s.forced_deal_us_count = s.forced_deal_ussr_count = 0;
+    s.forced_deal_us_pos = s.forced_deal_ussr_pos = 0;
     if (s.current_phase == Phase::HEADLINE && s.headline_stage == 0) {
         if (me == Player::USSR && s.headline_us_card) s.headline_us_card = 0;
         else if (me == Player::US && s.headline_ussr_card) s.headline_ussr_card = 0;
