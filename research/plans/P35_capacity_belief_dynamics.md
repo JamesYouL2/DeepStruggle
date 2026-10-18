@@ -185,3 +185,18 @@ form; the league; human cloning from the uncurated corpus; more search compute a
 ## Runs
 
 (filled in while running; mirrors [`../runs.md`](../runs.md))
+
+**Pair 1, item 4 (2026-10-18): both level.** 400M from A13+R48's 12,400M state against the control's unchanged leg (12,400 → 12,800M), 80M-window SWAs, 1,000 deals a side:
+
+| window | 4a η = 0 (R55) | 4b slow reference (R56) |
+|:---|---:|---:|
+| 12,400–12,480M | 51.7% | 48.4% |
+| 12,480–12,560M | 49.0% | 50.4% |
+| 12,560–12,640M | 48.3% | 50.4% |
+| 12,640–12,720M | 48.8% | 50.1% |
+| 12,720–12,800M | 49.9% (US 46.6 / USSR 53.1) | 49.5% (US 46.1 / USSR 53.0) |
+| same, keyed root (16 worlds) | 48.4% (US 46.3 / USSR 50.6) | 49.1% (US 47.0 / USSR 51.2) |
+
+Against the control's self-play bar (US 41.5 / USSR 58.0) each arm is about +5 as US and −5 as USSR: level, not a seat shift. Neither arm was unstable (entropy 0.74 / 0.78; 4b's KL 0.016, no domination). By the decision rule, 4a level means the KL term is not earning its place at the plateau, so the from-scratch runs would use annealed reverse-KL damping instead (owner's call before it changes a recipe); 4b level means the slow reference is not adopted as a late switch.
+
+**Pair 2.** Item 6 (PFSP, R57) runs under MPS; item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
