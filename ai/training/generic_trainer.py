@@ -1740,6 +1740,7 @@ def train_pipeline(
     logit_gap: float = 7.0,
     setup_block_lambda: bool = False,
     block_lambda: str = "off",
+    phase_lock: Optional[str] = None,
     inject_setup_only: bool = False,
     cuda_graphs: bool = True,
     start_pool_frac: float = 0.0,
@@ -2082,6 +2083,7 @@ def train_pipeline(
         "z_loss_coef": float(z_loss_coef),
         "logit_gap_coef": float(logit_gap_coef),
         "logit_gap": float(logit_gap),
+        "phase_lock": phase_lock,
         "setup_block_lambda": bool(setup_block_lambda),
         "block_lambda": str(block_lambda),
         "inject_setup_only": bool(inject_setup_only),
@@ -2415,6 +2417,7 @@ def train_pipeline(
         logit_gap=logit_gap,
         setup_block_lambda=setup_block_lambda,
         block_lambda=block_lambda,
+        phase_lock_path=phase_lock,
         cuda_graphs=cuda_graphs,
         device=dev,
     )

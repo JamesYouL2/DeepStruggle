@@ -843,6 +843,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "(owner 2026-10-09): keeps a saturated policy learnable. 0 (default): off.")
     parser.add_argument("--logit-gap", type=float, default=7.0,
                         help="The logit gap below the top legal move that --logit-gap-coef starts at.")
+    parser.add_argument("--phase-lock", type=str, default=None, metavar="PATH",
+                        help="Two arms on one machine take turns: the rollout under PATH.rollout, the update under "
+                             "PATH.update (flock), so one collects while the other updates. Each arm stays exactly "
+                             "serial; only the wall clock changes. Give both arms the same PATH.")
     parser.add_argument("--z-loss-coef", type=float, default=0.0,
                         help="z-loss: coef * mean(logsumexp(policy logits)^2) in the update (PaLM uses "
                              "1e-4). Bounds the logits' level, which the softmax leaves free and which "
@@ -1226,6 +1230,7 @@ def main():
             z_loss_coef=args.z_loss_coef,
             logit_gap_coef=args.logit_gap_coef,
             logit_gap=args.logit_gap,
+            phase_lock=args.phase_lock,
             cuda_graphs=not args.no_cuda_graphs,
             blunder_window=not args.no_blunder_window,
             gamma=args.gamma,

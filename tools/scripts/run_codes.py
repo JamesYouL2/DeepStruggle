@@ -70,6 +70,8 @@ BOOKKEEPING = frozenset({
     "merged_influence", "new_directory", "turn_credit_workers", "search_workers", "resume_widen",
     # a value fit's shape change: the network it builds is recorded as ladder_config, the A code's
     "value_arch",
+    # two arms taking turns on one machine: the wall clock, not the training
+    "phase_lock",
 })
 #: Settings that do nothing while their switch is off: dropped then, so a stray value cannot make
 #: two identical recipes look different. (switch, its off value, the settings it gates)

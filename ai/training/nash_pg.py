@@ -12,7 +12,9 @@ Implements:
    - Auxiliary Opponent Hand Belief Head multi-label BCE loss.
 """
 
+import contextlib
 import copy
+import fcntl
 import os
 import time
 from typing import Dict, List, Optional, Any, Sequence, Tuple, cast
@@ -272,6 +274,20 @@ class FixedEntropyProbe:
         return total / max(1, count)
 
 
+@contextlib.contextmanager
+def phase_lock(path: str) -> Any:
+    """An exclusive lock on `path` (created if absent) for the duration of the block; yields the
+    seconds waited for it. flock is per open file, so it excludes other processes and other opens
+    in this one; the kernel drops it if the holder dies."""
+    t0 = time.time()
+    with open(path, "a+") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield time.time() - t0
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 class BaseNashPGTrainer:
     """Abstract base class for Nash Policy Gradient self-play trainers."""
 
@@ -413,8 +429,14 @@ class BaseNashPGTrainer:
         logit_gap: float = 7.0,
         setup_block_lambda: bool = False,
         block_lambda: str = "off",
+        phase_lock_path: Optional[str] = None,
         device: torch.device | str = "cuda",
     ):
+        #: Two arms on one machine take turns: the rollout under `<path>.rollout`, the update under
+        #: `<path>.update`, so while one collects the other updates (the rollout is CPU-bound, the
+        #: update GPU-bound) instead of both doing the same at once. Each arm stays exactly serial
+        #: -- the same data, order and numbers -- only the wall clock changes.
+        self.phase_lock_path = phase_lock_path
         self.device = torch.device(device if (torch.cuda.is_available() and device == "cuda") else ("cuda" if torch.cuda.is_available() and str(device).startswith("cuda") else "cpu"))
         self.active_net = active_net.to(self.device)
         # P23 / E4.1: the learner decides in the merged-influence view. Pool opponents decide in
@@ -2201,8 +2223,18 @@ class BaseNashPGTrainer:
     def train_iteration(self) -> Dict[str, Any]:
         """Runs one full training iteration (rollout collection + inner SGD epochs + reference check)."""
         self.total_iterations += 1
-        rollout_metrics = self.collect_rollouts()
-        train_metrics = self.train_step()
+        if self.phase_lock_path:
+            with phase_lock(self.phase_lock_path + ".rollout") as wait_rollout:
+                rollout_metrics = self.collect_rollouts()
+            with phase_lock(self.phase_lock_path + ".update") as wait_update:
+                train_metrics = self.train_step()
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize(self.device)   # the update's kernels finish under the lock
+            rollout_metrics["phase_lock_wait_rollout"] = wait_rollout
+            rollout_metrics["phase_lock_wait_update"] = wait_update
+        else:
+            rollout_metrics = self.collect_rollouts()
+            train_metrics = self.train_step()
 
         if self.steps_since_ref_update >= self.ref_update_freq:
             self.update_reference_policy()
