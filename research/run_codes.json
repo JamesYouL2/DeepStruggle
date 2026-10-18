@@ -1140,6 +1140,18 @@
     "block_lambda": "off",
     "batch_size": 16384
    }
+  },
+  "R57": {
+   "description": "P35 item 6: R48's recipe with the pool opponent drawn by PFSP (--opponent-pfsp, var weighting x(1-x): toward evenly matched snapshots, a 0.25 uniform floor) instead of uniformly",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57_20261018_152427",
+   "flags": {
+    "opponent_pfsp": true,
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "logit_gap_coef": 0.001,
+    "block_lambda": "off",
+    "batch_size": 16384
+   }
   }
  },
  "overrides": {
@@ -1302,7 +1314,8 @@
   "E7-A17-R53-S44_20261017_143314": "E7-A17-R53-S44",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54_20261017_215302": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R55_20261018_134026": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R55",
-  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R56_20261018_134046": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R56"
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R56_20261018_134046": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R56",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57_20261018_152427": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

@@ -282,6 +282,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="With --resume: the model's grouped input projections (--ladder-entity-proj-dim) are an "
                              "integer multiple of the state's; widen the network, pi_ref and Adam's moments without "
                              "changing what it plays (ai/models/grow.py) and continue.")
+    parser.add_argument("--resume-grow-tokens", action="store_true", default=False,
+                        help="With --resume: the model has --ladder-token-layers the state lacks. The token path "
+                             "starts fresh and the fusion layer and per-entity heads read it through zero weights, "
+                             "so the network plays as saved and the path learns from the first step "
+                             "(ai/models/grow.py; P35 item 1's grown read).")
     parser.add_argument("--warmup-dataset", type=str, default=None, help="Path to dataset file for supervised BC warmup")
     parser.add_argument("--distill-dataset", type=str, default=None,
                         help="Search-target dataset for --mode distill. Must carry search_pi "
@@ -1112,6 +1117,7 @@ def main():
             search_teacher_policy=args.search_teacher_policy,
             resume_weights=args.resume_weights,
             resume_widen=args.resume_widen,
+            resume_grow_tokens=args.resume_grow_tokens,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,

@@ -25,7 +25,8 @@ import torch.nn.functional as F
 import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create_like
-from ai.models.grow import widen_factor, widen_optimizer_state, widen_state_dict
+from ai.models.grow import (grow_tokens_optimizer_state, grow_tokens_state_dict, widen_factor,
+                            widen_optimizer_state, widen_state_dict)
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
 from bindings.ts_env import (OBS_LAYOUT_NAME, TsVectorizedEnv, check_obs_width,
                              model_obs_features)
@@ -1462,7 +1463,7 @@ def _optimizer_state_with_added(model: nn.Module, added: Sequence[str], saved: D
 
 
 def load_resume_state(path: str, model: nn.Module, trainer: Any,
-                      seed: Optional[int] = None, widen: bool = False) -> Dict[str, Any]:
+                      seed: Optional[int] = None, widen: bool = False, grow_tokens: bool = False) -> Dict[str, Any]:
     """Restore a run in place and return where it left off.
 
     `seed` is the seed the *resuming* run was given. Where it differs from the one the state was
@@ -1493,6 +1494,26 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         blob["optimizer_state_dict"] = widen_optimizer_state(blob["optimizer_state_dict"], names, p, k)
         print(f"[resume widen] grouped projections {p} -> {p * k}: each unit copied {k}x, the fusion layer "
               f"reading each copy at 1/{k}; the network computes what it did", flush=True)
+    if grow_tokens:
+        # --resume-grow-tokens: the model has token layers the state lacks. The network and pi_ref
+        # are grown with zero weights where the fusion layer and the per-entity heads read the new
+        # path, so they compute what they did (ai/models/grow.py); Adam's moments follow.
+        t = int(getattr(model, "token_dim", 0))
+        if not t or not getattr(model, "token_layers", 0):
+            raise ValueError("--resume-grow-tokens needs --ladder-token-layers and --ladder-token-dim on the model")
+        if any(k.startswith("tok_") for k in blob["model_state_dict"]):
+            raise ValueError("--resume-grow-tokens: the resume state already has token layers")
+        if blob.get("ema_state_dict") is not None:
+            raise ValueError("--resume-grow-tokens does not grow an --ema-weights average")
+        ident = int(getattr(model, "identity_dim", 0))
+        target = model.state_dict()
+        names = [n for n, _ in model.named_parameters()]
+        blob["model_state_dict"] = grow_tokens_state_dict(blob["model_state_dict"], target, t, ident)
+        blob["reference_state_dict"] = grow_tokens_state_dict(blob["reference_state_dict"], target, t, ident)
+        blob["optimizer_state_dict"] = grow_tokens_optimizer_state(blob["optimizer_state_dict"], names, t, ident)
+        print(f"[resume grow-tokens] {getattr(model, 'token_layers', 0)} token layer(s) of width {t} added; the fusion "
+              f"layer and the per-entity heads read them through zero weights, so the network computes what it did",
+              flush=True)
     added = _load_allowing_added_heads(model, blob["model_state_dict"])
     if added:
         # A branch that adds a training-only head (e.g. --aux-card-events) to a state written
@@ -1652,6 +1673,7 @@ def train_pipeline(
     search_teacher_policy: bool = False,
     resume_weights: Optional[str] = None,
     resume_widen: bool = False,
+    resume_grow_tokens: bool = False,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -1950,6 +1972,7 @@ def train_pipeline(
         "search_teacher_policy": bool(search_teacher_policy),
         "resume_weights": resume_weights,
         "resume_widen": bool(resume_widen),
+        "resume_grow_tokens": bool(resume_grow_tokens),
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2740,7 +2763,8 @@ def train_pipeline(
     _ema_state: Optional[Dict[str, Any]] = None
     if resume:
         src = resolve_resume(resume)
-        state = load_resume_state(src, model, trainer, seed=seed, widen=resume_widen)
+        state = load_resume_state(src, model, trainer, seed=seed, widen=resume_widen,
+                                  grow_tokens=resume_grow_tokens)
         _ema_state = state.get("ema_state_dict")
         it = state["iteration"]
         resumed_elapsed = state["elapsed_seconds"]

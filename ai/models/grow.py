@@ -96,3 +96,71 @@ def widen_optimizer_state(saved: Dict[str, Any], names: Sequence[str], p: int, k
         state[idx] = new_st
     return {"state": state, "param_groups": [dict(g) for g in saved["param_groups"]]}
 
+
+# ---- token layers grown at identity (P35 item 1's grown read) ---------------------------------------
+
+#: The per-entity heads' first layers: their input is (identity, token, raw slots, trunk context), so a
+#: grown token path widens them at [identity_dim, identity_dim + token_dim).
+ENTITY_HEADS = ("pe_country.0.weight", "pe_card.0.weight")
+
+
+def _insert_zero_cols(w: torch.Tensor, at: int, n: int) -> torch.Tensor:
+    return torch.cat([w[:, :at], w.new_zeros(w.shape[0], n), w[:, at:]], dim=1)
+
+
+def grow_tokens_state_dict(saved: Mapping[str, torch.Tensor], target: Mapping[str, torch.Tensor],
+                           token_dim: int, identity_dim: int) -> Dict[str, torch.Tensor]:
+    """The state dict of `target` -- the saved network with `--ladder-token-layers` added -- that computes
+    exactly what the saved network did: every saved tensor kept, the token modules as `target` initialised
+    them, and zero weights wherever the fusion layer (its last `token_dim` inputs: the global token) and the
+    per-entity heads (inputs [identity_dim, identity_dim + token_dim): each entity's token) read the new
+    path. The zero weights take gradient at once, so the token path starts learning from the first step
+    (the Cell A pattern)."""
+    if any(k.startswith("region_attn.") for k in target):
+        raise ValueError("growing token layers under region attention is not defined: its input widens too")
+    extra = sorted(set(saved) - set(target) - {"keep_idx"})
+    if extra:
+        raise ValueError(f"the saved state has tensors the grown network lacks: {extra[:5]}")
+    out: Dict[str, torch.Tensor] = {}
+    for name, t in target.items():
+        s = saved.get(name)
+        if s is not None and s.shape == t.shape:
+            out[name] = s.clone()
+        elif name == FUSION and s is not None and s.shape[1] + token_dim == t.shape[1]:
+            out[name] = _insert_zero_cols(s, s.shape[1], token_dim)
+        elif name in ENTITY_HEADS and s is not None and s.shape[1] + token_dim == t.shape[1]:
+            out[name] = _insert_zero_cols(s, identity_dim, token_dim)
+        elif s is None and name.startswith("tok_"):
+            out[name] = t.clone()
+        else:
+            raise ValueError(f"cannot grow {name}: saved {None if s is None else tuple(s.shape)}, "
+                             f"target {tuple(t.shape)}")
+    return out
+
+
+def grow_tokens_optimizer_state(saved: Dict[str, Any], names: Sequence[str], token_dim: int,
+                                identity_dim: int) -> Dict[str, Any]:
+    """Adam's state for the grown network: `names` are its parameter names in `named_parameters()` order.
+    The saved state indexed the same names less the token modules; a widened weight's moments get zero
+    columns where its weights did, the token modules start without state (Adam initialises it)."""
+    old = [n for n in names if not n.startswith("tok_")]
+    state: Dict[Any, Any] = {}
+    for i, name in enumerate(names):
+        if name.startswith("tok_"):
+            continue
+        st = saved["state"].get(old.index(name))
+        if st is None:
+            continue
+        new_st = dict(st)
+        for key in ("exp_avg", "exp_avg_sq"):
+            if key not in st:
+                continue
+            m = st[key]
+            if name == FUSION:
+                new_st[key] = _insert_zero_cols(m, m.shape[1], token_dim)
+            elif name in ENTITY_HEADS:
+                new_st[key] = _insert_zero_cols(m, identity_dim, token_dim)
+        state[i] = new_st
+    groups = [dict(g) for g in saved["param_groups"]]
+    groups[0]["params"] = list(range(len(names)))
+    return {"state": state, "param_groups": groups}
