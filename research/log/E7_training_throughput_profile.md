@@ -174,3 +174,27 @@ Elo in the same field: SWAs E7-02-44 1613, E7-03-44 1609, **E7-23-44 1596**; sna
 * **Verdict: `--compile-update` stays opt-in.** For +15% throughput the evidence does not clear it.
   An eager from-scratch replica (E7 recipe, another seed) would say whether −2.5 / 47.8% is within
   the seed spread, i.e. whether compile is harmless after all.
+
+## Two arms on one machine: alternation and MPS (2026-10-18)
+
+A13+R48's recipe from its 12,800M state (opponent pool restored, frac 0.3), scratch directories, no
+snapshots, 6 minutes per configuration, steady steps/s over the last 4 (`--phase-lock` is
+`tools/train.py`'s: the rollout under one flock, the update under another, so two arms take turns).
+
+| configuration | without MPS: per arm / total | with CUDA MPS: per arm / total |
+|:---|---:|---:|
+| one arm alone | 91.8k | 96.9k |
+| two arms, no coordination | 52.3k / 104.5k | **63.0k / 125.9k** |
+| two arms, `--phase-lock` | 46.4k / 92.8k | 54.0k / 108.1k |
+
+* **Taking turns does not help.** Under the lock an arm's iteration is 1.32 s against 0.70 s alone:
+  each phase runs about as long as a whole solo iteration while the other arm runs the other phase,
+  so the rollout and the update are not independent resources. The flag stays (off, numerically
+  inert -- `tests/training/test_phase_lock.py`) but is not recommended.
+* **MPS is worth +20% an arm when two run** (52k -> 63k each, 1.30x one arm in total). Without it
+  the driver time-slices the two processes' kernels, and the rollout's per-step syncs wait for the
+  other arm's slice. It was run scoped (a daemon on a private pipe directory, stopped after).
+* What remains is CPU-side: the rollout's Python and per-step syncs against the other arm's update
+  dispatch. The levers left are the ones above (cutting the rollout's syncs, the overlapped rollout
+  -- parked on `wip/overlap-rollout` with an intermittent CUDA race -- and compile / bf16 as recipe
+  A/Bs).
