@@ -44,6 +44,7 @@ def test_the_posterior_is_a_distribution_over_the_pool_with_the_hands_size() -> 
     some = [s for s in samples if s.turn_log][:5]
     assert some
     for s in some:
-        post, _ = posterior(model, torch.device("cpu"), s, 32, 1.0, rng)
+        post, _, ess = posterior(model, torch.device("cpu"), s, 32, 1.0, rng)
+        assert 1.0 - 1e-6 <= ess <= 32 + 1e-6
         assert np.all(post[s.pool < 0.5] == 0)
         assert abs(float(post.sum()) - float(s.label.sum())) < 1e-4

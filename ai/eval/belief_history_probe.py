@@ -75,6 +75,9 @@ class Sample:
     turn_log: List[Decision] = field(default_factory=list)
     post: Optional[np.ndarray] = None
     used: int = 0            # opponent decisions the posterior conditioned on
+    ess: float = 0.0         # the posterior's effective sample size, in hands
+    post_more: Optional[np.ndarray] = None   # the same posterior from --more-worlds hands
+    ess_more: float = 0.0
 
 
 class _History:
@@ -185,10 +188,11 @@ def world_at(d: Decision, opp: int, held: np.ndarray) -> ts.GameState:
 
 
 def posterior(model: torch.nn.Module, device: torch.device, s: Sample, worlds: int, temperature: float,
-              rng: np.random.Generator, all_decisions: bool = False) -> Tuple[np.ndarray, int]:
+              rng: np.random.Generator, all_decisions: bool = False) -> Tuple[np.ndarray, int, float]:
     """The policy-likelihood posterior over the opponent's unseen hand at `s`, and how many of the
-    opponent's decisions it conditioned on (0: the uniform prior). `all_decisions` conditions on every
-    one of the opponent's decisions this turn, targets and branches included, not only CHOICES."""
+    opponent's decisions it conditioned on (0: the uniform prior), and its effective sample size
+    (sum w)^2 / sum w^2 in hands. `all_decisions` conditions on every one of the opponent's decisions
+    this turn, targets and branches included, not only CHOICES."""
     opp = 3 - s.decider
     h = int(s.label.sum())
     hands = np.stack([rng.choice(np.flatnonzero(s.pool > 0.5), size=h, replace=False) for _ in range(worlds)])
@@ -218,9 +222,9 @@ def posterior(model: torch.nn.Module, device: torch.device, s: Sample, worlds: i
         logw += np.where(np.isfinite(lp), lp, -1e9)
         used += 1
     if used == 0:
-        return member.mean(0), 0
+        return member.mean(0), 0, float(worlds)
     w = np.exp(logw - logw.max())
-    return (w[:, None] * member).sum(0) / w.sum(), used
+    return (w[:, None] * member).sum(0) / w.sum(), used, float(w.sum() ** 2 / (w ** 2).sum())
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -233,6 +237,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--worlds", type=int, default=256, help="hands drawn per position for the posterior")
     ap.add_argument("--posterior-positions", type=int, default=4000,
                     help="held-out positions (and as many validation ones) the posterior is computed for")
+    ap.add_argument("--more-worlds", type=int, default=0,
+                    help="also compute the held-out posterior from this many hands: a sampling-noise check")
     ap.add_argument("--all-decisions", action="store_true",
                     help="condition the posterior on every opponent decision this turn, not only card and play-mode choices")
     ap.add_argument("--seed", type=int, default=9091)
@@ -250,7 +256,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     te = [te[i] for i in sorted(rng.choice(len(te), size=min(a.posterior_positions, len(te)), replace=False))]
     va_post = [va[i] for i in sorted(rng.choice(len(va), size=min(a.posterior_positions, len(va)), replace=False))]
     for s in te + va_post:
-        s.post, s.used = posterior(model, dev, s, a.worlds, a.temperature, rng, a.all_decisions)
+        s.post, s.used, s.ess = posterior(model, dev, s, a.worlds, a.temperature, rng, a.all_decisions)
+    if a.more_worlds:
+        for s in te:
+            s.post_more, _, s.ess_more = posterior(model, dev, s, a.more_worlds, a.temperature, rng, a.all_decisions)
 
     def stack(ss: List[Sample]) -> Dict[str, torch.Tensor]:
         pub = torch.from_numpy(np.stack([s.pub for s in ss])).to(dev)
@@ -274,6 +283,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with torch.no_grad():
             rows.append((title, torch.sigmoid(probe(dte[key]) + prior_logit(dte["y"], dte["m"])).cpu().numpy()))
     rows.append(("policy-likelihood posterior (this turn)", np.stack([s.post for s in te if s.post is not None]) * m))
+    if a.more_worlds:
+        rows.append((f"the same from {a.more_worlds} hands", np.stack([s.post_more for s in te if s.post_more is not None]) * m))
     # The combination is fitted on the validation positions that carry a posterior (it needs one as input),
     # early-stopped on half of them, and read on the held-out set.
     half = dvp["y"].shape[0] // 2
@@ -283,6 +294,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     with torch.no_grad():
         rows.append(("history probe + posterior", torch.sigmoid(probe(dte["both"]) + prior_logit(dte["y"], dte["m"])).cpu().numpy()))
     used = np.asarray([s.used for s in te])
+    for k, ess in ((a.worlds, np.asarray([s.ess for s in te])), (a.more_worlds, np.asarray([s.ess_more for s in te]))):
+        if k:
+            q = ess[used > 0]
+            print(f"  effective hands of {k}: median {np.median(q):.1f}, mean {q.mean():.1f}, "
+                  f"below 10 on {100 * (q < 10).mean():.0f}% of the positions with a decision")
     print(f"checkpoint {a.checkpoint}: {len(tr):,} training, {len(va):,} validation and {len(te):,} held-out positions "
           f"({a.games} games at T={a.temperature:g}, one decision in {a.every}; the posterior from {a.worlds} hands, "
           f"on {100 * (used > 0).mean():.0f}% of positions with an opponent decision this turn, mean {used.mean():.2f}); "
