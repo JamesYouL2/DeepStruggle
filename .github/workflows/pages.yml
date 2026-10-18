@@ -42,6 +42,18 @@ jobs:
       - name: Install Emscripten
         run: tools/scripts/install_emsdk.sh
 
+      # Say which stats endpoint the page gets: an unset repository variable (or one set on the
+      # github-pages environment, which this job does not use) builds a page that cannot submit.
+      - name: Stats endpoint
+        env:
+          TS_STATS_ENDPOINT: ${{ vars.TS_STATS_ENDPOINT }}
+        run: |
+          if [[ -n "$TS_STATS_ENDPOINT" ]]; then
+            echo "::notice::stats endpoint: $TS_STATS_ENDPOINT"
+          else
+            echo "::warning::vars.TS_STATS_ENDPOINT is empty: the page will offer the download only (web/stats_worker/README.md)"
+          fi
+
       - name: Build the engine (WebAssembly) and the page
         env:
           # The page is served under /<repository>/ on Pages.
