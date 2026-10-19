@@ -274,6 +274,21 @@ played, confidently and wrongly. Flattened (T ≈ 5) the belief barely beats the
 gain (+3.4 against the keyed root) is against an opponent the likelihood models exactly; one belief mode
 for the leaderboard and the browser (owner) has to choose its likelihood for both.
 
+**One belief for both opponents: the temperature from the opponent's play.** Each temperature of a grid
+(1, 1.5, 2, 3, 5, 8) weighed by how well it explains this opponent's choices so far in the game (each
+finished turn's evidence log mean_k prod pi_T(a | hand k), summed, plus the current turn's) and the
+per-temperature posteriors mixed by those weights -- Bayesian model averaging over T, uniform prior, at
+almost no cost (one network pass; the softmax per T). Same probe, same positions as above (`--source
+selfplay`: 256 of the network's own games at T = 1):
+
+| | prior | T = 1 | best fixed T | **model average** | its weight on T = 1 / 1.5 / 2 / 3 / 5 / 8 |
+|:---|---:|---:|---:|---:|:---|
+| self-play (log loss) | 0.3912 | 0.3607 (+7.8%) | 0.3582 (+8.4%, T 1.5) | **0.3593 (+8.1%)** | 0.63 / 0.24 / 0.08 / 0.02 / 0.01 / 0.01 |
+| humans (log loss) | 0.4595 | 0.5131 (−11.7%) | 0.4518 (+1.7%, T 5) | **0.4558 (+0.8%)** | 0.03 / 0.09 / 0.31 / 0.44 / 0.10 / 0.04 |
+
+It finds the opponent unasked: on the network's games it keeps the whole gain, on humans it avoids the harm
+(a small gain instead of −11.7%). This is the belief mode for the leaderboard and the browser alike.
+
 **The per-seat bar (2026-10-19, corrected).** The window reads were first read per seat against one bar,
 the control's self-play in its last window (US 41.5 / USSR 58.0), which made every arm look "+5 as US, −5
 as USSR". The control's self-play per seat moves with the window, and the last window is the outlier. Each
