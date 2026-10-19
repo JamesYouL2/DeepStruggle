@@ -26,6 +26,7 @@ import { RolloutRunner } from "./analysis/rollout_runner";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 import { lastTurnOf } from "./game/last_turn";
 import { recentRolls } from "./game/rolls";
+import { describeEventTracks } from "./game/describe";
 import { MoveHow, buildSubmission, sha256Hex, summarize } from "./game/record";
 import { loadStoredGame, storeGame } from "./game/saved_game";
 import { ResultDialog } from "./result_dialog";
@@ -835,7 +836,9 @@ export class TSApp {
         const prev = idx > 0 ? this.replaySteps[idx - 1] : null;
         const vpDiff = prev ? (s.state_snapshot?.victory_points !== prev.state_snapshot?.victory_points) : false;
         const descHasVp = Boolean(s.description && (s.description.includes("Victory Points") || s.description.includes(" VP")));
-        return Boolean(vpDiff || descHasVp);
+        // Two Events of one step can move VP and cancel: the snapshots then show no change.
+        const eventVp = (s.event_tracks ?? s.state_snapshot?.event_tracks ?? []).some(t => t.vp_delta !== 0);
+        return Boolean(vpDiff || descHasVp || eventVp);
       };
 
       const { targetIndices, includedIndices } = this.getFilteredIndices(this.replaySteps.length, isVpChangingReplay);
@@ -904,6 +907,11 @@ export class TSApp {
           }
           dieRollHtml = `<div class="log-detail-line log-die-line">${detailText}</div>`;
         }
+        const prevSnapshot = idx > 0 ? this.replaySteps[idx - 1].state_snapshot : undefined;
+        const eventHtml = prevSnapshot && step.state_snapshot
+          ? describeEventTracks(prevSnapshot, step.state_snapshot, step.event_tracks ?? step.state_snapshot.event_tracks)
+              .map(line => `<div class="log-detail-line log-vp-line">${line.trim()}</div>`).join("")
+          : "";
 
         item.innerHTML = `
           <div>
@@ -915,6 +923,7 @@ export class TSApp {
               ${policyChipHtml(this.replaySteps, idx)}
               ${isVpTarget ? '<span class="log-vp-badge">🎯 VP CHANGE</span>' : ''}
             </div>
+            ${eventHtml}
             ${dieRollHtml}
           </div>
         `;

@@ -26,6 +26,14 @@ class DieRollDict(TypedDict, total=False):
     success: bool
 
 
+class EventTrackDict(TypedDict):
+    """What one Event of a step did to VP (positive toward the US) and DEFCON."""
+    card_id: int
+    card_name: str
+    vp_delta: int
+    defcon_delta: int
+
+
 class ChinaCardDict(TypedDict, total=False):
     """Serialization format for China card status."""
     holder: str
@@ -91,6 +99,7 @@ class GameStateDict(TypedDict, total=False):
     last_die_roll: int
     last_opp_die_roll: int
     die_roll: DieRollDict
+    event_tracks: List[EventTrackDict]
     space_turns_used: Dict[str, int]
     china_card: ChinaCardDict
     flags: List[str]

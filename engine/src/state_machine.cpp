@@ -762,6 +762,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
     state.last_roll = DieRollRecord{};
     state.last_die_roll = 0;
     state.last_opp_die_roll = 0;
+    state.last_event_track_count = 0;
     if (state.current_phase == Phase::GAME_OVER) return false;
 
     // An action must answer the question being asked. Without this, a mismatched action can fall

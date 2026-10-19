@@ -45,6 +45,19 @@ struct alignas(2) DieRollRecord {
 static_assert(sizeof(DieRollRecord) == 16, "DieRollRecord must be exactly 16 bytes");
 static_assert(std::is_trivially_copyable_v<DieRollRecord>, "DieRollRecord must be trivially copyable");
 
+// What one Event did to VP and DEFCON within a step (4 bytes). A step can resolve several
+// Events -- the second headline commit resolves both headlines, Missile Envy fires the card it
+// takes -- and a log comparing the state before and after the step sees only their sum: at
+// turn 8's headline of the workbench game nuclear_test_ban, Nuclear Test Ban's +1 VP for the
+// US and Pershing II's +1 VP for the USSR netted to nothing, and neither was logged.
+struct EventTrackRecord {
+    uint8_t card_id = 0;       // the resolving card
+    int8_t  vp_delta = 0;      // positive toward the US, as victory_points
+    int8_t  defcon_delta = 0;
+    uint8_t padding = 0;
+};
+static_assert(sizeof(EventTrackRecord) == 4, "EventTrackRecord must be exactly 4 bytes");
+
 // Single Micro-Action Token in rolling history (16 bytes, 16-byte aligned)
 struct alignas(16) ActionToken {
     Player     acting_player;        // US or USSR
@@ -279,6 +292,13 @@ struct alignas(64) GameState {
     DieRollRecord last_roll;           // Structured record of die roll event occurring in current step
     uint8_t last_die_roll;             // Backwards-compat: result of most recent die roll (1..6, 0 if none)
     uint8_t last_opp_die_roll;         // Backwards-compat: opponent die roll
+
+    // Every Event of the current step that moved VP or DEFCON, in the order each finished, its
+    // own change only: an Event that set off another (Missile Envy, Five Year Plan) is recorded
+    // net of the one it set off, which has its own record. Reset with last_roll at each step.
+    static constexpr uint8_t EVENT_TRACKS_MAX = 6;   // as deep as ctx_stack nests Events
+    std::array<EventTrackRecord, EVENT_TRACKS_MAX> last_event_tracks;
+    uint8_t last_event_track_count;
 
     // Forced deal: the cards the NEXT deal gives each player, supplied by a replay source.
     //

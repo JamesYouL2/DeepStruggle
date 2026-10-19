@@ -1,0 +1,73 @@
+"""The page's action log says what each event of a click did to VP and DEFCON.
+
+The second headline commit resolves both headlines in one engine step, and the log described a
+click by comparing the state before and after it. At turn 8's headline of the workbench game
+nuclear_test_ban, Nuclear Test Ban gave the US 1 VP (DEFCON 3) and Pershing II gave the USSR 1 VP:
+the score did not move, and the log said nothing of either. The engine now records each event's
+own change (GameState::last_event_tracks) and the log words them when the sum cannot.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, List
+
+import pytest
+import ts_engine as ts
+
+from tests.web.js_runner import PUBLIC, run_ts
+
+NUCLEAR_TEST_BAN = 34
+PERSHING_II = 99
+FIDEL = 8
+
+
+def _at_headline(us_card: int, ussr_card: int, defcon: int, vp: int) -> str:
+    state = ts.GameState()
+    ts.Engine.init_game(state, 12345)
+    while state.current_phase == ts.Phase.SETUP:
+        legal = [i for i, v in enumerate(ts.ActionMask.generate_flat_mask(state)) if v]
+        ts.Engine.step_flat(state, legal[0])
+    for player, card in ((ts.Player.US, us_card), (ts.Player.USSR, ussr_card)):
+        loc = ts.hand_of(player)
+        for c in range(1, 111):
+            if state.get_card_location(c) == loc:
+                state.set_card_location(c, ts.CardLocation.DISCARD_PILE)
+        state.set_card_location(card, loc)
+    state.defcon = defcon
+    state.victory_points = vp
+    return state.to_save_json()
+
+
+@pytest.fixture(scope="module")
+def logged(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, Any]:
+    out = tmp_path_factory.mktemp("event_tracks")
+    cases = {
+        "cancelling": {"save": _at_headline(NUCLEAR_TEST_BAN, PERSHING_II, 3, 18),
+                       "us": NUCLEAR_TEST_BAN, "ussr": PERSHING_II},
+        "alone": {"save": _at_headline(NUCLEAR_TEST_BAN, FIDEL, 4, 0),
+                  "us": NUCLEAR_TEST_BAN, "ussr": FIDEL},
+    }
+    spec = out / "cases.json"
+    spec.write_text(json.dumps(cases))
+    return run_ts("event_tracks.ts", str(out), PUBLIC, str(spec))
+
+
+def test_two_headlines_that_cancel_are_both_logged(logged: Dict[str, Any]) -> None:
+    details: List[str] = logged["cancelling"]["details"]
+    assert "  • Nuclear Test Ban (#34): US +1 VP, DEFCON +2" in details, details
+    assert "  • Pershing II Deployed (#99): USSR +1 VP" in details, details
+    assert not any(d.startswith("  • Victory Points:") for d in details), "the score did not move"
+
+
+def test_the_step_keeps_the_records(logged: Dict[str, Any]) -> None:
+    tracks = logged["cancelling"]["event_tracks"]
+    assert tracks[0] == []
+    assert [(t["card_id"], t["vp_delta"], t["defcon_delta"]) for t in tracks[1]] == [
+        (NUCLEAR_TEST_BAN, 1, 2), (PERSHING_II, -1, 0)]
+
+
+def test_a_lone_event_is_left_to_the_track_lines(logged: Dict[str, Any]) -> None:
+    """Fidel moves neither track, so Nuclear Test Ban's change is the whole change."""
+    details: List[str] = logged["alone"]["details"]
+    assert "  • Victory Points: 0 (Tie) -> +2 (US) (+2 VP)" in details, details
+    assert not any("Nuclear Test Ban (#34):" in d for d in details), details

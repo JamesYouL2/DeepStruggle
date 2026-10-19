@@ -55,6 +55,9 @@ ts::GameState g_settled{};
 // click can roll more than once -- a realignment with the opponent's war card, whose event fires in
 // the same click and rolls too -- and each engine step keeps only its own roll.
 std::vector<sj::Value> g_rolls;
+// Every Event's change to VP and DEFCON over the same steps as g_rolls: the second headline commit
+// resolves both headlines in one step, and the click's before/after shows only their sum.
+std::vector<sj::Value> g_event_tracks;
 uint8_t g_mask[ts::FLAT_ACTION_SPACE_SIZE];
 float g_obs[ts::OBS_SIZE_V23];
 int32_t g_decoded[4];
@@ -75,6 +78,15 @@ void keep_roll(const ts::GameState& s) {
     if (const sj::Value* r = display.find("die_roll")) g_rolls.push_back(*r);
 }
 
+// The Events a state's last step recorded, as the display state writes them.
+void keep_event_tracks(const ts::GameState& s) {
+    if (s.last_event_track_count == 0) return;
+    const sj::Value display = sj::display_state(s);   // held: find() points into it
+    if (const sj::Value* t = display.find("event_tracks")) {
+        for (const sj::Value& e : t->items()) g_event_tracks.push_back(e);
+    }
+}
+
 // `settled`, if given, takes the state after each step that rolled a die (see g_settled), and that
 // step's roll joins g_rolls.
 bool drain(ts::GameState& s, int forced_die, ts::GameState* settled = nullptr) {
@@ -85,6 +97,7 @@ bool drain(ts::GameState& s, int forced_die, ts::GameState* settled = nullptr) {
         if (settled && s.last_roll.type != ts::RollType::NONE) {
             *settled = s;
             keep_roll(s);
+            keep_event_tracks(s);
         }
     }
     return true;
@@ -102,7 +115,9 @@ int apply(const ts::MicroAction& action, int forced_die) {
     }
     g_settled = g_state;
     g_rolls.clear();
+    g_event_tracks.clear();
     keep_roll(g_state);
+    keep_event_tracks(g_state);
     if (!drain(g_state, forced_die, &g_settled)) {
         g_state = before;
         g_error = "the engine refused the die roll";
@@ -187,6 +202,11 @@ TS_API const char* ts_settled_display_json() { return keep(sj::display_state(g_s
 TS_API const char* ts_click_rolls_json() {
     sj::Value a = sj::Value::array();
     for (const sj::Value& r : g_rolls) a.push(r);
+    return keep(a.dump());
+}
+TS_API const char* ts_click_event_tracks_json() {
+    sj::Value a = sj::Value::array();
+    for (const sj::Value& t : g_event_tracks) a.push(t);
     return keep(a.dump());
 }
 TS_API const char* ts_save_json() { return keep(sj::save(g_state).dump()); }

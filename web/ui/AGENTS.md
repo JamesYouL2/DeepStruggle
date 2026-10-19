@@ -197,6 +197,11 @@ web/ui/
      session, pinned by a golden (`tests/web/test_describe_golden.py`).
    - A click is described from the engine's settled state (`WasmEngine.settledDisplay`: after its
      action or last die roll), with a dice line for every roll it made (`clickRolls`, in order).
+     When the click's Events moved VP or DEFCON in ways its before/after cannot show -- two
+     headlines whose VP cancel, or more than one Event -- each gets a line of its own
+     (`describeEventTracks`, from `clickEventTracks`; `ReplayStep.event_tracks` keeps them, and the
+     replay log shows them too); a lone Event that is the whole change adds nothing.
+     `tests/web/test_event_tracks.py` pins it on Nuclear Test Ban against Pershing II.
      When the click carried into the turn's end -- an action round that ends the turn stops on the
      turn's cleanup, resolved in the same click -- the turn's end (final VP, the military-ops reset,
      DEFCON, the next deal) is its own `TURN_END` entry, "End of turn N". Read from the end state,

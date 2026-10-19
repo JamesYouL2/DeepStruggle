@@ -153,6 +153,68 @@ TEST(StateLifecycleTest, HeadlineState_DefectorsCancelsUSSRHeadline) {
     ASSERT_EQ(state.action_round, 1);
 }
 
+// The second commit resolves both headlines in one step, so the step's before/after shows only
+// the sum. At turn 8's headline of the workbench game nuclear_test_ban that sum was nothing:
+// Nuclear Test Ban's +1 VP for the US and Pershing II's +1 VP for the USSR, and neither was logged.
+TEST(StateLifecycleTest, HeadlineState_EachEventRecordsItsOwnTrackChange) {
+    ts::GameState state{};
+    ts::StateMachine::init_new_game(state, 42);
+    state.current_phase = ts::Phase::HEADLINE;
+    state.ctx().decision_player = ts::Player::US;
+    state.ctx().decision_type = ts::DecisionType::SELECT_CARD;
+    state.card_locations[ts::card_ids::NUCLEAR_TEST_BAN] = ts::hand_of(ts::Player::US);      // 4 Ops
+    state.card_locations[ts::card_ids::PERSHING_II_DEPLOYED] = ts::hand_of(ts::Player::USSR); // 3 Ops
+    state.defcon = 3;
+    state.victory_points = 18;
+
+    ASSERT_TRUE(ts::StateMachine::step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, ts::card_ids::NUCLEAR_TEST_BAN, 0, 0}));
+    ASSERT_EQ(state.last_event_track_count, 0);
+    ASSERT_TRUE(ts::StateMachine::step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, ts::card_ids::PERSHING_II_DEPLOYED, 0, 0}));
+
+    ASSERT_EQ(state.victory_points, 18);
+    ASSERT_EQ(state.defcon, 5);
+    ASSERT_EQ(state.last_event_track_count, 2);
+    ASSERT_EQ(state.last_event_tracks[0].card_id, ts::card_ids::NUCLEAR_TEST_BAN);
+    ASSERT_EQ(state.last_event_tracks[0].vp_delta, 1);       // DEFCON 3 - 2, to the US
+    ASSERT_EQ(state.last_event_tracks[0].defcon_delta, 2);
+    ASSERT_EQ(state.last_event_tracks[1].card_id, ts::card_ids::PERSHING_II_DEPLOYED);
+    ASSERT_EQ(state.last_event_tracks[1].vp_delta, -1);
+    ASSERT_EQ(state.last_event_tracks[1].defcon_delta, 0);
+
+    // Pershing II's removals are the next step, and the record is that step's alone.
+    ASSERT_EQ(state.ctx().resolving_card, ts::card_ids::PERSHING_II_DEPLOYED);
+    uint8_t target = 255;
+    for (uint8_t c = 0; c < 84 && target == 255; ++c) {
+        if (ts::MapData::get_country(c).in_western_europe && state.countries[c].us_influence > 0) target = c;
+    }
+    ASSERT_TRUE(target != 255);
+    ASSERT_TRUE(ts::StateMachine::step(state, ts::MicroAction{ts::DecisionType::POINT_NODE, target, 0, 0}));
+    ASSERT_EQ(state.last_event_track_count, 0);
+}
+
+// An Event that sets off another is recorded net of it: Missile Envy takes Nuclear Test Ban, an
+// Event for both sides, which then occurs for the USSR. The VP is Nuclear Test Ban's, once.
+TEST(StateLifecycleTest, EventTracks_NestedEventIsRecordedOnce) {
+    ts::GameState state{};
+    ts::StateMachine::init_new_game(state, 42);
+    for (uint8_t c = 1; c <= 110; ++c) {
+        if (ts::in_hand_of(state.card_locations[c], ts::Player::US)) state.card_locations[c] = ts::CardLocation::DISCARD_PILE;
+    }
+    state.card_locations[ts::card_ids::NUCLEAR_TEST_BAN] = ts::hand_of(ts::Player::US);
+    state.defcon = 4;
+    state.victory_points = 0;
+    state.last_event_track_count = 0;
+
+    ts::CardHandlers::trigger_event(state, ts::card_ids::MISSILE_ENVY, ts::Player::USSR);
+
+    ASSERT_EQ(state.victory_points, -2);
+    ASSERT_EQ(state.defcon, 5);
+    ASSERT_EQ(state.last_event_track_count, 1);
+    ASSERT_EQ(state.last_event_tracks[0].card_id, ts::card_ids::NUCLEAR_TEST_BAN);
+    ASSERT_EQ(state.last_event_tracks[0].vp_delta, -2);
+    ASSERT_EQ(state.last_event_tracks[0].defcon_delta, 1);    // capped at 5
+}
+
 // =============================================================================
 // 3. Action Round State Tests & Timing Branches
 // =============================================================================

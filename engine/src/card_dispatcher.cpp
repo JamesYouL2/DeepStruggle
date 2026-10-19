@@ -321,7 +321,44 @@ bool CardHandlers::pay_u2_incident_rider(GameState& state) noexcept {
     return true;
 }
 
+namespace {
+
+// Runs one Event entry point and records what it did to VP and DEFCON, net of the Events it set
+// off -- those finished inside it and recorded themselves, after `first`.
+template <typename Run>
+bool recorded(GameState& state, uint8_t card, Run&& run) noexcept {
+    const int vp_before = state.victory_points;
+    const int defcon_before = state.defcon;
+    const uint8_t first = state.last_event_track_count;
+    const bool done = run();
+    int vp = state.victory_points - vp_before;
+    int defcon = static_cast<int>(state.defcon) - defcon_before;
+    for (uint8_t i = first; i < state.last_event_track_count; ++i) {
+        vp -= state.last_event_tracks[i].vp_delta;
+        defcon -= state.last_event_tracks[i].defcon_delta;
+    }
+    if (vp == 0 && defcon == 0) return done;
+    if (state.last_event_track_count >= GameState::EVENT_TRACKS_MAX) {
+        report_anomaly("more Events moved VP or DEFCON in one step than last_event_tracks holds", state);
+        return done;
+    }
+    state.last_event_tracks[state.last_event_track_count++] =
+        EventTrackRecord{card, static_cast<int8_t>(vp), static_cast<int8_t>(defcon), 0};
+    return done;
+}
+
+} // namespace
+
 bool CardHandlers::trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept {
+    return recorded(state, card_id, [&] { return run_trigger_event(state, card_id, player, forced_roll); });
+}
+
+bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action) noexcept {
+    const uint8_t card = state.ctx().resolving_card;
+    return recorded(state, card, [&] { return run_event_step(state, action); });
+}
+
+bool CardHandlers::run_trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept {
     if (!can_trigger_event(state, card_id, player)) {
         return true; // Unmet prerequisite: event does not occur
     }
@@ -456,7 +493,7 @@ bool CardHandlers::trigger_event(GameState& state, uint8_t card_id, Player playe
     }
 }
 
-bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action) noexcept {
+bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) noexcept {
     uint8_t card = state.ctx().resolving_card;
     // At a chance node there is no decision_player, so the roller is whoever staged the die.
     // This used to read a card slot that held a player code for a coup or a war and a *country
