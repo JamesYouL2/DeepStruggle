@@ -79,8 +79,12 @@ are cited from elsewhere; keep them.
   and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`). For the page's action log, a
   click also keeps what it did before the roll-less chance steps after it (`ts_settled_display_json`:
   the state after its action or its last die roll -- the turn's cleanup, resolved in the same click,
-  clears the roll record) and every die it rolled, in order (`ts_click_rolls_json`). Display only:
-  the game is stepped exactly as before.
+  clears the roll record) and every die it rolled, in order (`ts_click_rolls_json`), and what each
+  Event it resolved did to VP and DEFCON, over the same steps (`ts_click_event_tracks_json`, from
+  `GameState::last_event_tracks`; `engine/AGENTS.md` §6c). Display only: the game is stepped
+  exactly as before.
+  The display state writes that record as `event_tracks` (with card names) and the save as
+  `last_event_tracks` (`state_json.cpp`), next to `die_roll` / `last_roll`.
 - [`selftest.hpp`](selftest.hpp): one whole-game digest (full save, both observations, the mask,
   every position) compiled into both builds; `tests/web/test_wasm_engine.py` compares them.
 - [`rollout_batch.hpp`](rollout_batch.hpp) / [`rollout_batch.cpp`](rollout_batch.cpp): **the rollout

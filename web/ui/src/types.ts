@@ -50,6 +50,15 @@ export interface ActionLogItem {
   vp_delta?: number;
 }
 
+/** What one Event of a step did to VP and DEFCON (GameState::last_event_tracks). */
+export interface EventTrackState {
+  card_id: number;
+  card_name?: string;
+  /** Positive toward the US, as victory_points. */
+  vp_delta: number;
+  defcon_delta: number;
+}
+
 export interface DieRollState {
   type: string;
   type_id?: number;
@@ -86,6 +95,7 @@ export interface GameState {
   space_turns_used: { US: number; USSR: number };
   china_card: { holder: 'US' | 'USSR'; playable: boolean };
   die_roll?: DieRollState;
+  event_tracks?: EventTrackState[];
   last_die_roll?: number;
   last_opp_die_roll?: number;
   flags: string[];

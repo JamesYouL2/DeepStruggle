@@ -10,7 +10,7 @@
  */
 import { ActionLogItem, GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
-import { describeActionAndDeltas, describeDeltas, describeRoll } from "./describe";
+import { describeActionAndDeltas, describeDeltas, describeEventTracks, describeRoll } from "./describe";
 import { ReplayStep } from "../replay_controls";
 import { GameRecordData, ModelInfo, MoveHow, RecordEvent, RecordEventKind, Settings, StepTag } from "./record";
 
@@ -206,6 +206,8 @@ export class GameSession {
     // The dice: every roll the click made, in order, not only the last one a state keeps.
     const lines = describeActionAndDeltas(this.engine, before, { ...end, die_roll: undefined }, a);
     const mover = before.decision_context?.decision_player ?? "NONE";
+    const eventTracks = this.engine.clickEventTracks();
+    lines.push(...describeEventTracks(before, end, eventTracks));
     const rolls = this.engine.clickRolls();
     for (const r of rolls) lines.push(...describeRoll(this.engine, before, r, mover));
     this.tags.push({
@@ -232,7 +234,7 @@ export class GameSession {
     this.steps.push({
       step_index: this.stepIndex, turn: before.turn, ar, phase, player,
       action: { decision_type: a.decision_type, primary_id: a.primary_id, secondary_id: a.secondary_id, flags: a.flags },
-      description: main, state_snapshot: after, rolls,
+      description: main, state_snapshot: after, rolls, event_tracks: eventTracks,
     });
 
     if (this.engine.isTerminal()) {

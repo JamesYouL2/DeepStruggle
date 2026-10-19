@@ -7,7 +7,7 @@
  * the two builds bit for bit. Everything returned is a copy: the module's memory can move when it
  * grows, and a view into it would silently change under the caller.
  */
-import { DieRollState, GameState, MicroAction } from "../types";
+import { DieRollState, EventTrackState, GameState, MicroAction } from "../types";
 
 /** The flat action space's layout, from the engine itself (never a hand-kept copy). */
 export interface ActionLayout {
@@ -103,6 +103,12 @@ export class WasmEngine {
    * with the opponent's war card rolls, then its event does), and each engine step keeps only its own. */
   clickRolls(): DieRollState[] {
     return JSON.parse(this.str(this.M._ts_click_rolls_json()));
+  }
+
+  /** What each Event the last `step` resolved did to VP and DEFCON, over the same engine steps as
+   * clickRolls: the second headline commit resolves both headlines, and before/after shows their sum. */
+  clickEventTracks(): EventTrackState[] {
+    return JSON.parse(this.str(this.M._ts_click_event_tracks_json()));
   }
 
   saveJson(): string {

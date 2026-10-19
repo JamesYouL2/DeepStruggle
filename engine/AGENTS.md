@@ -265,6 +265,27 @@ Python's `GameState` is the plain struct with no cache, so nothing Python writes
 
 ---
 
+## 6c. What each Event did to VP and DEFCON: `last_event_tracks` (2026-10-19)
+
+A step can resolve several Events -- the second headline commit resolves both headlines, Missile
+Envy fires the card it takes -- and a log that compares the state before and after the step sees
+only their sum. At turn 8's headline of the workbench game `nuclear_test_ban`, Nuclear Test Ban's
++1 VP for the US and Pershing II's +1 VP for the USSR netted to nothing and neither was logged.
+
+* `GameState::last_event_tracks` (with `last_event_track_count`) holds one `EventTrackRecord`
+  (card, VP delta toward the US, DEFCON delta) per Event of the current step that moved either
+  track, in the order each finished. `StateMachine::step` clears it with `last_roll`; like the
+  die-roll fields, the mask never reads it, so `CachedState` validation is unaffected.
+* It is written in one place: the public `CardHandlers::trigger_event` and `handle_event_step`
+  run their private bodies (`run_trigger_event`, `run_event_step`) and record the change. An
+  Event that set off another is recorded **net** of it -- the inner one recorded itself first --
+  so Missile Envy taking Nuclear Test Ban records Nuclear Test Ban's VP once.
+* Display only: no rule and no observation reads it, and games are bit-identical. A change outside
+  an Event (Flower Power's charge, U-2 Incident's rider, the turn's cleanup) has no record.
+* Six slots, the depth `ctx_stack` nests Events to; a seventh is reported through
+  `report_anomaly` rather than dropped silently. Tests: `StateLifecycleTest.HeadlineState_EachEventRecordsItsOwnTrackChange`,
+  `StateLifecycleTest.EventTracks_NestedEventIsRecordedOnce`.
+
 ## 7. Why hand knowledge lives in `CardLocation`
 
 `card_locations` distinguishes `HAND_US_KNOWN` from `HAND_US_UNKNOWN` (and the USSR pair) rather

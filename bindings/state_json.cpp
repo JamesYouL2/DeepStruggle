@@ -506,6 +506,20 @@ Value display_state(const GameState& state) {
     roll.set("net_delta", I(r.net_delta));
     d.set("die_roll", std::move(roll));
 
+    // What each Event of the step did to VP and DEFCON (GameState::last_event_tracks): a step
+    // that resolves two headlines changes both tracks twice, and before/after shows only the sum.
+    Value tracks = Value::array();
+    for (uint8_t i = 0; i < state.last_event_track_count; ++i) {
+        const auto& e = state.last_event_tracks[i];
+        Value t = Value::object();
+        t.set("card_id", I(e.card_id));
+        t.set("card_name", (e.card_id >= 1 && e.card_id <= 110) ? std::string(CardData::get_card(e.card_id).name) : std::string());
+        t.set("vp_delta", I(e.vp_delta));
+        t.set("defcon_delta", I(e.defcon_delta));
+        tracks.push(std::move(t));
+    }
+    d.set("event_tracks", std::move(tracks));
+
     // 3. Space turns used
     Value space_turns = Value::object();
     space_turns.set("US", I(state.get_space_turns_used(Player::US)));
@@ -747,6 +761,17 @@ Value save(const GameState& state) {
     roll.set("net_delta", I(r.net_delta));
     d.set("last_roll", std::move(roll));
 
+    Value tracks = Value::array();
+    for (uint8_t i = 0; i < state.last_event_track_count; ++i) {
+        const auto& e = state.last_event_tracks[i];
+        Value t = Value::object();
+        t.set("card_id", I(e.card_id));
+        t.set("vp_delta", I(e.vp_delta));
+        t.set("defcon_delta", I(e.defcon_delta));
+        tracks.push(std::move(t));
+    }
+    d.set("last_event_tracks", std::move(tracks));
+
     // The decision state machine. Without it the restored state points at a different decision
     // than the saved one, and every legal action and every observation differs.
     Value frames = Value::array();
@@ -897,6 +922,27 @@ bool load_save(const Value& d, GameState& out, std::string* error) {
         r.mod2 = get<int8_t>(*roll, "mod2", r.mod2);
         r.success = get<bool>(*roll, "success", r.success);
         r.net_delta = get<int8_t>(*roll, "net_delta", r.net_delta);
+    }
+
+    const Value* tracks = nullptr;
+    if (!list_of(d, "last_event_tracks", &tracks, error)) return false;
+    if (tracks) {
+        const auto& items = tracks->items();
+        if (items.size() > GameState::EVENT_TRACKS_MAX) {
+            if (error) *error = "'last_event_tracks' has more entries than a step can record";
+            return false;
+        }
+        s.last_event_track_count = 0;
+        for (const Value& t : items) {
+            if (!t.is_object()) {
+                if (error) *error = "'last_event_tracks' holds a non-object";
+                return false;
+            }
+            auto& e = s.last_event_tracks[s.last_event_track_count++];
+            e.card_id = get<uint8_t>(t, "card_id", 0);
+            e.vp_delta = get<int8_t>(t, "vp_delta", 0);
+            e.defcon_delta = get<int8_t>(t, "defcon_delta", 0);
+        }
     }
 
     const Value* frames = nullptr;

@@ -9,7 +9,7 @@
  * Iteration order matters for a multi-line diff: countries are walked by id and cards 1..110, as
  * the Python dicts were built; the JSON the page reads has its keys sorted by name instead.
  */
-import { DieRollState, GameState, MicroAction } from "../types";
+import { DieRollState, EventTrackState, GameState, MicroAction } from "../types";
 import { CARDS_METADATA } from "../metadata";
 import { branchMeta } from "./branches";
 import { WasmEngine } from "../engine/wasm_engine";
@@ -205,6 +205,28 @@ export function describeDeltas(engine: WasmEngine, before: GameState, after: Gam
  * The dice line for one roll, as the display state writes a roll (`die_roll`); `before` is the
  * position the roll was made from (a coup's defence reads its stability). Nothing for no roll.
  */
+/**
+ * What each Event of a step did to VP and DEFCON, when the step's before/after cannot say it. The
+ * second headline commit resolves both headlines: Nuclear Test Ban's +1 VP for the US and Pershing
+ * II's +1 VP for the USSR net to no change, and the Tracks lines then say nothing at all. A lone
+ * Event that accounts for the whole change is already told by those lines, so it adds nothing.
+ */
+export function describeEventTracks(before: GameState, after: GameState,
+                                    tracks: EventTrackState[] | undefined): string[] {
+  if (!tracks || tracks.length === 0) return [];
+  const vp = tracks.reduce((sum, t) => sum + t.vp_delta, 0);
+  const defcon = tracks.reduce((sum, t) => sum + t.defcon_delta, 0);
+  const netVp = (after.victory_points ?? 0) - (before.victory_points ?? 0);
+  const netDefcon = (after.defcon ?? 0) - (before.defcon ?? 0);
+  if (tracks.length === 1 && vp === netVp && defcon === netDefcon) return [];
+  return tracks.map(t => {
+    const parts: string[] = [];
+    if (t.vp_delta !== 0) parts.push(`${t.vp_delta > 0 ? "US" : "USSR"} +${Math.abs(t.vp_delta)} VP`);
+    if (t.defcon_delta !== 0) parts.push(`DEFCON ${signed(t.defcon_delta)}`);
+    return `  • ${t.card_name || `Card #${t.card_id}`} (#${t.card_id}): ${parts.join(", ")}`;
+  });
+}
+
 export function describeRoll(engine: WasmEngine, before: GameState, roll: DieRollState | undefined, p: string): string[] {
   const logs: string[] = [];
   const r = roll || ({} as DieRollState);

@@ -54,6 +54,7 @@
     "die_roll": "DieRollDict",
     "discard_pile": "list[int]",
     "draw_deck_count": "int",
+    "event_tracks": "list[EventTrackDict]",
     "flags": "list[str]",
     "forced_card_id": "int",
     "forced_card_player": "str",

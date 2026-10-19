@@ -76,6 +76,12 @@ public:
     // played later this turn, either by the US or the USSR, the USSR receives an additional 1
     // VP". Every route that plays UN Intervention calls this. Returns false if the game ended.
     static bool pay_u2_incident_rider(GameState& state) noexcept;
+
+private:
+    // The two entry points above without the record: each public one runs its counterpart and
+    // adds what it did to VP and DEFCON to state.last_event_tracks.
+    static bool run_trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept;
+    static bool run_event_step(GameState& state, const MicroAction& action) noexcept;
 };
 
 } // namespace ts
