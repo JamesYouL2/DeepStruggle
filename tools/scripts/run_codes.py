@@ -19,7 +19,8 @@ times on the E4 ladder (CLAUDE.md, invariant 15).
 
 A value fit (`--mode value-fit`, P34's evaluators) takes its network's A code with `value_only`
 added -- the same shape read only for its value is a different thing to name -- and its R code from
-the value-fit flags, the dataset among them. A labelling recipe (`D`, tools/value_labels.py) is the
+the value-fit flags, the dataset among them. A policy fit (`--mode policy-fit`, P36c's students) is
+the same with `policy_only`. A labelling recipe (`D`, tools/value_labels.py) is the
 same idea for datasets: `labelling_code` maps a dataset's labelling settings to its code under
 `labellings`, assigning the next one for a new set.
 
@@ -70,7 +71,7 @@ BOOKKEEPING = frozenset({
     "merged_influence", "new_directory", "turn_credit_workers", "search_workers", "resume_widen",
     "resume_grow_tokens",
     # a value fit's shape change: the network it builds is recorded as ladder_config, the A code's
-    "value_arch",
+    "value_arch", "policy_arch",
     # two arms taking turns on one machine: the wall clock, not the training
     "phase_lock",
     # the token path in checkpointed passes: memory, not the function
@@ -149,7 +150,7 @@ class Run:
 
     @property
     def seed(self) -> str:
-        if self.meta.get("mode") == "value-fit":
+        if self.meta.get("mode") in ("value-fit", "policy-fit"):
             return str(self.meta.get("seed"))      # a supervised fit has one seed
         s = {self.meta.get(k) for k in ("seed_env", "seed_sampling", "seed_pool")}
         if len(s) != 1:
@@ -274,6 +275,8 @@ def arch_sig(r: Run) -> Dict[str, Any]:
     sig = {k: v for k, v in r.flags.items() if category(k) == "A"}
     if r.meta.get("mode") == "value-fit":
         sig["value_only"] = True
+    if r.meta.get("mode") == "policy-fit":
+        sig["policy_only"] = True
     return sig
 
 

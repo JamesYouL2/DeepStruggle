@@ -10,6 +10,7 @@ import torch
 
 from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
 from ai.training.generic_trainer import run_search_distillation
+from ai.training.policy_fit import PolicyFitConfig, run_policy_fit
 from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
 from tools.lib.data_root import data_path
 from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR
@@ -265,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Which per-entity heads exist. The card-collision finding predicts "
                           "`country` carries most of M2's gain (arms M2d/M2e).")
     parser.add_argument("--mode", type=str, default="train",
-                        choices=["train", "warmup", "eval", "curriculum", "distill", "value-fit"],
+                        choices=["train", "warmup", "eval", "curriculum", "distill", "value-fit", "policy-fit"],
                         help="Execution mode. `distill` is P15-X4a: soft cross-entropy "
                              "toward a searcher's visit distribution, from a dataset made "
                              "by tools/generate_search_targets.py. `value-fit` is P34's "
@@ -297,6 +298,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Deliberately below BC's 1e-3: this bends a trained policy "
                              "rather than training one.")
     parser.add_argument("--bc-epochs", type=int, default=5, help="Number of epochs for BC warmup")
+    pf = parser.add_argument_group("policy fit (--mode policy-fit, P36c)")
+    pf.add_argument("--policy-dataset", type=str, default=None,
+                    help="A tools/distill_targets.py .npz: the keyed root's improved policy on entry decisions.")
+    pf.add_argument("--policy-worlds", type=int, default=128, help="Which world count's targets to fit.")
+    pf.add_argument("--policy-reinit", action="store_true", default=False,
+                    help="Train --warmup-checkpoint's architecture from fresh weights instead of fine-tuning it.")
+    pf.add_argument("--policy-arch", nargs="+", default=None, metavar="KEY=VALUE",
+                    help="With --policy-reinit: change the network's ladder settings (a larger student).")
+    pf.add_argument("--policy-epochs", type=float, default=60.0, help="At most this many passes.")
+    pf.add_argument("--policy-lr", type=float, default=3e-4)
+    pf.add_argument("--policy-batch", type=int, default=4096)
+    pf.add_argument("--policy-eval-every", type=int, default=200)
+    pf.add_argument("--policy-patience", type=int, default=10,
+                    help="Stop when the training fit has not risen by 0.2 points in this many evaluations (convergence).")
     vf = parser.add_argument_group("value fit (--mode value-fit, P34)")
     vf.add_argument("--value-dataset", type=str, default=None,
                     help="A tools/value_labels.py dataset directory (train.npz, holdout.npz, siblings.npz, manifest.json).")
@@ -1300,6 +1315,19 @@ def main():
             lr=args.distill_lr,
             device=dev,
         )
+    elif args.mode == "policy-fit":
+        if not args.policy_dataset or not args.warmup_checkpoint:
+            raise SystemExit("--mode policy-fit needs --policy-dataset and --warmup-checkpoint (the weights to "
+                             "fine-tune, or with --policy-reinit the shape to train from scratch)")
+        run_policy_fit(
+            PolicyFitConfig(dataset=args.policy_dataset, worlds=args.policy_worlds, init=args.warmup_checkpoint,
+                            reinit=args.policy_reinit, arch=parse_arch(args.policy_arch), batch=args.policy_batch,
+                            lr=args.policy_lr, max_epochs=args.policy_epochs, eval_every=args.policy_eval_every,
+                            patience=args.policy_patience, seed=args.seed if args.seed is not None else 44,
+                            device=args.device),
+            run_name=args.run_name, description=args.description, output_dir=args.output_dir,
+            cli={k: v for k, v in vars(args).items()
+                 if k.startswith("policy_") or k in ("mode", "warmup_checkpoint", "seed")})
     elif args.mode == "value-fit":
         if not args.value_dataset or not args.warmup_checkpoint:
             raise SystemExit("--mode value-fit needs --value-dataset and --warmup-checkpoint (the weights to "
