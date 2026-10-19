@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net
 from ai.training.policy_fit import PolicyFitConfig, dense_targets, run_policy_fit
 from tests.training.test_ladder_tokens import SHALLOW
+from tools.lib.engine_fingerprint import fingerprint
 
 
 def _dataset(tmp: Path) -> str:
@@ -48,6 +50,8 @@ def _dataset(tmp: Path) -> str:
            "pick2_16": np.where(held, acts[:, 0], -1).astype(np.int16)}
     path = str(tmp / "targets.npz")
     np.savez(path, **out)
+    with open(path + ".meta.json", "w") as f:
+        json.dump({"engine_fingerprint": fingerprint()}, f)
     return path
 
 
@@ -77,3 +81,17 @@ def test_a_fit_converges_and_records_the_three_readings(tmp_path: Path) -> None:
     assert last["ceiling_all"] == 1.0
     after = torch.load(os.path.join(run, "policy_fit_last.pt"), weights_only=True)
     assert all(torch.equal(before[k], after[k]) for k in before), "the value heads moved"
+
+
+def test_a_dataset_from_another_build_is_refused(tmp_path: Path) -> None:
+    """Raw state bytes are read only by the build that wrote them (P36c's states decoded as other
+    positions after a layout change with the behaviour unchanged)."""
+    ds = _dataset(tmp_path)
+    with open(ds + ".meta.json", "w") as f:
+        json.dump({"engine_fingerprint": "0" * 64}, f)
+    torch.manual_seed(0)
+    ckpt = str(tmp_path / "init.pt")
+    torch.save(create_ladder_net("cpu", **SHALLOW).state_dict(), ckpt)
+    with pytest.raises(SystemExit, match="written by engine"):
+        run_policy_fit(PolicyFitConfig(dataset=ds, worlds=16, init=ckpt, device="cpu", bf16=False),
+                       run_name="E7-A1-R1-S44", description="t", output_dir=str(tmp_path / "E7-A1-R1-S44_x"))

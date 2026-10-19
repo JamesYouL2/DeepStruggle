@@ -38,6 +38,7 @@ import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
 from ai.training.generic_trainer import _resolve_run_dir
 from ai.training.value_fit import Codes, _git
+from tools.lib.engine_fingerprint import fingerprint
 
 ACTIONS = 220
 
@@ -112,6 +113,11 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     n_params = sum(p.numel() for p in model.parameters())
 
     t0 = time.time()
+    meta_path = pathlib.Path(cfg.dataset + ".meta.json")
+    written_by = json.loads(meta_path.read_text()).get("engine_fingerprint") if meta_path.exists() else None
+    if written_by != fingerprint():
+        raise SystemExit(f"{cfg.dataset}: its raw states were written by engine {str(written_by)[:8]}, this build is "
+                         f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
     with np.load(cfg.dataset) as z:
         d = {k: z[k] for k in z.files}
     w = cfg.worlds

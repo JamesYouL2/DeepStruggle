@@ -16,6 +16,7 @@ import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net
 from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
 from tests.training.test_ladder_tokens import SHALLOW
+from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.player_agent import NeuralAgent
 
 
@@ -49,7 +50,7 @@ def test_a_value_fit_runs_end_to_end(tmp_path: pathlib.Path) -> None:
     ds.mkdir()
     np.savez(ds / "train.npz", **_split(48, 1, 0.8))
     np.savez(ds / "holdout.npz", **_split(16, 2, 0.8))
-    (ds / "manifest.json").write_text(json.dumps({"dataset": "x~D1(seed=1,games=1)", "engine": "e" * 64,
+    (ds / "manifest.json").write_text(json.dumps({"dataset": "x~D1(seed=1,games=1)", "engine": fingerprint(),
                                                   "files": {}}))
     init = tmp_path / "init.pt"
     torch.save(create_ladder_net("cpu", **SHALLOW).state_dict(), init)
@@ -89,7 +90,7 @@ def test_the_decision_sibling_loss_and_leaf_weights_run_and_report(tmp_path: pat
     sd2.mkdir()
     np.savez(ds / "train.npz", **_split(32, 3, 0.6))
     np.savez(ds / "holdout.npz", **_split(12, 4, 0.6))
-    (ds / "manifest.json").write_text(json.dumps({"dataset": "x~D1(seed=1,games=1)", "engine": "e" * 64, "files": {}}))
+    (ds / "manifest.json").write_text(json.dumps({"dataset": "x~D1(seed=1,games=1)", "engine": fingerprint(), "files": {}}))
     k, w, n = 2, 4, 10
     leaves = _states(n * k * w, 5)
     cand, world, pid = np.meshgrid(np.arange(k), np.arange(w), np.arange(n), indexing="ij")
