@@ -1246,6 +1246,82 @@
     "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
     "policy_reinit": true
    }
+  },
+  "R60": {
+   "description": "R59 at 16 worlds (P36c world-count cell)",
+   "first": "E7-A19-R60-S44_20261019_212645",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_worlds": 16,
+    "policy_reinit": true
+   }
+  },
+  "R61": {
+   "description": "R59 at 64 worlds (P36c world-count cell)",
+   "first": "E7-A19-R61-S44_20261019_212735",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_worlds": 64,
+    "policy_reinit": true
+   }
+  },
+  "R62": {
+   "description": "R58 at lr 1e-3 (P36c: the fine-tune optimisation cell)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R62_20261019_212823",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_lr": 0.001
+   }
+  },
+  "R63": {
+   "description": "R59 on 25% of the training games (P36c data-scaling cell)",
+   "first": "E7-A19-R63-S44_20261019_212905",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_reinit": true,
+    "policy_train_fraction": 0.25
+   }
+  },
+  "R64": {
+   "description": "R59 on 50% of the training games (P36c data-scaling cell)",
+   "first": "E7-A19-R64-S44_20261019_212922",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_reinit": true,
+    "policy_train_fraction": 0.5
+   }
+  },
+  "R65": {
+   "description": "R62 on 25% of the training games (P36c fine-tune data-scaling cell)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R65_20261019_213055",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_lr": 0.001,
+    "policy_train_fraction": 0.25
+   }
+  },
+  "R66": {
+   "description": "R62 on 50% of the training games (P36c fine-tune data-scaling cell)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R66_20261019_213115",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_lr": 0.001,
+    "policy_train_fraction": 0.5
+   }
   }
  },
  "overrides": {
@@ -1413,7 +1489,14 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A18_20261018_171606": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A18",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R58_20261019_212021": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R58",
   "E7-A19-R59-S44_20261019_212108": "E7-A19-R59-S44",
-  "E7-A20-R59-S44_20261019_212151": "E7-A20-R59-S44"
+  "E7-A20-R59-S44_20261019_212151": "E7-A20-R59-S44",
+  "E7-A19-R60-S44_20261019_212645": "E7-A19-R60-S44",
+  "E7-A19-R61-S44_20261019_212735": "E7-A19-R61-S44",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R62_20261019_212823": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R62",
+  "E7-A19-R63-S44_20261019_212905": "E7-A19-R63-S44",
+  "E7-A19-R64-S44_20261019_212922": "E7-A19-R64-S44",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R65_20261019_213055": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R65",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R66_20261019_213115": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R66"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

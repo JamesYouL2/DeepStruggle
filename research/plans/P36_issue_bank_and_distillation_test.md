@@ -172,6 +172,54 @@ three times per world count (`data/logs/temp/p36b.out`):
   target's top move) as the teacher's own ceiling. Cost: 49 decisions/s at 128 worlds eager (CUDA graphs
   slower and out of memory), so the 200k-decision set is ~2 h at the three world counts, not ~30 min.
 
+**`P36c` (2026-10-19): the rollout root's corrections do not transfer to unseen positions -- not by
+capacity, not by world count, and barely by data.** Targets: `tools/distill_targets.py`, 200,000 entry
+decisions from 2,000 greedy games of A13+R48's SWA (12,730–12,800M), 20,675 held out by game, the keyed root's
+improved policy at 16 / 64 / 128 worlds, the held-out rows searched twice (2 h 40 min; the raw states
+re-collected on the rebased build, below). Students by `tools/train.py --mode policy-fit` (policy heads, value
+frozen, to convergence: 60 epochs). "Departures": positions where the target's top move is not the network's
+argmax (41.4%). Held-out readings on the 8,540 held-out departures:
+
+| student | training fit (departures) | held-out (departures) | held-out overall | teacher's self-agreement |
+|:---|---:|---:|---:|---:|
+| A13+R48 fine-tuned, lr 3e-4 (`…+A13@12800M+A19-R58`) | 21.9% | 15.2% | 58.8% | 79.1% / 86.0% |
+| fine-tuned, lr 1e-3 (`…+A19-R62`) | 40.9% | 20.2% | 57.4%* | 79.1% / 86.0% |
+| same shape from scratch (`E7-A19-R59-S44`) | 96.4% | 24.7% | 42.8% | 79.1% / 86.0% |
+| deep shape, 8.7x (`E7-A20-R59-S44`) | 98.9% | 23.6% | 44.9% | 79.1% / 86.0% |
+| same shape, 16 / 64 worlds (`R60`, `R61`) | 92.4 / 94.8% | 25.1 / 24.5% | | 57.4 / 72.4% |
+| same shape, 25 / 50% of the games (`R63`, `R64`) | 94.6 / 95.9% | 23.2 / 23.4% | | 79.1% |
+| fine-tuned lr 1e-3, 25 / 50% (`R65`, `R66`) | 39.9 / 40.5% | 16.6 / 18.6% | | 79.1% |
+
+\* from the move breakdown below. **Baselines on the held-out departures:** uniform over the other legal moves
+26.6%; **the network's own second choice is the teacher's move 51.3%** of the time; the current network 0% by
+construction (overall 58.6%).
+
+* **Capacity is not the limit**: the 8.7x student fits the training departures as the same shape does (98.9%
+  against 96.4%) and generalises no better (23.6% against 24.7%).
+* **The targets' noise is not the limit**: held-out agreement is flat across 16 / 64 / 128 worlds (25.1 / 24.5
+  / 24.7%) while the teacher's own agreement rises 57 → 72 → 79%.
+* **The from-scratch students memorise** (96–99% training fit) and are at chance on held-out departures (24.7%
+  against uniform's 26.6%) -- but they never learned the game from 180k positions (42.8% overall against the
+  network's 58.6%), so their numbers say nothing about transfer. The fine-tuned student is the reading that
+  counts.
+* **The fine-tuned student does not transfer the corrections**: on held-out departures it keeps its own move
+  64.1%, takes the teacher's 20.3%, another move 15.6%; on held-out positions where the teacher agrees with
+  the network it *leaves* that move 16.8% -- net, slightly worse than the network (57.4% overall agreement
+  against 58.6%). The teacher's margin does not matter (85.7% of departures have a margin over 0.6; agreement
+  ~20% in every band).
+* **Data barely helps**: 25 / 50 / 100% of the games give 16.6 / 18.6 / 20.2% -- about +1.8 points a
+  doubling. Reaching even the network's own second choice (51%) would take ~16 more doublings.
+* **By the decision rules no student goes to games** (training fit < 90% for the fine-tune; held-out far
+  from the teacher's self-agreement for all). By the cell table this is the "fits but does not generalise"
+  cell, but its remedy -- more targets, expert iteration's cost regime -- is ruled out by the slope: **an
+  expert-iteration programme on this teacher's entry-decision corrections is not viable** at any affordable
+  number of targets. The corrections are reproducible given the position (79%) but are not a function the
+  network learns from the observation at this scale: each is a position-specific consequence of lookahead.
+* **The raw-state bug found on the way**: the dataset's states were written by the pre-rebase build; main's
+  `c9e5689` added `GameState` fields with the behaviour digest unchanged, so they decoded as other positions
+  (the first fit's step-0 agreement was 1.1%). Re-collected on this build (games and argmax identical); raw
+  state datasets are now read only by the build that wrote them (`712381e`; P34's D1/D2 included).
+
 **`P36a` (2026-10-19): candidate set delivered for review.** 954 rows over 18 patterns in the five groups,
 mined from 2,000 greedy games of A13+R48 (`ai/eval/issue_bank.py`), two patterns constructed from real
 positions (Nuclear Subs set in effect; NATO and Formosan Resolution swapped into a Five Year Plan hand),
