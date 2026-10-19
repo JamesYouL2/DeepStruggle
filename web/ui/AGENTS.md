@@ -149,6 +149,11 @@ web/ui/
      touch screen.
    - The *All* tab lists each card's name and where it is -- no era/side line and no hover
      description (the hand tabs keep their tooltip); a click opens the card's text.
+   - The *Piles* tab's Discard and Removed buttons open the pile at a glance (`showPileList`):
+     a column a side (USSR, US, Neutral), one line a card -- Ops and name -- highest Ops first.
+     The text is the hover tooltip, or a tap (it opens under the name). The modal used to list
+     every card's full text, which made a pile hard to scan (Saito shows the card images, in
+     the order they arrived).
 3. **Active Continuous Effects Panel (`cards_view.ts`)**:
    - `EFFECT_INFO_MAP` describes every persistent continuous-effect and state bit (e.g. *Containment*, *Brezhnev Doctrine*, *Red Scare/Purge*, *Quagmire*, *Bear Trap*, *Flower Power*, *Willy Brandt*, *NORAD*, *NATO*, Space Race bonuses) with side tags (`US`, `USSR`, `Both`, `Neutral`), duration badges (`Turn Only`, `Permanent`, `Conditional`, `Space Perk`), and rule summaries. Add an entry here whenever the engine gains an effect bit.
 4. **Descriptive Branch Choice HUD (`action_hud.ts`)**:
