@@ -234,6 +234,11 @@ web/ui/
      rewords lines the view may read. A replay is grouped the same way (`replayItems` builds the
      items from its steps' snapshots, rolls and event records). `tests/web/test_log_view.py`
      holds the merged changes to the board's own over two turns and the USSR view to the redaction.
+     A line that can be matched to one step shows its number (`LogEntry.steps`, the session's step
+     index, which an exported replay keeps): a click's own lines, its dice and Events, and a merged
+     change that one click made; a change merged over several clicks, and an Event's label, show
+     none. An entry's heading shows the step that started it; in a replay a numbered line opens
+     that step.
    - A card chosen while an event resolves (`resolving_card`) is said as what happened to it
      (`eventCardChoice`): discarded or removed, and from where ("USSR discards X from the US hand
      (Aldrich Ames Remix)"), taken back (SALT), played from the discard pile (Star Wars), played

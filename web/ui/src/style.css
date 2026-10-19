@@ -1815,6 +1815,14 @@ body.player-view .view-select {
   line-height: 1.3;
 }
 
+/* The step a log line can be matched to (game/log_view.ts LogEntry.steps). */
+.log-line-step {
+  color: var(--text-dim);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
 /* A decision within a play (game/log_view.ts): the other side's answer, a card chosen for an Event. */
 .log-sub-line {
   color: var(--text-primary);

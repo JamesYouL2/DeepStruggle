@@ -95,6 +95,11 @@ export interface LogEntry {
   player: string;
   title: string;
   lines: string[];
+  /** Per line, the step it can be matched to: the click it came from, or for a change merged
+   * over several clicks the one click that made it -- null when more than one did. */
+  steps: (number | null)[];
+  /** The step that started the entry (its card, its headline commit, the turn's end). */
+  step: number | null;
   vp_delta: number;
   /** Index into the item list of the entry's first and last item. */
   first: number;
@@ -114,6 +119,8 @@ const HAND = /^HAND_(US|USSR)_(KNOWN|UNKNOWN)$/;
 const SPACE_ATTEMPT = /^SPACE_(US|USSR)_ATTEMPT_\d$/;
 
 type Span = [number, number];
+/** A line and the one step it can be matched to, if there is one. */
+type Line = [string, number | null];
 
 /** A play's changes to the board, each from its value before the play to its value after. */
 class Board {
@@ -124,16 +131,32 @@ class Board {
   private space = new Map<string, Span>();
   private effects = new Map<string, number>();
   private cards = new Map<number, { name: string; from: string; to: string }>();
+  /** The steps that changed each thing, keyed as `lines` tells them. */
+  private where = new Map<string, Set<number>>();
+
+  private note(key: string, step: number): void {
+    const s = this.where.get(key) ?? new Set<number>();
+    s.add(step);
+    this.where.set(key, s);
+  }
+
+  /** The one step that changed all of `keys`, or null. */
+  private stepOf(...keys: string[]): number | null {
+    const all = new Set<number>();
+    for (const k of keys) for (const n of this.where.get(k) ?? []) all.add(n);
+    return all.size === 1 ? [...all][0] : null;
+  }
 
   private static widen(m: Map<string, Span>, key: string, a: number, b: number): void {
     const s = m.get(key);
     if (s) s[1] = b; else m.set(key, [a, b]);
   }
 
-  /** Takes a board line into the play's changes; false for a line that is not one. */
-  take(line: string): boolean {
+  /** Takes a board line of `step` into the play's changes; false for a line that is not one. */
+  take(line: string, step: number): boolean {
     let m: RegExpExecArray | null;
     if ((m = INFLUENCE.exec(line))) {
+      this.note(`influence:${m[1]}`, step);
       const sides = this.influence.get(m[1]) ?? new Map<string, Span>();
       this.influence.set(m[1], sides);
       for (const part of m[2].split(", ")) {
@@ -141,17 +164,23 @@ class Board {
         if (s) Board.widen(sides, s[1], +s[2], +s[3]);
       }
     } else if ((m = DEFCON.exec(line))) {
+      this.note("defcon", step);
       this.defcon = this.defcon ? [this.defcon[0], +m[2]] : [+m[1], +m[2]];
     } else if ((m = VP.exec(line))) {
+      this.note("vp", step);
       this.vp = this.vp ? [this.vp[0], parseInt(m[2], 10)] : [parseInt(m[1], 10), parseInt(m[2], 10)];
     } else if ((m = MIL_OPS.exec(line))) {
+      this.note(`milops:${m[1]}`, step);
       Board.widen(this.milOps, m[1], +m[2], +m[3]);
     } else if ((m = SPACE.exec(line))) {
+      this.note(`space:${m[1]}`, step);
       Board.widen(this.space, m[1], +m[2], +m[3]);
     } else if ((m = EFFECT.exec(line))) {
+      this.note(`effect:${m[2]}`, step);
       this.effects.set(m[2], (this.effects.get(m[2]) ?? 0) + (m[1] === "Activated" ? 1 : -1));
     } else if ((m = MOVED.exec(line))) {
       const id = +m[1];
+      this.note(`card:${id}`, step);
       const c = this.cards.get(id);
       if (c) c.to = m[4]; else this.cards.set(id, { name: m[2], from: m[3], to: m[4] });
     } else {
@@ -161,34 +190,39 @@ class Board {
   }
 
   /** The play's changes, in words; `implied` are cards whose discard the heading already says. */
-  lines(implied: number[]): string[] {
-    const out: string[] = [];
+  lines(implied: number[]): Line[] {
+    const out: Line[] = [];
     for (const [country, sides] of this.influence) {
       const parts: string[] = [];
       for (const side of ["US", "USSR"]) {
         const s = sides.get(side);
         if (s && s[0] !== s[1]) parts.push(`${side}: ${s[0]} -> ${s[1]} (${signed(s[1] - s[0])})`);
       }
-      if (parts.length) out.push(`  • ${country} Influence: ${parts.join(", ")}`);
+      if (parts.length) out.push([`  • ${country} Influence: ${parts.join(", ")}`, this.stepOf(`influence:${country}`)]);
     }
-    if (this.defcon && this.defcon[0] !== this.defcon[1]) out.push(`  • DEFCON: ${this.defcon[0]} -> ${this.defcon[1]}`);
+    if (this.defcon && this.defcon[0] !== this.defcon[1]) {
+      out.push([`  • DEFCON: ${this.defcon[0]} -> ${this.defcon[1]}`, this.stepOf("defcon")]);
+    }
     if (this.vp && this.vp[0] !== this.vp[1]) {
-      out.push(`  • Victory Points: ${vpStr(this.vp[0])} -> ${vpStr(this.vp[1])} (${signed(this.vp[1] - this.vp[0])} VP)`);
+      out.push([`  • Victory Points: ${vpStr(this.vp[0])} -> ${vpStr(this.vp[1])} (${signed(this.vp[1] - this.vp[0])} VP)`, this.stepOf("vp")]);
     }
-    for (const [side, s] of this.milOps) if (s[0] !== s[1]) out.push(`  • ${side} MilOps: ${s[0]} -> ${s[1]}`);
-    for (const [side, s] of this.space) if (s[0] !== s[1]) out.push(`  • Space Race: ${side} ${s[0]} -> ${s[1]}`);
+    for (const [side, s] of this.milOps) if (s[0] !== s[1]) out.push([`  • ${side} MilOps: ${s[0]} -> ${s[1]}`, this.stepOf(`milops:${side}`)]);
+    for (const [side, s] of this.space) if (s[0] !== s[1]) out.push([`  • Space Race: ${side} ${s[0]} -> ${s[1]}`, this.stepOf(`space:${side}`)]);
     for (const [flag, net] of this.effects) {
       if (net === 0 || SPACE_ATTEMPT.test(flag)) continue;
       const name = EFFECT_INFO_MAP[flag]?.name ?? flag;
-      out.push(net > 0 ? `  • In effect: ${name}` : `  • No longer in effect: ${name}`);
+      out.push([net > 0 ? `  • In effect: ${name}` : `  • No longer in effect: ${name}`, this.stepOf(`effect:${flag}`)]);
     }
     out.push(...this.cardLines(implied));
     return out;
   }
 
-  private cardLines(implied: number[]): string[] {
-    const out: string[] = [];
+  private cardLines(implied: number[]): Line[] {
+    const out: Line[] = [];
     const draws: Record<string, string[]> = { US: [], USSR: [] };
+    const drawKeys: Record<string, string[]> = { US: [], USSR: [] };
+    const reshuffledKeys: string[] = [];
+    const addedKeys: string[] = [];
     let reshuffled = 0;
     let added = 0;
     for (const [id, c] of this.cards) {
@@ -200,9 +234,10 @@ class Board {
       const name = `${c.name} (#${id})`;
       const hf = HAND.exec(from);
       const ht = HAND.exec(to);
-      if (from === "DRAW_DECK" && ht) { draws[ht[1]].push(c.name); continue; }
-      if (to === "DRAW_DECK" && from === "DISCARD_PILE") { reshuffled++; continue; }
-      if (to === "DRAW_DECK" && from === "UNAVAILABLE") { added++; continue; }
+      const key = `card:${id}`;
+      if (from === "DRAW_DECK" && ht) { draws[ht[1]].push(c.name); drawKeys[ht[1]].push(key); continue; }
+      if (to === "DRAW_DECK" && from === "DISCARD_PILE") { reshuffled++; reshuffledKeys.push(key); continue; }
+      if (to === "DRAW_DECK" && from === "UNAVAILABLE") { added++; addedKeys.push(key); continue; }
       let says: string;
       if (ht && hf && hf[1] === ht[1]) {
         says = ht[2] === "KNOWN" ? `in the ${ht[1]} hand, now known to the ${other(ht[1])}` : `in the ${ht[1]} hand, no longer known to the ${other(ht[1])}`;
@@ -214,14 +249,16 @@ class Board {
           DRAW_DECK: "returned to the draw deck", PEEKED_TEMP: "drawn to choose from", UNAVAILABLE: "set aside",
         }[to] ?? `moved to ${to}`;
       }
-      out.push(`  • ${name} ${says}`);
+      out.push([`  • ${name} ${says}`, this.stepOf(key)]);
     }
     for (const side of ["US", "USSR"]) {
       const n = draws[side].length;
-      if (n) out.push(`  • ${side} draws ${n} card${n === 1 ? "" : "s"}: ${draws[side].join(", ")}`);
+      if (n) out.push([`  • ${side} draws ${n} card${n === 1 ? "" : "s"}: ${draws[side].join(", ")}`, this.stepOf(...drawKeys[side])]);
     }
-    if (added) out.push(`  • ${added} cards of the new era shuffled into the draw deck`);
-    if (reshuffled) out.push(`  • The discard pile (${reshuffled} cards) reshuffled into the draw deck`);
+    if (added) out.push([`  • ${added} cards of the new era shuffled into the draw deck`, this.stepOf(...addedKeys)]);
+    if (reshuffled) {
+      out.push([`  • The discard pile (${reshuffled} cards) reshuffled into the draw deck`, this.stepOf(...reshuffledKeys)]);
+    }
     return out;
   }
 }
@@ -261,15 +298,25 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
   // Event's card when the Event fires, before the Event's own decisions.
   let cards = new Board();
 
+  const add = (line: string, step: number | null) => {
+    if (!entry) return;
+    entry.lines.push(line);
+    entry.steps.push(step);
+  };
+  const addAll = (lines: Line[]) => {
+    for (const [line, step] of lines) add(line, step);
+  };
+
   const flush = () => {
-    if (entry) entry.lines.push(...board.lines(implied));
+    addAll(board.lines(implied));
     board = new Board();
   };
 
   const close = () => {
     if (!entry || !anchor) return;
     if (modes.length) entry.title = `${entry.title} — ${modes.join(", then ")}`;
-    entry.lines.push(...board.lines(implied), ...cards.lines(implied));
+    addAll(board.lines(implied));
+    addAll(cards.lines(implied));
   };
 
   items.forEach((item, i) => {
@@ -284,10 +331,12 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
       segment = item.resolving ?? 0;
       entry = {
         turn: item.turn, ar: item.ar, phase: item.phase, player: item.player,
-        title: item.title ?? item.text, lines: [], vp_delta: 0, first: i, last: i,
+        title: item.title ?? item.text, lines: [], steps: [], vp_delta: 0, first: i, last: i,
+        // A click's, or the turn's end (the click that ran into it); not the session's own lines.
+        step: item.kind || item.phase === "TURN_END" ? item.step_index : null,
       };
       // A replay's first step has no position before it to read its change from.
-      if (kind === "setup" && !toldByItsEffects(item)) entry.lines.push(`  ▸ ${item.text}`);
+      if (kind === "setup" && !toldByItsEffects(item)) add(`  ▸ ${item.text}`, item.step_index);
       // Both headlines are one entry, neither side's.
       if (kind === "headline" && item.title) entry.player = "SYSTEM";
       // A click that does not start a play of its own heads one with its own words.
@@ -301,7 +350,7 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
         segment = resolving;
         // Which Event the lines below are, unless the play is that card's own Event.
         const ownEvent = kind === "play" && modes.length === 1 && modes[0] === "Event";
-        if (resolving && item.resolving_name && !ownEvent) entry.lines.push(`  ▸ ${item.resolving_name} — ${item.player}`);
+        if (resolving && item.resolving_name && !ownEvent) add(`  ▸ ${item.resolving_name} — ${item.player}`, null);
       }
       if (item.kind === "mode" && kind === "play" && item.mode) {
         // An opponent's Event first, then the Ops: the mode chosen after names the Ops.
@@ -311,15 +360,15 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
       } else if ((item.kind === "setup" || item.kind === "point") && toldByItsEffects(item)) {
         // Said by the Influence or the dice below.
       } else {
-        entry.lines.push(`  ▸ ${item.text}`);
+        add(`  ▸ ${item.text}`, item.step_index);
       }
     }
     if (!entry) return;
     entry.vp_delta += item.vp_delta ?? 0;
     for (const d of item.details ?? []) {
       if (item.title && d.startsWith("  ★ Headlines Simultaneously Revealed")) continue;
-      if (MOVED.test(d) ? cards.take(d) : board.take(d)) continue;
-      entry.lines.push(d);
+      if (MOVED.test(d) ? cards.take(d, item.step_index) : board.take(d, item.step_index)) continue;
+      add(d, item.step_index);
       // A random discard and Missile Envy's exchange say where their cards went.
       if (d.startsWith("  ✂ ") || d.startsWith("  ⇄ ")) {
         for (const m of d.matchAll(/\(#(\d+)\)/g)) implied.push(+m[1]);

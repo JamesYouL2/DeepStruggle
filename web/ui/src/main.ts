@@ -889,12 +889,15 @@ export class TSApp {
       const item = document.createElement("div");
       item.className = `log-item ${current ? "active-replay-step" : ""} ${targetIndices.has(idx) ? "vp-target-event" : ""}`;
 
-      const lines = e.lines.map(d => {
+      // A line that can be matched to one step says which (game/log_view.ts LogEntry.steps).
+      const stepTag = (n: number | null) => n === null ? "" : `<span class="log-line-step">#${n}</span> `;
+      const lines = e.lines.map((d, j) => {
         let lineClass = "log-detail-line";
         if (d.includes("🎲")) lineClass += " log-die-line";
         if (d.includes("Victory Points:") || /\(#\d+\): .*VP/.test(d)) lineClass += " log-vp-line";
         if (d.startsWith("  ▸ ")) lineClass += " log-sub-line";
-        return `<div class="${lineClass}">${d}</div>`;
+        const n = e.steps[j];
+        return `<div class="${lineClass}"${n === null ? "" : ` data-step="${n}"`}>${stepTag(n)}${d}</div>`;
       }).join("");
 
       // A replay's policy chips: every decision of the play, in order.
@@ -910,7 +913,7 @@ export class TSApp {
       item.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 6px;">
           <div>
-            ${replay ? `<span class="log-index" style="font-size: 10px; color: var(--text-dim);">#${e.first + 1}</span>` : ""}
+            ${e.step === null ? "" : `<span class="log-index" style="font-size: 10px; color: var(--text-dim);">#${e.step}</span>`}
             <span class="log-step">[T${e.turn} AR${e.ar}]</span>
             <span class="log-player ${e.player}">${e.player}:</span>
             <span class="log-main-text">${e.title}</span>
@@ -920,7 +923,14 @@ export class TSApp {
         </div>
         ${lines}
       `;
-      if (replay) item.addEventListener("click", () => this.replayControls.goToStep(e.last));
+      if (replay) {
+        item.addEventListener("click", () => this.replayControls.goToStep(e.last));
+        // A replay's step numbers are its own (replayItems numbers them 1..n): a line goes to its step.
+        item.querySelectorAll<HTMLElement>("[data-step]").forEach(el => el.addEventListener("click", ev => {
+          ev.stopPropagation();
+          this.replayControls.goToStep(Number(el.dataset.step) - 1);
+        }));
+      }
       logContainer.appendChild(item);
     });
 

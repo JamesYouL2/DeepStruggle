@@ -70,3 +70,17 @@ def test_the_other_sides_deal_stays_hidden_once_grouped(game: Dict[str, Any]) ->
     named = {name for line in draws for name in line.split(": ", 1)[1].split(", ")}
     assert not named & unseen, named & unseen
     assert any(line.startswith("  • USSR draws") for line in _lines(game["ussr_view"]))
+
+
+def test_a_line_names_the_step_it_can_be_matched_to(game: Dict[str, Any]) -> None:
+    """A dice line is one click's; an Event's label spans its clicks and names none."""
+    for e in game["entries"]:
+        assert len(e["steps"]) == len(e["lines"])
+        for line, step in zip(e["lines"], e["steps"]):
+            if line.startswith("  🎲 "):
+                assert isinstance(step, int) and step > 0, (e["title"], line)
+            if re.match(r"^  ▸ .+ \(#\d+\) — (US|USSR)$", line):
+                assert step is None, (e["title"], line)
+    played = [e for e in game["entries"] if re.match(r"^(US|USSR) plays ", e["title"])]
+    assert all(isinstance(e["step"], int) for e in played)
+    assert [e["step"] for e in played] == sorted(e["step"] for e in played)

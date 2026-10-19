@@ -109,3 +109,15 @@ def test_the_headline_entry_reads_in_the_order_the_headlines_resolved(logged: Di
     moves = [i for i, line in enumerate(lines) if " Influence: USSR: " in line]
     removed = lines.index("  • De-Stalinization (#33) removed from the game")
     assert moves and purge < label < min(moves) and max(moves) < removed, lines
+
+
+def test_a_merged_line_is_numbered_only_when_one_step_made_it(logged: Dict[str, Any]) -> None:
+    """The commits are steps 1 and 2 and the USSR's answer step 3: the roll and the Space Race
+    advance are step 3's, Captured Nazi Scientist's way out of the game spans steps 2 and 3."""
+    entry = next(e for e in logged["olympics"]["entries"] if e["title"].startswith("Headlines: "))
+    step = dict(zip(entry["lines"], entry["steps"]))
+    assert entry["step"] == 2
+    roll = next(line for line in entry["lines"] if line.startswith("  🎲 Olympic Games"))
+    assert step[roll] == 3
+    assert step["  • Space Race: USSR 0 -> 1"] == 3
+    assert step["  • Captured Nazi Scientist (#18) removed from the game"] is None
