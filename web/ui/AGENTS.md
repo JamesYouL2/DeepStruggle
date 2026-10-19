@@ -215,7 +215,9 @@ web/ui/
      headline, one side's setup, every line the session writes itself (turn end, undo, debug) --
      and tells each once: the heading with its mode ("USSR plays Fidel (#8) — Ops: Influence",
      "Ops: Coup, then the US Event" for an opponent's card), the decisions within it (`▸`), dice
-     and Events in order, then the board's changes merged over the play, with card moves in words
+     and Events in order, the board's changes merged Event by Event and told where each Event's
+     clicks end (a headline's Red Scare before the other headline's De-Stalinization, labelled
+     "▸ De-Stalinization (#33) — USSR"), and where the cards went at the end, with card moves in words
      ("removed from the game", "now known to the USSR"), a deal as "US draws 7 cards: ..." and a
      reshuffle on one line. It runs on the log **after** `redactLogs`, so grouping only merges and
      rewords lines the view may read. A replay is grouped the same way (`replayItems` builds the

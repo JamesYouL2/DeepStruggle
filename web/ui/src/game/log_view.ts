@@ -32,6 +32,9 @@ export interface ClickInfo {
   mode?: string;
   /** Cards whose discard the heading already implies: the card played, the two headlines. */
   cards?: number[];
+  /** The Event the click answered, 0 for none: a play's changes are told Event by Event. */
+  resolving: number;
+  resolving_name?: string;
 }
 
 function other(p: string): string {
@@ -40,6 +43,14 @@ function other(p: string): string {
 
 export function clickInfo(engine: WasmEngine, before: GameState | undefined,
                           action: Required<MicroAction>, player = "NONE"): ClickInfo {
+  const resolving = before?.decision_context?.resolving_card ?? 0;
+  const named = resolving >= 1 && resolving <= 110;
+  return { ...classify(engine, before, action, player), resolving,
+           ...(named ? { resolving_name: `${engine.cardName(resolving)} (#${resolving})` } : {}) };
+}
+
+function classify(engine: WasmEngine, before: GameState | undefined,
+                  action: Required<MicroAction>, player: string): Omit<ClickInfo, "resolving"> {
   const ctx = before?.decision_context;
   const p = ctx?.decision_player ?? player;
   const resolving = ctx?.resolving_card ?? 0;
@@ -242,11 +253,23 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
   let anchor: ActionLogItem | null = null;
   let board = new Board();
   let implied: number[] = [];
+  // The Event the clicks so far answer. The board's changes are told where it changes, so a play
+  // reads in the order it happened: a headline's Red Scare before the other headline's
+  // De-Stalinization, an opponent's card's Ops before its Event.
+  let segment = 0;
+  // Where the cards ended up is the play's conclusion, told once at its end: the engine moves an
+  // Event's card when the Event fires, before the Event's own decisions.
+  let cards = new Board();
+
+  const flush = () => {
+    if (entry) entry.lines.push(...board.lines(implied));
+    board = new Board();
+  };
 
   const close = () => {
     if (!entry || !anchor) return;
     if (modes.length) entry.title = `${entry.title} — ${modes.join(", then ")}`;
-    entry.lines.push(...board.lines(implied));
+    entry.lines.push(...board.lines(implied), ...cards.lines(implied));
   };
 
   items.forEach((item, i) => {
@@ -256,7 +279,9 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
       anchor = item;
       modes = [];
       board = new Board();
+      cards = new Board();
       implied = [...(item.cards ?? [])];
+      segment = item.resolving ?? 0;
       entry = {
         turn: item.turn, ar: item.ar, phase: item.phase, player: item.player,
         title: item.title ?? item.text, lines: [], vp_delta: 0, first: i, last: i,
@@ -270,6 +295,14 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
       entries.push(entry);
     } else if (entry) {
       entry.last = i;
+      const resolving = item.resolving ?? 0;
+      if (resolving !== segment) {
+        flush();
+        segment = resolving;
+        // Which Event the lines below are, unless the play is that card's own Event.
+        const ownEvent = kind === "play" && modes.length === 1 && modes[0] === "Event";
+        if (resolving && item.resolving_name && !ownEvent) entry.lines.push(`  ▸ ${item.resolving_name} — ${item.player}`);
+      }
       if (item.kind === "mode" && kind === "play" && item.mode) {
         // An opponent's Event first, then the Ops: the mode chosen after names the Ops.
         const last = modes[modes.length - 1];
@@ -285,7 +318,7 @@ export function groupLog(items: ActionLogItem[]): LogEntry[] {
     entry.vp_delta += item.vp_delta ?? 0;
     for (const d of item.details ?? []) {
       if (item.title && d.startsWith("  ★ Headlines Simultaneously Revealed")) continue;
-      if (board.take(d)) continue;
+      if (MOVED.test(d) ? cards.take(d) : board.take(d)) continue;
       entry.lines.push(d);
       // A random discard and Missile Envy's exchange say where their cards went.
       if (d.startsWith("  ✂ ") || d.startsWith("  ⇄ ")) {

@@ -22,6 +22,8 @@ FIDEL = 8
 OLYMPIC_GAMES = 20
 CAPTURED_NAZI_SCIENTIST = 18
 CHOOSE_BRANCH = 6
+RED_SCARE = 31
+DE_STALINIZATION = 33
 
 
 def _at_headline(us_card: int, ussr_card: int, defcon: int, vp: int) -> str:
@@ -54,6 +56,10 @@ def logged(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, Any]:
         "olympics": {"save": _at_headline(OLYMPIC_GAMES, CAPTURED_NAZI_SCIENTIST, 5, 0),
                      "us": OLYMPIC_GAMES, "ussr": CAPTURED_NAZI_SCIENTIST,
                      "then": [[CHOOSE_BRANCH, 0, 4]]},
+        # Red Scare/Purge (4 Ops) resolves before De-Stalinization (3), a USSR Event headlined by
+        # the US, whose removals and placements the USSR then makes.
+        "purge_first": {"save": _at_headline(DE_STALINIZATION, RED_SCARE, 5, 0),
+                        "us": DE_STALINIZATION, "ussr": RED_SCARE, "finish": True},
     }
     spec = out / "cases.json"
     spec.write_text(json.dumps(cases))
@@ -92,3 +98,14 @@ def test_a_click_reads_from_cause_to_effect(logged: Dict[str, Any]) -> None:
     space = details.index("  • Space Race: USSR 0 -> 1")
     moved = next(i for i, d in enumerate(details) if d.startswith("  • Card #18 (Captured Nazi Scientist) moved:"))
     assert roll < olympics < scientist < space < moved, details
+
+
+def test_the_headline_entry_reads_in_the_order_the_headlines_resolved(logged: Dict[str, Any]) -> None:
+    """Red Scare's effect, then De-Stalinization's moves under its name, then where the cards went."""
+    entry = next(e for e in logged["purge_first"]["entries"] if e["title"].startswith("Headlines: "))
+    lines: List[str] = entry["lines"]
+    purge = lines.index("  • In effect: Red Scare (US)")
+    label = lines.index("  ▸ De-Stalinization (#33) — USSR")
+    moves = [i for i, line in enumerate(lines) if " Influence: USSR: " in line]
+    removed = lines.index("  • De-Stalinization (#33) removed from the game")
+    assert moves and purge < label < min(moves) and max(moves) < removed, lines

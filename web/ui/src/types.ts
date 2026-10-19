@@ -59,6 +59,9 @@ export interface ActionLogItem {
   mode?: string;
   /** Cards whose ordinary discard the heading implies. */
   cards?: number[];
+  /** The Event the click answered (`resolving_card` before it), 0 for none, and its name. */
+  resolving?: number;
+  resolving_name?: string;
 }
 
 /** What one Event of a step did to VP and DEFCON (GameState::last_event_tracks). */

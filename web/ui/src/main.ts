@@ -184,6 +184,9 @@ export class TSApp {
     }
     this.checkEngineFreshness();
     this.refresh();
+    // A replay that arrived before the engine was shown without its log, which needs the engine's
+    // names; refresh() leaves a replay alone.
+    if (this.isReplayMode) this.renderLogStream();
     const src = this.urlModel && this.urlModel !== "off" ? sourceFromParam(this.urlModel) : null;
     if (this.urlModel === "off") {
       this.analysisOff = true;
@@ -834,10 +837,16 @@ export class TSApp {
 
     // One entry per play (game/log_view.ts): a replay's built from its steps, a live game's from
     // the log as the view may read it (game/view.ts has already redacted the other side's lines).
-    const replay = this.isReplayMode && this.replaySteps && this.replaySteps.length > 0;
+    const replay = this.isReplayMode;
     let entries: LogEntry[];
     if (replay) {
-      if (!this.engine) return;
+      // Never the live game's log in its place: a replay link opens on a new game, and its log
+      // stood in until the replay file and the engine had both arrived.
+      if (!this.engine || this.replaySteps.length === 0) {
+        logContainer.innerHTML = `<div class="log-empty-msg">Loading the replay…</div>`;
+        if (logCountBadge) logCountBadge.textContent = "";
+        return;
+      }
       if (this.replayEntries?.steps !== this.replaySteps) {
         this.replayEntries = { steps: this.replaySteps, entries: groupLog(replayItems(this.engine, this.replaySteps)) };
       }
