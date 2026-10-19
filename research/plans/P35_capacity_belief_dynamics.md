@@ -289,6 +289,15 @@ selfplay`: 256 of the network's own games at T = 1):
 It finds the opponent unasked: on the network's games it keeps the whole gain, on humans it avoids the harm
 (a small gain instead of −11.7%). This is the belief mode for the leaderboard and the browser alike.
 
+**The shared belief root, re-measured (2026-10-19): 55.0%.** The belief as built for both the leaderboard
+and the browser (`bindings/belief.hpp`, commits `38da571`, `abfbf43`: the temperature model-averaged from
+the opponent's choices, draws keyed by the position, 2,048 hands, every opposing decision of the turn),
+A13+R48's SWA under the keyed root with belief worlds against the same network under the honest keyed
+root, 1,000 deals a side: **55.0%** (US 49.2 / USSR 60.9; ±1.1, about 4.5 SE;
+`data/reports/p35_belief_avg_root_vs_keyed.json`) -- **about +35 Elo**, against 53.4% for the first build
+(T = 1, numpy draws; the difference is about 1 SE) and the oracle root's 57.6%: two thirds of the ceiling.
+The player id is `…~rollout(…,chance=keyed,belief=2048)`, the page's `search=rollout:…:keyed:belief2048`.
+
 **The per-seat bar (2026-10-19, corrected).** The window reads were first read per seat against one bar,
 the control's self-play in its last window (US 41.5 / USSR 58.0), which made every arm look "+5 as US, −5
 as USSR". The control's self-play per seat moves with the window, and the last window is the outlier. Each
