@@ -1776,6 +1776,12 @@ body.player-view .view-select {
   line-height: 1.3;
 }
 
+/* A decision within a play (game/log_view.ts): the other side's answer, a card chosen for an Event. */
+.log-sub-line {
+  color: var(--text-primary);
+  font-style: italic;
+}
+
 .replay-select-dropdown {
   background: var(--bg-surface-elevated, #242b38);
   color: var(--text-primary, #ffffff);

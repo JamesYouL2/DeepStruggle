@@ -30,7 +30,7 @@ function signed(v: number): string {
   return v > 0 ? `+${v}` : `${v}`;
 }
 
-function vpStr(vp: number): string {
+export function vpStr(vp: number): string {
   return vp > 0 ? `+${vp} (US)` : vp < 0 ? `${vp} (USSR)` : "0 (Tie)";
 }
 

@@ -11,6 +11,7 @@
 import { ActionLogItem, GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
 import { describeAction, describeDeltas, describeEventTracks, describeRoll } from "./describe";
+import { clickInfo } from "./log_view";
 import { ReplayStep } from "../replay_controls";
 import { GameRecordData, ModelInfo, MoveHow, RecordEvent, RecordEventKind, Settings, StepTag } from "./record";
 
@@ -224,6 +225,7 @@ export class GameSession {
     this.logs.push({
       step_index: this.stepIndex, turn: before.turn, ar, phase, player, text: main,
       details: lines.slice(1), vp_delta: (end.victory_points ?? 0) - (before.victory_points ?? 0),
+      ...clickInfo(this.engine, before, a),
     });
     if (crossed) {
       const rest = describeDeltas(this.engine, settled, after, "SYSTEM");

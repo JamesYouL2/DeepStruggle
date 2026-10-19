@@ -26,7 +26,7 @@ import { RolloutRunner } from "./analysis/rollout_runner";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 import { lastTurnOf } from "./game/last_turn";
 import { recentRolls } from "./game/rolls";
-import { describeEventTracks } from "./game/describe";
+import { LogEntry, groupLog, replayItems } from "./game/log_view";
 import { MoveHow, buildSubmission, sha256Hex, summarize } from "./game/record";
 import { loadStoredGame, storeGame } from "./game/saved_game";
 import { ResultDialog } from "./result_dialog";
@@ -55,6 +55,8 @@ export class TSApp {
   private analysisPanel: AnalysisPanel;
 
   private engine: WasmEngine | null = null;
+  /** A replay's log entries, built once per loaded replay. */
+  private replayEntries: { steps: ReplayStep[]; entries: LogEntry[] } | null = null;
   private session: GameSession | null = null;
   private model: Model | null = null;
   private modelKey = "";
@@ -830,196 +832,95 @@ export class TSApp {
     const logCountBadge = document.getElementById("log-count");
     if (!logContainer) return;
 
-    if (this.isReplayMode && this.replaySteps && this.replaySteps.length > 0) {
-      const isVpChangingReplay = (idx: number): boolean => {
-        const s = this.replaySteps[idx];
-        const prev = idx > 0 ? this.replaySteps[idx - 1] : null;
-        const vpDiff = prev ? (s.state_snapshot?.victory_points !== prev.state_snapshot?.victory_points) : false;
-        const descHasVp = Boolean(s.description && (s.description.includes("Victory Points") || s.description.includes(" VP")));
-        // Two Events of one step can move VP and cancel: the snapshots then show no change.
-        const eventVp = (s.event_tracks ?? s.state_snapshot?.event_tracks ?? []).some(t => t.vp_delta !== 0);
-        return Boolean(vpDiff || descHasVp || eventVp);
-      };
-
-      const { targetIndices, includedIndices } = this.getFilteredIndices(this.replaySteps.length, isVpChangingReplay);
-
-      if (logCountBadge) {
-        logCountBadge.textContent = this.isVpFilterActive
-          ? `${includedIndices.length} filtered (${targetIndices.size} VP events)`
-          : `${this.replaySteps.length} steps (Current: #${this.replayCurrentStep + 1})`;
+    // One entry per play (game/log_view.ts): a replay's built from its steps, a live game's from
+    // the log as the view may read it (game/view.ts has already redacted the other side's lines).
+    const replay = this.isReplayMode && this.replaySteps && this.replaySteps.length > 0;
+    let entries: LogEntry[];
+    if (replay) {
+      if (!this.engine) return;
+      if (this.replayEntries?.steps !== this.replaySteps) {
+        this.replayEntries = { steps: this.replaySteps, entries: groupLog(replayItems(this.engine, this.replaySteps)) };
       }
-
-      logContainer.innerHTML = "";
-      if (includedIndices.length === 0) {
-        logContainer.innerHTML = `<div class="log-empty-msg">No VP-affecting events found in replay.</div>`;
-        return;
-      }
-
-      includedIndices.forEach((idx, k) => {
-        const step = this.replaySteps[idx];
-        const isCurrent = idx === this.replayCurrentStep;
-        const isVpTarget = targetIndices.has(idx);
-
-        if (k > 0 && idx > includedIndices[k - 1] + 1) {
-          const gap = idx - includedIndices[k - 1] - 1;
-          const sep = document.createElement("div");
-          sep.className = "log-context-separator";
-          sep.textContent = `••• ${gap} step${gap > 1 ? "s" : ""} skipped •••`;
-          logContainer.appendChild(sep);
-        }
-
-        const item = document.createElement("div");
-        item.className = `log-item ${isCurrent ? "active-replay-step" : ""} ${isVpTarget ? "vp-target-event" : ""}`;
-
-        const playerClass = (step.player || "SYSTEM").toUpperCase();
-
-        // Format die roll details if available in snapshot
-        let dieRollHtml = "";
-        const dieRoll = step.state_snapshot?.die_roll;
-        if (dieRoll && dieRoll.type && dieRoll.type !== "NONE") {
-          const rType = dieRoll.type;
-          const rPlayer = dieRoll.roller || step.player;
-          const cName = dieRoll.country_name || (dieRoll.country_id !== undefined && dieRoll.country_id < 84 ? `Country #${dieRoll.country_id}` : "");
-          const r1 = dieRoll.roll1 ?? 0;
-          const tot1 = dieRoll.total1 ?? r1;
-          const r2 = dieRoll.roll2 ?? 0;
-          const tot2 = dieRoll.total2 ?? r2;
-          const succ = dieRoll.success;
-          const net = dieRoll.net_delta ?? 0;
-
-          let detailText = "";
-          if (rType === "COUP") {
-            const defTarget = dieRoll.mod2 ?? 0;
-            const res = succ ? `Net +${net} Inf (Success)` : "Coup Failed";
-            detailText = `🎲 Coup in ${cName}: ${rPlayer} rolls ${r1} (Total ${tot1}) vs ${defTarget} Def -> ${res}`;
-          } else if (rType === "REALIGNMENT") {
-            detailText = `🎲 Realignment in ${cName}: US rolls ${r1} (Tot ${tot1}), USSR rolls ${r2} (Tot ${tot2}) -> Net ${net}`;
-          } else if (rType === "SPACE_RACE") {
-            const status = succ ? "SUCCESS (Advanced)" : "FAILED";
-            detailText = `🎲 Space Race Attempt: ${rPlayer} rolls ${r1} -> ${status}`;
-          } else if (rType === "WAR_EVENT") {
-            const cStr = dieRoll.card_name || "War Event";
-            const targetStr = cName ? ` in ${cName}` : "";
-            const res = succ ? "Success (Target Captured & VP)" : "Failed";
-            detailText = `🎲 ${cStr}${targetStr}: ${rPlayer} rolls ${r1} (Tot ${tot1}) -> ${res}`;
-          } else {
-            detailText = `🎲 ${rType} Roll: ${rPlayer} rolls ${r1}`;
-          }
-          dieRollHtml = `<div class="log-detail-line log-die-line">${detailText}</div>`;
-        }
-        const prevSnapshot = idx > 0 ? this.replaySteps[idx - 1].state_snapshot : undefined;
-        const eventHtml = prevSnapshot && step.state_snapshot
-          ? describeEventTracks(prevSnapshot, step.state_snapshot, step.event_tracks ?? step.state_snapshot.event_tracks)
-              .map(line => `<div class="log-detail-line log-vp-line">${line.trim()}</div>`).join("")
-          : "";
-
-        item.innerHTML = `
-          <div>
-            <div style="display: flex; gap: 6px; align-items: baseline; width: 100%;">
-              <span class="log-index" style="font-size: 10px; color: var(--text-dim); min-width: 28px;">#${idx + 1}</span>
-              <span class="log-step">[T${step.turn} AR${step.ar}]</span>
-              <span class="log-player ${playerClass}">${playerClass}:</span>
-              <span class="log-text" style="flex: 1;">${step.description || `Action type=${step.action?.decision_type}`}</span>
-              ${policyChipHtml(this.replaySteps, idx)}
-              ${isVpTarget ? '<span class="log-vp-badge">🎯 VP CHANGE</span>' : ''}
-            </div>
-            ${dieRollHtml}
-            ${eventHtml}
-          </div>
-        `;
-
-        item.addEventListener("click", () => {
-          this.replayControls.goToStep(idx);
-        });
-
-        logContainer.appendChild(item);
-      });
-
-      // Smooth scroll active step into view
-      requestAnimationFrame(() => {
-        const activeEl = logContainer.querySelector(".active-replay-step") as HTMLElement;
-        if (activeEl) {
-          activeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      });
-      return;
+      entries = this.replayEntries.entries;
+    } else {
+      if (!this.shown?.action_logs) return;
+      entries = groupLog(this.shown.action_logs);
     }
-
-    if (!this.shown?.action_logs) return;
-
-    // The view's log (game/view.ts redacts the other side's private lines).
-    const logs = this.shown.action_logs;
-    const isVpChangingLive = (idx: number) => {
-      const log = logs[idx];
-      const hasVpDelta = log.vp_delta !== undefined && log.vp_delta !== 0;
-      const hasVpDetail = (log.details || []).some(d => d.includes("Victory Points:") || d.includes(" VP"));
-      const hasVpText = log.text.includes("Victory Points:") || log.text.includes(" VP");
-      return hasVpDelta || hasVpDetail || hasVpText;
+    const isVpEntry = (i: number): boolean => {
+      const e = entries[i];
+      return e.vp_delta !== 0 || e.lines.some(l => l.includes("Victory Points:") || l.includes(" VP"));
     };
-
-    const { targetIndices, includedIndices } = this.getFilteredIndices(logs.length, isVpChangingLive);
+    const { targetIndices, includedIndices } = this.getFilteredIndices(entries.length, isVpEntry);
 
     if (logCountBadge) {
       logCountBadge.textContent = this.isVpFilterActive
         ? `${includedIndices.length} filtered (${targetIndices.size} VP events)`
-        : `${logs.length} events`;
+        : replay ? `${this.replaySteps.length} steps (Current: #${this.replayCurrentStep + 1})` : `${entries.length} events`;
     }
 
     logContainer.innerHTML = "";
     if (includedIndices.length === 0) {
-      logContainer.innerHTML = `<div class="log-empty-msg">No VP-affecting events recorded yet.</div>`;
+      logContainer.innerHTML = `<div class="log-empty-msg">${replay
+        ? "No VP-affecting events found in replay." : "No VP-affecting events recorded yet."}</div>`;
       return;
     }
 
     includedIndices.forEach((idx, k) => {
-      const log = logs[idx];
-      const isVpTarget = targetIndices.has(idx);
-
+      const e = entries[idx];
       if (k > 0 && idx > includedIndices[k - 1] + 1) {
         const gap = idx - includedIndices[k - 1] - 1;
         const sep = document.createElement("div");
         sep.className = "log-context-separator";
-        sep.textContent = `••• ${gap} step${gap > 1 ? "s" : ""} skipped •••`;
+        sep.textContent = `••• ${gap} entr${gap > 1 ? "ies" : "y"} skipped •••`;
         logContainer.appendChild(sep);
       }
 
+      const current = replay && e.first <= this.replayCurrentStep && this.replayCurrentStep <= e.last;
       const item = document.createElement("div");
-      item.className = `log-item ${isVpTarget ? "vp-target-event" : ""}`;
+      item.className = `log-item ${current ? "active-replay-step" : ""} ${targetIndices.has(idx) ? "vp-target-event" : ""}`;
 
-      let detailsHtml = "";
-      if (log.details && log.details.length > 0) {
-        detailsHtml = log.details.map(d => {
-          let lineClass = "log-detail-line";
-          if (d.includes("🎲")) lineClass += " log-die-line";
-          if (d.includes("Victory Points:")) lineClass += " log-vp-line";
-          return `<div class="${lineClass}">${d}</div>`;
-        }).join("");
-      }
+      const lines = e.lines.map(d => {
+        let lineClass = "log-detail-line";
+        if (d.includes("🎲")) lineClass += " log-die-line";
+        if (d.includes("Victory Points:") || /\(#\d+\): .*VP/.test(d)) lineClass += " log-vp-line";
+        if (d.startsWith("  ▸ ")) lineClass += " log-sub-line";
+        return `<div class="${lineClass}">${d}</div>`;
+      }).join("");
+
+      // A replay's policy chips: every decision of the play, in order.
+      let chips = "";
+      if (replay) for (let s = e.first; s <= e.last; s++) chips += policyChipHtml(this.replaySteps, s);
 
       let vpDeltaBadge = "";
-      if (log.vp_delta !== undefined && log.vp_delta !== 0) {
-        const deltaClass = log.vp_delta > 0 ? "us" : "ussr";
-        const sign = log.vp_delta > 0 ? `+${log.vp_delta}` : `${log.vp_delta}`;
-        vpDeltaBadge = `<span class="vp-delta-pill ${deltaClass}">${sign} VP</span>`;
+      if (e.vp_delta !== 0) {
+        const deltaClass = e.vp_delta > 0 ? "us" : "ussr";
+        vpDeltaBadge = `<span class="vp-delta-pill ${deltaClass}">${e.vp_delta > 0 ? `+${e.vp_delta}` : e.vp_delta} VP</span>`;
       }
 
       item.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 6px;">
           <div>
-            <span class="log-step">[T${log.turn} AR${log.ar}]</span>
-            <span class="log-player ${log.player}">${log.player}:</span>
-            <span class="log-main-text">${log.text}</span>
+            ${replay ? `<span class="log-index" style="font-size: 10px; color: var(--text-dim);">#${e.first + 1}</span>` : ""}
+            <span class="log-step">[T${e.turn} AR${e.ar}]</span>
+            <span class="log-player ${e.player}">${e.player}:</span>
+            <span class="log-main-text">${e.title}</span>
+            ${chips}
           </div>
           ${vpDeltaBadge}
         </div>
-        ${detailsHtml}
+        ${lines}
       `;
+      if (replay) item.addEventListener("click", () => this.replayControls.goToStep(e.last));
       logContainer.appendChild(item);
     });
 
-    // Ensure auto-scrolling to the latest bottom line
     requestAnimationFrame(() => {
-      logContainer.scrollTop = logContainer.scrollHeight;
+      if (replay) {
+        const activeEl = logContainer.querySelector(".active-replay-step") as HTMLElement | null;
+        activeEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } else {
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
     });
   }
 

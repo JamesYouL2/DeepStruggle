@@ -207,6 +207,20 @@ web/ui/
      turn's cleanup, resolved in the same click -- the turn's end (final VP, the military-ops reset,
      DEFCON, the next deal) is its own `TURN_END` entry, "End of turn N". Read from the end state,
      the turn's last realignment or coup used to lose its dice and wear the turn's end as its own.
+   - **The log is shown one entry per play, not per click** (`game/log_view.ts`). The session's
+     log stays per click -- undo, the game's record, the golden and the E2E tests read it -- and
+     each click's entry carries what it is (`ActionLogItem.kind`, from `clickInfo`: setup, a
+     headline commit, a card played, its mode, a point, any other decision) with the play's
+     heading. `groupLog` groups clicks into plays -- a card played in an action round, the
+     headline, one side's setup, every line the session writes itself (turn end, undo, debug) --
+     and tells each once: the heading with its mode ("USSR plays Fidel (#8) — Ops: Influence",
+     "Ops: Coup, then the US Event" for an opponent's card), the decisions within it (`▸`), dice
+     and Events in order, then the board's changes merged over the play, with card moves in words
+     ("removed from the game", "now known to the USSR"), a deal as "US draws 7 cards: ..." and a
+     reshuffle on one line. It runs on the log **after** `redactLogs`, so grouping only merges and
+     rewords lines the view may read. A replay is grouped the same way (`replayItems` builds the
+     items from its steps' snapshots, rolls and event records). `tests/web/test_log_view.py`
+     holds the merged changes to the board's own over two turns and the USSR view to the redaction.
    - A card chosen while an event resolves (`resolving_card`) is said as what happened to it
      (`eventCardChoice`): discarded or removed, and from where ("USSR discards X from the US hand
      (Aldrich Ames Remix)"), taken back (SALT), played from the discard pile (Star Wars), played

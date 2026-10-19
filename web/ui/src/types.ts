@@ -39,6 +39,9 @@ export interface CardInHand {
   ops: number;
 }
 
+/** What a click is, for grouping the log into plays (game/log_view.ts). */
+export type LogKind = "setup" | "headline" | "play" | "mode" | "point" | "step";
+
 export interface ActionLogItem {
   step_index: number;
   turn: number;
@@ -48,6 +51,14 @@ export interface ActionLogItem {
   text: string;
   details?: string[];
   vp_delta?: number;
+  /** Set on a click's entry; the lines the session writes itself (turn end, undo...) have none. */
+  kind?: LogKind;
+  /** The heading of the play the click starts (never set for a headline still face down). */
+  title?: string;
+  /** A play's mode, for its heading. */
+  mode?: string;
+  /** Cards whose ordinary discard the heading implies. */
+  cards?: number[];
 }
 
 /** What one Event of a step did to VP and DEFCON (GameState::last_event_tracks). */
