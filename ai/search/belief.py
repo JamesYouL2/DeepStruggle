@@ -28,6 +28,7 @@ import numpy as np
 import torch
 
 import ts_engine as ts
+from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 
 DECK = int(ts.CardLocation.DRAW_DECK)
@@ -37,6 +38,8 @@ KNOWN = {1: int(ts.CardLocation.HAND_US_KNOWN), 2: int(ts.CardLocation.HAND_USSR
 TRANSIENT = (int(ts.CardLocation.PEEKED_TEMP), int(ts.CardLocation.HEADLINE_COMMITTED))
 #: The rows of one network call.
 _CHUNK = 16384
+#: The flat action space's width.
+ACTIONS = ActionEncoder.FLAT_ACTION_SIZE
 
 
 def side(code: int) -> int:
@@ -127,63 +130,85 @@ SLOT_DECK = 0
 SLOT_MY_HAND = 1
 
 
+_CARD_HAND = torch.tensor([CARD_BLOCK + c * CARD_FEATURES + SLOT_MY_HAND for c in range(110)])
+_CARD_DECK = torch.tensor([CARD_BLOCK + c * CARD_FEATURES + SLOT_DECK for c in range(110)])
+_BITS = torch.tensor([128, 64, 32, 16, 8, 4, 2, 1], dtype=torch.uint8)
+
+
 def _hypothesis_obs(base: torch.Tensor, held: torch.Tensor, pool: torch.Tensor) -> torch.Tensor:
-    """The observation rows of a past opposing decision under each hypothesised hand: `base` (one row,
-    the decision's own observation from the opponent's side) with each hidden card's own-hand / deck
-    slot set by `held` (n x 110). Exactly `ts.hypothesis_rows`'s rows (tested): from that side the
-    hypotheses differ in nothing else -- the hand and deck counts are fixed by the hand size."""
-    obs = base.unsqueeze(0).repeat(held.shape[0], 1)
-    h = held[:, pool].to(obs.dtype)
-    obs[:, CARD_BLOCK + pool * CARD_FEATURES + SLOT_MY_HAND] = h
-    obs[:, CARD_BLOCK + pool * CARD_FEATURES + SLOT_DECK] = 1.0 - h
-    return obs
+    """Observation rows of past opposing decisions under hypothesised hands: `base` (b x width, each
+    decision's own observation from the opponent's side), `held` (b x n x 110) and `pool` (b x 110, the
+    decider's hidden pool then) -> (b * n) x width, each hidden card's own-hand / deck slot set by its
+    hand. Exactly `ts.hypothesis_rows`'s rows (tested): from that side the hypotheses differ in nothing
+    else -- the hand and deck counts are fixed by the hand size."""
+    b, n = held.shape[0], held.shape[1]
+    obs = base.unsqueeze(1).expand(b, n, base.shape[1]).clone()
+    hand_idx, deck_idx = _CARD_HAND.to(base.device), _CARD_DECK.to(base.device)
+    h = held.to(obs.dtype)
+    in_pool = pool.unsqueeze(1).expand(b, n, 110)
+    obs[:, :, hand_idx] = torch.where(in_pool, h, obs[:, :, hand_idx])
+    obs[:, :, deck_idx] = torch.where(in_pool, 1.0 - h, obs[:, :, deck_idx])
+    return obs.reshape(b * n, base.shape[1])
+
+
+def _unpack(packed: torch.Tensor, width: int) -> torch.Tensor:
+    """np.packbits rows (big-endian bits) back to `width` uint8 0/1 columns."""
+    bits = (packed.unsqueeze(-1) & _BITS.to(packed.device)) != 0
+    return bits.reshape(*packed.shape[:-1], -1)[..., :width].to(torch.uint8)
 
 
 def log_weights(model: Any, device: torch.device, jobs: Sequence[Tuple[Now, np.ndarray, List[Tuple[Decision, np.ndarray]]]],
                 temperature: float = 1.0) -> List[np.ndarray]:
     """For each job (the decider's view, its hands, the record), every hand's log-likelihood of the
-    opponent's recorded decisions under the network. Per decision one observation row goes to the
-    device and is specialised there to each hand (`_hypothesis_obs`); the legal masks, which a hand
-    changes in ways only the engine knows, come from C++ (`ts.hypothesis_masks`)."""
+    opponent's recorded decisions under the network. Everything for the call crosses to the device at
+    once -- one observation row per decision, the hands, each decision's departed cards and pool, and
+    the legal masks bit-packed (they change with the hand in ways only the engine knows:
+    `ts.hypothesis_masks`) -- and the rows are built there (`_hypothesis_obs`) in chunks of `_CHUNK`."""
     feats = model_obs_features(model)
-    out = [np.zeros(len(h), dtype=np.float64) for _, h, _ in jobs]
-    blocks: List[Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor, int]] = []   # job, obs, masks, held, action
-    pending = 0
-
-    def flush() -> None:
-        nonlocal pending
-        if not blocks:
-            return
-        obs = torch.cat([b[1] for b in blocks])
-        m = torch.cat([b[2] for b in blocks])
-        acts = torch.cat([torch.full((b[1].shape[0],), b[4], dtype=torch.long, device=device) for b in blocks])
-        with torch.no_grad():
-            lg = model(obs, m)[0].float()
-            lg = (lg / temperature).masked_fill(m == 0, float("-inf"))
-            lp = torch.log_softmax(lg, -1).gather(1, acts[:, None]).squeeze(1).double()
-            lp = torch.where(torch.isfinite(lp), lp, torch.full_like(lp, -1e9)).cpu().numpy()
-        at = 0
-        for job, o, _m, _h, _a in blocks:
-            out[job] += lp[at:at + o.shape[0]]
-            at += o.shape[0]
-        blocks.clear()
-        pending = 0
-
+    n = len(jobs[0][1]) if jobs else 0
+    if any(len(h) != n for _, h, _ in jobs):
+        raise ValueError("every job must carry the same number of hands")
+    bases: List[np.ndarray] = []
+    lefts: List[np.ndarray] = []
+    pools: List[np.ndarray] = []
+    packed: List[np.ndarray] = []
+    acts: List[int] = []
+    job_of: List[int] = []
     for j, (now, hands, rec) in enumerate(jobs):
+        opp = 3 - now.me
         for d, left in rec:
             held = np.ascontiguousarray(hands | left.astype(np.uint8)[None, :])
-            opp = 3 - now.me
-            pool = np.flatnonzero((d.locs == DECK) | (d.locs == UNKNOWN[opp]))
-            base = torch.from_numpy(np.asarray(ts.extract_observation_features(d.state, player(opp), feats))).to(device)
-            held_t = torch.from_numpy(held).to(device)
-            obs = _hypothesis_obs(base, held_t, torch.from_numpy(pool).to(device))
-            masks = torch.from_numpy(ts.hypothesis_masks(d.state, player(now.me), held)).to(device)
-            blocks.append((j, obs, masks, held_t, d.action))
-            pending += len(hands)
-            if pending >= _CHUNK:
-                flush()
-    flush()
-    return out
+            bases.append(np.asarray(ts.extract_observation_features(d.state, player(opp), feats), dtype=np.float32))
+            lefts.append(left.astype(np.uint8))
+            pools.append((d.locs == DECK) | (d.locs == UNKNOWN[opp]))
+            packed.append(np.packbits(ts.hypothesis_masks(d.state, player(now.me), held), axis=1))
+            acts.append(d.action)
+            job_of.append(j)
+    if not bases:
+        return [np.zeros(n, dtype=np.float64) for _ in jobs]
+    with torch.no_grad():
+        base_t = torch.from_numpy(np.stack(bases)).to(device)
+        left_t = torch.from_numpy(np.stack(lefts)).to(device)
+        pool_t = torch.from_numpy(np.stack(pools)).to(device)
+        mask_t = torch.from_numpy(np.stack(packed)).to(device)
+        hands_t = torch.from_numpy(np.stack([h for _, h, _ in jobs])).to(device)
+        act_t = torch.tensor(acts, dtype=torch.long, device=device)
+        job_t = torch.tensor(job_of, dtype=torch.long, device=device)
+        logw = torch.zeros(len(jobs), n, dtype=torch.float64, device=device)
+        per = max(1, _CHUNK // max(n, 1))                       # decisions per chunk
+        for lo in range(0, len(bases), per):
+            sl = slice(lo, lo + per)
+            held = hands_t[job_t[sl]] | left_t[sl].unsqueeze(1)
+            obs = _hypothesis_obs(base_t[sl], held, pool_t[sl])
+            m = _unpack(mask_t[sl], ACTIONS).reshape(-1, ACTIONS)
+            lg = model(obs, m)[0].float()
+            lg = (lg / temperature).masked_fill(m == 0, float("-inf"))
+            a = act_t[sl].repeat_interleave(n)
+            lp = torch.log_softmax(lg, -1).gather(1, a[:, None]).squeeze(1).double()
+            lp = torch.where(torch.isfinite(lp), lp, torch.full_like(lp, -1e9)).reshape(-1, n)
+            logw.index_add_(0, job_t[sl], lp)
+        out = logw.cpu().numpy()
+    return [out[j] for j in range(len(jobs))]
 
 
 def posterior(hands: np.ndarray, logw: np.ndarray) -> Tuple[np.ndarray, float]:

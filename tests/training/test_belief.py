@@ -63,9 +63,9 @@ def test_the_device_rows_are_the_engines_rows_exactly() -> None:
         for d, left in rec[:4]:
             held = np.ascontiguousarray(hands | left.astype(np.uint8)[None, :])
             want_obs, want_masks = ts.hypothesis_rows(d.state, player(now.me), held, 0)
-            pool = np.flatnonzero((d.locs == DECK) | (d.locs == UNKNOWN[opp]))
-            base = torch.from_numpy(np.asarray(ts.extract_observation_features(d.state, player(opp), 0)))
-            got = _hypothesis_obs(base, torch.from_numpy(held), torch.from_numpy(pool)).numpy()
+            pool = torch.from_numpy((d.locs == DECK) | (d.locs == UNKNOWN[opp]))[None]
+            base = torch.from_numpy(np.asarray(ts.extract_observation_features(d.state, player(opp), 0)))[None]
+            got = _hypothesis_obs(base, torch.from_numpy(held)[None], pool).numpy()
             assert np.array_equal(got, want_obs)
             assert np.array_equal(ts.hypothesis_masks(d.state, player(now.me), held), want_masks)
 
