@@ -330,4 +330,6 @@ In windows 1–4 no arm shows a seat pattern (differences within noise, signs mi
 in the last window, in all three arms alike: it is the control's 12,730–12,800M SWA that plays a different
 seat balance (unusually strong as USSR, weak as US against itself), not the arms.
 
-**Pair 2, item 1.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
+**Pair 2, item 1 (A18): level.** Raw 50.0 / 49.5 / 48.6 / 49.0 / 49.0% over the five windows, level per seat against each window's own control self-play, and 50.1% under the keyed root. A level grown read does not cancel the from-scratch run (above).
+
+**Pair 2, item 1, the schedule.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
