@@ -149,3 +149,32 @@ planning block.
 ## Runs
 
 (filled in while running; mirrors [`../runs.md`](../runs.md))
+
+**`P36b` (2026-10-19): no world count reaches 90%; the targets are built at 128, ceiling 72.7%.**
+`ai/eval/rollout_consistency.py --keyed --stop earlier --leaf own --entry --worlds 16 64 128 --positions 3000`
+on A13+R48's SWA (12,730–12,800M): 3,000 entry decisions (card choices) from 256 greedy games, each searched
+three times per world count (`data/logs/temp/p36b.out`):
+
+| keyed worlds | departs | of a run's departures, another departs too / same move | stable in all three | improved policy: TV between runs (median) / top move agrees |
+|:---|---:|:---|:---|:---|
+| 16 | 17–18% | 64–67% / 57–60% | 237 of 518 (**45.8%**) | 0.214 (0.055) / 77% |
+| 64 | 27% | 79–81% / 73–75% | 519 of 808 (**64.2%**) | 0.164 (0.018) / 83% |
+| 128 | 32% | 85–86% / 80–81% | 701 of 964 (**72.7%**) | 0.135 (0.003) / 86% |
+
+* 16 keyed worlds reproduce the record's 16 shared-stream numbers (62–64% / 57–58%, 188 of 432): keyed
+  chance did not make the pick steadier at equal worlds.
+* The departure share itself grows with worlds (17 → 27 → 32%): the z2 rule clears more leads as their
+  standard error shrinks, so each larger set adds borderline departures; the stable ones carry larger
+  leads (+0.045 against +0.031 at 128).
+* The improved policy (the P36c target) is steadier than the pick: its median TV between seeds falls to
+  0.003 at 128, top move 86%.
+* By the rule, P36c builds at 128 and reads every student against 72.7% (the departures) and 86% (the
+  target's top move) as the teacher's own ceiling. Cost: 49 decisions/s at 128 worlds eager (CUDA graphs
+  slower and out of memory), so the 200k-decision set is ~2 h at the three world counts, not ~30 min.
+
+**`P36a` (2026-10-19): candidate set delivered for review.** 954 rows over 18 patterns in the five groups,
+mined from 2,000 greedy games of A13+R48 (`ai/eval/issue_bank.py`), two patterns constructed from real
+positions (Nuclear Subs set in effect; NATO and Formosan Resolution swapped into a Five Year Plan hand),
+each row with a workbench link and its proposed label source -- `ai/eval/banks/issues_P36a_candidates.jsonl`,
+the review page [`../log/P36a_issue_bank_candidates.md`](../log/P36a_issue_bank_candidates.md). Nothing is
+labelled until the owner chooses the situations.
