@@ -1,0 +1,122 @@
+# Turn 1 De-Stalinization destinations priced by paired playouts (tools/scripts/destal_values.py):
+# every package of the freed points over the chosen countries, in every world, the rest of the
+# game played greedy by one network. The position comes from a release asset of this repository,
+# made locally from the corpus:
+#
+#   destal_values.py position --games data/datasets/ts_replayer/51.json.gz --out positions.jsonl
+#   gh release create destal-input-<date> positions.jsonl --prerelease --title "destal values input"
+#   gh workflow run destal_values.yml --ref exp/destal-values -f release=destal-input-<date> -f worlds=4000
+#   gh run download <run-id> -n destal-values-<run-id> -D data/reports/destal_t1/values
+name: destal-values
+
+on:
+  # The push trigger only registers the workflow from this branch (a dispatch-only workflow that is
+  # not on the default branch cannot be dispatched); every job is skipped on it.
+  push:
+    branches: [exp/destal-values]
+    paths: [.github/workflows/destal_values.yml]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release whose *.jsonl asset holds the positions (destal_values.py position)"
+        required: true
+      model:
+        description: "Model in the Hugging Face repo (.onnx or .pt); the default is A13+R48's SWA, the strongest network on the E7 leaderboard"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.onnx"
+      worlds:
+        description: "Worlds per position (each plays every package)"
+        default: "4000"
+      runners:
+        default: "20"
+      args:
+        description: "Further arguments for the run stage (e.g. --redeal mover, --countries ...)"
+        default: ""
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  RELEASE: ${{ inputs.release }}
+  MODEL: ${{ inputs.model }}
+  WORLDS: ${{ inputs.worlds }}
+  RUNNERS: ${{ inputs.runners }}
+  ARGS: ${{ inputs.args }}
+  HF_REPO: ${{ inputs.hf_repo }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Fetch the positions and the model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern '*.jsonl' --dir input
+          mkdir -p models
+          curl -sSfL --retry 3 -o "models/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum "models/$(basename "$MODEL")"
+      - name: Play (part ${{ matrix.part }})
+        run: |
+          mkdir -p out
+          python tools/scripts/destal_values.py run --input input/*.jsonl --model "models/$(basename "$MODEL")" \
+            --worlds "$WORLDS" --part "${{ matrix.part }}/$RUNNERS" \
+            --out "out/values-${{ matrix.part }}.jsonl.gz" $ARGS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: destal-values-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  # Pools whatever parts arrived, so one failed runner does not discard the others' hours; the
+  # missing parts are named in report/values.jsonl.gz.parts.json and in provenance.txt.
+  pool:
+    needs: [plan, run]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: destal-values-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool and report
+        run: |
+          mkdir -p report
+          python tools/scripts/destal_values.py pool --parts parts/values-*.jsonl.gz --expect "$RUNNERS" \
+            --out report/values.jsonl.gz
+          python tools/scripts/destal_values.py report --input report/values.jsonl.gz --out report/report.md
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "positions: release $RELEASE"
+            echo "model: $HF_REPO $MODEL  worlds: $WORLDS  runners: $RUNNERS  args: $ARGS"
+            echo "parts: $(cat report/values.jsonl.gz.parts.json)"
+          } > report/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: destal-values-${{ github.run_id }}
+          path: report/
+          retention-days: 90
