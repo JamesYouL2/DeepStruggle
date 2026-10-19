@@ -66,7 +66,7 @@ def describe(st: Any) -> Dict[str, str]:
     era = "early(1-3)" if t <= 3 else ("mid(4-7)" if t <= 7 else "late(8-10)")
     side = "US" if acting_player(st) == ts.Player.US else "USSR"
     return {"type": dt, "phase": phase, "era": era, "defcon": f"DEFCON {int(st.defcon)}", "side": side,
-            "card": (str(ts.CardData.get_card_info(card)["name"]) if card else "-")}
+            "card": (str(ts.CardData.get_card_info(card)["name"]) if 1 <= card <= 110 else "-")}
 
 
 def main() -> None:
