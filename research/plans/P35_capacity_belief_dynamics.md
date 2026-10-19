@@ -258,6 +258,22 @@ by per-decision host-device transfers that do not batch across games. Not yet us
 the opponent's first move of a turn it is the uniform prior) and more hands (P35a: not converged at
 2,048).
 
+**3b against humans: the belief is tuned to opponents that play like our network (2026-10-19).**
+`ai/eval/belief_human_probe.py`: the same posterior on the human corpus (256 games converted, 36,048
+positions, true hands from the converter), card and play-mode choices only (the logs order a play's points
+arbitrarily), 256 hands, at several likelihood temperatures. Prior log loss 0.4595:
+
+| likelihood temperature | 1 | 1.5 | 2 | 3 | 5 | 8 |
+|:---|---:|---:|---:|---:|---:|---:|
+| log loss | 0.5131 | 0.4755 | 0.4617 | 0.4533 | **0.4518** | 0.4534 |
+| vs the prior | −11.7% | −3.5% | −0.5% | +1.3% | **+1.7%** | +1.3% |
+
+On self-play the same settings gain +7.6% at T = 1 (P35a). Against humans the network's peaked policy is a
+wrong model: a human who plays a card our network would not is read as not holding the cards it would have
+played, confidently and wrongly. Flattened (T ≈ 5) the belief barely beats the prior. So the measured 3b
+gain (+3.4 against the keyed root) is against an opponent the likelihood models exactly; one belief mode
+for the leaderboard and the browser (owner) has to choose its likelihood for both.
+
 **The per-seat bar (2026-10-19, corrected).** The window reads were first read per seat against one bar,
 the control's self-play in its last window (US 41.5 / USSR 58.0), which made every arm look "+5 as US, −5
 as USSR". The control's self-play per seat moves with the window, and the last window is the outlier. Each
