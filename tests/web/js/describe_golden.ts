@@ -19,7 +19,7 @@ const golden = JSON.parse(gunzipSync(readFileSync(goldenPath)).toString("utf8"))
 //   so for those steps the action's own lines are left out of the comparison;
 // - the port says Five Year Plan's and Terrorism's random discards on lines of their own ("  ✂ "),
 //   and Missile Envy's exchange with how the taken card resolves ("  ⇄ ");
-// - it counted the Olympic sponsor's +2 twice: the engine's roll1 already holds it (roll1 = die + 2),
+// - it counted the Olympic sponsor's +2 twice: the engine's roll1 then held it (roll1 = die + 2),
 //   so the golden's sponsor die, total and winning margin are each 2 too high -- corrected here
 //   (`olympicsCorrected`), the rest of the line still compared.
 const comparable = (lines: string[], eventChoice: boolean) => {

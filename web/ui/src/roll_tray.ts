@@ -87,11 +87,10 @@ export function describeRoll(r: RecentRoll): RollView {
         result: r.success ? `${sideTag(roller)} wins, +${net} VP` : "fails",
       };
     case "OLYMPIC_GAMES": {
-      // The engine records the sponsor's roll with its +2 already in (roll1 = die + 2, mod1 = 2).
       const winner = r.success ? roller : other(roller);
       return {
         kind: "Olympic Games", where: `${roller} sponsors`, ok: !!r.success,
-        dice: `${term(r1 - m1, m1, roller, true)}<span class="roll-vs">vs</span>${term(r2, m2, other(roller), true)}`,
+        dice: `${term(r1, m1, roller, true)}<span class="roll-vs">vs</span>${term(r2, m2, other(roller), true)}`,
         result: `${sideTag(winner)} +2 VP`,
       };
     }

@@ -704,7 +704,11 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                     sp_roll = Prng::roll_d6(state.rng_state) + 2;
                     opp_roll = Prng::roll_d6(state.rng_state);
                 }
-                state.last_die_roll = sp_roll;
+                // The record holds the die and its +2 apart, as every other roll does: roll1 was
+                // the sponsor's total, and the display's total1 = roll1 + mod1 counted the +2 twice.
+                // Display only -- the winner and the VP above and below use sp_roll.
+                const uint8_t sp_die = static_cast<uint8_t>(sp_roll - 2);
+                state.last_die_roll = sp_die;
                 state.last_opp_die_roll = opp_roll;
                 Player winner = (sp_roll > opp_roll) ? sponsor : get_opponent(sponsor);
                 state.last_roll = DieRollRecord{
@@ -712,7 +716,7 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                     .roller = sponsor,
                     .card_id = card_ids::OLYMPIC_GAMES,
                     .country_id = 255,
-                    .roll1 = sp_roll,
+                    .roll1 = sp_die,
                     .mod1 = 2,
                     .roll2 = opp_roll,
                     .mod2 = 0,

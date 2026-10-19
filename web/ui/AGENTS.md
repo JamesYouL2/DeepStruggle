@@ -115,8 +115,8 @@ web/ui/
      after a turn's last action round clears the roll from the state it ends on), a replay file's
      step only its snapshot's roll. They show during the half action round they were made in and
      the next (the reply; the next turn's headline follows the last action round), after that
-     they are the log's. The Olympic Games record holds the sponsor's roll with its +2 in
-     (`roll1` = die + 2, `mod1` = 2), so the tray draws `roll1 - mod1` as the die.
+     they are the log's. The Olympic Games record holds the sponsor's die and its +2 apart
+     (`roll1` = die, `mod1` = 2), like every other roll; until 2026-10-19 `roll1` was die + 2.
    - **This turn's effects** (`#map-turn-effects`, `CardsView.renderTurnEffects`) run across the
      top of the map: every flag whose `EFFECT_INFO_MAP` duration is `TURN`, the card's text on
      hover. Permanent and conditional effects, and the Space Race attempt flags, stay in the

@@ -73,9 +73,9 @@ def test_a_replay_files_step_shows_its_snapshots_roll(tmp_path: Any) -> None:
 
 
 def test_the_olympic_sponsors_die_is_the_die(tmp_path: Any) -> None:
-    """The engine records the sponsor's roll with its +2 in (card_dispatcher.cpp): a 5 is roll1 7."""
-    olympics = {"type": "OLYMPIC_GAMES", "roller": "US", "country_id": 255, "roll1": 7, "mod1": 2,
-                "total1": 9, "roll2": 4, "mod2": 0, "success": True}
+    """The record holds the sponsor's die and its +2 apart (card_dispatcher.cpp): a 5 is 7 in all."""
+    olympics = {"type": "OLYMPIC_GAMES", "roller": "US", "country_id": 255, "roll1": 5, "mod1": 2,
+                "total1": 7, "roll2": 4, "mod2": 0, "success": True}
     ar = _state(1, "ACTION_ROUND", 1, "US")
     out = _run(tmp_path, ar, [], ar, [olympics])
     view = out["tray"][0]

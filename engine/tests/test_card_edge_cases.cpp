@@ -2153,6 +2153,35 @@ TEST(CardEdgeCasesTest, DieRollRecord_BrushWar_PopulatedOnTargetResolution) {
     ASSERT_TRUE(state.last_roll.success);
 }
 
+// The sponsor's die and its +2 are recorded apart, like every other roll's die and modifier.
+// roll1 held the total (die + 2) beside mod1 = 2, so a display adding the two counted the +2
+// twice: at the turn 1 headline of the workbench game cns the US rolled 4 (6 with the +2) and
+// the record read 6 + 2 = 8.
+TEST(CardEdgeCasesTest, DieRollRecord_OlympicGames_RecordsTheDieWithoutItsBonus) {
+    ts::GameState state{};
+    ts::StateMachine::init_new_game(state, 42);
+    state.current_phase = ts::Phase::ACTION_ROUND;
+    state.action_round = 1;
+    state.phasing_player = ts::Player::US;
+    state.victory_points = 0;
+    ASSERT_FALSE(ts::CardHandlers::trigger_event(state, ts::card_ids::OLYMPIC_GAMES, ts::Player::US));
+    // The USSR participates; the sponsor's die is the primary, the opponent's the secondary.
+    ASSERT_FALSE(ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::CHOOSE_BRANCH, 0, 0, 0}));
+    ASSERT_EQ(state.ctx().decision_type, ts::DecisionType::ROLL_DIE);
+    ASSERT_TRUE(ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::ROLL_DIE, 4, 5, 0}));
+
+    ASSERT_EQ(state.last_roll.type, ts::RollType::OLYMPIC_GAMES);
+    ASSERT_EQ(state.last_roll.roller, ts::Player::US);
+    ASSERT_EQ(state.last_roll.roll1, 4);
+    ASSERT_EQ(state.last_roll.mod1, 2);
+    ASSERT_EQ(state.last_roll.roll2, 5);
+    ASSERT_EQ(state.last_die_roll, 4);
+    ASSERT_EQ(state.last_opp_die_roll, 5);
+    // 4 + 2 = 6 beats 5: the outcome is the sponsor's total, as before.
+    ASSERT_TRUE(state.last_roll.success);
+    ASSERT_EQ(state.victory_points, 2);
+}
+
 
 // =============================================================================
 // COMPLEX EVENT CHAINS & FULL ACTION ROUND RE-ENTRANCY TESTS
