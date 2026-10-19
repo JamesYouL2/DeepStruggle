@@ -243,4 +243,19 @@ rest are excluded by the rules, e.g. an unplayable held scoring card).
   (4% of positions) it is the prior. Carrying the particles across the deal (held cards) extends it.
 * The learned combination (history probe + posterior logit, fitted on ~2,000 positions) overfit; not read.
 
+**3b, the belief root (2026-10-19): +3.4, about 45% of the oracle's ceiling.** `ai/search/belief.py`
+(commits `1199961`, `ed4b852`): the tracker sees every decision of its games through the tournament's new
+hooks and, at a root decision, weights 2,048 uniform hands by the network's likelihood of the opponent's
+decisions this turn (all of them -- P35a's best form), then resamples the root's 16 worlds from them; the
+likelihood rows are one observation per opposing decision with each hidden card's own-hand / deck slot set
+on the device (exactly the engine's rows, tested). A13+R48's SWA (12,730–12,800M) under the keyed root with
+belief worlds against the same network under the honest keyed root, 1,000 deals a side: **53.4%** (US 47.4
+/ USSR 59.5; ±1.1, about 3 SE; `data/reports/p35_belief_root_vs_keyed.json`) -- **about +24 Elo**, against
+the oracle root's 57.6% (US 52.6 / USSR 62.6). The keyed root's own per-seat self-play bar is not measured;
+against the raw network's (41.5 / 58.0) both seats are above it. Cost: ~6 s a game for the belief on the
+current code (the 2,000 games took 4 h 15 min beside A18 against ~50 min for the keyed root's), dominated
+by per-decision host-device transfers that do not batch across games. Not yet used: earlier turns (before
+the opponent's first move of a turn it is the uniform prior) and more hands (P35a: not converged at
+2,048).
+
 **Pair 2, item 1.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
