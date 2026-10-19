@@ -119,7 +119,7 @@ export function redactState(s: GameState, view: ViewMode): GameState {
   // The other side's options, while it decides, are not ours to see.
   if (oppDeciding && !s.is_terminal) {
     r.view_hidden_decision = true;
-    r.legal_actions = { ...s.legal_actions, valid_ids: [], valid_action_labels: {} };
+    r.legal_actions = { ...s.legal_actions, valid_ids: [], valid_action_labels: {}, can_confirm_done: false };
   }
   if (s.action_logs) r.action_logs = redactLogs(s.action_logs, view, faceDownHeadline);
   return r;

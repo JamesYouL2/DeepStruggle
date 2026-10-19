@@ -92,6 +92,9 @@ export class GameSession {
     s.step_index = this.stepIndex;
     s.action_logs = this.logs;
     s.can_undo = this.history.length > 0;
+    // Muslim Revolution with US Influence in one of its eight countries takes that one and then
+    // offers only CONFIRM_DONE: the removal is mandatory, so there is no early stop to say so.
+    s.legal_actions.can_confirm_done = !!this.engine.mask(false)[this.engine.layout.confirm_done_index];
     s.players = { US: "US", USSR: "USSR" };
     return s;
   }

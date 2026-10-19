@@ -31,6 +31,10 @@ export interface LegalActions {
   valid_ids: number[];
   valid_action_labels?: Record<string, string>;
   allow_early_stop: boolean;
+  /** The engine's flat mask offers CONFIRM_DONE (session.ts). For a target decision that is
+   * either an early stop or the way out once no eligible target is left -- the display's own
+   * per-decision mask has no slot for the second. */
+  can_confirm_done?: boolean;
 }
 
 export interface CardInHand {

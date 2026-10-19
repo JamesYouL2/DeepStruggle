@@ -171,6 +171,12 @@ web/ui/
      `allow_early_stop`, outside `valid_ids`), which hands the card back for Grain Sales' 2 Ops.
      Without it the page could only play the drawn card. Ops not yet granted read "the card's Ops",
      not "0 Ops".
+   - A target decision whose eligible targets have run out offers only CONFIRM_DONE in the
+     engine's flat mask, and the display's per-decision mask has no slot for it: with
+     `allow_early_stop` off (a mandatory removal) the panel was empty and the game stuck -- Muslim
+     Revolution with US Influence in one of its eight countries. The session sets
+     `legal_actions.can_confirm_done` from the flat mask, and the panel then offers "✓ Done — no
+     eligible target left" (`tests/web/test_e2e_muslim_revolution.py`).
    - `tests/web/test_e2e_card_choices.py` plays all of these from the US hand.
 5. **Deluxe Space Race Track & Modal Inspector (`tracks_view.ts`)**:
    - Renders the 9-step ladder (0..8) in the top status bar with US and USSR marker tokens and turn attempt counters (`Attempts: used/max`).

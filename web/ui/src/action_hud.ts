@@ -346,6 +346,11 @@ export class ActionHud {
 
         if (allowEarlyStop) {
           buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Done / Pass Remaining</button>`;
+        } else if (legal.can_confirm_done) {
+          // No eligible target is left for what remains (the engine's flat mask offers only
+          // CONFIRM_DONE): without this the panel was empty and the game could not go on.
+          promptText += ` <em>No eligible target is left.</em>`;
+          buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Done — no eligible target left</button>`;
         }
         break;
 
