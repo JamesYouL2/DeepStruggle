@@ -17,9 +17,13 @@ One pass of greedy self-play per checkpoint feeds every section:
    designates, whether the US then places its Ops influence in that region more than usual, and
    US Europe Control wins in games where Chernobyl closed Europe -- only when the US plays the
    event in more than 1% of its plays of the card; otherwise the section says so and stops.
-7. **UN Intervention** -- the opponent card each side plays with it.
-8. **Space race** -- the cards each side sends there most.
-9. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
+7. **Blockade** -- the US's card choices while it controls West Germany and holds exactly one card
+   that answers Blockade: how often it plays that card by where Blockade is, and the network's
+   probability of playing it with Blockade moved to each place (the same positions).
+8. **UN Intervention** -- the opponent card each side plays with it.
+9. **Space race** -- the cards each side sends there most, and how often it plays each of them so
+   that the opponent's event fires in its own round.
+10. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
    same logic (one count per holding where the owner could have played the event).
 
 With `--leak`, a searched-leak census of the same network under the same player
@@ -97,6 +101,16 @@ CHERNOBYL_EVENT_MIN = 0.01
 OP_INFLUENCE = int(ts.OpMode.INFLUENCE)
 SOUTH_KOREA = int(_MAP["South Korea"]["id"])
 CUBA = int(_MAP["Cuba"]["id"])
+BLOCKADE = ID["Blockade"]
+WEST_GERMANY = int(_MAP["West Germany"]["id"])
+L = ts.CardLocation
+#: Where the Blockade section moves Blockade to, by the names the US can tell apart: "unknown" is the
+#: draw deck, which the US sees exactly as an unseen card in the USSR's hand.
+BLOCKADE_PLACES: Dict[str, Any] = {"unknown": L.DRAW_DECK, "discard": L.DISCARD_PILE,
+                                   "removed": L.REMOVED_FROM_GAME, "ussr_known": L.HAND_USSR_KNOWN}
+BLOCKADE_PLACE_NAMES = {"unknown": "draw deck, or the USSR's hand unseen", "discard": "discard pile",
+                        "removed": "removed from the game", "ussr_known": "the USSR's hand, known to the US",
+                        "other": "elsewhere"}
 #: The engine's lists (`trigger_opec`, `trigger_alliance_for_progress`): 1 VP per country controlled.
 OPEC_COUNTRIES = [int(_MAP[n]["id"]) for n in
                   ("Egypt", "Iran", "Libya", "Saudi Arabia", "Iraq", "Gulf States", "Venezuela")]
@@ -115,6 +129,47 @@ def _hand(st: ts.GameState, player: Any) -> List[int]:
 
 def _mode(a: int) -> str:
     return "event first" if a == EVENT else "space race" if a == SPACE else "Ops first"
+
+
+def _us_ops(st: ts.GameState, card: int) -> int:
+    """A card's Ops for the US outside Asia, as the engine's `combine_ops` counts them: Containment +1
+    to at most 4 (or the printed value), Red Scare/Purge -1, never below 1. It is the value Blockade
+    asks about (`trigger_blockade` uses `get_effective_ops`, which the bindings do not export)."""
+    base = int(CARDS[card]["ops"])
+    if base == 0:
+        return 0
+    up = st.has_flag(ts.EffectBits.CONTAINMENT_ACTIVE)
+    ops = base + int(up) - int(st.has_flag(ts.EffectBits.PURGE_US_ACTIVE))
+    if up:
+        ops = min(ops, max(4, base))
+    return max(ops, 1)
+
+
+def _blockade_place(loc: Any) -> str:
+    """Where Blockade is, as the US sees it."""
+    if loc in (L.DRAW_DECK, L.HAND_USSR_UNKNOWN):
+        return "unknown"
+    for name, place in BLOCKADE_PLACES.items():
+        if loc == place:
+            return name
+    return "other"
+
+
+def _with_blockade(st: ts.GameState, loc: Any) -> Optional[ts.GameState]:
+    """`st` with Blockade at `loc`. A move into or out of the USSR's hand swaps an unseen card the
+    other way between that hand and the draw deck, so the USSR hand size the US sees stays the same;
+    None when there is no such card."""
+    s = st.clone()
+    was_in = s.get_card_location(BLOCKADE) in (L.HAND_USSR_UNKNOWN, L.HAND_USSR_KNOWN)
+    now_in = loc in (L.HAND_USSR_UNKNOWN, L.HAND_USSR_KNOWN)
+    if was_in != now_in:
+        src, dst = (L.DRAW_DECK, L.HAND_USSR_UNKNOWN) if was_in else (L.HAND_USSR_UNKNOWN, L.DRAW_DECK)
+        pool = [c for c in range(1, 111) if c != BLOCKADE and s.get_card_location(c) == src]
+        if not pool:
+            return None
+        s.set_card_location(pool[0], dst)
+    s.set_card_location(BLOCKADE, loc)
+    return s
 
 
 # --------------------------------------------------------------------------------------------
@@ -455,11 +510,14 @@ class UNIntervention:
 
 class PlayModes:
     """Every play-mode choice (a card played in an action round, not inside an event): which card,
-    which side, and whether it went to the space race -- the denominator for the space-race list."""
+    which side, whether it went to the space race -- the denominator for the space-race list -- and,
+    for the opponent's card, whether its event fired: any mode but the space race, when the event can
+    trigger (`trigger_event`'s own test, on flags an Ops-first play cannot change before it resolves)."""
 
     def __init__(self) -> None:
         self.counts: Dict[str, Dict[str, int]] = {"US": {}, "USSR": {}}
         self.space: Dict[str, Dict[str, int]] = {"US": {}, "USSR": {}}
+        self.fired: Dict[str, Dict[str, int]] = {"US": {}, "USSR": {}}
 
     def see(self, g: int, st: ts.GameState, a: int) -> None:
         ctx = st.ctx()
@@ -471,6 +529,69 @@ class PlayModes:
         self.counts[side][card] = self.counts[side].get(card, 0) + 1
         if a == SPACE:
             self.space[side][card] = self.space[side].get(card, 0) + 1
+        owner = ts.Player.USSR if side == "US" else ts.Player.US
+        if (a != SPACE and _side(int(card)) == ("ussr" if side == "US" else "us")
+                and ts.CardHandlers.can_trigger_event(st, int(card), owner)):
+            self.fired[side][card] = self.fired[side].get(card, 0) + 1
+
+    def done(self, g: int) -> None:
+        pass
+
+
+class BlockadeAnswer:
+    """The US's card choices in an action round (not inside an event) while it controls West Germany,
+    does not hold Blockade, and holds exactly one card Blockade would take (3 or more Ops as the event
+    counts them): the card, where Blockade is as the US sees it, and whether the card was chosen.
+    `evaluate` then reads the network's probability of choosing the card with Blockade moved to each
+    of `BLOCKADE_PLACES`, at the same position."""
+
+    def __init__(self) -> None:
+        self.choices: List[Dict[str, Any]] = []
+        self.pending: List[Tuple[Dict[str, Any], ts.GameState, np.ndarray]] = []
+
+    def see(self, g: int, st: ts.GameState, a: int, mask: np.ndarray) -> None:
+        ctx = st.ctx()
+        if (st.current_phase != ts.Phase.ACTION_ROUND or ctx.decision_type != ts.DecisionType.SELECT_CARD
+                or int(ctx.resolving_card) != 0 or ctx.decision_player != ts.Player.US):
+            return
+        if not ts.Scoring.is_controlled_by(st, WEST_GERMANY, ts.Player.US):
+            return
+        hand = _hand(st, ts.Player.US)
+        answers = [c for c in hand if _us_ops(st, c) >= 3]
+        if BLOCKADE in hand or len(answers) != 1 or not mask[answers[0] - 1]:
+            return
+        card = answers[0]
+        rec: Dict[str, Any] = {
+            "game": g, "turn": int(st.turn), "ar": int(st.action_round), "card": card,
+            "place": _blockade_place(st.get_card_location(BLOCKADE)),
+            "played": a < ActionEncoder.PLAY_MODE_OFFSET and int(ts.decode_flat_action(st, a).primary_id) == card}
+        self.choices.append(rec)
+        self.pending.append((rec, st, np.array(mask)))
+
+    def evaluate(self, model: Any, feats: int, device: Any, chunk: int = 1024) -> None:
+        """`prob`, place -> the network's probability of choosing the card, for the choices seen since
+        the last call; a choice with no unseen card to swap (`_with_blockade`) gets none."""
+        k = len(BLOCKADE_PLACES)
+        rows: List[Dict[str, Any]] = []
+        obs: List[np.ndarray] = []
+        masks: List[np.ndarray] = []
+        for rec, st, mask in self.pending:
+            variants = [_with_blockade(st, loc) for loc in BLOCKADE_PLACES.values()]
+            if any(v is None for v in variants):
+                continue
+            rows.append(rec)
+            obs += [ts.extract_observation_features(v, ts.Player.US, feats) for v in variants if v is not None]
+            masks += [mask] * k
+        self.pending = []
+        for c0 in range(0, len(rows), chunk):
+            o = torch.from_numpy(np.stack(obs[c0 * k:(c0 + chunk) * k]).astype(np.float32)).to(device)
+            m = torch.from_numpy(np.stack(masks[c0 * k:(c0 + chunk) * k])).to(device)
+            with torch.no_grad():
+                logits = model(o, m)[0].float().masked_fill(m == 0, float("-inf"))
+            p = torch.softmax(logits, -1).cpu().numpy()
+            for j, rec in enumerate(rows[c0:c0 + chunk]):
+                rec["prob"] = {name: round(float(p[j * k + i, rec["card"] - 1]), 6)
+                               for i, name in enumerate(BLOCKADE_PLACES)}
 
     def done(self, g: int) -> None:
         pass
@@ -552,9 +673,10 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
     ortega, warsaw, kal_after = OrtegaResponse(), WarsawPact(), KalAftermath()
     chern_us, chern_ussr = OpponentCardPlay(CHERNOBYL, ts.Player.US), OpponentCardPlay(CHERNOBYL, ts.Player.USSR)
     chern = ChernobylEffect(merged)
+    blockade = BlockadeAnswer()
     endings: List[Dict[str, Any]] = []
     observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw,
-                 kal_after, chern_us, chern_ussr, chern)
+                 kal_after, chern_us, chern_ussr, chern, blockade)
     for b0 in (batches if batches is not None else range(0, games, batch)):
         n = min(batch, games - b0)
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
@@ -608,6 +730,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
                 chern_us.see(g, st, a)
                 chern_ussr.see(g, st, a)
                 chern.see(g, st, a)
+                blockade.see(g, st, a, masks_np[i])
             obs, masks, _, dones, info = env.step(actions)
             _collect_endings(info, done, b0, endings)
             for i, d in enumerate(dones):
@@ -619,17 +742,19 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
             if not done[i]:
                 for o in observers:
                     o.done(b0 + i)
+        blockade.evaluate(model, feats, device)
     return {"games": games, "seed": seed, "batch": batch, "player": player,
             "holdings": [dump_holding(h) for h in census.holdings],
             "star_wars": {"plays": sw.plays, "retrievals": sw.retrievals},
             "five_year_plan": fyp.plays, "aldrich_ames": ames.plays,
             "kal_007": kal.choices, "opec": opec.choices, "alliance_for_progress": alliance.choices,
-            "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space},
+            "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space, "fired": modes.fired},
             "setups": setup.records, "endings": endings,
             "ortega_us": ortega_us.plays, "ortega_response": ortega.responses, "kal_ussr": kal_ussr.plays,
             "warsaw_pact": warsaw.choices, "kal_aftermath": kal_after.plays,
             "chernobyl": {"us_plays": chern_us.plays, "ussr_plays": chern_ussr.plays, "regions": chern.regions,
-                          "us_placements": chern.placements}}
+                          "us_placements": chern.placements},
+            "blockade": blockade.choices}
 
 
 # A worker process's network and agent, loaded once by `_worker_init`.
@@ -1252,17 +1377,90 @@ def un_section(picks: Sequence[Dict[str, Any]]) -> str:
 
 
 def space_section(modes: Dict[str, Dict[str, Dict[str, int]]], top: int = 15) -> str:
+    fired = modes.get("fired")
     out = ["## Space race: the cards sent", "",
            "Every card played in an action round goes through the play-mode choice; this counts those sent to the "
            "space race. \"Share of its plays\": of that side's plays of the card in a round, the share spent on the "
-           "space race."]
+           "space race. \"Opponent's event fired\": for the opponent's card, that side's plays of it in its own "
+           "round that fired the opponent's event (any mode but the space race, when the event can trigger), with "
+           "their share of its plays of the card in a round; \"—\" for its own and neutral cards."
+           + ("" if fired is not None else " These records predate that column; rerun without `--load` to fill it.")]
     for side in ("US", "USSR"):
         allp, sp = modes["all"][side], modes["space"][side]
+        opp = "ussr" if side == "US" else "us"
         n, tot = sum(sp.values()), sum(allp.values())
         out += ["", f"### {side}", "", f"{n:,} space race plays, {_pct(n, tot)} of the {tot:,} cards it played in a round.", "",
-                "| card | sent to space | share of space plays | share of its plays |", "|:---|---:|---:|---:|"]
+                "| card | sent to space | share of space plays | share of its plays | opponent's event fired |",
+                "|:---|---:|---:|---:|---:|"]
         for c, k in sorted(sp.items(), key=lambda kv: -kv[1])[:top]:
-            out.append(f"| {CARDS[int(c)]['name']} | {k:,} | {_pct(k, n)} | {_pct(k, allp.get(c, 0))} |")
+            if fired is None:
+                fire = "n/a"
+            elif _side(int(c)) != opp:
+                fire = "—"
+            else:
+                f = fired[side].get(c, 0)
+                fire = f"{f:,} ({_pct(f, allp.get(c, 0))})"
+            out.append(f"| {CARDS[int(c)]['name']} | {k:,} | {_pct(k, n)} | {_pct(k, allp.get(c, 0))} | {fire} |")
+    return "\n".join(out)
+
+
+def _paired_change(xs: Sequence[Dict[str, Any]], place: str) -> str:
+    """The mean change in the network's probability, Blockade at `place` against "unknown", in points,
+    with one standard error over games (each game's positions averaged first)."""
+    if not xs:
+        return "—"
+    by: Dict[int, List[float]] = collections.defaultdict(list)
+    for c in xs:
+        by[int(c["game"])].append(c["prob"][place] - c["prob"]["unknown"])
+    g = np.array([np.mean(v) for v in by.values()])
+    mean = float(np.mean([c["prob"][place] - c["prob"]["unknown"] for c in xs]))
+    se = float(g.std(ddof=1) / np.sqrt(len(g))) if len(g) > 1 else float("nan")
+    return f"{100 * mean:+.2f} ± {100 * se:.2f}"
+
+
+def blockade_section(choices: Optional[Sequence[Dict[str, Any]]], player: Optional[str]) -> str:
+    out = ["## Blockade: the US's only card that answers it", "",
+           "Blockade (USSR, 1 Op, starred): unless the US discards a card worth 3 or more Ops, it loses all its "
+           "influence in West Germany. Here: every US card choice in an action round (not inside an event) while the "
+           "US controls West Germany, does not hold Blockade itself, and holds exactly one card Blockade would take "
+           "-- 3 or more Ops as the event counts them, Containment and Red Scare/Purge included (the China Card is "
+           "not a hand card and cannot be discarded). Where Blockade is, as the US sees it: the draw deck or the "
+           "USSR's hand unseen (one place to the US), the discard pile, removed, or the USSR's hand known."]
+    if choices is None:
+        return "\n".join(out + ["", "These records predate the section; rerun without `--load` to fill it."])
+    if not choices:
+        return "\n".join(out + ["", "No such choices."])
+    n = len(choices)
+    games = len({c["game"] for c in choices})
+    out += ["", "### Where Blockade really was", "",
+            f"{n:,} choices in {games:,} games. \"Played it\": the choice was that card"
+            + (f" (`{player}`'s pick)" if player else "") + "; \"network P\": the network's probability of choosing "
+            "it at the position as it stood.", "",
+            "| Blockade | choices | in Early War | played it | network P |", "|:---|---:|---:|---:|---:|"]
+    for place, name in BLOCKADE_PLACE_NAMES.items():
+        xs = [c for c in choices if c["place"] == place]
+        if not xs:
+            continue
+        ps = [c["prob"][place] for c in xs if "prob" in c and place in c["prob"]]
+        out.append(f"| {name} | {len(xs):,} ({_pct(len(xs), n)}) | {_pct(sum(c['turn'] <= 3 for c in xs), len(xs))} | "
+                   f"{_pct(sum(bool(c['played']) for c in xs), len(xs))} | "
+                   f"{f'{100 * float(np.mean(ps)):.1f}%' if ps else '—'} |")
+    ev = [c for c in choices if "prob" in c]
+    early = [c for c in ev if c["turn"] <= 3]
+    late = [c for c in ev if c["turn"] > 3]
+    out += ["", "### Blockade moved, the same positions", "",
+            "Each choice rebuilt with Blockade in each place and the network's probability of choosing the card read "
+            "in each; nothing else the US sees changes (a move into or out of the USSR's hand swaps an unseen card "
+            "the other way between that hand and the draw deck, so its size is kept). Changes are in points against "
+            "\"unknown\", ± one standard error with games as the unit. "
+            f"{len(ev):,} choices ({len(early):,} Early War, {len(late):,} Mid+Late War); {n - len(ev):,} with no "
+            "unseen card to swap are left out.", "",
+            "| Blockade moved to | network P | change | change, Early War | change, Mid+Late War |",
+            "|:---|---:|---:|---:|---:|"]
+    for place in BLOCKADE_PLACES:
+        p = f"{100 * float(np.mean([c['prob'][place] for c in ev])):.1f}%" if ev else "—"
+        ch = ["—"] * 3 if place == "unknown" else [_paired_change(xs, place) for xs in (ev, early, late)]
+        out.append(f"| {BLOCKADE_PLACE_NAMES[place]} | {p} | " + " | ".join(ch) + " |")
     return "\n".join(out)
 
 
@@ -1502,6 +1700,7 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
                                                          d.get("endings", [])), "",
             red_scare_section(holdings, d["star_wars"]["retrievals"]), "",
             warsaw_section(d.get("warsaw_pact", [])), "",
+            blockade_section(d.get("blockade"), d.get("player")), "",
             chernobyl_section(d.get("chernobyl", {}), d.get("endings", [])), "",
             un_section(d["un_intervention"]), "",
             space_section(d["play_modes"]), "",
