@@ -197,7 +197,7 @@ form; the league; human cloning from the uncurated corpus; more search compute a
 | 12,720–12,800M | 49.9% (US 46.6 / USSR 53.1) | 49.5% (US 46.1 / USSR 53.0) |
 | same, keyed root (16 worlds) | 48.4% (US 46.3 / USSR 50.6) | 49.1% (US 47.0 / USSR 51.2) |
 
-Against the control's self-play bar (US 41.5 / USSR 58.0) each arm is about +5 as US and −5 as USSR: level, not a seat shift. Neither arm was unstable (entropy 0.74 / 0.78; 4b's KL 0.016, no domination). By the decision rule, 4a level means the KL term is not earning its place at the plateau, so the from-scratch runs would use annealed reverse-KL damping instead (owner's call before it changes a recipe); 4b level means the slow reference is not adopted as a late switch.
+Per seat, see *The per-seat bar* below: level in both seats. Neither arm was unstable (entropy 0.74 / 0.78; 4b's KL 0.016, no domination). By the decision rule, 4a level means the KL term is not earning its place at the plateau, so the from-scratch runs would use annealed reverse-KL damping instead (owner's call before it changes a recipe); 4b level means the slow reference is not adopted as a late switch.
 
 **Pair 2, item 6 (PFSP, R57): level, slightly above.** Raw 51.3 / 49.9 / 49.4 / 49.8 / 51.1% over the five windows; the last window US 49.0 / USSR 53.3 (+7.5 / −4.7 against the control's self-play), under the keyed root 51.1% (US 48.1 / USSR 54.2, about +1 SE). Both seats hold, so by the rule it may be adopted, but nothing here shows it gains: the predicted harm is absent, the gain unmeasured at this size.
 
@@ -252,10 +252,28 @@ on the device (exactly the engine's rows, tested). A13+R48's SWA (12,730–12,80
 belief worlds against the same network under the honest keyed root, 1,000 deals a side: **53.4%** (US 47.4
 / USSR 59.5; ±1.1, about 3 SE; `data/reports/p35_belief_root_vs_keyed.json`) -- **about +24 Elo**, against
 the oracle root's 57.6% (US 52.6 / USSR 62.6). The keyed root's own per-seat self-play bar is not measured;
-against the raw network's (41.5 / 58.0) both seats are above it. Cost: ~6 s a game for the belief on the
+against the control's last-window self-play (41.5 / 58.0, an outlier -- *The per-seat bar*) both seats are above it. Cost: ~6 s a game for the belief on the
 current code (the 2,000 games took 4 h 15 min beside A18 against ~50 min for the keyed root's), dominated
 by per-decision host-device transfers that do not batch across games. Not yet used: earlier turns (before
 the opponent's first move of a turn it is the uniform prior) and more hands (P35a: not converged at
 2,048).
+
+**The per-seat bar (2026-10-19, corrected).** The window reads were first read per seat against one bar,
+the control's self-play in its last window (US 41.5 / USSR 58.0), which made every arm look "+5 as US, −5
+as USSR". The control's self-play per seat moves with the window, and the last window is the outlier. Each
+window's exact control SWA against itself on the reads' deals (raw, 1,000 a side;
+`data/reports/p35_ctrl_selfplay_*.json`), and each arm's seat rates minus it (± ~1.6 per seat):
+
+| window | control self-play (US / USSR) | R55 η 0 | R56 slow ref | R57 PFSP | A18 tokens |
+|:---|---:|---:|---:|---:|---:|
+| 12,410–12,480M | 45.7 / 53.1 | +2.7 / +1.9 | −0.4 / −1.5 | +0.3 / +3.5 | +0.6 / +0.5 |
+| 12,490–12,560M | 45.8 / 52.4 | +1.4 / −1.5 | +0.8 / +1.8 | −0.6 / +2.1 | +0.6 / +0.3 |
+| 12,570–12,640M | 47.4 / 51.6 | −3.7 / +1.3 | +2.4 / −0.6 | 0.0 / −0.3 | −2.1 / +0.3 |
+| 12,650–12,720M | 46.4 / 52.6 | −0.7 / −0.8 | −0.3 / +1.5 | +0.4 / +0.1 | |
+| 12,730–12,800M | **41.5 / 58.0** | +5.1 / −4.9 | +4.6 / −5.0 | +7.5 / −4.7 | |
+
+In windows 1–4 no arm shows a seat pattern (differences within noise, signs mixed). The +5 / −5 appears only
+in the last window, in all three arms alike: it is the control's 12,730–12,800M SWA that plays a different
+seat balance (unusually strong as USSR, weak as US against itself), not the arms.
 
 **Pair 2, item 1.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
