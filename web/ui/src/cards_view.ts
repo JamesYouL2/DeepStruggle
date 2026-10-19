@@ -797,8 +797,72 @@ export class CardsView {
     this.tooltipEl.style.top = `${y}px`;
   }
 
-  private hideTooltip() {
+  public hideTooltip() {
     this.tooltipEl.classList.add("hidden");
+  }
+
+  /**
+   * A pile (the discards, the removed cards) at a glance: one line a card, in a column for each
+   * side, highest Ops first. The text is a hover away, or a tap on a phone.
+   */
+  public showPileList(title: string, cardIds: number[]) {
+    const modal = document.getElementById("modal-container");
+    const titleEl = document.getElementById("modal-title");
+    const bodyEl = document.getElementById("modal-body");
+    if (!modal || !titleEl || !bodyEl) return;
+
+    modal.querySelector(".modal-content")?.classList.remove("modal-lg");
+    titleEl.textContent = `${title} (${cardIds.length} cards)`;
+    bodyEl.innerHTML = "";
+
+    if (cardIds.length === 0) {
+      bodyEl.innerHTML = "<div style=\"color: var(--text-muted); text-align: center; padding: 20px;\">No cards in this pile</div>";
+      modal.classList.remove("hidden");
+      return;
+    }
+
+    const metas = cardIds
+      .map(id => this.cardsMeta.get(id))
+      .filter((m): m is CardMetadata => m !== undefined)
+      .sort((a, b) => b.ops - a.ops || a.name.localeCompare(b.name));
+
+    const columns = document.createElement("div");
+    columns.className = "pile-columns";
+    const sides: Array<[CardMetadata["side"], string]> = [["ussr", "USSR"], ["us", "US"], ["neutral", "Neutral"]];
+    for (const [side, label] of sides) {
+      const cards = metas.filter(m => m.side === side);
+      const col = document.createElement("div");
+      col.className = "pile-column";
+      col.innerHTML = `<div class="pile-column-head ${side}">${label} <span class="pile-column-count">${cards.length}</span></div>`;
+      for (const meta of cards) {
+        const row = document.createElement("div");
+        row.className = "pile-row";
+        row.innerHTML = `
+          <span class="card-ops-badge ${meta.side}">${meta.ops}</span>
+          <span class="pile-row-name">${meta.name}${meta.one_time ? '<span class="card-star" title="Remove after event">★</span>' : ""}</span>
+        `;
+        row.addEventListener("mouseenter", (e) => this.showTooltip(e, meta));
+        row.addEventListener("mouseleave", () => this.hideTooltip());
+        // Touch has no hover: a tap opens the card's text under its name, and a second closes it.
+        row.addEventListener("click", () => {
+          this.hideTooltip();   // a tap is also a hover: the text would show twice
+          const open = row.nextElementSibling?.classList.contains("pile-row-text");
+          if (open) {
+            row.nextElementSibling!.remove();
+          } else {
+            const text = document.createElement("div");
+            text.className = "pile-row-text";
+            text.textContent = meta.description;
+            row.after(text);
+          }
+        });
+        col.appendChild(row);
+      }
+      columns.appendChild(col);
+    }
+    bodyEl.appendChild(columns);
+
+    modal.classList.remove("hidden");
   }
 
   public showPileModal(title: string, cardIds: number[]) {

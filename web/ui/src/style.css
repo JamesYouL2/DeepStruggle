@@ -1593,6 +1593,45 @@ body.player-view .view-select {
   gap: 8px;
 }
 
+/* A pile at a glance (cards_view.ts showPileList): a column a side, a line a card. */
+.pile-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.pile-column { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pile-column-head {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 2px solid var(--neutral-gold);
+  color: #F8FAFC;
+}
+.pile-column-head.us { border-bottom-color: var(--us-blue); }
+.pile-column-head.ussr { border-bottom-color: var(--ussr-red); }
+.pile-column-count { color: var(--text-muted); font-weight: 600; margin-left: 4px; }
+.pile-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: default;
+}
+.pile-row:hover { background: rgba(255, 255, 255, 0.06); }
+.pile-row .card-ops-badge { width: 18px; height: 18px; font-size: 11px; flex-shrink: 0; }
+.pile-row-name { font-size: 12px; color: #E2E8F0; line-height: 1.25; min-width: 0; }
+.pile-row-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  padding: 2px 4px 6px 28px;
+}
+
 .card-tooltip {
   position: fixed;
   z-index: 200;

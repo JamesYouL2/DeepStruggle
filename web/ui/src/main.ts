@@ -1226,15 +1226,16 @@ export class TSApp {
 
     // Discard & Removed pile modals
     document.getElementById("btn-view-discard")?.addEventListener("click", () => {
-      if (this.state) this.cardsView.showPileModal("Discard Pile", this.state.discard_pile || []);
+      if (this.state) this.cardsView.showPileList("Discard Pile", this.state.discard_pile || []);
     });
     document.getElementById("btn-view-removed")?.addEventListener("click", () => {
-      if (this.state) this.cardsView.showPileModal("Removed from Game Pile", this.state.removed_pile || []);
+      if (this.state) this.cardsView.showPileList("Removed from Game Pile", this.state.removed_pile || []);
     });
 
-    // Modal Close button & ESC key
+    // Modal Close button & ESC key. A pile's hover text would outlive a modal closed under it.
     const closeModal = () => {
       document.getElementById("modal-container")?.classList.add("hidden");
+      this.cardsView.hideTooltip();
     };
     document.getElementById("modal-close")?.addEventListener("click", closeModal);
     document.getElementById("modal-container")?.addEventListener("click", (e) => {
