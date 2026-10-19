@@ -339,9 +339,10 @@ TS_API void ts_determinize(int player, uint32_t seed_lo, uint32_t seed_hi) {
 // and that park (ts::rollout::Stop). `leaf`: 0 = read every leaf from the root mover's side,
 // 1 = from the leaf's decider's, negated into the mover's frame, 2 = play on to the mover's next decision
 // (ts::rollout::Leaf). `aligned`: count every candidate's horizon from the end of the mover's own
-// action round (rollout::Config::aligned).
+// action round, the headline one boundary (rollout::Config::aligned); `box4`: keep the opponent's headline
+// revealed by Space Race box 4 in every world (rollout::Config::box4).
 TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t features,
-                            uint32_t seed_lo, uint32_t seed_hi, int stop, int leaf, int keyed, int aligned) {
+                            uint32_t seed_lo, uint32_t seed_hi, int stop, int leaf, int keyed, int aligned, int box4) {
     if (horizon < 0) { g_error = "horizon must be >= 0"; return 0; }
     if (stop < 0 || stop > 5) {
         g_error = "stop must be 0 (boundaries), 1 (turn), 2 (later), 3 (earlier), 4 (predeal) or 5 (earlier_predeal)";
@@ -352,7 +353,7 @@ TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t fe
     const uint64_t seed = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
     g_rollout = std::make_unique<ts::rollout::RolloutBatch>(
         ts::rollout::Config{horizon, shared_dice != 0, guard != 0, features, static_cast<ts::rollout::Stop>(stop),
-                            static_cast<ts::rollout::Leaf>(leaf), keyed != 0, false, aligned != 0}, seed);
+                            static_cast<ts::rollout::Leaf>(leaf), keyed != 0, false, aligned != 0, box4 != 0}, seed);
     return 1;
 }
 
@@ -381,9 +382,10 @@ TS_API int ts_rollout_add(const int32_t* candidates, int k, int worlds) {
 // network -> the log-probability of ts_belief_action(d) at each of ts_belief_temperature(t) ->
 // ts_belief_set_log_likelihoods; then ts_rollout_add_belief deals the root's worlds from it.
 
-TS_API void ts_belief_reset(uint32_t particles, int all_decisions, uint32_t seed_lo, uint32_t seed_hi) {
+// `reveal`: every hand holds the opponent's headline revealed by Space Race box 4 (the root's box4).
+TS_API void ts_belief_reset(uint32_t particles, int all_decisions, uint32_t seed_lo, uint32_t seed_hi, int reveal) {
     g_belief = std::make_unique<ts::belief::Tracker>(particles, all_decisions != 0,
-                                                     (static_cast<uint64_t>(seed_hi) << 32) | seed_lo);
+                                                     (static_cast<uint64_t>(seed_hi) << 32) | seed_lo, reveal != 0);
 }
 TS_API int ts_belief_temperatures() { return static_cast<int>(ts::belief::kTemps); }
 TS_API float ts_belief_temperature(int t) {

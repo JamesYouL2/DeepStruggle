@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 
+#include "rollout_batch.hpp"
 #include "ts/prng.hpp"
 
 namespace ts::belief {
@@ -88,13 +89,15 @@ std::vector<bool> Tracker::prepare(const std::vector<size_t>& games, const std::
         const auto now = locations(s);
         if (transient(now)) continue;
         const uint8_t ou = unknown_of(other(me));
+        const uint8_t revealed = reveal_ ? rollout::revealed_headline(s, me) : 0;   // in every hand
         std::vector<uint8_t> pool;
         size_t hand = 0;
         for (uint8_t c = 1; c <= 110; ++c) {
+            if (c == revealed) continue;
             if (now[c] == kDeck || now[c] == ou) pool.push_back(c);
             hand += now[c] == ou;
         }
-        if (hand == 0 || hand > pool.size()) continue;
+        if ((hand == 0 && !revealed) || hand > pool.size()) continue;
         Game& g = games_[games[p]];
         uint64_t key = seed_ ^ s.rng_state ^ (static_cast<uint64_t>(g.seen) << 20) ^ 0x9E3779B97F4A7C15ull;
         Prng::next_u64(key);
@@ -126,6 +129,7 @@ std::vector<bool> Tracker::prepare(const std::vector<size_t>& games, const std::
         job.hands.assign(static_cast<size_t>(particles_) * 110, 0);
         std::vector<uint8_t> perm(pool);
         for (uint32_t k = 0; k < particles_; ++k) {
+            if (revealed) job.hands[static_cast<size_t>(k) * 110 + revealed - 1] = 1;
             for (size_t i = 0; i < hand; ++i) {
                 const size_t j = i + Prng::random_index(rng, static_cast<uint32_t>(perm.size() - i));
                 std::swap(perm[i], perm[j]);

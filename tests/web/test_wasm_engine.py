@@ -156,7 +156,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     act = int(mask.shape[0])
 
     batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed, stop=stop,
-                            leaf=leaf, keyed=keyed, aligned=aligned)
+                            leaf=leaf, keyed=keyed, aligned=aligned, box4=aligned)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
     plies_run = 0
@@ -184,7 +184,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
                                 "horizon": horizon, "batch_seed": batch_seed, "stop": stop, "leaf": leaf,
-                                "keyed": keyed, "aligned": aligned}))
+                                "keyed": keyed, "aligned": aligned, "box4": aligned}))
     # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
     root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
     top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)

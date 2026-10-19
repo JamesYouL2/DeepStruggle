@@ -17,6 +17,7 @@ import pytest
 import ts_engine as ts
 from ai.eval.paired_playouts import ar_key, decider
 from bindings.action_encoder import ActionEncoder
+from tools.lib.game_step import drain_chance
 
 
 def _position(plies: int = 60, seed: int = 7) -> ts.GameState:
@@ -494,7 +495,7 @@ def test_place_hand_with_the_true_hand_changes_nothing_and_add_deals_the_given_h
 
 
 def _leaf_keys_by_world(st: ts.GameState, candidates: List[int], horizon: int, aligned: bool,
-                        seed: int) -> List[Set[Tuple[int, int, int]]]:
+                        seed: int, same_turn: bool = True) -> List[Set[Tuple[int, int, int]]]:
     """Per world whose every candidate reaches a leaf inside the decision's turn: the (turn, action round,
     phasing side) its candidates' leaves are at."""
     b = ts.RolloutBatch(horizon=horizon, seed=3, keyed=True, aligned=aligned)
@@ -505,7 +506,7 @@ def _leaf_keys_by_world(st: ts.GameState, candidates: List[int], horizon: int, a
     for r in range(n):
         world = int(b.row_world()[r])
         w = b.row_state(r)
-        if b.row_terminal()[r] or int(w.turn) != int(st.turn):
+        if b.row_terminal()[r] or (same_turn and int(w.turn) != int(st.turn)):
             outside.add(world)
             continue
         keys.setdefault(world, set()).add((int(w.turn), int(w.action_round), int(w.phasing_player)))
@@ -543,3 +544,100 @@ def test_aligned_counts_every_candidates_horizon_from_the_end_of_the_movers_roun
             apart += sum(len(ks) > 1 for ks in _leaf_keys_by_world(st, [space, ops], horizon, False, seed))
     assert seen >= 10
     assert apart > 0        # the unaligned count, every measured player's, reads them apart
+
+
+def _headline_choices(n: int) -> List[ts.GameState]:
+    """Headline card choices, first and second to choose, from random games."""
+    out: List[ts.GameState] = []
+    for seed in range(40):
+        runner = ts.VectorizedBatchRunner(1, 100 + seed)
+        rng = np.random.default_rng(seed)
+        while not runner.get_terminals()[0] and len(out) < n:
+            st = runner.get_state(0)
+            m = np.asarray(runner.get_action_masks())[0]
+            if (st.current_phase == ts.Phase.HEADLINE and st.headline_stage == 0
+                    and int(st.ctx().decision_type) == int(ts.DecisionType.SELECT_CARD) and m.sum() >= 3):
+                out.append(st)
+            runner.step_flat_all([int(rng.choice(np.flatnonzero(m)))], True)
+    return out
+
+
+def test_aligned_counts_the_headline_as_one_boundary_for_every_candidate() -> None:
+    """At a headline choice the candidate decides how the headline resolves: whether its card goes first
+    and whether its event stops for a choice while its owner is phasing. Counting every phasing change
+    made that 1 to 3 boundaries, so the candidates of one choice were read at different points of the
+    next action rounds (2026-10-19: 30% of worlds at the first choice under the deployed root, 89% with
+    the round-start alignment alone). Aligned, the headline is one boundary for every candidate."""
+    positions = _headline_choices(24)
+    assert len(positions) >= 12
+    seen = apart = 0
+    for seed, st in enumerate(positions):
+        cands = _legal(st)[:3]
+        for horizon in (1, 2, 3):
+            for ks in _leaf_keys_by_world(st, cands, horizon, True, seed):
+                assert len(ks) == 1, (seed, horizon, ks)
+                seen += 1
+            apart += sum(len(ks) > 1 for ks in _leaf_keys_by_world(st, cands, horizon, False, seed))
+    assert seen >= 50
+    assert apart > 0        # the unaligned count, every measured player's, reads them apart
+
+
+def _box4_headline(seed: int) -> ts.GameState:
+    """The US's headline choice with Man in Space (Space Race box 4) its own: the USSR chose first."""
+    st = ts.GameState()
+    ts.Engine.init_game(st, seed)
+    drain_chance(st)
+    st.us_space_track = 4
+    rng = np.random.default_rng(seed)
+    while True:
+        assert not ts.Engine.is_terminal(st)
+        if (st.current_phase == ts.Phase.HEADLINE and st.headline_stage == 0 and st.headline_ussr_card
+                and st.ctx().decision_player == ts.Player.US):
+            return st
+        m = np.asarray(ActionEncoder.get_legal_mask(st))
+        ts.Engine.step_flat(st, int(rng.choice(np.flatnonzero(m))))
+        drain_chance(st)
+
+
+def test_box4_keeps_the_revealed_opposing_headline_in_every_world() -> None:
+    """With Man in Space held alone, the opponent chooses its headline first and reveals it: the box-4
+    worlds keep the card chosen and in the opponent's hand, the rest of the hand redealt around it; the
+    default worlds forget it and ask it again, as every measured player's did."""
+    st = _box4_headline(5)
+    card = int(st.headline_ussr_card)
+    assert ts.revealed_headline(st, ts.Player.US) == card
+    assert ts.revealed_headline(st, ts.Player.USSR) == 0
+    unknown = ts.CardLocation.HAND_USSR_UNKNOWN
+    n_hand = sum(st.get_card_location(c) == unknown for c in range(1, 111))
+    hands = set()
+    for seed in range(8):
+        w = ts.determinize(st, ts.Player.US, seed, keep_revealed=True)
+        assert w.headline_ussr_card == card and w.get_card_location(card) == unknown
+        assert sum(w.get_card_location(c) == unknown for c in range(1, 111)) == n_hand
+        hands.add(tuple(c for c in range(1, 111) if w.get_card_location(c) == unknown))
+        assert ts.determinize(st, ts.Player.US, seed).headline_ussr_card == 0
+    assert len(hands) > 1
+    cands = _legal(st)[:3]
+    for box4 in (True, False):
+        b = ts.RolloutBatch(horizon=2, seed=3, keyed=True, box4=box4)
+        n = b.add(st, cands, 4)
+        for r in range(n):
+            w = b.row_state(r)
+            asks_again = (w.current_phase == ts.Phase.HEADLINE and w.headline_stage == 0
+                          and w.ctx().decision_player == ts.Player.USSR)
+            assert asks_again != box4, (box4, r)
+
+
+def test_box4_belief_hands_all_hold_the_revealed_headline() -> None:
+    st = _box4_headline(5)
+    card = int(st.headline_ussr_card)
+    for reveal in (True, False):
+        tr = ts.BeliefTracker(64, True, 3, reveal)
+        assert tr.prepare([0], [st]) == [True]
+        hands = np.asarray(tr.worlds(0, 64))
+        n_hand = sum(st.get_card_location(c) == ts.CardLocation.HAND_USSR_UNKNOWN for c in range(1, 111))
+        assert (hands.sum(axis=1) == n_hand).all()
+        if reveal:
+            assert hands[:, card - 1].all()
+        else:
+            assert not hands[:, card - 1].all()

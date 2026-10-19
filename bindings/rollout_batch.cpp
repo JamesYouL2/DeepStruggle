@@ -16,6 +16,7 @@
 #include "ts/engine.hpp"
 #include "ts/observation.hpp"
 #include "ts/prng.hpp"
+#include "ts/space_race.hpp"
 
 namespace ts::rollout {
 
@@ -67,9 +68,14 @@ void record_key(Row& r) noexcept {
     r.phase = r.state.current_phase;
 }
 
-bool key_changed(const Row& r) noexcept {
+// `one_headline` (Config::aligned): the headline is one boundary however it resolves. Its events set
+// the phasing side to their owners, so a headline whose event stops for a choice changes the phasing
+// side at a decision and one that resolves at once does not -- 1 to 3 boundaries, by the cards headlined:
+// at a headline choice the candidate itself decided how far its playout read (2026-10-19).
+bool key_changed(const Row& r, bool one_headline) noexcept {
+    const bool headline = one_headline && r.phase == Phase::HEADLINE && r.state.current_phase == Phase::HEADLINE;
     return r.turn != r.state.turn || r.action_round != r.state.action_round ||
-           r.phasing != r.state.phasing_player || r.phase != r.state.current_phase;
+           (!headline && r.phasing != r.state.phasing_player) || r.phase != r.state.current_phase;
 }
 
 }  // namespace
@@ -84,15 +90,21 @@ namespace {
 // order -- keyed_chance.hpp) names cards by where they were, and once the unseen cards are redealt
 // those names need not be in the deck, so the world deals at random instead; and an opposing headline
 // chosen but not revealed is forgotten, so the world asks it again from the hand it dealt.
-void forget_unseen(GameState& s, Player me) noexcept {
+void forget_unseen(GameState& s, Player me, bool keep_revealed) noexcept {
     s.forced_deal_us_count = s.forced_deal_ussr_count = 0;
     s.forced_deal_us_pos = s.forced_deal_ussr_pos = 0;
+    if (keep_revealed && revealed_headline(s, me)) return;
     if (s.current_phase == Phase::HEADLINE && s.headline_stage == 0) {
         if (me == Player::USSR && s.headline_us_card) s.headline_us_card = 0;
         else if (me == Player::US && s.headline_ussr_card) s.headline_ussr_card = 0;
     }
 }
 }  // namespace
+
+uint8_t revealed_headline(const GameState& s, Player me) noexcept {
+    if (s.current_phase != Phase::HEADLINE || s.headline_stage != 0 || !SpaceRace::has_man_in_space(s, me)) return 0;
+    return me == Player::US ? s.headline_ussr_card : s.headline_us_card;
+}
 
 void place_hand(GameState& s, Player me, const uint8_t* held) noexcept {
     const CardLocation opp_unknown =
@@ -104,14 +116,15 @@ void place_hand(GameState& s, Player me, const uint8_t* held) noexcept {
     }
 }
 
-void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand) noexcept {
-    forget_unseen(s, me);
+void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand, bool keep_revealed) noexcept {
+    forget_unseen(s, me, keep_revealed);
+    const uint8_t revealed = keep_revealed ? revealed_headline(s, me) : 0;   // stays in the hand
     const CardLocation opp_unknown =
         me == Player::US ? CardLocation::HAND_USSR_UNKNOWN : CardLocation::HAND_US_UNKNOWN;
     uint8_t pool[110];
     size_t n = 0, n_hand = 0;
     for (uint8_t cid = 1; cid <= 110 && !keep_hand; ++cid) {
-        if (s.card_locations[cid] == opp_unknown) { pool[n++] = cid; ++n_hand; }
+        if (s.card_locations[cid] == opp_unknown && cid != revealed) { pool[n++] = cid; ++n_hand; }
     }
     for (uint8_t cid = 1; cid <= 110; ++cid) {
         if (s.card_locations[cid] == CardLocation::DRAW_DECK) pool[n++] = cid;
@@ -183,7 +196,7 @@ void RolloutBatch::settle_and_mark(Row& r) noexcept {
         r.value = mover_value(r.state, mover);
         return;
     }
-    if (key_changed(r)) {
+    if (key_changed(r, cfg_.aligned)) {
         ++r.crossed;
         record_key(r);
     }
@@ -210,10 +223,10 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
         GameState world = base;
         if (Engine::is_terminal(world)) {
         } else if (hands != nullptr) {
-            forget_unseen(world, mover);
+            forget_unseen(world, mover, cfg_.box4);
             place_hand(world, mover, hands + w * 110);
         } else {
-            determinize(world, mover, rng_, cfg_.oracle);
+            determinize(world, mover, rng_, cfg_.oracle, cfg_.box4);
         }
         if (cfg_.shared_dice || cfg_.keyed) world.rng_state = Prng::next_u64(rng_);
         uint8_t wm[A];
@@ -253,10 +266,11 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
                     // others of the same decision, a different point of the turn: on the owner's
                     // replay the root played the USSR's Decolonization for its event over space at
                     // +0.10, which read at one point for every candidate trails space by 0.12
-                    // (2026-10-19). Horizon 0 keeps reading the position the move leads to.
+                    // (2026-10-19). Horizon 0 keeps reading the position the move leads to. The
+                    // headline is one round whoever is phasing in it (key_changed).
                     const bool still_in_round = cfg_.aligned && cfg_.horizon > 0 && r.turn == base.turn &&
                                                 r.action_round == base.action_round &&
-                                                r.phasing == base.phasing_player &&
+                                                (r.phasing == base.phasing_player || r.phase == Phase::HEADLINE) &&
                                                 r.phase == base.current_phase;
                     r.crossed = still_in_round ? -1 : 0;
                     // A move that ends the turn has already reached the next one: under kTurnEnd

@@ -6,7 +6,7 @@
  * the leaves, and the decision with its statistics. This file is the loop that feeds
  * onnxruntime's logits and values in -- the same loop the Python searcher runs with torch.
  *
- * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:belief[N]]`
+ * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:box4][:belief[N]]`
  * (`rollout` alone is the best player there, 4:32:4:z2 with stop=earlier, leaf=own). `keyed` ties
  * every draw to its situation (the leaderboard's chance=keyed); `belief` deals the worlds from the
  * policy-likelihood belief over the opponent's hand (bindings/belief.hpp, N hands, 2,048 by default --
@@ -28,8 +28,10 @@ export interface RolloutSpec {
   leaf: string;
   /** Each draw tied to its situation (bindings/keyed_chance.hpp). */
   keyed: boolean;
-  /** Every candidate's horizon counted from the end of the mover's own action round. */
+  /** Every candidate's horizon counted from the end of the mover's own action round, the headline one boundary. */
   aligned: boolean;
+  /** The opponent's headline revealed by Space Race box 4 kept in every world. */
+  box4: boolean;
   /** Hands the belief weighs (bindings/belief.hpp); 0 = uniform redeals. */
   belief: number;
 }
@@ -40,16 +42,16 @@ export const LEAVES = ["mover", "decider", "own"] as const;
 
 /** The best player on the leaderboard: rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own). */
 export const DEFAULT_ROLLOUT: RolloutSpec = { k: 4, worlds: 32, horizon: 4, rule: "z2", stop: "earlier", leaf: "own",
-                                             keyed: false, aligned: false, belief: 0 };
+                                             keyed: false, aligned: false, box4: false, belief: 0 };
 /** ai/search/rollout_root.py's `belief` with no count. */
 export const DEFAULT_BELIEF_HANDS = 2048;
 
-/** "rollout" or "rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:belief[N]]", an omitted field the
+/** "rollout" or "rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:box4][:belief[N]]", an omitted field the
  *  default's; null otherwise. */
 export function parseRolloutParam(s: string | null): RolloutSpec | null {
   if (!s) return null;
   const parts = s.split(":");
-  if (parts[0] !== "rollout" || parts.length > 10) return null;
+  if (parts[0] !== "rollout" || parts.length > 11) return null;
   const num = (i: number, d: number, min: number) => {
     if (parts.length <= i || parts[i] === "") return d;
     const v = Number(parts[i]);
@@ -58,7 +60,7 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
   const spec: RolloutSpec = {
     k: num(1, DEFAULT_ROLLOUT.k, 1), worlds: num(2, DEFAULT_ROLLOUT.worlds, 1),
     horizon: num(3, DEFAULT_ROLLOUT.horizon, 0), rule: parts.length > 4 && parts[4] ? parts[4] : DEFAULT_ROLLOUT.rule,
-    stop: DEFAULT_ROLLOUT.stop, leaf: DEFAULT_ROLLOUT.leaf, keyed: false, aligned: false, belief: 0,
+    stop: DEFAULT_ROLLOUT.stop, leaf: DEFAULT_ROLLOUT.leaf, keyed: false, aligned: false, box4: false, belief: 0,
   };
   // The trailing fields are told apart by value, as the Python spec does.
   for (const p of parts.slice(5)) {
@@ -68,6 +70,7 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
     else if ((LEAVES as readonly string[]).includes(p)) spec.leaf = p;
     else if (p === "keyed") spec.keyed = true;
     else if (p === "aligned") spec.aligned = true;
+    else if (p === "box4") spec.box4 = true;
     else if (b) spec.belief = b[1] ? Number(b[1]) : DEFAULT_BELIEF_HANDS;
     else return null;
   }
@@ -79,9 +82,10 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
 export function rolloutParam(spec: RolloutSpec): string {
   const d = DEFAULT_ROLLOUT;
   if (spec.k === d.k && spec.worlds === d.worlds && spec.horizon === d.horizon && spec.rule === d.rule
-      && spec.stop === d.stop && spec.leaf === d.leaf && !spec.keyed && !spec.aligned && !spec.belief) return "rollout";
+      && spec.stop === d.stop && spec.leaf === d.leaf && !spec.keyed && !spec.aligned && !spec.box4 && !spec.belief) return "rollout";
   return `rollout:${spec.k}:${spec.worlds}:${spec.horizon}:${spec.rule}:${spec.stop}:${spec.leaf}`
-    + (spec.keyed ? ":keyed" : "") + (spec.aligned ? ":aligned" : "") + (spec.belief ? `:belief${spec.belief}` : "");
+    + (spec.keyed ? ":keyed" : "") + (spec.aligned ? ":aligned" : "") + (spec.box4 ? ":box4" : "")
+    + (spec.belief ? `:belief${spec.belief}` : "");
 }
 
 /** What the root decided at one position, and the evidence (ts.rollout_decide's record). */
@@ -166,7 +170,7 @@ export async function rolloutRoot(engine: WasmEngine, model: Model, spec: Rollou
 
   engine.rolloutReset(spec.horizon, model.obsFeatures, seed, true, true,
                       STOPS.indexOf(spec.stop as typeof STOPS[number]), LEAVES.indexOf(spec.leaf as typeof LEAVES[number]),
-                      spec.keyed, spec.aligned);
+                      spec.keyed, spec.aligned, spec.box4);
   const width = engine.rolloutObsWidth();
   if (width !== model.meta.obsSize) {
     throw new Error(`the batch writes ${width} observation floats for this feature set; the model reads ${model.meta.obsSize}`);

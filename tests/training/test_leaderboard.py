@@ -558,3 +558,10 @@ def test_the_aligned_horizon_is_spelled_in_the_id_and_the_agent_string() -> None
     agent = load_spec(spec, "m.pt")
     assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned"
     assert rollout_spec_config(agent)[1].aligned
+    withb = one[:-1] + ",aligned=true,box4=true)"
+    net, spec = parse_player_id(withb)
+    assert isinstance(spec, Rollout) and spec.box4 and player_id(net, spec) == withb
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned:box4"
+    assert rollout_spec_config(agent)[1].box4

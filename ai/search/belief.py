@@ -242,10 +242,11 @@ class BeliefTracker:
     applied; `worlds` for the decisions the agent is about to search."""
 
     def __init__(self, model: Any, device: torch.device, particles: int = 2048, all_decisions: bool = True,
-                 seed: int = 0) -> None:
+                 seed: int = 0, reveal: bool = False) -> None:
+        """`reveal` (the root's box4): every hand holds the opponent's headline revealed by Space Race box 4."""
         self.model = model
         self.device = device
-        self.tracker = ts.BeliefTracker(int(particles), bool(all_decisions), int(seed))
+        self.tracker = ts.BeliefTracker(int(particles), bool(all_decisions), int(seed), bool(reveal))
         self.temperatures = list(ts.BeliefTracker.temperatures())
         self.features = model_obs_features(model)
         #: positions given a belief, jobs weighed, decisions conditioned on, and summed temperature weights

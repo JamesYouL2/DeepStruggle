@@ -35,7 +35,14 @@ namespace ts::rollout {
 // worlds from one seed, by design -- this one is what the rollout root uses in both builds.
 // `keep_hand` (the oracle's world, Config::oracle) leaves the opponent's hand as it truly is and
 // reshuffles only the draw deck: the hand is known, the deck order and the forgotten headline are not.
-void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand = false) noexcept;
+// `keep_revealed` (Config::box4) keeps an opposing headline `me` has seen (revealed_headline): the card
+// stays chosen and in the opponent's hand, and only the rest of the hand is redealt.
+void determinize(GameState& s, Player me, uint64_t& rng, bool keep_hand = false, bool keep_revealed = false) noexcept;
+
+// The opposing headline `me` has seen, else 0. With Man in Space (Space Race box 4) held by `me` alone
+// the opponent chooses its headline first and reveals it (the engine asks it first, StateMachine::
+// start_turn), so at `me`'s own headline choice the card is known -- though no observation slot shows it.
+uint8_t revealed_headline(const GameState& s, Player me) noexcept;
 
 // `me`'s hidden pool -- the opponent's unknown hand and the draw deck -- split as `held` says: card
 // `cid` in the opponent's unknown hand where held[cid - 1] is set, in the deck otherwise. Nothing else
@@ -113,6 +120,11 @@ struct Config {
     // different points of the turn (the owner's Decolonization replay, 2026-10-19). Off by default:
     // every rollout player measured before it played the unaligned count.
     bool aligned = false;
+    // Space Race box 4: at the headline choice of the side holding Man in Space alone, the opponent's
+    // headline -- chosen first and revealed -- stays in every world (revealed_headline), and the
+    // opponent's hand is redealt around it. Off: the world forgets it and asks it again, as every
+    // rollout player measured before it did.
+    bool box4 = false;
 };
 
 struct Row {
@@ -120,7 +132,8 @@ struct Row {
     uint32_t position;          // which decision of the batch
     uint16_t world;             // index of the world within the position (dropped worlds excluded)
     uint16_t candidate;         // index into that decision's candidate list
-    int32_t crossed;            // action-round boundaries crossed so far (aligned: -1 while still in the mover's round)
+    int32_t crossed;            // action-round boundaries crossed so far (aligned: -1 while still in the mover's round;
+                                //   the whole headline one boundary)
     uint8_t turn, action_round; // the row's current key, with phasing and phase below
     uint8_t start_turn;         // the decision's turn (Stop::kTurnEnd / kLater / kEarlier read it)
     bool parked = false;        // stopped at the turn-end park (Stop::kPredeal / kEarlierPredeal)
