@@ -172,6 +172,18 @@ three times per world count (`data/logs/temp/p36b.out`):
   target's top move) as the teacher's own ceiling. Cost: 49 decisions/s at 128 worlds eager (CUDA graphs
   slower and out of memory), so the 200k-decision set is ~2 h at the three world counts, not ~30 min.
 
+**Caveat added the same night: the teacher has a horizon bug, so this reading is provisional.** The
+`stop=earlier, leaf=own` root counts its 4 action-round boundaries from different points for different
+candidates of one decision: a move that ends the mover's action round inside its own settling does not count
+that boundary, a move whose round ends later in the playout (further choices: Ops placements, an event's
+choices, the opponent placing its event's influence) does. Those candidates are read one action round
+earlier. Found on the owner's replay (`data/replays/us_search_decol.json`, turn 3 AR3: the root plays the
+USSR's Decolonization for its event at +0.10 over space; read at the turn's end for every candidate, space
+leads by +0.12). At card choices it shifts every card that resolves without a choice (all scoring cards)
+by an action round against the rest, so P36c's targets carry artifacts there. The fix (count from the same
+point for every candidate) is a bindings change awaiting the owner; P36b/P36c are re-read on the fixed root.
+The 2M-target data-scaling run (test 1) was stopped for the same reason.
+
 **`P36c` (2026-10-19): the rollout root's corrections do not transfer to unseen positions -- not by
 capacity, not by world count, and barely by data.** Targets: `tools/distill_targets.py`, 200,000 entry
 decisions from 2,000 greedy games of A13+R48's SWA (12,730–12,800M), 20,675 held out by game, the keyed root's
