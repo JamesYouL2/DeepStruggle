@@ -192,11 +192,12 @@ export class WasmEngine {
   /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed, and
    *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier, 4 the turn-end park before
    *  the deal, 5 the earlier of the boundaries and that park); `keyed` ties every draw to its situation
-   *  (bindings/keyed_chance.hpp, the leaderboard's chance=keyed). */
+   *  (bindings/keyed_chance.hpp, the leaderboard's chance=keyed); `aligned` counts every candidate's
+   *  horizon from the end of the mover's own action round (rollout::Config::aligned). */
   rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true, stop = 0,
-               leaf = 0, keyed = false): void {
+               leaf = 0, keyed = false, aligned = false): void {
     const ok = this.M._ts_rollout_reset(horizon, sharedDice ? 1 : 0, guard ? 1 : 0, features >>> 0,
-      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf, keyed ? 1 : 0);
+      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf, keyed ? 1 : 0, aligned ? 1 : 0);
     if (!ok) throw new Error(this.lastError());
   }
 

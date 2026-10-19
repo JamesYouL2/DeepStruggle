@@ -9,7 +9,8 @@
 // candidates' values in a world differ only by the move. A world in which any candidate is illegal
 // (The Cambridge Five can change the legal set) is dropped for every candidate. Each row then plays
 // greedily -- both sides the network's argmax -- through `horizon` action-round boundaries (a change
-// of turn, action round, phasing side or phase; 0 reads the position the move leads to) -- or, by
+// of turn, action round, phasing side or phase; 0 reads the position the move leads to; with
+// `Config::aligned`, counted from the end of the mover's own action round for every candidate) -- or, by
 // `Config::stop`, to the end of the decision's turn, or to the later of the two -- with the
 // DEFCON-2 suicide guard when `guard` is set: at a play mode, an event branch or a coup's target,
 // a greedy move that ends the game against its own player on the spot is replaced by the next-best
@@ -105,6 +106,13 @@ struct Config {
     // (determinize's keep_hand). Not a deployable searcher -- the ceiling on what any belief over the
     // opponent's hand could give the root (P35 item 3).
     bool oracle = false;
+    // Count every candidate's horizon from the end of the mover's own action round. Without it a
+    // candidate that leaves choices inside the round (Ops points, an event's choices) counts the
+    // round's end as its first boundary, while one that ends the round inside its own settling
+    // (space, a decision-free event) does not -- so the two are read an action round apart, at
+    // different points of the turn (the owner's Decolonization replay, 2026-10-19). Off by default:
+    // every rollout player measured before it played the unaligned count.
+    bool aligned = false;
 };
 
 struct Row {
@@ -112,7 +120,7 @@ struct Row {
     uint32_t position;          // which decision of the batch
     uint16_t world;             // index of the world within the position (dropped worlds excluded)
     uint16_t candidate;         // index into that decision's candidate list
-    int32_t crossed;            // action-round boundaries crossed so far
+    int32_t crossed;            // action-round boundaries crossed so far (aligned: -1 while still in the mover's round)
     uint8_t turn, action_round; // the row's current key, with phasing and phase below
     uint8_t start_turn;         // the decision's turn (Stop::kTurnEnd / kLater / kEarlier read it)
     bool parked = false;        // stopped at the turn-end park (Stop::kPredeal / kEarlierPredeal)

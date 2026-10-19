@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from typing import List, Tuple
+from typing import Dict, List, Set, Tuple
 
 import numpy as np
 import pytest
@@ -491,3 +491,55 @@ def test_place_hand_with_the_true_hand_changes_nothing_and_add_deals_the_given_h
         # the row has played its candidate: compare only the cards it did not move
         w = b.row_world()[r]
         assert np.array_equal(got[~played], hands[w][~played])
+
+
+def _leaf_keys_by_world(st: ts.GameState, candidates: List[int], horizon: int, aligned: bool,
+                        seed: int) -> List[Set[Tuple[int, int, int]]]:
+    """Per world whose every candidate reaches a leaf inside the decision's turn: the (turn, action round,
+    phasing side) its candidates' leaves are at."""
+    b = ts.RolloutBatch(horizon=horizon, seed=3, keyed=True, aligned=aligned)
+    n = b.add(st, candidates, 3)
+    _play(b, seed=seed)
+    keys: Dict[int, Set[Tuple[int, int, int]]] = {}
+    outside: Set[int] = set()
+    for r in range(n):
+        world = int(b.row_world()[r])
+        w = b.row_state(r)
+        if b.row_terminal()[r] or int(w.turn) != int(st.turn):
+            outside.add(world)
+            continue
+        keys.setdefault(world, set()).add((int(w.turn), int(w.action_round), int(w.phasing_player)))
+    return [ks for world, ks in keys.items() if world not in outside]
+
+
+def test_aligned_counts_every_candidates_horizon_from_the_end_of_the_movers_round() -> None:
+    """A play-mode decision whose candidates end the action round differently -- space ends it inside the
+    move, Ops leave points to place -- reads every candidate's leaf at the same point of the turn when
+    aligned: the same (turn, action round, phasing side) in each world. Unaligned, the Ops candidate counts
+    the round's end and is read an action round earlier (the owner's Decolonization replay, 2026-10-19).
+    Only worlds whose leaves are all inside the root's turn are compared: a headline whose event the
+    phasing side resolves adds a boundary on some paths and not others, which is the playout's own course,
+    not where the count starts."""
+    off = int(ActionEncoder.PLAY_MODE_OFFSET)
+    space, ops = off + 1, off + 2
+    positions: List[ts.GameState] = []
+    for seed in range(12):
+        runner = ts.VectorizedBatchRunner(1, seed)
+        rng = np.random.default_rng(seed)
+        while not runner.get_terminals()[0] and len(positions) < 2 * (seed + 1):
+            st = runner.get_state(0)
+            m = np.asarray(runner.get_action_masks())[0]
+            if (int(st.ctx().decision_type) == int(ts.DecisionType.SELECT_PLAY_MODE)
+                    and st.current_phase == ts.Phase.ACTION_ROUND and m[space] and m[ops]):
+                positions.append(st)
+            runner.step_flat_all([int(rng.choice(np.flatnonzero(m)))], True)
+    assert len(positions) >= 6
+    seen = apart = 0
+    for seed, st in enumerate(positions):
+        for horizon in (1, 2, 4):
+            for ks in _leaf_keys_by_world(st, [space, ops], horizon, True, seed):
+                assert len(ks) == 1, (seed, horizon, ks)
+                seen += 1
+            apart += sum(len(ks) > 1 for ks in _leaf_keys_by_world(st, [space, ops], horizon, False, seed))
+    assert seen >= 10
+    assert apart > 0        # the unaligned count, every measured player's, reads them apart

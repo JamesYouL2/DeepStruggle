@@ -124,16 +124,18 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
-@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed", [
-    (21, 70, 2, "boundaries", "mover", False), (34, 150, 1, "boundaries", "mover", False),
-    (47, 40, 0, "boundaries", "mover", False), (58, 90, 4, "turn", "mover", False),
-    (63, 120, 2, "later", "mover", False), (71, 130, 3, "earlier", "mover", False),
-    (58, 90, 4, "turn", "decider", False), (77, 110, 2, "boundaries", "decider", False),
-    (58, 90, 4, "turn", "own", False), (83, 100, 3, "earlier", "own", False),
-    (58, 90, 4, "predeal", "mover", False), (93, 80, 3, "earlier_predeal", "own", False),
-    (83, 100, 3, "earlier", "own", True), (34, 150, 1, "boundaries", "mover", True)])
+@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed,aligned", [
+    (21, 70, 2, "boundaries", "mover", False, False), (34, 150, 1, "boundaries", "mover", False, False),
+    (47, 40, 0, "boundaries", "mover", False, False), (58, 90, 4, "turn", "mover", False, False),
+    (63, 120, 2, "later", "mover", False, False), (71, 130, 3, "earlier", "mover", False, False),
+    (58, 90, 4, "turn", "decider", False, False), (77, 110, 2, "boundaries", "decider", False, False),
+    (58, 90, 4, "turn", "own", False, False), (83, 100, 3, "earlier", "own", False, False),
+    (58, 90, 4, "predeal", "mover", False, False), (93, 80, 3, "earlier_predeal", "own", False, False),
+    (83, 100, 3, "earlier", "own", True, False), (34, 150, 1, "boundaries", "mover", True, False),
+    (83, 100, 3, "earlier", "own", True, True), (21, 70, 2, "boundaries", "mover", False, True)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
-                                                                 leaf: str, keyed: bool, tmp_path) -> None:
+                                                                 leaf: str, keyed: bool, aligned: bool,
+                                                                 tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
     critic: the same rows, the same worlds, the same observations ply by ply, the same values."""
     state = ts.GameState()
@@ -154,7 +156,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     act = int(mask.shape[0])
 
     batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed, stop=stop,
-                            leaf=leaf, keyed=keyed)
+                            leaf=leaf, keyed=keyed, aligned=aligned)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
     plies_run = 0
@@ -182,7 +184,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
                                 "horizon": horizon, "batch_seed": batch_seed, "stop": stop, "leaf": leaf,
-                                "keyed": keyed}))
+                                "keyed": keyed, "aligned": aligned}))
     # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
     root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
     top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)

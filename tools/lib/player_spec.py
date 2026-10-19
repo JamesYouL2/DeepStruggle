@@ -75,6 +75,9 @@ class Rollout:
     #: many importance-sampled hands, the likelihood temperature model-averaged from the opponent's own
     #: choices (bindings/belief.hpp); 0 = uniform redeals, the root every rollout id before it meant.
     belief: int = 0
+    #: Every candidate's horizon counted from the end of the mover's own action round
+    #: (bindings/rollout_batch.hpp's Config::aligned); false = the count every rollout id before it meant.
+    aligned: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,7 +116,8 @@ _LEAVES: Final = ("mover", "decider", "own")
 #: Fields added to a kind after ids using it were published, with the value those ids meant. They are
 #: written into an id or a stored spec only when they differ from it.
 LATE_FIELDS: Final[Dict[str, Dict[str, Union[str, int]]]] = {
-    "rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "", "chance": "shared", "belief": 0}}
+    "rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "", "chance": "shared", "belief": 0,
+                "aligned": False}}
 _CHANCES: Final = ("shared", "keyed")
 #: Characters a leaf_net name may not hold: the id grammar's own separators.
 _LEAF_NET_BAD: Final = frozenset("(),~:= ")
@@ -297,6 +301,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str], leaf_checkpoint: Optio
     if isinstance(spec, Rollout):
         tail = (f":{spec.stop}" if spec.stop != "boundaries" else "") + (f":{spec.leaf}" if spec.leaf != "mover" else "")
         tail += ":keyed" if spec.chance == "keyed" else ""
+        tail += ":aligned" if spec.aligned else ""
         tail += f":belief{spec.belief}" if spec.belief else ""
         if spec.leaf_net:
             if not leaf_checkpoint:

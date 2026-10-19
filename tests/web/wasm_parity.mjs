@@ -38,7 +38,7 @@ if (mode === "rollout") {
   const stop = { boundaries: 0, turn: 1, later: 2, earlier: 3, predeal: 4, earlier_predeal: 5 }[spec.stop ?? "boundaries"];
   const leaf = { mover: 0, decider: 1, own: 2 }[spec.leaf ?? "mover"];
   if (!M._ts_rollout_reset(spec.horizon, 1, 1, 0, spec.batch_seed >>> 0, Math.floor(spec.batch_seed / 4294967296) >>> 0, stop, leaf,
-                           spec.keyed ? 1 : 0)) {
+                           spec.keyed ? 1 : 0, spec.aligned ? 1 : 0)) {
     console.log(JSON.stringify({ error: M.UTF8ToString(M._ts_last_error()) }));
     process.exit(0);
   }

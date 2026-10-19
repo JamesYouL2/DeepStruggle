@@ -244,7 +244,21 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
                     r.value = mover_value(r.state, mover);
                 } else {
                     record_key(r);
-                    r.crossed = 0;
+                    // Aligned: every candidate counts its horizon from the end of the mover's own
+                    // action round. A move that ends the round inside its own settling has left it
+                    // already (that boundary was never counted); a move that leaves choices inside
+                    // the round -- Ops points, an event's choices, the opponent placing its event's
+                    // influence -- leaves it later in the playout, and that boundary is not counted
+                    // either. Counting it reads those candidates an action round earlier than the
+                    // others of the same decision, a different point of the turn: on the owner's
+                    // replay the root played the USSR's Decolonization for its event over space at
+                    // +0.10, which read at one point for every candidate trails space by 0.12
+                    // (2026-10-19). Horizon 0 keeps reading the position the move leads to.
+                    const bool still_in_round = cfg_.aligned && cfg_.horizon > 0 && r.turn == base.turn &&
+                                                r.action_round == base.action_round &&
+                                                r.phasing == base.phasing_player &&
+                                                r.phase == base.current_phase;
+                    r.crossed = still_in_round ? -1 : 0;
                     // A move that ends the turn has already reached the next one: under kTurnEnd
                     // and kEarlier its row is a leaf at once.
                     r.done = at_stop(r);
