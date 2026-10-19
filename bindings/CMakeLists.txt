@@ -39,6 +39,9 @@ if(EMSCRIPTEN)
         _ts_rollout_values _ts_rollout_row_position _ts_rollout_row_world _ts_rollout_row_candidate
         _ts_rollout_row_done _ts_rollout_row_terminal _ts_rollout_worlds_used
         _ts_rollout_candidates _ts_rollout_decide
+        _ts_belief_reset _ts_belief_temperatures _ts_belief_temperature _ts_belief_particles _ts_belief_observe
+        _ts_belief_prepare _ts_belief_decisions _ts_belief_action _ts_belief_rows _ts_belief_set_log_likelihoods
+        _ts_belief_temperature_weights _ts_belief_worlds _ts_rollout_add_belief
         _malloc _free)
     list(JOIN TS_WASM_EXPORTS "," TS_WASM_EXPORTS_CSV)
     target_link_options(ts_engine_wasm PRIVATE

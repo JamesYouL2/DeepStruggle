@@ -5,14 +5,17 @@
  *
  *   { type: "load", base, bytes, source, obsSize, actionSize }  -> { type: "loaded" } | { type: "error" }
  *   { type: "search", id, state, spec, seed }                   -> { type: "result", id, result } | { type: "error", id }
+ *   { type: "belief", reset, hands, moves }                     -> (nothing) the belief tracker sees the game's moves
  */
 import { WasmEngine } from "../engine/wasm_engine";
 import { Model, ModelSource } from "./model";
 import { RolloutSpec, SearchResult, rolloutRoot } from "./rollout";
+import type { Move } from "../game/session";
 
 interface LoadMsg { type: "load"; base: string; bytes: Uint8Array; source: ModelSource; obsSize: number; actionSize: number }
 interface SearchMsg { type: "search"; id: number; state: Uint8Array; spec: RolloutSpec; seed: number }
-type InMsg = LoadMsg | SearchMsg;
+interface BeliefMsg { type: "belief"; reset: boolean; hands: number; moves: Move[] }
+type InMsg = LoadMsg | SearchMsg | BeliefMsg;
 export type OutMsg =
   | { type: "loaded"; fingerprint: string }
   | { type: "result"; id: number; result: SearchResult | null }
@@ -42,6 +45,14 @@ async function handle(msg: InMsg): Promise<void> {
       return;
     }
     if (!engine || !model) throw new Error("the search worker has no model loaded");
+    if (msg.type === "belief") {
+      if (msg.reset) engine.beliefReset(msg.hands, 0);
+      for (const m of msg.moves) {
+        engine.restore(m.before);
+        engine.beliefObserve(m.action);
+      }
+      return;
+    }
     engine.restore(msg.state);
     const result = await rolloutRoot(engine, model, msg.spec, msg.seed);
     post({ type: "result", id: msg.id, result });

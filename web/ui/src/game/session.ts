@@ -22,6 +22,14 @@ interface UndoEntry {
   logs: number;
   steps: number;
   stepIndex: number;
+  moves: number;
+}
+
+/** One move of the game as played: the position before it (raw state) and the click. The belief over
+ *  the opponent's hand (bindings/belief.hpp) reads these -- the record both players saw. */
+export interface Move {
+  before: Uint8Array;
+  action: MicroAction;
 }
 
 export interface GameResult {
@@ -64,6 +72,8 @@ export class GameSession {
   models: Record<string, ModelInfo> = {};
   events: RecordEvent[] = [];
   private setting = 0;
+  /** Every move since the game began (or its position was loaded); undo takes them back. */
+  moves: Move[] = [];
   private history: UndoEntry[] = [];
 
   constructor(readonly engine: WasmEngine) {}
@@ -73,6 +83,7 @@ export class GameSession {
     this.seed = seed;
     this.stepIndex = 0;
     this.history = [];
+    this.moves = [];
     this.steps = [];
     this.result = null;
     this.startPosition = null;
@@ -174,6 +185,7 @@ export class GameSession {
   private remember(): void {
     this.history.push({
       snapshot: this.engine.snapshot(), logs: this.logs.length, steps: this.steps.length, stepIndex: this.stepIndex,
+      moves: this.moves.length,
     });
     if (this.history.length > MAX_UNDO) this.history.shift();
   }
@@ -193,8 +205,10 @@ export class GameSession {
     const refused = this.engine.step(a, forcedDie);
     if (refused) return refused;
     // Only now is there something to undo.
-    this.history.push({ snapshot, logs: this.logs.length, steps: this.steps.length, stepIndex: this.stepIndex });
+    this.history.push({ snapshot, logs: this.logs.length, steps: this.steps.length, stepIndex: this.stepIndex,
+                        moves: this.moves.length });
     if (this.history.length > MAX_UNDO) this.history.shift();
+    this.moves.push({ before: snapshot, action: a });
 
     this.stepIndex += 1;
     const after = this.engine.display();
@@ -299,6 +313,7 @@ export class GameSession {
     this.steps.length = e.steps;
     this.tags.length = e.steps;
     this.stepIndex = e.stepIndex;
+    this.moves.length = e.moves;
     this.result = null;
     if (announce) {
       const s = this.engine.display();
@@ -347,6 +362,7 @@ export class GameSession {
     if (saveJson === this.engine.saveJson()) return false;
     this.engine.loadSaveJson(saveJson);
     this.history = [];
+    this.moves = [];
     this.steps = [];
     this.stepIndex = 0;
     this.result = null;

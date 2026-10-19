@@ -37,7 +37,8 @@ if (mode === "rollout") {
   M.HEAP32.set(cands, candPtr >> 2);
   const stop = { boundaries: 0, turn: 1, later: 2, earlier: 3, predeal: 4, earlier_predeal: 5 }[spec.stop ?? "boundaries"];
   const leaf = { mover: 0, decider: 1, own: 2 }[spec.leaf ?? "mover"];
-  if (!M._ts_rollout_reset(spec.horizon, 1, 1, 0, spec.batch_seed >>> 0, Math.floor(spec.batch_seed / 4294967296) >>> 0, stop, leaf)) {
+  if (!M._ts_rollout_reset(spec.horizon, 1, 1, 0, spec.batch_seed >>> 0, Math.floor(spec.batch_seed / 4294967296) >>> 0, stop, leaf,
+                           spec.keyed ? 1 : 0)) {
     console.log(JSON.stringify({ error: M.UTF8ToString(M._ts_last_error()) }));
     process.exit(0);
   }
@@ -89,6 +90,60 @@ if (mode === "rollout") {
   console.log(JSON.stringify({ candidates: cands, rows, worlds_used: M._ts_rollout_worlds_used(0), plies, leaves,
                                refused: M._ts_rollout_refused(), digest: hash.digest("hex"), values, table,
                                top, decisions }));
+  process.exit(0);
+}
+
+// belief: {seed, actions, particles, tracker_seed, worlds} -- the game's moves through the belief tracker
+// (bindings/belief.hpp), each observed before it is applied, then at the last position: the recorded
+// decisions' moves, a digest of every hypothesis row, the weights under synthetic log-likelihoods, and
+// the worlds' hands.
+if (mode === "belief") {
+  const spec = JSON.parse(readFileSync(arg, "utf8"));
+  M._ts_new_game(spec.seed >>> 0, 0);
+  M._ts_belief_reset(spec.particles >>> 0, 1, spec.tracker_seed >>> 0, 0);
+  let observed = 0;
+  for (const [t, p, s, f] of spec.actions) {
+    observed += M._ts_belief_observe(t, p, s, f);
+    if (!M._ts_step(t, p, s, f, 0)) {
+      console.log(JSON.stringify({ error: `refused: ${M.UTF8ToString(M._ts_last_error())}` }));
+      process.exit(0);
+    }
+  }
+  const has = M._ts_belief_prepare();
+  const D = M._ts_belief_decisions();
+  const P = spec.particles;
+  const ACT = M._ts_action_size();
+  const W = M._ts_obs_size();
+  const actions = [];
+  const hash = createHash("sha256");
+  for (let d = 0; d < D; d++) {
+    actions.push(M._ts_belief_action(d));
+    if (M._ts_belief_rows(d, 0, P, 0) !== P) {
+      console.log(JSON.stringify({ error: `rows: ${M.UTF8ToString(M._ts_last_error())}` }));
+      process.exit(0);
+    }
+    hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_obs(), P * W * 4).slice());
+    hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_masks(), P * ACT).slice());
+  }
+  const T = M._ts_belief_temperatures();
+  let weights = [];
+  let worlds = null;
+  if (D > 0) {
+    const lp = new Float32Array(T * D * P);
+    for (let t = 0; t < T; t++)
+      for (let d = 0; d < D; d++)
+        for (let k = 0; k < P; k++)
+          lp[(t * D + d) * P + k] = -(((k * 2654435761 + d * 40503 + t * 7) % 1000) / 250);
+    const lpPtr = M._malloc(4 * lp.length);
+    M.HEAPF32.set(lp, lpPtr >> 2);
+    M._ts_belief_set_log_likelihoods(lpPtr);
+    const wPtr = M._malloc(4 * T);
+    M._ts_belief_temperature_weights(wPtr);
+    weights = Array.from(new Float32Array(M.HEAPF32.buffer, wPtr, T));
+    const h = M._ts_belief_worlds(spec.worlds);
+    worlds = h ? Array.from(new Uint8Array(M.HEAPU8.buffer, h, spec.worlds * 110)) : null;
+  }
+  console.log(JSON.stringify({ observed, has, decisions: D, actions, digest: hash.digest("hex"), weights, worlds }));
   process.exit(0);
 }
 

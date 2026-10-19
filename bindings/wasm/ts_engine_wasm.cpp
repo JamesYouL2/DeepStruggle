@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "belief.hpp"
 #include "rollout_batch.hpp"
 #include "selftest.hpp"
 #include "state_json.hpp"
@@ -302,6 +303,9 @@ TS_API int ts_set_vp(int v) {
 
 namespace {
 std::unique_ptr<ts::rollout::RolloutBatch> g_rollout;
+std::unique_ptr<ts::belief::Tracker> g_belief;
+std::vector<uint8_t> g_belief_hands;    // the worlds' hands ts_rollout_add_belief dealt
+std::vector<uint8_t> g_belief_held;     // a chunk's hands for ts_belief_rows
 std::vector<float> g_ro_obs;
 std::vector<uint8_t> g_ro_masks;
 std::vector<float> g_ro_values;
@@ -320,7 +324,7 @@ TS_API void ts_determinize(int player, uint32_t seed_lo, uint32_t seed_hi) {
 // 1 = from the leaf's decider's, negated into the mover's frame, 2 = play on to the mover's next decision
 // (ts::rollout::Leaf).
 TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t features,
-                            uint32_t seed_lo, uint32_t seed_hi, int stop, int leaf) {
+                            uint32_t seed_lo, uint32_t seed_hi, int stop, int leaf, int keyed) {
     if (horizon < 0) { g_error = "horizon must be >= 0"; return 0; }
     if (stop < 0 || stop > 5) {
         g_error = "stop must be 0 (boundaries), 1 (turn), 2 (later), 3 (earlier), 4 (predeal) or 5 (earlier_predeal)";
@@ -331,7 +335,7 @@ TS_API int ts_rollout_reset(int horizon, int shared_dice, int guard, uint32_t fe
     const uint64_t seed = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
     g_rollout = std::make_unique<ts::rollout::RolloutBatch>(
         ts::rollout::Config{horizon, shared_dice != 0, guard != 0, features, static_cast<ts::rollout::Stop>(stop),
-                            static_cast<ts::rollout::Leaf>(leaf)}, seed);
+                            static_cast<ts::rollout::Leaf>(leaf), keyed != 0}, seed);
     return 1;
 }
 
@@ -348,6 +352,125 @@ TS_API int ts_rollout_add(const int32_t* candidates, int k, int worlds) {
     }
     const size_t n = g_rollout->add(g_state, g_ro_cands.data(), g_ro_cands.size(),
                                     static_cast<size_t>(worlds < 0 ? 0 : worlds));
+    if (n == 0 && g_rollout->last_error()[0]) g_error = g_rollout->last_error();
+    return static_cast<int>(n);
+}
+
+// ---- the belief over the opponent's hand (bindings/belief.hpp, the same C++ as Python's) -------
+//
+// One tracker, one game (game 0). The page: ts_belief_reset at a new game; ts_belief_observe before
+// every move is applied (the position held is the one the move is made in); at the AI's decision
+// ts_belief_prepare, then for each recorded decision and each chunk of hands ts_belief_rows -> the
+// network -> the log-probability of ts_belief_action(d) at each of ts_belief_temperature(t) ->
+// ts_belief_set_log_likelihoods; then ts_rollout_add_belief deals the root's worlds from it.
+
+TS_API void ts_belief_reset(uint32_t particles, int all_decisions, uint32_t seed_lo, uint32_t seed_hi) {
+    g_belief = std::make_unique<ts::belief::Tracker>(particles, all_decisions != 0,
+                                                     (static_cast<uint64_t>(seed_hi) << 32) | seed_lo);
+}
+TS_API int ts_belief_temperatures() { return static_cast<int>(ts::belief::kTemps); }
+TS_API float ts_belief_temperature(int t) {
+    return (t >= 0 && static_cast<size_t>(t) < ts::belief::kTemps) ? ts::belief::kTemperatures[t] : 0.0f;
+}
+TS_API int ts_belief_particles() { return g_belief ? static_cast<int>(g_belief->particles()) : 0; }
+
+// The move [type, primary, secondary, flags] about to be applied at the position held: recorded as the
+// flat action that decodes to it. 0 when there is no tracker, no decider, or no flat action is the move
+// (then nothing is recorded -- a move the network could not have made carries no likelihood).
+TS_API int ts_belief_observe(int decision_type, int primary, int secondary, int flags) {
+    if (!g_belief) return 0;
+    const ts::Player decider = g_state.ctx().decision_player;
+    if (decider != ts::Player::US && decider != ts::Player::USSR) return 0;
+    uint8_t mask[ts::FLAT_ACTION_SPACE_SIZE];
+    ts::ActionMask::generate_flat_mask_212(g_state, mask);
+    for (size_t a = 0; a < ts::FLAT_ACTION_SPACE_SIZE; ++a) {
+        if (!mask[a]) continue;
+        const ts::MicroAction m = ts::ActionMask::decode_flat_action_212(g_state, static_cast<uint16_t>(a));
+        if (static_cast<int>(m.decision_type) == decision_type && m.primary_id == primary && m.secondary_id == secondary &&
+            m.flags == flags) {
+            g_belief->observe(0, g_state, decider, static_cast<uint16_t>(a));
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// The belief for the position held: 1 if it has one (then ts_belief_decisions() rows blocks to
+// evaluate, 0 when its weights are reused), 0 where there is nothing to believe.
+TS_API int ts_belief_prepare() {
+    if (!g_belief) return 0;
+    const std::vector<size_t> games{0};
+    const std::vector<const ts::GameState*> states{&g_state};
+    return g_belief->prepare(games, states)[0] ? 1 : 0;
+}
+TS_API int ts_belief_decisions() {
+    return (g_belief && !g_belief->jobs().empty()) ? static_cast<int>(g_belief->jobs()[0].decisions.size()) : 0;
+}
+TS_API int ts_belief_action(int d) {
+    if (!g_belief || g_belief->jobs().empty() || d < 0 || static_cast<size_t>(d) >= g_belief->jobs()[0].decisions.size())
+        return -1;
+    return g_belief->decision(0, static_cast<size_t>(d)).action;
+}
+// Recorded decision d under hands lo .. lo + n - 1: n observation rows (from the opponent's side, in
+// feature set `features`) and masks into the rollout buffers (ts_rollout_buf_obs / _masks). Rows written.
+TS_API int ts_belief_rows(int d, int lo, int n, uint32_t features) {
+    if (!g_belief || g_belief->jobs().empty()) { g_error = "ts_belief_prepare made no job"; return 0; }
+    const auto& job = g_belief->jobs()[0];
+    const size_t N = g_belief->particles();
+    if (d < 0 || static_cast<size_t>(d) >= job.decisions.size() || lo < 0 || n <= 0 || static_cast<size_t>(lo + n) > N) {
+        g_error = "no such decision or hands";
+        return 0;
+    }
+    const auto& left = job.lefts[static_cast<size_t>(d)];
+    g_belief_held.assign(static_cast<size_t>(n) * 110, 0);
+    for (int k = 0; k < n; ++k)
+        for (size_t c = 0; c < 110; ++c)
+            g_belief_held[static_cast<size_t>(k) * 110 + c] =
+                static_cast<uint8_t>(job.hands[static_cast<size_t>(lo + k) * 110 + c] | left[c]);
+    const size_t width = ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features);
+    g_ro_obs.assign(static_cast<size_t>(n) * width, 0.0f);
+    g_ro_masks.assign(static_cast<size_t>(n) * ts::FLAT_ACTION_SPACE_SIZE, 0);
+    ts::rollout::hypothesis_rows(g_belief->decision(0, static_cast<size_t>(d)).state, job.me, g_belief_held.data(),
+                                 static_cast<size_t>(n), features, g_ro_obs.data(), g_ro_masks.data());
+    return n;
+}
+// lp: temperatures x decisions x particles floats, the log-probability of each recorded decision's move.
+TS_API int ts_belief_set_log_likelihoods(const float* lp) {
+    if (!g_belief || g_belief->jobs().empty()) { g_error = "ts_belief_prepare made no job"; return 0; }
+    g_belief->set_log_likelihoods(lp, g_belief->jobs()[0].decisions.size());
+    return 1;
+}
+// The temperature weights of the position prepared (ts_belief_temperatures() floats into `out`).
+TS_API int ts_belief_temperature_weights(float* out) {
+    if (!g_belief) return 0;
+    const auto w = g_belief->temperature_weights(0);
+    std::copy(w.begin(), w.end(), out);
+    return 1;
+}
+// `n` hands resampled from the prepared belief (n x 110 bytes, card c at c - 1); null where it has none.
+TS_API const uint8_t* ts_belief_worlds(int n) {
+    if (!g_belief || n <= 0) return nullptr;
+    g_belief_hands.assign(static_cast<size_t>(n) * 110, 0);
+    return g_belief->worlds(0, static_cast<size_t>(n), g_belief_hands.data()) ? g_belief_hands.data() : nullptr;
+}
+
+// ts_rollout_add with the worlds' opposing hands resampled from the prepared belief. Rows added; 0 with
+// ts_last_error() when the position has no belief (the caller then uses ts_rollout_add).
+TS_API int ts_rollout_add_belief(const int32_t* candidates, int k, int worlds) {
+    if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
+    if (!g_belief || worlds <= 0) { g_error = "no belief"; return 0; }
+    g_belief_hands.assign(static_cast<size_t>(worlds) * 110, 0);
+    if (!g_belief->worlds(0, static_cast<size_t>(worlds), g_belief_hands.data())) { g_error = "no belief here"; return 0; }
+    g_ro_cands.clear();
+    for (int i = 0; i < k; ++i) {
+        if (candidates[i] < 0 || candidates[i] >= static_cast<int32_t>(ts::FLAT_ACTION_SPACE_SIZE)) {
+            g_error = "a candidate is outside the flat action space";
+            return 0;
+        }
+        g_ro_cands.push_back(static_cast<uint16_t>(candidates[i]));
+    }
+    const size_t n = g_rollout->add(g_state, g_ro_cands.data(), g_ro_cands.size(), static_cast<size_t>(worlds),
+                                    g_belief_hands.data());
     if (n == 0 && g_rollout->last_error()[0]) g_error = g_rollout->last_error();
     return static_cast<int>(n);
 }

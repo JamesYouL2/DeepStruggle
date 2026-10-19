@@ -177,12 +177,79 @@ export class WasmEngine {
 
   /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed, and
    *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier, 4 the turn-end park before
-   *  the deal, 5 the earlier of the boundaries and that park). */
+   *  the deal, 5 the earlier of the boundaries and that park); `keyed` ties every draw to its situation
+   *  (bindings/keyed_chance.hpp, the leaderboard's chance=keyed). */
   rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true, stop = 0,
-               leaf = 0): void {
+               leaf = 0, keyed = false): void {
     const ok = this.M._ts_rollout_reset(horizon, sharedDice ? 1 : 0, guard ? 1 : 0, features >>> 0,
-      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf);
+      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf, keyed ? 1 : 0);
     if (!ok) throw new Error(this.lastError());
+  }
+
+  /** The position held as one decision of the batch, its worlds' opposing hands resampled from the
+   *  prepared belief; rows added. */
+  rolloutAddBelief(candidates: number[], worlds: number): number {
+    const p = this.M._malloc(4 * Math.max(1, candidates.length));
+    try {
+      this.M.HEAP32.set(candidates, p >> 2);
+      const n = this.M._ts_rollout_add_belief(p, candidates.length, worlds);
+      if (n === 0 && candidates.length >= 2) throw new Error(this.lastError() || "no rows");
+      return n;
+    } finally {
+      this.M._free(p);
+    }
+  }
+
+  // ---- the belief over the opponent's hand (bindings/belief.hpp, the same C++ as Python's) ------
+  //
+  // One tracker, one game. beliefReset at a new game; beliefObserve before every move is applied;
+  // at the AI's decision beliefPrepare, then per recorded decision and chunk of hands beliefRows ->
+  // the network -> the move's log-probability at each temperature -> beliefSetLogLikelihoods; then
+  // rolloutAddBelief.
+
+  beliefReset(particles: number, seed: number, allDecisions = true): void {
+    this.M._ts_belief_reset(particles >>> 0, allDecisions ? 1 : 0, seed >>> 0, Math.floor(seed / 4294967296) >>> 0);
+  }
+  beliefTemperatures(): number[] {
+    const n = this.M._ts_belief_temperatures();
+    return Array.from({ length: n }, (_, t) => this.M._ts_belief_temperature(t));
+  }
+  beliefParticles(): number { return this.M._ts_belief_particles(); }
+  /** Record the move about to be applied at the position held; false when no flat action is that move. */
+  beliefObserve(a: MicroAction): boolean {
+    return this.M._ts_belief_observe(a.decision_type, a.primary_id, a.secondary_id ?? 0, a.flags ?? 0) !== 0;
+  }
+  /** Whether the position held has a belief; then beliefDecisions() blocks to evaluate (0: reused). */
+  beliefPrepare(): boolean { return this.M._ts_belief_prepare() !== 0; }
+  beliefDecisions(): number { return this.M._ts_belief_decisions(); }
+  beliefAction(d: number): number { return this.M._ts_belief_action(d); }
+  /** Recorded decision d under hands lo .. lo + n - 1: n observation rows and masks. */
+  beliefRows(d: number, lo: number, n: number, features: number, width: number): { obs: Float32Array; masks: Uint8Array } {
+    const rows = this.M._ts_belief_rows(d, lo, n, features >>> 0);
+    if (rows !== n) throw new Error(this.lastError());
+    const o = this.M._ts_rollout_buf_obs() >> 2;
+    const m = this.M._ts_rollout_buf_masks();
+    return { obs: this.M.HEAPF32.slice(o, o + n * width), masks: this.M.HEAPU8.slice(m, m + n * this.actionSize) };
+  }
+  /** temperatures x decisions x particles log-probabilities of the recorded moves. */
+  beliefSetLogLikelihoods(lp: Float32Array): void {
+    const p = this.M._malloc(4 * Math.max(1, lp.length));
+    try {
+      this.M.HEAPF32.set(lp, p >> 2);
+      if (!this.M._ts_belief_set_log_likelihoods(p)) throw new Error(this.lastError());
+    } finally {
+      this.M._free(p);
+    }
+  }
+  beliefTemperatureWeights(): number[] {
+    const n = this.M._ts_belief_temperatures();
+    const p = this.M._malloc(4 * n);
+    try {
+      this.M._ts_belief_temperature_weights(p);
+      return Array.from(this.M.HEAPF32.subarray(p >> 2, (p >> 2) + n));
+    } finally {
+      this.M._free(p);
+    }
   }
 
   /** The `k` most probable legal moves by the root's logits under `mask`, best first. */

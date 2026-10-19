@@ -313,6 +313,15 @@ web/ui/
      in the URL, `search=rollout:k:worlds:horizon:rule[:stop][:leaf]` for another spec; the default is the leaderboard's best, 4:32:4:z2 with stop=earlier, leaf=own): the engine's own batch
      (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
+     The spec takes the leaderboard's other modes too: `:keyed` (chance=keyed,
+     `bindings/keyed_chance.hpp`) and `:belief[N]` (belief=N, 2,048 hands by default: the worlds dealt
+     from the policy-likelihood belief over the opponent's hand, `bindings/belief.hpp`, the same C++
+     as Python's). For the belief the session records every move (`GameSession.moves`, undone with
+     undo) and `rollout_runner.ts` brings the searching engine's tracker up to them before each
+     search -- new moves only, or reset and replayed after an undo, a loaded position or a new worker
+     (the evidence about the opponent's style then restarts). The page builds each hypothesis row in
+     full in WebAssembly and runs it through onnxruntime in chunks of 256: slow at 2,048 hands, but
+     the leaderboard's player (`tests/web/test_wasm_engine.py` holds the tracker equal to Python's).
      The panel shows each candidate's mean value and paired lead and marks the pick; the favourite
      and auto-play take the pick and wait for it. A model in the merged (E4.1) view is refused for
      search.

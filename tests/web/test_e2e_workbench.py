@@ -208,7 +208,8 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.search", timeout=120000)
     a = page.evaluate("window.__wb.liveAnalysis")
     s = a["search"]
-    assert s["kind"] == "rollout" and s["spec"] == {"k": 3, "worlds": 2, "horizon": 1, "rule": "z2", "stop": "earlier", "leaf": "own"}
+    assert s["kind"] == "rollout" and s["spec"] == {"k": 3, "worlds": 2, "horizon": 1, "rule": "z2", "stop": "earlier", "leaf": "own",
+                                                   "keyed": False, "belief": 0}
     assert s["pick"] in s["candidates"] and s["candidates"][0] == a["policy"]["argmax_idx"]
     assert s["worlds"] == 2 and len(s["q"]) == len(s["candidates"]) == 3
     assert parse_qs(page.url.split("?", 1)[1]).get("search") == [spec]
@@ -255,6 +256,37 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     page.evaluate("async () => { window.__release(); await new Promise(r => setTimeout(r, 0)); }")
     assert "ROLLOUT ROOT" not in page.inner_text("#analysis-body")
     assert not page.evaluate("window.__wb.liveAnalysis.search")
+    assert not page.errors
+
+
+def test_the_page_searches_with_the_belief_root(browser: Any, server: str) -> None:
+    """The leaderboard's belief root (`:keyed:belief<N>`, bindings/belief.hpp) in the page: the search
+    worker's tracker is fed the game's moves (rollout_runner.ts) and its searches deal their worlds from
+    the belief -- a result carries the temperature weights it settled on -- through Play favourite and an
+    undo (which replays the moves into the tracker)."""
+    spec = "rollout:2:2:0:z2:earlier:own:keyed:belief16"
+    page = _open(browser, server + f"/?search={spec}")
+    _pick_local_model(page)
+    weighed = 0
+    for i in range(14):
+        page.wait_for_function("window.__wb.liveAnalysis && (window.__wb.liveAnalysis.search "
+                               "|| window.__wb.liveAnalysis.search_error)", timeout=120000)
+        a = page.evaluate("window.__wb.liveAnalysis")
+        assert not a.get("search_error"), a.get("search_error")
+        s = a["search"]
+        assert s["spec"]["keyed"] is True and s["spec"]["belief"] == 16
+        w = s.get("temperature_weights")
+        if w:
+            assert len(w) == 6 and abs(sum(w) - 1.0) < 1e-4
+            weighed += 1
+        n = page.evaluate("window.__wb.state.step_index")
+        if i == 8:
+            page.click("#btn-undo-action")
+            page.wait_for_function(f"window.__wb.state.step_index < {n}")
+            continue
+        page.click("#btn-play-favourite")
+        page.wait_for_function(f"window.__wb.state.step_index > {n}")
+    assert weighed > 0, "no search was dealt from the belief"
     assert not page.errors
 
 

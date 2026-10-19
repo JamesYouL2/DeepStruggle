@@ -21,8 +21,10 @@ from typing import Any, Dict, List
 
 import numpy as np
 import pytest
+import torch
 
 import ts_engine as ts
+from ai.search.belief import _hypothesis_obs
 from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.game_step import drain_chance
 
@@ -94,13 +96,16 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
-@pytest.mark.parametrize("seed,plies,horizon,stop,leaf", [
-    (21, 70, 2, "boundaries", "mover"), (34, 150, 1, "boundaries", "mover"), (47, 40, 0, "boundaries", "mover"),
-    (58, 90, 4, "turn", "mover"), (63, 120, 2, "later", "mover"), (71, 130, 3, "earlier", "mover"),
-    (58, 90, 4, "turn", "decider"), (77, 110, 2, "boundaries", "decider"), (58, 90, 4, "turn", "own"),
-    (83, 100, 3, "earlier", "own"), (58, 90, 4, "predeal", "mover"), (93, 80, 3, "earlier_predeal", "own")])
+@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed", [
+    (21, 70, 2, "boundaries", "mover", False), (34, 150, 1, "boundaries", "mover", False),
+    (47, 40, 0, "boundaries", "mover", False), (58, 90, 4, "turn", "mover", False),
+    (63, 120, 2, "later", "mover", False), (71, 130, 3, "earlier", "mover", False),
+    (58, 90, 4, "turn", "decider", False), (77, 110, 2, "boundaries", "decider", False),
+    (58, 90, 4, "turn", "own", False), (83, 100, 3, "earlier", "own", False),
+    (58, 90, 4, "predeal", "mover", False), (93, 80, 3, "earlier_predeal", "own", False),
+    (83, 100, 3, "earlier", "own", True), (34, 150, 1, "boundaries", "mover", True)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
-                                                                 leaf: str, tmp_path) -> None:
+                                                                 leaf: str, keyed: bool, tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
     critic: the same rows, the same worlds, the same observations ply by ply, the same values."""
     state = ts.GameState()
@@ -121,7 +126,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     act = int(mask.shape[0])
 
     batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed, stop=stop,
-                            leaf=leaf)
+                            leaf=leaf, keyed=keyed)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
     plies_run = 0
@@ -148,7 +153,8 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     }
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
-                                "horizon": horizon, "batch_seed": batch_seed, "stop": stop, "leaf": leaf}))
+                                "horizon": horizon, "batch_seed": batch_seed, "stop": stop, "leaf": leaf,
+                                "keyed": keyed}))
     # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
     root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
     top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)
@@ -171,3 +177,64 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
             assert np.allclose(np.asarray(got[key], dtype=np.float32), np.asarray(want[key], dtype=np.float32),
                                rtol=1e-6, atol=1e-7), (rule, key)
     assert rows > 0 and native["refused"] == 0
+
+
+@pytest.mark.parametrize("seed,plies", [(21, 70), (34, 150), (58, 95), (83, 120)])
+def test_the_belief_tracker_is_the_same_in_both_builds(seed: int, plies: int, tmp_path) -> None:
+    """The belief over the opponent's hand (bindings/belief.hpp) on one game: the page observes moves
+    as clicks and finds their flat actions, Python observes the flat actions; at the last position the
+    same recorded decisions, the same hypothesis rows (the page builds them whole, Python on its device
+    from rows_patch), and under the same synthetic log-likelihoods the same temperature weights and
+    the same dealt hands."""
+    particles, tracker_seed, n_worlds = 16, 4242, 8
+    tracker = ts.BeliefTracker(particles, True, tracker_seed)
+    state = ts.GameState()
+    ts.Engine.init_game(state, seed)
+    drain_chance(state)
+    rng = random.Random(seed)
+    actions: List[List[int]] = []
+    while not ts.Engine.is_terminal(state) and len(actions) < plies:
+        legal = [int(i) for i in np.nonzero(ts.get_flat_action_mask(state, False))[0]]
+        a = rng.choice(legal)
+        ma = ts.decode_flat_action(state, a)
+        tracker.observe(0, state, state.ctx().decision_player, a)
+        actions.append([int(ma.decision_type), int(ma.primary_id), int(ma.secondary_id), int(ma.flags)])
+        ts.Engine.step(state, ma)
+        drain_chance(state)
+    assert not ts.Engine.is_terminal(state)
+    has = tracker.prepare([0], [state])[0]
+    D = tracker.job_decisions(0) if tracker.job_count() else 0
+    h = hashlib.sha256()
+    weights: List[float] = []
+    worlds = None
+    rows_actions: List[int] = []
+    if D:
+        bases, pools, lefts, job_of, acts, hands, packed = tracker.rows_patch(0)
+        rows_actions = [int(x) for x in acts]
+        for d in range(D):
+            held = torch.from_numpy(hands[0] | lefts[d][None, :])[None]
+            obs = _hypothesis_obs(torch.from_numpy(bases[d])[None], held, torch.from_numpy(pools[d]).bool()[None])
+            masks = np.unpackbits(packed[d], axis=1)[:, :int(ts.get_flat_action_mask(state, False).shape[0])]
+            h.update(np.ascontiguousarray(obs.numpy(), dtype=np.float32).tobytes())
+            h.update(np.ascontiguousarray(masks, dtype=np.uint8).tobytes())
+        T = len(ts.BeliefTracker.temperatures())
+        lp = np.empty((T, D, particles), dtype=np.float32)
+        for t in range(T):
+            for d in range(D):
+                for k in range(particles):
+                    lp[t, d, k] = -(((k * 2654435761 + d * 40503 + t * 7) % 1000) / 250)
+        tracker.set_log_likelihoods(lp)
+        weights = [float(x) for x in tracker.temperature_weights(0)]
+        w = tracker.worlds(0, n_worlds)
+        worlds = None if w is None else [int(x) for x in np.asarray(w).reshape(-1)]
+    path = tmp_path / "belief.json"
+    path.write_text(json.dumps({"seed": seed, "actions": actions, "particles": particles,
+                                "tracker_seed": tracker_seed, "worlds": n_worlds}))
+    wasm = _node("belief", str(path))
+    assert "error" not in wasm, wasm.get("error")
+    assert wasm["observed"] == len(actions), "the page found a flat action for every click"
+    assert (bool(wasm["has"]), wasm["decisions"]) == (bool(has), D)
+    assert wasm["actions"] == rows_actions
+    assert wasm["digest"] == h.hexdigest(), "the two builds' hypothesis rows differ"
+    assert np.allclose(np.asarray(wasm["weights"], dtype=np.float32), np.asarray(weights, dtype=np.float32), atol=1e-6)
+    assert wasm["worlds"] == worlds

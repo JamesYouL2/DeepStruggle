@@ -497,7 +497,8 @@ export class TSApp {
     const current = () => version === this.version && key === this.modelKey && run === this.searchRuns
       && a === this.liveAnalysis && spec === this.searchSpec;
     try {
-      const result = await this.runner.search(this.engine.snapshot(), model, key, spec, this.seedFor(version));
+      const result = await this.runner.search(this.engine.snapshot(), model, key, spec, this.seedFor(version),
+                                              this.session?.moves ?? []);
       if (!current()) return;
       a.search_pending = false;
       a.search = result ?? undefined;

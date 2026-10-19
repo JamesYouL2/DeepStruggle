@@ -4,8 +4,15 @@
  * either path: a search awaits the model between its batch steps, and two at once would share one
  * engine and one rollout batch. A request still waiting when a newer one arrives is superseded --
  * it rejects without running, as the page has moved on from it; one already running finishes.
+ *
+ * A belief root (`spec.belief`) needs the game's moves: before each search the searching engine's
+ * tracker is brought up to the session's moves -- only the new ones when what it saw is still the
+ * game's beginning, else reset and replayed (an undo, a loaded position, a new worker). A replay
+ * restores the record of the current turn exactly; the evidence earlier searches gathered about the
+ * opponent's style (bindings/belief.hpp) starts again from there.
  */
 import { WasmEngine } from "../engine/wasm_engine";
+import type { Move } from "../game/session";
 import { Model } from "./model";
 import { RolloutSpec, SearchResult, rolloutRoot } from "./rollout";
 import type { OutMsg } from "./rollout_worker";
@@ -19,6 +26,10 @@ export class RolloutRunner {
   /** Settles when the search before the newest request has finished. */
   private queue: Promise<void> = Promise.resolve();
   private latest = 0;
+  /** The moves the searching engine's belief tracker has observed, and its hands (0: no tracker). */
+  private beliefSeen: Move[] = [];
+  private beliefHands = 0;
+  private beliefOnWorker = false;
 
   constructor(private readonly engine: WasmEngine, private readonly base: string = import.meta.env.BASE_URL) {}
 
@@ -26,6 +37,8 @@ export class RolloutRunner {
   setModel(model: Model | null, key: string): void {
     this.failAll(new Error("the model changed"));
     this.workerModelKey = "";
+    this.beliefSeen = [];
+    this.beliefHands = 0;
     if (!model) return;
     if (typeof Worker === "undefined") return;
     try {
@@ -55,7 +68,8 @@ export class RolloutRunner {
    * The root's decision for the position `state` (the engine's raw bytes) under `spec`, after the
    * search before it has finished. Rejects without searching if a newer request arrives first.
    */
-  async search(state: Uint8Array, model: Model, key: string, spec: RolloutSpec, seed: number): Promise<SearchResult | null> {
+  async search(state: Uint8Array, model: Model, key: string, spec: RolloutSpec, seed: number,
+               moves: Move[] = []): Promise<SearchResult | null> {
     const ticket = ++this.latest;
     const before = this.queue;
     let done!: () => void;
@@ -63,16 +77,37 @@ export class RolloutRunner {
     try {
       await before;
       if (ticket !== this.latest) throw new Error("superseded by a newer search");
-      return await this.searchNow(state, model, key, spec, seed);
+      return await this.searchNow(state, model, key, spec, seed, moves);
     } finally {
       done();
     }
   }
 
+  /**
+   * The moves the searching engine's tracker has not yet seen, and whether it must start over: what
+   * it saw is still the game's beginning only if the game is at least as long and its last seen move
+   * is the same object (an undo followed by new moves replaces it).
+   */
+  private beliefDelta(moves: Move[], hands: number, onWorker: boolean): { reset: boolean; add: Move[] } {
+    const seen = this.beliefSeen;
+    const prefix = hands === this.beliefHands && onWorker === this.beliefOnWorker && seen.length <= moves.length
+      && (seen.length === 0 || moves[seen.length - 1] === seen[seen.length - 1]);
+    const add = prefix ? moves.slice(seen.length) : moves.slice();
+    this.beliefSeen = moves.slice();
+    this.beliefHands = hands;
+    this.beliefOnWorker = onWorker;
+    return { reset: !prefix, add };
+  }
+
   /** One search, now. Inline when there is no worker for this model: then the page's engine runs it between two renders. */
-  private async searchNow(state: Uint8Array, model: Model, key: string, spec: RolloutSpec, seed: number): Promise<SearchResult | null> {
+  private async searchNow(state: Uint8Array, model: Model, key: string, spec: RolloutSpec, seed: number,
+                          moves: Move[]): Promise<SearchResult | null> {
     if (this.worker && this.workerReady && this.workerModelKey === key) {
       await this.workerReady;
+      if (spec.belief > 0) {
+        const { reset, add } = this.beliefDelta(moves, spec.belief, true);
+        this.worker.postMessage({ type: "belief", reset, hands: spec.belief, moves: add });
+      }
       const id = this.next++;
       return new Promise<SearchResult | null>((resolve, reject) => {
         this.pending.set(id, { resolve, reject });
@@ -83,6 +118,14 @@ export class RolloutRunner {
     // on add and never touches it again, so the board is intact when this returns.
     const keep = this.engine.snapshot();
     try {
+      if (spec.belief > 0) {
+        const { reset, add } = this.beliefDelta(moves, spec.belief, false);
+        if (reset) this.engine.beliefReset(spec.belief, 0);
+        for (const m of add) {
+          this.engine.restore(m.before);
+          this.engine.beliefObserve(m.action);
+        }
+      }
       this.engine.restore(state);
       return await rolloutRoot(this.engine, model, spec, seed);
     } finally {
