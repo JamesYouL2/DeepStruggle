@@ -1,13 +1,16 @@
 """Why doesn't the rollout root distil? (1) is its verdict consistent across seeds, (2) where do its departures
 (and their measured leads) lie. Positions: greedy self-play of the network, every decision with >= 2 legal moves
-sampled at rate p (all node types, as the training targets were). Each position searched R times, reseeded.
+sampled at rate p (all node types, as the training targets were; `--entry`: card choices only, the entry
+decisions). Each position searched R times, reseeded -- at every world count of `--worlds` (P36b: the
+target's signal-to-noise against the number of worlds, with `--keyed --stop earlier --leaf own`).
     PYTHONPATH=.:build/release python -m ai.eval.rollout_consistency <checkpoint> <games> <p> <repeats>
+        [--worlds 16 64 128] [--keyed] [--stop earlier] [--leaf own] [--entry] [--positions 3000]
 
-Findings: research/log/E7_search_depth_and_value.md section 6.
+Findings: research/log/E7_search_depth_and_value.md section 6; research/plans/P36_*.md (P36b).
 """
 from __future__ import annotations
 
-import sys
+import argparse
 from collections import Counter, defaultdict
 from typing import Any, Dict, List
 
@@ -21,7 +24,8 @@ from bindings.ts_env import model_obs_features
 from tools.lib.player_agent import NeuralAgent, load_agent
 
 
-def collect(model: Any, dev: torch.device, games: int, p: float, rng: np.random.Generator) -> List[Any]:
+def collect(model: Any, dev: torch.device, games: int, p: float, rng: np.random.Generator, entry: bool = False,
+            limit: int = 0) -> List[Any]:
     feats = model_obs_features(model)
     runner = ts.VectorizedBatchRunner(games, 515)
     if feats:
@@ -40,8 +44,14 @@ def collect(model: Any, dev: torch.device, games: int, p: float, rng: np.random.
         acts[done] = 0
         for i in np.flatnonzero(~done & (masks.sum(axis=1) >= 2)):
             if rng.random() < p:
-                out.append(runner.get_state(int(i)).clone())
+                st = runner.get_state(int(i))
+                if entry and int(st.ctx().decision_type) != int(ts.DecisionType.SELECT_CARD):
+                    continue
+                out.append(st.clone())
         runner.step_flat_all(acts.tolist(), True)
+    if limit and len(out) > limit:
+        # a uniform subset of whole games' positions (stopping early would keep only the early turns)
+        out = [out[i] for i in sorted(rng.choice(len(out), size=limit, replace=False))]
     return out
 
 
@@ -60,22 +70,42 @@ def describe(st: Any) -> Dict[str, str]:
 
 
 def main() -> None:
-    path, games, p, R = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4])
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("checkpoint")
+    ap.add_argument("games", type=int)
+    ap.add_argument("p", type=float, help="sampling rate of the decisions")
+    ap.add_argument("repeats", type=int)
+    ap.add_argument("--worlds", type=int, nargs="+", default=[16])
+    ap.add_argument("--keyed", action="store_true", help="keyed chance (bindings/keyed_chance.hpp)")
+    ap.add_argument("--stop", default="boundaries")
+    ap.add_argument("--leaf", default="mover")
+    ap.add_argument("--entry", action="store_true", help="card choices only (the entry decisions)")
+    ap.add_argument("--positions", type=int, default=0, help="stop collecting at this many positions")
+    a = ap.parse_args()
+    path, games, p, R = a.checkpoint, a.games, a.p, a.repeats
     agent = load_agent(path, device="cuda")
     if not isinstance(agent, NeuralAgent):
         raise SystemExit(f"{path} is not a network")
     model = agent.model.eval()
     dev = next(model.parameters()).device
     rng = np.random.default_rng(7)
-    states = collect(model, dev, games, p, rng)
-    print(f"{len(states)} positions from {games} greedy games")
-    teacher = RolloutTeacher(model, RolloutConfig(k=4, worlds=16, horizon=4, rule="z2"), device=dev)
+    states = collect(model, dev, games, p, rng, a.entry, a.positions)
+    print(f"{len(states)} positions from {games} greedy games{' (entry decisions)' if a.entry else ''}")
+    for worlds in a.worlds:
+        print(f"\n======== {worlds} worlds ({'keyed' if a.keyed else 'shared-stream'} chance, stop={a.stop}, leaf={a.leaf})")
+        report(model, dev, states, R, RolloutConfig(k=4, worlds=worlds, horizon=4, rule="z2", stop=a.stop,
+                                                     leaf_side=a.leaf, keyed=a.keyed))
+
+
+def report(model: Any, dev: torch.device, states: List[Any], R: int, cfg: RolloutConfig) -> None:
+    teacher = RolloutTeacher(model, cfg, device=dev)
+    chunk_n = max(32, 8192 // cfg.worlds)
     runs: List[List[Dict[str, Any]]] = []
     for r in range(R):
         teacher.root.reseed(1000 + 17 * r)
         res: List[Dict[str, Any]] = []
-        for lo in range(0, len(states), 512):
-            chunk = states[lo:lo + 512]
+        for lo in range(0, len(states), chunk_n):
+            chunk = states[lo:lo + chunk_n]
             tg = teacher.improved_policies(chunk)
             for st, stats, (acts, probs) in zip(chunk, teacher.root.last_stats, tg):
                 cands = stats["candidates"]
@@ -131,7 +161,8 @@ def main() -> None:
     cardc = Counter(descs[i]["card"] for i in d0)
     print("  departures by card (top 15):", ", ".join(f"{k} {v}" for k, v in cardc.most_common(15)))
     stable = [i for i in d0 if all(runs[r][i]["pick"] == runs[0][i]["pick"] for r in range(R))]
-    print(f"\n  departures stable in all {R} runs: {len(stable)} of {len(d0)}; their mean lead "
+    print(f"\n  departures stable in all {R} runs: {len(stable)} of {len(d0)} ({100 * len(stable) / max(1, len(d0)):.1f}%); "
+          f"their mean lead "
           f"{np.mean([runs[0][i]['lead'] for i in stable]) if stable else 0:+.3f} vs the unstable "
           f"{np.mean([runs[0][i]['lead'] for i in d0 if i not in set(stable)]) if len(stable) < len(d0) else 0:+.3f}")
     stc = Counter(descs[i]["type"] for i in stable)
