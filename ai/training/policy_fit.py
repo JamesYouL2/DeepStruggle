@@ -22,6 +22,7 @@ The z2 picks are read alike (`*_pick`): where the root's own decision departs fr
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -32,6 +33,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 import ts_engine as ts
@@ -62,6 +64,12 @@ class PolicyFitConfig:
     fit_sample: int = 20000         # training positions the fit is read on
     #: The share of the training games used (whole games, the lowest game ids): the data-scaling cells.
     train_fraction: float = 1.0
+    #: Freeze the whole network and train only a correction head on its trunk features, added to its logits
+    #: (zero at the start): the corrections as a residual that cannot damage the policy.
+    head_only: bool = False
+    #: Weight of KL(the initial network's policy || the student's) on every position: a fine-tune held near
+    #: the policy it started from.
+    kl_anchor: float = 0.0
     seed: int = 44
     device: str = "cuda"
     bf16: bool = True
@@ -110,9 +118,27 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     for name, p in model.named_parameters():
         if name.startswith(("val_win_head", "val_vp_head", "val_logits_head")):
             p.requires_grad_(False)
-    model.train()
-    params = [p for p in model.parameters() if p.requires_grad]
-    n_params = sum(p.numel() for p in model.parameters())
+    anchor = None
+    if cfg.kl_anchor > 0:
+        anchor = copy.deepcopy(model).eval()
+        for p in anchor.parameters():
+            p.requires_grad_(False)
+    head: Optional[nn.Module] = None
+    if cfg.head_only:
+        for p in model.parameters():
+            p.requires_grad_(False)
+        with torch.no_grad():
+            width = int(getattr(model, "_encode")(torch.zeros(1, model.TOTAL_OBS_SIZE, device=dev))[0].shape[1])
+        head = nn.Sequential(nn.Linear(width, 512), nn.GELU(), nn.Linear(512, ACTIONS)).to(dev)
+        out_layer = head[-1]
+        assert isinstance(out_layer, nn.Linear)
+        nn.init.zeros_(out_layer.weight)
+        nn.init.zeros_(out_layer.bias)
+        model.eval()
+    else:
+        model.train()
+    params = list(head.parameters()) if head is not None else [p for p in model.parameters() if p.requires_grad]
+    n_params = sum(p.numel() for p in model.parameters()) + (sum(p.numel() for p in head.parameters()) if head is not None else 0)
 
     t0 = time.time()
     meta_path = pathlib.Path(cfg.dataset + ".meta.json")
@@ -166,28 +192,41 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
         return cfg.lr * (0.05 + 0.95 * 0.5 * (1.0 + math.cos(math.pi * min(1.0, frac))))
 
     def logits(rows: torch.Tensor) -> torch.Tensor:
+        obs = codes.decode(x_dev[rows])
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=cfg.bf16 and dev.type == "cuda"):
-            lg = model(codes.decode(x_dev[rows]), m_dev[rows])[0]
+            if head is not None:
+                with torch.no_grad():
+                    base = model(obs, m_dev[rows])[0]
+                    h = getattr(model, "_encode")(obs)[0]
+                lg = base.float() + head(h.float()).float()
+            else:
+                lg = model(obs, m_dev[rows])[0]
         return lg.float().masked_fill(m_dev[rows] == 0, float("-inf"))
+
+    def set_train(on: bool) -> None:
+        if head is not None:
+            head.train(on)
+        else:
+            model.train(on)
 
     @torch.no_grad()
     def argmax_of(rows: np.ndarray) -> np.ndarray:
-        model.eval()
+        set_train(False)
         out = [logits(torch.from_numpy(rows[lo:lo + 8192]).to(dev)).argmax(-1).cpu().numpy()
                for lo in range(0, rows.size, 8192)]
-        model.train()
+        set_train(True)
         return np.concatenate(out) if out else np.zeros(0, np.int64)
 
     @torch.no_grad()
     def held_ce() -> float:
-        model.eval()
+        set_train(False)
         tot, n = 0.0, 0
         for lo in range(0, ho.size, 8192):
             r = torch.from_numpy(ho[lo:lo + 8192]).to(dev)
             lp = torch.log_softmax(logits(r), -1).nan_to_num(neginf=0.0)
             tot += float(-(y_dev[r] * lp).sum().item())
             n += int(r.numel())
-        model.train()
+        set_train(True)
         return tot / max(1, n)
 
     def evaluate() -> Dict[str, float]:
@@ -195,8 +234,14 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
         if fit_rows.size:
             out["train_fit"] = float((argmax_of(fit_rows) == top[fit_rows]).mean())
         if dep_ho.size:
-            out["held_agree_dep"] = float((argmax_of(dep_ho) == top[dep_ho]).mean())
-        out["held_agree_all"] = float((argmax_of(ho) == top[ho]).mean())
+            a_dep = argmax_of(dep_ho)
+            out["held_agree_dep"] = float((a_dep == top[dep_ho]).mean())
+            out["held_keep_dep"] = float((a_dep == net[dep_ho]).mean())     # still the network's own move
+        a_all = argmax_of(ho)
+        out["held_agree_all"] = float((a_all == top[ho]).mean())
+        agree_ho = top[ho] == net[ho]
+        if agree_ho.any():
+            out["held_leave_agree"] = float((a_all[agree_ho] != net[ho][agree_ho]).mean())   # damage
         if pdep_ho.size:
             out["held_agree_pick"] = float((argmax_of(pdep_ho) == pick[pdep_ho]).mean())
         if pdep_tr.size:
@@ -237,6 +282,12 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
             g["lr"] = lr_at(step)
         lp = torch.log_softmax(logits(idx), -1).nan_to_num(neginf=0.0)
         loss = -(y_dev[idx] * lp).sum(-1).mean()
+        if anchor is not None:
+            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16, enabled=cfg.bf16 and dev.type == "cuda"):
+                la = anchor(codes.decode(x_dev[idx]), m_dev[idx])[0]
+            pa = torch.softmax(la.float().masked_fill(m_dev[idx] == 0, float("-inf")), -1)
+            kl = (pa * (torch.log(pa.clamp(min=1e-12)) - lp)).sum(-1).mean()
+            loss = loss + cfg.kl_anchor * kl
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -264,6 +315,8 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
                     print(f"  converged: the training fit has not risen by {cfg.min_gain} in {bad} evaluations", flush=True)
                     break
     torch.save(model.state_dict(), os.path.join(run_dir, "policy_fit_last.pt"))
+    if head is not None:
+        torch.save(head.state_dict(), os.path.join(run_dir, "policy_fit_head_last.pt"))
     meta.update(finished=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), steps=step, initial=first, final=last)
     (pathlib.Path(run_dir) / "metadata.json").write_text(json.dumps(meta, indent=2, default=str) + "\n")
     log.close()

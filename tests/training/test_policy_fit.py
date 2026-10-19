@@ -95,3 +95,20 @@ def test_a_dataset_from_another_build_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="written by engine"):
         run_policy_fit(PolicyFitConfig(dataset=ds, worlds=16, init=ckpt, device="cpu", bf16=False),
                        run_name="E7-A1-R1-S44", description="t", output_dir=str(tmp_path / "E7-A1-R1-S44_x"))
+
+
+def test_a_head_only_fit_leaves_the_network_untouched_and_learns_the_residual(tmp_path: Path) -> None:
+    ds = _dataset(tmp_path)
+    torch.manual_seed(0)
+    net = create_ladder_net("cpu", **SHALLOW)
+    ckpt = str(tmp_path / "init.pt")
+    torch.save(net.state_dict(), ckpt)
+    run = run_policy_fit(PolicyFitConfig(dataset=ds, worlds=16, init=ckpt, batch=64, lr=1e-3, warmup_steps=5,
+                                         max_epochs=30, eval_every=20, patience=6, fit_sample=500, device="cpu",
+                                         bf16=False, head_only=True),
+                         run_name="E7-A1-R1-S44", description="t", output_dir=str(tmp_path / "E7-A1-R1-S44_h"))
+    after = torch.load(os.path.join(run, "policy_fit_last.pt"), weights_only=True)
+    assert all(torch.equal(v, after[k]) for k, v in net.state_dict().items()), "the frozen network moved"
+    rows = [json.loads(line) for line in open(os.path.join(run, "policy_fit_metrics.jsonl"))]
+    assert rows[-1]["train_fit"] > rows[0]["train_fit"] and "held_leave_agree" in rows[-1] or "held_keep_dep" in rows[-1]
+    assert os.path.exists(os.path.join(run, "policy_fit_head_last.pt"))
