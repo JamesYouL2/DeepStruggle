@@ -961,6 +961,50 @@ def hypothesis_masks(state: GameState, me: Player, held: Annotated[NDArray[numpy
     hypothesis_rows' legal masks alone (n x 220): the observations differ only in each hidden card's own-hand / deck slot, which the belief sets on the device (ai/search/belief.py).
     """
 
+class BeliefTracker:
+    """
+    The policy-likelihood belief over the opponent's unseen hand (bindings/belief.hpp, shared with the browser): observe() every decision of the games; at root decisions prepare(), evaluate the rows it lists (rows_patch or rows_full) at every temperature, set_log_likelihoods(), worlds().
+    """
+
+    def __init__(self, particles: int = 2048, all_decisions: bool = True, seed: int = 0) -> None: ...
+
+    @staticmethod
+    def temperatures() -> list[float]: ...
+
+    @property
+    def particles(self) -> int: ...
+
+    def reseed(self, seed: int) -> None: ...
+
+    def new_games(self) -> None: ...
+
+    def observe(self, game: int, state: GameState, decider: Player, action: int) -> None: ...
+
+    def prepare(self, games: Sequence[int], states: Sequence[GameState]) -> list[bool]: ...
+
+    def job_count(self) -> int: ...
+
+    def job_decisions(self, job: int) -> int: ...
+
+    def job_position(self, job: int) -> int:
+        """The index, among the last prepare() call's positions, of job j."""
+
+    def job_hands(self, job: int) -> Annotated[NDArray[numpy.uint8], dict(shape=(None, None))]: ...
+
+    def rows_patch(self, features: int = 0) -> tuple:
+        """
+        (bases R x W, pools R x 110, lefts R x 110, job_of R, actions R, hands J x N x 110, packed masks R x N x 28): every job's recorded decisions, for the caller to build the rows on its device.
+        """
+
+    def set_log_likelihoods(self, log_likelihoods: Annotated[NDArray[numpy.float32], dict(shape=(None, None, None), order='C', device='cpu', writable=False)]) -> None: ...
+
+    def worlds(self, position: int, n: int) -> object:
+        """
+        n hands (n x 110 uint8) resampled from the prepared position's belief, or None where it has none.
+        """
+
+    def temperature_weights(self, position: int) -> list[float]: ...
+
 class RolloutBatch:
     """
     The rollout root's playouts for one or more decisions: the sampled worlds of each candidate move, their greedy playouts to a horizon of action-round boundaries (stop='boundaries', the default), to the end of the decision's turn ('turn'), or to the later of the two ('later'), and the leaves the critic reads. The network is the caller's: fill_live() -> logits -> step(), until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).

@@ -4,7 +4,7 @@ until the opponent moves, and a belief root plays a tournament through the game 
 
 from __future__ import annotations
 
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -12,8 +12,8 @@ import torch
 import ts_engine as ts
 from ai.eval.belief_history_probe import collect, world_at
 from ai.models.ladder_net import create_ladder_net
-from ai.search.belief import (DECK, UNKNOWN, BeliefTracker, Now, _hypothesis_obs, log_weights, player, record,
-                              sample_hands, side)
+from ai.search.belief import (DECK, UNKNOWN, BeliefTracker, Decision, Now, _hypothesis_obs, card_locations,
+                              device_log_probs, log_weights, player, record, sample_hands, side)
 from ai.search.rollout_root import RolloutConfig, RolloutRootAgent, rollout_spec_config
 from bindings.ts_env import model_obs_features
 from tests.training.test_ladder_tokens import SHALLOW
@@ -89,35 +89,168 @@ def test_log_weights_are_the_slow_computation() -> None:
         assert np.allclose(lw, want, atol=1e-4)
 
 
-def test_the_tracker_deals_hidden_hands_and_reuses_them_until_the_opponent_moves() -> None:
-    model = _model()
-    tr = BeliefTracker(model, torch.device("cpu"), particles=32, seed=1)
-    runner = ts.VectorizedBatchRunner(2, 77)
-    rng = np.random.default_rng(0)
-    dealt = 0
-    for _ in range(400):
-        if all(runner.get_terminals()):
+def _play(n_games: int, seed: int, steps: int, on_step: Any) -> None:
+    """Random legal play of `n_games` games; `on_step(live, states, actions, players)` before each step."""
+    runner = ts.VectorizedBatchRunner(n_games, seed)
+    rng = np.random.default_rng(seed)
+    for _ in range(steps):
+        terms = runner.get_terminals()
+        if all(terms):
             break
         masks = np.asarray(runner.get_action_masks())
         players = list(runner.get_decision_players())
-        states = [runner.get_state(i) for i in range(2)]
+        states = [runner.get_state(i) for i in range(n_games)]
         acts = [int(rng.choice(np.flatnonzero(m))) if m.any() else 0 for m in masks]
-        live = [i for i in range(2) if players[i] != 0 and not runner.get_terminals()[i]]
-        hands = tr.worlds(live, [states[i] for i in live], 4)
-        for i, h in zip(live, hands):
+        live = [i for i in range(n_games) if players[i] != 0 and not terms[i]]
+        on_step(live, [states[i] for i in live], [acts[i] for i in live], [players[i] for i in live])
+        runner.step_flat_all(acts, True)
+
+
+def test_the_tracker_deals_hidden_hands_and_reuses_them_until_the_opponent_moves() -> None:
+    tr = BeliefTracker(_model(), torch.device("cpu"), particles=32, seed=1)
+    dealt = [0]
+
+    def step(live: List[int], states: List[ts.GameState], acts: List[int], players: List[int]) -> None:
+        hands = tr.worlds(live, states, 4)
+        for st, p, h in zip(states, players, hands):
             if h is None:
                 continue
-            now = Now.of(states[i], side(players[i]))
+            now = Now.of(st, side(p))
             assert h.shape == (4, 110)
             assert np.all(h.sum(1) == now.hand) and not np.any(h[:, ~now.pool])
-            dealt += 1
-        computed = tr.stats["positions"]
-        again = tr.worlds(live, [states[i] for i in live], 4)
-        assert tr.stats["positions"] == computed                     # the second call hits the cache
+            dealt[0] += 1
+        jobs = tr.stats["jobs"]
+        again = tr.worlds(live, states, 4)
+        assert tr.stats["jobs"] == jobs                              # the second call reuses the weights
         assert all((a is None) == (b is None) for a, b in zip(hands, again))
-        tr.observe(live, [states[i] for i in live], [acts[i] for i in live], [players[i] for i in live])
-        runner.step_flat_all(acts, True)
-    assert dealt > 50
+        assert all(a is None or (b is not None and np.array_equal(a, b)) for a, b in zip(hands, again))   # keyed by the position
+        tr.observe(live, states, acts, players)
+
+    _play(2, 77, 400, step)
+    assert dealt[0] > 50 and tr.stats["jobs"] > 10
+
+
+def _logged(logs: Dict[int, List[Decision]], live: List[int], states: List[ts.GameState], acts: List[int],
+            players: List[int]) -> None:
+    """The Python record's log: each game's decisions this turn."""
+    for g, st, a, p in zip(live, states, acts, players):
+        if g in logs and logs[g] and int(logs[g][-1].state.turn) != int(st.turn):
+            logs[g] = []
+        logs.setdefault(g, []).append(Decision(st, side(p), a, card_locations(st)))
+
+
+def test_the_c_record_is_the_python_record() -> None:
+    tr = ts.BeliefTracker(16, True, 3)
+    logs: Dict[int, List[Decision]] = {}
+    checked = [0]
+
+    def step(live: List[int], states: List[ts.GameState], acts: List[int], players: List[int]) -> None:
+        tr.prepare(live, states)
+        if tr.job_count():
+            rows = tr.rows_patch(0)
+            at = 0
+            for j in range(tr.job_count()):
+                k = tr.job_position(j)
+                rec = record(logs.get(live[k], []), Now.of(states[k], side(players[k])), True)
+                assert tr.job_decisions(j) == len(rec)
+                for d, (dec, left) in enumerate(rec):
+                    assert np.array_equal(rows[2][at + d], left.astype(np.uint8))
+                    assert int(rows[4][at + d]) == dec.action
+                at += len(rec)
+                checked[0] += 1
+            tr.set_log_likelihoods(np.zeros((6, len(rows[0]), 16), dtype=np.float32))
+        for g, st, a, p in zip(live, states, acts, players):
+            tr.observe(g, st, player(side(p)), a)
+        _logged(logs, live, states, acts, players)
+
+    _play(2, 91, 300, step)
+    assert checked[0] > 10
+
+
+def test_the_temperature_weights_are_the_evidence_softmax() -> None:
+    tr = ts.BeliefTracker(8, True, 5)
+    temps = ts.BeliefTracker.temperatures()
+    seen = [0]
+
+    def step(live: List[int], states: List[ts.GameState], acts: List[int], players: List[int]) -> None:
+        has = tr.prepare(live, states)
+        if tr.job_count() and seen[0] == 0:
+            R = sum(tr.job_decisions(j) for j in range(tr.job_count()))
+            rng = np.random.default_rng(0)
+            lp = np.log(rng.uniform(0.05, 1.0, size=(len(temps), R, 8))).astype(np.float32)
+            tr.set_log_likelihoods(lp)
+            # The first job's game has no finished turn yet only if this is its first belief; take job 0's rows.
+            d0 = tr.job_decisions(0)
+            logw = lp[:, :d0, :].astype(np.float64).sum(1)
+            ev = np.log(np.exp(logw - logw.max(1, keepdims=True)).mean(1)) + logw.max(1)
+            want = np.exp(ev - ev.max()); want /= want.sum()
+            p0 = [k for k, h in enumerate(has) if h][0]
+            got = np.asarray(tr.temperature_weights(p0))
+            if np.isfinite(got).all() and got.sum() > 0:
+                assert np.allclose(got, want, atol=1e-5)
+                seen[0] += 1
+        elif tr.job_count():
+            R = sum(tr.job_decisions(j) for j in range(tr.job_count()))
+            tr.set_log_likelihoods(np.zeros((len(temps), R, 8), dtype=np.float32))
+        for g, st, a, p in zip(live, states, acts, players):
+            tr.observe(g, st, player(side(p)), a)
+
+    _play(1, 5, 200, step)
+    assert seen[0] == 1
+
+
+def test_a_games_worlds_do_not_depend_on_the_batch() -> None:
+    model = _model()
+    together = BeliefTracker(model, torch.device("cpu"), particles=16, seed=9)
+    alone = BeliefTracker(model, torch.device("cpu"), particles=16, seed=9)
+    compared = [0]
+
+    def step(live: List[int], states: List[ts.GameState], acts: List[int], players: List[int]) -> None:
+        a = together.worlds(live, states, 4)
+        if 0 in live:
+            k = live.index(0)
+            b = alone.worlds([0], [states[k]], 4)[0]
+            assert (a[k] is None) == (b is None)
+            ak = a[k]
+            if b is not None and ak is not None:
+                assert np.array_equal(ak, b)
+                compared[0] += 1
+            alone.observe([0], [states[k]], [acts[k]], [players[k]])
+        together.observe(live, states, acts, players)
+
+    _play(3, 33, 300, step)
+    assert compared[0] > 20
+
+
+def test_the_trackers_likelihoods_are_the_probes() -> None:
+    model = _model()
+    tr = ts.BeliefTracker(8, True, 4)
+    logs: Dict[int, List[Decision]] = {}
+    checked = [0]
+
+    def step(live: List[int], states: List[ts.GameState], acts: List[int], players: List[int]) -> None:
+        tr.prepare(live, states)
+        if tr.job_count():
+            rows = tr.rows_patch(0)
+            lp = device_log_probs(model, torch.device("cpu"), rows, ts.BeliefTracker.temperatures())
+            at = 0
+            for j in range(tr.job_count()):
+                k = tr.job_position(j)
+                now = Now.of(states[k], side(players[k]))
+                rec = record(logs.get(live[k], []), now, True)
+                lw_c = lp[0, at:at + len(rec)].double().sum(0).numpy()
+                lw_py = log_weights(model, torch.device("cpu"), [(now, tr.job_hands(j), rec)])[0]
+                assert np.allclose(lw_py, lw_c, atol=1e-3)
+                at += len(rec)
+                checked[0] += 1
+            tr.set_log_likelihoods(np.ascontiguousarray(lp.numpy(), dtype=np.float32))
+        for g, st, a, p in zip(live, states, acts, players):
+            tr.observe(g, st, player(side(p)), a)
+        _logged(logs, live, states, acts, players)
+
+    _play(1, 12, 300, step)
+    assert checked[0] >= 3
+
 
 
 def test_the_spec_names_the_belief() -> None:
@@ -134,4 +267,4 @@ def test_a_belief_root_plays_a_tournament_through_the_game_hooks() -> None:
     res = BatchMatchRunner.play_parallel_matchup(belief, plain, games_per_side=1, device="cpu", temperature=0.0)
     assert res["total_games"] == 2
     assert belief.belief is not None
-    assert belief.belief.stats["positions"] > 20 and belief.belief.stats["decisions_sum"] > 0
+    assert belief.belief.stats["positions"] > 20 and belief.belief.stats["jobs"] > 0

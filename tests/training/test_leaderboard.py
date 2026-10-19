@@ -525,3 +525,20 @@ def test_an_epochs_strong_tier_must_be_main_players() -> None:
     bad: lb.Epoch = {**ep, "strong": ["not-a-main-player"]}
     assert not [e for e in lb.validate(dataclasses.replace(board, epochs={"E7": good})) if "strong" in e]
     assert [e for e in lb.validate(dataclasses.replace(board, epochs={"E7": bad})) if "strong" in e]
+
+
+def test_the_belief_root_is_spelled_in_the_id_and_the_agent_string() -> None:
+    """`belief=<hands>` (P35 3b, bindings/belief.hpp) names the belief root; ids without it keep meaning
+    the root with uniform redeals."""
+    one = "E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed)"
+    net, spec = parse_player_id(one)
+    assert isinstance(spec, Rollout) and spec.belief == 0 and player_id(net, spec) == one
+    withb = one[:-1] + ",belief=2048)"
+    net, spec = parse_player_id(withb)
+    assert isinstance(spec, Rollout) and spec.belief == 2048 and player_id(net, spec) == withb
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:belief2048"
+    assert rollout_spec_config(agent)[1].belief == 2048
+    with pytest.raises(PlayerSpecError):
+        parse_player_id(one[:-1] + ",belief=-1)")

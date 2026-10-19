@@ -71,6 +71,10 @@ class Rollout:
     #: How a world's randomness is shared by its candidates: "shared" (one dice stream, the measured
     #: root) or "keyed" (each draw tied to its situation, bindings/keyed_chance.hpp).
     chance: str = "shared"
+    #: P35 3b: the worlds dealt from the policy-likelihood belief over the opponent's hand with this
+    #: many importance-sampled hands, the likelihood temperature model-averaged from the opponent's own
+    #: choices (bindings/belief.hpp); 0 = uniform redeals, the root every rollout id before it meant.
+    belief: int = 0
 
 
 @dataclass(frozen=True)
@@ -108,8 +112,8 @@ _STOPS: Final = ("boundaries", "turn", "later", "earlier", "predeal", "earlier_p
 _LEAVES: Final = ("mover", "decider", "own")
 #: Fields added to a kind after ids using it were published, with the value those ids meant. They are
 #: written into an id or a stored spec only when they differ from it.
-LATE_FIELDS: Final[Dict[str, Dict[str, str]]] = {"rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "",
-                                                            "chance": "shared"}}
+LATE_FIELDS: Final[Dict[str, Dict[str, Union[str, int]]]] = {
+    "rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "", "chance": "shared", "belief": 0}}
 _CHANCES: Final = ("shared", "keyed")
 #: Characters a leaf_net name may not hold: the id grammar's own separators.
 _LEAF_NET_BAD: Final = frozenset("(),~:= ")
@@ -155,6 +159,8 @@ def _check(spec: Inference) -> None:
             raise PlayerSpecError(f"leaf must be one of {_LEAVES}, got {spec.leaf!r}")
         if spec.chance not in _CHANCES:
             raise PlayerSpecError(f"chance must be one of {_CHANCES}, got {spec.chance!r}")
+        if spec.belief < 0:
+            raise PlayerSpecError(f"belief must be >= 0 hands, got {spec.belief}")
         if set(spec.leaf_net) & _LEAF_NET_BAD:
             raise PlayerSpecError(f"leaf_net may not contain any of {''.join(sorted(_LEAF_NET_BAD))!r} "
                                   f"(register the evaluator under a plain name): {spec.leaf_net!r}")
@@ -291,6 +297,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str], leaf_checkpoint: Optio
     if isinstance(spec, Rollout):
         tail = (f":{spec.stop}" if spec.stop != "boundaries" else "") + (f":{spec.leaf}" if spec.leaf != "mover" else "")
         tail += ":keyed" if spec.chance == "keyed" else ""
+        tail += f":belief{spec.belief}" if spec.belief else ""
         if spec.leaf_net:
             if not leaf_checkpoint:
                 raise PlayerSpecError(f"leaf_net={spec.leaf_net} needs its checkpoint file")

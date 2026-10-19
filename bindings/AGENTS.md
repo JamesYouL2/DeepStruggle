@@ -164,6 +164,15 @@ are cited from elsewhere; keep them.
   `ts.hypothesis_rows(state, me, held, features)` builds a past opposing decision's observation and
   mask under n hypothesised hands in one parallel call -- the policy-likelihood belief's inner loop,
   held equal to the Python rebuild by `tests/training/test_belief.py`.
+- [`belief.hpp`](belief.hpp): **the belief tracker** (`ts.BeliefTracker`, compiled into
+  `ts_rollout_batch` so the browser build has it too). Per game it keeps the turn's decisions; at a
+  root decision it records the opponent's decisions that fit the hand, draws `particles` hands keyed by
+  the seed and the position (a game's worlds do not depend on the batch -- tested), lists the rows
+  (`rows_patch` for a device, `hypothesis_rows` per decision for a full build), takes the caller's
+  log-probabilities at every temperature of `kTemperatures`, weighs the hands and the temperatures
+  (model averaging by each side's evidence of its opponent across the game) and resamples the root's
+  worlds. Belief state is per (game, side). The rollout spec's `:belief<N>` and the player id's
+  `belief=<N>` name it.
 - [`gomp_parallel.hpp`](gomp_parallel.hpp): `gomp_parallel_for`, the one OpenMP pool (§3).
 - [`settle.py`](settle.py): `SettleMode`, the one rule for how far past decisions nobody controls
   the engine is advanced. Settlers that stop at different depths put two components on different

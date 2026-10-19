@@ -22,7 +22,7 @@ are importance-sampled, so their number (`particles`) sets the noise: P35a's log
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -157,13 +157,45 @@ def _unpack(packed: torch.Tensor, width: int) -> torch.Tensor:
     return bits.reshape(*packed.shape[:-1], -1)[..., :width].to(torch.uint8)
 
 
+def device_log_probs(model: Any, device: torch.device, rows: Tuple[np.ndarray, ...],
+                     temperatures: Sequence[float]) -> torch.Tensor:
+    """(T x R x N) log-probabilities of each recorded decision's move under each hand at each temperature,
+    from `rows` = (bases R x W, pools R x 110, lefts R x 110, job_of R, actions R, hands J x N x 110,
+    packed masks R x N x 28) -- `ts.BeliefTracker.rows_patch`'s layout, which `log_weights` also builds.
+    One transfer; the rows are built on the device (`_hypothesis_obs`) in chunks of `_CHUNK`, and each
+    chunk's logits serve every temperature."""
+    bases, pools, lefts, job_of, acts, hands, packed = rows
+    R, n = len(bases), hands.shape[1]
+    out = torch.empty(len(temperatures), R, n, dtype=torch.float32, device=device)
+    if R == 0:
+        return out
+    with torch.no_grad():
+        base_t = torch.from_numpy(np.ascontiguousarray(bases)).to(device)
+        left_t = torch.from_numpy(np.ascontiguousarray(lefts)).to(device)
+        pool_t = torch.from_numpy(np.ascontiguousarray(pools)).to(device).bool()
+        mask_t = torch.from_numpy(np.ascontiguousarray(packed)).to(device)
+        hands_t = torch.from_numpy(np.ascontiguousarray(hands)).to(device)
+        act_t = torch.from_numpy(np.ascontiguousarray(acts)).to(device).long()
+        job_t = torch.from_numpy(np.ascontiguousarray(job_of)).to(device).long()
+        per = max(1, _CHUNK // max(n, 1))
+        for lo in range(0, R, per):
+            sl = slice(lo, lo + per)
+            held = hands_t[job_t[sl]] | left_t[sl].unsqueeze(1)
+            obs = _hypothesis_obs(base_t[sl], held, pool_t[sl])
+            m = _unpack(mask_t[sl], ACTIONS).reshape(-1, ACTIONS)
+            lg = model(obs, m)[0].float().masked_fill(m == 0, float("-inf"))
+            a = act_t[sl].repeat_interleave(n)[:, None]
+            for ti, t in enumerate(temperatures):
+                lp = torch.log_softmax(lg / t, -1).gather(1, a).squeeze(1)
+                out[ti, sl] = torch.where(torch.isfinite(lp), lp, torch.full_like(lp, -1e9)).reshape(-1, n)
+    return out
+
+
 def log_weights(model: Any, device: torch.device, jobs: Sequence[Tuple[Now, np.ndarray, List[Tuple[Decision, np.ndarray]]]],
                 temperature: float = 1.0) -> List[np.ndarray]:
     """For each job (the decider's view, its hands, the record), every hand's log-likelihood of the
-    opponent's recorded decisions under the network. Everything for the call crosses to the device at
-    once -- one observation row per decision, the hands, each decision's departed cards and pool, and
-    the legal masks bit-packed (they change with the hand in ways only the engine knows:
-    `ts.hypothesis_masks`) -- and the rows are built there (`_hypothesis_obs`) in chunks of `_CHUNK`."""
+    opponent's recorded decisions under the network at one temperature: the probes' path, through the same
+    device code as the tracker (`device_log_probs`)."""
     feats = model_obs_features(model)
     n = len(jobs[0][1]) if jobs else 0
     if any(len(h) != n for _, h, _ in jobs):
@@ -180,34 +212,18 @@ def log_weights(model: Any, device: torch.device, jobs: Sequence[Tuple[Now, np.n
             held = np.ascontiguousarray(hands | left.astype(np.uint8)[None, :])
             bases.append(np.asarray(ts.extract_observation_features(d.state, player(opp), feats), dtype=np.float32))
             lefts.append(left.astype(np.uint8))
-            pools.append((d.locs == DECK) | (d.locs == UNKNOWN[opp]))
+            pools.append(((d.locs == DECK) | (d.locs == UNKNOWN[opp])).astype(np.uint8))
             packed.append(np.packbits(ts.hypothesis_masks(d.state, player(now.me), held), axis=1))
             acts.append(d.action)
             job_of.append(j)
     if not bases:
         return [np.zeros(n, dtype=np.float64) for _ in jobs]
-    with torch.no_grad():
-        base_t = torch.from_numpy(np.stack(bases)).to(device)
-        left_t = torch.from_numpy(np.stack(lefts)).to(device)
-        pool_t = torch.from_numpy(np.stack(pools)).to(device)
-        mask_t = torch.from_numpy(np.stack(packed)).to(device)
-        hands_t = torch.from_numpy(np.stack([h for _, h, _ in jobs])).to(device)
-        act_t = torch.tensor(acts, dtype=torch.long, device=device)
-        job_t = torch.tensor(job_of, dtype=torch.long, device=device)
-        logw = torch.zeros(len(jobs), n, dtype=torch.float64, device=device)
-        per = max(1, _CHUNK // max(n, 1))                       # decisions per chunk
-        for lo in range(0, len(bases), per):
-            sl = slice(lo, lo + per)
-            held = hands_t[job_t[sl]] | left_t[sl].unsqueeze(1)
-            obs = _hypothesis_obs(base_t[sl], held, pool_t[sl])
-            m = _unpack(mask_t[sl], ACTIONS).reshape(-1, ACTIONS)
-            lg = model(obs, m)[0].float()
-            lg = (lg / temperature).masked_fill(m == 0, float("-inf"))
-            a = act_t[sl].repeat_interleave(n)
-            lp = torch.log_softmax(lg, -1).gather(1, a[:, None]).squeeze(1).double()
-            lp = torch.where(torch.isfinite(lp), lp, torch.full_like(lp, -1e9)).reshape(-1, n)
-            logw.index_add_(0, job_t[sl], lp)
-        out = logw.cpu().numpy()
+    rows = (np.stack(bases), np.stack(pools), np.stack(lefts), np.asarray(job_of, dtype=np.int64),
+            np.asarray(acts, dtype=np.int64), np.stack([h for _, h, _ in jobs]), np.stack(packed))
+    lp = device_log_probs(model, device, rows, [temperature])[0].double()
+    logw = torch.zeros(len(jobs), n, dtype=torch.float64, device=lp.device)
+    logw.index_add_(0, torch.from_numpy(rows[3]).to(lp.device), lp)
+    out = logw.cpu().numpy()
     return [out[j] for j in range(len(jobs))]
 
 
@@ -218,75 +234,52 @@ def posterior(hands: np.ndarray, logw: np.ndarray) -> Tuple[np.ndarray, float]:
 
 
 class BeliefTracker:
-    """Every game's decisions this turn, and on request the root's worlds dealt from the belief.
+    """The root's belief: `ts.BeliefTracker` (bindings/belief.hpp, shared with the browser) keeps every
+    game's record, draws the hands, weighs them and the likelihood temperatures, and deals the worlds;
+    this wrapper evaluates the rows it asks for on `device` with `model` -- the opponent's model.
 
     `observe` is called with every decision of every game the agent plays (both sides), before it is
-    applied; `worlds` for the decisions the agent is about to search. A game's weighted hands are kept
-    until its opponent decides again (or the turn changes), so consecutive decisions of the agent's own
-    reuse them."""
+    applied; `worlds` for the decisions the agent is about to search."""
 
     def __init__(self, model: Any, device: torch.device, particles: int = 2048, all_decisions: bool = True,
                  seed: int = 0) -> None:
         self.model = model
         self.device = device
-        self.particles = int(particles)
-        self.all_decisions = bool(all_decisions)
-        self.rng = np.random.default_rng(seed)
-        self.logs: Dict[int, List[Decision]] = {}
-        self.turns: Dict[int, int] = {}
-        self._cache: Dict[int, Tuple[int, bytes, np.ndarray, np.ndarray]] = {}
-        #: Per `worlds` call: positions with a belief, mean effective hands, decisions conditioned on.
-        self.stats: Dict[str, float] = {"positions": 0, "ess_sum": 0.0, "decisions_sum": 0}
+        self.tracker = ts.BeliefTracker(int(particles), bool(all_decisions), int(seed))
+        self.temperatures = list(ts.BeliefTracker.temperatures())
+        self.features = model_obs_features(model)
+        #: positions given a belief, jobs weighed, decisions conditioned on, and summed temperature weights
+        self.stats: Dict[str, float] = {"positions": 0, "jobs": 0, "decisions_sum": 0}
+        self.temperature_weight_sum = np.zeros(len(self.temperatures))
 
     def reseed(self, seed: int) -> None:
-        self.rng = np.random.default_rng(seed)
+        self.tracker.reseed(int(seed))
 
     def new_games(self) -> None:
-        self.logs.clear()
-        self.turns.clear()
-        self._cache.clear()
+        self.tracker.new_games()
 
     def observe(self, games: Sequence[int], states: Sequence[ts.GameState], actions: Sequence[int],
                 players: Sequence[int]) -> None:
         for g, st, a, p in zip(games, states, actions, players):
-            if int(p) == 0:
-                continue
-            turn = int(st.turn)
-            if self.turns.get(g) != turn:
-                self.logs[g], self.turns[g] = [], turn
-            self.logs[g].append(Decision(st, side(int(p)), int(a), card_locations(st)))
+            if int(p) != 0:
+                self.tracker.observe(int(g), st, player(side(int(p))), int(a))
 
     def worlds(self, games: Sequence[int], states: Sequence[ts.GameState], n_worlds: int) -> List[Optional[np.ndarray]]:
         """For each game's position (the agent to move): `n_worlds` opposing hands (n_worlds x 110 uint8)
         resampled from the belief, or None where there is nothing to believe (no hidden hand, a
         transient location) -- the root then redeals at random as before."""
-        out: List[Optional[np.ndarray]] = [None] * len(games)
-        jobs: List[Tuple[Now, np.ndarray, List[Tuple[Decision, np.ndarray]]]] = []
-        where: List[Tuple[int, int, bytes, int]] = []
-        for i, (g, st) in enumerate(zip(games, states)):
-            me = side(1 if st.ctx().decision_player == ts.Player.US else -1)
-            now = Now.of(st, me)
-            if now.hand == 0 or np.isin(now.locs, TRANSIENT).any():
-                continue
-            rec = record(self.logs.get(g, []), now, self.all_decisions)
-            key = now.locs.tobytes()
-            hit = self._cache.get(g)
-            if hit is not None and hit[0] == len(rec) and hit[1] == key:
-                out[i] = self._resample(hit[2], hit[3], n_worlds)
-                continue
-            hands = sample_hands(now, self.particles, self.rng)
-            jobs.append((now, hands, rec))
-            where.append((i, g, key, len(rec)))
+        has = self.tracker.prepare([int(g) for g in games], list(states))
+        jobs = self.tracker.job_count()
         if jobs:
-            for (i, g, key, n_rec), (now, hands, rec), logw in zip(where, jobs, log_weights(self.model, self.device, jobs)):
-                self._cache[g] = (n_rec, key, hands, logw)
-                out[i] = self._resample(hands, logw, n_worlds)
+            rows = self.tracker.rows_patch(self.features)
+            lp = device_log_probs(self.model, self.device, rows, self.temperatures)
+            self.tracker.set_log_likelihoods(np.ascontiguousarray(lp.cpu().numpy(), dtype=np.float32))
+            self.stats["jobs"] += jobs
+            self.stats["decisions_sum"] += len(rows[0])
+        out: List[Optional[np.ndarray]] = []
+        for i, h in enumerate(has):
+            out.append(cast(Optional[np.ndarray], self.tracker.worlds(i, n_worlds)) if h else None)
+            if h:
                 self.stats["positions"] += 1
-                self.stats["ess_sum"] += posterior(hands, logw)[1]
-                self.stats["decisions_sum"] += len(rec)
+                self.temperature_weight_sum += np.asarray(self.tracker.temperature_weights(i))
         return out
-
-    def _resample(self, hands: np.ndarray, logw: np.ndarray, n: int) -> np.ndarray:
-        w = np.exp(logw - logw.max())
-        pick = self.rng.choice(len(hands), size=n, replace=True, p=w / w.sum())
-        return np.ascontiguousarray(hands[pick])

@@ -9,7 +9,7 @@ set_target_properties(ts_state_json PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The rollout root's playouts -- the worlds, the greedy playouts to a horizon, the leaves -- written
 # once for both bindings, so the Python searcher and the browser's play the same worlds.
-add_library(ts_rollout_batch STATIC rollout_batch.cpp)
+add_library(ts_rollout_batch STATIC rollout_batch.cpp belief.cpp)
 target_include_directories(ts_rollout_batch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
 target_link_libraries(ts_rollout_batch PUBLIC ts_engine_core)
 set_target_properties(ts_rollout_batch PROPERTIES POSITION_INDEPENDENT_CODE ON)

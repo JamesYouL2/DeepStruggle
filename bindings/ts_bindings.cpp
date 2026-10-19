@@ -28,6 +28,7 @@
 #include "state_json.hpp"
 #include "selftest.hpp"
 #include "batched_search.hpp"
+#include "belief.hpp"
 #include "rollout_batch.hpp"
 #include "playout_labels.hpp"
 #include "keyed_chance.hpp"
@@ -1010,6 +1011,135 @@ NB_MODULE(ts_engine, m) {
           }, nb::arg("state"), nb::arg("me"), nb::arg("held"),
           "hypothesis_rows' legal masks alone (n x 220): the observations differ only in each hidden "
           "card's own-hand / deck slot, which the belief sets on the device (ai/search/belief.py).");
+    {
+        using BT = ts::belief::Tracker;
+        nb::class_<BT>(m, "BeliefTracker",
+            "The policy-likelihood belief over the opponent's unseen hand (bindings/belief.hpp, shared with "
+            "the browser): observe() every decision of the games; at root decisions prepare(), evaluate the "
+            "rows it lists (rows_patch or rows_full) at every temperature, set_log_likelihoods(), worlds().")
+            .def(nb::init<uint32_t, bool, uint64_t>(), nb::arg("particles") = 2048, nb::arg("all_decisions") = true,
+                 nb::arg("seed") = 0ull)
+            .def_static("temperatures", []() {
+                std::vector<float> t(ts::belief::kTemperatures, ts::belief::kTemperatures + ts::belief::kTemps);
+                return t;
+            })
+            .def_prop_ro("particles", &BT::particles)
+            .def("reseed", &BT::reseed, nb::arg("seed"))
+            .def("new_games", &BT::new_games)
+            .def("observe", [](BT& self, size_t game, const ts::GameState& s, ts::Player decider, int action) {
+                     if (action < 0 || action >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE))
+                         throw std::invalid_argument("action outside the flat action space");
+                     self.observe(game, s, decider, static_cast<uint16_t>(action));
+                 }, nb::arg("game"), nb::arg("state"), nb::arg("decider"), nb::arg("action"))
+            .def("prepare", [](BT& self, const std::vector<size_t>& games, const std::vector<const ts::GameState*>& states) {
+                     if (games.size() != states.size()) throw std::invalid_argument("games and states differ in length");
+                     return self.prepare(games, states);
+                 }, nb::arg("games"), nb::arg("states"))
+            .def("job_count", [](const BT& self) { return self.jobs().size(); })
+            .def("job_decisions", [](const BT& self, size_t j) {
+                     if (j >= self.jobs().size()) throw std::out_of_range("job");
+                     return self.jobs()[j].decisions.size();
+                 }, nb::arg("job"))
+            .def("job_position", [](const BT& self, size_t j) {
+                     if (j >= self.jobs().size()) throw std::out_of_range("job");
+                     return self.jobs()[j].position;
+                 }, nb::arg("job"), "The index, among the last prepare() call's positions, of job j.")
+            .def("job_hands", [](const BT& self, size_t j) {
+                     if (j >= self.jobs().size()) throw std::out_of_range("job");
+                     const auto& h = self.jobs()[j].hands;
+                     size_t sh[2] = { h.size() / 110, 110 };
+                     uint8_t* buf = new uint8_t[std::max<size_t>(1, h.size())];
+                     std::copy(h.begin(), h.end(), buf);
+                     nb::capsule own(buf, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+                     return nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(buf, 2, sh, own);
+                 }, nb::arg("job"))
+            .def("rows_patch", [](const BT& self, uint32_t features) {
+                     // Every job's recorded decisions as one block each: the decision's own observation from
+                     // the opponent's side, its hidden pool then, the cards departed since, its job, the move,
+                     // and each hand's legal mask bit-packed (np.packbits order) -- the device builds the rows.
+                     const auto& jobs = self.jobs();
+                     const size_t N = self.particles();
+                     const size_t W = ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features);
+                     size_t R = 0;
+                     for (const auto& j : jobs) R += j.decisions.size();
+                     const size_t PB = (ts::FLAT_ACTION_SPACE_SIZE + 7) / 8;
+                     float* bases = new float[std::max<size_t>(1, R * W)];
+                     uint8_t* pools = new uint8_t[std::max<size_t>(1, R * 110)];
+                     uint8_t* lefts = new uint8_t[std::max<size_t>(1, R * 110)];
+                     int64_t* job_of = new int64_t[std::max<size_t>(1, R)];
+                     int64_t* acts = new int64_t[std::max<size_t>(1, R)];
+                     uint8_t* hands = new uint8_t[std::max<size_t>(1, jobs.size() * N * 110)];
+                     uint8_t* packed = new uint8_t[std::max<size_t>(1, R * N * PB)];
+                     {
+                         nb::gil_scoped_release release;
+                         size_t r = 0;
+                         std::vector<uint8_t> held(N * 110), masks(N * ts::FLAT_ACTION_SPACE_SIZE);
+                         for (size_t ji = 0; ji < jobs.size(); ++ji) {
+                             const auto& j = jobs[ji];
+                             std::copy(j.hands.begin(), j.hands.end(), hands + ji * N * 110);
+                             const ts::Player opp = j.me == ts::Player::US ? ts::Player::USSR : ts::Player::US;
+                             const uint8_t ou = static_cast<uint8_t>(opp == ts::Player::US ? ts::CardLocation::HAND_US_UNKNOWN
+                                                                                            : ts::CardLocation::HAND_USSR_UNKNOWN);
+                             for (size_t d = 0; d < j.decisions.size(); ++d, ++r) {
+                                 const auto& dec = self.decision(ji, d);
+                                 ts::extract_observation_features(dec.state, opp, features, bases + r * W);
+                                 for (size_t c = 0; c < 110; ++c) {
+                                     const uint8_t l = dec.locs[c + 1];
+                                     pools[r * 110 + c] = (l == static_cast<uint8_t>(ts::CardLocation::DRAW_DECK) || l == ou) ? 1 : 0;
+                                     lefts[r * 110 + c] = j.lefts[d][c];
+                                 }
+                                 job_of[r] = static_cast<int64_t>(ji);
+                                 acts[r] = dec.action;
+                                 for (size_t k = 0; k < N; ++k)
+                                     for (size_t c = 0; c < 110; ++c)
+                                         held[k * 110 + c] = static_cast<uint8_t>(j.hands[k * 110 + c] | j.lefts[d][c]);
+                                 ts::rollout::hypothesis_masks(dec.state, j.me, held.data(), N, masks.data());
+                                 uint8_t* out = packed + r * N * PB;
+                                 std::fill(out, out + N * PB, 0);
+                                 for (size_t k = 0; k < N; ++k)
+                                     for (size_t a = 0; a < ts::FLAT_ACTION_SPACE_SIZE; ++a)
+                                         if (masks[k * ts::FLAT_ACTION_SPACE_SIZE + a])
+                                             out[k * PB + a / 8] |= static_cast<uint8_t>(0x80u >> (a % 8));
+                             }
+                         }
+                     }
+                     auto own_f = [](float* p) { return nb::capsule(p, [](void* q) noexcept { delete[] static_cast<float*>(q); }); };
+                     auto own_u = [](uint8_t* p) { return nb::capsule(p, [](void* q) noexcept { delete[] static_cast<uint8_t*>(q); }); };
+                     auto own_i = [](int64_t* p) { return nb::capsule(p, [](void* q) noexcept { delete[] static_cast<int64_t*>(q); }); };
+                     size_t s_b[2] = { R, W }, s_p[2] = { R, 110 }, s_r[1] = { R }, s_h[3] = { jobs.size(), N, 110 },
+                            s_m[3] = { R, N, PB };
+                     return nb::make_tuple(
+                         nb::ndarray<nb::numpy, float, nb::ndim<2>>(bases, 2, s_b, own_f(bases)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(pools, 2, s_p, own_u(pools)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(lefts, 2, s_p, own_u(lefts)),
+                         nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(job_of, 1, s_r, own_i(job_of)),
+                         nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(acts, 1, s_r, own_i(acts)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<3>>(hands, 3, s_h, own_u(hands)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<3>>(packed, 3, s_m, own_u(packed)));
+                 }, nb::arg("features") = 0u,
+                 "(bases R x W, pools R x 110, lefts R x 110, job_of R, actions R, hands J x N x 110, packed masks "
+                 "R x N x 28): every job's recorded decisions, for the caller to build the rows on its device.")
+            .def("set_log_likelihoods", [](BT& self, nb::ndarray<const float, nb::ndim<3>, nb::c_contig, nb::device::cpu> lp) {
+                     if (lp.shape(0) != ts::belief::kTemps || lp.shape(2) != self.particles())
+                         throw std::invalid_argument("log-likelihoods must be temperatures x blocks x particles");
+                     size_t R = 0;
+                     for (const auto& j : self.jobs()) R += j.decisions.size();
+                     if (lp.shape(1) != R) throw std::invalid_argument("one block per recorded decision of every job");
+                     self.set_log_likelihoods(lp.data(), R);
+                 }, nb::arg("log_likelihoods"))
+            .def("worlds", [](const BT& self, size_t p, size_t n) -> nb::object {
+                     uint8_t* buf = new uint8_t[std::max<size_t>(1, n * 110)];
+                     if (!self.worlds(p, n, buf)) { delete[] buf; return nb::none(); }
+                     size_t sh[2] = { n, 110 };
+                     nb::capsule own(buf, [](void* q) noexcept { delete[] static_cast<uint8_t*>(q); });
+                     return nb::cast(nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(buf, 2, sh, own));
+                 }, nb::arg("position"), nb::arg("n"),
+                 "n hands (n x 110 uint8) resampled from the prepared position's belief, or None where it has none.")
+            .def("temperature_weights", [](const BT& self, size_t p) {
+                     const auto w = self.temperature_weights(p);
+                     return std::vector<float>(w.begin(), w.end());
+                 }, nb::arg("position"));
+    }
     {
         using RB = ts::rollout::RolloutBatch;
         auto arrays = [](size_t n, size_t width) {
