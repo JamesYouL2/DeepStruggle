@@ -298,6 +298,20 @@ root, 1,000 deals a side: **55.0%** (US 49.2 / USSR 60.9; ±1.1, about 4.5 SE;
 (T = 1, numpy draws; the difference is about 1 SE) and the oracle root's 57.6%: two thirds of the ceiling.
 The player id is `…~rollout(…,chance=keyed,belief=2048)`, the page's `search=rollout:…:keyed:belief2048`.
 
+**Against a network the belief does not model: the same edge (2026-10-19).** The belief root and the
+honest keyed root (both A13+R48's SWA) each against the R34 soup
+(`E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M`) under the keyed root, 1,000 deals a side:
+
+| | overall | US | USSR |
+|:---|---:|---:|---:|
+| belief root vs the R34 soup's root | 52.8% | 56.3% | 49.3% |
+| honest keyed root vs the R34 soup's root | 47.5% | 49.6% | 45.4% |
+| **the belief's edge** | **+5.3** | +6.7 | +3.9 |
+
+±1.1 each, the difference about 3.3 SE (`data/reports/p35_{belief,honest}_root_vs_r34soup.json`): the same
++5 as against its own network, in both seats. With the human probe (the temperature average avoids the harm
+there), the belief is not tuned to its own network's play.
+
 **The per-seat bar (2026-10-19, corrected).** The window reads were first read per seat against one bar,
 the control's self-play in its last window (US 41.5 / USSR 58.0), which made every arm look "+5 as US, −5
 as USSR". The control's self-play per seat moves with the window, and the last window is the outlier. Each
