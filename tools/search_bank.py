@@ -1430,13 +1430,56 @@ def kind_bootstrap(rows: Sequence[Dict[str, Any]], scale: float, resamples: int 
                 "largest": largest[k] / resamples} for k in kinds}
 
 
+#: Version of the leak stage's `<out>.json`, which `tools/scripts/checkpoint_report.py --leak` reads.
+LEAK_SCHEMA = 1
+
+
+def leak_summary(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_per_game: float,
+                 large: float = LARGE_REGRET, bs: Optional[Dict[str, Dict[str, float]]] = None,
+                 meta: Optional[Dict[str, Any]] = None, top: int = 20) -> Dict[str, Any]:
+    """The leak stage's headline numbers for a report to read: the census's checkpoint and player
+    (annotate's `.meta.json`, `meta`), the share of decisions where a better move was found (escalated,
+    for a screened census; large regret otherwise), each decision kind's leak a game with its
+    stratified-bootstrap SE (`bs`, kind_bootstrap's; without it the playout noise alone) and the share
+    of resamples in which it leaks the most, and the `top` positions that cost the most a game."""
+    scale = 100.0 * decisions_per_game / bank_weight
+    big = [r for r in rows if large <= 0 or r["regret"] >= large]
+    found = [r for r in rows if r["b"].get("escalated")] if large <= 0 else big
+    if bs is None:
+        bs = {}
+        for k in sorted({str(r["kind"]) for r in big}) + ["all"]:
+            rs = [r for r in big if k in ("all", r["kind"])]
+            bs[k] = {"leak": scale * sum(r["w"] * r["gain"][0] for r in rs),
+                     "leak_se": scale * math.sqrt(sum(r["w"] ** 2 * r["gain"][1] for r in rs))}
+    total = bs.get("all", {}).get("leak", 0.0)
+    kinds = [{"kind": k, "leak": v["leak"], "se": v["leak_se"],
+              "share": v["leak"] / total if total else None, "largest": v.get("largest")}
+             for k, v in sorted(bs.items(), key=lambda kv: -kv[1]["leak"]) if k != "all"]
+    worst = []
+    for r in sorted(big, key=lambda r: -r["w"] * r["gain"][0])[:top]:
+        b, nm = r["b"], r["b"]["names"]
+        worst.append({"turn": int(b["turn"]), "ar": int(b["ar"]), "side": r["side"], "defcon": r["defcon"],
+                      "kind": r["kind"], "played": nm.get(str(b["raw"]), str(b["raw"])),
+                      "best": nm.get(str(b["best"]), str(b["best"])), "gain": 100 * r["gain"][0],
+                      "gain_se": 100 * math.sqrt(r["gain"][1]), "a_game": scale * r["w"] * r["gain"][0]})
+    m = meta or {}
+    return {"schema": LEAK_SCHEMA, "census": "screened" if large <= 0 else "large regret",
+            "model": m.get("model"), "model_sha256": m.get("model_sha256"), "player": m.get("player"),
+            "games": m.get("games"), "decisions_per_game": decisions_per_game, "positions": len(rows),
+            "found_share": sum(r["w"] for r in found) / bank_weight,
+            "bootstrap": bool(bs) and "largest" in bs.get("all", {}),
+            "total": {"leak": total, "se": bs.get("all", {}).get("leak_se", 0.0)},
+            "kinds": kinds, "top": worst}
+
+
 def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_per_game: float,
-                  large: float = LARGE_REGRET, resamples: int = 2000) -> str:
+                  large: float = LARGE_REGRET, resamples: int = 2000,
+                  bs: Optional[Dict[str, Dict[str, float]]] = None) -> str:
     """Where raw play loses, in points of win probability a game (both sides' decisions summed): each
     playout row's paired gain of the best move over raw's, weighted back to the population, grouped
     by the decision's kind and by finer labels, beside what k=8 @256 recovers there. `large` <= 0
     is the playout-screened census (confirm-select): every row is read, none is screened out by a
-    search-valued regret."""
+    search-valued regret. `bs` is kind_bootstrap's result when the caller already has it."""
     scope = "large regret" if large > 0 else "all positions"
     scale = 100.0 * decisions_per_game / bank_weight
     out: List[str] = []
@@ -1479,7 +1522,7 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
                 "total is a lower bound. 'raw' is the move under study (annotate --player: the player's).", ""]
         tab("total", lambda r: "escalated" if r["b"].get("escalated") else "not escalated", rows)
     if resamples > 0 and big:
-        bs = kind_bootstrap(big, scale, resamples)
+        bs = bs if bs is not None else kind_bootstrap(big, scale, resamples)
         out += [f"## {scope}: decision kind, stratified bootstrap ({resamples} resamples)", "",
                 "Positions resampled within their (bank stratum, playout class) cell: the ± counts the "
                 "sampling of positions as well as the playout noise the tables below print alone.", "",
@@ -1680,7 +1723,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="the screen's playouts (a confirm-select census: k=8 @256's gain read from them)")
     lk.add_argument("--large", type=float, default=LARGE_REGRET,
                     help="search-valued regret of the 'large' rows; 0 for a confirm-select census")
-    lk.add_argument("--out", required=True)
+    lk.add_argument("--annotate-meta", default=None,
+                    help="annotate's .meta.json (the pooled artifact's annotate.meta.json): the census's checkpoint, "
+                         "its sha256 and the player, carried into <out>.json for checkpoint_report.py --leak")
+    lk.add_argument("--out", required=True, help="Markdown; the headline numbers go to <out>.json")
     rp = sub.add_parser("report", help="the tables, from the bank and the later stages' outputs")
     rp.add_argument("--bank", required=True)
     rp.add_argument("--reference", nargs="+", required=True)
@@ -1720,9 +1766,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         screen = None if a.screen is None else [{r["id"]: r for r in read_rows([p])} for p in a.screen]
         rows = leak_rows(read_rows([a.playouts_input]), runs, cards, countries, screen=screen)
         weight = sum(float(b["weight"]) for b in read_rows([a.bank]))
+        big = [r for r in rows if a.large <= 0 or r["regret"] >= a.large]
+        bs = (kind_bootstrap(big, 100.0 * a.decisions_per_game / weight, a.resamples)
+              if a.resamples > 0 and big else None)
         open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game, large=a.large,
-                                             resamples=a.resamples))
-        print(f"leak tables over {len(rows)} positions -> {a.out}", file=sys.stderr)
+                                             resamples=a.resamples, bs=bs))
+        meta = json.load(open(a.annotate_meta)) if a.annotate_meta else None
+        json.dump(leak_summary(rows, weight, a.decisions_per_game, large=a.large, bs=bs, meta=meta),
+                  open(a.out + ".json", "w"), indent=1)
+        print(f"leak tables over {len(rows)} positions -> {a.out} (+ .json)", file=sys.stderr)
         return 0
     if a.cmd == "report":
         cards = {int(c["id"]): str(c["name"]) for c in json.load(open("rules/cards.json"))}

@@ -697,6 +697,13 @@ searcher's candidates), `playouts` (paired raw-network playouts) and `report`. C
   and `leak` maps the playouts back to the population: the best move's gain over raw's in points a
   game, by decision kind, side, era, DEFCON, card and region. Results:
   [`E7_leak_by_kind_R34.md`](../research/log/E7_leak_by_kind_R34.md).
+* **Where a searched player loses:** `annotate --player rollout:4:32:4:z2:earlier:own` has the player
+  play, `screen-select` / `confirm-select` judge its moves by playouts alone, and `leak --large 0
+  --screen ... --annotate-meta annotate.meta.json` writes the census (reproduction:
+  [`E7_searched_leak_R39.md`](../research/log/E7_searched_leak_R39.md)). Beside `leak.md`, `leak.md.json`
+  holds the headline numbers with the census's network and player, which
+  `tools/scripts/checkpoint_report.py --leak` checks and puts first in that player's report
+  (`--games 0` for the census alone).
 * `event-select` / `event-report`: every action-round play-mode decision with a legal event, ranked
   by raw's measured loss per card.
 * `subs-select` / `subs` / `subs-report`: four paired branches at each US Nuclear Subs decision
@@ -731,7 +738,7 @@ PYTHONPATH=.:build/release .venv/bin/python tools/search_bank.py leak --bank ban
 | `tools/scripts/launch_flags.py` | a run's effective flags, and `--diff` against another run |
 | `tools/scripts/watch_run.py` | the monitor for a launched run (progress, stalls, exit) |
 | `tools/scripts/average_weights.py` | uniform weight averages: a run's late snapshots give its **SWA**, branches of one state a **model soup** |
-| `tools/scripts/checkpoint_report.py` | a network's behaviour report (`research/log/per_checkpoint/`) |
+| `tools/scripts/checkpoint_report.py` | a network's behaviour report (`research/log/per_checkpoint/`), with its searched-leak census (`--leak`) |
 | `tools/scripts/check_engine_fresh.sh` | exits 0 if the built engine matches the sources, else rebuilds and exits 1 |
 | `tools/scripts/check_doc_links.py` | every Markdown link and anchor, resolved the way Obsidian does |
 
