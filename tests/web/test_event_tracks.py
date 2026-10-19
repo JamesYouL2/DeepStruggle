@@ -19,6 +19,9 @@ from tests.web.js_runner import PUBLIC, run_ts
 NUCLEAR_TEST_BAN = 34
 PERSHING_II = 99
 FIDEL = 8
+OLYMPIC_GAMES = 20
+CAPTURED_NAZI_SCIENTIST = 18
+CHOOSE_BRANCH = 6
 
 
 def _at_headline(us_card: int, ussr_card: int, defcon: int, vp: int) -> str:
@@ -46,6 +49,11 @@ def logged(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, Any]:
                        "us": NUCLEAR_TEST_BAN, "ussr": PERSHING_II},
         "alone": {"save": _at_headline(NUCLEAR_TEST_BAN, FIDEL, 4, 0),
                   "us": NUCLEAR_TEST_BAN, "ussr": FIDEL},
+        # data/replays/cns.tslog.json: the USSR's answer to Olympic Games resolves the sponsor's
+        # roll and then Captured Nazi Scientist, whose Space Race advance pays the USSR 2 VP.
+        "olympics": {"save": _at_headline(OLYMPIC_GAMES, CAPTURED_NAZI_SCIENTIST, 5, 0),
+                     "us": OLYMPIC_GAMES, "ussr": CAPTURED_NAZI_SCIENTIST,
+                     "then": [[CHOOSE_BRANCH, 0, 4]]},
     }
     spec = out / "cases.json"
     spec.write_text(json.dumps(cases))
@@ -71,3 +79,16 @@ def test_a_lone_event_is_left_to_the_track_lines(logged: Dict[str, Any]) -> None
     details: List[str] = logged["alone"]["details"]
     assert "  • Victory Points: 0 (Tie) -> +2 (US) (+2 VP)" in details, details
     assert not any("Nuclear Test Ban (#34):" in d for d in details), details
+
+
+def test_a_click_reads_from_cause_to_effect(logged: Dict[str, Any]) -> None:
+    """The dice, then what each Event did, then the board -- not the board before the roll."""
+    entry = logged["olympics"]
+    assert entry["text"] == "USSR participates in the Olympic Games (Olympic Games)"
+    details: List[str] = entry["details"]
+    roll = next(i for i, d in enumerate(details) if d.startswith("  🎲 Olympic Games Competition"))
+    olympics = details.index("  • Olympic Games (#20): US +2 VP")
+    scientist = details.index("  • Captured Nazi Scientist (#18): USSR +2 VP")
+    space = details.index("  • Space Race: USSR 0 -> 1")
+    moved = next(i for i, d in enumerate(details) if d.startswith("  • Card #18 (Captured Nazi Scientist) moved:"))
+    assert roll < olympics < scientist < space < moved, details

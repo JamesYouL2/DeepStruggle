@@ -12,7 +12,8 @@ const engine = await WasmEngine.load(pathToFileURL(publicDir).href);
 const golden = JSON.parse(gunzipSync(readFileSync(goldenPath)).toString("utf8"));
 
 // Intended differences from the Python session, which the port corrects:
-// - it never logged MilOps (it read keys the display state does not have);
+// - it never logged MilOps (it read keys the display state does not have), nor the Space Race
+//   track;
 // - a card chosen while an event resolves read as a play, or in the headline as a headline commit
 //   with a "Headlines Simultaneously Revealed" pair for it; the port says what happened to the card,
 //   so for those steps the action's own lines are left out of the comparison;
@@ -22,7 +23,8 @@ const golden = JSON.parse(gunzipSync(readFileSync(goldenPath)).toString("utf8"))
 //   so the golden's sponsor die, total and winning margin are each 2 too high -- corrected here
 //   (`olympicsCorrected`), the rest of the line still compared.
 const comparable = (lines: string[], eventChoice: boolean) => {
-  let out = lines.filter(l => !l.includes(" MilOps: ") && !l.startsWith("  ✂ ") && !l.startsWith("  ⇄ "));
+  let out = lines.filter(l => !l.includes(" MilOps: ") && !l.startsWith("  • Space Race: ")
+    && !l.startsWith("  ✂ ") && !l.startsWith("  ⇄ "));
   if (eventChoice) out = out.slice(1).filter(l => !l.startsWith("  ★ "));
   return out;
 };

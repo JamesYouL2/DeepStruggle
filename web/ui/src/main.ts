@@ -923,8 +923,8 @@ export class TSApp {
               ${policyChipHtml(this.replaySteps, idx)}
               ${isVpTarget ? '<span class="log-vp-badge">🎯 VP CHANGE</span>' : ''}
             </div>
-            ${eventHtml}
             ${dieRollHtml}
+            ${eventHtml}
           </div>
         `;
 

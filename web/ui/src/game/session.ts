@@ -10,7 +10,7 @@
  */
 import { ActionLogItem, GameState, MicroAction } from "../types";
 import { WasmEngine } from "../engine/wasm_engine";
-import { describeActionAndDeltas, describeDeltas, describeEventTracks, describeRoll } from "./describe";
+import { describeAction, describeDeltas, describeEventTracks, describeRoll } from "./describe";
 import { ReplayStep } from "../replay_controls";
 import { GameRecordData, ModelInfo, MoveHow, RecordEvent, RecordEventKind, Settings, StepTag } from "./record";
 
@@ -203,13 +203,16 @@ export class GameSession {
     const settled = this.engine.settledDisplay();
     const crossed = settled.turn !== after.turn || settled.current_phase_name !== after.current_phase_name;
     const end = crossed ? settled : after;
-    // The dice: every roll the click made, in order, not only the last one a state keeps.
-    const lines = describeActionAndDeltas(this.engine, before, { ...end, die_roll: undefined }, a);
+    // From cause to effect: the action, every die the click rolled (in order, not only the last
+    // one a state keeps), what each of its Events did to VP and DEFCON, then the board's changes.
     const mover = before.decision_context?.decision_player ?? "NONE";
-    const eventTracks = this.engine.clickEventTracks();
-    lines.push(...describeEventTracks(before, end, eventTracks));
     const rolls = this.engine.clickRolls();
+    const eventTracks = this.engine.clickEventTracks();
+    const lines = describeAction(this.engine, before, end, a);
     for (const r of rolls) lines.push(...describeRoll(this.engine, before, r, mover));
+    lines.push(...describeEventTracks(before, end, eventTracks));
+    lines.push(...describeDeltas(this.engine, before, { ...end, die_roll: undefined }, mover,
+                                 a.decision_type === 1 ? a.primary_id : 0));
     this.tags.push({
       source: how.source, analysis: how.analysis, mover: mover === "US" || mover === "USSR" ? mover : "",
       forcedDie, rolled: rolls.length > 0, setting: this.setting,

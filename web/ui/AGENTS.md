@@ -196,8 +196,9 @@ web/ui/
      steps. `game/describe.ts` writes the action log -- a line-for-line port of the old Python
      session, pinned by a golden (`tests/web/test_describe_golden.py`).
    - A click is described from the engine's settled state (`WasmEngine.settledDisplay`: after its
-     action or last die roll), with a dice line for every roll it made (`clickRolls`, in order).
-     When the click's Events moved VP or DEFCON in ways its before/after cannot show -- two
+     action or last die roll), from cause to effect: the action (`describeAction`), a dice line for
+     every roll it made (`clickRolls`, in order), what each Event did to VP and DEFCON, then the
+     board's changes (`describeDeltas`, which also logs the Space Race track). When the click's Events moved VP or DEFCON in ways its before/after cannot show -- two
      headlines whose VP cancel, or more than one Event -- each gets a line of its own
      (`describeEventTracks`, from `clickEventTracks`; `ReplayStep.event_tracks` keeps them, and the
      replay log shows them too); a lone Event that is the whole change adds nothing.

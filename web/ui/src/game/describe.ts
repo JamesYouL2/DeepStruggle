@@ -41,6 +41,19 @@ function countriesById(s: GameState) {
 export function describeActionAndDeltas(
   engine: WasmEngine, before: GameState, after: GameState, action: Required<MicroAction>,
 ): string[] {
+  const chosen = action.decision_type === DT.SELECT_CARD ? action.primary_id : 0;
+  const p = before.decision_context?.decision_player ?? "NONE";
+  return [...describeAction(engine, before, after, action), ...describeDeltas(engine, before, after, p, chosen)];
+}
+
+/**
+ * What was done: the action's own line, and the headline reveal when it is the second commit. The
+ * first half of `describeActionAndDeltas`; the session puts the click's dice and Events after it
+ * and the board's changes last, so a log reads from cause to effect.
+ */
+export function describeAction(
+  engine: WasmEngine, before: GameState, after: GameState, action: Required<MicroAction>,
+): string[] {
   const d = action.decision_type;
   const primary = action.primary_id;
   const secondary = action.secondary_id;
@@ -131,8 +144,6 @@ export function describeActionAndDeltas(
   } else {
     logs.push(`${p} action: type=${d} primary=${primary} secondary=${secondary} flags=${flags}`);
   }
-
-  logs.push(...describeDeltas(engine, before, after, p, d === DT.SELECT_CARD ? primary : 0));
   return logs;
 }
 
@@ -174,6 +185,14 @@ export function describeDeltas(engine: WasmEngine, before: GameState, after: Gam
     const b = before.mil_ops?.[side];
     const a = after.mil_ops?.[side];
     if (b !== a) logs.push(`  • ${side} MilOps: ${b} -> ${a}`);
+  }
+
+  // The Space Race track: an advance pays VP, and Captured Nazi Scientist's +2 VP read as
+  // unexplained without the move that paid it. The Python session never logged it.
+  for (const side of ["US", "USSR"] as const) {
+    const b = before.space?.[side];
+    const a = after.space?.[side];
+    if (b !== undefined && a !== undefined && b !== a) logs.push(`  • Space Race: ${side} ${b} -> ${a}`);
   }
 
   // 3.5 Effect flags
