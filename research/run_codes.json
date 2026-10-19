@@ -420,6 +420,81 @@
     "ladder_play_mode_head": true,
     "value_only": true
    }
+  },
+  "A18": {
+   "description": "A13 plus two card/country token-attention layers of width 128 (A6s), grown at identity onto A13+R48 by --resume-grow-tokens (P35 item 1, the grown read)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A18_20261018_171606",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_token_layers": 2,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true,
+    "ladder_token_chunk": 4096
+   }
+  },
+  "A19": {
+   "description": "A13 read only for its policy (a P36c student: --mode policy-fit, the value heads frozen)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R58_20261019_212021",
+   "flags": {
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 0,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_token_dim": 0,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_entity_proj_dim": 512,
+    "ladder_head_center": true,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "policy_only": true
+   }
+  },
+  "A20": {
+   "description": "A19 deep: A13 with hidden 1024 and 8 residual blocks (8.7x the parameters), policy only (a P36c student)",
+   "first": "E7-A20-R59-S44_20261019_212151",
+   "flags": {
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 0,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_token_dim": 0,
+    "ladder_hidden_dim": 1024,
+    "ladder_res_blocks": 8,
+    "ladder_entity_proj_dim": 512,
+    "ladder_head_center": true,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "policy_only": true
+   }
   }
  },
  "recipes": {
@@ -1152,6 +1227,25 @@
     "block_lambda": "off",
     "batch_size": 16384
    }
+  },
+  "R58": {
+   "description": "P36c policy fit: the keyed rollout root improved policy at 128 worlds on 200k entry decisions, fine-tuning the init network to convergence",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R58_20261019_212021",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz"
+   }
+  },
+  "R59": {
+   "description": "R58 from fresh weights (--policy-reinit)",
+   "first": "E7-A19-R59-S44_20261019_212108",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/p36c/targets.npz",
+    "policy_reinit": true
+   }
   }
  },
  "overrides": {
@@ -1315,7 +1409,11 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54_20261017_215302": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12000M+A15-R54",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R55_20261018_134026": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R55",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R56_20261018_134046": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R56",
-  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57_20261018_152427": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57"
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57_20261018_152427": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+R57",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A18_20261018_171606": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12400M+A18",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R58_20261019_212021": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R58",
+  "E7-A19-R59-S44_20261019_212108": "E7-A19-R59-S44",
+  "E7-A20-R59-S44_20261019_212151": "E7-A20-R59-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

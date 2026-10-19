@@ -60,6 +60,8 @@ class PolicyFitConfig:
     patience: int = 10              # evaluations without the training fit rising by min_gain
     min_gain: float = 0.002
     fit_sample: int = 20000         # training positions the fit is read on
+    #: The share of the training games used (whole games, the lowest game ids): the data-scaling cells.
+    train_fraction: float = 1.0
     seed: int = 44
     device: str = "cuda"
     bf16: bool = True
@@ -133,6 +135,10 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     net = d["net_argmax"].astype(np.int64)
     pick, pick2 = d[f"pick_{w}"].astype(np.int64), d[f"pick2_{w}"].astype(np.int64)
     tr, ho = np.flatnonzero(~heldout), np.flatnonzero(heldout)
+    if cfg.train_fraction < 1.0:
+        games = np.unique(d["game"][tr])
+        keep_games = games[:max(1, int(round(cfg.train_fraction * games.size)))]
+        tr = tr[np.isin(d["game"][tr], keep_games)]
     dep_tr = tr[top[tr] != net[tr]]
     fit_rows = np.sort(rng.choice(dep_tr, size=min(cfg.fit_sample, dep_tr.size), replace=False)) if dep_tr.size else dep_tr
     dep_ho = ho[top[ho] != net[ho]]

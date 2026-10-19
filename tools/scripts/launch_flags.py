@@ -95,7 +95,7 @@ UNCHECKED_BY_DESIGN = frozenset({
     "value_leaf_weights",
     # --mode policy-fit's inputs: ai/training/policy_fit.py records them in its own metadata.json
     "policy_dataset", "policy_worlds", "policy_reinit", "policy_arch", "policy_epochs", "policy_lr",
-    "policy_batch", "policy_eval_every", "policy_patience",
+    "policy_batch", "policy_eval_every", "policy_patience", "policy_train_fraction",
 })
 
 

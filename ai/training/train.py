@@ -311,6 +311,8 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--policy-lr", type=float, default=3e-4)
     pf.add_argument("--policy-batch", type=int, default=4096)
     pf.add_argument("--policy-eval-every", type=int, default=200)
+    pf.add_argument("--policy-train-fraction", type=float, default=1.0,
+                    help="Use this share of the training games (whole games): the data-scaling cells.")
     pf.add_argument("--policy-patience", type=int, default=10,
                     help="Stop when the training fit has not risen by 0.2 points in this many evaluations (convergence).")
     vf = parser.add_argument_group("value fit (--mode value-fit, P34)")
@@ -1331,7 +1333,8 @@ def main():
             PolicyFitConfig(dataset=args.policy_dataset, worlds=args.policy_worlds, init=args.warmup_checkpoint,
                             reinit=args.policy_reinit, arch=parse_arch(args.policy_arch), batch=args.policy_batch,
                             lr=args.policy_lr, max_epochs=args.policy_epochs, eval_every=args.policy_eval_every,
-                            patience=args.policy_patience, seed=args.seed if args.seed is not None else 44,
+                            patience=args.policy_patience, train_fraction=args.policy_train_fraction,
+                            seed=args.seed if args.seed is not None else 44,
                             device=args.device),
             run_name=args.run_name, description=args.description, output_dir=args.output_dir,
             cli={k: v for k, v in vars(args).items()
