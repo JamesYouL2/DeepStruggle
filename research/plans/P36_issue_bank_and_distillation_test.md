@@ -290,3 +290,11 @@ bug, which is largest there (Ops candidates read before the opponent moved, the 
 the deal adds nothing, at up to 1.7x the time. **The mode: horizon 4, stop=earlier, leaf=own, keyed,
 aligned, box4, with belief worlds** -- without belief, the same at 52.3%; horizon 2 is level and cheaper.
 Both are registered at 32 worlds on the leaderboard network (`…+A13@11920..12000M`) and play the strong tier.
+
+*On the leaderboard (E7, strong tier, 1,000 deals a side).* The corrected keyed root at 32 worlds,
+`…+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)`:
+**1844 ± 4, second on E7** -- +12 over the same network's 32-world root on the old count (1832) and above its
+64-world one (1839); the R34 soup's 64-world root (1852) stays first. By opponent, against the old 32-world
+root on the same network: the R34 soup's rollout root **60.3%** (57.6%), the R34 soup 74.1% (73.2%), A13+R48
+75.2% (73.7%), the heads soup 74.1% (73.7%); against greedy players both are near the ceiling, and the
+searched opponent separates them.
