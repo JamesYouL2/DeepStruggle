@@ -977,6 +977,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-teacher-policy", action="store_true",
                         help="Search-CE targets are the frozen --search-teacher-checkpoint's own policy, with no search: the "
                              "control for the rollout-root teacher (same rows, same weight).")
+    # P36's gated active search (ai/training/active_search.py; owner, 2026-10-20).
+    parser.add_argument("--active-search-spec", type=str, default=None,
+                        help="P36: the rollout root that acts in this run, as a spec tail without its checkpoint "
+                             "(e.g. 4:16:4:z2:earlier:own:keyed:aligned:box4). Off by default. It joins only once its "
+                             "gate opens: a check every --active-search-gate-every-steps plays the raw snapshot "
+                             "under the root against itself raw, and the first at --active-search-gate-threshold "
+                             "or more opens it. Then the root plays --active-search-frac of the learner's entry "
+                             "decisions (headline and action-round card choices) as environment -- no policy "
+                             "gradient on them -- and its improved policy is their search-CE target, searching a "
+                             "lagged snapshot of the learner.")
+    parser.add_argument("--active-search-frac", type=float, default=1.0 / 64.0,
+                        help="P36: the share of the learner's entry decisions the root plays once its gate is open.")
+    parser.add_argument("--active-search-ce-coef", type=float, default=0.1,
+                        help="P36: weight of the cross-entropy toward the root's improved policy on the rows it played.")
+    parser.add_argument("--active-search-gate-every-steps", type=int, default=40_000_000,
+                        help="P36: steps between gate checks (run in a separate tools/tournament.py process).")
+    parser.add_argument("--active-search-gate-games", type=int, default=200,
+                        help="P36: games per gate check (half a side).")
+    parser.add_argument("--active-search-gate-threshold", type=float, default=0.55,
+                        help="P36: the root's score against its raw snapshot that opens the gate.")
+    parser.add_argument("--active-search-gate-only", action="store_true",
+                        help="P36: run the gate checks and record when the gate opened, but never join -- so a "
+                             "later resume without this flag switches search on at once if the gate is open.")
+    parser.add_argument("--active-search-refresh-steps", type=int, default=10_000_000,
+                        help="P36: steps between refreshes of the searched snapshot from the learner, early.")
+    parser.add_argument("--active-search-refresh-steps-late", type=int, default=50_000_000,
+                        help="P36: the same from --active-search-late-from on.")
+    parser.add_argument("--active-search-late-from", type=int, default=400_000_000,
+                        help="P36: the step the refresh cadence slows at.")
     parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
                         help="P32: search with this FROZEN network for the search CE targets, instead of the "
                              "network being trained -- whose targets follow it as it changes. Same "
@@ -1148,6 +1177,16 @@ def main():
             searched_value_batch=args.searched_value_batch,
             search_workers=args.search_workers,
             search_teacher_policy=args.search_teacher_policy,
+            active_search_spec=args.active_search_spec,
+            active_search_frac=args.active_search_frac,
+            active_search_ce_coef=args.active_search_ce_coef,
+            active_search_gate_every_steps=args.active_search_gate_every_steps,
+            active_search_gate_games=args.active_search_gate_games,
+            active_search_gate_threshold=args.active_search_gate_threshold,
+            active_search_gate_only=args.active_search_gate_only,
+            active_search_refresh_steps=args.active_search_refresh_steps,
+            active_search_refresh_steps_late=args.active_search_refresh_steps_late,
+            active_search_late_from=args.active_search_late_from,
             resume_weights=args.resume_weights,
             resume_widen=args.resume_widen,
             resume_grow_tokens=args.resume_grow_tokens,

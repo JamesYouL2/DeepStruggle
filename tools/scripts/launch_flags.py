@@ -140,6 +140,16 @@ _BEFORE_RECORDED = {
     "aux_card_buffer": lambda meta: 65536,
     "aux_card_steps": lambda meta: 4,
     "aux_card_batch": lambda meta: 512,
+    # P36 (2026-10-20): no gated active search before it existed.
+    "active_search_frac": lambda meta: 1.0 / 64.0,
+    "active_search_ce_coef": lambda meta: 0.1,
+    "active_search_gate_every_steps": lambda meta: 40_000_000,
+    "active_search_gate_games": lambda meta: 200,
+    "active_search_gate_threshold": lambda meta: 0.55,
+    "active_search_gate_only": lambda meta: False,
+    "active_search_refresh_steps": lambda meta: 10_000_000,
+    "active_search_refresh_steps_late": lambda meta: 50_000_000,
+    "active_search_late_from": lambda meta: 400_000_000,
     # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
     # below as "unrecorded" for older runs and diffs as the default.
 }

@@ -15,6 +15,7 @@ import re
 import argparse
 import functools
 import random
+from pathlib import Path
 from typing import (Any, Callable, Dict, Final, List, Mapping, Optional, Sequence, Set, Tuple, TypeVar,
                     Union, cast)
 import numpy as np
@@ -30,6 +31,7 @@ from ai.models.grow import (grow_tokens_optimizer_state, grow_tokens_state_dict,
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
 from bindings.ts_env import (OBS_LAYOUT_NAME, TsVectorizedEnv, check_obs_width,
                              model_obs_features)
+from ai.training.active_search import ActiveSearch, gate_metrics
 from ai.training.rollout_buffer import RolloutBuffer
 from ai.training.run_name import is_run_name
 from ai.training.schedule import WeightEMA, scheduled_lr
@@ -1418,6 +1420,9 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
         "setup_ent_coef": float(getattr(trainer, "setup_ent_coef", 0.0)),
         # --ema-weights: the average, beside the live weights it averages. None without the flag.
         "ema_state_dict": None if ema is None else ema.state_dict(),
+        # P36's gated active search: when its gate opened and the checks so far.
+        "active_search": (trainer.active_search.state_dict()
+                          if getattr(trainer, "active_search", None) is not None else None),
     }, path)
 
 
@@ -1584,6 +1589,8 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         "opponent_pool": blob.get("opponent_pool"),
         # None for a state written without --ema-weights; the average then starts from the weights.
         "ema_state_dict": blob.get("ema_state_dict"),
+        # None for a state written without --active-search-spec.
+        "active_search": blob.get("active_search"),
     }
 
 
@@ -1695,6 +1702,16 @@ def train_pipeline(
     searched_value_batch: int = 1024,
     search_workers: int = 0,
     search_teacher_policy: bool = False,
+    active_search_spec: Optional[str] = None,
+    active_search_frac: float = 1.0 / 64.0,
+    active_search_ce_coef: float = 0.1,
+    active_search_gate_every_steps: int = 40_000_000,
+    active_search_gate_games: int = 200,
+    active_search_gate_threshold: float = 0.55,
+    active_search_gate_only: bool = False,
+    active_search_refresh_steps: int = 10_000_000,
+    active_search_refresh_steps_late: int = 50_000_000,
+    active_search_late_from: int = 400_000_000,
     resume_weights: Optional[str] = None,
     resume_widen: bool = False,
     resume_grow_tokens: bool = False,
@@ -1995,6 +2012,16 @@ def train_pipeline(
         "searched_value_batch": int(searched_value_batch),
         "search_workers": int(search_workers),
         "search_teacher_policy": bool(search_teacher_policy),
+        "active_search_spec": active_search_spec,
+        "active_search_frac": float(active_search_frac),
+        "active_search_ce_coef": float(active_search_ce_coef),
+        "active_search_gate_every_steps": int(active_search_gate_every_steps),
+        "active_search_gate_games": int(active_search_gate_games),
+        "active_search_gate_threshold": float(active_search_gate_threshold),
+        "active_search_gate_only": bool(active_search_gate_only),
+        "active_search_refresh_steps": int(active_search_refresh_steps),
+        "active_search_refresh_steps_late": int(active_search_refresh_steps_late),
+        "active_search_late_from": int(active_search_late_from),
         "resume_weights": resume_weights,
         "resume_widen": bool(resume_widen),
         "resume_grow_tokens": bool(resume_grow_tokens),
@@ -2476,6 +2503,24 @@ def train_pipeline(
         cuda_graphs=cuda_graphs,
         device=dev,
     )
+    if active_search_spec:
+        # P36's gated active search: the search CE weight is its own, so no queued searcher may be on.
+        if search_ce_coef > 0.0 or search_value_beta > 0.0 or search_rollout_horizon > 0:
+            raise ValueError("--active-search-spec takes no other search targets (--search-ce-coef, "
+                             "--search-value-beta, --search-rollout-horizon)")
+        trainer.active_search = ActiveSearch(
+            model, active_search_spec, device=trainer.device, frac=active_search_frac,
+            gate_every=active_search_gate_every_steps, gate_games=active_search_gate_games,
+            gate_threshold=active_search_gate_threshold, gate_only=active_search_gate_only,
+            refresh_every=active_search_refresh_steps, refresh_every_late=active_search_refresh_steps_late,
+            late_from=active_search_late_from)
+        trainer.search_ce_coef = float(active_search_ce_coef)
+        print(f"[active search] {trainer.active_search.label}: a gate check every "
+              f"{active_search_gate_every_steps / 1e6:.0f}M ({active_search_gate_games} games, root against the raw "
+              f"snapshot, opens at {100 * active_search_gate_threshold:.0f}%)"
+              + (", checks only (never joins)" if active_search_gate_only else
+                 f"; once open, 1 in {1 / active_search_frac:.0f} learner entry decisions played by the root, "
+                 f"search CE {active_search_ce_coef}"), flush=True)
 
     # Frozen-opponent sampling. A share of environments plays the learner against a past
     # snapshot instead of against itself, so the outcome depends on the learner's actions
@@ -2819,6 +2864,11 @@ def train_pipeline(
             trainer.reference_net.load_state_dict(_sd)
             print(f"[resume weights] the network and pi_ref start from {resume_weights}", flush=True)
         record_start_steps(metadata_path, int(state["total_env_steps"]))
+        if trainer.active_search is not None:
+            trainer.active_search.restore(state.get("active_search"), int(state["total_env_steps"]))
+            _as_open = trainer.active_search.state.open_step
+            print(f"[active search] resumed: {len(trainer.active_search.state.checks)} gate checks so far, gate "
+                  + (f"open since {_as_open / 1e6:.0f}M" if _as_open is not None else "closed"), flush=True)
 
     # Restored before anything reads or writes the weights: snapshot_0s.pt claims to be
     # this run's starting point, and an eval of it costs real time, so both have to see
@@ -3085,9 +3135,21 @@ def train_pipeline(
         step_metrics.update(episode_stats)
         if "entropy_fixed_probe" in iteration_metrics:
             step_metrics["entropy_fixed_probe"] = float(iteration_metrics["entropy_fixed_probe"])
+        _as = trainer.active_search
+        if _as is not None:
+            step_metrics["active_search_joined"] = float(_as.joined)
+            step_metrics["active_search_rows"] = float(_as.rows_rollout)
 
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(step_metrics) + "\n")
+        if _as is not None:
+            _rec = _as.poll(int(trainer.total_env_steps))
+            if _rec is not None:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"iteration": it, "elapsed_seconds": int(time.time() - t_start),
+                                        **gate_metrics(_rec)}) + "\n")
+            if _as.gate_due(int(trainer.total_env_steps)):
+                _as.start_check(int(trainer.total_env_steps), model, Path(out_dir))
 
         # Indexed by environment steps, not iteration. Runs are budgeted and compared by
         # --train-steps, and iteration count depends on --num-envs and rollout length, so two
@@ -3215,6 +3277,16 @@ def train_pipeline(
                     tb.log_metrics(decisive, total_env_steps)
             next_eval_steps += eval_every_steps
             overhead_seconds += time.time() - t_eval0
+
+    if trainer.active_search is not None and trainer.active_search.pending is not None:
+        _p = trainer.active_search.pending.proc
+        if _p is not None:
+            _p.wait()
+        _rec = trainer.active_search.poll(int(trainer.total_env_steps))
+        if _rec is not None:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"iteration": it, "elapsed_seconds": int(time.time() - t_start),
+                                    **gate_metrics(_rec)}) + "\n")
 
     # Final Snapshot
     final_snap_path = os.path.join(out_dir, "snapshot_final.pt")

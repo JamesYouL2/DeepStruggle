@@ -389,8 +389,13 @@ class RolloutTeacher:
         return self.subsample >= 1.0 or self._rng.random() < self.subsample
 
     def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        return self.decide(states)[1]
+
+    def decide(self, states: Sequence[ts.GameState]) -> Tuple[List[int], List[Tuple[List[int], np.ndarray]]]:
+        """The root's move at each position and its improved policy over the legal moves (P36's active
+        search plays the first and trains toward the second)."""
         states = list(states)
-        self.root.choose(states)                  # fills last_stats: candidates, worlds, Q
+        picks = self.root.choose(states)          # fills last_stats: candidates, worlds, Q
         lg, masks, v = self.root._forward(states)
         out: List[Tuple[List[int], np.ndarray]] = []
         for i, st in enumerate(self.root.last_stats):
@@ -408,7 +413,7 @@ class RolloutTeacher:
             z = np.array([logits[a] + sig[a] for a in acts], dtype=np.float64)
             z = np.exp(z - z.max())
             out.append((acts, z / z.sum()))
-        return out
+        return picks, out
 
 
 class RolloutRootAgent:
