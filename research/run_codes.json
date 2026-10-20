@@ -523,6 +523,31 @@
      "headline_reveal"
     ]
    }
+  },
+  "A22": {
+   "description": "A21 at E8's default view: the same network (A8 with 512 projections, fusion 768, 4 residual blocks, A8's heads) reading headline_reveal, which is the default from E8 on, so its flags no longer name it (main a20d77a)",
+   "first": "E8-A22-R70-S44_20261020_234241",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 768,
+    "ladder_res_blocks": 4,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1572,7 +1597,8 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R67_20261019_215319": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R67",
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R68_20261019_215356": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R68",
   "E7-A21-R70-S44_20261020_194250": "E7-A21-R70-S44",
-  "E7-A8-R69-S44_20261020_194250": "E7-A8-R69-S44"
+  "E7-A8-R69-S44_20261020_194250": "E7-A8-R69-S44",
+  "E8-A22-R70-S44_20261020_234241": "E8-A22-R70-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

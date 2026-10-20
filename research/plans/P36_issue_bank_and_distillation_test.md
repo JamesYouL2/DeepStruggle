@@ -380,3 +380,9 @@ snapshots with the trainer's command, written into the resume states, and both r
 40.04M (~3.5M steps repeated; the metric lines past 40M kept beside as `training_metrics.jsonl.before_resume_40M`).
 Slot 1 then plays ~340 root moves a rollout at ~17k steps/s (45k closed, 2.6x); slot 2 runs at ~54k with its
 gate recorded open, so search can join it at a resume the moment slot 1 reads ahead.
+
+**Slot 2 moved to E8 (2026-10-21, owner).** After the rebase onto main's E8 (ENG-4: a draw that empties the
+deck reshuffles inside the event), the flagship was relaunched from scratch as `E8-A22-R70-S44` (same flags;
+A22 is A21 at E8's default view, headline_reveal) and the E7 run stopped at 564M. Slot 1 stays on E7 to
+finish its matched-step test against the E7 heads run; its reads are played on a copy of the E7 build kept in
+`build/e7` (git-ignored), so its checkpoints and the heads run's meet on the engine they were trained on.
