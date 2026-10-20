@@ -319,6 +319,23 @@
     "description": "The rollout root at 32 worlds with playouts stopping at the earlier of 4 boundaries and the turn's end, each leaf played on to the mover's own next decision (P33)",
     "report": "research/log/per_checkpoint/E7-A8-R1-S44_6400M+R34_7200M+R48_9170M+A13_11920..12000M_rollout_k_4_worlds_32_horizon_4_rule_z2_stop_earlier_leaf_own.md"
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)": {
+    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 32,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own",
+      "chance": "keyed",
+      "aligned": true,
+      "box4": true
+    },
+    "description": "The corrected rollout root (P36, 2026-10-20): every candidate's horizon counted from the end of the mover's own action round and the headline one boundary (aligned), the opponent's Space-Race-box-4 headline kept in every world (box4); keyed chance, 32 worlds. Mode chosen by the P36 sweep at 16 worlds (corrected h4 52.3% vs the keyed root).",
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=64,horizon=4,rule=z2)": {
     "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
     "inference": {
