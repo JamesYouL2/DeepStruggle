@@ -325,8 +325,10 @@ searched opponent separates them.
   transfers to any architecture. Then 1 in 64 entry decisions: the root's move played as environment
   (no policy gradient on it) and the improved policy as a soft target there; the root searches a
   lagged snapshot of the learner against the R29 loop, refreshed every 10M until 400M and every 50M
-  after. Cost ~4× a plain run per step once joined. **The bounded test:** the heads recipe (A8) from
-  scratch to 2,000M, read at matched steps against the heads run's own trajectory at 400M, 800M and
+  after. Cost ~4× a plain run per step once joined. **The bounded test:** the heads run's *exact* flags
+  (A8, the 4,096 minibatch it trained at, the gap penalty off as it was) from scratch to 2,000M, so the
+  gated search is the only difference from its control -- the 16k minibatch would add a second variable
+  worth +15–25 Elo on its own (R47) -- read at matched steps against the heads run's own trajectory at 400M, 800M and
   2,000M (per seat, raw and under the keyed root), continued only if ahead; if the gate never opens,
   that is the answer at no search cost.
 * **Launch order (owner, 2026-10-20), after the running session's current report is generated.**
