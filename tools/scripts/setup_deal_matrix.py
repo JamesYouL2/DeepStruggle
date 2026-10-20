@@ -80,7 +80,9 @@ ABBR = (("EG", "East Germany"), ("Pol", "Poland"), ("Yug", "Yugoslavia"), ("Hun"
         ("Ir", "Iran"), ("Pan", "Panama"), ("Isr", "Israel"))
 
 #: (setup, who plays it). Human shares: 254 corpus games with a full turn-1 board; networks: their
-#: greedy setup over 1,000 deals (A13+R48 SWA, R34 soup, R39 SWA; R32 SWA and the heads soup 300).
+#: greedy setup over 1,000 deals (A13+R48 SWA, R34 soup, R39 SWA; R32 SWA and the heads soup 300), and
+#: their mean probability where it tops 5%; "playouts": a best reply or equilibrium setup of the
+#: fixed-deal (500310) matrices under A13 or R39.
 USSR_SETUPS: Tuple[Tuple[str, str], ...] = (
     ("EG4/Pol4/Aus1", "human 45%"),
     ("EG4/Pol4/Yug1", "human 30%"),
@@ -88,31 +90,31 @@ USSR_SETUPS: Tuple[Tuple[str, str], ...] = (
     ("Pol3/Yug3", "A13, R34, R39: every deal"),
     ("Pol3/Hun2/Aus1", "R32, heads soup"),
     ("Pol3/Yug2/Hun1", "network tail"),
-    ("EG4/Pol3/Yug2", "network tail"),
+    ("EG4/Pol3/Yug2", "playouts: A13 fixed-deal equilibrium"),
     ("Pol4/Yug2", "variant"),
     ("Pol3/Yug2/Aus1", "variant"),
     ("EG4/Pol4/Hun1", "variant"),
     ("Pol3/Hun3", "probe: Yugoslavia's place"),
     ("Pol3/Rom3", "probe: Yugoslavia's place"),
     ("Pol3/Cze3", "probe: Yugoslavia's place"),
-    ("Pol3/Bul3", "probe: Yugoslavia's place"),
+    ("Pol3/Bul3", "playouts: R39 fixed-deal equilibrium"),
 )
 US_SETUPS: Tuple[Tuple[str, str], ...] = (
     ("WG4/It4/Ir2", "human 48%"),
-    ("WG3/Fr3/It2/Ir2", "human 31%, R39"),
+    ("WG3/Fr3/It2/Ir2", "human 31%, R39 52%, R34 53%"),
     ("WG3/It3/Fr2/Ir2", "human 7%"),
     ("WG4/It3/Ir3", "human 5%"),
     ("WG4/It3/Fr1/Ir2", "human 3%"),
-    ("WG4/Fr3/It2", "human 3%"),
-    ("WG4/It3/Ir2/Pan2", "A13"),
-    ("WG4/Fr2/It2/Ir2", "R34"),
+    ("WG4/Fr3/It2", "human 3%, R34 10%, R39 8%"),
+    ("WG4/It3/Ir2/Pan2", "A13 90%"),
+    ("WG4/Fr2/It2/Ir2", "R34 26%, R39 14%"),
     ("Fr6/It2/Ir2", "R32, heads soup"),
-    ("WG4/It2/Fr1/Ir2/Pan2", "A13's second"),
+    ("WG4/It2/Fr1/Ir2/Pan2", "A13 5%"),
     ("WG4/It4/Pan2", "variant"),
     ("WG3/Fr3/It2/Pan2", "variant"),
-    ("WG4/It3/Fr2", "variant"),
+    ("WG4/It3/Fr2", "playouts: fixed-deal best"),
     ("Fr4/WG3/It2", "variant"),
-    ("WG3/Fr3/It3", "variant"),
+    ("WG3/Fr3/It3", "playouts: A13 fixed-deal equilibrium"),
     ("WG4/Fr3/It1/Ir2", "variant"),
     ("WG4/Fr3/Ir3", "probe: Italy left empty"),
     ("WG4/It5", "probe: Italy overprotected"),
