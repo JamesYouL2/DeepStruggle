@@ -49,7 +49,7 @@ ACTIVE_CARD_SLOT = 13
 #: Width of each optional observation block, by ts.OBS_FEATURE_* bit (engine/include/ts/game_state.hpp,
 #: obs_features). Restated so the model does not import the engine; tests/bindings check it
 #: against ts.obs_size_for.
-OBS_FEATURE_WIDTHS: Dict[int, int] = {1 << 1: 3}   # OPS_BUDGET
+OBS_FEATURE_WIDTHS: Dict[int, int] = {1 << 1: 3, 1 << 2: 0}   # OPS_BUDGET, HEADLINE_REVEAL (no width)
 
 
 def _obs_extra(features: int) -> int:

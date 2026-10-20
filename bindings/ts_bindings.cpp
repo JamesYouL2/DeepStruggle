@@ -967,7 +967,11 @@ NB_MODULE(ts_engine, m) {
           "every seen card left; an unrevealed opposing headline is forgotten. The C++ port of "
           "ai.search.dmcts.determinize that the rollout root uses in both builds. keep_hand=True keeps the "
           "opponent's true hand and reshuffles only the draw deck (the oracle's world).");
-    using Hands = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+    m.def("revealed_headline", [](const ts::GameState& s, ts::Player me) { return ts::SpaceRace::revealed_headline(s, me); },
+          nb::arg("state"), nb::arg("me"),
+          "The opposing headline `me` has seen, else 0: with Man in Space (Space Race box 4) held by `me` alone "
+          "the opponent chooses first and reveals it.");
+    using Hands =nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
     m.def("place_hand", [](const ts::GameState& s, ts::Player me, nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> held) {
               if (held.shape(0) != 110) throw std::invalid_argument("held must have 110 entries");
               ts::GameState out = s;
@@ -1375,6 +1379,7 @@ NB_MODULE(ts_engine, m) {
        "The base observation followed by the blocks `features` appends. features=0 is exactly "
        "extract_observation(state, perspective).");
     m.attr("OBS_FEATURE_OPS_BUDGET") = static_cast<uint32_t>(ts::obs_features::OPS_BUDGET);
+    m.attr("OBS_FEATURE_HEADLINE_REVEAL") = static_cast<uint32_t>(ts::obs_features::HEADLINE_REVEAL);
     m.attr("OBS_FEATURES_ALL") = static_cast<uint32_t>(ts::obs_features::ALL);
 
     m.attr("OBS_FLAG_STAGED_CARDS") = static_cast<uint32_t>(ts::obs_flags::STAGED_CARDS);

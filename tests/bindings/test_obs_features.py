@@ -18,6 +18,9 @@ import ts_engine as ts
 from ai.models.ladder_net import OBS_FEATURE_WIDTHS, create_ladder_net
 from ai.training.card_event_targets import BREZHNEV, CONTAINMENT, PURGE_US, PURGE_USSR, effective_ops
 from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
+from tools.lib.batch_tournament import BatchMatchRunner
+from tools.lib.game_step import drain_chance
+from tools.lib.player_agent import NeuralAgent
 
 F = int(ts.OBS_FEATURE_OPS_BUDGET)
 BASE = int(ts.OBS_SIZE)
@@ -151,3 +154,71 @@ def test_the_training_probes_run_in_the_models_view() -> None:
     measure_decisive_batched(m, num_envs=2)
     measure_blunders_batched(m, num_games=2, temperature=1.0)
     profile_self_play_batched(m, num_envs=2)
+
+
+R = int(ts.OBS_FEATURE_HEADLINE_REVEAL)
+
+
+def _box4_headline(seed: int) -> "ts.GameState":
+    """The US's headline choice with Man in Space its own: the USSR chose first."""
+    st = ts.GameState()
+    ts.Engine.init_game(st, seed)
+    drain_chance(st)
+    st.us_space_track = 4
+    rng = np.random.default_rng(seed)
+    while True:
+        assert not ts.Engine.is_terminal(st)
+        if (st.current_phase == ts.Phase.HEADLINE and st.headline_stage == 0 and st.headline_ussr_card
+                and st.ctx().decision_player == ts.Player.US):
+            return st
+        m = np.asarray(ts.get_flat_action_mask(st, False))
+        ts.Engine.step_flat(st, int(rng.choice(np.flatnonzero(m))))
+        drain_chance(st)
+
+
+def test_headline_reveal_shows_the_box4_holder_the_opponents_headline_at_no_width() -> None:
+    """Space Race box 4: the opponent's headline, chosen first and revealed, shows in its card row as a
+    known opposing card committed to resolve -- for the box-4 holder only, only while it chooses, and
+    nothing else in the observation moves."""
+    assert ts.obs_size_for(R) == BASE and ts.obs_size_for(R | F) == BASE + OBS_FEATURE_WIDTHS[F]
+    st = _box4_headline(5)
+    card = int(st.headline_ussr_card)
+    assert ts.revealed_headline(st, ts.Player.US) == card
+    base = np.asarray(ts.extract_observation_features(st, ts.Player.US, 0))
+    shown = np.asarray(ts.extract_observation_features(st, ts.Player.US, R))
+    row = 84 * 26 + (card - 1) * 14
+    assert base[row + 0] == 1.0                              # DECK_OR_HIDDEN in the base layout
+    assert shown[row + 0] == 0.0 and shown[row + 2] == 1.0   # KNOWN_OPPONENT_HAND
+    assert shown[row + 13] == pytest.approx(0.3)             # ACTIVE_NEXT
+    differ = np.flatnonzero(base != shown)
+    assert set(differ) <= {row + 0, row + 2, row + 13}
+    # The opponent's own view, and every position without a revealed headline, are the base layout.
+    assert np.array_equal(np.asarray(ts.extract_observation_features(st, ts.Player.USSR, R)),
+                          np.asarray(ts.extract_observation_features(st, ts.Player.USSR, 0)))
+    for s, p in _positions(300):
+        if ts.revealed_headline(s, p) == 0:
+            assert np.array_equal(np.asarray(ts.extract_observation_features(s, p, R)),
+                                  np.asarray(ts.extract_observation_features(s, p, 0)))
+
+
+def test_a_reveal_model_plays_a_model_without_it_each_in_its_own_view() -> None:
+    """The flagships read HEADLINE_REVEAL; every earlier model does not. In one batch each side gets its own
+    set: at a box-4 headline the revealing side sees the opponent's headline and the other side's view is the
+    base layout -- and a whole match between the two plays out."""
+    st = _box4_headline(5)
+    r = ts.VectorizedBatchRunner(2, 11)
+    r.set_state(0, st)
+    r.set_state(1, st)
+    r.set_obs_features([R, 0], [0, R])
+    r.refresh_all()
+    assert r.obs_width == BASE
+    obs = np.asarray(r.get_observations())
+    assert np.array_equal(obs[0], np.asarray(ts.extract_observation_features(st, ts.Player.US, R)))
+    assert np.array_equal(obs[1], np.asarray(ts.extract_observation_features(st, ts.Player.US, 0)))
+    assert not np.array_equal(obs[0], obs[1])
+    torch.manual_seed(0)
+    a = NeuralAgent(model=create_ladder_net("cpu", **{**M2D, "obs_features": R}), name="reveal", device="cpu")
+    b = NeuralAgent(model=create_ladder_net("cpu", **M2D), name="base", device="cpu")
+    assert model_obs_features(a.model) == R and check_obs_width(a.model) == BASE
+    res = BatchMatchRunner.play_parallel_matchup(a, b, games_per_side=4, batch_chunk_size=8, device="cpu")
+    assert res is not None

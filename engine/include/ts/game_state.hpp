@@ -532,7 +532,15 @@ namespace obs_features {
     // Purge -1, summed). The base layout shows the raw effect bits but never the Ops a card is
     // worth at the moment its use is chosen.
     constexpr uint32_t OPS_BUDGET  = 1u << 1;
-    constexpr uint32_t ALL         = OPS_BUDGET;
+    // Space Race box 4 made visible, at no width (owner, 2026-10-20): while the side holding Man in
+    // Space alone chooses its headline, the opponent's -- chosen first and revealed to it
+    // (SpaceRace::revealed_headline) -- shows in that card's row as a known opposing card committed to
+    // resolve (KNOWN_OPPONENT_HAND, ACTIVE_NEXT), as the second headline shows while the first
+    // resolves. The base layout leaves it hidden in the opponent's hand. It changes base slots, so
+    // only a model trained with the bit reads them so; the base layout of every other model is
+    // unchanged.
+    constexpr uint32_t HEADLINE_REVEAL = 1u << 2;
+    constexpr uint32_t ALL         = OPS_BUDGET | HEADLINE_REVEAL;
 
     constexpr size_t OPS_BUDGET_WIDTH = 3;
 
