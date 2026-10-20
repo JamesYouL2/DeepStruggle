@@ -35,6 +35,7 @@ env:
     tests/engine_logic/test_cuban_missile_crisis_choice.py::test_replay_264_converts_end_to_end
     tests/engine_logic/test_norad_action_round_scope.py::test_replay_296_gets_past_its_bear_trap_escape
     tests/training/test_setup_arms.py::test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term
+    tests/training/test_search_bank.py::test_corpus_annotate_studies_the_humans_moves
 
 jobs:
   engine:

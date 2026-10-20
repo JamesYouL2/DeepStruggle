@@ -715,6 +715,10 @@ searcher's candidates), `playouts` (paired raw-network playouts) and `report`. C
   holds the headline numbers with the census's network and player, which
   `tools/scripts/checkpoint_report.py --leak` checks and puts first in that player's report
   (`--games 0` for the census alone).
+* **Where the humans lose:** `annotate --corpus --games 0 --sample 1` puts every decision of the
+  human corpus (`tools/lib/corpus_driver.py`, untrusted turns left out) to the network and the
+  searchers, with the human's move as `raw`; the screened stages then run as for a searched player.
+  On CI the corpus comes from the fork's `corpus-v1` release.
 * `event-select` / `event-report`: every action-round play-mode decision with a legal event, ranked
   by raw's measured loss per card.
 * `subs-select` / `subs` / `subs-report`: four paired branches at each US Nuclear Subs decision

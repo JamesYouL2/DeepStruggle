@@ -8,13 +8,19 @@
 #   gh release create search-bank-<date> bank.jsonl.gz --prerelease --title "search bank"
 #   gh workflow run search_bank.yml --ref exp/search-bank -f stage=reference -f release=search-bank-<date>
 #   gh run download <run-id> -n search-bank-<run-id> -D data/reports/search_bank/<stage>
+#
+# The human corpus's census (annotate --corpus) reads the corpus from this repository's release
+# corpus-v1 (the ts-replayer snapshot, byte-identical to tools/download_ts_replayer.py's 300 files):
+#
+#   gh workflow run search_bank.yml --ref exp/human-leak -f stage=annotate \
+#     -f args="--corpus --games 0 --sample 1 --budgets g256=256:8" -f model=<run>/<file>.pt
 name: search-bank
 
 on:
   # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
   # push run skips every job.
   push:
-    branches: [exp/search-bank, exp/leak-r34]
+    branches: [exp/search-bank, exp/leak-r34, exp/human-leak]
     paths: [.github/workflows/search_bank.yml]
   workflow_dispatch:
     inputs:
@@ -87,6 +93,15 @@ jobs:
           if [ -n "$RELEASE" ]; then
             gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" --pattern bank.jsonl.gz --dir input
           fi
+      - name: Fetch the human corpus
+        if: contains(env.ARGS, '--corpus')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download corpus-v1 -R "$GITHUB_REPOSITORY" --pattern ts_replayer_corpus.tar.gz --dir input
+          mkdir -p corpus && tar xzf input/ts_replayer_corpus.tar.gz -C corpus
+          ls corpus/ts_replayer | wc -l
+          echo "TS_REPLAYER_CORPUS=$PWD/corpus/ts_replayer" >> "$GITHUB_ENV"
       - name: Rebuild the checkpoint from the export
         if: endsWith(env.MODEL, '.onnx')
         run: |

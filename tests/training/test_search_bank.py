@@ -9,7 +9,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
-from typing import List, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 import pytest
@@ -21,7 +21,8 @@ from ai.eval.subs_followup import OPS_COUP, SubsWatch, bg_coup_open, is_us_coup_
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
-from tools.lib.corpus_driver import load_policy, state_from_token
+from tools.lib.corpus_driver import feed_corpus_game, load_policy, position_token, state_from_token
+from tools.lib.corpus_paths import distinct_corpus_files
 from tools.scripts.checkpoint_report import check_leak, leak_section
 from tools.search_bank import (CHINA, EVENT, SPACE, _paired_scores, china_select, china_verdict, confirm_select,
                                event_moves, event_select, event_verdict, is_china_decision, is_event_decision,
@@ -77,6 +78,44 @@ def test_annotated_positions_reload_to_the_same_moves_and_logits(tmp_path: Path)
             assert m["choice"] in m["candidates"] and m["dropped"][str(m["choice"])] is None
             assert set(m["candidates"]) <= set(r["legal"])
             assert str(m["choice"]) in r["names"]
+
+
+class _HumanMoves:
+    """Every decision of a corpus game as the converter feeds it: position token -> the human's move."""
+
+    def __init__(self) -> None:
+        self.moves: Dict[str, int] = {}
+
+    def observe(self, st: ts.GameState, a: int) -> None:
+        self.moves[position_token(st)] = int(a)
+
+
+def test_corpus_annotate_studies_the_humans_moves(tmp_path: Path, corpus_dir: str) -> None:
+    """--corpus: the first distinct corpus game instead of self-play; a row's raw is the human's move
+    as the converter fed it, the network's argmax moves to `net`, and the game names its file."""
+    ckpt = _checkpoint(tmp_path)
+    out = str(tmp_path / "human.jsonl.gz")
+    assert main(["annotate", "--model", ckpt, "--corpus", "--games", "1", "--sample", "4",
+                 "--budgets", "g8=8:2", "--out", out]) == 0
+    meta = json.load(open(out + ".meta.json"))
+    assert meta["player"] == "human" and meta["corpus"] is True and meta["temperature"] is None
+    first = distinct_corpus_files()[0][0]
+    human = _HumanMoves()
+    feed_corpus_game(str(first), human)
+    rows = read_rows([out])
+    assert len(rows) >= 20
+    assert sum(r["raw"] != r["net"] for r in rows) > 0
+    for r in rows:
+        assert r["game"]["corpus"] == first.name and r["game"]["status"] in ("complete", "partial")
+        assert r["raw"] == r["played"] == human.moves[r["pos"]]
+        assert r["net"] == r["legal"][int(np.argmax(r["logits"]))]
+        assert str(r["raw"]) in r["names"] and str(r["net"]) in r["names"]
+
+
+def test_corpus_annotate_takes_no_player(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="no --player"):
+        main(["annotate", "--model", "unused.pt", "--corpus", "--games", "1", "--player", "rollout:4:32:4:z2",
+              "--out", str(tmp_path / "x.jsonl.gz")])
 
 
 def test_resume_skips_finished_games(tmp_path: Path) -> None:

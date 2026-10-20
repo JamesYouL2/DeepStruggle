@@ -62,7 +62,11 @@ Stages (each resumable, each writing JSONL.gz rows of schema `SCHEMA`):
   a disjoint share of the games, so CI runners split the work. With `--player SPEC` (a player spec
   without its checkpoint, e.g. `rollout:4:32:4:z2`, run on `--model`) that player plays itself
   instead, and every later stage studies *its* move: a row's `raw` is the player's choice and the
-  network's argmax moves to `net` -- so the census measures the searched player's leak.
+  network's argmax moves to `net` -- so the census measures the searched player's leak. With
+  `--corpus` the games are the human corpus's instead (`tools/lib/corpus_driver.feed_corpus_game`:
+  the converter's positions, untrusted turns left out; game g is the g-th distinct game, `--games
+  0` every one), and a row's `raw` is the human's move, the network's argmax in `net` -- the
+  census then measures the humans' leak, judged by the network's own play afterwards.
 
 A row (`SCHEMA` 1):
 
@@ -107,7 +111,8 @@ import ts_engine as ts
 from ai.eval.paired_playouts import compare
 from ai.eval.subs_followup import BRANCHES, COUNTS, NUCLEAR_SUBS, subs_branches
 from bindings.action_encoder import ActionEncoder
-from tools.lib.corpus_driver import load_policy, position_token, selfplay, state_from_token
+from tools.lib.corpus_driver import feed_corpus_game, load_policy, position_token, selfplay, state_from_token
+from tools.lib.corpus_paths import distinct_corpus_files
 from tools.lib.player_agent import OnnxAgent, load_agent
 from tools.lib.position_bank import position_seed
 from tools.scripts.bank_clarity import value_moves_per_world
@@ -230,8 +235,15 @@ def annotate(a: argparse.Namespace) -> int:
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
     k, n = (int(x) for x in a.part.split("/"))
+    if a.corpus and a.player:
+        raise SystemExit("--corpus studies the humans' moves: it takes no --player")
+    # With --corpus, game g is the g-th distinct corpus game (replay-id order, the same on every runner).
+    corpus = [str(p) for p in distinct_corpus_files()[0]] if a.corpus else []
+    games = (a.games or len(corpus)) if a.corpus else a.games
+    if a.corpus and games > len(corpus):
+        raise SystemExit(f"--games {games}: the corpus holds {len(corpus)} distinct games")
     # Game g (0-based, over all parts) is played from seed base + g; this part takes g = k-1 mod n.
-    mine = [g for g in range(a.games) if g % n == k - 1]
+    mine = [g for g in range(games) if g % n == k - 1]
     ledger = a.out + ".games.jsonl"
     done = set()
     if os.path.exists(ledger):
@@ -241,8 +253,9 @@ def annotate(a: argparse.Namespace) -> int:
     todo = [g for g in mine if g not in done]
     budgets = parse_budgets(a.budgets)
     json.dump({"schema": SCHEMA, "model": os.path.basename(a.model), "model_sha256": _sha256(a.model),
-               "temperature": None if a.player else a.temperature, "player": a.player,
-               "sample": a.sample, "seed": a.seed, "games": a.games,
+               "temperature": None if a.player or a.corpus else a.temperature,
+               "player": "human" if a.corpus else a.player, "corpus": bool(a.corpus),
+               "sample": a.sample, "seed": a.seed, "games": games,
                "part": a.part, "budgets": {lb: {"simulations": s, "k": kk} for lb, s, kk in budgets}},
               open(a.out + ".meta.json", "w"), indent=1)
     logits_fn, features = load_policy(a.model)
@@ -257,21 +270,28 @@ def annotate(a: argparse.Namespace) -> int:
     t0 = time.time()
     total = 0
     for gi, g in enumerate(todo):
-        if player is not None:
-            player.reseed(a.seed + g)
-        trackers = selfplay(logits_fn, features, 1, a.seed + g, 1, a.temperature,
-                            lambda: Sampler(a.sample, a.seed + g),
-                            states_fn=None if player is None else player.select_actions_batch)
-        kept = trackers[0].kept
+        game: Dict[str, Any] = {"seed": a.seed + g, "index": g}
+        if a.corpus:
+            sampler = Sampler(a.sample, a.seed + g)
+            game.update(corpus=os.path.basename(corpus[g]), status=feed_corpus_game(corpus[g], sampler))
+            kept = sampler.kept
+        else:
+            if player is not None:
+                player.reseed(a.seed + g)
+            trackers = selfplay(logits_fn, features, 1, a.seed + g, 1, a.temperature,
+                                lambda: Sampler(a.sample, a.seed + g),
+                                states_fn=None if player is None else player.select_actions_batch)
+            kept = trackers[0].kept
         rows: List[Dict[str, Any]] = []
         for lo in range(0, len(kept), a.chunk):
             part = kept[lo:lo + a.chunk]
             got = annotate_states([s for _, s, _ in part], logits_fn, features, searchers, seed=a.seed + g)
             for (dec, _s, played), r in zip(part, got):
-                r.update({"model": os.path.basename(a.model), "game": {"seed": a.seed + g, "index": g},
+                r.update({"model": os.path.basename(a.model), "game": dict(game),
                           "decision": dec, "played": played})
-                if player is not None:
-                    # The player's move is the one under study; every later stage reads it as `raw`.
+                if player is not None or a.corpus:
+                    # The player's (or the human's) move is the one under study; every later stage
+                    # reads it as `raw`.
                     r["net"], r["raw"] = r["raw"], int(played)
                     r["names"].setdefault(str(int(played)), ActionEncoder.get_action_name(_s, int(played)))
                 rows.append(r)
@@ -279,7 +299,7 @@ def annotate(a: argparse.Namespace) -> int:
             for r in rows:
                 f.write(json.dumps(r, separators=(",", ":")) + "\n")
         with open(ledger, "a") as f:
-            f.write(json.dumps({"game": g, "rows": len(rows)}) + "\n")
+            f.write(json.dumps({**game, "game": g, "rows": len(rows)}) + "\n")
         total += len(rows)
         print(f"[{gi + 1}/{len(todo)}] game {g}: {len(rows)} positions ({total} this run, "
               f"{time.time() - t0:.0f}s)", file=sys.stderr, flush=True)
@@ -1595,7 +1615,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     an = sub.add_parser("annotate", help="raw self-play positions, each put to the raw network and Gumbel")
     an.add_argument("--model", required=True, help="a .pt checkpoint (onnx_to_checkpoint.py for an export)")
-    an.add_argument("--games", type=int, required=True, help="games over all parts")
+    an.add_argument("--games", type=int, required=True, help="games over all parts (--corpus: 0 is every one)")
+    an.add_argument("--corpus", action="store_true",
+                    help="the human corpus's games, not self-play: a row's raw is the human's move")
     an.add_argument("--part", default="1/1")
     an.add_argument("--seed", type=int, default=700_000, help="game g is played from seed + g")
     an.add_argument("--sample", type=int, default=8, help="keep one decision in this many")
