@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -35,6 +36,19 @@ import ts_engine as ts
 from ai.search.rollout_root import RolloutTeacher, rollout_spec_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def child_env() -> Dict[str, str]:
+    """The environment of a gate check's process: the trainer's, with the repository and the directory
+    the trainer's own engine was imported from first on PYTHONPATH -- a run launched with
+    PYTHONPATH=. finds the engine without it being there, and the child would not (2026-10-20: both
+    40M checks failed on `No module named 'ts_engine'`)."""
+    env = dict(os.environ)
+    paths = [str(REPO_ROOT), str(Path(ts.__file__).resolve().parent)]
+    if env.get("PYTHONPATH"):
+        paths.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(paths)
+    return env
 
 
 def is_entry_decision(st: "ts.GameState") -> bool:
@@ -133,7 +147,7 @@ class ActiveSearch:
                "--games-per-side", str(self.gate_games // 2), "--temperature", "0",
                "--base-seed", str(40_000 + steps // 1_000_000), "--output-json", str(out)]
         log = open(gate_dir / f"gate_{steps}steps.log", "w")
-        proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT, env=child_env())
         self.pending = GateCheck(step=int(steps), snapshot=str(snap), out=str(out), proc=proc)
         self.next_gate_step = (int(steps) // self.gate_every + 1) * self.gate_every
         print(f"[active search] gate check at {steps / 1e6:.0f}M: {self.gate_games} games, root "

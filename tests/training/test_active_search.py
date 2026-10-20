@@ -5,15 +5,17 @@ resume, and the searched snapshot follows the learner on its two-phase schedule.
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
+import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net
 from ai.training import NashPGTrainer
-from ai.training.active_search import ActiveSearch, GateCheck, is_entry_decision
+from ai.training.active_search import ActiveSearch, GateCheck, child_env, is_entry_decision
 from bindings.ts_env import TsVectorizedEnv
 
 CFG = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
@@ -156,3 +158,14 @@ def test_it_refuses_belief_and_bad_gates() -> None:
     with pytest.raises(ValueError):
         ActiveSearch(t.active_net, SPEC, device=t.device, frac=0.0, gate_every=10, gate_games=200,
                      gate_threshold=0.55, gate_only=False, refresh_every=1, refresh_every_late=1, late_from=1)
+
+
+def test_a_gate_check_process_finds_the_trainers_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The check runs tools/tournament.py in a child process; it must import the engine the trainer runs,
+    whatever PYTHONPATH the run was launched with -- here none, as a run launched with PYTHONPATH=. gives
+    the child nothing that points at the build."""
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    env = child_env()
+    code = "import ts_engine, sys; sys.stdout.write(ts_engine.__file__)"
+    out = subprocess.run([sys.executable, "-c", code], env=env, cwd="/", capture_output=True, text=True, check=True)
+    assert Path(out.stdout).resolve() == Path(ts.__file__).resolve()
