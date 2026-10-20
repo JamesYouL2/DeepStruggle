@@ -198,6 +198,13 @@ export async function fetchHfDefault(repo: string, revision: string): Promise<st
   return model;
 }
 
+/** The obs_features bits a model reads: ts.obs_features in the export; 0 for the base layout and for
+ *  exports made before the key existed. */
+function featureBits(raw: Record<string, string>): number {
+  const v = Number(raw["ts.obs_features"] ?? "0");
+  return Number.isFinite(v) ? v >>> 0 : 0;
+}
+
 export interface ModelMeta {
   label: string;
   mergedInfluence: boolean;
@@ -235,11 +242,13 @@ export class Model {
   ) {}
 
   /**
-   * Build from the file's bytes. `obsSize`/`actionSize` are the engine's; a model for another
-   * width is refused here, with the reason, before it can misread a single observation.
+   * Build from the file's bytes. `obsSizeFor` is the engine's width for a feature set
+   * (WasmEngine.obsSizeFor) and `actionSize` its action space; a model whose width is not the one
+   * this engine writes for the model's own obs_features, or that reads a feature bit this engine does
+   * not know, is refused here, with the reason, before it can misread a single observation.
    */
-  static async fromBytes(source: ModelSource, bytes: Uint8Array, obsSize: number, actionSize: number,
-                         fromCache = false): Promise<Model> {
+  static async fromBytes(source: ModelSource, bytes: Uint8Array, obsSizeFor: (features: number) => number,
+                         actionSize: number, fromCache = false): Promise<Model> {
     let raw: Record<string, string>;
     try {
       raw = onnxMetadata(bytes);
@@ -258,9 +267,18 @@ export class Model {
       checkpoint: raw["ts.checkpoint"] || "",
       raw,
     };
+    const features = featureBits(raw);
+    let obsSize: number;
+    try {
+      obsSize = obsSizeFor(features);
+    } catch {
+      throw new Error(`${meta.label} reads observation features 0x${features.toString(16)}, which this engine does not `
+        + `know: it was exported next to a newer engine. Rebuild the page (tools/scripts/build_web.sh).`);
+    }
     if (meta.obsSize !== obsSize || meta.actionSize !== actionSize) {
       throw new Error(`${meta.label} reads ${meta.obsSize} observation floats and ${meta.actionSize} actions; `
-        + `this engine has ${obsSize} and ${actionSize}. It was trained on another layout and would misread every position.`);
+        + `this engine has ${obsSize} and ${actionSize} for its features. It was trained on another layout and would `
+        + `misread every position.`);
     }
     const session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
     return new Model(source, meta, session, fromCache, bytes);
@@ -269,27 +287,27 @@ export class Model {
   /** The obs_features bits the network reads (ts.obs_features in the export; 0 for the base layout
    *  and for exports made before the key existed). */
   get obsFeatures(): number {
-    const v = Number(this.meta.raw["ts.obs_features"] ?? "0");
-    return Number.isFinite(v) ? v >>> 0 : 0;
+    return featureBits(this.meta.raw);
   }
 
-  static async fetch(source: ModelSource, obsSize: number, actionSize: number, fileBytes?: Uint8Array): Promise<Model> {
+  static async fetch(source: ModelSource, obsSizeFor: (features: number) => number, actionSize: number,
+                     fileBytes?: Uint8Array): Promise<Model> {
     if (source.kind === "file") {
       if (!fileBytes) throw new Error("a dropped model needs its bytes");
-      return Model.fromBytes(source, fileBytes, obsSize, actionSize);
+      return Model.fromBytes(source, fileBytes, obsSizeFor, actionSize);
     }
     if (source.kind === "local") {
       // The local server exports and keeps the ONNX itself, and serves it from this machine.
       const url = `/api/local/models/onnx?path=${encodeURIComponent(source.path)}`;
-      return Model.fromBytes(source, await download(source, url), obsSize, actionSize);
+      return Model.fromBytes(source, await download(source, url), obsSizeFor, actionSize);
     }
     // The cache only saves a download: if Hugging Face will not say what the file is, or the
     // browser will not keep it, the model is downloaded and used all the same.
     const sha256 = await hfFileSha256(source.repo, source.revision, source.path).catch(() => null);
     const hit = sha256 ? await cachedModel(sha256).catch(() => null) : null;
-    if (hit) return Model.fromBytes(source, hit, obsSize, actionSize, true);
+    if (hit) return Model.fromBytes(source, hit, obsSizeFor, actionSize, true);
     const bytes = await download(source, hfFileUrl(source.repo, source.revision, source.path));
-    const model = await Model.fromBytes(source, bytes, obsSize, actionSize);
+    const model = await Model.fromBytes(source, bytes, obsSizeFor, actionSize);
     // Only a model that loaded is kept: one refused here would be refused again from the cache.
     if (sha256) await storeModel(sha256, bytes).catch(() => false);
     return model;

@@ -75,7 +75,8 @@ are cited from elsewhere; keep them.
   flat C API compiled by Emscripten (`tools/scripts/build_web.sh`, into `web/ui/public/engine/`):
   new game, raw-bytes undo snapshots, display/save JSON, loading a save (refused unless it
   round-trips), stepping with the workbench's forced-die drain, masks in both action views, decode,
-  observations, names, debug setters, the action layout, the engine fingerprint baked in at build,
+  observations (the base layout, and a model's view under its obs_features bits:
+  `ts_observation_features`, `ts_obs_size_for`, which refuse an unknown bit), names, debug setters, the action layout, the engine fingerprint baked in at build,
   and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`). For the page's action log, a
   click also keeps what it did before the roll-less chance steps after it (`ts_settled_display_json`:
   the state after its action or its last die roll -- the turn's cleanup, resolved in the same click,

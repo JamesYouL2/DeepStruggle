@@ -683,7 +683,8 @@ export class TSApp {
     }
     this.analysisPanel.setLoading(pick.source);
     try {
-      const m = await Model.fetch(pick.source, this.engine!.obsSize, this.engine!.actionSize, pick.bytes);
+      const engine = this.engine!;
+      const m = await Model.fetch(pick.source, f => engine.obsSizeFor(f), engine.actionSize, pick.bytes);
       // The file's own hash names the model in a game's record: a revision like `main` moves.
       const sha = await sha256Hex(m.bytes).catch(() => "");
       if (load !== this.modelLoads) return;   // another pick superseded this one

@@ -566,18 +566,26 @@ def test_a_repo_with_models_json_is_not_listed(browser: Any, static_site: str, o
 
 def test_the_leaderboard_page_filters_one_fit(browser: Any, static_site: str) -> None:
     """leaderboard.html shows the leaderboard.json that build_web.sh fitted from leaderboard/: the
-    main players by default, every player under "All", each with the same rating in both views;
-    a row opens its head-to-head results, and the view is kept in the link."""
+    newest epoch with games in it (a new engine epoch starts with its anchor alone), the main players
+    by default, every player under "All", each with the same rating in both views; a row opens its
+    head-to-head results, and the view is kept in the link."""
     with open(os.path.join(DIST, "leaderboard.json")) as f:
         data = json.load(f)
     with open(os.path.join(REPO, "leaderboard", "epochs.json")) as f:
-        epoch = list(json.load(f))[-1]
+        names = list(json.load(f))
+    epoch = [n for n in names if data["epochs"][n]["pairs"]][-1]
     ep = data["epochs"][epoch]
     page = browser.new_page(viewport={"width": 1280, "height": 900})
     errors: List[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    if epoch != names[-1]:
+        # An epoch with no games yet still opens when the link names it.
+        page.goto(static_site + f"/leaderboard.html?epoch={names[-1]}")
+        page.wait_for_selector("#lb-body tr")
+        assert page.input_value("#lb-epoch") == names[-1]
     page.goto(static_site + "/leaderboard.html")
     page.wait_for_selector("#lb-body tr")
+    assert page.input_value("#lb-epoch") == epoch
 
     def shown() -> Dict[str, str]:
         rows = page.eval_on_selector_all(
