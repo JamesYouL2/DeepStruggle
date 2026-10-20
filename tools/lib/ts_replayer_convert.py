@@ -2566,10 +2566,15 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
             eq_here: List[int] = [c for c in eq if c in _war_targets]
         else:
             eq_here = eq
-        # Before the mask is read, since the mask for a peek is built from that very set.
+        # Before the mask is read, since the mask for a peek is built from that very set. Only
+        # the discards under Tehran's own header were in it: at turn 8's headline of replay 277
+        # Five Year Plan discards Our Man in Tehran out of the USSR hand, which fires it, and
+        # seeding the peek from every discard in the entry put the removed card in its own peek,
+        # whence the US discarded it into the pile.
         if (int(ctx.resolving_card) == _OUR_MAN_IN_TEHRAN and not seeded_peek
                 and dt == ts.DecisionType.SELECT_CARD):
-            _seed_peeked_set(state, discard_queue)
+            peeked = _peeked_from_the_pile(e, card_id)
+            _seed_peeked_set(state, [c for c in discard_queue if c in peeked])
             seeded_peek = True
             ctx = state.ctx()
         elif (plays_grain_sales and not seeded_reveal and reveal_queue
@@ -3434,7 +3439,10 @@ def _arrival_entry(raws: List[Dict], turn: int, side: str, card: int,
     return None
 
 
-def _apply_hands(state, us_cards, ussr_cards) -> None:
+_OUT_OF_PLAY = (ts.CardLocation.REMOVED_FROM_GAME, ts.CardLocation.ONGOING_EVENT)
+
+
+def _apply_hands(state, us_cards, ussr_cards) -> List[int]:
     """Seat the tracked hands, and put every other card the engine holds back in the deck.
 
     A card the engine holds and the log's hand does not is one the engine dealt and the humans
@@ -3446,7 +3454,16 @@ def _apply_hands(state, us_cards, ussr_cards) -> None:
     where the humans had not -- at turn 2, putting the cards they had played back in the deck --
     and the observation's discard features and every redeal from a converted position read
     that pile.
+
+    Returns the cards it was asked to seat that the engine has out of play -- removed from the
+    game or in effect -- and seats none of them: no rule brings either back into a hand, and
+    taking one out of the engine's removed cards puts it back in circulation for the rest of the
+    game (CONV-4).
     """
+    out_of_play = [c for c in list(us_cards) + list(ussr_cards)
+                   if state.get_card_location(c) in _OUT_OF_PLAY]
+    if out_of_play:
+        return out_of_play
     for c in range(1, 111):
         if ts.hand_holder(state.get_card_location(c)) != ts.Player.NONE:
             state.set_card_location(c, ts.CardLocation.DRAW_DECK)
@@ -3454,6 +3471,7 @@ def _apply_hands(state, us_cards, ussr_cards) -> None:
         state.set_card_location(c, ts.hand_of(ts.Player.US))
     for c in ussr_cards:
         state.set_card_location(c, ts.hand_of(ts.Player.USSR))
+    return []
 
 
 def _board_diff(state, countries) -> str:
@@ -3946,9 +3964,16 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
                                vp_offset=log_vp_offset)
         _settle_cuban_missile_offer(state, e)
 
-        _apply_hands(state,
-                     _hand_after(turn_hands["US"], played["US"], set(pending["US"])),
-                     _hand_after(turn_hands["USSR"], played["USSR"], set(pending["USSR"])))
+        out_of_play = _apply_hands(
+            state,
+            _hand_after(turn_hands["US"], played["US"], set(pending["US"])),
+            _hand_after(turn_hands["USSR"], played["USSR"], set(pending["USSR"])))
+        if out_of_play:
+            names = ", ".join(str(ts.CardData.get_card_info(c)["name"]) for c in out_of_play)
+            raise ConversionFailure(Mismatch(
+                conv.replay_id, e.turn, e.phase, e.player, e.card,
+                "hand holds a card out of play",
+                f"the solved hands hold {names}, which the engine has out of play"))
 
         # --- the card(s) this entry uses must be in the tracked hand ---
         # Diagnostic: the conversion does not depend on it, and the tracked hand is only one

@@ -9,6 +9,7 @@ every side:
   * what a player does not play, they carry into the next turn;
   * a card that has been played is in the discard pile until a reshuffle, and the log prints
     "*RESHUFFLE*" where one happens;
+  * a starred card whose event has occurred is removed from the game for good;
   * a card of a later era is not in the deck yet;
   * a scoring card may not be held past the end of a turn -- holding one loses the game;
   * a hand the log calls empty is empty, and a player who skipped an action round had nothing
@@ -93,6 +94,8 @@ class GameFacts:
         # Cards taken *out* of a hand mid-turn by the opponent's event.
         self.taken: Dict[Tuple[int, str], Set[int]] = {}
         self.reshuffled_before: Set[int] = set()
+        # The turn each starred card's event occurred, which removed it from the game.
+        self.removed: Dict[int, int] = {}
         self.empty_hand: Set[Tuple[int, str]] = set()
         self.skipped: Set[Tuple[int, str]] = set()
         self.trapped: Set[Tuple[int, str]] = set()
@@ -156,6 +159,10 @@ class GameFacts:
             text = e.text or ""
             if "*RESHUFFLE*" in text:
                 self.reshuffled_before.add(turn)
+            for nm in (e.events or []):
+                cid = self.card_id(nm)
+                if cid and cid != THE_CHINA_CARD and ts.CardData.get_card_info(cid)["one_time"]:
+                    self.removed.setdefault(cid, turn)
             for side, nm in (e.headlines or {}).items():
                 cid = self.card_id(nm)
                 if cid and cid != THE_CHINA_CARD and side in self.sides:
@@ -770,6 +777,19 @@ def solve_hands(raws: List[Dict], hands: Dict, card_id,
                 for s in facts.sides:
                     if c not in facts.spent[(t, s)]:
                         forbid(c, t, s, f"spent at turn {last_spent}, no reshuffle since")
+
+    # ...except a starred card whose event has occurred: that one is removed from the game, and
+    # no reshuffle brings it back. The rule above freed it at the next *RESHUFFLE* all the same,
+    # the solver used it to fill a hand, and the converter seated it out of the engine's removed
+    # cards -- in 252 of the corpus's 300 games, at 19% of all converted decisions. Each one also
+    # put a card the humans' deck held into the engine's for the rest of the game: in replay 228
+    # the US plays Blockade at turn 2 AR5, which fires it, and has it back at turn 3, and the
+    # engine's deck, one card too big, still held a card at the turn-7 deal the log reshuffles at.
+    for c, gone in facts.removed.items():
+        for t in turns:
+            if t > gone:
+                for s in facts.sides:
+                    forbid(c, t, s, f"removed from the game at turn {gone}")
 
     # A seam for asking "would this other hand have been better?": pin forces a (card, turn,
     # side) in or out, and report_cost hands back the weight of the answer, so an alternative can
