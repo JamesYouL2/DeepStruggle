@@ -288,8 +288,9 @@ horizons 2, 4, 6, the uncapped 4 and the turn-end stop are all level (51–53%);
 the deployed root and −36 against the corrected 4. The old sweep's horizon 1 (−170, R32) was mostly the
 bug, which is largest there (Ops candidates read before the opponent moved, the rest after). Reading past
 the deal adds nothing, at up to 1.7x the time. **The mode: horizon 4, stop=earlier, leaf=own, keyed,
-aligned, box4, with belief worlds** -- without belief, the same at 52.3%; horizon 2 is level and cheaper.
-Both are registered at 32 worlds on the leaderboard network (`…+A13@11920..12000M`) and play the strong tier.
+aligned, box4** (52.3%); horizon 2 is level and cheaper. **Belief is not adopted** (owner, 2026-10-20): how it
+plays against humans is hard to check, and it is a one-time gain where continuous improvement is wanted; its
+32-world leaderboard entry was stopped before any pairing finished and unregistered.
 
 *On the leaderboard (E7, strong tier, 1,000 deals a side).* The corrected keyed root at 32 worlds,
 `…+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)`:
