@@ -7,7 +7,7 @@
  * onnxruntime's logits and values in -- the same loop the Python searcher runs with torch.
  *
  * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:box4][:belief[N]]`
- * (`rollout` alone is the best player there, 4:32:4:z2 with stop=earlier, leaf=own). `keyed` ties
+ * (`rollout` alone is the best 32-world player there, 4:32:4:z2:earlier:own:keyed:aligned:box4). `keyed` ties
  * every draw to its situation (the leaderboard's chance=keyed); `belief` deals the worlds from the
  * policy-likelihood belief over the opponent's hand (bindings/belief.hpp, N hands, 2,048 by default --
  * the leaderboard's belief=N), the same C++ as Python's. The playouts are honest -- the candidates come
@@ -40,9 +40,10 @@ export interface RolloutSpec {
 export const STOPS = ["boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal"] as const;
 export const LEAVES = ["mover", "decider", "own"] as const;
 
-/** The best player on the leaderboard: rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own). */
+/** The best 32-world player on the leaderboard (owner, 2026-10-21): the corrected keyed root,
+ *  rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true). */
 export const DEFAULT_ROLLOUT: RolloutSpec = { k: 4, worlds: 32, horizon: 4, rule: "z2", stop: "earlier", leaf: "own",
-                                             keyed: false, aligned: false, box4: false, belief: 0 };
+                                             keyed: true, aligned: true, box4: true, belief: 0 };
 /** ai/search/rollout_root.py's `belief` with no count. */
 export const DEFAULT_BELIEF_HANDS = 2048;
 
@@ -52,6 +53,9 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
   if (!s) return null;
   const parts = s.split(":");
   if (parts[0] !== "rollout" || parts.length > 11) return null;
+  // "rollout" alone is the default player; a spelled-out spec says every switch it turns on, so one
+  // written before a switch existed keeps meaning what it meant.
+  if (parts.length === 1) return { ...DEFAULT_ROLLOUT };
   const num = (i: number, d: number, min: number) => {
     if (parts.length <= i || parts[i] === "") return d;
     const v = Number(parts[i]);
@@ -82,7 +86,8 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
 export function rolloutParam(spec: RolloutSpec): string {
   const d = DEFAULT_ROLLOUT;
   if (spec.k === d.k && spec.worlds === d.worlds && spec.horizon === d.horizon && spec.rule === d.rule
-      && spec.stop === d.stop && spec.leaf === d.leaf && !spec.keyed && !spec.aligned && !spec.box4 && !spec.belief) return "rollout";
+      && spec.stop === d.stop && spec.leaf === d.leaf && spec.keyed === d.keyed && spec.aligned === d.aligned
+      && spec.box4 === d.box4 && spec.belief === d.belief) return "rollout";
   return `rollout:${spec.k}:${spec.worlds}:${spec.horizon}:${spec.rule}:${spec.stop}:${spec.leaf}`
     + (spec.keyed ? ":keyed" : "") + (spec.aligned ? ":aligned" : "") + (spec.box4 ? ":box4" : "")
     + (spec.belief ? `:belief${spec.belief}` : "");

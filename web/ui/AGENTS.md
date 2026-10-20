@@ -342,7 +342,7 @@ web/ui/
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
    - **Search.** The section's search radios (`#mode-opponent`) choose the policy's argmax or the **rollout root** (`search=rollout`
-     in the URL, `search=rollout:k:worlds:horizon:rule[:stop][:leaf]` for another spec; the default is the leaderboard's best, 4:32:4:z2 with stop=earlier, leaf=own): the engine's own batch
+     in the URL, `search=rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:box4]` for another spec; the default is the leaderboard's best 32-world player, the corrected keyed root `4:32:4:z2:earlier:own:keyed:aligned:box4`, since 2026-10-21 -- a spelled-out spec turns on only the switches it names): the engine's own batch
      (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
      The spec takes the leaderboard's other modes too: `:keyed` (chance=keyed,
