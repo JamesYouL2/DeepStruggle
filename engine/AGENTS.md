@@ -232,7 +232,7 @@ and is mirrored in `ai/models/ladder_net.OBS_FEATURE_WIDTHS` (a test compares th
 | bit | name | width | contents |
 |:---|:---|---:|:---|
 | 1<<1 | `OPS_BUDGET` | 3 | at SELECT_PLAY_MODE, `Operations::grant_ops_for_card(pending_op_card, decider)/5`, else 0; my per-card Ops modifier; the opponent's (Containment/Brezhnev +1, Red Scare/Purge −1, summed) |
-| 1<<2 | `HEADLINE_REVEAL` | 0 | **no block: edits the base's card rows** (owner, 2026-10-20). While the side holding Man in Space alone chooses its headline, the opponent's -- chosen first and revealed (`SpaceRace::revealed_headline`) -- shows as `KNOWN_OPPONENT_HAND` with `ACTIVE_CARD` = `ACTIVE_NEXT`, as the second headline does while the first resolves; the base layout leaves it hidden. The one bit that changes base slots, so a model reads it only if trained with it and every other model's view is unchanged |
+| 1<<2 | `HEADLINE_REVEAL` | 0 | **no block: edits the base's card rows** (owner, 2026-10-20). While the side holding Man in Space alone chooses its headline, the opponent's -- chosen first and revealed (`SpaceRace::revealed_headline`) -- shows as `KNOWN_OPPONENT_HAND` with `ACTIVE_CARD` = `ACTIVE_NEXT`, as the second headline does while the first resolves; the base layout leaves it hidden. The one bit that changes base slots, so a model reads it only if trained with it and every other model's view is unchanged. A new network reads it by default since E8 (`tools/train.py --obs-features`) |
 
 **The extractor computes each country's control once** (2026-10-06) and reads it everywhere —
 control features, realignment neighbour counts (from a list of the 112 borders), regional scoring
@@ -417,7 +417,8 @@ and left the reshuffle to the next deal: in the human corpus, at turn 7 AR2 of t
 * **The PRNG stream is untouched unless the deck runs out.** The pool is rebuilt only after a draw
   empties it, so a deck holding more than Tehran's five, or more than Ask Not's redraws, is drawn
   exactly as before. This still moves the engine's behaviour digest (`runner`, `rollout` and `mcts`
-  sections; `tools/lib/engine_behaviour.py`), so it is a new leaderboard epoch.
+  sections; `tools/lib/engine_behaviour.py`), so it defines engine **E8**
+  (`research/findings/engine/engine_revisions.md`).
 
 Held by `Card108_OurManInTehran_ShortDeckReshufflesMidDraw`, `_DeckOfFiveReshufflesAfterTheDraw`,
 `_LongDeckLeavesThePileAlone`, `Card77_AskNot_RedrawEmptiesTheDeck` and
