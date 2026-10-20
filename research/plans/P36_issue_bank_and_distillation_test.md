@@ -276,10 +276,17 @@ and leaf=own, horizon 1 reads at the mover's next round, 2 two rounds on, 4 thre
 | horizon 4, no turn cap (stop=boundaries) | 51.1% ± 1.1 | 48.9 | 52.2 | 75 |
 | stop=turn (the next turn, after the deal) | 52.6% ± 1.1 | 48.0 | 56.3 | 97 |
 | horizon 1, stop=earlier | 47.1% ± 1.1 | 44.2 | 49.2 | 47 |
+| horizon 4, rule z1 | 52.4% ± 1.1 | 49.0 | 55.0 | 103 |
+| horizon 4, k = 6 | 53.1% ± 1.1 | 49.6 | 55.7 | 117 |
+| **horizon 4, belief worlds (2,048 hands)** | **56.6% ± 1.1** | 51.5 | 60.3 | 155 |
 
-Reads. **The correction is worth ~+16 Elo** (52.3%, ~2 SE). **Depth flattens from two rounds on**:
+Reads. **The correction is worth ~+16 Elo** (52.3%, ~2 SE). **The rule and k no longer matter**: z1 is
+level with z2 (52.4%) -- the conservative rule was guarding against biased leads too -- and k = 6 is +0.8
+points for ~1.5x the search. **Belief adds on top**: 56.6% (~+46 Elo), against 55.0% for the belief root on
+the unaligned count; the two gains roughly add. **Depth flattens from two rounds on**:
 horizons 2, 4, 6, the uncapped 4 and the turn-end stop are all level (51–53%); horizon 1 is −20 Elo against
 the deployed root and −36 against the corrected 4. The old sweep's horizon 1 (−170, R32) was mostly the
 bug, which is largest there (Ops candidates read before the opponent moved, the rest after). Reading past
 the deal adds nothing, at up to 1.7x the time. **The mode: horizon 4, stop=earlier, leaf=own, keyed,
-aligned, box4** -- the best point and the measured family's horizon; horizon 2 is level and cheaper.
+aligned, box4, with belief worlds** -- without belief, the same at 52.3%; horizon 2 is level and cheaper.
+Both are registered at 32 worlds on the leaderboard network (`…+A13@11920..12000M`) and play the strong tier.
