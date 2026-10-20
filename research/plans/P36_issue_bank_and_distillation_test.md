@@ -357,3 +357,16 @@ searched opponent separates them.
   turn-order root are search-side product gains, built when wanted; the corrected keyed root (aligned,
   box4) is the deployed mode, 1844 at 32 worlds. **The base-model bet left is P35's two from-scratch
   flagships**, independent of everything above; the GPU is free.
+
+**Launched (2026-10-20, 19:42 UTC), after the corrected root's behaviour report** (8,192 games, owner;
+its leak census is paused at 1,032 of 1,500 self-play games, resumable). Slot 1, `E7-A8-R69-S44` (code
+R69): the heads run's exact flags -- the flag diff against `E7-A8-R1-S44` is the active-search spec and the
+budget only, no box-4 bit (owner) -- with the gate (`ai/training/active_search.py`, `c21f47f`). Slot 2,
+`E7-A21-R70-S44` (codes A21, R70): A8 with 512 projections, fusion 768, 4 residual blocks, the box-4
+observation bit (`HEADLINE_REVEAL`, `726b9d5`: no width, the opponent's revealed headline shown to the
+box-4 holder; a match against a model without the bit gives each side its own view), R47's 16,384 minibatch,
+the gate checks only. Built for this: the root's moves are batched by step (a search step with probability
+1/64 plays all of that step's learner entry decisions) -- one at a time an open rollout cost 40x a plain one
+(200 s against 5 s; the root's cost barely grows with the positions searched together, 2.1 s for one and
+3.5 s for forty), batched ~2-3x; the behaviour digest's feature paths are pinned to OPS_BUDGET so a new bit
+is not a new epoch.
