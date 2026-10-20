@@ -1,0 +1,112 @@
+# Turn 1 setups on one fixed deal (tools/scripts/setup_deal_matrix.py): every listed USSR setup
+# against every listed US setup, both hands held fixed and the dice and later draws shared by every
+# cell of a world, the rest of the game played greedy by one network. The deal is built in code
+# (init_game(500310) with the swaps in SWAPS), so the run needs no input but the model:
+#
+#   gh workflow run setup_deal_matrix.yml --ref exp/setup-deal-matrix -f worlds=16000 -f runners=40
+#   gh run download <run-id> -n setup-deal-matrix-<run-id> -D data/reports/t1_openings/matrix
+name: setup-deal-matrix
+
+on:
+  # The push trigger only registers the workflow from this branch (a dispatch-only workflow that is
+  # not on the default branch cannot be dispatched); every job is skipped on it.
+  push:
+    branches: [exp/setup-deal-matrix]
+    paths: [.github/workflows/setup_deal_matrix.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model in the Hugging Face repo (.onnx or .pt); the default is A13+R48's SWA, the strongest network on the E7 leaderboard"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.onnx"
+      worlds:
+        description: "Worlds (each plays every cell of the matrix)"
+        default: "16000"
+      runners:
+        default: "40"
+      args:
+        description: "Further arguments for the run stage (e.g. --seed 1, --deal ..., --swap ...)"
+        default: ""
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  MODEL: ${{ inputs.model }}
+  WORLDS: ${{ inputs.worlds }}
+  RUNNERS: ${{ inputs.runners }}
+  ARGS: ${{ inputs.args }}
+  HF_REPO: ${{ inputs.hf_repo }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Fetch the model
+        run: |
+          mkdir -p models
+          curl -sSfL --retry 3 -o "models/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum "models/$(basename "$MODEL")"
+      - name: Play (part ${{ matrix.part }})
+        run: |
+          mkdir -p out
+          python tools/scripts/setup_deal_matrix.py run --model "models/$(basename "$MODEL")" \
+            --worlds "$WORLDS" --part "${{ matrix.part }}/$RUNNERS" \
+            --out "out/matrix-${{ matrix.part }}.jsonl.gz" $ARGS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-deal-matrix-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  # Pools whatever parts arrived, so one failed runner does not discard the others' hours; the
+  # missing parts are named in report/matrix.jsonl.gz.parts.json and in provenance.txt.
+  pool:
+    needs: [plan, run]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: setup-deal-matrix-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool and report
+        run: |
+          mkdir -p report
+          python tools/scripts/setup_deal_matrix.py pool --parts parts/matrix-*.jsonl.gz --expect "$RUNNERS" \
+            --out report/matrix.jsonl.gz
+          python tools/scripts/setup_deal_matrix.py report --input report/matrix.jsonl.gz --out report/report.md
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL  worlds: $WORLDS  runners: $RUNNERS  args: $ARGS"
+            echo "parts: $(cat report/matrix.jsonl.gz.parts.json)"
+          } > report/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-deal-matrix-${{ github.run_id }}
+          path: report/
+          retention-days: 90
