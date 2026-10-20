@@ -345,7 +345,7 @@ bare commit (`tests/bindings/test_merged_influence.py`, `p23_wwby_pending_positi
 
 `StateMachine::finish_end_turn` adds the Mid War cards at turn 4 and the Late War cards at turn 8
 with `add_era_cards_to_deck` and nothing else (rule 4.4: the discards stay in the discard pile); the
-only reshuffle is in `deal_cards_to_hands` when the draw deck runs out. Until E6 both transitions
+discard is reshuffled only when a draw runs the deck out (§13). Until E6 both transitions
 also reshuffled the discard, so every pre-E6 checkpoint trained on that deck; the converter missed it
 because it sets hands from the log. Held by `EraTransitionKeepsTheDiscard.*`
 (`tests/test_bugs_regression.cpp`) and
@@ -389,3 +389,35 @@ affected" is contradicted by the rulebook, which outranks it. The `*_OpsModifier
 
 These fixes define engine **E7** (`research/findings/engine/engine_revisions.md`); each is on a rare
 situation. The human corpus (`tests/replayer`) passes with them.
+
+---
+
+## 13. A draw that runs the deck out reshuffles there, inside an Event too (ENG-4, 2026-10-19)
+
+Three places draw from the deck: the deal (`StateMachine::deal_cards_to_hands`), Our Man in
+Tehran's five (`trigger_our_man_in_tehran`, `src/events/mid_war.cpp`) and Ask Not's replacements
+(its confirm in `src/card_dispatcher.cpp`). All three treat the deck running out the same way: a
+draw that finds it empty, or takes its last card, reshuffles the discard pile into it **at that
+moment** (`StateMachine::reshuffle_discard_into_draw`; rules.md's Reshuffle Invariant), and the
+draws still owed come from the new deck. Until ENG-4 the two Events drew at most what the deck held
+and left the reshuffle to the next deal: in the human corpus, at turn 7 AR2 of ts-replayer game 207
+(Tehran, two cards in the deck), turn 7 AR6 of game 314 (Tehran, three), turn 6 AR4 of game 156
+(Tehran, exactly five) and turn 7 AR7 of game 272 (Ask Not, two from two), the log prints
+`*RESHUFFLE*` inside the Event.
+
+* **Tehran's peek stays out of the new deck.** The cards already drawn are at `PEEKED_TEMP`, not
+  in the pile; Tehran itself is still in hand or `HEADLINE_COMMITTED` (§11). **Ask Not's own
+  discards go in**: they are in the pile when the deck runs out, and the Reshuffle Invariant makes
+  no exception for cards discarded this turn.
+* **The empty deck reveals what it reveals at the deal.** At the deal both hands become public:
+  every card not in a hand is. Ask Not does the same (`reveal_both_hands`). Tehran reveals the USSR
+  hand only: the US sees the peek and can name the USSR hand, but the USSR cannot tell the US hand
+  from the cards being looked at. A card drawn after the reveal is hidden again, as at the deal.
+* **The PRNG stream is untouched unless the deck runs out.** The pool is rebuilt only after a draw
+  empties it, so a deck holding more than Tehran's five, or more than Ask Not's redraws, is drawn
+  exactly as before. This still moves the engine's behaviour digest (`runner`, `rollout` and `mcts`
+  sections; `tools/lib/engine_behaviour.py`), so it is a new leaderboard epoch.
+
+Held by `Card108_OurManInTehran_ShortDeckReshufflesMidDraw`, `_DeckOfFiveReshufflesAfterTheDraw`,
+`_LongDeckLeavesThePileAlone`, `Card77_AskNot_RedrawEmptiesTheDeck` and
+`_DeckRunsOutBetweenRedraws` (`tests/test_cards_mid.cpp`).
