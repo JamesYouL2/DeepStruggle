@@ -1408,6 +1408,19 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
             r["sub"] = f"{region(raw)} -> {region(best)}"
         else:
             r["kind"] = dt.lower()
+
+        def move(a: int) -> str:
+            """A move by name: the card chosen, the card and the mode, the country, else the engine's name."""
+            if dt == "SELECT_CARD":
+                return card_name(a)
+            if dt in ("SELECT_PLAY_MODE", "SELECT_OP_MODE"):
+                cid = int(b.get("card") or 0)
+                return f"{cards[cid]['name'] if cid else '?'}: {modes.get(a, str(a))}"
+            if dt == "POINT_NODE":
+                c = countries.get(a - ActionEncoder.NODE_OFFSET)
+                return str(c["name"]) if c else str(a)
+            return str(b["names"].get(str(a), a))
+        r["raw_move"], r["best_move"] = move(raw), move(best)
         out.append(r)
     return out
 
@@ -1525,6 +1538,35 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
                        f"{m:+.1f} ± {s:.1f} | {gm:+.1f} ± {gs:.1f} |")
         out.append("")
 
+    def found(r: Dict[str, Any]) -> bool:
+        return bool(r["b"].get("escalated")) if large <= 0 else r["regret"] >= large
+
+    def freq_tab(title: str, key: Callable[[Dict[str, Any]], str], rs: Sequence[Dict[str, Any]],
+                 top: int = 25, min_found: int = 3) -> None:
+        """Recurring mistakes, frequency x cost: how often a game the mover makes this move where a
+        better one was found (weighted found rows), what it costs when it does, and the product."""
+        g: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+        for r in rs:
+            if found(r):
+                g[key(r)].append(r)
+        def leak_se(v: Sequence[Dict[str, Any]]) -> Tuple[float, float]:
+            # Each position stands for w of the population, drawn with probability 1/w: the sampling
+            # variance of the weighted sum is sum (w^2 - w) y^2 (Poisson sampling), and the playouts
+            # add w^2 times their own.
+            return (scale * sum(r["w"] * r["gain"][0] for r in v),
+                    scale * math.sqrt(sum((r["w"] ** 2 - r["w"]) * r["gain"][0] ** 2 + r["w"] ** 2 * r["gain"][1]
+                                          for r in v)))
+        ranked = sorted(((leak_se(v), k, v) for k, v in g.items() if len(v) >= min_found),
+                        key=lambda x: -x[0][0])
+        out.extend([f"## {title}", "",
+                    "| pattern | positions | times a game | cost each (points) | a game |",
+                    "|:---|---:|---:|---:|---:|"])
+        for (m, se_), k, v in ranked[:top]:
+            times = scale / 100.0 * sum(r["w"] for r in v)
+            out.append(f"| {k} | {len(v)} | {times:.3f} | {m / times if times else 0.0:+.1f} | "
+                       f"{m:+.2f} ± {se_:.2f} |")
+        out.append("")
+
     big = [r for r in rows if large <= 0 or r["regret"] >= large]
     out += ["# Where raw play loses: paired playouts by decision kind", "",
             f"Points of win probability a game, both sides' decisions summed ({decisions_per_game:.1f} decisions "
@@ -1573,6 +1615,18 @@ def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_
         [r for r in big if r["kind"] == "target (influence)"], top=10, min_n=4)
     tab(f"{scope}, headline: raw's card -> the best card (kind, Ops)", lambda r: r["sub"],
         [r for r in big if r["kind"] == "headline"], top=8, min_n=4)
+    out += ["# Recurring mistakes: frequency x cost", "",
+            "Each pattern's positions are those where a better move was found"
+            + (" (escalated and confirmed on fresh pairs)" if large <= 0 else " (large regret)")
+            + ": 'times a game' is how often the mover makes it, weighted back to the population; "
+            "'cost each' the confirmed gain of the best move when it does; 'a game' their product. Its ± "
+            "counts the sampling of positions (each standing for its weight's share of the population) "
+            "as well as the playout noise; a pattern needs 3+ positions.", ""]
+    freq_tab("the move raw played (side, kind, move)", lambda r: f"{r['side']} {r['kind']}: {r['raw_move']}", big)
+    freq_tab("the move raw played -> the best move",
+             lambda r: f"{r['side']} {r['kind']}: {r['raw_move']} -> {r['best_move']}", big)
+    freq_tab("the best move raw missed (side, kind, move)",
+             lambda r: f"{r['side']} {r['kind']}: {r['best_move']}", big)
     out += [f"## The 20 positions that cost raw the most a game ({scope})", "",
             "| turn/AR | side | DEFCON | kind | raw | best | gain a decision | a game |", "|:---|:---|---:|:---|:---|:---|---:|---:|"]
     for r in sorted(big, key=lambda r: -r["w"] * r["gain"][0])[:20]:

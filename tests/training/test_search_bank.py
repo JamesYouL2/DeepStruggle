@@ -26,8 +26,8 @@ from tools.lib.corpus_paths import distinct_corpus_files
 from tools.scripts.checkpoint_report import check_leak, leak_section
 from tools.search_bank import (CHINA, EVENT, SPACE, _paired_scores, china_select, china_verdict, confirm_select,
                                event_moves, event_select, event_verdict, is_china_decision, is_event_decision,
-                               is_subs_decision, kind_bootstrap, leak_analysis, leak_summary, legal_actions, main,
-                               mover_of,
+                               is_subs_decision, kind_bootstrap, leak_analysis, leak_rows, leak_summary,
+                               legal_actions, main, mover_of,
                                parse_budgets, playout_select, raw_rank, read_rows, screen_select, select, solve,
                                stratum, subs_select)
 
@@ -223,15 +223,43 @@ def test_leak_weights_each_rows_paired_gain_back_to_the_population() -> None:
     assert _paired_scores({"5": [0.0]}, 5, 5) == (0.0, 0.0)
     row = {"id": "x", "w": 10.0, "regret": 0.1, "gain": gain, "g256": (0.1, 0.0), "kind": "AR card choice",
            "side": "US", "turn": 9, "defcon": 2, "sub": "opp 2 -> own 3", "raw_card": "A", "best_card": "B",
-           "b": {"turn": 9, "ar": 3, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}}}
+           "raw_move": "A", "best_move": "B", "b": {"turn": 9, "ar": 3, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}}}
     md = leak_analysis([row], bank_weight=100.0, decisions_per_game=50.0)
     assert "| AR card choice | 1 | 10.00% | +100.0 ± 0.0 | +50.0 ± 0.0 |" in md
 
 
-def _leak_row(i: int, kind: str, gain: float, escalated: bool) -> dict:
+def _leak_row(i: int, kind: str, gain: float, escalated: bool, raw_move: str = "A") -> dict:
     return {"id": str(i), "w": 10.0, "regret": 0.0, "gain": (gain, 0.0001), "g256": (0.0, 0.0), "kind": kind,
             "side": "USSR", "turn": 5, "defcon": 3, "sub": "", "raw_card": "A", "best_card": "B",
+            "raw_move": raw_move, "best_move": "B",
             "b": {"turn": 5, "ar": 2, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}, "escalated": escalated}}
+
+
+def test_leak_rows_name_the_moves_and_recurring_mistakes_rank_by_frequency_x_cost() -> None:
+    rules = Path(__file__).resolve().parents[2] / "rules"
+    cards = {int(c["id"]): c for c in json.loads((rules / "cards.json").read_text())}
+    countries = {int(c["id"]): c for c in json.loads((rules / "map.json").read_text())["countries"]}
+    st = ts.GameState()
+    ts.Engine.init_game(st, 7)                           # the USSR's setup placement, a POINT_NODE decision
+    raw, best = (int(a) for a in np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))[:2])
+    b = {"id": "p", "pos": position_token(st), "raw": raw, "best": best, "side": "USSR", "turn": 0,
+         "decision_type": "POINT_NODE", "phase": "SETUP", "weight": 1.0, "regret": 0.0, "methods": {}, "names": {}}
+    (r,) = leak_rows([b], [{"p": {"scores": {str(raw): [0.0] * 4, str(best): [0.5] * 4}}}], cards, countries)
+    assert r["kind"] == "target (influence)"
+    assert r["raw_move"] == countries[raw - ActionEncoder.NODE_OFFSET]["name"]
+    assert r["best_move"] == countries[best - ActionEncoder.NODE_OFFSET]["name"]
+    # Bank 100, 50 decisions a game: a row of weight 10 is 5 times a game. Three found rows play A for B
+    # at 0.2 (15 times a game, +300 a game); a row that was not escalated does not count, and C (one
+    # row) is under the three positions a pattern needs, but its B counts among the best moves missed.
+    rows = [_leak_row(i, "target (influence)", 0.2, True) for i in range(3)]
+    rows += [_leak_row(3, "target (influence)", 0.0, False), _leak_row(4, "target (influence)", 0.4, True, "C")]
+    md = leak_analysis(rows, bank_weight=100.0, decisions_per_game=50.0, large=0)
+    se3 = 50.0 * (3 * ((100.0 - 10.0) * 0.2 ** 2 + 100.0 * 0.0001)) ** 0.5
+    se4 = 50.0 * (3 * ((100.0 - 10.0) * 0.2 ** 2 + 100.0 * 0.0001) + (100.0 - 10.0) * 0.4 ** 2 + 0.01) ** 0.5
+    assert f"| USSR target (influence): A | 3 | 15.000 | +20.0 | +300.00 ± {se3:.2f} |" in md
+    assert f"| USSR target (influence): A -> B | 3 | 15.000 | +20.0 | +300.00 ± {se3:.2f} |" in md
+    assert f"| USSR target (influence): B | 4 | 20.000 | +25.0 | +500.00 ± {se4:.2f} |" in md
+    assert "USSR target (influence): C" not in md
 
 
 def test_leak_summary_carries_the_census_identity_and_checkpoint_report_checks_and_renders_it(
