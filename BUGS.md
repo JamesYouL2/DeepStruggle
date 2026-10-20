@@ -36,6 +36,9 @@ judged those exact positions, so the verdicts were not moved; carrying them to t
 positions, or re-reviewing, is the owner's call. `tests/training/test_disagreement_bank.py`
 checks that each position loads and each mark is legal, not that the converter still produces it.
 
+They also predate CONV-2: 94 of the 100 positions hold in the discard pile a card the log had not
+spent by that turn, 7.1 on average, and the network observes the pile.
+
 ---
 
 ## BIND-1 — a long disagreement-bank run can stop on a nanobind instance collision
@@ -50,6 +53,32 @@ it -- and the same fault could corrupt a position silently instead of stopping t
 
 **Next.** Reproduce under the sanitizer build (`tools/scripts/run_asan.sh`) with a long scan, and
 record the traceback here.
+
+---
+
+## CONV-3 — from turn 4 the converted piles still drift from the log's
+
+**Area:** human replay conversion · **Severity:** low · **Status:** open
+
+Since CONV-2 the discard pile at a converted decision is the log's through turn 3
+(`tests/replayer/test_replay_deck_and_discards.py`), and 461 of the corpus's 469 `*RESHUFFLE*`
+markers fall on the entry where the engine reshuffles. From turn 4 a decision's pile still holds
+0.34 cards the log has not spent and lacks 0.06 it has, on average. Part of the 0.34 is the
+measurement's own: an ongoing card such as Shuttle Diplomacy, played before a reshuffle and
+discarded after it, is counted as never spent. What is known of the rest:
+
+* **Draws the humans' game reshuffled in the middle of.** The engine's Our Man in Tehran draws at
+  most what the deck holds and reshuffles only an empty deck; at turn 7 AR2 of replay 207 the log
+  reshuffles inside the draw with two cards left. Ask Not's replacement draws do the same at turn
+  7 AR7 of replay 272. The engine reshuffles a turn or two later instead, and every pile in
+  between is wrong. Engine behaviour, so the owner's call (invariant 11).
+* **A card received through Missile Envy is missing from the receiver's solved hand** until the
+  entry that shows the receiver with it. In replay 109 the USSR headlines Missile Envy at turn 5;
+  the engine holds it as `HAND_US_KNOWN`, the solved US hand for the USSR's AR1 leaves it out, and
+  at those decisions it sits in the deck. Missile Envy is the card most often missing (339
+  decisions in 74 games); only replay 109 has been traced.
+* Not traced: four turn-7 deals where the log's deck runs out and the engine's does not (replays
+  59, 119, 228, 302), and two mid-round markers (156 turn 6 AR4, 314 turn 7 AR6).
 
 ---
 
