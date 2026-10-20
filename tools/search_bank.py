@@ -1400,7 +1400,10 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
             r["kind"] = "op mode"
             r["sub"] = f"{modes.get(raw, str(raw))} -> {modes.get(best, str(best))}"
         elif dt == "POINT_NODE":
-            r["kind"] = f"target ({str(st.ctx().op_mode).split('.')[-1].lower()})"
+            # The opening setup is its own kind: it is not an Ops target, and its fixed regions would
+            # crowd the in-game placements out of the influence tables.
+            r["kind"] = ("setup placement" if b["phase"] == "SETUP"
+                         else f"target ({str(st.ctx().op_mode).split('.')[-1].lower()})")
 
             def region(a: int) -> str:
                 c = countries.get(a - ActionEncoder.NODE_OFFSET)

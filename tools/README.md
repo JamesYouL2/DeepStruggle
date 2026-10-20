@@ -706,7 +706,9 @@ searcher's candidates), `playouts` (paired raw-network playouts) and `report`. C
 * **Where raw play loses, by decision kind:** `playout-select` samples the bank (every position
   with 2+ points of search-valued regret, `--rest` of the others, `--control` agreement controls)
   and `leak` maps the playouts back to the population: the best move's gain over raw's in points a
-  game, by decision kind, side, era, DEFCON, card and region. Results:
+  game, by decision kind (the opening setup its own kind, `setup placement`), side, era, DEFCON, card
+  and region, and the recurring mistakes -- each found row's move by name, grouped by the move played,
+  played -> best and the best move missed, ranked by how often a game times what each costs. Results:
   [`E7_leak_by_kind_R34.md`](../research/log/E7_leak_by_kind_R34.md).
 * **Where a searched player loses:** `annotate --player rollout:4:32:4:z2:earlier:own` has the player
   play, `screen-select` / `confirm-select` judge its moves by playouts alone, and `leak --large 0

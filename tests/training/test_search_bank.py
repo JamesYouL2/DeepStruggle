@@ -245,7 +245,7 @@ def test_leak_rows_name_the_moves_and_recurring_mistakes_rank_by_frequency_x_cos
     b = {"id": "p", "pos": position_token(st), "raw": raw, "best": best, "side": "USSR", "turn": 0,
          "decision_type": "POINT_NODE", "phase": "SETUP", "weight": 1.0, "regret": 0.0, "methods": {}, "names": {}}
     (r,) = leak_rows([b], [{"p": {"scores": {str(raw): [0.0] * 4, str(best): [0.5] * 4}}}], cards, countries)
-    assert r["kind"] == "target (influence)"
+    assert r["kind"] == "setup placement"                # not an in-game influence target
     assert r["raw_move"] == countries[raw - ActionEncoder.NODE_OFFSET]["name"]
     assert r["best_move"] == countries[best - ActionEncoder.NODE_OFFSET]["name"]
     # Bank 100, 50 decisions a game: a row of weight 10 is 5 times a game. Three found rows play A for B
