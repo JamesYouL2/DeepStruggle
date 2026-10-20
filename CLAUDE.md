@@ -238,7 +238,7 @@ PYTHONPATH=. .venv/bin/python tools/tournament.py \
 PYTHONPATH=. .venv/bin/python tools/leaderboard.py add-network <name> <file.pt> --description "..."
 PYTHONPATH=. .venv/bin/python tools/leaderboard.py add-player '<name>[~gumbel(sims=256,k=8)]'
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python \
-  tools/leaderboard_play.py --epoch E7 --players '<player-id>' --games-per-side 1000
+  tools/leaderboard_play.py --epoch E8 --players '<player-id>' --games-per-side 1000
 PYTHONPATH=. .venv/bin/python tools/leaderboard.py show --main-only   # or --lineage <run-name>
 # Publish to Hugging Face (repo mirrors data/checkpoints/; .onnx only for the final snapshot,
 # the final SWA, soups and leaderboard networks): tools/README.md §2c
@@ -311,11 +311,16 @@ reserved bit, so it is never reused with another meaning.
 `obs_features` bit (`engine/include/ts/game_state.hpp`) whose block is written *after* the 3,824
 base floats, so existing checkpoints keep running. A model's set is recorded in its weights
 (LadderNet's `obs_features` buffer) and in `metadata.json`, and chosen with
-`tools/train.py --obs-features`. There is no default: `ts.extract_observation_features(state,
-perspective, features)` requires the set (`bindings.ts_env.model_obs_features(model)`),
+`tools/train.py --obs-features`, whose default since **E8 is `headline_reveal`** (owner, 2026-10-20;
+the flag with no names gives none, what every earlier run read; `launch_flags.py` compares each run
+against its own epoch's default, so earlier codes hold). The engine has no default:
+`ts.extract_observation_features(state, perspective, features)` requires the set
+(`bindings.ts_env.model_obs_features(model)`),
 `ts.obs_size_for(features)` is the width, and the batch runner holds a set per env and side
 (`set_obs_features(us, ussr)`), zero-padding rows to the widest so models with different sets share
-a batch. Blocks so far: `OPS_BUDGET` (bit 1, 3 floats; P30 C4). Adding a block still needs the owner.
+a batch. Blocks so far: `OPS_BUDGET` (bit 1, 3 floats; P30 C4) and `HEADLINE_REVEAL` (bit 2, no width:
+it shows the box-4 holder the opponent's revealed headline in the base's card rows, for models trained with it;
+2026-10-20). Adding a block still needs the owner.
 
 **AI (`ai/`):** the current lineage is LadderNet (`models/ladder_net.py`, `--arch ladder`), the
 configurable P21 backbone whose required structural flags make up the A codes;

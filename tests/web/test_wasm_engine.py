@@ -25,6 +25,7 @@ import torch
 
 import ts_engine as ts
 from ai.search.belief import _hypothesis_obs
+from tests.bindings.test_obs_features import _box4_headline
 from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.game_step import drain_chance
 
@@ -50,6 +51,27 @@ def test_the_wasm_engine_was_built_from_these_sources() -> None:
         f"({fingerprint()[:12]}): rebuild it with tools/scripts/build_web.sh --engine")
 
 
+def test_the_page_shows_a_reveal_model_the_box4_headline_as_python_does(tmp_path) -> None:
+    """A model trained with HEADLINE_REVEAL (E8's default) must be shown its own view, which the base
+    layout cannot tell apart by width: at the US's box-4 headline choice the page's observation under
+    each feature set is Python's, byte for byte, and under HEADLINE_REVEAL it differs from the base
+    layout. A bit this engine does not know has no width (the page then refuses the model)."""
+    state = _box4_headline(5)
+    assert ts.revealed_headline(state, ts.Player.US) != 0
+    path = tmp_path / "obs.json"
+    path.write_text(json.dumps({"save": state.to_save_json(), "features": [0, *FEATURE_SETS]}))
+    wasm = _node("obs", str(path))
+    assert "error" not in wasm, wasm.get("error")
+    for f in [0, *FEATURE_SETS]:
+        for p, side in ((1, ts.Player.US), (-1, ts.Player.USSR)):
+            want = hashlib.sha256(np.asarray(ts.extract_observation_features(state, side, f),
+                                             dtype=np.float32).tobytes()).hexdigest()
+            assert wasm["obs"][f"{f}:{p}"] == want, f"features {f}, side {p}"
+    reveal = int(ts.OBS_FEATURE_HEADLINE_REVEAL)
+    assert wasm["obs"][f"{reveal}:1"] != wasm["obs"]["0:1"]
+    assert wasm["unknown_width"] == 0
+
+
 def test_whole_games_match_the_native_engine() -> None:
     native_digest, native_steps = ts.selftest_digest(200)
     wasm = _node("selftest", "200")
@@ -59,10 +81,14 @@ def test_whole_games_match_the_native_engine() -> None:
         f"(digest {wasm['digest']:08x} vs {native_digest:08x})")
 
 
+#: The feature sets a model can read, each checked as the page builds it for such a model.
+FEATURE_SETS = [int(ts.OBS_FEATURE_OPS_BUDGET), int(ts.OBS_FEATURE_HEADLINE_REVEAL), int(ts.OBS_FEATURES_ALL)]
+
+
 @pytest.mark.parametrize("seed", [11, 58])
 def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
-    """Display JSON, save JSON, both observations and the mask, at every step of a game driven
-    through the MicroActions a click sends."""
+    """Display JSON, save JSON, both observations -- the base layout and each feature set's view --
+    and the mask, at every step of a game driven through the MicroActions a click sends."""
     state = ts.GameState()
     ts.Engine.init_game(state, seed)
     drain_chance(state)
@@ -74,6 +100,8 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         h.update(state.to_save_json().encode())
         for p in (ts.Player.US, ts.Player.USSR):
             h.update(np.asarray(ts.extract_observation(state, p), dtype=np.float32).tobytes())
+            for f in FEATURE_SETS:
+                h.update(np.asarray(ts.extract_observation_features(state, p, f), dtype=np.float32).tobytes())
         h.update(np.asarray(ts.get_flat_action_mask(state, False), dtype=np.uint8).tobytes())
 
     record()
@@ -87,7 +115,7 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         record()
 
     path = tmp_path / "actions.json"
-    path.write_text(json.dumps({"seed": seed, "actions": actions}))
+    path.write_text(json.dumps({"seed": seed, "actions": actions, "features": FEATURE_SETS}))
     wasm = _node("walk", str(path))
     assert "error" not in wasm, wasm.get("error")
     assert wasm["steps"] == len(actions)

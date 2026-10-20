@@ -60,7 +60,7 @@ std::vector<sj::Value> g_rolls;
 // resolves both headlines in one step, and the click's before/after shows only their sum.
 std::vector<sj::Value> g_event_tracks;
 uint8_t g_mask[ts::FLAT_ACTION_SPACE_SIZE];
-float g_obs[ts::OBS_SIZE_V23];
+float g_obs[ts::OBS_SIZE_V23 + ts::obs_features::extra_width(ts::obs_features::ALL)];
 int32_t g_decoded[4];
 std::string g_text;
 std::string g_error;
@@ -270,7 +270,23 @@ TS_API int ts_is_merged_influence_action(int idx) {
 TS_API const float* ts_observation(int player) {
     ts::ObservationBufferV23 ob;
     ts::Observation::extract(g_state, player_from_int(player), &ob);
-    std::memcpy(g_obs, reinterpret_cast<const float*>(&ob), sizeof(g_obs));
+    std::memcpy(g_obs, reinterpret_cast<const float*>(&ob), sizeof(ob));
+    return g_obs;
+}
+
+// The width of the observation a model reading the obs_features bits `features` takes, or 0 (and the
+// reason in ts_last_error) for a bit this build does not know.
+TS_API int ts_obs_size_for(uint32_t features) {
+    if (features & ~ts::obs_features::ALL) { g_error = "unknown obs_features bit"; return 0; }
+    return static_cast<int>(ts::OBS_SIZE_V23 + ts::obs_features::extra_width(features));
+}
+
+// The observation in a model's own view: the base layout as the bits `features` edit and extend it
+// (extract_observation_features, the same call Python makes for that model), ts_obs_size_for(features)
+// floats; null for an unknown bit. HEADLINE_REVEAL has no width, so only this tells its view apart.
+TS_API const float* ts_observation_features(int player, uint32_t features) {
+    if (features & ~ts::obs_features::ALL) { g_error = "unknown obs_features bit"; return nullptr; }
+    ts::extract_observation_features(g_state, player_from_int(player), features, g_obs);
     return g_obs;
 }
 

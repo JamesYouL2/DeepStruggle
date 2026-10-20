@@ -61,29 +61,24 @@ record the traceback here.
 **Area:** human replay conversion · **Severity:** low · **Status:** open
 
 Since CONV-2 and CONV-4 the discard pile at a converted decision is the log's through turn 3
-(`tests/replayer/test_replay_deck_and_discards.py`), and 465 of the corpus's 469 `*RESHUFFLE*`
-markers fall on the entry where the engine reshuffles. From turn 4 a decision's pile can still
-hold cards the log has not spent and lack ones it has: 0.25 and 0.04 per decision, averaged over
-every converted decision (13.4% and 1.6% of decisions have any). Part of the 0.25 is the
-measurement's own: an ongoing card such as Shuttle Diplomacy, played before a reshuffle and
-discarded after it, is counted as never spent. What is known of the rest:
+(`tests/replayer/test_replay_deck_and_discards.py`), and since ENG-4 all 469 of the corpus's
+`*RESHUFFLE*` markers fall on the entry where the engine reshuffles. From turn 4 a decision's pile
+can still hold cards the log has not spent and lack ones it has: 0.15 and 0.03 per decision,
+averaged over every converted decision (13.2% and 1.6% of decisions have any; 0.25 and 0.04 before
+ENG-4, which fixed the mid-draw reshuffles of Our Man in Tehran and Ask Not in 156, 207, 272 and
+314). Part of the 0.15 is the measurement's own: an ongoing card such as Shuttle Diplomacy, played
+before a reshuffle and discarded after it, is counted as never spent. What is known of the rest:
 
-* **Draws the humans' game reshuffled in the middle of** -- the four markers left. The engine's
-  Our Man in Tehran draws at most what the deck holds and reshuffles only an empty deck; at turn 7
-  AR2 of replay 207 the log reshuffles inside the draw with two cards left, and likewise at turn 6
-  AR4 of 156 and turn 7 AR6 of 314. Ask Not's replacement draws do the same at turn 7 AR7 of
-  replay 272. The engine reshuffles a turn or two later instead, and every pile in between is
-  wrong. Engine behaviour, so the owner's call (invariant 11).
 * **A card received through Missile Envy is missing from the receiver's solved hand** until the
   entry that shows the receiver with it. In replay 109 the USSR headlines Missile Envy at turn 5;
   the engine holds it as `HAND_US_KNOWN`, the solved US hand for the USSR's AR1 leaves it out, and
   at those decisions it sits in the deck. Missile Envy is the card most often missing (339
   decisions in 74 games); only replay 109 has been traced.
 
-Besides those late reshuffles, the engine reshuffles at five entries with no marker (replays 201,
-221, 256, 265, 299), none of them wrong. Each is the last entry the conversion reaches, at the end
-of a turn, and the engine deals the next turn; in 201 and 256 the log's next entry, which the
-conversion stops before, carries the marker.
+The engine also reshuffles at five entries with no marker (replays 201, 221, 256, 265, 299), none
+of them wrong. Each is the last entry the conversion reaches, at the end of a turn, and the engine
+deals the next turn; in 201 and 256 the log's next entry, which the conversion stops before,
+carries the marker.
 
 ---
 
@@ -93,6 +88,7 @@ conversion stops before, carries the marker.
 |:---|:---|:---|
 | ENG-1 | UN Intervention's companion mask offered every card in hand (the correct filter in `action_mask.cpp` was unreachable); an illegal pick silently cost the action round | `3ef2d92` (P17 6a); `engine/AGENTS.md` §9, test in `engine/tests/test_cards_early.cpp` |
 | ENG-2 | 2026-09-28 rules audit: seven rare-situation rules wrong (war-roll defender, Vietnam Revolts ladder, UN Intervention as an event, We Will Bury You on a trapped round, NORAD at 2, Grain Sales→UN with U-2, Summit counting scoring-only cards). Defines engine **E7** | `acc68d6`; `engine/AGENTS.md` §12, `engine/tests/test_rules_audit.cpp`, `research/findings/engine/engine_revisions.md` |
+| ENG-4 | Our Man in Tehran drew at most what the deck held, and Ask Not's replacement draws left an emptied deck for the next deal to reshuffle: the humans' game reshuffled inside the draw (ts-replayer 156 turn 6 AR4, 207 turn 7 AR2 and 314 turn 7 AR6, Tehran; 272 turn 7 AR7, Ask Not), the engine a turn or two later, with every pile in between wrong. Both now reshuffle the moment the deck runs out, as the deal does, and reveal what an empty deck reveals there: all 469 of the corpus's `*RESHUFFLE*` markers fall where the engine reshuffles (465 before), and the pile holds 0.15 unspent cards per decision (0.25). 10 of 2,000 non-suicidal random games play differently, all from the first Ask Not or Tehran that runs the deck out. Moves the behaviour digest. Defines engine **E8** | `380358d`; `engine/AGENTS.md` §13, `Card108_OurManInTehran_*`, `Card77_AskNot_*` in `engine/tests/test_cards_mid.cpp` |
 | CONV-1 | the human-log converter seated cards in hands the player never held (Our Man in Tehran peeks, reveals not used as evidence, late arrivals placed at AR1): over-limit hands in trusted turns 178 games / 2,590 decisions → 39 / 186. Rebuild anything made from converted human positions after it | `8aec4db`; `tests/replayer/test_replay_hand_contents.py` |
 | CONV-2 | the human-log converter put every card the solved hands leave out in the discard pile, not the deck: at 99.7% of converted decisions the pile held cards nobody had played (14.2 on average) and the engine reshuffled where the humans had not, 24 games losing a SALT pick to it. Terrorism's random discard was never steered, and Five Year Plan's took the wrong card in 5 of 237 entries. Now 0.34 per decision from turn 4 (CONV-3), none before. Rebuild anything made from converted human positions after it | `0f112d7`; `tests/replayer/test_replay_deck_and_discards.py`, `tests/replayer/test_replay_five_year_plan_discard.py` |
 | CONV-4 | the hand solver freed a starred card its event had removed at the next `*RESHUFFLE*`, like any spent card, and the converter seated it out of the engine's removed cards: a removed card was back in a hand or the deck at 19.1% of converted decisions, in 252 of the 300 games. Each one left the engine's deck a card bigger than the humans', so the turn-7 deals of replays 59, 119, 228 and 302 did not reshuffle where the log does. Our Man in Tehran's peek was seeded from every discard in its entry, so in replay 277 Our Man in Tehran, fired by a Five Year Plan discard, went into its own peek and on to the pile. Now none; the pile holds 0.25 unspent cards per decision, from 0.34, and 465 of 469 markers match, from 461. Rebuild anything made from converted human positions after it | `de64176`; `tests/replayer/test_replay_removed_cards.py` |

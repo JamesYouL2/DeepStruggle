@@ -20,6 +20,7 @@ in place**; the experiments are in `../../log/`. When the letter bumps is
 | **E5** | `b19b958`, `8d05d94` | 2026-09-26 | influence Ops spent in full; each Ops modifier carries its own limit; an owed Event no longer inherits the Ops play's stop |
 | **E6** | `c1df6f5` + `c248bfb` | 2026-09-29 | the era transitions no longer shuffle the discard back (rule 4.4); Kitchen Debates spent for Operations is discarded |
 | **E7** | `acc68d6`–`9cd3ed9`, merged as `dec2768` | 2026-09-30 | the 2026-09-28 rules audit: seven fixes, each on a rare situation (`BUGS.md` ENG-2, `engine/AGENTS.md` §12) |
+| **E8** | `380358d` (PR 23) | 2026-10-20 | a draw that runs the deck out reshuffles there, inside Our Man in Tehran and Ask Not too, and reveals what an empty deck reveals (`BUGS.md` ENG-4, `engine/AGENTS.md` §13). New networks read Space Race box 4's revealed headline by default (`HEADLINE_REVEAL`, no width) |
 
 ## What each boundary showed
 
@@ -59,6 +60,14 @@ in place**; the experiments are in `../../log/`. When the letter bumps is
   **E6 measurements stay comparable to E7 ones**. E7's slower training (88k against 96k steps/s)
   was the host: six void smokes put current code on E7 at 93k, on E6 at 90k, old code on E6 at 92k;
   host throughput varies ~±7% over a day, so compare steps/s only between runs made together.
+* **E7 → E8**: one rule, on a rare situation: Tehran's five or Ask Not's redraws emptying the deck
+  (4 of the human corpus's 300 games; 10 of 2,000 non-suicidal random games play differently, each
+  from that draw on). The PRNG stream is unchanged until the deck runs out, mask and layout are
+  unchanged, and E7 checkpoints play on E8. What changes for training is the default view: a new
+  run reads `HEADLINE_REVEAL` (`tools/train.py --obs-features`; the flag with no names keeps E7's
+  view), so an E8 run of an E7 recipe differs from it in two things, and a continuation of an E7 run
+  must name its view (`--obs-features` with no names), or the resume is refused. Not re-run across
+  the letter yet.
 
 ## Changes held inside a letter by measurement
 

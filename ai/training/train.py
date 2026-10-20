@@ -8,7 +8,8 @@ import os
 import sys
 import torch
 
-from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
+from ai.training.generic_trainer import (train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits,
+                                         DEFAULT_OBS_FEATURES, OBS_FEATURE_BITS)
 from ai.training.generic_trainer import run_search_distillation
 from ai.training.policy_fit import PolicyFitConfig, run_policy_fit
 from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
@@ -820,11 +821,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aux-min-batch", type=int, default=4096,
                         help="Labelled positions to gather before one aux training step.")
     # The view spec (owner, 2026-10-01): optional observation blocks appended to the base layout.
-    parser.add_argument("--obs-features", nargs="*", default=[], choices=["ops_budget"],
-                        help="Optional observation blocks the network reads, appended after the base "
-                             "v2.3 layout. ops_budget: the Ops the card at play will be granted (at "
-                             "SELECT_PLAY_MODE) and each side's per-card Ops modifier (Containment / "
-                             "Brezhnev / Red Scare). Recorded in the run's metadata and in the weights; "
+    parser.add_argument("--obs-features", nargs="*", default=list(DEFAULT_OBS_FEATURES),
+                        choices=sorted(OBS_FEATURE_BITS),
+                        help="Optional observation features the network reads. ops_budget: a block "
+                             "appended after the base v2.3 layout, the Ops the card at play will be "
+                             "granted (at SELECT_PLAY_MODE) and each side's per-card Ops modifier "
+                             "(Containment / Brezhnev / Red Scare). headline_reveal (no width): while "
+                             "the side holding Space Race box 4 alone chooses its headline, the "
+                             "opponent's, chosen first and revealed, shows in its card row. The list "
+                             "replaces the default, which since E8 is headline_reveal: name both to "
+                             "have both, and give the flag with no names for none (what every run "
+                             "before E8 read). Recorded in the run's metadata and in the weights; "
                              "every evaluator then builds this view for the model. Ladder only.")
     # P30 (research/log/P30_card_board_targets.md): what each held card's event and Ops would do.
     parser.add_argument("--aux-card-events", type=float, default=0.0,
@@ -1238,7 +1245,8 @@ def main():
             aux_vp_coef=args.aux_vp_margin,
             aux_sample_frac=args.aux_sample_frac,
             aux_min_batch=args.aux_min_batch,
-            obs_features=obs_feature_bits(args.obs_features),
+            # Ladder only: the other architectures read the base layout, and record that they do.
+            obs_features=obs_feature_bits(args.obs_features) if args.arch == "ladder" else 0,
             aux_card_coef=args.aux_card_events,
             aux_card_sample_frac=args.aux_card_sample_frac,
             aux_card_min_batch=args.aux_card_min_batch,

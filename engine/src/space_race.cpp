@@ -50,6 +50,11 @@ bool SpaceRace::has_man_in_space(const GameState& state, Player p) noexcept {
     return false;
 }
 
+uint8_t SpaceRace::revealed_headline(const GameState& state, Player p) noexcept {
+    if (state.current_phase != Phase::HEADLINE || state.headline_stage != 0 || !has_man_in_space(state, p)) return 0;
+    return p == Player::US ? state.headline_ussr_card : state.headline_us_card;
+}
+
 bool SpaceRace::has_space_walk(const GameState& state, Player p) noexcept {
     if (p == Player::US) {
         return state.us_space_track >= 6 && state.ussr_space_track < 6;

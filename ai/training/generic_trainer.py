@@ -15,7 +15,7 @@ import re
 import argparse
 import functools
 import random
-from typing import (Any, Callable, Dict, Final, List, Optional, Sequence, Set, Tuple, TypeVar,
+from typing import (Any, Callable, Dict, Final, List, Mapping, Optional, Sequence, Set, Tuple, TypeVar,
                     Union, cast)
 import numpy as np
 import torch
@@ -1462,6 +1462,25 @@ def _optimizer_state_with_added(model: nn.Module, added: Sequence[str], saved: D
     return out
 
 
+def check_state_obs_features(model: nn.Module, state_dict: Mapping[str, Any], source: str) -> None:
+    """Refuse weights trained on another observation view than the one the model was built for.
+
+    The feature set is a buffer, so loading copies the saved value over the model's while the model
+    goes on building the view it was built with (model_obs_features reads the attribute): with two
+    sets of one width the weights would be trained on a view their own record does not name. Since
+    E8 the default set is headline_reveal, so continuing an earlier run needs `--obs-features` with
+    the set it was trained on -- none for any run before E8.
+    """
+    saved = int(state_dict["obs_features"]) if "obs_features" in state_dict else 0
+    built = model_obs_features(model)
+    if saved != built:
+        names = ", ".join(_obs_feature_names(saved)) or "none"
+        raise ValueError(f"{source} reads observation features {saved:#x} ({names}); the model was built "
+                         f"for {built:#x} ({', '.join(_obs_feature_names(built)) or 'none'}). Pass "
+                         f"--obs-features {' '.join(_obs_feature_names(saved))} to train it on its own view"
+                         f" (E8's default is headline_reveal; the flag with no names is none)")
+
+
 def load_resume_state(path: str, model: nn.Module, trainer: Any,
                       seed: Optional[int] = None, widen: bool = False, grow_tokens: bool = False) -> Dict[str, Any]:
     """Restore a run in place and return where it left off.
@@ -1476,6 +1495,7 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
     honouring the flag is less surprising than silently ignoring it.
     """
     blob = torch.load(path, map_location=trainer.device, weights_only=False)
+    check_state_obs_features(model, blob["model_state_dict"], f"the resume state {path}")
     if widen:
         # --resume-widen: the model's grouped projections are k times wider than the state's. The
         # network and pi_ref are widened without changing their function, Adam's moments with them
@@ -1568,7 +1588,11 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
 
 
 #: Observation feature names (`--obs-features`) and their ts.OBS_FEATURE_* bits.
-OBS_FEATURE_BITS: Dict[str, int] = {"ops_budget": 1 << 1}
+OBS_FEATURE_BITS: Dict[str, int] = {"ops_budget": 1 << 1, "headline_reveal": 1 << 2}
+#: What a new network reads when `--obs-features` is not given: since E8 (owner, 2026-10-20), Space Race
+#: box 4's revealed headline. Before E8 the default was none; tools/scripts/launch_flags.py compares each
+#: run against its own epoch's default (_EPOCH_DEFAULTS), so earlier runs keep their codes.
+DEFAULT_OBS_FEATURES: List[str] = ["headline_reveal"]
 
 
 def _obs_feature_names(bits: int) -> List[str]:
@@ -2195,7 +2219,9 @@ def train_pipeline(
     if warmup_checkpoint and os.path.exists(warmup_checkpoint):
         print(f"Loading Warm-up Checkpoint from: {warmup_checkpoint}", flush=True)
         from tools.lib.player_agent import load_checkpoint_into
-        load_checkpoint_into(model, torch.load(warmup_checkpoint, map_location=dev, weights_only=True))
+        _warm = torch.load(warmup_checkpoint, map_location=dev, weights_only=True)
+        check_state_obs_features(model, _warm, f"--warmup-checkpoint {warmup_checkpoint}")
+        load_checkpoint_into(model, _warm)
         model.to(dev)
     elif warmup_dataset and os.path.exists(warmup_dataset):
         warmup_save_path = os.path.join(out_dir, f"coldwar_net_{arch}_warmup.pt")
@@ -2788,6 +2814,7 @@ def train_pipeline(
             _sd = torch.load(resume_weights, map_location=dev, weights_only=False)
             if isinstance(_sd, dict) and "model_state_dict" in _sd:
                 _sd = _sd["model_state_dict"]
+            check_state_obs_features(model, _sd, f"--resume-weights {resume_weights}")
             model.load_state_dict(_sd)
             trainer.reference_net.load_state_dict(_sd)
             print(f"[resume weights] the network and pi_ref start from {resume_weights}", flush=True)

@@ -51,7 +51,8 @@ web/ui/
 │   ├── style.css               # Theme tokens, dark mode palette, animations, layout styles
 │   ├── leaderboard_page.ts     # The leaderboard: views (main / + lineages / all) filter one fit,
 │   │                           # head-to-head on click, links to reports, weights and the workbench
-│   │                           # (a player's own report; a search never shows its network's greedy one)
+│   │                           # (a player's own report; a search never shows its network's greedy one);
+│   │                           # opens on the newest epoch with games played (?epoch= names another)
 │   └── types.ts                # TypeScript interface mirrors of engine GameState and MicroAction
 ├── public/engine/              # ts_engine.mjs + .wasm, not committed (tools/scripts/build_web.sh)
 ├── public/leaderboard.json     # fitted from leaderboard/ by build_web.sh (tools/leaderboard.py fit), not committed
@@ -259,8 +260,14 @@ web/ui/
      from three sources: **local** checkpoints (`/api/local/models`; the server exports on first
      use), a **Hugging Face** model repo (`owner/repo`, listed from the public tree API), or a
      dropped **file**. The file carries its description in ONNX metadata (`analysis/onnx_meta.ts`):
-     a model whose observation width differs from the engine's is refused, one exported next to
-     another engine build is flagged.
+     a model whose observation width differs from the one the engine writes for the model's own
+     `ts.obs_features` (`WasmEngine.obsSizeFor`), or that reads a feature bit this engine does not
+     know, is refused; one exported next to another engine build is flagged.
+   - **Every forward is built in the model's own view**: its action view (`ts.merged_influence`)
+     and its observation features (`Model.obsFeatures` -> `engine.observation(player, features)`,
+     the same `extract_observation_features` Python calls). `HEADLINE_REVEAL`, E8's default, has no
+     width, so a base-layout observation handed to such a model would run and misread Space Race
+     box 4's headline; `tests/web/test_wasm_engine.py` holds each feature set's view to Python's.
    - **The repo's catalogue (`hfCatalog`, `analysis/model.ts`) is one request**: `models.json`
      at the repo root, written by `tools/publish_hf.py` on every publish (each `.onnx` with its
      commit date, sha256 and size, and the default model). A repo without one is listed by

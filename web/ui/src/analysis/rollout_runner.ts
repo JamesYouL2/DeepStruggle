@@ -53,7 +53,7 @@ export class RolloutRunner {
         this.loadWaiters = { resolve, reject };
         // A copy: the page keeps using its own bytes-backed session.
         w.postMessage({ type: "load", base: this.base, bytes: model.bytes.slice(), source: model.source,
-                        obsSize: model.meta.obsSize, actionSize: model.meta.actionSize });
+                        actionSize: model.meta.actionSize });
       });
       this.workerReady.catch(() => { this.workerModelKey = ""; });
     } catch {

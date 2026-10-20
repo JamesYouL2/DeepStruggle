@@ -158,10 +158,24 @@ export class WasmEngine {
     return this.M._ts_is_merged_influence_action(idx) !== 0;
   }
 
-  /** The observation from one side's perspective (PLAYER_US / PLAYER_USSR). */
-  observation(player: number): Float32Array {
-    const p = this.M._ts_observation(player) >> 2;
-    return this.M.HEAPF32.slice(p, p + this.obsSize);
+  /**
+   * The observation from one side's perspective (PLAYER_US / PLAYER_USSR), in the view of a model
+   * reading the obs_features bits `features` (Model.obsFeatures; 0 is the base layout). A model must
+   * be shown its own view: HEADLINE_REVEAL has no width, so the base layout fed to a model trained
+   * with it runs without complaint and misreads Space Race box 4's headline.
+   */
+  observation(player: number, features = 0): Float32Array {
+    const width = this.obsSizeFor(features);
+    const p = this.M._ts_observation_features(player, features >>> 0) >> 2;
+    return this.M.HEAPF32.slice(p, p + width);
+  }
+
+  /** The observation width for the obs_features bits `features`; throws for a bit this engine does
+   *  not know (a model from a newer engine). */
+  obsSizeFor(features: number): number {
+    const w = this.M._ts_obs_size_for(features >>> 0);
+    if (!w) throw new Error(this.lastError());
+    return w;
   }
 
   // ---- the rollout root's playouts (bindings/rollout_batch.hpp, the same C++ as Python's) ------

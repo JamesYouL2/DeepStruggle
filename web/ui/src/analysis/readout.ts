@@ -18,7 +18,9 @@ import { CriticTrace, PolicyTrace } from "../replay_controls";
 import { AnalysisChoice, LiveAnalysis } from "../analysis_view";
 
 export async function analyze(engine: WasmEngine, model: Model, modelKey: string): Promise<LiveAnalysis> {
-  const obsSize = engine.obsSize;
+  // The model's own view: its action view (merged influence) and its observation features.
+  const features = model.obsFeatures;
+  const obsSize = engine.obsSizeFor(features);
   const act = engine.actionSize;
   const merged = model.meta.mergedInfluence;
   const decider = engine.isTerminal() ? 0 : engine.decisionPlayer();
@@ -27,13 +29,13 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
   const masks = new Uint8Array(3 * act).fill(1);
   const legalMask = decider !== 0 ? engine.mask(merged) : null;
   if (decider !== 0 && legalMask) {
-    obs.set(engine.observation(decider), 0);
+    obs.set(engine.observation(decider, features), 0);
     masks.set(legalMask, 0);
   } else {
-    obs.set(engine.observation(PLAYER_US), 0);
+    obs.set(engine.observation(PLAYER_US, features), 0);
   }
-  obs.set(engine.observation(PLAYER_US), obsSize);
-  obs.set(engine.observation(PLAYER_USSR), 2 * obsSize);
+  obs.set(engine.observation(PLAYER_US, features), obsSize);
+  obs.set(engine.observation(PLAYER_USSR, features), 2 * obsSize);
   const out = await model.run(obs, masks, 3);
 
   const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
