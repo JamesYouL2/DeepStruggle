@@ -101,10 +101,7 @@ void forget_unseen(GameState& s, Player me, bool keep_revealed) noexcept {
 }
 }  // namespace
 
-uint8_t revealed_headline(const GameState& s, Player me) noexcept {
-    if (s.current_phase != Phase::HEADLINE || s.headline_stage != 0 || !SpaceRace::has_man_in_space(s, me)) return 0;
-    return me == Player::US ? s.headline_ussr_card : s.headline_us_card;
-}
+uint8_t revealed_headline(const GameState& s, Player me) noexcept { return SpaceRace::revealed_headline(s, me); }
 
 void place_hand(GameState& s, Player me, const uint8_t* held) noexcept {
     const CardLocation opp_unknown =
