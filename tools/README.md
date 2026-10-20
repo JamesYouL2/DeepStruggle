@@ -491,7 +491,14 @@ turns whose recording stops part way.
   on: the players decided against the score the app showed.
 - `tools/lib/ts_replayer_hands.py`: both hands for a whole game solved at once as a z3 constraint
   problem from the rules, with preference heuristics as soft clauses. Without z3 it falls back to
-  per-turn heuristics and `Conversion.hands_solved` is False.
+  per-turn heuristics and `Conversion.hands_solved` is False. Before each entry the solved hands
+  are seated and every other card the engine holds goes back to the **draw deck**, never the
+  discard pile: the pile holds only what the log has spent, so the engine reshuffles where the
+  humans did, and the discard features and any redeal from a converted position read the real
+  pile (`tests/replayer/test_replay_deck_and_discards.py`). A card out of play -- removed from
+  the game or in effect -- is never seated: the solver forbids a starred card from the turn
+  after its event occurs, whatever is reshuffled, and the converter stops rather than take one
+  out of play (`tests/replayer/test_replay_removed_cards.py`).
 
 Two rules: **never force a decision the log does not state** (an invented choice teaches what no
 human did), and **the engine is the reference** -- the log is at least as likely to be wrong, so

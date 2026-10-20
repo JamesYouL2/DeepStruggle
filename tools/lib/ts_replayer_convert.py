@@ -605,6 +605,7 @@ def _cards_named_through_un_intervention(raws: List[Dict], turn: int,
 
 
 _FIVE_YEAR_PLAN = 5
+_TERRORISM = 92
 _UN_INTERVENTION = 32
 _GRAIN_SALES = 67
 _OUR_MAN_IN_TEHRAN = 108
@@ -958,23 +959,6 @@ def _pad_hand(state: ts.GameState, held: List[int], size: int, ops_cap: Optional
     return list(held) + pool[:size - len(held)]
 
 
-def _set_hand(state: ts.GameState, player: ts.Player, names: List[str]) -> int:
-    """Force a player's hand to the logged cards. Returns how many were placed."""
-    loc = ts.hand_of(player)
-    # clear the current hand first, so leftovers cannot linger -- both variants, since a
-    # card the opponent has seen is still in the hand
-    for c in range(1, 111):
-        if ts.in_hand_of(state.get_card_location(c), player):
-            state.set_card_location(c, ts.CardLocation.DISCARD_PILE)
-    placed = 0
-    for nm in names:
-        cid = card_id(nm)
-        if cid:
-            state.set_card_location(cid, loc)
-            placed += 1
-    return placed
-
-
 def _narrated_score(entry: Entry) -> Optional[int]:
     """The score this entry states in words, US positive, or None if it states none.
 
@@ -1286,7 +1270,8 @@ def _drain(state: ts.GameState,
            realign_rolls: Optional[List[Tuple[str, int]]] = None,
            want_vp: Optional[int] = None,
            summit: Optional[Tuple[bool, Optional[int]]] = None,
-           random_discards: Optional[List[int]] = None) -> None:
+           random_discards: Optional[List[int]] = None,
+           discarder: ts.Player = ts.Player.USSR) -> None:
     """Resolve chance nodes, steering them to what the log recorded.
 
     Not every die belongs to a decision. A war with a fixed target -- Korean War, Arab-Israeli
@@ -1358,7 +1343,8 @@ def _drain(state: ts.GameState,
         # An event can fire as this node resolves -- Five Year Plan's discard follows the last
         # Op spent, and the last Op of a realignment is spent here -- so the card it draws has
         # to be steered on this step too, not only on the ones the log answers.
-        if random_discards and _force_random_discard(state, random_discards, micro=micro):
+        if random_discards and _force_random_discard(state, random_discards, micro=micro,
+                                                     player=discarder):
             del random_discards[:]
         ts.Engine.step(state, micro)
 
@@ -1691,6 +1677,11 @@ def _peek_op_mode(e, sections, pq, step_outcomes):
 
 _GOLDEN = 0x9E3779B97F4A7C15
 _UINT64 = 1 << 64
+# Where a card Five Year Plan or Terrorism discards can be when the step ends: discarded, removed
+# or in effect as a US event fires, or in the deck if the step went on to reshuffle
+# (_force_random_discard).
+_DISCARDED = (ts.CardLocation.DISCARD_PILE, ts.CardLocation.REMOVED_FROM_GAME,
+              ts.CardLocation.ONGOING_EVENT, ts.CardLocation.DRAW_DECK)
 
 
 def expected_counts(e, raw: Optional[Dict] = None) -> Dict[int, Tuple[int, int]]:
@@ -2046,7 +2037,8 @@ def _logged_board(raw: Optional[Dict]) -> Dict[int, Tuple[int, int]]:
 def _force_random_discard(state: ts.GameState, cards: List[int],
                           action: Optional[int] = None,
                           micro: Optional["ts.MicroAction"] = None,
-                          tries: int = 400) -> bool:
+                          tries: int = 400,
+                          player: ts.Player = ts.Player.USSR) -> bool:
     """Seed the rng so that the coming step discards the card the log says was discarded.
 
     Five Year Plan discards at random from the USSR hand and, if the card is a US event, plays
@@ -2063,13 +2055,39 @@ def _force_random_discard(state: ts.GameState, cards: List[int],
     and the reconstruction drew a US one and played its event for a VP that stayed on the board
     until the Special Relationship two action rounds later asserted against it.
 
-    Only a card the USSR is holding *now* can be the one this step discards. Accepting a card
+    Terrorism draws the same way from `player`, the side it was played against, with no event to
+    follow; Five Year Plan's `player` is always the USSR.
+
+    Only a card the player is holding *now* can be the one this step discards. Accepting a card
     that is already gone made every step a match, so the first step offered -- the one that
     plays the card -- claimed the forcing and cleared the queue before the discard happened.
+
+    ...with one exception: the card being resolved, which the step can hand to the USSR and
+    discard in the same breath. At turn 4's headline of replay 206 the US headlines Missile
+    Envy, the USSR chooses to give up Five Year Plan, and the US plays its event, which discards
+    Missile Envy -- just handed over by the exchange, all inside the step that answers the
+    choice. The card sits in the discard pile while its own event resolves, so it is neither
+    held nor gone and the discard was left to chance; it came out OAS Founded, a US event whose
+    placement the log never wrote. It counts as discarded once its event has finished.
+
+    And leaving the USSR hand is not being discarded. Other draws take a card out of it in the
+    same step: at turn 9's headline of replay 270 the last Influence Glasnost places sets off
+    the US's Grain Sales To Soviets, and a seed that had Grain Sales take Europe Scoring into
+    the US hand passed for the discard. Grain Sales was then steered to Five Year Plan as the
+    log says, Five Year Plan threw out U-2 Incident, and Europe Scoring stayed with the USSR.
+    The card has to end the step out of play -- or in the deck, when the step runs on into the
+    next turn's deal and reshuffles it, as the end of turn 2 of replay 317 does.
     """
-    want = [c for c in cards if ts.in_hand_of(state.get_card_location(c), ts.Player.USSR)]
+    resolving = state.ctx().resolving_card
+    want = [c for c in cards
+            if c == resolving or ts.in_hand_of(state.get_card_location(c), player)]
     if not want:
         return False
+
+    def discarded(probe: ts.GameState, c: int) -> bool:
+        if probe.get_card_location(c) not in _DISCARDED:
+            return False
+        return c != resolving or probe.ctx().resolving_card != c
 
     def take(probe: ts.GameState) -> None:
         if micro is not None:
@@ -2086,7 +2104,7 @@ def _force_random_discard(state: ts.GameState, cards: List[int],
             take(probe)
         except Exception:
             continue
-        if all(not ts.in_hand_of(probe.get_card_location(c), ts.Player.USSR) for c in want):
+        if all(discarded(probe, c) for c in want):
             if k:
                 state.rng_state = (base + k * _GOLDEN) % _UINT64
             return True
@@ -2265,7 +2283,25 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
     plays_five_year_plan = _FIVE_YEAR_PLAN in fired_here
     plays_grain_sales = _GRAIN_SALES in fired_here
     returned_cid = card_id(e.returned_card) if e.returned_card else None
-    random_discards = list(discard_queue) if plays_five_year_plan else []
+    # Five Year Plan's discard is the USSR's, and the entry can hold the US's too: Ask Not What
+    # Your Country Can Do For You discards five of them in one of the corpus's entries. Those
+    # are decisions the queues above answer, not cards this event can draw.
+    #
+    # Terrorism draws the same way from the hand of whoever it is played against -- two cards
+    # from the US under Iranian Hostage Crisis -- and was never steered at all: at turn 9 AR3 of
+    # replay 104 the log reads "USSR discards Missile Envy" and the engine threw out Star Wars.
+    # Each of the corpus's 73 entries that fire it lists one side's discards
+    # and no other's, which makes that side its target; an entry listing both would be left to
+    # the engine's draw rather than guessed at.
+    discard_sides = {side for side, _nm in (e.discards or [])}
+    discarder_side: Optional[str] = None
+    if plays_five_year_plan:
+        discarder_side = "USSR"
+    elif _TERRORISM in fired_here and len(discard_sides) == 1:
+        discarder_side = next(iter(discard_sides))
+    random_discarder = ts.Player.US if discarder_side == "US" else ts.Player.USSR
+    random_discards = [c for c in (card_id(nm) for side, nm in (e.discards or [])
+                                   if side == discarder_side) if c]
     seeded_peek = False
     seeded_reveal = False
     # Missile Envy's exchange is decided by the hand, not by a decision, so the hand has to be
@@ -2369,6 +2405,15 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
     # same way a space race roll is -- at turn 6 AR1 of replay 111 the USSR escapes Bear Trap.
     if not space_roll and e.trap_rolls:
         space_roll = int(e.trap_rolls[0][0])
+    if e.mode == "space" and not space_roll:
+        # The log prints every space race die, so an attempt without one is an entry the
+        # recording stopped inside -- the engine would roll it from its own stream and decide
+        # what the humans never wrote down. At turn 5 AR7 of replay 132 the last entry is
+        # "Nuclear Test Ban: Space Race (3 Ops):" with the US on 18, and whether the game ended
+        # at 20 turned on which reshuffles the deck happened to have taken.
+        raise ConversionFailure(Mismatch(
+            conv.replay_id, e.turn, e.phase, e.player, e.card,
+            "roll not in the log", "a space race attempt with no die roll"))
     # Realignment only. It rolls once per target and prints the running result of each, so the
     # results have to be consumed in order. A coup rolls once but prints a line per side whose
     # influence moved, where only the last line is the country's settled value.
@@ -2420,7 +2465,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
         # success, because the war constraint it was re-seeded against was already satisfied.
         _drain(state, None if seed_settled else war_outcome, space_roll,
                war_roll_queue, coup_roll_queue, realign_roll_queue, _narrated_score(e),
-               _summit_target(e), random_discards)
+               _summit_target(e), random_discards, random_discarder)
         seed_settled = False
 
         # Points the engine has already spent, struck off so nothing spends them twice. Settled
@@ -2521,10 +2566,15 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
             eq_here: List[int] = [c for c in eq if c in _war_targets]
         else:
             eq_here = eq
-        # Before the mask is read, since the mask for a peek is built from that very set.
+        # Before the mask is read, since the mask for a peek is built from that very set. Only
+        # the discards under Tehran's own header were in it: at turn 8's headline of replay 277
+        # Five Year Plan discards Our Man in Tehran out of the USSR hand, which fires it, and
+        # seeding the peek from every discard in the entry put the removed card in its own peek,
+        # whence the US discarded it into the pile.
         if (int(ctx.resolving_card) == _OUR_MAN_IN_TEHRAN and not seeded_peek
                 and dt == ts.DecisionType.SELECT_CARD):
-            _seed_peeked_set(state, discard_queue)
+            peeked = _peeked_from_the_pile(e, card_id)
+            _seed_peeked_set(state, [c for c in discard_queue if c in peeked])
             seeded_peek = True
             ctx = state.ctx()
         elif (plays_grain_sales and not seeded_reveal and reveal_queue
@@ -3151,7 +3201,8 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
         if random_discards:
             # Do this on whichever step actually fires the event; the search accepts the seed
             # the engine already has, so steps that discard nothing cost one clone and pass.
-            if _force_random_discard(state, random_discards, action=int(chosen)):
+            if _force_random_discard(state, random_discards, action=int(chosen),
+                                     player=random_discarder):
                 random_discards = []
 
         if informative and int(e.turn or 0) not in conv.reveal_conflict_turns:
@@ -3388,14 +3439,39 @@ def _arrival_entry(raws: List[Dict], turn: int, side: str, card: int,
     return None
 
 
-def _apply_hands(state, us_cards, ussr_cards) -> None:
+_OUT_OF_PLAY = (ts.CardLocation.REMOVED_FROM_GAME, ts.CardLocation.ONGOING_EVENT)
+
+
+def _apply_hands(state, us_cards, ussr_cards) -> List[int]:
+    """Seat the tracked hands, and put every other card the engine holds back in the deck.
+
+    A card the engine holds and the log's hand does not is one the engine dealt and the humans
+    were never dealt -- so it is still in the draw deck. Anything a hand really gave up was
+    given up through the engine, which moved it to the discard pile or out of the game itself.
+    These used to go to the discard pile, which held cards nobody had played at 99.7% of the
+    corpus's decisions, 14 of them on average: at turn 1 AR2 of replay 51, 9 of its 13,
+    Middle East Scoring among them. The engine's deck then ran short early, so it reshuffled
+    where the humans had not -- at turn 2, putting the cards they had played back in the deck --
+    and the observation's discard features and every redeal from a converted position read
+    that pile.
+
+    Returns the cards it was asked to seat that the engine has out of play -- removed from the
+    game or in effect -- and seats none of them: no rule brings either back into a hand, and
+    taking one out of the engine's removed cards puts it back in circulation for the rest of the
+    game (CONV-4).
+    """
+    out_of_play = [c for c in list(us_cards) + list(ussr_cards)
+                   if state.get_card_location(c) in _OUT_OF_PLAY]
+    if out_of_play:
+        return out_of_play
     for c in range(1, 111):
         if ts.hand_holder(state.get_card_location(c)) != ts.Player.NONE:
-            state.set_card_location(c, ts.CardLocation.DISCARD_PILE)
+            state.set_card_location(c, ts.CardLocation.DRAW_DECK)
     for c in us_cards:
         state.set_card_location(c, ts.hand_of(ts.Player.US))
     for c in ussr_cards:
         state.set_card_location(c, ts.hand_of(ts.Player.USSR))
+    return []
 
 
 def _board_diff(state, countries) -> str:
@@ -3521,7 +3597,8 @@ def _is_the_record_ending(m: Mismatch, raws: List[Dict]) -> bool:
     are not reading; on the last one it means the recording stopped. Nine of the corpus's games
     end that way -- at turn 3 AR3 of replay 153 the file's final entry is "Event: Arab-Israeli
     War" and not one word more, and at turn 6 AR1 of replay 251 it is "Coup (3 Ops):" with no
-    target, roll or result.
+    target, roll or result. A die the log never prints is the same silence: at turn 5 AR7 of
+    replay 132 it is "Space Race (3 Ops):" and nothing after.
 
     A disagreement is never treated this way, wherever it lands. Fifteen games fail their last
     entry on a pass the log records and the engine will not allow, and three more on a board or
@@ -3541,7 +3618,7 @@ def _is_the_record_ending(m: Mismatch, raws: List[Dict]) -> bool:
     last = parse_entry(raws[-1])
     if (m.turn, m.phase, m.player) != (last.turn, last.phase, last.player):
         return False
-    if m.kind == "decision not determined by the log":
+    if m.kind in ("decision not determined by the log", "roll not in the log"):
         return True
     if m.kind == "logged pass is not legal":
         # A bare "Turn 4, USSR AR2" header at the foot of an entry means a player out of cards
@@ -3887,9 +3964,16 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
                                vp_offset=log_vp_offset)
         _settle_cuban_missile_offer(state, e)
 
-        _apply_hands(state,
-                     _hand_after(turn_hands["US"], played["US"], set(pending["US"])),
-                     _hand_after(turn_hands["USSR"], played["USSR"], set(pending["USSR"])))
+        out_of_play = _apply_hands(
+            state,
+            _hand_after(turn_hands["US"], played["US"], set(pending["US"])),
+            _hand_after(turn_hands["USSR"], played["USSR"], set(pending["USSR"])))
+        if out_of_play:
+            names = ", ".join(str(ts.CardData.get_card_info(c)["name"]) for c in out_of_play)
+            raise ConversionFailure(Mismatch(
+                conv.replay_id, e.turn, e.phase, e.player, e.card,
+                "hand holds a card out of play",
+                f"the solved hands hold {names}, which the engine has out of play"))
 
         # --- the card(s) this entry uses must be in the tracked hand ---
         # Diagnostic: the conversion does not depend on it, and the tracked hand is only one
