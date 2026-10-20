@@ -370,3 +370,13 @@ the gate checks only. Built for this: the root's moves are batched by step (a se
 (200 s against 5 s; the root's cost barely grows with the positions searched together, 2.1 s for one and
 3.5 s for forty), batched ~2-3x; the behaviour digest's feature paths are pinned to OPS_BUDGET so a new bit
 is not a new epoch.
+
+**The gate opened at the first check, 40M, in both runs (2026-10-20).** The root against its own raw snapshot,
+200 games: `E7-A8-R69-S44` **87.0% ± 2.4** (US 90 / USSR 83), `E7-A21-R70-S44` **92.0% ± 1.9** (US 87 / USSR
+97), against the 55% threshold -- at 40M search is already worth 37–42 points to the network, so the gate
+filters nothing and the test is active search from 40M. Both runs' own checks had failed to start (the child
+process had no path to the engine; fixed `133e78f`); the two were played by hand from the saved 40M gate
+snapshots with the trainer's command, written into the resume states, and both runs resumed in place from
+40.04M (~3.5M steps repeated; the metric lines past 40M kept beside as `training_metrics.jsonl.before_resume_40M`).
+Slot 1 then plays ~340 root moves a rollout at ~17k steps/s (45k closed, 2.6x); slot 2 runs at ~54k with its
+gate recorded open, so search can join it at a resume the moment slot 1 reads ahead.
