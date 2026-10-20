@@ -329,6 +329,15 @@ searched opponent separates them.
   scratch to 2,000M, read at matched steps against the heads run's own trajectory at 400M, 800M and
   2,000M (per seat, raw and under the keyed root), continued only if ahead; if the gate never opens,
   that is the answer at no search cost.
+* **Launch order (owner, 2026-10-20), after the running session's current report is generated.**
+  Slot 1: the gated search test on the A8 recipe from scratch (~a day). Slot 2, at the same time:
+  P35 item 2, the scaled conventional architecture from scratch (~3× A8 per step), with the same
+  40M gate check running from its start so that search joins it the moment the test passes and its
+  own gate opens -- no relaunch. Slot 1, when the test finishes: P35 item 1, the encoder from scratch
+  (~9× A8 per step), **without** search unless the test's gain is large enough to pay 4× more. All
+  three read per seat, raw and under the corrected keyed root, at 400M windows; the flagships to
+  their own plateaus by the plain line's rule. The search test is cheap and its answer changes the
+  flagships' recipe; the flagships' answers change nothing about it, which fixes the order.
 * **Precedents for "fails as a correction, works from scratch".** In this project: the card-conditioned
   heads -- level on strength as 400M branches (E7-30/31/32-44), then from scratch (E7-33-44 → A8) level
   to 2,000M, 53.9% ahead at 4,000M and a plateau 3,000M later than the plain line; and the branch-vs-
