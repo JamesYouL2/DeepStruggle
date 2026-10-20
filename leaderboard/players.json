@@ -336,6 +336,24 @@
     "description": "The corrected rollout root (P36, 2026-10-20): every candidate's horizon counted from the end of the mover's own action round and the headline one boundary (aligned), the opponent's Space-Race-box-4 headline kept in every world (box4); keyed chance, 32 worlds. Mode chosen by the P36 sweep at 16 worlds (corrected h4 52.3% vs the keyed root).",
     "report": null
   },
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,belief=2048,aligned=true,box4=true)": {
+    "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 32,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own",
+      "chance": "keyed",
+      "belief": 2048,
+      "aligned": true,
+      "box4": true
+    },
+    "description": "The corrected rollout root with belief worlds (P36, 2026-10-20): aligned and box4 as the keyed corrected root, the worlds dealt from the policy-likelihood belief over the opponent's hand (2,048 hands, temperature model-averaged; bindings/belief.hpp); keyed chance, 32 worlds. The P36 sweep's strongest mode at 16 worlds: 56.6% vs the keyed root.",
+    "report": null
+  },
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=64,horizon=4,rule=z2)": {
     "network": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M",
     "inference": {
