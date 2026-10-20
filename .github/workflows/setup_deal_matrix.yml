@@ -1,9 +1,14 @@
 # Turn 1 setups on one fixed deal (tools/scripts/setup_deal_matrix.py): every listed USSR setup
 # against every listed US setup, both hands held fixed and the dice and later draws shared by every
 # cell of a world, the rest of the game played greedy by one network. The deal is built in code
-# (init_game(500310) with the swaps in SWAPS), so the run needs no input but the model:
+# (init_game(500310) with the swaps in SWAPS, or one per world), so the run needs no input but the model:
 #
 #   gh workflow run setup_deal_matrix.yml --ref exp/setup-deal-matrix -f worlds=16000 -f runners=40
+#
+# or with a fresh deal in every world, on chosen setups:
+#
+#   gh workflow run setup_deal_matrix.yml --ref exp/setup-deal-matrix -f worlds=200000 -f runners=40 \
+#     -f args="--random-deals --ussr EG4/Pol4/Aus1 Pol3/Yug3 --us WG4/It4/Ir2 WG4/It3/Fr2"
 #   gh run download <run-id> -n setup-deal-matrix-<run-id> -D data/reports/t1_openings/matrix
 name: setup-deal-matrix
 

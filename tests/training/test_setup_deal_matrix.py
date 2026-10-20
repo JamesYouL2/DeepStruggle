@@ -93,6 +93,31 @@ def test_a_world_is_its_seed_whatever_part_or_batch_plays_it(tmp_path, monkeypat
     assert json.load(open(pooled + ".parts.json"))["missing"] == []
 
 
+def test_random_deals_give_each_world_its_own_deal_whatever_part_plays_it(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sdm, "load_policy", lambda path: (_first_legal, 0))
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"not a model")
+    ussr, us = ["Pol3/Yug3", "EG4/Pol5"], ["WG4/It4/Ir2", "WG4/It3/Fr2", "WG3/It3/Fr2/Ir2"]
+    whole = str(tmp_path / "whole.jsonl.gz")
+    sdm.run(str(model), 4, "1/1", 3, 0, [], 6, whole, ussr, us, random_deals=True)
+    parts = [str(tmp_path / f"matrix-{k}.jsonl.gz") for k in (1, 2)]
+    for k, p in enumerate(parts, 1):
+        sdm.run(str(model), 4, f"{k}/2", 3, 0, [], 1536, p, ussr, us, random_deals=True)
+    pooled = str(tmp_path / "pooled.jsonl.gz")
+    sdm.pool(parts, pooled, expect=2)
+    a = sorted(read_jsonl([whole]), key=lambda r: r["world"])
+    b = sorted(read_jsonl([pooled]), key=lambda r: r["world"])
+    assert a == b  # same worlds, other batches and parts: the same deals and games
+    assert len({r["deal"] for r in a}) == 4
+    for r in a:
+        st = sdm.dealt(sdm.world_deal(3, r["world"]))
+        assert r["deal"] == sdm.world_deal(3, r["world"])
+        assert r["ussr_hand"] == sdm.hand(st, ts.Player.USSR) and r["us_hand"] == sdm.hand(st, ts.Player.US)
+        assert len(r["ussr_hand"]) == len(r["us_hand"]) == 8 and len(r["s"]) == 6
+    meta = json.load(open(pooled + ".meta.json"))
+    assert meta["deal"] == sdm.RANDOM and meta["net"] is None and meta["ussr"] == ussr and meta["us"] == us
+
+
 def test_the_solver_finds_a_mixed_equilibrium() -> None:
     a = np.array([[0.6, 0.4], [0.3, 0.7]])
     x, y, v, gap = sdm.solve_game(a, tol=1e-6)
@@ -128,3 +153,34 @@ def test_the_report_reads_the_matrix_it_was_given(tmp_path) -> None:
     assert min(m @ np.array(eq["us"])) - 1e-3 <= eq["value"] <= max(np.array(eq["ussr"]) @ m) + 1e-3
     text = open(out).read()
     assert "## The equilibrium" in text and "Pol3/Yug3" in text
+
+
+def test_the_report_splits_random_deals_by_where_a_scoring_card_went(tmp_path) -> None:
+    ussr, us = ["EG4/Pol4/Aus1", "Pol3/Yug3"], ["WG4/It4/Ir2", "WG4/It3/Fr2"]
+    ids = sdm.card_ids()
+    me = ids["Middle East Scoring"]
+    others = [c for c in range(1, 111) if c not in (me, ids["Asia Scoring"], ids["Europe Scoring"])][:30]
+    rng = np.random.default_rng(1)
+    rows = []
+    for w in range(3000):
+        hands = list(rng.choice(others, 16, replace=False).tolist())
+        where = rng.integers(3)  # 0: the US hand, 1: the USSR hand, 2: neither
+        if where < 2:
+            hands[0 if where == 0 else 8] = me
+        # WG4/It3/Fr2 gains 20 points when the US holds Middle East Scoring, none otherwise
+        p = np.array([[0.5, 0.7 if where == 0 else 0.5]] * 2)
+        rows.append({"world": w, "deal": w, "ussr_hand": hands[8:], "us_hand": hands[:8],
+                     "s": "".join(str(2 * int(rng.random() < q)) for q in p.ravel())})
+    src = str(tmp_path / "matrix-1.jsonl.gz")
+    write_jsonl(src, rows)
+    with open(src + ".meta.json", "w") as f:
+        json.dump({"model": "m.onnx", "model_sha256": "0" * 64, "deal": sdm.RANDOM, "swaps": [], "hands": None,
+                   "ussr": ussr, "us": us, "net": None, "worlds": 3000, "part": "1/1", "seed": 0, "rows": 3000}, f)
+    out = str(tmp_path / "report.md")
+    assert sdm.report([src], out, bootstrap=5) == 0
+    split = json.load(open(os.path.splitext(out)[0] + ".json"))["split"]["Middle East Scoring"]
+    assert sum(split[g]["n"] for g in ("us", "ussr", "deck")) == 3000
+    gain = {g: np.array(split[g]["mean"])[:, 1].mean() - np.array(split[g]["mean"])[:, 0].mean() for g in split}
+    assert abs(gain["us"] - 0.2) < 0.06 and abs(gain["ussr"]) < 0.06 and abs(gain["deck"]) < 0.06
+    text = open(out).read()
+    assert "over random deals" in text and "### Middle East Scoring" in text and "network" not in text
