@@ -317,11 +317,18 @@ searched opponent separates them.
   generalisation is confounded; and the fine-tuned students' inability to fit even the *training*
   departures (22–41% against 96–99% from scratch) is the signature of a network that has lost
   plasticity, which the literature on long-trained networks predicts (see the precedents below). What
-  was never tested is search targets **inside a from-scratch RL run from the start** -- active, the
-  learner acting with the root at a sparse fraction of its own decisions (the R54 form of P33), with
-  a slow snapshot cadence against the R29 loop. Cost ~4× a plain run per step at 1 in 64 entry
-  decisions. Bounded test if the owner wants it: 2,000M at matched steps against the heads run's own
-  trajectory, ~a day, continued only if ahead.
+  was never tested is search targets **inside a from-scratch RL run** -- active, the learner acting with
+  the root at a sparse fraction of its own decisions (the R54 form of P33). **Approved by the owner
+  (2026-10-20), in the gated form:** not from step 0 (a random network's root is noise at four times the
+  cost); search joins the rollouts the first time a 200-game check, run every 40M steps, has the root
+  beating its own raw snapshot by ~55% -- "search is now worth something to this network", a rule that
+  transfers to any architecture. Then 1 in 64 entry decisions: the root's move played as environment
+  (no policy gradient on it) and the improved policy as a soft target there; the root searches a
+  lagged snapshot of the learner against the R29 loop, refreshed every 10M until 400M and every 50M
+  after. Cost ~4× a plain run per step once joined. **The bounded test:** the heads recipe (A8) from
+  scratch to 2,000M, read at matched steps against the heads run's own trajectory at 400M, 800M and
+  2,000M (per seat, raw and under the keyed root), continued only if ahead; if the gate never opens,
+  that is the answer at no search cost.
 * **Precedents for "fails as a correction, works from scratch".** In this project: the card-conditioned
   heads -- level on strength as 400M branches (E7-30/31/32-44), then from scratch (E7-33-44 → A8) level
   to 2,000M, 53.9% ahead at 4,000M and a plateau 3,000M later than the plain line; and the branch-vs-
