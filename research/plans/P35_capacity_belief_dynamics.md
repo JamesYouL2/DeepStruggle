@@ -86,6 +86,11 @@ decision and are marked as such.
 
 ### 5. Search-computed advantages for the policy gradient (R code; a build, then one branch)
 
+**Closed as a branch (2026-10-20, P36c):** the root's corrections at entry decisions are reproducible
+but not learnable from the observation by any student at feasible scale, and a plateau network cannot
+fit even the training departures. If this form runs at all it is from scratch, active, as P36's
+verdict describes -- not as a branch from a plateau.
+
 * **What.** At one in eight of the learner's *entry* decisions (card choice, headline; ~3.4% of
   decisions) the keyed root (k = 4, 16 worlds, `earlier`+own) on a **slow frozen snapshot** of the
   learner (refreshed every 50M steps, not with π_ref, to keep the R29 self-referential loop out)

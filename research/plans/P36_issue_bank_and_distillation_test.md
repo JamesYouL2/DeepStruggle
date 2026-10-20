@@ -299,3 +299,43 @@ plays against humans is hard to check, and it is a one-time gain where continuou
 root on the same network: the R34 soup's rollout root **60.3%** (57.6%), the R34 soup 74.1% (73.2%), A13+R48
 75.2% (73.7%), the heads soup 74.1% (73.7%); against greedy players both are near the ceiling, and the
 searched opponent separates them.
+
+## Verdict (2026-10-20)
+
+* **Search distillation as a correction is closed, by a test that separated the causes.** `P36c`: the
+  keyed root's entry-decision corrections are reproducible given the position (teacher self-agreement
+  79% on held-out departures at 128 worlds) but no student learns them from the observation. Held-out
+  agreement is flat across 16 / 64 / 128 worlds while the teacher's rises (57 → 79%), so **target noise
+  is not the limit**; an 8.7× network memorises the training departures (98.9%) and generalises at
+  chance (23.6%), so **capacity is not the limit**; data scaling is ~1.8 points a doubling against a
+  59-point gap; the teacher's move is the network's own second choice 51% of the time and a student
+  picks it 20%. The "fits but does not generalise" cell with its remedy ruled out. **Item 2 is closed in
+  the proposal's form; P35 item 5 (search-computed advantages) is closed as a branch by the same
+  result.** No generation of expert iteration is spent.
+* **What the test did not cover, and the one form left.** Both from-scratch students failed to learn
+  the game from 180k positions (overall agreement 43–45% against the network's 58%), so their chance
+  generalisation is confounded; and the fine-tuned students' inability to fit even the *training*
+  departures (22–41% against 96–99% from scratch) is the signature of a network that has lost
+  plasticity, which the literature on long-trained networks predicts (see the precedents below). What
+  was never tested is search targets **inside a from-scratch RL run from the start** -- active, the
+  learner acting with the root at a sparse fraction of its own decisions (the R54 form of P33), with
+  a slow snapshot cadence against the R29 loop. Cost ~4× a plain run per step at 1 in 64 entry
+  decisions. Bounded test if the owner wants it: 2,000M at matched steps against the heads run's own
+  trajectory, ~a day, continued only if ahead.
+* **Precedents for "fails as a correction, works from scratch".** In this project: the card-conditioned
+  heads -- level on strength as 400M branches (E7-30/31/32-44), then from scratch (E7-33-44 → A8) level
+  to 2,000M, 53.9% ahead at 4,000M and a plateau 3,000M later than the plain line; and the branch-vs-
+  scratch reversals in both directions (the gap penalty +7.6/+2.1 late, −150–240 from step 0; the slow
+  reference the opposite). In the literature: warm-started networks generalise worse than retrained ones
+  on the same data (Ash & Adams 2020); loss of plasticity in long-trained networks, with last-layer
+  resets or continual backprop as the remedy (Nikishin et al. 2022, Lyle et al. 2023, Dohare et al.
+  2024); and the tandem effect -- a network trained passively on another agent's decisions, even the same
+  data, underperforms the active learner (Ostrovski et al. 2021), which is the offline-distillation
+  failure here in its general form. None of these says the from-scratch form *would* work; they say the
+  correction form was expected to fail and does not settle the question.
+* **Belief not adopted** (owner, 2026-10-20): hard to check against humans, a one-time gain; to the
+  reserve with the belief input.
+* **Open from this plan:** `P36a` awaits the owner's review; the rule-derived candidates and the
+  turn-order root are search-side product gains, built when wanted; the corrected keyed root (aligned,
+  box4) is the deployed mode, 1844 at 32 worlds. **The base-model bet left is P35's two from-scratch
+  flagships**, independent of everything above; the GPU is free.
