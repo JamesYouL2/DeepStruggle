@@ -180,8 +180,8 @@ choices, the opponent placing its event's influence) does. Those candidates are 
 earlier. Found on the owner's replay (`data/replays/us_search_decol.json`, turn 3 AR3: the root plays the
 USSR's Decolonization for its event at +0.10 over space; read at the turn's end for every candidate, space
 leads by +0.12). At card choices it shifts every card that resolves without a choice (all scoring cards)
-by an action round against the rest, so P36c's targets carry artifacts there. The fix (count from the same
-point for every candidate) is a bindings change awaiting the owner; P36b/P36c are re-read on the fixed root.
+by an action round against the rest, so P36c's targets carry artifacts there. The fix landed as the
+`aligned` option (below, with the search-mode sweep); P36b/P36c are still to be re-read on it.
 The 2M-target data-scaling run (test 1) was stopped for the same reason.
 
 **`P36c` (2026-10-19): the rollout root's corrections do not transfer to unseen positions -- not by
@@ -238,3 +238,48 @@ positions (Nuclear Subs set in effect; NATO and Formosan Resolution swapped into
 each row with a workbench link and its proposed label source -- `ai/eval/banks/issues_P36a_candidates.jsonl`,
 the review page [`../log/P36a_issue_bank_candidates.md`](../log/P36a_issue_bank_candidates.md). Nothing is
 labelled until the owner chooses the situations.
+
+
+**The rollout root corrected, and the search-mode sweep (2026-10-19/20; the owner's question: the optimal
+search mode).**
+
+*The bugs.* (1) **The horizon was counted from different points for different candidates of one
+decision** (found on the owner's Decolonization replay, `data/replays/us_search_decol.json`, turn 3 AR3):
+a move that ends the mover's action round inside its own settling (space, a decision-free event) did not
+count that boundary, one that leaves choices in the round (Ops points, an event's choices) did, later in
+the playout -- so those were read an action round earlier. The deployed root played Decolonization for its
+event over space at +0.10; read at one point it trails by 0.12. (2) **The headline counted 1 to 3
+boundaries** by how its events resolved (an event that stops for a choice sets the phasing side to its
+owner at a decision), decided at a headline choice by the candidate itself. (3) **Space Race box 4**: the
+side holding Man in Space alone sees the opponent's headline before choosing, but every world forgot it and
+asked it again. Fixed as two opt-in options so every measured player keeps its meaning and the E7
+behaviour digest is unchanged (measured): `aligned` (every candidate's horizon counted from the end of the
+mover's own round, the headline one boundary; `bef6b4c`, `eedf70e`) and `box4` (the revealed headline kept
+in every world and every belief hand). Player id `…,aligned=true,box4=true)`, spec `:aligned:box4`, in both
+builds. Under the deployed root (150 positions each, A13+R48's SWA) the candidates' leaves were at different
+points of the turn in 27% of worlds at the first headline choice (a full action round) and 7% at the
+second; aligned: 0.0% at the second; at the first the 19% left (and ~11% at action-round card choices) is
+leaf=own's "the mover's next decision" falling in the opponent's half of a round on some paths -- the
+playout's course, not the count. The box-4 case is 8.5% of headline choices in self-play, in half the
+games; no observation slot shows the revealed card (a zero-float option is with the owner).
+
+*The sweep.* Each mode on A13+R48's SWA (12,730–12,800M), keyed, k = 4, 16 worlds, z2, against the deployed
+root (`4:16:4:z2:earlier:own:keyed`, unaligned), 1,000 deals a side (`data/reports/p36_mode_*`,
+`p36_aligned_box4_root_vs_keyed`; minutes are wall time with three matches sharing the GPU). With `aligned`
+and leaf=own, horizon 1 reads at the mover's next round, 2 two rounds on, 4 three, 6 four.
+
+| mode (all `aligned`, `box4`) | overall | US | USSR | min |
+|:---|---:|---:|---:|---:|
+| horizon 4, stop=earlier | **52.3% ± 1.1** | 50.3 | 53.3 | 58 |
+| horizon 2, stop=earlier | 51.6% ± 1.1 | 48.9 | 53.7 | 59 |
+| horizon 6, stop=earlier | 51.1% ± 1.1 | 47.1 | 54.2 | 79 |
+| horizon 4, no turn cap (stop=boundaries) | 51.1% ± 1.1 | 48.9 | 52.2 | 75 |
+| stop=turn (the next turn, after the deal) | 52.6% ± 1.1 | 48.0 | 56.3 | 97 |
+| horizon 1, stop=earlier | 47.1% ± 1.1 | 44.2 | 49.2 | 47 |
+
+Reads. **The correction is worth ~+16 Elo** (52.3%, ~2 SE). **Depth flattens from two rounds on**:
+horizons 2, 4, 6, the uncapped 4 and the turn-end stop are all level (51–53%); horizon 1 is −20 Elo against
+the deployed root and −36 against the corrected 4. The old sweep's horizon 1 (−170, R32) was mostly the
+bug, which is largest there (Ops candidates read before the opponent moved, the rest after). Reading past
+the deal adds nothing, at up to 1.7x the time. **The mode: horizon 4, stop=earlier, leaf=own, keyed,
+aligned, box4** -- the best point and the measured family's horizon; horizon 2 is level and cheaper.
