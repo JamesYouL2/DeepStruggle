@@ -951,11 +951,6 @@ def revealed_headline(state: GameState, me: Player) -> int:
     The opposing headline `me` has seen, else 0: with Man in Space (Space Race box 4) held by `me` alone the opponent chooses first and reveals it.
     """
 
-def revealed_headline(state: GameState, me: Player) -> int:
-    """
-    The opposing headline `me` has seen, else 0: with Man in Space (Space Race box 4) held by `me` alone the opponent chooses first and reveals it.
-    """
-
 def place_hand(state: GameState, me: Player, held: Annotated[NDArray[numpy.uint8], dict(shape=(None,), order='C', device='cpu', writable=False)]) -> GameState:
     """
     A clone with `me`'s hidden pool (the opponent's unknown hand and the deck) split by `held` (110 bytes, card c at c - 1): set -> the opponent's unknown hand, else the deck.
