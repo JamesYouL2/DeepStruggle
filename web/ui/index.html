@@ -48,21 +48,14 @@
 
       <div class="tech-group tech-model" id="tech-model">
         <span class="tech-label">Model</span>
-        <!-- The active model, in one line: analysis_view.ts writes its state here (off, loading,
-             error) and its name, view and checkpoint into #analysis-model-info once loaded. -->
-        <span id="model-active-status" class="model-active-status">no model</span>
-        <div id="analysis-model-info" class="analysis-model-info hidden"></div>
-        <button id="btn-model-choose" class="btn btn-secondary btn-sm model-choose" title="Choose another model: a local checkpoint, a Hugging Face repo or an .onnx file" aria-label="Choose a model" aria-expanded="false" aria-controls="model-chooser">▾</button>
-        <!-- How the model chooses a move. Policy: its argmax, one forward. Rollout root: its top
-             moves played out in sampled worlds by the engine's own batch (bindings/rollout_batch.hpp,
-             analysis/rollout.ts), in a worker; `search=` in the URL carries it, a custom spec too. -->
-        <label class="search-mode" title="How the model picks its move">
-          Search
-          <select id="search-mode-select" class="analysis-select" title="Policy: the model's most likely move, one forward. Rollout root: its top 4 moves each played out by the model in 32 sampled worlds, to the earlier of 4 action-round boundaries and the turn-end park, the leaf read on from the mover's own next decision, then the best only on a clear lead over the policy's move (the best player on the leaderboard; search=rollout:k:worlds:horizon:rule[:stop][:leaf] in the address for another).">
-            <option value="policy">Policy (greedy)</option>
-            <option value="rollout">Rollout root</option>
-          </select>
-        </label>
+        <!-- The model and how it plays, in one line (main.ts renderModelModeLabels). A click opens
+             the model & search section (#model-mode-section) in #model-mode-dialog. -->
+        <button id="btn-model-choose" class="model-mode-label" title="Choose the model -- a local checkpoint, a Hugging Face repo or an .onnx file -- and how it plays" aria-haspopup="dialog" aria-controls="model-mode-dialog">
+          <span id="model-mode-label-model" class="mm-model">no model</span>
+          <span class="mm-sep">·</span>
+          <span id="model-mode-label-mode" class="mm-mode">Policy</span>
+          <span class="mm-caret" aria-hidden="true">▾</span>
+        </button>
         <!-- The model's readout (its win chances, move probabilities, search) and its badges on the
              board: on in the Developer view, off in a player's view, either switchable here. The
              model's own decisions stay hidden in a player's view regardless (main.ts setView). -->
@@ -70,33 +63,6 @@
           <input type="checkbox" id="analysis-visible-toggle">
           Show analysis
         </label>
-        <!-- Where the model comes from (analysis_view.ts binds these by id), opened by Change.
-             The readout -- the policy over the open decision and the critic -- stays in the Model
-             Analysis panel. -->
-        <div id="model-chooser" class="model-chooser hidden">
-          <div class="model-controls">
-            <select id="analysis-source-select" class="analysis-select analysis-source" title="Where the model comes from">
-              <option value="">— analysis off —</option>
-              <option value="local" id="analysis-source-local-option">Local checkpoints</option>
-              <option value="hf">Hugging Face</option>
-              <option value="file">.onnx file</option>
-            </select>
-            <div id="analysis-src-local" class="analysis-src hidden">
-              <select id="analysis-run-select" class="analysis-select" title="Training run"></select>
-              <select id="analysis-snapshot-select" class="analysis-select analysis-snapshot" title="Snapshot" disabled></select>
-            </div>
-            <div id="analysis-src-hf" class="analysis-src hidden">
-              <input id="analysis-hf-repo" class="analysis-select" placeholder="owner/repo" title="A public Hugging Face model repo holding .onnx exports (tools/export_onnx.py)">
-              <input id="analysis-hf-revision" class="analysis-select analysis-snapshot" value="main" title="Branch, tag or commit">
-              <button id="analysis-hf-list" class="btn btn-secondary btn-sm" title="List the repo's .onnx files">List</button>
-              <select id="analysis-hf-file" class="analysis-select" title="Model file"></select>
-              <button id="analysis-hf-clear" class="btn btn-secondary btn-sm" disabled>Clear cache</button>
-            </div>
-            <div id="analysis-src-file" class="analysis-src hidden">
-              <input id="analysis-file-input" type="file" accept=".onnx" class="analysis-file" title="An .onnx export (tools/export_onnx.py); you can also drop it anywhere on the page">
-            </div>
-          </div>
-        </div>
       </div>
 
       <div class="tech-group tech-dev" id="tech-dev">
@@ -139,11 +105,12 @@
           </div>
           <div class="tab-content" id="tab-board-cards">
             <div id="china-card-container"></div>
-            <div class="piles-summary">
-              <button id="btn-view-discard" class="btn btn-secondary btn-block">View Discard Pile (<span id="discard-count">0</span>)</button>
-              <button id="btn-view-removed" class="btn btn-secondary btn-block">View Removed Pile (<span id="removed-count">0</span>)</button>
-              <div class="draw-count-label"><span id="draw-count-name">Draw Deck</span>: <strong id="draw-count">0</strong> cards remaining</div>
-            </div>
+            <div class="draw-count-label"><span id="draw-count-name">Draw Deck</span>: <strong id="draw-count">0</strong> cards remaining</div>
+            <!-- The piles as the hands are drawn, packed, by side then Ops (cards_view.ts renderPile). -->
+            <div class="pile-head">Discard Pile <span class="pile-head-count" id="discard-count">0</span></div>
+            <div class="card-list card-list-packed" id="discard-cards-list"></div>
+            <div class="pile-head">Removed from Game <span class="pile-head-count" id="removed-count">0</span></div>
+            <div class="card-list card-list-packed" id="removed-cards-list"></div>
           </div>
           <div class="tab-content" id="tab-all-cards">
             <div class="all-cards-controls">
@@ -261,18 +228,12 @@
           <button id="mode-dialog-close" class="btn-icon" title="Keep the current mode (Esc)">✕</button>
         </div>
         <div class="modal-body mode-dialog-body">
-          <!-- How the model picks its moves: the search select's two settings (main.ts askMode). -->
-          <fieldset class="mode-opponent" id="mode-opponent">
-            <legend>When you play a side, the model plays with</legend>
-            <label class="mode-opponent-option">
-              <input type="radio" name="mode-opponent" value="rollout" id="mode-opponent-rollout">
-              <span><b>Rollout root</b> -- its strongest player: <span id="mode-opponent-rollout-spec">its top 4 moves, each played out in 32 sampled worlds</span>. A few seconds a move.</span>
-            </label>
-            <label class="mode-opponent-option">
-              <input type="radio" name="mode-opponent" value="policy" id="mode-opponent-policy">
-              <span><b>Policy</b> -- its most likely move, at once.</span>
-            </label>
-          </fieldset>
+          <!-- The model & search section (#model-mode-section), folded: main.ts askMode moves it in
+               here and openModelMode back into #model-mode-dialog. -->
+          <details id="mode-model-details" class="mode-model-details">
+            <summary><span class="mode-model-summary-label">Model</span> <span id="mode-model-summary">no model · Policy</span></summary>
+            <div id="mode-model-slot" class="mode-model-slot"></div>
+          </details>
           <button id="mode-choice-dev" class="mode-choice" data-mode="DEV">
             <span class="mode-choice-title">Developer</span>
             <span class="mode-choice-text">Both hands, every option, the debug tools and replays. You move both sides, or let the model play one.</span>
@@ -286,6 +247,67 @@
             <span class="mode-choice-text">The US's hand and headline stay hidden; the model plays the US. No hints: its win chances and move probabilities stay off unless you turn on Show analysis.</span>
           </button>
           <p class="mode-dialog-note" id="mode-dialog-note"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- The model and how it plays (main.ts openModelMode), from the technical bar's label. Its body
+         holds #model-mode-section unless the New Game dialog has borrowed it. -->
+    <div id="model-mode-dialog" class="modal-backdrop model-mode-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="model-mode-dialog-title">
+      <div class="modal-content model-mode-dialog-content">
+        <div class="modal-header">
+          <h2 id="model-mode-dialog-title">Model &amp; play mode</h2>
+          <button id="model-mode-dialog-close" class="btn-icon" title="Close (Esc)">✕</button>
+        </div>
+        <div class="modal-body" id="model-mode-dialog-body">
+          <!-- The section: where the model comes from (analysis_view.ts binds these by id) and how
+               it picks its move (main.ts: the radios set the search). One copy, moved between the
+               two dialogs. -->
+          <div id="model-mode-section" class="model-mode-section">
+            <div class="mm-current">
+              <span id="model-active-status" class="model-active-status">no model</span>
+              <div id="analysis-model-info" class="analysis-model-info hidden"></div>
+            </div>
+            <div id="model-chooser" class="model-chooser">
+              <div class="model-controls">
+                <select id="analysis-source-select" class="analysis-select analysis-source" title="Where the model comes from">
+                  <option value="">— analysis off —</option>
+                  <option value="local" id="analysis-source-local-option">Local checkpoints</option>
+                  <option value="hf">Hugging Face</option>
+                  <option value="file">.onnx file</option>
+                </select>
+                <div id="analysis-src-local" class="analysis-src hidden">
+                  <select id="analysis-run-select" class="analysis-select" title="Training run"></select>
+                  <select id="analysis-snapshot-select" class="analysis-select analysis-snapshot" title="Snapshot" disabled></select>
+                </div>
+                <div id="analysis-src-hf" class="analysis-src hidden">
+                  <input id="analysis-hf-repo" class="analysis-select" placeholder="owner/repo" title="A public Hugging Face model repo holding .onnx exports (tools/export_onnx.py)">
+                  <input id="analysis-hf-revision" class="analysis-select analysis-snapshot" value="main" title="Branch, tag or commit">
+                  <button id="analysis-hf-list" class="btn btn-secondary btn-sm" title="List the repo's .onnx files">List</button>
+                  <select id="analysis-hf-file" class="analysis-select" title="Model file"></select>
+                  <button id="analysis-hf-clear" class="btn btn-secondary btn-sm" disabled>Clear cache</button>
+                </div>
+                <div id="analysis-src-file" class="analysis-src hidden">
+                  <input id="analysis-file-input" type="file" accept=".onnx" class="analysis-file" title="An .onnx export (tools/export_onnx.py); you can also drop it anywhere on the page">
+                </div>
+              </div>
+            </div>
+            <!-- How the model picks its move: the policy's argmax, or the rollout root -- its top
+                 moves played out in sampled worlds by the engine's own batch
+                 (bindings/rollout_batch.hpp, analysis/rollout.ts) in a worker; `search=` in the URL
+                 carries it, a custom spec too. -->
+            <fieldset class="mode-opponent" id="mode-opponent">
+              <legend>The model plays with</legend>
+              <label class="mode-opponent-option" title="Its top moves each played out by the model in sampled worlds, to the earlier of a few action-round boundaries and the turn-end park, the leaf read on from the mover's own next decision, then the best only on a clear lead over the policy's move (the best player on the leaderboard; search=rollout:k:worlds:horizon:rule[:stop][:leaf] in the address for another).">
+                <input type="radio" name="mode-opponent" value="rollout" id="mode-opponent-rollout">
+                <span><b>Rollout root</b> -- its strongest player: <span id="mode-opponent-rollout-spec">its top 4 moves, each played out in 32 sampled worlds</span>. A few seconds a move.</span>
+              </label>
+              <label class="mode-opponent-option">
+                <input type="radio" name="mode-opponent" value="policy" id="mode-opponent-policy">
+                <span><b>Policy</b> -- its most likely move, at once.</span>
+              </label>
+            </fieldset>
+          </div>
         </div>
       </div>
     </div>

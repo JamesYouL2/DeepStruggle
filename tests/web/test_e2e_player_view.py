@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from tests.web.test_e2e_workbench import (RUN, SNAP, _open, _open_model_chooser, browser, checkpoint,  # noqa: F401 -- fixtures
+from tests.web.test_e2e_workbench import (RUN, SNAP, _close_model_chooser, _open, _open_model_chooser, _search, _set_search, browser, checkpoint,  # noqa: F401 -- fixtures
                                           server, static_site)
 
 #: Play the first legal action for whoever is to move, until `stop(state)` holds.
@@ -167,7 +167,7 @@ def test_new_game_and_the_view_select_fit_a_laptop_screen(browser: Any, static_s
     page.wait_for_selector("#mode-dialog", state="hidden")
     assert page.evaluate("window.__wb.shown.view") == "US"
     for el in ("view-select", "btn-new-game", "btn-toggle-debug", "btn-toggle-replay", "btn-model-choose",
-               "search-mode-select", "analysis-visible-toggle", "active-player-badge", "btn-undo-action"):
+               "analysis-visible-toggle", "active-player-badge", "btn-undo-action"):
         box = page.locator(f"#{el}").bounding_box()
         assert box and box["width"] > 0 and box["x"] + box["width"] <= 1366, f"#{el} is off screen"
     _play_until(page, "s.current_phase_name === 'HEADLINE'")
@@ -194,35 +194,62 @@ def test_the_play_mode_question_sets_how_the_model_plays_a_side(browser: Any, st
     page = browser.new_page(viewport={"width": 1366, "height": 768})
     page.goto(f"{static_site}/?model=off")
     page.wait_for_function("window.__wb && window.__wb.liveState && window.__wb.positionToken", timeout=30000)
-    # A fresh open offers the strongest player, the rollout root, for playing a side.
+    # A fresh open offers the strongest player, the rollout root, for playing a side -- in the
+    # model & search section, folded under a summary that says so.
     page.wait_for_selector("#mode-dialog:not(.hidden)")
+    assert page.evaluate("document.getElementById('mode-model-details').open") is False
+    assert not page.is_visible("#mode-opponent-rollout")
+    assert page.inner_text("#mode-model-summary") == "no model · Rollout root"
     assert page.is_checked("#mode-opponent-rollout") and not page.is_checked("#mode-opponent-policy")
     page.click("#mode-choice-us")
     page.wait_for_selector("#mode-dialog", state="hidden")
-    assert page.input_value("#search-mode-select") == "rollout"
+    assert _search(page) == "rollout"
+    assert page.inner_text("#model-mode-label-mode") == "Rollout root"
     page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout'")
-    # New Game offers the setting in force; the policy turns the search off.
+    # New Game offers the setting in force, folded again; the policy turns the search off.
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
+    assert page.evaluate("document.getElementById('mode-model-details').open") is False
     assert page.is_checked("#mode-opponent-rollout")
+    page.click("#mode-model-details summary")
     page.check("#mode-opponent-policy")
+    assert page.inner_text("#mode-model-summary") == "no model · Policy"
+    assert page.inner_text("#model-mode-label-mode") == "Rollout root", "the question's choice waits for the mode"
     page.click("#mode-choice-ussr")
     page.wait_for_selector("#mode-dialog", state="hidden")
-    assert page.input_value("#search-mode-select") == "policy"
+    assert _search(page) == "policy"
     page.wait_for_function("!new URLSearchParams(location.search).has('search')")
-    # The Developer choice leaves the search select as it is; cancelling sets nothing.
+    # The Developer choice leaves the search as it is, unless it was changed in the question;
+    # cancelling sets nothing.
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
-    page.check("#mode-opponent-rollout")
     page.click("#mode-choice-dev")
     page.wait_for_selector("#mode-dialog", state="hidden")
-    assert page.input_value("#search-mode-select") == "policy"
+    assert _search(page) == "policy"
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.click("#mode-model-details summary")
     page.check("#mode-opponent-rollout")
     page.keyboard.press("Escape")
     page.wait_for_selector("#mode-dialog", state="hidden")
-    assert page.input_value("#search-mode-select") == "policy"
+    assert _search(page) == "policy"
+    page.click("#btn-new-game")
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.click("#mode-model-details summary")
+    page.check("#mode-opponent-rollout")
+    page.click("#mode-choice-dev")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    assert _search(page) == "rollout"
+    # The model & search dialog, from the technical bar's label, sets the search at once.
+    _set_search(page, "policy")
+    assert page.inner_text("#model-mode-label-mode") == "Policy"
+    page.wait_for_function("!new URLSearchParams(location.search).has('search')")
+    # Its Escape closes it and takes back no move.
+    n = page.evaluate("window.__wb.state.step_index")
+    _open_model_chooser(page)
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#model-mode-dialog", state="hidden")
+    assert page.evaluate("window.__wb.state.step_index") == n
     page.close()
 
 
@@ -231,14 +258,14 @@ def test_the_play_mode_question_describes_the_search_it_would_keep(browser: Any,
     page = _open(browser, f"{static_site}/?model=off&view=us&search=rollout:2:1:1:z2")
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
-    assert page.inner_text("#mode-opponent-rollout-spec") == "its top 2 moves, each played out in 1 sampled world"
+    assert page.text_content("#mode-opponent-rollout-spec") == "its top 2 moves, each played out in 1 sampled world"
     page.click("#mode-choice-us")
     page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout:2:1:1:z2:earlier:own'")
     # Back on the policy, it offers the default spec again.
-    page.select_option("#search-mode-select", "policy")
+    _set_search(page, "policy")
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")
-    assert page.inner_text("#mode-opponent-rollout-spec") == "its top 4 moves, each played out in 32 sampled worlds"
+    assert page.text_content("#mode-opponent-rollout-spec") == "its top 4 moves, each played out in 32 sampled worlds"
     page.close()
 
 
@@ -276,6 +303,7 @@ def test_a_players_view_shows_no_readout_and_no_hints(browser: Any, server: str,
     page.select_option("#analysis-source-select", "local")
     page.wait_for_function(f"[...document.querySelectorAll('#analysis-run-select option')].some(o => o.value === '{RUN}')")
     page.select_option("#analysis-run-select", RUN)
+    _close_model_chooser(page)
     # The USSR (the model) sets up first, by auto-play; then the US -- the player -- is to choose.
     page.wait_for_function("window.__wb.state.decision_context.decision_player === 'US' && window.__wb.liveAnalysis "
                            "&& window.__wb.liveAnalysis.decision_player === 'US' && !!window.__wb.liveAnalysis.policy",

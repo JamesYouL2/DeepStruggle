@@ -27,6 +27,7 @@ web/ui/
 │   │                           # last_turn.ts (what the other side's latest turn did to the map),
 │   │                           # rolls.ts (the latest action round's dice, from the steps),
 │   │                           # record.ts (a game for the stats database: log, tags, summary),
+│   │                           # card_refs.ts (the cards a log line names, made hoverable),
 │   │                           # saved_game.ts (the game kept in the browser, for a reload)
 │   ├── result_dialog.ts        # Game over: the result, how it was played, submit to the stats database
 │   ├── build_info.ts           # the commit the page was built from, the stats endpoint
@@ -134,10 +135,19 @@ web/ui/
      compatibility mouse events after a tap fire a mouseleave elsewhere and would close the card.
 2. **Layout: cards on the left, the board, the HUD rail on the right (`index.html`, `style.css`)**:
    - The top of the page is three blocks: the disclaimer; the technical bar (engine badge, play
-     mode with New Game, the active model with *Change* opening `#model-chooser`, the search select,
-     then the developer's tools: Cancel Action, Debug Tools, Replay Mode, Leaderboard); and the game
-     bar (the tracks and whose decision it is). A fresh open (a link naming no position, replay or
-     view) and every New Game first ask for the play mode (`#mode-dialog`, `main.ts askMode`).
+     mode with New Game, the **model · mode label** (`#btn-model-choose`: the model's name and
+     *Rollout root* / *Policy*, `renderModelModeLabels`) and Show analysis, then the developer's
+     tools: Cancel Action, Debug Tools, Replay Mode, Leaderboard); and the game bar (the tracks and
+     whose decision it is). A fresh open (a link naming no position, replay or view) and every New
+     Game first ask for the play mode (`#mode-dialog`, `main.ts askMode`).
+   - **The model & search section** (`#model-mode-section`): where the model comes from (the
+     source, run / snapshot, Hugging Face repo or file -- `analysis_view.ts` binds them by id) and
+     how it plays (`#mode-opponent`: rollout root or policy). It is one copy in the DOM, moved
+     (`moveModelSection`) into whichever dialog shows it: the label opens it in
+     `#model-mode-dialog` (`openModelMode`; a modal, closed by its button, the backdrop or Escape),
+     and the play-mode question holds it folded in `#mode-model-details`, under a one-line summary
+     of what it says, folded again on every opening. A model picked in either loads at once; how
+     the search radios apply depends on the dialog (*How the model plays a side* below).
    - `.main-content` is a three-column grid: `#cards-sidebar` (the hands panel -- USSR / US /
      Piles / All tabs, the switch unchanged) the full height of the board on the left, the map in
      the middle, and the right rail with the Decision HUD, model analysis / replay readout and
@@ -150,11 +160,13 @@ web/ui/
      touch screen.
    - The *All* tab lists each card's name and where it is -- no era/side line and no hover
      description (the hand tabs keep their tooltip); a click opens the card's text.
-   - The *Piles* tab's Discard and Removed buttons open the pile at a glance (`showPileList`):
-     a column a side (USSR, US, Neutral), one line a card -- Ops and name -- highest Ops first.
-     The text is the hover tooltip, or a tap (it opens under the name). The modal used to list
-     every card's full text, which made a pile hard to scan (Saito shows the card images, in
-     the order they arrived).
+   - The *Piles* tab lists the Discard Pile and Removed from Game in the tab itself
+     (`renderPile`): each card as the hand tabs draw it (`cardItem`: era bar, Ops in the side's
+     colour, number and name, the text on hover), packed -- no gap between the cards
+     (`.card-list-packed`) -- by side (USSR, US, Neutral, as the tabs run), then highest Ops first
+     (`sortPile`). The tab scrolls as a whole, not each pile. A pile's cards carry no
+     `data-card-id`, so the model's probabilities are painted on the hands only. It replaced the
+     Discard / Removed buttons, whose modal had a column a side.
 3. **Active Continuous Effects Panel (`cards_view.ts`)**:
    - `EFFECT_INFO_MAP` describes every persistent continuous-effect and state bit (e.g. *Containment*, *Brezhnev Doctrine*, *Red Scare/Purge*, *Quagmire*, *Bear Trap*, *Flower Power*, *Willy Brandt*, *NORAD*, *NATO*, Space Race bonuses) with side tags (`US`, `USSR`, `Both`, `Neutral`), duration badges (`Turn Only`, `Permanent`, `Conditional`, `Space Perk`), and rule summaries. Add an entry here whenever the engine gains an effect bit.
 4. **Descriptive Branch Choice HUD (`action_hud.ts`)**:
@@ -240,6 +252,14 @@ web/ui/
      change that one click made; a change merged over several clicks, and an Event's label, show
      none. An entry's heading shows the step that started it; in a replay a numbered line opens
      that step.
+   - **A card named in the log shows its text on hover** (`game/card_refs.ts` `linkCardRefs`):
+     every mention -- `Name (#id)`, the headline reveal's `'Name' (#id, n Ops)`, a card move's
+     `Card #id (Name)`, and the bare names of a deal -- is wrapped in `span.log-card[data-card-id]`
+     (by the engine's name or the rules'), and one delegated listener on `#action-log-stream`
+     opens the hand tabs' tooltip (`CardsView.showCardTooltip`: Ops, side, era, text). Nothing
+     else in the line changes, and the lines are the redacted log, so nothing hidden is named.
+     The tooltip opens above the pointer where it would run off the bottom.
+     `tests/web/test_card_refs.py` holds it to a two-turn game's log and to each form.
    - A card chosen while an event resolves (`resolving_card`) is said as what happened to it
      (`eventCardChoice`): discarded or removed, and from where ("USSR discards X from the US hand
      (Aldrich Ames Remix)"), taken back (SALT), played from the discard pile (Star Wars), played
@@ -321,7 +341,7 @@ web/ui/
      with the engine's own die, and drops the move if the position changed meanwhile. With
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
-   - **Search.** The search select is the policy's argmax or the **rollout root** (`search=rollout`
+   - **Search.** The section's search radios (`#mode-opponent`) choose the policy's argmax or the **rollout root** (`search=rollout`
      in the URL, `search=rollout:k:worlds:horizon:rule[:stop][:leaf]` for another spec; the default is the leaderboard's best, 4:32:4:z2 with stop=earlier, leaf=own): the engine's own batch
      (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
@@ -389,14 +409,17 @@ web/ui/
      `RolloutRunner` runs one search at a time, the worker one message at a time (they share one
      engine and one rollout batch), and a request still waiting when a newer one arrives is
      superseded without running.
-   - **How the model plays a side.** The play-mode question (`#mode-dialog`, `askMode`) also asks
-     it (`#mode-opponent`): the rollout root, the strongest player, or the policy -- the search
-     select's two settings, set through `setSearch`. The rollout option describes the spec it
-     would keep (the one in force, else the measured one). A fresh open offers the rollout root
-     unless the link named `search=`; New Game offers the setting in force. Only *Play as US /
+   - **How the model plays a side.** The search radios (`#mode-opponent`, in the model & search
+     section): the rollout root, the strongest player, or the policy, set through `setSearch`.
+     The rollout option describes the spec it would keep (the one in force, else the measured
+     one). In `#model-mode-dialog` a change is the setting at once. In the play-mode question
+     (`#mode-dialog`, `askMode`) it waits for the choice of mode: a fresh open offers the rollout
+     root unless the link named `search=`; New Game offers the setting in force. *Play as US /
      USSR* sets it, without a search of its own (the deal or the view reads the position once);
-     *Developer* leaves the search select alone, and cancelling sets nothing. While the question
-     is open the page's keyboard shortcuts are off, so its Escape does not also take back a move.
+     *Developer* leaves it alone unless it was changed in the question (`searchChoiceTouched`),
+     and cancelling sets nothing. Once either dialog closes the radios say the setting in force
+     again. While either is open the page's keyboard shortcuts are off, so its Escape does not
+     also take back a move.
    - Debug Tools and Replay Mode are developer-only; loading or dropping a replay switches to the
      developer view. Limitation: the `pos=` link token is the full save, so a player view hides
      the other side from the page, not from someone who decodes the link.
@@ -474,9 +497,10 @@ PYTHONPATH=.:build/release .venv/bin/python -m pytest -q tests/web
 | `test_e2e_mobile.py` | in Chromium at 390px with touch: one column with the map first and nothing wider than the screen, the region buttons clear of the zoom buttons and framing their region, a tap showing a non-target country's card and a tap on open map closing it, a badge opening the region's scoring summary with the right rows, and the space pills' next Ops and roll |
 | `test_position_tokens.py` | a `pos=` token means the same position to the page and to Python's zlib |
 | `test_local_server.py` | the local server lists and exports checkpoints, serves replays, and nothing outside its trees |
-| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
-| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen; the play-mode question sets the search for a side (rollout root by default) and leaves it alone for Developer, describes the spec it would keep, and its Escape takes back no move; Show analysis follows the view and the toggle; with a model, the player's own decisions show no readout, no badges and no favourite and are not searched until Show analysis is on, a change of view keeps the search already made, the question starts one search at a time (the runner supersedes a waiting request), a failed search is reported in a player's view, and a change of view drops a move armed for the old auto side |
+| `test_e2e_workbench.py` | in Chromium: a game played by the page, the model readout against Python's `read_policy`/`read_critic`, the live critic lighting the side to move, country probabilities clear of the influence, the cards column left of the map (and stacked when narrow), the Piles tab packed by side then Ops, a log card's tooltip on hover, auto-play + undo, links, a dropped `.onnx`, debug overrides, replay export, and the page on a static server with no API (GitHub Pages) |
+| `test_e2e_player_view.py` | in Chromium, a player's view: the other hand and the deck are one unseen pile on every tab, the other side's deal and face-down headline are not logged (the cards leaving its hand are), its latest turn's countries are marked on the map, its decision is hidden and clicks for it refused, *New Game* and the view select fit a 1366px screen; the play-mode question holds the model & search section folded and sets the search for a side (rollout root by default) and leaves it alone for Developer unless changed there, the model · mode dialog sets it at once and its Escape takes back no move, describes the spec it would keep, and its Escape takes back no move; Show analysis follows the view and the toggle; with a model, the player's own decisions show no readout, no badges and no favourite and are not searched until Show analysis is on, a change of view keeps the search already made, the question starts one search at a time (the runner supersedes a waiting request), a failed search is reported in a player's view, and a change of view drops a move armed for the old auto side |
 | `test_e2e_replay_trace.py`, `test_e2e_space_race.py` | replay trace views (the readout lights the next step's player); the header tracks and the Space Race widget |
+| `test_card_refs.py` | `game/card_refs.ts` under node: on a two-turn game's grouped log and on one line per form of mention, every card named by number is wrapped (with its name where the name precedes it), a deal's names too, a Space Race box is not, and the line is otherwise unchanged |
 | `test_recent_rolls.py` | `game/rolls.ts`, `roll_tray.ts` and the log's dice lines (`game/describe.ts`) under node: the turn's last coup shown in the next headline and gone a half round later, every die of one click, a replay file's snapshot roll, the Olympic sponsor's die without its +2 (tray and log) |
 | `test_value_readings.py` | `trace_view.ts` under node: the decider of each replay position, the calibrated P(US wins), VP ×20, the terminal case, the `ΔP` chip |
 | `test_web_workbench.py` | the bundled rules metadata, the page's DOM, replay snapshots |

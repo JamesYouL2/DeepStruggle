@@ -320,6 +320,14 @@ export const EFFECT_INFO_MAP: Record<string, EffectInfo> = {
   }
 };
 
+const PILE_SIDE_ORDER: Record<CardMetadata["side"], number> = { ussr: 0, us: 1, neutral: 2 };
+
+/** A pile's order: by side (USSR, US, Neutral), then highest Ops first, then by name. */
+export function sortPile(metas: CardMetadata[]): CardMetadata[] {
+  return [...metas].sort((a, b) =>
+    PILE_SIDE_ORDER[a.side] - PILE_SIDE_ORDER[b.side] || b.ops - a.ops || a.name.localeCompare(b.name));
+}
+
 export class CardsView {
   private cardsMeta: Map<number, CardMetadata> = new Map();
   private onCardClick: (cardId: number) => void;
@@ -429,6 +437,10 @@ export class CardsView {
     // Render China Card Box
     this.renderChinaCard(state);
 
+    // The piles, drawn as the hands are
+    this.renderPile("discard-cards-list", state.discard_pile || []);
+    this.renderPile("removed-cards-list", state.removed_pile || []);
+
     // Render All Cards Explorer List
     this.renderAllCardsList(state);
 
@@ -496,36 +508,11 @@ export class CardsView {
     }
 
     cardIds.forEach(id => {
-      const meta = this.cardsMeta.get(id) || {
-        id,
-        name: `Card #${id}`,
-        ops: 0,
-        side: "neutral",
-        age: "early war",
-        description: "",
-        one_time: false
-      };
-
+      const meta = this.metaOf(id);
       const isLegal = isCurrentDecision && legalCards.has(id);
-      const cardEl = document.createElement("div");
-      cardEl.className = `card-item ${meta.side} ${isLegal ? "playable" : ""}`;
+      const cardEl = this.cardItem(meta, isLegal ? "playable" : "");
       // The replay trace paints this card's probability onto it; that needs the id on the node.
       cardEl.setAttribute("data-card-id", id.toString());
-
-      const eraClass = meta.age === "early war" ? "era-early" : (meta.age === "mid war" ? "era-mid" : "era-late");
-
-      cardEl.innerHTML = `
-        <div class="card-item-era-bar ${eraClass}"></div>
-        <div class="card-ops-badge ${meta.side}">
-          ${meta.ops}${meta.one_time ? '<span class="card-star" title="Remove after event">★</span>' : ''}
-        </div>
-        <div class="card-name-single">
-          #${meta.id} ${meta.name}
-        </div>
-      `;
-
-      cardEl.addEventListener("mouseenter", (e) => this.showTooltip(e, meta));
-      cardEl.addEventListener("mouseleave", () => this.hideTooltip());
       cardEl.addEventListener("click", () => {
         if (isLegal || legalCards.size === 0) {
           this.onCardClick(id);
@@ -546,6 +533,57 @@ export class CardsView {
         <div class="card-name-single">Face-down card</div>
       `;
       container.appendChild(el);
+    }
+  }
+
+  /** A card's metadata, or a stand-in for an id the rules do not list. */
+  private metaOf(id: number): CardMetadata {
+    return this.cardsMeta.get(id) || {
+      id,
+      name: `Card #${id}`,
+      ops: 0,
+      side: "neutral",
+      age: "early war",
+      description: "",
+      one_time: false
+    };
+  }
+
+  /** A card's line as the hand tabs draw it -- era bar, Ops in the side's colour, number and name --
+   *  with its text on hover. */
+  private cardItem(meta: CardMetadata, extraClass = ""): HTMLElement {
+    const cardEl = document.createElement("div");
+    cardEl.className = `card-item ${meta.side} ${extraClass}`;
+    const eraClass = meta.age === "early war" ? "era-early" : (meta.age === "mid war" ? "era-mid" : "era-late");
+    cardEl.innerHTML = `
+      <div class="card-item-era-bar ${eraClass}"></div>
+      <div class="card-ops-badge ${meta.side}">
+        ${meta.ops}${meta.one_time ? '<span class="card-star" title="Remove after event">★</span>' : ''}
+      </div>
+      <div class="card-name-single">
+        #${meta.id} ${meta.name}
+      </div>
+    `;
+    cardEl.addEventListener("mouseenter", (e) => this.showTooltip(e, meta));
+    cardEl.addEventListener("mouseleave", () => this.hideTooltip());
+    return cardEl;
+  }
+
+  /**
+   * A pile (the discards, the removed cards) in the Piles tab: each card as the hands draw it,
+   * packed, by side -- USSR, US, Neutral, as the tabs run -- then highest Ops first. No
+   * `data-card-id`: the model's probabilities are painted on the hands, not on a pile.
+   */
+  private renderPile(containerId: string, cardIds: number[]) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = "";
+    if (cardIds.length === 0) {
+      container.innerHTML = `<div class="pile-empty">Empty</div>`;
+      return;
+    }
+    for (const meta of sortPile(cardIds.map(id => this.metaOf(id)))) {
+      container.appendChild(this.cardItem(meta, "pile-card"));
     }
   }
 
@@ -792,77 +830,21 @@ export class CardsView {
 
     this.tooltipEl.classList.remove("hidden");
     const x = Math.min(window.innerWidth - 300, e.clientX + 15);
-    const y = Math.min(window.innerHeight - 200, e.clientY + 15);
+    // Below the pointer, or above it where the card would run off the bottom (the action log).
+    const h = this.tooltipEl.offsetHeight;
+    const y = e.clientY + 15 + h <= window.innerHeight ? e.clientY + 15 : Math.max(8, e.clientY - 15 - h);
     this.tooltipEl.style.left = `${x}px`;
     this.tooltipEl.style.top = `${y}px`;
   }
 
-  public hideTooltip() {
-    this.tooltipEl.classList.add("hidden");
+  /** A card's tooltip by its id (the action log's card names, main.ts). */
+  public showCardTooltip(e: MouseEvent, cardId: number) {
+    const meta = this.cardsMeta.get(cardId);
+    if (meta) this.showTooltip(e, meta);
   }
 
-  /**
-   * A pile (the discards, the removed cards) at a glance: one line a card, in a column for each
-   * side, highest Ops first. The text is a hover away, or a tap on a phone.
-   */
-  public showPileList(title: string, cardIds: number[]) {
-    const modal = document.getElementById("modal-container");
-    const titleEl = document.getElementById("modal-title");
-    const bodyEl = document.getElementById("modal-body");
-    if (!modal || !titleEl || !bodyEl) return;
-
-    modal.querySelector(".modal-content")?.classList.remove("modal-lg");
-    titleEl.textContent = `${title} (${cardIds.length} cards)`;
-    bodyEl.innerHTML = "";
-
-    if (cardIds.length === 0) {
-      bodyEl.innerHTML = "<div style=\"color: var(--text-muted); text-align: center; padding: 20px;\">No cards in this pile</div>";
-      modal.classList.remove("hidden");
-      return;
-    }
-
-    const metas = cardIds
-      .map(id => this.cardsMeta.get(id))
-      .filter((m): m is CardMetadata => m !== undefined)
-      .sort((a, b) => b.ops - a.ops || a.name.localeCompare(b.name));
-
-    const columns = document.createElement("div");
-    columns.className = "pile-columns";
-    const sides: Array<[CardMetadata["side"], string]> = [["ussr", "USSR"], ["us", "US"], ["neutral", "Neutral"]];
-    for (const [side, label] of sides) {
-      const cards = metas.filter(m => m.side === side);
-      const col = document.createElement("div");
-      col.className = "pile-column";
-      col.innerHTML = `<div class="pile-column-head ${side}">${label} <span class="pile-column-count">${cards.length}</span></div>`;
-      for (const meta of cards) {
-        const row = document.createElement("div");
-        row.className = "pile-row";
-        row.innerHTML = `
-          <span class="card-ops-badge ${meta.side}">${meta.ops}</span>
-          <span class="pile-row-name">${meta.name}${meta.one_time ? '<span class="card-star" title="Remove after event">★</span>' : ""}</span>
-        `;
-        row.addEventListener("mouseenter", (e) => this.showTooltip(e, meta));
-        row.addEventListener("mouseleave", () => this.hideTooltip());
-        // Touch has no hover: a tap opens the card's text under its name, and a second closes it.
-        row.addEventListener("click", () => {
-          this.hideTooltip();   // a tap is also a hover: the text would show twice
-          const open = row.nextElementSibling?.classList.contains("pile-row-text");
-          if (open) {
-            row.nextElementSibling!.remove();
-          } else {
-            const text = document.createElement("div");
-            text.className = "pile-row-text";
-            text.textContent = meta.description;
-            row.after(text);
-          }
-        });
-        col.appendChild(row);
-      }
-      columns.appendChild(col);
-    }
-    bodyEl.appendChild(columns);
-
-    modal.classList.remove("hidden");
+  public hideTooltip() {
+    this.tooltipEl.classList.add("hidden");
   }
 
   public showPileModal(title: string, cardIds: number[]) {

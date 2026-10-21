@@ -146,9 +146,11 @@ export class AnalysisPanel {
   private body = el<HTMLElement>("analysis-body");
   private badge = el<HTMLElement>("analysis-status");
   private info = el<HTMLElement>("analysis-model-info");
-  /** The technical bar's one-line state of the model: off, loading, error -- or nothing, when
+  /** The model section's one-line state of the model: off, loading, error -- or nothing, when
    *  `info` names the loaded model beside it. */
   private activeStatus = el<HTMLElement>("model-active-status");
+  /** The model in a few words, for the technical bar's model · mode label (main.ts). */
+  public onModelLabel: (text: string, status: "off" | "loading" | "ready" | "error") => void = () => {};
 
   constructor(
     private onPick: (pick: ModelPick | null) => void,
@@ -485,6 +487,7 @@ export class AnalysisPanel {
       this.info.classList.remove("hidden");
       this.activeStatus.textContent = "";
       this.activeStatus.className = "model-active-status hidden";
+      this.onModelLabel(l.label, this.status);
       return;
     }
     this.info.innerHTML = "";
@@ -496,6 +499,7 @@ export class AnalysisPanel {
     this.activeStatus.textContent = text;
     this.activeStatus.className = `model-active-status ${this.status}`;
     this.activeStatus.title = this.status === "error" ? this.error ?? "" : "";
+    this.onModelLabel(text, this.status);
   }
 
   private renderBody(state: GameState | null = null): void {
