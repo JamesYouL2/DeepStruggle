@@ -1,0 +1,111 @@
+# Turn 1 headlines over random deals (tools/scripts/setup_deal_matrix.py headlines): every listed
+# USSR setup against every listed US setup on the worlds where one card was dealt to one side, the
+# headline phase played greedy by one network, no playouts. The rows carry the world, so they join
+# the setup-deal-matrix --random-deals runs of the same seed (their outcomes):
+#
+#   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f runners=10 \
+#     -f args="--card 'East European Unrest' --holder us --ussr EG4/Pol4/Yug1 Pol3/Yug3 --us WG4/It4/Ir2"
+#   gh run download <run-id> -n setup-headline-probe-<run-id> -D data/reports/t1_openings/eeu_a13
+name: setup-headline-probe
+
+on:
+  # The push trigger only registers the workflow from this branch (a dispatch-only workflow that is
+  # not on the default branch cannot be dispatched); every job is skipped on it.
+  push:
+    branches: [exp/setup-deal-matrix]
+    paths: [.github/workflows/setup_headline_probe.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model in the Hugging Face repo (.onnx or .pt); the default is A13+R48's SWA"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.onnx"
+      worlds:
+        description: "Worlds dealt (only those where the card went to the holder are played)"
+        default: "200000"
+      runners:
+        default: "10"
+      args:
+        description: "--ussr ... --us ... (required), --card, --holder, --seed"
+        default: ""
+      hf_repo:
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  MODEL: ${{ inputs.model }}
+  WORLDS: ${{ inputs.worlds }}
+  RUNNERS: ${{ inputs.runners }}
+  ARGS: ${{ inputs.args }}
+  HF_REPO: ${{ inputs.hf_repo }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Fetch the model
+        run: |
+          mkdir -p models
+          curl -sSfL --retry 3 -o "models/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum "models/$(basename "$MODEL")"
+      - name: Headlines (part ${{ matrix.part }})
+        run: |
+          mkdir -p out
+          eval "set -- $ARGS"
+          python tools/scripts/setup_deal_matrix.py headlines --model "models/$(basename "$MODEL")" \
+            --worlds "$WORLDS" --part "${{ matrix.part }}/$RUNNERS" \
+            --out "out/matrix-${{ matrix.part }}.jsonl.gz" "$@"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-headline-probe-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  pool:
+    needs: [plan, run]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: setup-headline-probe-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool
+        run: |
+          mkdir -p report
+          python tools/scripts/setup_deal_matrix.py pool --parts parts/matrix-*.jsonl.gz --expect "$RUNNERS" \
+            --out report/headlines.jsonl.gz
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL  worlds: $WORLDS  runners: $RUNNERS  args: $ARGS"
+            echo "parts: $(cat report/headlines.jsonl.gz.parts.json)"
+          } > report/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup-headline-probe-${{ github.run_id }}
+          path: report/
+          retention-days: 90

@@ -184,3 +184,29 @@ def test_the_report_splits_random_deals_by_where_a_scoring_card_went(tmp_path) -
     assert abs(gain["us"] - 0.2) < 0.06 and abs(gain["ussr"]) < 0.06 and abs(gain["deck"]) < 0.06
     text = open(out).read()
     assert "over random deals" in text and "### Middle East Scoring" in text and "network" not in text
+
+
+def test_headlines_keep_the_card_holders_worlds_and_name_both_headlines(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sdm, "load_policy", lambda path: (_first_legal, 0))
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"not a model")
+    ussr, us = ["Pol3/Yug3", "EG4/Pol4/Yug1"], ["WG4/It4/Ir2", "WG3/Fr3/It2/Ir2"]
+    card = "East European Unrest"
+    whole = str(tmp_path / "whole.jsonl.gz")
+    sdm.headlines(str(model), 40, "1/1", 0, 6, whole, ussr, us, card, "us")
+    parts = [str(tmp_path / f"matrix-{k}.jsonl.gz") for k in (1, 2)]
+    for k, p in enumerate(parts, 1):
+        sdm.headlines(str(model), 40, f"{k}/2", 0, 1536, p, ussr, us, card, "us")
+    pooled = str(tmp_path / "pooled.jsonl.gz")
+    sdm.pool(parts, pooled, expect=2)
+    a = sorted(read_jsonl([whole]), key=lambda r: r["world"])
+    assert a == sorted(read_jsonl([pooled]), key=lambda r: r["world"])
+    cid = sdm.card_ids()[card]
+    held = [w for w in range(40) if cid in sdm.hand(sdm.dealt(sdm.world_deal(0, w)), ts.Player.US)]
+    assert [r["world"] for r in a] == held and held
+    for r in a:
+        assert len(r["us_hl"]) == len(r["ussr_hl"]) == len(r["targets"]) == 4
+        assert all(c in r["us_hand"] for c in r["us_hl"]) and all(c in r["ussr_hand"] for c in r["ussr_hl"])
+        for c, tg in zip(r["us_hl"], r["targets"]):
+            assert (len(tg) == 3) == (c == cid)  # Early War: one Influence from three countries
+    assert json.load(open(pooled + ".meta.json"))["stage"] == "headlines"

@@ -16,6 +16,10 @@ the matrix by where each scoring card was dealt.
 * `run` -- this part's share of the worlds (`--part k/N`, for CI runners); `--ussr` / `--us`
   choose the setups (default: all listed below). On the fixed deal, the network's own greedy
   setups (as USSR, and as US against each USSR setup) go in the metadata.
+* `headlines` -- over random deals, each cell's greedy turn-1 headlines (no playouts) on the
+  worlds where a card (`--card`, default East European Unrest) was dealt to one side (`--holder`),
+  and the countries the card's event targeted; rows carry the world, so they join `run` rows of
+  the same seed.
 * `pool` -- merge the parts.
 * `report` -- the US score of every cell, each side's best reply to each setup, the score against
   the corpus's human setups, the equilibrium of the matrix game and paired contrasts; over random
@@ -381,6 +385,88 @@ def run(model: str, worlds: int, part: str, seed: int, deal_seed: int, swaps: Se
     return 0
 
 
+def greedy_headlines(states: List[ts.GameState], logits_fn: LogitsFn, feats: int,
+                     card: int) -> Tuple[List[int], List[int], List[List[int]]]:
+    """Play each state's turn-1 headline phase greedily: each state's US and USSR headline, read
+    from the choices themselves (the engine clears the pair once both resolve, which a USSR card
+    chosen second and resolving without a decision does inside one step), and the countries the
+    `card` event targeted when either side headlined it."""
+    us, ussr = [0] * len(states), [0] * len(states)
+    targets: List[List[int]] = [[] for _ in states]
+    live = list(range(len(states)))
+    for _ in range(200):
+        live = [k for k in live if states[k].current_phase == ts.Phase.HEADLINE]
+        if not live:
+            return us, ussr, targets
+        obs = np.stack([ts.extract_observation_features(states[k], states[k].ctx().decision_player, feats)
+                        for k in live])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(states[k])) for k in live])
+        for k, a in zip(live, np.asarray(logits_fn(obs, masks)).argmax(axis=1)):
+            st, a = states[k], int(a)
+            c = st.ctx()
+            if (c.decision_type == ts.DecisionType.SELECT_CARD and st.headline_stage == 0
+                    and c.resolving_card == 0):
+                (us if c.decision_player == ts.Player.US else ussr)[k] = ActionEncoder.decode(st, a).primary_id
+            elif c.resolving_card == card and NODE <= a < NODE + N_COUNTRIES:
+                targets[k].append(a - NODE)
+            states[k] = apply_move(st, a)
+    raise RuntimeError(f"{len(live)} headline phases still unfinished after 200 decisions")
+
+
+def headlines(model: str, worlds: int, part: str, seed: int, chunk: int, out: str,
+              ussr_names: Sequence[str], us_names: Sequence[str], card: str, holder: str) -> int:
+    """Over random deals, every cell's greedy turn-1 headlines on the worlds where `card` was dealt
+    to `holder`, and the countries the card's event targeted when it was headlined. Rows carry
+    the world, so they join the `run --random-deals` rows of the same seed."""
+    k, n = (int(x) for x in part.split("/"))
+    ids = card_ids()
+    if card not in ids:
+        raise ValueError(f"unknown card {card!r}")
+    cid, side = ids[card], ts.Player.US if holder == "us" else ts.Player.USSR
+    base = dealt(world_deal(seed, 0))
+    ussr = [parse_setup(nm, base, ts.Player.USSR) for nm in ussr_names]
+    us = [parse_setup(nm, base, ts.Player.US) for nm in us_names]
+    n_cells = len(ussr) * len(us)
+    logits_fn, feats = load_policy(model)
+    t0 = time.time()
+    mine = [w for w in range(worlds) if w % n == k - 1]
+    step = max(1, chunk // n_cells)
+    res: List[Dict[str, Any]] = []
+    for lo in range(0, len(mine), step):
+        rows: List[Dict[str, Any]] = []
+        starts: List[ts.GameState] = []
+        for w in mine[lo:lo + step]:
+            d = world_deal(seed, w)
+            b0 = dealt(d)
+            if cid not in hand(b0, side):
+                continue
+            r = world_rng(d, seed, w)
+            for a in ussr:
+                for c in us:
+                    s = cell_start(b0, a, c)
+                    s.rng_state = r
+                    starts.append(s)
+            rows.append({"world": w, "deal": d, "ussr_hand": hand(b0, ts.Player.USSR), "us_hand": hand(b0, ts.Player.US)})
+        if not rows:
+            continue
+        us_hl, ussr_hl, tg = greedy_headlines(starts, logits_fn, feats, cid)
+        for b, row in enumerate(rows):
+            cells = slice(b * n_cells, (b + 1) * n_cells)
+            row.update({"us_hl": us_hl[cells], "ussr_hl": ussr_hl[cells], "targets": tg[cells]})
+            res.append(row)
+        print(f"[{min(lo + step, len(mine))}/{len(mine)} worlds] {len(res)} with {card} in the {holder.upper()} hand, "
+              f"{time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    write_jsonl(out, res)
+    with open(out + ".meta.json", "w") as f:
+        json.dump({"schema": 1, "stage": "headlines", "model": os.path.basename(model),
+                   "model_sha256": sha256_file(model), "deal": RANDOM, "swaps": [], "hands": None,
+                   "ussr": list(ussr_names), "us": list(us_names), "net": None, "card": card,
+                   "holder": holder, "worlds": worlds, "part": part, "seed": seed, "rows": len(res),
+                   "wall_s": round(time.time() - t0, 1)}, f, indent=1)
+    print(f"{len(res)} worlds, {len(res) * n_cells} headline phases in {time.time() - t0:.0f}s", file=sys.stderr)
+    return 0
+
+
 def pool(parts: Sequence[str], out: str, expect: int = 0) -> int:
     """Merge the parts (`matrix-<k>.jsonl.gz`, each with its `.meta.json`); with `expect`, name
     the parts that are missing in `<out>.parts.json`."""
@@ -706,6 +792,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--random-deals", action="store_true",
                    help="every world deals afresh (--deal and --swap unused); rows record both hands")
     r.add_argument("--out", required=True)
+    h = sub.add_parser("headlines")
+    h.add_argument("--model", required=True, help="a .pt checkpoint or its .onnx export")
+    h.add_argument("--worlds", type=int, default=200000)
+    h.add_argument("--part", default="1/1")
+    h.add_argument("--seed", type=int, default=0)
+    h.add_argument("--chunk", type=int, default=1536, help="headline phases per batch")
+    h.add_argument("--ussr", nargs="+", required=True, help="USSR setups by name")
+    h.add_argument("--us", nargs="+", required=True, help="US setups by name")
+    h.add_argument("--card", default="East European Unrest", help="keep the worlds where this card was dealt ...")
+    h.add_argument("--holder", choices=("us", "ussr"), default="us", help="... to this side")
+    h.add_argument("--out", required=True)
     q = sub.add_parser("pool")
     q.add_argument("--parts", nargs="+", required=True)
     q.add_argument("--expect", type=int, default=0)
@@ -719,6 +816,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return deal(a.deal, a.swap)
     if a.cmd == "run":
         return run(a.model, a.worlds, a.part, a.seed, a.deal, a.swap, a.chunk, a.out, a.ussr, a.us, a.random_deals)
+    if a.cmd == "headlines":
+        return headlines(a.model, a.worlds, a.part, a.seed, a.chunk, a.out, a.ussr, a.us, a.card, a.holder)
     if a.cmd == "pool":
         return pool(a.parts, a.out, a.expect)
     return report(a.input, a.out, a.bootstrap)
