@@ -169,9 +169,13 @@ def test_the_ce_metrics_are_registered_for_logging() -> None:
     assert '"search_ce"' not in block.replace('"search_ce"', "", 1), (
         "the registration appears more than once; this test's teeth check is unreliable")
 
-    assert "if search_ce_coef > 0.0" in block, (
+    assert "if float(trainer.search_ce_coef) > 0.0" in block, (
         "the CE metrics must be registered only when the term is on; logged unconditionally they "
         "are a flat zero line that reads as 'present and converged'")
+    # The trainer's coefficient, not the argument: --active-search-spec sets the trainer's from
+    # --active-search-ce-coef with --search-ce-coef at 0, and P36's active-search runs logged no CE.
+    assert "if search_ce_coef > 0.0" not in block, (
+        "the registration reads the --search-ce-coef argument, which an active-search run leaves at 0")
 
 
 def test_the_ppo_ratio_cannot_overflow_to_nan() -> None:
