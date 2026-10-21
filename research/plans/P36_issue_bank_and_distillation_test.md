@@ -405,3 +405,16 @@ pull is not yet measured. Candidates: the CE is averaged over the few searched r
 4,096), so each such row carries ~270x a normal row's policy gradient, as R39 did at 1/256 (level there, as a
 branch); the searched snapshot lags the learner by up to 10M while it changes fastest; the root's moves
 played as environment take those rows out of the policy gradient. The plan reads it again at 800M and 2,000M.
+
+**Slot 1 at 800M (2026-10-21): still behind, the gap closing.** SWAs of 720–800M, the same protocol
+(`data/reports/p36_slot1_800M_*`):
+
+| | 400M | 800M |
+|:---|---:|---:|
+| raw, slot 1 against the heads run | 39.8% | **42.7% ± 1.1** (US 41.9 / USSR 42.5) |
+| the heads run's own bar (US / USSR) | 45.8 / 53.0 | 47.9 / 51.6 |
+| raw, per seat over the bar | −4.6 / −15.7 | **−6.0 / −9.1** |
+| both under the corrected keyed root | 38.5% | **43.0% ± 1.1** (US 43.7 / USSR 41.4) |
+
+About −50 Elo at 800M against −70/−80 at 400M: behind in both seats, closing by ~3–4.5 points a 400M. The
+plan's decision point is 2,000M (on past it only if ahead).
