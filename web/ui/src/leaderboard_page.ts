@@ -7,7 +7,13 @@
  *
  * A second tab lists the architecture and recipe codes the players' names are written in, with each
  * code's description and flags, read from research/run_codes.json by the same fit (`codes`).
+ *
+ * The network that is the Hugging Face repo's default model (its models.json, set by
+ * `tools/publish_hf.py default`) is tagged, read from the repo when the page opens rather than
+ * fitted in, so the tag follows the repo without a rebuild.
  */
+
+import { hfCatalog } from "./analysis/hf_catalog";
 
 interface Seat { w: number; l: number; d: number }
 
@@ -114,6 +120,8 @@ function defaultEpoch(epochs: Record<string, { pairs: unknown[] }>): string {
   return played.length ? played[played.length - 1] : names[names.length - 1];
 }
 
+const HF_TAG = `<span class="lb-tag hf" title="The default model on Hugging Face: the workbench opens it when a link names no model">HF DEFAULT</span>`;
+
 const KIND_LABEL: Record<string, string> ={ policy: "", gumbel: "Gumbel", rollout: "rollout", search: "PUCT", bot: "bot" };
 
 class LeaderboardPage {
@@ -123,6 +131,8 @@ class LeaderboardPage {
   private selected: string | null = null;
   private tab: Tab = "ratings";
   private allCodes = false;
+  /** The Hugging Face repo's default model (an .onnx path), once read; null until then or if none. */
+  private hfDefault: string | null = null;
 
   constructor(private readonly data: LeaderboardData) {
     const params = new URLSearchParams(location.search);
@@ -173,6 +183,26 @@ class LeaderboardPage {
       this.render();
     });
     this.render();
+    void this.loadHfDefault();
+  }
+
+  /** The repo's default model, read after the first render: the table does not wait for Hugging
+   *  Face, and without it (offline, the repo unreachable) the page simply has no tag. */
+  private async loadHfDefault(): Promise<void> {
+    try {
+      this.hfDefault = (await hfCatalog(this.data.hf_repo, "main")).defaultModel;
+    } catch (e) {
+      console.warn(`leaderboard: the Hugging Face default model could not be read: ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    this.render();
+  }
+
+  /** Whether `pid` plays the network that is the repo's default model (its .onnx beside the .pt). */
+  private isHfDefault(pid: string): boolean {
+    const network = this.data.players[pid]?.network;
+    const hf = network ? this.data.networks[network]?.hf : null;
+    return !!hf && !!this.hfDefault && hf.replace(/\.pt$/, ".onnx") === this.hfDefault;
   }
 
   private get ep(): Epoch { return this.data.epochs[this.epoch]; }
@@ -226,7 +256,7 @@ class LeaderboardPage {
       const pct = r.games ? (100 * r.score / r.games).toFixed(1) + "%" : "";
       return `<tr data-player="${esc(r.player)}" class="${r.player === this.selected ? "selected" : ""}">
         <td class="num lb-dim">${k + 1}</td>
-        <td><span class="lb-player">${esc(r.player)}</span>${r.main ? `<span class="lb-tag main">MAIN</span>` : ""}${kind ? `<span class="lb-tag kind">${esc(kind)}</span>` : ""}</td>
+        <td><span class="lb-player">${esc(r.player)}</span>${r.main ? `<span class="lb-tag main">MAIN</span>` : ""}${kind ? `<span class="lb-tag kind">${esc(kind)}</span>` : ""}${this.isHfDefault(r.player) ? HF_TAG : ""}</td>
         <td class="num lb-elo">${r.elo.toFixed(0)}</td>
         <td class="num lb-dim lb-hide-narrow">${r.player === this.ep.anchor ? "anchor" : r.se.toFixed(0)}</td>
         <td class="num lb-hide-narrow">${r.games.toLocaleString("en-US")}</td>
@@ -268,6 +298,7 @@ class LeaderboardPage {
     box.innerHTML = `
       <h2>${esc(pid)}</h2>
       <p>${desc}${old}</p>
+      ${this.isHfDefault(pid) ? `<p>${HF_TAG} Its network is the default model on Hugging Face: the workbench opens it when a link names no model.</p>` : ""}
       ${codeLine}
       ${links ? `<p class="lb-links">${links}</p>` : ""}
       <p>Elo <b>${rating.elo.toFixed(0)}</b>${pid === this.ep.anchor ? " (the anchor)" : ` ± ${rating.se.toFixed(0)}`} · ${rating.games.toLocaleString("en-US")} games against ${rating.opponents} opponents, ${rating.main_opponents} of them main players.</p>
@@ -342,7 +373,10 @@ class LeaderboardPage {
     const records = `https://github.com/${esc(d.github)}/blob/${esc(d.commit ?? "main")}/leaderboard/matches/${esc(this.epoch)}.jsonl`;
     $("lb-footer").innerHTML = `Fitted from <a href="${records}">the match records</a>`
       + (d.commit ? ` at commit <code>${esc(d.commit.slice(0, 10))}</code>` : "")
-      + ` by <code>tools/leaderboard.py</code>. Weights: <a href="https://huggingface.co/${esc(d.hf_repo)}">${esc(d.hf_repo)}</a>.`;
+      + ` by <code>tools/leaderboard.py</code>. Weights: <a href="https://huggingface.co/${esc(d.hf_repo)}">${esc(d.hf_repo)}</a>`
+      + (this.hfDefault ? `, default model <code>${esc(this.hfDefault)}</code>`
+        + (Object.values(d.networks).some(n => n.hf?.replace(/\.pt$/, ".onnx") === this.hfDefault) ? "" : " (not on the board)") : "")
+      + ".";
   }
 
   private render(): void {

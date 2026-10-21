@@ -11,6 +11,7 @@
   --ussr-red-light: #F87171;
   --gold: #F59E0B;
   --accent: #A78BFA;
+  --hf: #34D399;
   --danger: #EF4444;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -89,6 +90,7 @@ a:hover { text-decoration: underline; }
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; vertical-align: 1px; }
 .lb-tag.main { background: rgba(245, 158, 11, 0.18); color: var(--gold); }
 .lb-tag.kind { background: rgba(167, 139, 250, 0.18); color: var(--accent); }
+.lb-tag.hf { background: rgba(52, 211, 153, 0.16); color: var(--hf); }
 
 .lb-detail { margin-top: 18px; padding: 14px 16px; background: var(--bg-panel-solid);
   border: 1px solid var(--border-color); border-radius: 6px; }

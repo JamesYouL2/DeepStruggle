@@ -687,6 +687,57 @@ def test_the_leaderboard_page_filters_one_fit(browser: Any, static_site: str) ->
     assert not errors
 
 
+def test_the_leaderboard_tags_the_hugging_face_default_model(browser: Any, static_site: str) -> None:
+    """The players of the network the repo names as its default model (models.json, read when the
+    page opens) carry the HF DEFAULT tag, and only they; a default not on the board tags nothing and
+    the footer says so; a repo the page cannot read tags nothing and breaks nothing."""
+    with open(os.path.join(DIST, "leaderboard.json")) as f:
+        data = json.load(f)
+    with open(os.path.join(REPO, "leaderboard", "epochs.json")) as f:
+        names = list(json.load(f))
+    epoch = [n for n in names if data["epochs"][n]["pairs"]][-1]
+    rated = {r["player"] for r in data["epochs"][epoch]["ratings"]}
+    net = next(n for n, v in data["networks"].items()
+               if v["hf"] and any(p in rated and pl["network"] == n for p, pl in data["players"].items()))
+    onnx = data["networks"][net]["hf"].removesuffix(".pt") + ".onnx"
+    expected = {p for p in rated if data["players"][p]["network"] == net}
+
+    def opened(default: Optional[str], status: int = 200) -> Any:
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        errors: List[str] = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        body = json.dumps({"schema": 1, "default": default, "models": []})
+        page.route("https://huggingface.co/mihaild/deepstruggle/resolve/main/models.json",
+                   lambda route: route.fulfill(status=status, content_type="application/json", body=body))
+        page.goto(static_site + f"/leaderboard.html?epoch={epoch}&view=all")
+        page.wait_for_selector("#lb-body tr")
+        page.wait_for_function("document.getElementById('lb-footer').textContent.includes('Weights')")
+        page.errors = errors  # type: ignore[attr-defined]
+        return page
+
+    page = opened(onnx)
+    page.wait_for_selector("#lb-body .lb-tag.hf")
+    tagged = set(page.eval_on_selector_all("#lb-body tr:has(.lb-tag.hf)", "rs => rs.map(r => r.dataset.player)"))
+    assert tagged == expected
+    assert onnx in page.inner_text("#lb-footer") and "not on the board" not in page.inner_text("#lb-footer")
+    page.click(f"#lb-body tr[data-player='{sorted(expected)[0]}']")
+    assert "default model on Hugging Face" in page.inner_text("#lb-detail")
+    assert not page.errors
+    page.close()
+
+    page = opened("_models/not-registered.onnx")
+    page.wait_for_function("document.getElementById('lb-footer').textContent.includes('not on the board')")
+    assert page.eval_on_selector_all("#lb-body .lb-tag.hf", "ts => ts.length") == 0
+    assert not page.errors
+    page.close()
+
+    page = opened(None, status=500)
+    assert page.eval_on_selector_all("#lb-body .lb-tag.hf", "ts => ts.length") == 0
+    assert "default model" not in page.inner_text("#lb-footer")
+    assert not page.errors
+    page.close()
+
+
 def test_a_downloaded_model_is_kept_for_the_next_visit(browser: Any, static_site: str, onnx_bytes: bytes) -> None:
     """Reopening the page loads the same file from the browser, not Hugging Face -- but a file
     the repo has since replaced (another sha256 under the same name) is downloaded again."""

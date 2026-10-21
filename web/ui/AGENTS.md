@@ -31,7 +31,9 @@ web/ui/
 │   │                           # saved_game.ts (the game kept in the browser, for a reload)
 │   ├── result_dialog.ts        # Game over: the result, how it was played, submit to the stats database
 │   ├── build_info.ts           # the commit the page was built from, the stats endpoint
-│   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), onnx_meta.ts,
+│   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), hf_catalog.ts (the
+│   │                           # Hugging Face repo's catalogue and default model, no onnxruntime),
+│   │                           # onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen),
 │   │                           # rollout.ts / rollout_runner.ts / rollout_worker.ts (the rollout root
@@ -53,7 +55,9 @@ web/ui/
 │   ├── leaderboard_page.ts     # The leaderboard: views (main / + lineages / all) filter one fit,
 │   │                           # head-to-head on click, links to reports, weights and the workbench
 │   │                           # (a player's own report; a search never shows its network's greedy one);
-│   │                           # opens on the newest epoch with games played (?epoch= names another)
+│   │                           # opens on the newest epoch with games played (?epoch= names another);
+│   │                           # tags HF DEFAULT on the players of the network that is the repo's
+│   │                           # default model, read live from models.json (hf_catalog.ts) after render
 │   └── types.ts                # TypeScript interface mirrors of engine GameState and MicroAction
 ├── public/engine/              # ts_engine.mjs + .wasm, not committed (tools/scripts/build_web.sh)
 ├── public/leaderboard.json     # fitted from leaderboard/ by build_web.sh (tools/leaderboard.py fit), not committed
@@ -288,7 +292,8 @@ web/ui/
      the same `extract_observation_features` Python calls). `HEADLINE_REVEAL`, E8's default, has no
      width, so a base-layout observation handed to such a model would run and misread Space Race
      box 4's headline; `tests/web/test_wasm_engine.py` holds each feature set's view to Python's.
-   - **The repo's catalogue (`hfCatalog`, `analysis/model.ts`) is one request**: `models.json`
+   - **The repo's catalogue (`hfCatalog`, `analysis/hf_catalog.ts`, re-exported by `model.ts`) is one
+     request**: `models.json`
      at the repo root, written by `tools/publish_hf.py` on every publish (each `.onnx` with its
      commit date, sha256 and size, and the default model). A repo without one is listed by
      `listHfModels`: the tree *without* `expand` (1,000 entries a page, against 50 with it), then
