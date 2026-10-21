@@ -205,7 +205,7 @@ def test_the_play_mode_question_sets_how_the_model_plays_a_side(browser: Any, st
     page.wait_for_selector("#mode-dialog", state="hidden")
     assert _search(page) == "rollout"
     assert page.inner_text("#model-mode-label-mode") == "Rollout root"
-    page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout'")
+    page.wait_for_function("new URLSearchParams(location.search).get('search') === 'rollout:4:32:4:z2:earlier:own:keyed:aligned:box4'")
     # New Game offers the setting in force, folded again; the policy turns the search off.
     page.click("#btn-new-game")
     page.wait_for_selector("#mode-dialog:not(.hidden)")

@@ -57,7 +57,8 @@ export function sourceLabel(s: ModelSource): string {
 
 // The repo's catalogue lives in hf_catalog.ts (no onnxruntime there, for the leaderboard page).
 export {
-  hfFileUrl, DEFAULT_HF_REPO, DEFAULT_HF_REVISION, listHfModels, hfCatalog, groupHfModels, fetchHfDefault,
+  hfFileUrl, DEFAULT_HF_REPO, DEFAULT_HF_REVISION, listHfModels, hfCatalog, defaultHfCatalog, groupHfModels,
+  fetchHfDefault,
 } from "./hf_catalog";
 export type { HfModelFile, HfCatalog, HfModelGroup } from "./hf_catalog";
 

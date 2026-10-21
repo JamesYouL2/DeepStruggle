@@ -804,6 +804,24 @@ body {
 .mode-opponent-option { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.4; cursor: pointer; }
 .mode-opponent-option b { color: var(--text-main); }
 .mode-opponent-option input { margin-top: 2px; }
+/* The rollout root's spec, folded under the radios (main.ts searchSettingsChanged). */
+.search-settings { font-size: 11px; color: var(--text-muted); }
+.search-settings summary { cursor: pointer; }
+.search-settings-code { margin-left: 6px; font-size: 10px; color: var(--text-dim); word-break: break-all; }
+.search-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 12px;
+  margin: 8px 0 6px;
+}
+.search-settings-grid label { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.search-settings-grid label.ss-flag { justify-content: flex-start; }
+.search-settings-grid input[type=number], .search-settings-grid input[type=text], .search-settings-grid select {
+  width: 84px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color);
+  border-radius: 4px; padding: 2px 4px; font-size: 11px;
+}
+.search-settings-foot { display: flex; align-items: center; gap: 8px; }
+.search-settings-error { color: var(--ussr-red-light); }
 /* The play-mode question's model & search, folded under a one-line summary. */
 .mode-model-details {
   border: 1px solid var(--border-color);

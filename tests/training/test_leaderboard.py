@@ -8,17 +8,18 @@ import math
 import pathlib
 import subprocess
 import sys
-from typing import Dict, List, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 import pytest
+from huggingface_hub.hf_api import RepoFile
 
 import tools.publish_hf as publish
 from tools.lib import engine_behaviour
 from tools.lib import leaderboard as lb
 from tools.lib.player_agent import search_spec_config
 from tools.lib.player_spec import (Bot, Gumbel, Policy, PlayerSpecError, Rollout, Search, load_spec,
-                                   parse_player_id, player_id, spec_from_dict, spec_to_dict)
+                                   parse_player_id, player_id, spec_from_dict, spec_to_dict, workbench_search)
 from ai.search.rollout_root import rollout_spec_config
 from tools.leaderboard_play import plan_pairs
 
@@ -573,3 +574,56 @@ def test_the_aligned_horizon_is_spelled_in_the_id_and_the_agent_string() -> None
     agent = load_spec(spec, "m.pt")
     assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned:box4"
     assert rollout_spec_config(agent)[1].box4
+
+
+def test_the_workbench_plays_a_player_as_its_search_spelled_out() -> None:
+    """`workbench_search` writes the web workbench's `search=` value with every field spelled out: the
+    workbench's defaults for a field left out are the measured root's, not this module's. What it
+    cannot run is None."""
+    assert workbench_search(Policy()) == "policy"
+    assert workbench_search(Policy(temperature=0.5)) is None
+    assert workbench_search(Rollout()) == "rollout:4:16:4:z2:boundaries:mover"
+    assert workbench_search(Rollout(worlds=32, stop="earlier", leaf="own", chance="keyed", aligned=True,
+                                    box4=True)) == "rollout:4:32:4:z2:earlier:own:keyed:aligned:box4"
+    assert workbench_search(Rollout(belief=512, rule="kl1.5")) == "rollout:4:16:4:kl1.5:boundaries:mover:belief512"
+    assert workbench_search(Rollout(leaf_net="E7-A1-R1-S44@1M")) is None
+    assert workbench_search(Gumbel()) is None and workbench_search(Search()) is None and workbench_search(Bot()) is None
+
+
+class _FakeHub:
+    """The calls `build_manifest` makes, over a repo holding `files` and `manifest` as its models.json."""
+
+    def __init__(self, tmp: pathlib.Path, files: List[str], manifest: Optional[Dict[str, Any]]) -> None:
+        self.tmp, self.files, self.manifest = tmp, files, manifest
+
+    def list_repo_tree(self, repo: str, recursive: bool) -> List[RepoFile]:
+        return [RepoFile(path=f, size=1, oid="o", lfs=None, last_commit=None, security=None) for f in self.files]
+
+    def get_paths_info(self, repo: str, paths: List[str], expand: bool) -> List[RepoFile]:
+        return []
+
+    def file_exists(self, repo: str, name: str) -> bool:
+        return name == publish.MANIFEST and self.manifest is not None
+
+    def hf_hub_download(self, repo: str, name: str) -> str:
+        out = self.tmp / name
+        out.write_text(json.dumps(self.manifest), encoding="utf-8")
+        return str(out)
+
+
+def test_the_default_search_is_kept_until_a_default_names_one(tmp_path: pathlib.Path) -> None:
+    """models.json's default_search: a publish keeps the repo's, `default <onnx>` keeps it with the new
+    model, `default --player` (both given) replaces both."""
+    keyed = "rollout:4:32:4:z2:earlier:own:keyed:aligned:box4"
+    hub = cast(Any, _FakeHub(tmp_path, ["a.onnx", "b.onnx"], {"schema": 1, "default": "a.onnx", "default_search": keyed,
+                                                                "models": []}))
+    m = publish.build_manifest(hub, "r", [])
+    assert (m["default"], m["default_search"]) == ("a.onnx", keyed)
+    m = publish.build_manifest(hub, "r", [], "b.onnx")
+    assert (m["default"], m["default_search"]) == ("b.onnx", keyed)
+    m = publish.build_manifest(hub, "r", [], "b.onnx", "policy")
+    assert (m["default"], m["default_search"]) == ("b.onnx", "policy")
+    # A repo whose models.json predates the field names none.
+    m = publish.build_manifest(cast(Any, _FakeHub(tmp_path, ["a.onnx"], None)), "r", [], "a.onnx")
+    assert m["default_search"] is None
+

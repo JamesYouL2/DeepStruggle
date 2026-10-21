@@ -21,7 +21,10 @@ import { GameSession } from "./game/session";
 import { decodePosition, encodePosition } from "./game/position";
 import { Model, sourceFromParam, sourceToParam } from "./analysis/model";
 import { analyze } from "./analysis/readout";
-import { DEFAULT_ROLLOUT, RolloutSpec, parseRolloutParam, rolloutParam } from "./analysis/rollout";
+import {
+  DEFAULT_ROLLOUT, LEAVES, RolloutSpec, STOPS, parseRolloutParam, parseSearchParam, rolloutParam,
+} from "./analysis/rollout_spec";
+import { DEFAULT_HF_REPO, defaultHfCatalog, fetchHfDefaultSearch } from "./analysis/hf_catalog";
 import { RolloutRunner } from "./analysis/rollout_runner";
 import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from "./game/view";
 import { lastTurnOf } from "./game/last_turn";
@@ -88,8 +91,21 @@ export class TSApp {
    * in a worker with its own engine and model where the browser has workers, else inline.
    */
   private searchSpec: RolloutSpec | null = null;
-  /** The link named a search (`search=`): a fresh open then keeps it rather than offering the rollout root. */
+  /** The link named a search (`search=`): a fresh open then keeps it rather than offering the default. */
   private urlSearch = false;
+  /**
+   * The default search: the Hugging Face repo's (models.json's default_search, written by
+   * `tools/publish_hf.py default --player`), else the built-in DEFAULT_ROLLOUT until that is read or
+   * when the repo names none; null is the policy. A fresh open offers it.
+   */
+  private defaultSearch: RolloutSpec | null = DEFAULT_ROLLOUT;
+  /** The spec the Rollout root choice stands for, which the search settings edit: the one in force,
+   *  else the default's. */
+  private rolloutChoice: RolloutSpec = DEFAULT_ROLLOUT;
+  /** The search settings were edited: the default, read later, does not replace them. */
+  private rolloutEdited = false;
+  /** Why the play-mode question is open, while it is. */
+  private modeReason: "open" | "new" = "open";
   private runner: RolloutRunner | null = null;
   private searchRuns = 0;
   /** sha256 of the loaded model's file: the model's identity in the game's record. */
@@ -207,9 +223,39 @@ export class TSApp {
     } else if (!this.isReplayMode) {
       this.loadDefaultModel();
     }
+    // A link that turns the model off never reaches the repo; one that names a model reads its
+    // models.json alone, and one that names none shares the default model's read.
+    if (!this.isReplayMode && this.urlModel !== "off") this.loadDefaultSearch(!src);
     // A fresh open with nothing decided by the link: ask how to play. A link that names a
     // position, a replay or a view has decided already.
     if (!this.urlPosition && !this.isReplayMode && !this.urlView) this.askMode("open");
+  }
+
+  /**
+   * The default repo's default search (one read, shared with the default model). The search settings
+   * and a fresh open's offer show it once it arrives, unless the link named a search or the settings
+   * were edited meanwhile; the search in force never changes under the player.
+   */
+  private async loadDefaultSearch(withModel: boolean) {
+    try {
+      const raw = withModel ? (await defaultHfCatalog()).defaultSearch : await fetchHfDefaultSearch();
+      if (raw === null) return;
+      const spec = parseSearchParam(raw);
+      if (spec === undefined) throw new Error(`${DEFAULT_HF_REPO}'s default search ${raw} is not a search= value`);
+      this.defaultSearch = spec;
+    } catch (e) {
+      console.warn(`workbench: the default search could not be read, the built-in one stands: ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    if (!this.searchSpec && !this.rolloutEdited) this.rolloutChoice = this.defaultSearch ?? DEFAULT_ROLLOUT;
+    if (this.modeQuestionOpen && !this.searchChoiceTouched) this.showSearchChoice(this.offeredSearch(this.modeReason));
+    else if (!this.modeQuestionOpen) this.showSearchChoice(this.searchSpec !== null);
+  }
+
+  /** What the play-mode question offers: the setting in force, and on a fresh open with no search in
+   *  the link, the default. */
+  private offeredSearch(reason: "open" | "new"): boolean {
+    return this.searchSpec !== null || (reason === "open" && !this.urlSearch && this.defaultSearch !== null);
   }
 
   /**
@@ -342,8 +388,10 @@ export class TSApp {
     // A replay link shows everything; a player's view cannot watch one.
     this.urlView = params.has("view");
     this.view = this.isReplayMode ? "DEV" : viewFromParam(params.get("view"));
-    this.searchSpec = parseRolloutParam(params.get("search"));
+    const search = params.get("search");
+    this.searchSpec = search ? parseSearchParam(search) ?? null : null;
     this.urlSearch = params.has("search");
+    if (this.searchSpec) this.rolloutChoice = this.searchSpec;
   }
 
   /**
@@ -371,7 +419,8 @@ export class TSApp {
     this.moveModelSection("mode-model-slot");
     const details = document.getElementById("mode-model-details") as HTMLDetailsElement | null;
     if (details) details.open = false;
-    this.showSearchChoice(this.searchSpec !== null || (reason === "open" && !this.urlSearch));
+    this.modeReason = reason;
+    this.showSearchChoice(this.offeredSearch(reason));
     this.searchChoiceTouched = false;
     dialog.classList.remove("hidden");
     const choose = (mode: ViewMode | null) => {
@@ -462,22 +511,73 @@ export class TSApp {
   private searchChoiceTouched = false;
 
   /**
-   * The search radios (#mode-opponent): the policy's argmax, or the rollout root at the default
-   * spec (the leaderboard's best; another comes in through `search=rollout:k:worlds:horizon:rule[:stop][:leaf]`
-   * in the URL and is kept while rollout is chosen). In #model-mode-dialog a change is the setting
-   * and re-reads the position on screen; in the play-mode question it waits for the choice of mode.
+   * The search radios (#mode-opponent): the policy's argmax, or the rollout root at `rolloutChoice`
+   * -- the default (the Hugging Face repo's), a spec from the URL, or what the search settings
+   * (#search-settings) say. In #model-mode-dialog a change is the setting and re-reads the position
+   * on screen; in the play-mode question it waits for the choice of mode.
    */
   private setupSearchChoice() {
+    const fill = (id: string, names: readonly string[]) => {
+      const sel = document.getElementById(id) as HTMLSelectElement | null;
+      if (sel) sel.innerHTML = names.map(n => `<option value="${n}">${n.replace(/_/g, " ")}</option>`).join("");
+    };
+    fill("ss-stop", STOPS);
+    fill("ss-leaf", LEAVES);
     this.showSearchChoice(this.searchSpec !== null);
     for (const id of ["mode-opponent-rollout", "mode-opponent-policy"]) {
-      document.getElementById(id)?.addEventListener("change", () => {
-        if (this.modeQuestionOpen) {
-          this.searchChoiceTouched = true;
-          this.renderModelModeLabels();
-        } else {
-          this.setSearch(this.searchChoice());
-        }
-      });
+      document.getElementById(id)?.addEventListener("change", () => this.searchChoiceChanged());
+    }
+    for (const id of ["ss-k", "ss-worlds", "ss-horizon", "ss-rule", "ss-stop", "ss-leaf", "ss-keyed", "ss-aligned",
+                      "ss-box4", "ss-belief"]) {
+      document.getElementById(id)?.addEventListener("change", () => this.searchSettingsChanged());
+    }
+    document.getElementById("ss-default")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      this.rolloutEdited = false;
+      this.rolloutChoice = this.defaultSearch ?? DEFAULT_ROLLOUT;
+      this.chooseRollout();
+    });
+  }
+
+  /** A radio was changed: in the open play-mode question the choice waits for a mode, else it is the setting. */
+  private searchChoiceChanged() {
+    if (this.modeQuestionOpen) {
+      this.searchChoiceTouched = true;
+      this.renderModelModeLabels();
+    } else {
+      this.setSearch(this.searchChoice());
+    }
+  }
+
+  /** The search settings say a spec: it is the Rollout root's, chosen. One that does not parse is shown
+   *  as an error and changes nothing. */
+  private searchSettingsChanged() {
+    const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
+    const on = (id: string) => !!(document.getElementById(id) as HTMLInputElement | null)?.checked;
+    const belief = Number(val("ss-belief") || "0");
+    const text = `rollout:${val("ss-k")}:${val("ss-worlds")}:${val("ss-horizon")}:${val("ss-rule").trim()}:${val("ss-stop")}`
+      + `:${val("ss-leaf")}${on("ss-keyed") ? ":keyed" : ""}${on("ss-aligned") ? ":aligned" : ""}${on("ss-box4") ? ":box4" : ""}`
+      + (belief ? `:belief${belief}` : "");
+    const spec = Number.isInteger(belief) && belief >= 0 ? parseRolloutParam(text) : null;
+    const error = document.getElementById("ss-error");
+    if (!spec) {
+      if (error) error.textContent = "Not a search: k and worlds whole numbers of at least 1, the horizon and belief "
+        + "hands of at least 0, the rule argmax, z<x> or kl<t>.";
+      return;
+    }
+    if (error) error.textContent = "";
+    this.rolloutEdited = true;
+    this.rolloutChoice = spec;
+    this.chooseRollout();
+  }
+
+  /** The Rollout root at `rolloutChoice`, chosen: the setting now, or the play-mode question's choice. */
+  private chooseRollout() {
+    if (this.modeQuestionOpen) {
+      this.searchChoiceTouched = true;
+      this.showSearchChoice(true);
+    } else {
+      this.setSearch(this.rolloutChoice);
     }
   }
 
@@ -487,20 +587,37 @@ export class TSApp {
     const policyRadio = document.getElementById("mode-opponent-policy") as HTMLInputElement | null;
     if (rolloutRadio) rolloutRadio.checked = rollout;
     if (policyRadio) policyRadio.checked = !rollout;
-    // The spec choosing it keeps: the one in force, else the measured one.
-    const spec = this.searchSpec ?? DEFAULT_ROLLOUT;
+    // The spec choosing it keeps, and the settings that edit it.
+    const spec = this.rolloutChoice;
     const specText = document.getElementById("mode-opponent-rollout-spec");
     if (specText) {
       specText.textContent = `its top ${spec.k} move${spec.k === 1 ? "" : "s"}, each played out in `
         + `${spec.worlds} sampled world${spec.worlds === 1 ? "" : "s"}`;
     }
+    const set = (id: string, v: string) => { const el = document.getElementById(id) as HTMLInputElement | null; if (el) el.value = v; };
+    const tick = (id: string, v: boolean) => { const el = document.getElementById(id) as HTMLInputElement | null; if (el) el.checked = v; };
+    set("ss-k", String(spec.k));
+    set("ss-worlds", String(spec.worlds));
+    set("ss-horizon", String(spec.horizon));
+    set("ss-rule", spec.rule);
+    set("ss-stop", spec.stop);
+    set("ss-leaf", spec.leaf);
+    tick("ss-keyed", spec.keyed);
+    tick("ss-aligned", spec.aligned);
+    tick("ss-box4", spec.box4);
+    set("ss-belief", String(spec.belief));
+    const code = document.getElementById("search-settings-code");
+    if (code) code.textContent = rolloutParam(spec);
+    const deflt = document.getElementById("ss-default") as HTMLButtonElement | null;
+    const d = this.defaultSearch ?? DEFAULT_ROLLOUT;
+    if (deflt) deflt.title = `The default search: ${rolloutParam(d)}`;
     this.renderModelModeLabels();
   }
 
-  /** The search the radios say: the spec in force (else the measured one), or null for the policy. */
+  /** The search the radios say: the Rollout root's spec, or null for the policy. */
   private searchChoice(): RolloutSpec | null {
     const rolloutRadio = document.getElementById("mode-opponent-rollout") as HTMLInputElement | null;
-    return rolloutRadio?.checked ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null;
+    return rolloutRadio?.checked ? this.rolloutChoice : null;
   }
 
   /**
@@ -530,6 +647,9 @@ export class TSApp {
    */
   private setSearch(spec: RolloutSpec | null, apply = true) {
     this.searchSpec = spec;
+    // On the policy the rollout choice offers the default again -- unless the settings were edited.
+    if (spec) this.rolloutChoice = spec;
+    else if (!this.rolloutEdited) this.rolloutChoice = this.defaultSearch ?? DEFAULT_ROLLOUT;
     if (!this.modeQuestionOpen) this.showSearchChoice(spec !== null);
     this.searchRuns++;          // a search still running was asked for under the old setting
     // A new object: a search still running for the old one checks it is the readout on screen.

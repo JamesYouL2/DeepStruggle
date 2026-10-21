@@ -32,7 +32,8 @@ web/ui/
 │   ├── result_dialog.ts        # Game over: the result, how it was played, submit to the stats database
 │   ├── build_info.ts           # the commit the page was built from, the stats endpoint
 │   ├── analysis/               # model.ts (ONNX sources + onnxruntime-web), hf_catalog.ts (the
-│   │                           # Hugging Face repo's catalogue and default model, no onnxruntime),
+│   │                           # Hugging Face repo's catalogue, default model and default search, no
+│   │                           # onnxruntime), rollout_spec.ts (the search= grammar, no engine),
 │   │                           # onnx_meta.ts,
 │   │                           # model_cache.ts (downloaded models kept in the browser),
 │   │                           # readout.ts (policy + critic for the position on screen),
@@ -56,8 +57,9 @@ web/ui/
 │   │                           # head-to-head on click, links to reports, weights and the workbench
 │   │                           # (a player's own report; a search never shows its network's greedy one);
 │   │                           # opens on the newest epoch with games played (?epoch= names another);
-│   │                           # tags HF DEFAULT on the players of the network that is the repo's
-│   │                           # default model, read live from models.json (hf_catalog.ts) after render
+│   │                           # play links open each player's search; tags HF DEFAULT on the player
+│   │                           # that is the repo's default model and search, read live from
+│   │                           # models.json (hf_catalog.ts) after render
 │   └── types.ts                # TypeScript interface mirrors of engine GameState and MicroAction
 ├── public/engine/              # ts_engine.mjs + .wasm, not committed (tools/scripts/build_web.sh)
 ├── public/leaderboard.json     # fitted from leaderboard/ by build_web.sh (tools/leaderboard.py fit), not committed
@@ -346,8 +348,15 @@ web/ui/
      with the engine's own die, and drops the move if the position changed meanwhile. With
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
-   - **Search.** The section's search radios (`#mode-opponent`) choose the policy's argmax or the **rollout root** (`search=rollout`
-     in the URL, `search=rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:box4]` for another spec; the default is the leaderboard's best 32-world player, the corrected keyed root `4:32:4:z2:earlier:own:keyed:aligned:box4`, since 2026-10-21 -- a spelled-out spec turns on only the switches it names): the engine's own batch
+   - **Search.** The section's search radios (`#mode-opponent`) choose the policy's argmax (`search=policy`) or the **rollout root**
+     (`search=rollout:k:worlds:horizon:rule:stop:leaf[:keyed][:aligned][:box4][:beliefN]`, always written with every field --
+     `analysis/rollout_spec.ts`, the grammar without the engine, which the leaderboard page reads too). Its spec is the
+     default search -- the Hugging Face repo's `models.json` `default_search` (`tools/publish_hf.py default --player`),
+     read once with the default model (`defaultHfCatalog`), else the built-in `DEFAULT_ROLLOUT`, the corrected keyed root
+     `4:32:4:z2:earlier:own:keyed:aligned:box4` -- or one from the URL, or what the **search settings** (`#search-settings`,
+     one field per spec field, a change the setting at once, Default back to the default search) say. A bare
+     `search=rollout` from an older link is `DEFAULT_ROLLOUT`; a spelled-out spec turns on only the switches it names.
+     The leaderboard's `play` links name each player's search (`player_spec.workbench_search`). The engine's own batch
      (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
      The spec takes the leaderboard's other modes too: `:keyed` (chance=keyed,

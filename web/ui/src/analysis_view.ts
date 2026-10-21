@@ -19,7 +19,7 @@ import {
 } from "./trace_view";
 import { CriticTrace, PolicyTrace } from "./replay_controls";
 import {
-  DEFAULT_HF_REPO, DEFAULT_HF_REVISION, groupHfModels, HfCatalog, hfCatalog, HfModelFile, ModelSource,
+  DEFAULT_HF_REPO, DEFAULT_HF_REVISION, defaultHfCatalog, groupHfModels, HfCatalog, hfCatalog, HfModelFile, ModelSource,
   sourceLabel,
 } from "./analysis/model";
 import { cachedModelCount, clearModelCache } from "./analysis/model_cache";
@@ -430,12 +430,12 @@ export class AnalysisPanel {
 
   /** List the Hugging Face repo in the inputs into the file select: one group per directory (a run
    *  published whole), newest upload first. */
-  private async listHf(): Promise<HfCatalog> {
+  private async listHf(read?: () => Promise<HfCatalog>): Promise<HfCatalog> {
     const repo = this.hfRepo.value.trim();
     const rev = this.hfRevision.value.trim() || "main";
     this.hfFile.innerHTML = `<option value="">listing…</option>`;
     try {
-      const catalog = await hfCatalog(repo, rev);
+      const catalog = await (read ? read() : hfCatalog(repo, rev));
       const files = catalog.files;
       if (files.length === 0) throw new Error("no .onnx files in the repo (export them with tools/export_onnx.py)");
       const option = (f: HfModelFile, text: string) =>
@@ -462,7 +462,8 @@ export class AnalysisPanel {
     this.hfRepo.value = DEFAULT_HF_REPO;
     this.hfRevision.value = DEFAULT_HF_REVISION;
     this.showSourceControls();
-    const { files, defaultModel: named } = await this.listHf();
+    // The page's one read of the default repo, shared with the default search (main.ts).
+    const { files, defaultModel: named } = await this.listHf(defaultHfCatalog);
     if (named !== null && !files.some(f => f.path === named)) {
       throw new Error(`${DEFAULT_HF_REPO}'s default model ${named} is not in the repo`);
     }

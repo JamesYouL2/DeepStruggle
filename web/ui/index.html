@@ -294,11 +294,12 @@
             </div>
             <!-- How the model picks its move: the policy's argmax, or the rollout root -- its top
                  moves played out in sampled worlds by the engine's own batch
-                 (bindings/rollout_batch.hpp, analysis/rollout.ts) in a worker; `search=` in the URL
-                 carries it, a custom spec too. -->
+                 (bindings/rollout_batch.hpp, analysis/rollout.ts) in a worker. Its spec is the
+                 default (the Hugging Face repo's models.json), one from `search=` in the URL, or
+                 what #search-settings say; the URL carries the one in force. -->
             <fieldset class="mode-opponent" id="mode-opponent">
               <legend>The model plays with</legend>
-              <label class="mode-opponent-option" title="Its top moves each played out by the model in sampled worlds, to the earlier of a few action-round boundaries and the turn-end park, the leaf read on from the mover's own next decision, then the best only on a clear lead over the policy's move (the best player on the leaderboard; search=rollout:k:worlds:horizon:rule[:stop][:leaf] in the address for another).">
+              <label class="mode-opponent-option" title="Its top moves each played out by the model in sampled worlds, then the best only on a clear lead over the policy's move. By default the search the Hugging Face repo names (the best player on the leaderboard); the search settings below, or search=rollout:k:worlds:horizon:rule:stop:leaf[:keyed][:aligned][:box4][:beliefN] in the address, for another.">
                 <input type="radio" name="mode-opponent" value="rollout" id="mode-opponent-rollout">
                 <span><b>Rollout root</b> -- its strongest player: <span id="mode-opponent-rollout-spec">its top 4 moves, each played out in 32 sampled worlds</span>. A few seconds a move.</span>
               </label>
@@ -306,6 +307,25 @@
                 <input type="radio" name="mode-opponent" value="policy" id="mode-opponent-policy">
                 <span><b>Policy</b> -- its most likely move, at once.</span>
               </label>
+              <details class="search-settings" id="search-settings">
+                <summary>Search settings <code id="search-settings-code" class="search-settings-code"></code></summary>
+                <div class="search-settings-grid">
+                  <label title="The candidates: the policy's most probable moves">Moves <input type="number" id="ss-k" min="1" step="1"></label>
+                  <label title="Sampled worlds each candidate is played out in">Worlds <input type="number" id="ss-worlds" min="1" step="1"></label>
+                  <label title="Action-round boundaries a playout runs through">Horizon <input type="number" id="ss-horizon" min="0" step="1"></label>
+                  <label title="The choice: argmax, z&lt;x&gt; (the best only on an x-SE lead over the policy's move) or kl&lt;t&gt;">Rule <input type="text" id="ss-rule" size="6" spellcheck="false"></label>
+                  <label title="Where a playout stops">Stop <select id="ss-stop"></select></label>
+                  <label title="Whose side a leaf is read from">Leaf <select id="ss-leaf"></select></label>
+                  <label class="ss-flag" title="Each draw tied to its situation (chance=keyed)"><input type="checkbox" id="ss-keyed"> keyed chance</label>
+                  <label class="ss-flag" title="Every candidate's horizon counted from the end of the mover's own action round"><input type="checkbox" id="ss-aligned"> aligned horizon</label>
+                  <label class="ss-flag" title="The opponent's headline revealed by Space Race box 4 kept in every world"><input type="checkbox" id="ss-box4"> box 4 headline</label>
+                  <label title="Worlds dealt from the policy-likelihood belief over the opponent's hand, with this many hands; 0 = uniform redeals">Belief hands <input type="number" id="ss-belief" min="0" step="1"></label>
+                </div>
+                <div class="search-settings-foot">
+                  <button id="ss-default" class="btn btn-secondary btn-sm">Default</button>
+                  <span id="ss-error" class="search-settings-error" role="status"></span>
+                </div>
+              </details>
             </fieldset>
           </div>
         </div>

@@ -334,12 +334,17 @@ get their `hf` path -- commit that change. Needs a write token (`hf auth login` 
 PYTHONPATH=.:build/release python tools/publish_hf.py run data/checkpoints/<run-dir> --dry-run
 PYTHONPATH=.:build/release python tools/publish_hf.py files 'data/checkpoints/_models/<name>.pt'
 PYTHONPATH=.:build/release python tools/publish_hf.py default '<run-dir>/snapshot_<N>steps.onnx'
+PYTHONPATH=.:build/release python tools/publish_hf.py default --player '<leaderboard player id>'
 PYTHONPATH=.:build/release python tools/publish_hf.py index      # rebuild models.json from the repo
 ```
 
 `models.json` is the repo's catalogue, rewritten by every publish: each `.onnx` with date, sha256
-and size, and `default`, the model a workbench link that names none opens. Files uploaded another
-way appear after `index`.
+and size, `default`, the model a workbench link that names none opens, and `default_search`, how it
+plays when the link names no search (a workbench `search=` value). `default <onnx>` sets the model
+and keeps the search; `default --player` sets both to a leaderboard player's -- its network's `.onnx`
+and its search as the workbench plays it (`player_spec.workbench_search`) -- and the leaderboard page
+tags that player HF DEFAULT. The default is the best player the workbench can play. Files uploaded
+another way appear after `index`.
 
 ---
 

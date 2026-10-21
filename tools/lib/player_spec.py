@@ -35,8 +35,8 @@ from typing import Dict, Final, Mapping, Optional, Tuple, Union
 
 @dataclass(frozen=True)
 class Policy:
-    """The network's own policy: argmax at temperature <= 0.05 (the tournament's greedy cut-off),
-    otherwise sampled at `temperature`."""
+    """The network's own policy: argmax at temperature <= GREEDY_TEMPERATURE (the tournament's greedy
+    cut-off), otherwise sampled at `temperature`."""
 
     temperature: float = 0.0
 
@@ -254,6 +254,25 @@ def spec_to_dict(spec: Inference) -> Dict[str, object]:
     late = LATE_FIELDS.get(kind_of(spec), {})
     return {"kind": kind_of(spec), **{k: v for k, v in dataclasses.asdict(spec).items()
                                       if k not in late or v != late[k]}}
+
+
+#: The policy's argmax: the temperature at or under which a Policy is greedy (the tournament's cut-off).
+GREEDY_TEMPERATURE: Final = 0.05
+
+
+def workbench_search(spec: Inference) -> Optional[str]:
+    """How the web workbench plays this player, as its `search=` value
+    (web/ui/src/analysis/rollout_spec.ts): "policy" for the greedy policy, the rollout root with every
+    field spelled out -- the workbench's defaults for a field left out are not this module's -- and
+    None for what it cannot run: a sampled policy, a Gumbel or PUCT search, a root whose leaves another
+    network reads."""
+    if isinstance(spec, Policy):
+        return "policy" if spec.temperature <= GREEDY_TEMPERATURE else None
+    if not isinstance(spec, Rollout) or spec.leaf_net:
+        return None
+    return (f"rollout:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}:{spec.stop}:{spec.leaf}"
+            + (":keyed" if spec.chance == "keyed" else "") + (":aligned" if spec.aligned else "")
+            + (":box4" if spec.box4 else "") + (f":belief{spec.belief}" if spec.belief else ""))
 
 
 def parse_player_id(pid: str) -> Tuple[Optional[str], Inference]:

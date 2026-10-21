@@ -45,7 +45,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, NotRequired, Optional, Sequence, Set, Tuple, TypedDict
 
-from tools.lib.player_spec import (Inference, PlayerSpecError, Policy, Rollout, kind_of, player_id, spec_from_dict)
+from tools.lib.player_spec import (GREEDY_TEMPERATURE, Inference, PlayerSpecError, Policy, Rollout, kind_of,
+                                   player_id, spec_from_dict, workbench_search)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LEADERBOARD_DIR = ROOT / "leaderboard"
@@ -679,10 +680,6 @@ def view(board: Board, fit: EpochFit, *, main_only: bool = False,
 # ---- the page's data --------------------------------------------------------------------------
 
 
-#: The temperature at or below which a policy plays its argmax (the tournament's greedy cut-off).
-GREEDY_TEMPERATURE = 0.05
-
-
 def player_report(board: Board, pid: str) -> Optional[str]:
     """The report the page links for a player: its own; else, for the greedy policy only, its
     network's -- a behaviour report of the network's greedy play, which says nothing about how the
@@ -734,7 +731,9 @@ def site_data(board: Board, commit: Optional[str] = None) -> Dict[str, object]:
         spec = spec_from_dict(pl["inference"])
         players[pid] = {"network": pl["network"], "lineage": lineage(pl["network"]),
                         "kind": kind_of(spec), "inference": pl["inference"],
-                        "description": pl["description"], "report": player_report(board, pid)}
+                        "description": pl["description"], "report": player_report(board, pid),
+                        # how the workbench plays it: its `play` link's search=, null if it cannot
+                        "workbench_search": workbench_search(spec)}
     return {"schema": 1, "commit": commit, "hf_repo": HF_REPO, "github": GITHUB_REPO,
             "networks": board.networks, "players": players, "epochs": epochs, "codes": codes_data(board)}
 

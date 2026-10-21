@@ -66,11 +66,15 @@ function sortNewestFirst(files: HfModelFile[]): HfModelFile[] {
   return files.sort((a, b) => (a.date === b.date ? a.path.localeCompare(b.path) : a.date < b.date ? 1 : -1));
 }
 
-/** What the page needs from a repo: its .onnx files, newest first, and the default model. */
+/** What the page needs from a repo: its .onnx files, newest first, and the default model and search. */
 export interface HfCatalog {
   files: HfModelFile[];
   /** The model a link that names none opens; null when the repo names none (newest is used). */
   defaultModel: string | null;
+  /** How it plays when the link names no search, as a `search=` value ("policy" or a rollout spec,
+   *  analysis/rollout_spec.ts): `tools/publish_hf.py default --player` writes the player's. null when
+   *  the repo names none -- the page's built-in default then. */
+  defaultSearch: string | null;
 }
 
 /**
@@ -83,10 +87,10 @@ export async function hfCatalog(repo: string, revision: string): Promise<HfCatal
   const res = await fetch(hfFileUrl(repo, revision, "models.json"));
   if (res.status === 404) {
     const [files, defaultModel] = await Promise.all([listHfModels(repo, revision), fetchHfDefault(repo, revision)]);
-    return { files, defaultModel };
+    return { files, defaultModel, defaultSearch: null };
   }
   if (!res.ok) throw new Error(`models.json: HTTP ${res.status}`);
-  let doc: { schema?: unknown; default?: unknown; models?: unknown };
+  let doc: { schema?: unknown; default?: unknown; default_search?: unknown; models?: unknown };
   try {
     doc = await res.json();
   } catch {
@@ -102,7 +106,38 @@ export async function hfCatalog(repo: string, revision: string): Promise<HfCatal
   }
   const def = doc.default;
   if (def !== null && def !== undefined && typeof def !== "string") throw new Error(`${repo}'s models.json: default must be a path or null`);
-  return { files: sortNewestFirst(files), defaultModel: (def as string | null | undefined) ?? null };
+  const search = doc.default_search;
+  if (search !== null && search !== undefined && typeof search !== "string") {
+    throw new Error(`${repo}'s models.json: default_search must be a search= value or null`);
+  }
+  return { files: sortNewestFirst(files), defaultModel: (def as string | null | undefined) ?? null,
+           defaultSearch: (search as string | null | undefined) ?? null };
+}
+
+/** The default repo's default search from its models.json alone -- no listing: for a page whose link
+ *  names its model. null when the repo has no models.json or names no search. */
+export async function fetchHfDefaultSearch(): Promise<string | null> {
+  const res = await fetch(hfFileUrl(DEFAULT_HF_REPO, DEFAULT_HF_REVISION, "models.json"));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`models.json: HTTP ${res.status}`);
+  const search = ((await res.json()) as { default_search?: unknown } | null)?.default_search;
+  if (search !== null && search !== undefined && typeof search !== "string") {
+    throw new Error(`${DEFAULT_HF_REPO}'s models.json: default_search must be a search= value or null`);
+  }
+  return (search as string | null | undefined) ?? null;
+}
+
+let defaultCatalog: Promise<HfCatalog> | null = null;
+
+/** The default repo's catalogue, read once a page load and shared: the workbench's default model and
+ *  default search both come from it. A read that fails is tried again by the next caller. */
+export function defaultHfCatalog(): Promise<HfCatalog> {
+  if (!defaultCatalog) {
+    const read = hfCatalog(DEFAULT_HF_REPO, DEFAULT_HF_REVISION);
+    read.catch(() => { if (defaultCatalog === read) defaultCatalog = null; });
+    defaultCatalog = read;
+  }
+  return defaultCatalog;
 }
 
 export interface HfModelGroup {

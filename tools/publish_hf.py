@@ -4,6 +4,7 @@
     PYTHONPATH=.:build/release python tools/publish_hf.py run data/checkpoints/<run-dir> [--dry-run]
     PYTHONPATH=.:build/release python tools/publish_hf.py files data/checkpoints/_models/<name>.pt ... [--dry-run]
     PYTHONPATH=.:build/release python tools/publish_hf.py default <path-in-repo>.onnx [--dry-run]
+    PYTHONPATH=.:build/release python tools/publish_hf.py default --player '<leaderboard player id>' [--dry-run]
     PYTHONPATH=.:build/release python tools/publish_hf.py index [--dry-run]
 
 The repo mirrors `data/checkpoints/`: a run directory is published whole as `<run-dir>/`, a model
@@ -22,8 +23,12 @@ size), `run.pid`, `snapshot_final.pt` (a copy named by no step: snapshots are al
 step), and any `.onnx` it did not select.
 
 Every publish also rewrites `models.json` at the repo root, in the same commit: each `.onnx` the
-repo holds with its commit date, sha256 and size, and the default model -- the one a workbench
-link that names none opens (`default` sets it). The page reads that one file instead of listing
+repo holds with its commit date, sha256 and size, the default model -- the one a workbench link
+that names none opens -- and the default search, how it plays when the link names none (a `search=`
+value, web/ui/src/analysis/rollout_spec.ts). `default <onnx>` sets the model and keeps the search;
+`default --player <id>` sets both to a leaderboard player's -- its network's .onnx, its search as
+the workbench plays it (player_spec.workbench_search) -- and the leaderboard page tags that player.
+Every publish carries both over. The page reads that one file instead of listing
 the whole tree, which with `expand` (the dates) is one request per 50 files. `index` rebuilds it
 from the repo as it is, for files uploaded another way; a legacy `default.json`'s model carries
 over.
@@ -43,7 +48,7 @@ import json
 import os
 import re
 import sys
-from typing import Dict, List, Optional, Sequence, Set, TypedDict
+from typing import Dict, List, Optional, Sequence, Set, Tuple, TypedDict
 
 from huggingface_hub import CommitOperationAdd, HfApi
 from huggingface_hub.hf_api import RepoFile
@@ -51,6 +56,7 @@ from huggingface_hub.hf_api import RepoFile
 from tools.export_onnx import ExportRefused, export
 from tools.lib.data_root import data_path
 from tools.lib.leaderboard import HF_REPO, LeaderboardError, load, save_registry, validate
+from tools.lib.player_spec import spec_from_dict, workbench_search
 
 #: Never published: optimizer / opponent-pool state for resuming, the live process id, and the
 #: final-weights copy, which names no step (snapshots are referred to by step).
@@ -74,6 +80,9 @@ class ManifestEntry(TypedDict):
 class Manifest(TypedDict):
     schema: int
     default: Optional[str]
+    #: How the default plays when a link names no search: a workbench `search=` value, or None (the
+    #: page's built-in default).
+    default_search: Optional[str]
     #: Newest first.
     models: List[ManifestEntry]
 _SWA_RE = re.compile(r"^swa_(\d+)-(\d+)M\.pt$")
@@ -199,11 +208,12 @@ def _remote_json(api: HfApi, repo: str, name: str) -> Optional[Dict[str, object]
 
 
 def build_manifest(api: HfApi, repo: str, added: Sequence[ManifestEntry],
-                   default: Optional[str] = None) -> Manifest:
+                   default: Optional[str] = None, default_search: Optional[str] = None) -> Manifest:
     """`models.json` after a commit that adds `added`: every .onnx the repo holds (from one
     listing of its tree, and one paths-info request per 50 files for their dates) plus the new
     ones. The default is `default`, else the current manifest's, else a legacy default.json's;
-    one the repo will not hold is refused."""
+    one the repo will not hold is refused. The default search is `default_search`, else the current
+    manifest's."""
     new = {e["path"]: e for e in added}
     existing = {e.path: e for e in api.list_repo_tree(repo, recursive=True)
                 if isinstance(e, RepoFile) and e.path.endswith(".onnx") and e.path not in new}
@@ -217,15 +227,33 @@ def build_manifest(api: HfApi, repo: str, added: Sequence[ManifestEntry],
         {"path": p, "date": dates.get(p, ""), "sha256": e.lfs.sha256 if e.lfs else "", "size": e.size}
         for p, e in existing.items()] + list(new.values())
     entries.sort(key=lambda e: (e["date"], e["path"]), reverse=True)
+    current = _remote_json(api, repo, MANIFEST) if default is None or default_search is None else None
     if default is None:
-        for name, key in ((MANIFEST, "default"), (LEGACY_DEFAULT, "model")):
-            doc = _remote_json(api, repo, name)
+        for doc, key in ((current, "default"), (_remote_json(api, repo, LEGACY_DEFAULT), "model")):
             if doc and isinstance(doc.get(key), str):
                 default = str(doc[key])
                 break
+    if default_search is None and current and isinstance(current.get("default_search"), str):
+        default_search = str(current["default_search"])
     if default is not None and default not in {e["path"] for e in entries}:
         raise LeaderboardError(f"the default model {default} is not an .onnx the repo holds")
-    return {"schema": 1, "default": default, "models": entries}
+    return {"schema": 1, "default": default, "default_search": default_search, "models": entries}
+
+
+def player_default(pid: str) -> Tuple[str, str]:
+    """(the .onnx path in the repo, the workbench search) that make the leaderboard player `pid` the
+    default: its network must be published, and the workbench must be able to play its search."""
+    board = load()
+    if pid not in board.players:
+        raise LeaderboardError(f"{pid!r} is not a registered player")
+    pl = board.players[pid]
+    net = board.networks.get(str(pl["network"])) if pl["network"] else None
+    if net is None or not net["hf"]:
+        raise LeaderboardError(f"{pid}: its network is not published on Hugging Face (publish it first)")
+    search = workbench_search(spec_from_dict(pl["inference"]))
+    if search is None:
+        raise LeaderboardError(f"{pid}: the workbench cannot play this search")
+    return _onnx_of(str(net["hf"])), search
 
 
 def manifest_op(manifest: Manifest) -> CommitOperationAdd:
@@ -295,13 +323,18 @@ def cmd_files(a: argparse.Namespace) -> int:
 
 
 def cmd_default(a: argparse.Namespace) -> int:
-    if not a.model.endswith(".onnx"):
+    if (a.model is None) == (a.player is None):
+        raise LeaderboardError("give the default model (an .onnx path in the repo) or --player, not both")
+    model, search = player_default(a.player) if a.player else (a.model, None)
+    if not model.endswith(".onnx"):
         raise LeaderboardError("the default model is an .onnx path in the repo")
     api = _api(a.dry_run)
     if api is not None:
-        api.create_commit(repo_id=a.repo, operations=[manifest_op(build_manifest(api, a.repo, [], a.model))],
-                          commit_message=f"Default model: {a.model}")
-    print(f" {MANIFEST}: default -> {a.model}{' (dry run)' if a.dry_run else ''}")
+        manifest = build_manifest(api, a.repo, [], model, search)
+        api.create_commit(repo_id=a.repo, operations=[manifest_op(manifest)],
+                          commit_message=f"Default model: {model}" + (f", search {search}" if search else ""))
+    print(f" {MANIFEST}: default -> {model}" + (f", search -> {search}" if search else " (search kept)")
+          + (" (dry run)" if a.dry_run else ""))
     return 0
 
 
@@ -311,7 +344,8 @@ def cmd_index(a: argparse.Namespace) -> int:
     api = HfApi() if a.dry_run else _api(False)
     assert api is not None
     manifest = build_manifest(api, a.repo, [])
-    print(f" {MANIFEST}: {len(manifest['models'])} models, default {manifest['default']}"
+    print(f" {MANIFEST}: {len(manifest['models'])} models, default {manifest['default']}, "
+          f"search {manifest['default_search']}"
           f"{' (dry run)' if a.dry_run else ''}")
     if not a.dry_run:
         api.create_commit(repo_id=a.repo, operations=[manifest_op(manifest)],
@@ -331,8 +365,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("files", parents=[common], help="publish single .pt files (SWAs, soups), each with its .onnx")
     p.add_argument("files", nargs="+")
     p.set_defaults(fn=cmd_files)
-    p = sub.add_parser("default", parents=[common], help="set the model a workbench link that names none opens")
-    p.add_argument("model", help="an .onnx path in the repo")
+    p = sub.add_parser("default", parents=[common],
+                       help="set the model (and search) a workbench link that names none opens")
+    p.add_argument("model", nargs="?", default=None, help="an .onnx path in the repo; the default search is kept")
+    p.add_argument("--player", default=None,
+                   help="a leaderboard player: its network's .onnx and its search, both the default")
     p.set_defaults(fn=cmd_default)
     p = sub.add_parser("index", parents=[common], help="rebuild models.json from what the repo holds")
     p.set_defaults(fn=cmd_index)

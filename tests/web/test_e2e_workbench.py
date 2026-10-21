@@ -17,8 +17,8 @@ import os
 import socket
 import threading
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional
-from urllib.parse import parse_qs
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
+from urllib.parse import parse_qs, quote
 
 import numpy as np
 import pytest
@@ -31,6 +31,7 @@ from ai.eval.policy_readout import read_critic, read_policy
 from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import NeuralAgent
+from tools.lib.player_spec import Rollout, spec_from_dict
 from web.server.main import app
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -687,26 +688,40 @@ def test_the_leaderboard_page_filters_one_fit(browser: Any, static_site: str) ->
     assert not errors
 
 
-def test_the_leaderboard_tags_the_hugging_face_default_model(browser: Any, static_site: str) -> None:
-    """The players of the network the repo names as its default model (models.json, read when the
-    page opens) carry the HF DEFAULT tag, and only they; a default not on the board tags nothing and
-    the footer says so; a repo the page cannot read tags nothing and breaks nothing."""
+#: The workbench's built-in default search (analysis/rollout_spec.ts DEFAULT_ROLLOUT), spelled out: what a
+#: page that cannot read the repo's default plays.
+BUILTIN_SEARCH = "rollout:4:32:4:z2:earlier:own:keyed:aligned:box4"
+
+
+def _leaderboard_data() -> Tuple[Dict[str, Any], str, Set[str]]:
+    """leaderboard.json as built, the epoch the page opens on, and the players rated in it."""
     with open(os.path.join(DIST, "leaderboard.json")) as f:
         data = json.load(f)
     with open(os.path.join(REPO, "leaderboard", "epochs.json")) as f:
         names = list(json.load(f))
     epoch = [n for n in names if data["epochs"][n]["pairs"]][-1]
-    rated = {r["player"] for r in data["epochs"][epoch]["ratings"]}
-    net = next(n for n, v in data["networks"].items()
-               if v["hf"] and any(p in rated and pl["network"] == n for p, pl in data["players"].items()))
-    onnx = data["networks"][net]["hf"].removesuffix(".pt") + ".onnx"
-    expected = {p for p in rated if data["players"][p]["network"] == net}
+    return data, epoch, {r["player"] for r in data["epochs"][epoch]["ratings"]}
 
-    def opened(default: Optional[str], status: int = 200) -> Any:
+
+def test_the_leaderboard_tags_the_hugging_face_default_player(browser: Any, static_site: str) -> None:
+    """The player that is the repo's default -- its default model played with its default search
+    (models.json, read when the page opens) -- carries the HF DEFAULT tag, and only it; with no default
+    search the workbench's built-in one stands. A default that is no player tags nothing and the footer
+    says so; a repo the page cannot read tags nothing and breaks nothing. Every play link opens its
+    player's search."""
+    data, epoch, rated = _leaderboard_data()
+    players = data["players"]
+    pid = next(p for p in sorted(rated) if (players[p]["workbench_search"] or "").startswith("rollout")
+               and data["networks"][players[p]["network"]]["hf"])
+    net = players[pid]["network"]
+    onnx = data["networks"][net]["hf"].removesuffix(".pt") + ".onnx"
+    on_net = {p for p in rated if players[p]["network"] == net}
+
+    def opened(manifest: Optional[Dict[str, Any]], status: int = 200) -> Any:
         page = browser.new_page(viewport={"width": 1280, "height": 900})
         errors: List[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
-        body = json.dumps({"schema": 1, "default": default, "models": []})
+        body = json.dumps({"schema": 1, "models": [], **(manifest or {})})
         page.route("https://huggingface.co/mihaild/deepstruggle/resolve/main/models.json",
                    lambda route: route.fulfill(status=status, content_type="application/json", body=body))
         page.goto(static_site + f"/leaderboard.html?epoch={epoch}&view=all")
@@ -715,25 +730,127 @@ def test_the_leaderboard_tags_the_hugging_face_default_model(browser: Any, stati
         page.errors = errors  # type: ignore[attr-defined]
         return page
 
-    page = opened(onnx)
+    def tagged(page: Any) -> Set[str]:
+        return set(page.eval_on_selector_all("#lb-body tr:has(.lb-tag.hf)", "rs => rs.map(r => r.dataset.player)"))
+
+    page = opened({"default": onnx, "default_search": players[pid]["workbench_search"]})
     page.wait_for_selector("#lb-body .lb-tag.hf")
-    tagged = set(page.eval_on_selector_all("#lb-body tr:has(.lb-tag.hf)", "rs => rs.map(r => r.dataset.player)"))
-    assert tagged == expected
-    assert onnx in page.inner_text("#lb-footer") and "not on the board" not in page.inner_text("#lb-footer")
-    page.click(f"#lb-body tr[data-player='{sorted(expected)[0]}']")
-    assert "default model on Hugging Face" in page.inner_text("#lb-detail")
+    assert tagged(page) == {pid}
+    assert onnx in page.inner_text("#lb-footer") and players[pid]["workbench_search"] in page.inner_text("#lb-footer")
+    page.click(f"#lb-body tr[data-player='{pid}']")
+    assert "The default on Hugging Face" in page.inner_text("#lb-detail")
+    # Every play link: the player's network and its search as the workbench plays it.
+    links = dict(page.eval_on_selector_all(
+        "#lb-body tr", "rs => rs.map(r => [r.dataset.player, (r.querySelector('.lb-links a[title*=\"workbench\"]') || {}).href || ''])"))
+    for p, href in links.items():
+        if not href:
+            continue
+        q = parse_qs(href.split("?", 1)[1])
+        assert q["search"] == [players[p]["workbench_search"] or "policy"], p
+        assert q["model"][0].endswith(data["networks"][players[p]["network"]]["hf"].removesuffix(".pt") + ".onnx")
     assert not page.errors
     page.close()
 
-    page = opened("_models/not-registered.onnx")
-    page.wait_for_function("document.getElementById('lb-footer').textContent.includes('not on the board')")
-    assert page.eval_on_selector_all("#lb-body .lb-tag.hf", "ts => ts.length") == 0
-    assert not page.errors
+    # The policy as the default search: the network's greedy player.
+    page = opened({"default": onnx, "default_search": "policy"})
+    greedy = {p for p in on_net if players[p]["workbench_search"] == "policy"}
+    if greedy:
+        page.wait_for_selector("#lb-body .lb-tag.hf")
+    assert tagged(page) == greedy
+    page.close()
+
+    # No default search: the built-in one.
+    page = opened({"default": onnx})
+    builtin = {p for p in on_net if players[p]["workbench_search"] == BUILTIN_SEARCH}
+    page.wait_for_function("document.getElementById('lb-footer').textContent.includes('default model')")
+    assert tagged(page) == builtin
+    page.close()
+
+    page = opened({"default": "_models/not-registered.onnx", "default_search": "policy"})
+    page.wait_for_function("document.getElementById('lb-footer').textContent.includes('not a player on the board')")
+    assert not tagged(page) and not page.errors
     page.close()
 
     page = opened(None, status=500)
-    assert page.eval_on_selector_all("#lb-body .lb-tag.hf", "ts => ts.length") == 0
-    assert "default model" not in page.inner_text("#lb-footer")
+    assert not tagged(page) and "default model" not in page.inner_text("#lb-footer")
+    assert not page.errors
+    page.close()
+
+
+def test_every_leaderboard_search_reads_in_the_workbench_as_python_wrote_it(browser: Any, static_site: str) -> None:
+    """tools/lib/player_spec.workbench_search writes each player's search; the page parses it
+    (analysis/rollout_spec.ts). Every one on the board must come back as the same spec, field by field
+    -- a field the two grammars default differently would otherwise change the player."""
+    data, _, _ = _leaderboard_data()
+    searches: Dict[str, Dict[str, Any]] = {}
+    for pl in data["players"].values():
+        ws = pl["workbench_search"]
+        if ws and ws.startswith("rollout") and ws not in searches:
+            spec = spec_from_dict(pl["inference"])
+            assert isinstance(spec, Rollout)
+            searches[ws] = {"k": spec.k, "worlds": spec.worlds, "horizon": spec.horizon, "rule": spec.rule,
+                            "stop": spec.stop, "leaf": spec.leaf, "keyed": spec.chance == "keyed",
+                            "aligned": spec.aligned, "box4": spec.box4, "belief": spec.belief}
+    assert searches
+    for ws, want in searches.items():
+        page = _open(browser, static_site + f"/?model=off&view=us&search={quote(ws)}")
+        assert page.evaluate("window.__wb.searchSpec") == want, ws
+        assert parse_qs(page.url.split("?", 1)[1])["search"] == [ws], "the page writes it back as it came"
+        assert not page.errors
+        page.close()
+
+
+def test_a_fresh_open_offers_the_repos_default_search(browser: Any, static_site: str) -> None:
+    """models.json's default_search is what a fresh open offers and the search settings show; choosing
+    a side plays with it, and the link then names it. (The repo here holds no model: the page says so,
+    and the search stands.)"""
+    default = "rollout:2:1:1:z2:earlier:own"
+    page = browser.new_page(viewport={"width": 1366, "height": 768})
+    errors: List[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    body = json.dumps({"schema": 1, "default": None, "default_search": default, "models": []})
+    page.route("https://huggingface.co/mihaild/deepstruggle/resolve/main/models.json",
+               lambda route: route.fulfill(status=200, content_type="application/json", body=body))
+    page.goto(f"{static_site}/")
+    page.wait_for_function("window.__wb && window.__wb.liveState && window.__wb.positionToken", timeout=30000)
+    page.wait_for_selector("#mode-dialog:not(.hidden)")
+    page.wait_for_function(f"document.getElementById('search-settings-code').textContent === '{default}'")
+    assert page.is_checked("#mode-opponent-rollout")
+    page.click("#mode-choice-us")
+    page.wait_for_selector("#mode-dialog", state="hidden")
+    page.wait_for_function(f"new URLSearchParams(location.search).get('search') === '{default}'")
+    assert not errors
+    page.close()
+
+
+def test_the_search_settings_set_the_search(browser: Any, static_site: str) -> None:
+    """The search settings under the radios edit the rollout root's spec: a change is the setting (the
+    Rollout root chosen, the link naming it), one that does not parse is refused with a note, and
+    Default goes back to the default search."""
+    page = _open(browser, static_site + "/?model=off&view=us&search=policy")
+    assert page.evaluate("window.__wb.searchSpec") is None
+    _open_model_chooser(page)
+    page.click("#search-settings summary")
+    page.fill("#ss-worlds", "8")
+    page.dispatch_event("#ss-worlds", "change")
+    eight = BUILTIN_SEARCH.replace(":32:", ":8:")
+    page.wait_for_function(f"new URLSearchParams(location.search).get('search') === '{eight}'")
+    assert page.is_checked("#mode-opponent-rollout")
+    assert page.inner_text("#search-settings-code") == eight
+    # Edited settings are kept through a turn on the policy (a link's spec is not: the default comes back).
+    page.check("#mode-opponent-policy")
+    page.wait_for_function("new URLSearchParams(location.search).get('search') === null")
+    assert page.inner_text("#search-settings-code") == eight
+    page.check("#mode-opponent-rollout")
+    page.wait_for_function(f"new URLSearchParams(location.search).get('search') === '{eight}'")
+    page.fill("#ss-rule", "zz")
+    page.dispatch_event("#ss-rule", "change")
+    assert page.inner_text("#ss-error")
+    assert parse_qs(page.url.split("?", 1)[1])["search"] == [eight], "a spec that does not parse changes nothing"
+    page.click("#ss-default")
+    page.wait_for_function(f"new URLSearchParams(location.search).get('search') === '{BUILTIN_SEARCH}'")
+    assert page.input_value("#ss-rule") == "z2"
+    _close_model_chooser(page)
     assert not page.errors
     page.close()
 

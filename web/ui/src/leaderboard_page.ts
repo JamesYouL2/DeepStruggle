@@ -8,12 +8,15 @@
  * A second tab lists the architecture and recipe codes the players' names are written in, with each
  * code's description and flags, read from research/run_codes.json by the same fit (`codes`).
  *
- * The network that is the Hugging Face repo's default model (its models.json, set by
- * `tools/publish_hf.py default`) is tagged, read from the repo when the page opens rather than
- * fitted in, so the tag follows the repo without a rebuild.
+ * A player's `play` link opens the workbench with its network and its search (`workbench_search`,
+ * written by the fit). The player that is the Hugging Face repo's default -- its default model, played
+ * with its default search (models.json, set by `tools/publish_hf.py default --player`) -- is tagged,
+ * read from the repo when the page opens rather than fitted in, so the tag follows the repo without a
+ * rebuild.
  */
 
 import { hfCatalog } from "./analysis/hf_catalog";
+import { DEFAULT_ROLLOUT, RolloutSpec, parseSearchParam, rolloutParam, specEqual } from "./analysis/rollout_spec";
 
 interface Seat { w: number; l: number; d: number }
 
@@ -37,6 +40,9 @@ interface Player {
   /** The report on this player's play (tools/lib/leaderboard.py player_report): its own, or for the
    * greedy policy its network's; null for a search or a sampled policy that has none of its own. */
   report: string | null;
+  /** How the workbench plays it, as its `search=` value ("policy" or a rollout spec, every field
+   *  spelled out); null for a search it cannot run (Gumbel, PUCT, a sampled policy, another leaf network). */
+  workbench_search: string | null;
 }
 
 interface Rating {
@@ -120,7 +126,7 @@ function defaultEpoch(epochs: Record<string, { pairs: unknown[] }>): string {
   return played.length ? played[played.length - 1] : names[names.length - 1];
 }
 
-const HF_TAG = `<span class="lb-tag hf" title="The default model on Hugging Face: the workbench opens it when a link names no model">HF DEFAULT</span>`;
+const HF_TAG = `<span class="lb-tag hf" title="The default on Hugging Face: the workbench plays this network with this search when a link names neither">HF DEFAULT</span>`;
 
 const KIND_LABEL: Record<string, string> ={ policy: "", gumbel: "Gumbel", rollout: "rollout", search: "PUCT", bot: "bot" };
 
@@ -133,6 +139,8 @@ class LeaderboardPage {
   private allCodes = false;
   /** The Hugging Face repo's default model (an .onnx path), once read; null until then or if none. */
   private hfDefault: string | null = null;
+  /** Its default search (null: the policy): the repo's, else the workbench's built-in one. */
+  private hfDefaultSearch: RolloutSpec | null = DEFAULT_ROLLOUT;
 
   constructor(private readonly data: LeaderboardData) {
     const params = new URLSearchParams(location.search);
@@ -190,7 +198,11 @@ class LeaderboardPage {
    *  Face, and without it (offline, the repo unreachable) the page simply has no tag. */
   private async loadHfDefault(): Promise<void> {
     try {
-      this.hfDefault = (await hfCatalog(this.data.hf_repo, "main")).defaultModel;
+      const catalog = await hfCatalog(this.data.hf_repo, "main");
+      const search = catalog.defaultSearch === null ? DEFAULT_ROLLOUT : parseSearchParam(catalog.defaultSearch);
+      if (search === undefined) throw new Error(`its default search ${catalog.defaultSearch} is not a search= value`);
+      this.hfDefault = catalog.defaultModel;
+      this.hfDefaultSearch = search;
     } catch (e) {
       console.warn(`leaderboard: the Hugging Face default model could not be read: ${e instanceof Error ? e.message : e}`);
       return;
@@ -198,11 +210,15 @@ class LeaderboardPage {
     this.render();
   }
 
-  /** Whether `pid` plays the network that is the repo's default model (its .onnx beside the .pt). */
+  /** Whether `pid` is the repo's default: its network the default model (the .onnx beside the .pt),
+   *  played with the default search. */
   private isHfDefault(pid: string): boolean {
-    const network = this.data.players[pid]?.network;
-    const hf = network ? this.data.networks[network]?.hf : null;
-    return !!hf && !!this.hfDefault && hf.replace(/\.pt$/, ".onnx") === this.hfDefault;
+    const pl = this.data.players[pid];
+    const hf = pl?.network ? this.data.networks[pl.network]?.hf : null;
+    if (!hf || !this.hfDefault || hf.replace(/\.pt$/, ".onnx") !== this.hfDefault || !pl.workbench_search) return false;
+    const search = parseSearchParam(pl.workbench_search);
+    const want = this.hfDefaultSearch;
+    return search !== undefined && (search === null || want === null ? search === want : specEqual(search, want));
   }
 
   private get ep(): Epoch { return this.data.epochs[this.epoch]; }
@@ -229,8 +245,12 @@ class LeaderboardPage {
     if (net.hf) {
       const onnx = net.hf.replace(/\.pt$/, ".onnx");
       out.push(`<a href="https://huggingface.co/${esc(this.data.hf_repo)}/blob/main/${esc(net.hf)}" title="The weights on Hugging Face">weights</a>`);
-      out.push(`<a href="./?model=${encodeURIComponent(`hf:${this.data.hf_repo}@main:${onnx}`)}"
-        title="Open the network in the engine workbench">play</a>`);
+      // The player as the workbench plays it; a search it cannot run opens the network's policy, and says so.
+      const search = pl.workbench_search ?? "policy";
+      const what = pl.workbench_search ? `Play this player in the engine workbench (search=${pl.workbench_search})`
+        : `The workbench cannot run this player's search: open its network's policy in the engine workbench`;
+      out.push(`<a href="./?model=${encodeURIComponent(`hf:${this.data.hf_repo}@main:${onnx}`)}&search=${encodeURIComponent(search)}"
+        title="${esc(what)}">play</a>`);
     }
     return out.join("");
   }
@@ -298,7 +318,7 @@ class LeaderboardPage {
     box.innerHTML = `
       <h2>${esc(pid)}</h2>
       <p>${desc}${old}</p>
-      ${this.isHfDefault(pid) ? `<p>${HF_TAG} Its network is the default model on Hugging Face: the workbench opens it when a link names no model.</p>` : ""}
+      ${this.isHfDefault(pid) ? `<p>${HF_TAG} The default on Hugging Face: the workbench plays this network with this search when a link names neither.</p>` : ""}
       ${codeLine}
       ${links ? `<p class="lb-links">${links}</p>` : ""}
       <p>Elo <b>${rating.elo.toFixed(0)}</b>${pid === this.ep.anchor ? " (the anchor)" : ` ± ${rating.se.toFixed(0)}`} · ${rating.games.toLocaleString("en-US")} games against ${rating.opponents} opponents, ${rating.main_opponents} of them main players.</p>
@@ -374,8 +394,9 @@ class LeaderboardPage {
     $("lb-footer").innerHTML = `Fitted from <a href="${records}">the match records</a>`
       + (d.commit ? ` at commit <code>${esc(d.commit.slice(0, 10))}</code>` : "")
       + ` by <code>tools/leaderboard.py</code>. Weights: <a href="https://huggingface.co/${esc(d.hf_repo)}">${esc(d.hf_repo)}</a>`
-      + (this.hfDefault ? `, default model <code>${esc(this.hfDefault)}</code>`
-        + (Object.values(d.networks).some(n => n.hf?.replace(/\.pt$/, ".onnx") === this.hfDefault) ? "" : " (not on the board)") : "")
+      + (this.hfDefault ? `, default model <code>${esc(this.hfDefault)}</code> with search <code>${
+        esc(this.hfDefaultSearch ? rolloutParam(this.hfDefaultSearch) : "policy")}</code>`
+        + (Object.keys(this.data.players).some(p => this.isHfDefault(p)) ? "" : " (not a player on the board)") : "")
       + ".";
   }
 
