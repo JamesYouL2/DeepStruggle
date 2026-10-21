@@ -258,8 +258,8 @@ or a player in `leaderboard/` is the behaviour report `tools/scripts/checkpoint_
 for exactly that network (`--checkpoints`) or player (`--players`) -- openings, how games end, what
 each side does with every card, and its searched-leak census first when it has one -- in
 `research/log/per_checkpoint/`. The plan or research log the checkpoint was made for is not its
-report, nor is the leak census written alone (`--games 0`); until a report is generated, leave the
-link null.
+report, nor is the leak census written alone (`--games 0`, a searched-leak report, which its
+network's behaviour report links); until a report is generated, leave the link null.
 `tools/leaderboard.py validate` (run by `tests/training`) refuses anything else.
 
 Other `tools/` CLIs: `generate_dataset.py` and `build_human_dataset.py` (demonstration datasets),

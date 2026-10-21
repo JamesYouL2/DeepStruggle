@@ -714,8 +714,9 @@ searcher's candidates), `playouts` (paired raw-network playouts) and `report`. C
   [`E7_searched_leak_R39.md`](../research/log/E7_searched_leak_R39.md)). Beside `leak.md`, `leak.md.json`
   holds the headline numbers with the census's network and player, which
   `tools/scripts/checkpoint_report.py --leak` checks and puts first in that player's report
-  (`--games 0` for the census alone, which the leaderboard does not link; a later self-play run of
-  the player keeps it, and `--load --leak` adds it to one already played).
+  (`--games 0` for the census alone: a searched-leak report, which the leaderboard does not link and
+  its network's behaviour report does; a later self-play run of the player keeps it, and `--load
+  --leak` adds it to one already played; `--index` rewrites the index and the links).
 * `event-select` / `event-report`: every action-round play-mode decision with a legal event, ranked
   by raw's measured loss per card.
 * `subs-select` / `subs` / `subs-report`: four paired branches at each US Nuclear Subs decision

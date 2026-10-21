@@ -28,8 +28,11 @@ With `--leak`, a searched-leak census of the same network under the same player
 (`tools/search_bank.py` leak's `<out>.json`) goes first: where the player loses, in points of win
 probability a game, by decision kind, and the positions that cost it the most. It is not played
 here -- the census takes CI hours -- so `--games 0` writes it alone, `--load` adds it to a report
-already played, and a self-play run keeps the census its records already hold. A report with the
-census alone is not a behaviour report: the leaderboard links none (`tools/lib/leaderboard.py`).
+already played, and a self-play run keeps the census its records already hold. The census alone
+is a searched-leak report, not a behaviour report: the leaderboard links none
+(`tools/lib/leaderboard.py`), and the behaviour report of its network -- or of its player, once there
+is one -- links it, on the line after its Games line. Writing into `research/log/per_checkpoint/`
+rewrites the index and those links; `--index` does that alone.
 
     PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
         --checkpoints <pt> [<pt> ...] --games 16384
@@ -1448,7 +1451,7 @@ def leak_section(lk: Dict[str, Any]) -> str:
     who = f"the player `{lk['player']}`" if lk.get("player") else "the greedy network"
     tot = lk["total"]
     screened = lk["census"] == "screened"
-    out = ["## Where it loses: the searched-leak census", "",
+    out = [LEAK_HEADING, "",
            f"{who[0].upper() + who[1:]} loses **{tot['leak']:+.1f} ± {tot['se']:.1f}** points of win probability "
            f"a game, both sides' decisions summed ({lk['decisions_per_game']:.1f} decisions with two or more legal "
            f"moves a game). {lk['positions']:,} positions from {lk['games']:,} of its own self-play games "
@@ -1500,6 +1503,12 @@ def _label(path: str) -> Tuple[str, str, str]:
 
 #: Where `report` puts the table of contents, built once the sections below it are written.
 CONTENTS = "<!-- contents -->"
+LEAK_HEADING = "## Where it loses: the searched-leak census"
+#: The two kinds of report, by their title: a behaviour report has self-play (its `* **Games:**` line);
+#: the searched-leak census written alone (`--games 0`) is a leak report, linked from the behaviour
+#: report of its network (or its player) by `link_leaks`, never from the leaderboard.
+BEHAVIOUR, LEAK = "behaviour report", "searched-leak report"
+GAMES_LINE, LEAK_LINE = "* **Games:** ", "* **Searched-leak census:** "
 
 
 def _slug(heading: str, seen: Dict[str, int]) -> str:
@@ -1544,7 +1553,7 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     home = os.path.dirname(data_root())      # paths print as data/..., on any machine
     rel = os.path.relpath(path, home)
-    out = [f"# {title}: behaviour report", "",
+    out = [f"# {title}: {BEHAVIOUR if d['games'] else LEAK}", "",
            f"Generated {datetime.date.today().isoformat()} by `tools/scripts/checkpoint_report.py` (commit {commit}).", "",
            "## The checkpoint", "",
            f"* **File:** `{rel}` (sha256 `{_sha(path)[:12]}…`)",
@@ -1597,24 +1606,68 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     return _with_contents("\n".join(out)) + "\n"
 
 
-def write_index() -> None:
-    rows = []
-    for f in sorted(os.listdir(REPORT_DIR)):
+def _reports(report_dir: str) -> List[Tuple[str, str, List[str]]]:
+    """Every report in `report_dir`: (file, subject, lines). The subject is the title's: a network's
+    name, or a player's id (`<network>~<search>`)."""
+    out = []
+    for f in sorted(os.listdir(report_dir)):
         if f.endswith(".md") and f != "README.md":
-            first = open(os.path.join(REPORT_DIR, f)).readline().lstrip("# ").strip()
-            rows.append(f"* [{first}]({f})")
-    open(os.path.join(REPORT_DIR, "README.md"), "w").write(
+            lines = open(os.path.join(report_dir, f)).read().split("\n")
+            out.append((f, re.sub(r"^# ", "", lines[0]).rsplit(": ", 1)[0], lines))
+    return out
+
+
+def _has_selfplay(lines: Sequence[str]) -> bool:
+    return any(line.startswith(GAMES_LINE) for line in lines)
+
+
+def link_leaks(report_dir: str = REPORT_DIR) -> None:
+    """In every behaviour report, the line after its Games line that links the searched-leak censuses
+    of what it reports on: for a network, each of its players' (the network under a search); for a
+    player, its own when that is a report of its own. Rewritten whenever the index is, so a census
+    written after the behaviour report -- or a behaviour report played after the census -- is linked.
+    A report holding its census already (`--leak` with self-play) needs no link to itself."""
+    reports = _reports(report_dir)
+    leaks = [(f, subj) for f, subj, lines in reports if LEAK_HEADING in lines]
+    for f, subj, lines in reports:
+        if not _has_selfplay(lines):
+            continue
+        mine = [(lf, ls) for lf, ls in leaks if lf != f and (ls == subj or ls.startswith(subj + "~"))]
+        kept = [line for line in lines if not line.startswith(LEAK_LINE)]
+        if mine:
+            at = next(i for i, line in enumerate(kept) if line.startswith(GAMES_LINE)) + 1
+            links = ", ".join(f"[{'this player' if ls == subj else ls.split('~', 1)[1]}]({lf})" for lf, ls in mine)
+            what = ("where this player loses" if all(ls == subj for _, ls in mine)
+                    else "where this network loses under each search")
+            kept.insert(at, f"{LEAK_LINE}{links} -- {what} (`tools/search_bank.py`'s leak census).")
+        if kept != lines:
+            open(os.path.join(report_dir, f), "w").write("\n".join(kept))
+
+
+def write_index(report_dir: str = REPORT_DIR) -> None:
+    """The directory's README: the behaviour reports, then the searched-leak reports; and every
+    behaviour report's links to its leak reports (`link_leaks`)."""
+    link_leaks(report_dir)
+    reports = _reports(report_dir)
+    rows = {kind: [f"* [{lines[0].lstrip('# ').strip()}]({f})" for f, _, lines in reports
+                   if _has_selfplay(lines) == (kind == BEHAVIOUR)] for kind in (BEHAVIOUR, LEAK)}
+    open(os.path.join(report_dir, "README.md"), "w").write(
         "# Per-checkpoint behaviour reports\n\nGenerated by `tools/scripts/checkpoint_report.py`: for one "
         "checkpoint, greedy self-play and from it what each side does with every card, Star Wars "
         "retrievals, and when and with what hand the USSR plays Five Year Plan and the US plays Aldrich Ames "
         "Remix; with `--leak`, first, the searched-leak census (where the player loses, by decision kind; "
-        "`tools/search_bank.py`).\n\n" + "\n".join(rows) + "\n")
+        "`tools/search_bank.py`). The leaderboard links these.\n\n" + "\n".join(rows[BEHAVIOUR]) + "\n\n"
+        "## Searched-leak reports\n\nThe census alone (`--games 0`), for a player with no behaviour report of "
+        "its own: linked from its network's behaviour report, not from the leaderboard.\n\n"
+        + "\n".join(rows[LEAK]) + "\n")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--checkpoints", nargs="+")
+    src.add_argument("--index", action="store_true",
+                     help="only rewrite the index and every behaviour report's links to its leak reports")
     src.add_argument("--players", nargs="+",
                      help="leaderboard player ids (leaderboard/players.json): the network registered for each, "
                           "played as the player plays -- under its search, if it has one")
@@ -1638,6 +1691,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "it must be of this network (sha256) under this player; kept in the records, so --load "
                          "adds it to an existing report without replaying")
     a = ap.parse_args(argv)
+    if a.index:
+        write_index(a.output_dir)
+        return 0
     # A player brings its network's file, its search and its description, all from the registry.
     agents: List[Optional[str]] = []
     if a.players:
