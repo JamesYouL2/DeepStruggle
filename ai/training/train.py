@@ -303,6 +303,10 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--policy-dataset", type=str, default=None,
                     help="A tools/distill_targets.py .npz: the keyed root's improved policy on entry decisions.")
     pf.add_argument("--policy-worlds", type=int, default=128, help="Which world count's targets to fit.")
+    pf.add_argument("--policy-target", type=str, default=None,
+                    help="Which teacher's targets to fit, by its distill_targets.py --teacher name (overrides --policy-worlds).")
+    pf.add_argument("--policy-reinit-heads", action="store_true", default=False,
+                    help="Re-initialise the policy heads, keeping the trained trunk (plasticity).")
     pf.add_argument("--policy-reinit", action="store_true", default=False,
                     help="Train --warmup-checkpoint's architecture from fresh weights instead of fine-tuning it.")
     pf.add_argument("--policy-arch", nargs="+", default=None, metavar="KEY=VALUE",
@@ -1378,6 +1382,7 @@ def main():
                             lr=args.policy_lr, max_epochs=args.policy_epochs, eval_every=args.policy_eval_every,
                             patience=args.policy_patience, train_fraction=args.policy_train_fraction,
                             head_only=args.policy_head_only, kl_anchor=args.policy_kl_anchor,
+                            target=args.policy_target, reinit_heads=args.policy_reinit_heads,
                             seed=args.seed if args.seed is not None else 44,
                             device=args.device),
             run_name=args.run_name, description=args.description, output_dir=args.output_dir,

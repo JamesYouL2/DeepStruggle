@@ -2963,7 +2963,9 @@ def train_pipeline(
     if search_value_beta > 0.0:
         active_aux_losses.extend(["search_value_rows", "search_value_vs_return", "search_value_vs_critic",
                                   "search_value_bias", "search_value_bias_us", "search_value_bias_ussr"])
-    if search_ce_coef > 0.0:
+    # The trainer's coefficient, not the argument: --active-search-spec sets it from
+    # --active-search-ce-coef with --search-ce-coef at 0, and P36's active-search runs logged none of these.
+    if float(trainer.search_ce_coef) > 0.0:
         # P15-X4b. The CE term's magnitude and its share of the raw gradient. Registering them
         # here rather than unconditionally keeps them off every run that has no searcher, and
         # registering them at ALL is the point: the arm that collapsed at ~20M logged neither,
