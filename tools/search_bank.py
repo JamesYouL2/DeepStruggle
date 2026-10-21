@@ -1346,12 +1346,14 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
               cards: Dict[int, Dict[str, Any]], countries: Dict[int, Dict[str, Any]],
               screen: Optional[Sequence[Dict[str, Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
     """Per playout row: its population weight (bank weight / `pl_incl`), raw's search-valued regret,
-    the decision kind and a finer label, and the paired playout gain over raw's move of the best move
-    (`gain`) and of k=8 @256's move (`g256`), the runs' pairs pooled. `runs` are playout outputs
-    keyed by row id. With `screen` (confirm-select's rows as `inputs`) k=8 @256's gain is read from
-    the screen's pairs -- it was not chosen on them -- and a row the screen did not escalate counts
-    with no gain."""
-    modes = {EVENT: "EVENT", SPACE: "SPACE", EVENT + 2: "INFL", EVENT + 3: "COUP", EVENT + 4: "REALIGN"}
+    the decision kind, the card in play (the card chosen, or the card whose mode, Ops or event the
+    decision resolves), raw's and the best move by name and by class (a card's relation and Ops, a
+    mode, a region), and the paired playout gain over raw's move of the best move (`gain`) and of
+    k=8 @256's move (`g256`), the runs' pairs pooled. `runs` are playout outputs keyed by row id.
+    With `screen` (confirm-select's rows as `inputs`) k=8 @256's gain is read from the screen's pairs
+    -- it was not chosen on them -- and a row the screen did not escalate counts with no gain."""
+    modes = {EVENT: "EVENT", SPACE: "SPACE", EVENT + 2: "INFL", EVENT + 3: "COUP", EVENT + 4: "REALIGN",
+             ActionEncoder.CONFIRM_DONE_INDEX: "done"}
 
     def rel(a: int, side: str) -> str:
         if a >= 110:
@@ -1381,24 +1383,28 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
         for m in (raw, best):  # a screen's best can lie outside every searcher's candidates
             b["names"].setdefault(str(m), ActionEncoder.get_action_name(st, m))
         dt = b["decision_type"]
+        cid = int(b.get("card") or 0)                       # the card in play, 1-based; 0 for none
+        cid = cid if cid in cards else 0                    # (a card choice can carry a pending marker)
         r: Dict[str, Any] = {"id": b["id"], "b": b, "w": float(b["weight"]) / float(b.get("pl_incl", 1.0)),
                              "regret": float(b["regret"]), "side": side, "turn": int(b["turn"]),
+                             "ar": int(b.get("ar") or 0), "phase": str(b["phase"]),
                              "defcon": int(st.defcon), "gain": _paired_scores(sc, best, raw),
                              "g256": _paired_scores(gsc, None if g256 is None else int(g256), raw),
-                             "sub": "", "raw_card": "", "best_card": ""}
+                             "card": str(cards[cid]["name"]) if cid else "",
+                             "raw_class": "", "best_class": "", "raw_card": "", "best_card": ""}
         if dt == "SELECT_CARD":
             r["kind"] = "headline" if b["phase"] == "HEADLINE" else "AR card choice"
-            r["sub"] = f"{rel(raw, side)}{ops(raw)} -> {rel(best, side)}{ops(best)}"
+            r["raw_class"], r["best_class"] = f"{rel(raw, side)}{ops(raw)}", f"{rel(best, side)}{ops(best)}"
             r["raw_card"], r["best_card"] = card_name(raw), card_name(best)
+            r["card"] = r["raw_card"]
         elif dt == "SELECT_PLAY_MODE":
             r["kind"] = "play mode"
-            cid = int(b.get("card") or 0)
-            r["sub"] = (f"{rel(cid - 1, side) if cid else '?'} card: "
-                        f"{modes.get(raw, str(raw))} -> {modes.get(best, str(best))}")
+            own = f"{rel(cid - 1, side) if cid else '?'} card: "
+            r["raw_class"], r["best_class"] = own + modes.get(raw, str(raw)), own + modes.get(best, str(best))
             r["raw_card"] = r["best_card"] = str(cards[cid]["name"]) if cid else "?"
         elif dt == "SELECT_OP_MODE":
             r["kind"] = "op mode"
-            r["sub"] = f"{modes.get(raw, str(raw))} -> {modes.get(best, str(best))}"
+            r["raw_class"], r["best_class"] = modes.get(raw, str(raw)), modes.get(best, str(best))
         elif dt == "POINT_NODE":
             # The opening setup is its own kind: it is not an Ops target, and its fixed regions would
             # crowd the in-game placements out of the influence tables.
@@ -1407,8 +1413,8 @@ def leak_rows(inputs: Sequence[Dict[str, Any]], runs: Sequence[Dict[str, Dict[st
 
             def region(a: int) -> str:
                 c = countries.get(a - ActionEncoder.NODE_OFFSET)
-                return str(c["region"]) if c else str(a)
-            r["sub"] = f"{region(raw)} -> {region(best)}"
+                return str(c["region"]) if c else modes.get(a, str(a))
+            r["raw_class"], r["best_class"] = region(raw), region(best)
         else:
             r["kind"] = dt.lower()
 
@@ -1508,138 +1514,201 @@ def leak_summary(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_p
             "kinds": kinds, "top": worst}
 
 
+#: The sides, in the order every per-side table prints them.
+SIDES = ("US", "USSR")
+
+
 def leak_analysis(rows: Sequence[Dict[str, Any]], bank_weight: float, decisions_per_game: float,
-                  large: float = LARGE_REGRET, resamples: int = 2000,
-                  bs: Optional[Dict[str, Dict[str, float]]] = None) -> str:
-    """Where raw play loses, in points of win probability a game (both sides' decisions summed): each
-    playout row's paired gain of the best move over raw's, weighted back to the population, grouped
-    by the decision's kind and by finer labels, beside what k=8 @256 recovers there. `large` <= 0
-    is the playout-screened census (confirm-select): every row is read, none is screened out by a
-    search-valued regret. `bs` is kind_bootstrap's result when the caller already has it."""
+                  large: float = LARGE_REGRET, resamples: int = 2000) -> str:
+    """Where raw play loses, in points of win probability a game, each side's own decisions apart:
+    each playout row's paired gain of the best move over raw's, weighted back to the population.
+    Every table is one-sided twice over -- a column per side, and grouped by what raw played or by
+    what it missed, never by the pair -- and splits each group's leak into how often it comes up,
+    how often a better move was found there and what that costs each time. `large` <= 0 is the
+    playout-screened census (confirm-select): every row is read, none is screened out by a
+    search-valued regret."""
     scope = "large regret" if large > 0 else "all positions"
     scale = 100.0 * decisions_per_game / bank_weight
     out: List[str] = []
-
-    def total(rs: Sequence[Dict[str, Any]], f: str) -> Tuple[float, float]:
-        return (scale * sum(r["w"] * r[f][0] for r in rs),
-                scale * math.sqrt(sum(r["w"] ** 2 * r[f][1] for r in rs)))
-
-    def tab(title: str, key: Callable[[Dict[str, Any]], Optional[str]], rs: Sequence[Dict[str, Any]],
-            top: int = 12, min_n: int = 1) -> None:
-        g: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
-        for r in rs:
-            k = key(r)
-            if k is not None:
-                g[k].append(r)
-        ranked = sorted(((total(v, "gain"), k, v) for k, v in g.items() if len(v) >= min_n),
-                        key=lambda x: -x[0][0])
-        out.extend([f"## {title}", "", "| group | n | share of decisions | best over raw | k=8 @256 over raw |",
-                    "|:---|---:|---:|---:|---:|"])
-        for (m, s), k, v in ranked[:top]:
-            gm, gs = total(v, "g256")
-            out.append(f"| {k} | {len(v)} | {100 * sum(r['w'] for r in v) / bank_weight:.2f}% | "
-                       f"{m:+.1f} ± {s:.1f} | {gm:+.1f} ± {gs:.1f} |")
-        out.append("")
+    big = [r for r in rows if large <= 0 or r["regret"] >= large]
 
     def found(r: Dict[str, Any]) -> bool:
         return bool(r["b"].get("escalated")) if large <= 0 else r["regret"] >= large
 
-    def freq_tab(title: str, key: Callable[[Dict[str, Any]], str], rs: Sequence[Dict[str, Any]],
-                 top: int = 25, min_found: int = 3) -> None:
-        """Recurring mistakes, frequency x cost: how often a game the mover makes this move where a
-        better one was found (weighted found rows), what it costs when it does, and the product."""
-        g: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    def agg(v: Sequence[Dict[str, Any]]) -> Dict[str, float]:
+        """A group's decisions a game, the share where a better move was found, what it costs each
+        time (points), and the leak a game with its SE: each position stands for its weight's share
+        of the population (Poisson sampling: sum (w^2 - w) y^2) and its playouts add w^2 times theirs."""
+        f = [r for r in v if found(r)]
+        wa, wf = sum(r["w"] for r in v), sum(r["w"] for r in f)
+        wg = sum(r["w"] * r["gain"][0] for r in f)
+        var = sum(max(r["w"] ** 2 - r["w"], 0.0) * r["gain"][0] ** 2 + r["w"] ** 2 * r["gain"][1] for r in f)
+        return {"n": float(len(v)), "found": float(len(f)), "decisions": scale / 100.0 * wa,
+                "rate": wf / wa if wa else 0.0, "cost": 100.0 * wg / wf if wf else 0.0,
+                "leak": scale * wg, "se": scale * math.sqrt(var)}
+
+    def cells(a: Optional[Dict[str, float]], missed: bool) -> List[str]:
+        if a is None:
+            return ["", "", ""] if missed else ["", "", "", ""]
+        leak = f"{a['leak']:+.1f} ± {a['se']:.1f}"
+        if missed:
+            return [f"{a['decisions']:.3f}", f"{a['cost']:+.1f}", leak]
+        return [f"{a['decisions']:.2f}", f"{100 * a['rate']:.1f}%", f"{a['cost']:+.1f}", leak]
+
+    def heads(missed: bool) -> List[str]:
+        return ["times a game", "cost each", "a game"] if missed else \
+            ["decisions a game", "mistakes", "cost each", "a game"]
+
+    def groups(key: Callable[[Dict[str, Any]], Optional[str]], rs: Sequence[Dict[str, Any]],
+               missed: bool) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+        g: Dict[Tuple[str, str], List[Dict[str, Any]]] = collections.defaultdict(list)
         for r in rs:
-            if found(r):
-                g[key(r)].append(r)
-        def leak_se(v: Sequence[Dict[str, Any]]) -> Tuple[float, float]:
-            # Each position stands for w of the population, drawn with probability 1/w: the sampling
-            # variance of the weighted sum is sum (w^2 - w) y^2 (Poisson sampling), and the playouts
-            # add w^2 times their own.
-            return (scale * sum(r["w"] * r["gain"][0] for r in v),
-                    scale * math.sqrt(sum((r["w"] ** 2 - r["w"]) * r["gain"][0] ** 2 + r["w"] ** 2 * r["gain"][1]
-                                          for r in v)))
-        ranked = sorted(((leak_se(v), k, v) for k, v in g.items() if len(v) >= min_found),
-                        key=lambda x: -x[0][0])
+            k = key(r) if not missed or found(r) else None
+            if k:
+                g[(k, str(r["side"]))].append(r)
+        return g
+
+    def side_tab(title: str, key: Callable[[Dict[str, Any]], Optional[str]], rs: Sequence[Dict[str, Any]],
+                 order: Optional[Sequence[str]] = None, missed: bool = False) -> None:
+        """A shared set of groups, the sides side by side: in `order`, else by the leak of both."""
+        g = groups(key, rs, missed)
+        a = {k: agg(v) for k, v in g.items()}
+        names = {k for k, _ in g}
+        keys = [k for k in order if k in names] if order is not None else sorted(
+            names, key=lambda k: -sum(a[(k, s)]["leak"] for s in SIDES if (k, s) in a))
         out.extend([f"## {title}", "",
-                    "| pattern | positions | times a game | cost each (points) | a game |",
-                    "|:---|---:|---:|---:|---:|"])
-        for (m, se_), k, v in ranked[:top]:
-            times = scale / 100.0 * sum(r["w"] for r in v)
-            out.append(f"| {k} | {len(v)} | {times:.3f} | {m / times if times else 0.0:+.1f} | "
-                       f"{m:+.2f} ± {se_:.2f} |")
+                    "| group | " + " | ".join(f"{s}: {h}" for s in SIDES for h in heads(missed)) + " |",
+                    "|:---|" + "---:|" * (len(SIDES) * len(heads(missed)))])
+        for k in keys:
+            out.append(f"| {k} | " + " | ".join(c for s in SIDES for c in cells(a.get((k, s)), missed)) + " |")
         out.append("")
 
-    big = [r for r in rows if large <= 0 or r["regret"] >= large]
-    out += ["# Where raw play loses: paired playouts by decision kind", "",
-            f"Points of win probability a game, both sides' decisions summed ({decisions_per_game:.1f} decisions "
-            "with two or more legal moves a game): each playout row's paired gain of the best move over raw's, "
-            "weighted back to the decisions raw play meets. 'k=8 @256 over raw' is what that searcher's own "
-            "move recovers." + (" 'Large' is a search-valued raw regret of 2+ points, where the gain is "
-                                "(research/log/E7_search_disagreement_bank.md on the fork's exp/search-bank branch); "
-                                "the rest sits at its noise."
-                                if large > 0 else ""), ""]
-    if large > 0:
-        tab("total", lambda r: "large regret (2+ points)" if r["regret"] >= large else "the rest", rows)
-    else:
-        out += ["Screened census: the best move is chosen on the screen's pairs, and its gain measured on "
-                "fresh pairs where the screen's lead held (escalated); other rows count as no loss, so the "
-                "total is a lower bound. 'raw' is the move under study (annotate --player: the player's).", ""]
-        tab("total", lambda r: "escalated" if r["b"].get("escalated") else "not escalated", rows)
+    def ranked_tab(title: str, label: str, key: Callable[[Dict[str, Any]], Optional[str]],
+                   rs: Sequence[Dict[str, Any]], missed: bool = False, top: int = 20, min_found: int = 3) -> None:
+        """Groups too many to share a table: one table a side, ranked by that side's leak; a group
+        needs `min_found` positions where a better move was found."""
+        g = groups(key, rs, missed)
+        for s in SIDES:
+            ranked = sorted(((agg(v), k) for (k, side), v in g.items() if side == s),
+                            key=lambda x: -x[0]["leak"])
+            ranked = [(a, k) for a, k in ranked if a["found"] >= min_found][:top]
+            if not ranked:
+                continue
+            out.extend([f"## {title}: {s}", "",
+                        f"| {label} | positions{'' if missed else ' (found / all)'} | " + " | ".join(heads(missed)) + " |",
+                        "|:---|---:|" + "---:|" * len(heads(missed))])
+            for a, k in ranked:
+                pos = f"{a['found']:.0f}" if missed else f"{a['found']:.0f} / {a['n']:.0f}"
+                out.append(f"| {k} | {pos} | " + " | ".join(cells(a, missed)) + " |")
+            out.append("")
+
+    out += ["# Where raw play loses: paired playouts, each side's own decisions", "",
+            f"Points of win probability a game, the mover's: a side's column sums its own decisions, and the "
+            f"two sides add to the game's leak ({decisions_per_game:.1f} decisions with two or more legal moves a "
+            "game, both sides). 'decisions a game' is how often the group comes up for that side, 'mistakes' "
+            "the share of them where a better move was found"
+            + (" (escalated: the screen's lead confirmed on fresh pairs)" if large <= 0 else
+               " (a search-valued raw regret of 2+ points)")
+            + ", 'cost each' the best move's gain there (points of win probability), and 'a game' their "
+            "product, ± the sampling of positions (each standing for its weight's share of the population) and "
+            "the playout noise. Groups are one-sided: by the move raw played, or by the best move it missed "
+            "('times a game' then counts the misses)."
+            + (" Screened census: rows the screen did not escalate count as no loss, so every leak is a lower "
+               "bound. 'raw' is the move under study (annotate --player: the player's)." if large <= 0 else ""), ""]
+    side_tab(f"{scope}: by side", lambda r: "all decisions", rows)
     if resamples > 0 and big:
-        bs = bs if bs is not None else kind_bootstrap(big, scale, resamples)
+        bs = {s: kind_bootstrap([r for r in big if r["side"] == s], scale, resamples)
+              for s in SIDES if any(r["side"] == s for r in big)}
+        kinds = sorted({k for v in bs.values() for k in v if k != "all"},
+                       key=lambda k: -sum(v[k]["leak"] for v in bs.values() if k in v)) + ["all"]
         out += [f"## {scope}: decision kind, stratified bootstrap ({resamples} resamples)", "",
-                "Positions resampled within their (bank stratum, playout class) cell: the ± counts the "
-                "sampling of positions as well as the playout noise the tables below print alone.", "",
-                "| kind | best over raw | share | k=8 @256 over raw | leaks the most in |",
-                "|:---|---:|---:|---:|---:|"]
-        for k, v in sorted(bs.items(), key=lambda kv: (kv[0] == "all", -kv[1]["leak"])):
-            share = f"{100 * v['leak'] / bs['all']['leak']:.0f}%" if k != "all" and bs["all"]["leak"] else ""
-            most = f"{100 * v['largest']:.0f}%" if k != "all" else ""
-            out.append(f"| {k} | {v['leak']:+.1f} ± {v['leak_se']:.1f} | {share} | "
-                       f"{v['g256']:+.1f} ± {v['g256_se']:.1f} | {most} |")
+                "Positions resampled within their (bank stratum, playout class) cell, each side apart: the ± "
+                "counts the sampling of positions as well as the playout noise. 'share' is of that side's "
+                "leak; 'k=8 @256' what that searcher's own move recovers over raw's.", "",
+                "| kind | " + " | ".join(f"{s}: {h}" for s in bs for h in ("a game", "share", "k=8 @256")) + " |",
+                "|:---|" + "---:|" * (3 * len(bs))]
+        for k in kinds:
+            row: List[str] = []
+            for v in bs.values():
+                x = v.get(k)
+                if x is None:
+                    row += ["", "", ""]
+                    continue
+                share = f"{100 * x['leak'] / v['all']['leak']:.0f}%" if k != "all" and v["all"]["leak"] else ""
+                row += [f"{x['leak']:+.1f} ± {x['leak_se']:.1f}", share, f"{x['g256']:+.1f} ± {x['g256_se']:.1f}"]
+            out.append(f"| {k} | " + " | ".join(row) + " |")
         out.append("")
-    tab(f"{scope}: decision kind", lambda r: r["kind"], big)
-    tab(f"{scope}: side x kind", lambda r: f"{r['side']} {r['kind']}", big, top=10)
-    tab(f"{scope}: era x kind", lambda r: f"{era_label(r['turn'])} {r['kind']}", big, top=12)
-    tab(f"{scope}: DEFCON x kind",
-        lambda r: f"D{min(r['defcon'], 4)}{'+' if r['defcon'] >= 4 else ''} "
-                  f"{r['kind'] if r['kind'] in ('AR card choice', 'play mode') else 'other'}", big, top=10)
-    cc = [r for r in big if r["kind"] == "AR card choice"]
-    tab(f"{scope}, AR card choice: raw's card -> the best card (kind, Ops)", lambda r: r["sub"], cc, min_n=5)
-    tab(f"{scope}, AR card choice: the card raw plays instead (n >= 4)", lambda r: r["raw_card"], cc, min_n=4)
-    tab(f"{scope}, AR card choice: the card the best move plays (n >= 4)", lambda r: r["best_card"], cc, min_n=4)
-    tab(f"{scope}, play mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "play mode"],
-        top=10, min_n=4)
-    tab(f"{scope}, play mode: the card (n >= 4)", lambda r: r["raw_card"],
-        [r for r in big if r["kind"] == "play mode"], top=10, min_n=4)
-    tab(f"{scope}, op mode: raw -> best", lambda r: r["sub"], [r for r in big if r["kind"] == "op mode"], top=6)
-    tab(f"{scope}, influence targets: raw's region -> the best region", lambda r: r["sub"],
-        [r for r in big if r["kind"] == "target (influence)"], top=10, min_n=4)
-    tab(f"{scope}, headline: raw's card -> the best card (kind, Ops)", lambda r: r["sub"],
-        [r for r in big if r["kind"] == "headline"], top=8, min_n=4)
-    out += ["# Recurring mistakes: frequency x cost", "",
-            "Each pattern's positions are those where a better move was found"
-            + (" (escalated and confirmed on fresh pairs)" if large <= 0 else " (large regret)")
-            + ": 'times a game' is how often the mover makes it, weighted back to the population; "
-            "'cost each' the confirmed gain of the best move when it does; 'a game' their product. Its ± "
-            "counts the sampling of positions (each standing for its weight's share of the population) "
-            "as well as the playout noise; a pattern needs 3+ positions.", ""]
-    freq_tab("the move raw played (side, kind, move)", lambda r: f"{r['side']} {r['kind']}: {r['raw_move']}", big)
-    freq_tab("the move raw played -> the best move",
-             lambda r: f"{r['side']} {r['kind']}: {r['raw_move']} -> {r['best_move']}", big)
-    freq_tab("the best move raw missed (side, kind, move)",
-             lambda r: f"{r['side']} {r['kind']}: {r['best_move']}", big)
-    out += [f"## The 20 positions that cost raw the most a game ({scope})", "",
-            "| turn/AR | side | DEFCON | kind | raw | best | gain a decision | a game |", "|:---|:---|---:|:---|:---|:---|---:|---:|"]
-    for r in sorted(big, key=lambda r: -r["w"] * r["gain"][0])[:20]:
-        b, nm = r["b"], r["b"]["names"]
-        out.append(f"| T{b['turn']} AR{b['ar']} | {r['side']} | {r['defcon']} | {r['kind']} | "
-                   f"{nm.get(str(b['raw']), b['raw'])} | {nm.get(str(b['best']), b['best'])} | "
-                   f"{100 * r['gain'][0]:+.1f} ± {100 * math.sqrt(r['gain'][1]):.1f} | "
-                   f"{scale * r['w'] * r['gain'][0]:+.2f} |")
-    return "\n".join(out) + "\n"
+    main_kinds = ("AR card choice", "play mode", "target (influence)", "headline")
 
+    def kind_group(r: Dict[str, Any]) -> str:
+        return str(r["kind"]) if r["kind"] in main_kinds else "other"
+
+    def turn(r: Dict[str, Any]) -> str:
+        return "setup" if r["phase"] == "SETUP" else f"T{r['turn']}"
+
+    def round_(r: Dict[str, Any]) -> str:
+        return "setup" if r["phase"] == "SETUP" else ("headline" if r["phase"] == "HEADLINE" else f"AR{r['ar']}")
+
+    def defcon(r: Dict[str, Any]) -> str:
+        return f"DEFCON {r['defcon']}"
+
+    side_tab(f"{scope}: by decision kind", lambda r: str(r["kind"]), rows)
+    side_tab(f"{scope}: by turn", turn, rows, order=["setup"] + [f"T{t}" for t in range(1, 11)])
+    side_tab(f"{scope}: by action round", round_, rows, order=["setup", "headline"] + [f"AR{a}" for a in range(1, 9)])
+    side_tab(f"{scope}: by DEFCON", defcon, rows, order=[f"DEFCON {d}" for d in range(5, 0, -1)])
+    side_tab(f"{scope}: by turn x kind", lambda r: f"{turn(r)} {kind_group(r)}", rows,
+             order=[f"{t} {k}" for t in ["setup"] + [f"T{t}" for t in range(1, 11)] for k in main_kinds + ("other",)])
+    side_tab(f"{scope}: by DEFCON x kind", lambda r: f"{defcon(r)} {kind_group(r)}", rows,
+             order=[f"DEFCON {d} {k}" for d in range(5, 0, -1) for k in main_kinds + ("other",)])
+    ranked_tab(f"{scope}: by the card in play (every decision on it: chosen, then its mode, Ops and event)",
+               "card", lambda r: r["card"] or None, rows, top=30)
+
+    def of(kind: str) -> List[Dict[str, Any]]:
+        return [r for r in rows if r["kind"] == kind]
+
+    cc, hl, pm, om, inf = (of("AR card choice"), of("headline"), of("play mode"), of("op mode"),
+                           of("target (influence)"))
+    side_tab(f"{scope}, AR card choice: the class raw played (relation, Ops)", lambda r: r["raw_class"], cc)
+    side_tab(f"{scope}, AR card choice: the class of the best card raw missed", lambda r: r["best_class"], cc,
+             missed=True)
+    ranked_tab(f"{scope}, AR card choice: the card raw played", "card", lambda r: r["raw_card"], cc)
+    ranked_tab(f"{scope}, AR card choice: the best card raw missed", "card", lambda r: r["best_card"], cc, missed=True)
+    ranked_tab(f"{scope}, headline: the card raw played", "card", lambda r: r["raw_card"], hl, top=12)
+    ranked_tab(f"{scope}, headline: the best card raw missed", "card", lambda r: r["best_card"], hl, missed=True, top=12)
+    side_tab(f"{scope}, play mode: the mode raw chose (the card's relation)", lambda r: r["raw_class"], pm)
+    side_tab(f"{scope}, play mode: the best mode raw missed", lambda r: r["best_class"], pm, missed=True)
+    ranked_tab(f"{scope}, play mode: the card", "card", lambda r: r["raw_card"], pm, top=15)
+    side_tab(f"{scope}, op mode: the mode raw chose", lambda r: r["raw_class"], om)
+    side_tab(f"{scope}, op mode: the best mode raw missed", lambda r: r["best_class"], om, missed=True)
+    side_tab(f"{scope}, influence: the region raw placed in", lambda r: r["raw_class"], inf)
+    side_tab(f"{scope}, influence: the best region raw missed", lambda r: r["best_class"], inf, missed=True)
+    ranked_tab(f"{scope}, influence: the country raw placed in", "country", lambda r: r["raw_move"], inf, top=25)
+    ranked_tab(f"{scope}, influence: the best country raw missed", "country", lambda r: r["best_move"], inf,
+               missed=True, top=25)
+    tr = [r for r in rows if r["kind"] in ("target (coup)", "target (realign)")]
+    ranked_tab(f"{scope}, coups and realignments: the target raw chose", "target",
+               lambda r: f"{r['raw_move']} ({str(r['kind'])[8:-1]})", tr, top=12)
+    ranked_tab(f"{scope}, coups and realignments: the best target raw missed", "target",
+               lambda r: f"{r['best_move']} ({str(r['kind'])[8:-1]})", tr, missed=True, top=12)
+    st = of("setup placement")
+    ranked_tab(f"{scope}, setup: the country raw placed in", "country", lambda r: r["raw_move"], st, top=10)
+    ranked_tab(f"{scope}, setup: the best country raw missed", "country", lambda r: r["best_move"], st,
+               missed=True, top=10)
+    for s in SIDES:
+        worst = sorted((r for r in big if r["side"] == s), key=lambda r: -r["w"] * r["gain"][0])[:15]
+        if not worst:
+            continue
+        out += [f"## The 15 positions that cost the {s} the most a game ({scope})", "",
+                "| turn/AR | DEFCON | kind | raw | best | gain a decision | a game |",
+                "|:---|---:|:---|:---|:---|---:|---:|"]
+        for r in worst:
+            b, nm = r["b"], r["b"]["names"]
+            out.append(f"| T{b['turn']} AR{b['ar']} | {r['defcon']} | {r['kind']} | "
+                       f"{nm.get(str(b['raw']), b['raw'])} | {nm.get(str(b['best']), b['best'])} | "
+                       f"{100 * r['gain'][0]:+.1f} ± {100 * math.sqrt(r['gain'][1]):.1f} | "
+                       f"{scale * r['w'] * r['gain'][0]:+.2f} |")
+        out.append("")
+    return "\n".join(out) + "\n"
 
 def era_label(turn: int) -> str:
     return "T1-3" if turn <= 3 else ("T4-7" if turn <= 7 else "T8-10")
@@ -1849,7 +1918,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bs = (kind_bootstrap(big, 100.0 * a.decisions_per_game / weight, a.resamples)
               if a.resamples > 0 and big else None)
         open(a.out, "w").write(leak_analysis(rows, weight, a.decisions_per_game, large=a.large,
-                                             resamples=a.resamples, bs=bs))
+                                             resamples=a.resamples))
         meta = json.load(open(a.annotate_meta)) if a.annotate_meta else None
         json.dump(leak_summary(rows, weight, a.decisions_per_game, large=a.large, bs=bs, meta=meta),
                   open(a.out + ".json", "w"), indent=1)

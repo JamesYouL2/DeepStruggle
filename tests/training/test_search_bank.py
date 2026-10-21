@@ -222,15 +222,22 @@ def test_leak_weights_each_rows_paired_gain_back_to_the_population() -> None:
     assert abs(gain[0] - 0.2) < 1e-9 and gain[1] < 1e-12
     assert _paired_scores({"5": [0.0]}, 5, 5) == (0.0, 0.0)
     row = {"id": "x", "w": 10.0, "regret": 0.1, "gain": gain, "g256": (0.1, 0.0), "kind": "AR card choice",
-           "side": "US", "turn": 9, "defcon": 2, "sub": "opp 2 -> own 3", "raw_card": "A", "best_card": "B",
-           "raw_move": "A", "best_move": "B", "b": {"turn": 9, "ar": 3, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}}}
+           "side": "US", "turn": 9, "ar": 3, "phase": "ACTION_ROUND", "defcon": 2, "card": "A",
+           "raw_class": "opp 2", "best_class": "own 3", "raw_card": "A", "best_card": "B", "raw_move": "A",
+           "best_move": "B", "b": {"turn": 9, "ar": 3, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}}}
     md = leak_analysis([row], bank_weight=100.0, decisions_per_game=50.0)
-    assert "| AR card choice | 1 | 10.00% | +100.0 ± 0.0 | +50.0 ± 0.0 |" in md
+    # 5 US decisions a game, every one a mistake costing 20 points; the USSR columns stay empty. The ±
+    # is the sampling of one position standing for 10: 50 x sqrt((10^2 - 10) x 0.2^2).
+    se = 50.0 * (90 * 0.04) ** 0.5
+    assert f"| AR card choice | 5.00 | 100.0% | +20.0 | +100.0 ± {se:.1f} |  |  |  |  |" in md
+    assert f"| T9 | 5.00 | 100.0% | +20.0 | +100.0 ± {se:.1f} |  |  |  |  |" in md
+    assert "| AR card choice | +100.0 ± 0.0 | 100% | +50.0 ± 0.0 |" in md      # the bootstrap, one side
 
 
 def _leak_row(i: int, kind: str, gain: float, escalated: bool, raw_move: str = "A") -> dict:
     return {"id": str(i), "w": 10.0, "regret": 0.0, "gain": (gain, 0.0001), "g256": (0.0, 0.0), "kind": kind,
-            "side": "USSR", "turn": 5, "defcon": 3, "sub": "", "raw_card": "A", "best_card": "B",
+            "side": "USSR", "turn": 5, "ar": 2, "phase": "ACTION_ROUND", "defcon": 3, "card": "A",
+            "raw_class": "Asia", "best_class": "Europe", "raw_card": "A", "best_card": "B",
             "raw_move": raw_move, "best_move": "B",
             "b": {"turn": 5, "ar": 2, "raw": 5, "best": 7, "names": {"5": "A", "7": "B"}, "escalated": escalated}}
 
@@ -248,18 +255,21 @@ def test_leak_rows_name_the_moves_and_recurring_mistakes_rank_by_frequency_x_cos
     assert r["kind"] == "setup placement"                # not an in-game influence target
     assert r["raw_move"] == countries[raw - ActionEncoder.NODE_OFFSET]["name"]
     assert r["best_move"] == countries[best - ActionEncoder.NODE_OFFSET]["name"]
-    # Bank 100, 50 decisions a game: a row of weight 10 is 5 times a game. Three found rows play A for B
-    # at 0.2 (15 times a game, +300 a game); a row that was not escalated does not count, and C (one
-    # row) is under the three positions a pattern needs, but its B counts among the best moves missed.
+    # Bank 100, 50 decisions a game: a row of weight 10 is 5 times a game. The USSR places in A four
+    # times (20 a game), three of them found mistakes at 0.2 (75%, +300 a game); C (one found row) is
+    # under the three positions a group needs, but its B counts among the best countries missed (four
+    # misses, 20 a game, +500). No group pairs the move played with the best one.
     rows = [_leak_row(i, "target (influence)", 0.2, True) for i in range(3)]
     rows += [_leak_row(3, "target (influence)", 0.0, False), _leak_row(4, "target (influence)", 0.4, True, "C")]
-    md = leak_analysis(rows, bank_weight=100.0, decisions_per_game=50.0, large=0)
+    md = leak_analysis(rows, bank_weight=100.0, decisions_per_game=50.0, large=0, resamples=0)
     se3 = 50.0 * (3 * ((100.0 - 10.0) * 0.2 ** 2 + 100.0 * 0.0001)) ** 0.5
     se4 = 50.0 * (3 * ((100.0 - 10.0) * 0.2 ** 2 + 100.0 * 0.0001) + (100.0 - 10.0) * 0.4 ** 2 + 0.01) ** 0.5
-    assert f"| USSR target (influence): A | 3 | 15.000 | +20.0 | +300.00 ± {se3:.2f} |" in md
-    assert f"| USSR target (influence): A -> B | 3 | 15.000 | +20.0 | +300.00 ± {se3:.2f} |" in md
-    assert f"| USSR target (influence): B | 4 | 20.000 | +25.0 | +500.00 ± {se4:.2f} |" in md
-    assert "USSR target (influence): C" not in md
+    assert "## all positions, influence: the country raw placed in: USSR" in md
+    assert f"| A | 3 / 4 | 20.00 | 75.0% | +20.0 | +300.0 ± {se3:.1f} |" in md
+    assert f"| B | 4 | 20.000 | +25.0 | +500.0 ± {se4:.1f} |" in md
+    assert "| C |" not in md and "-> B" not in md and ": US\n" not in md
+    # The region tables: the sides side by side, the US's columns empty.
+    assert f"| Asia |  |  |  |  | 25.00 | 80.0% | +25.0 | +500.0 ± " in md
 
 
 def test_leak_summary_carries_the_census_identity_and_checkpoint_report_checks_and_renders_it(
