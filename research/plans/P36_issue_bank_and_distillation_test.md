@@ -386,3 +386,22 @@ deck reshuffles inside the event), the flagship was relaunched from scratch as `
 A22 is A21 at E8's default view, headline_reveal) and the E7 run stopped at 564M. Slot 1 stays on E7 to
 finish its matched-step test against the E7 heads run; its reads are played on a copy of the E7 build kept in
 `build/e7` (git-ignored), so its checkpoints and the heads run's meet on the engine they were trained on.
+
+**Slot 1 at 400M (2026-10-21): behind, raw and searched.** SWAs of 320–400M (8 snapshots each) of
+`E7-A8-R69-S44` and the heads run `E7-A8-R1-S44`, on the E7 build, 1,000 deals a side
+(`data/reports/p36_slot1_400M_*`):
+
+| | overall | US | USSR |
+|:---|---:|---:|---:|
+| raw, slot 1 against the heads run | **39.8% ± 1.1** | 41.2 | 37.3 |
+| the heads run against itself (the per-seat bar) | 50.0% | 45.8 | 53.0 |
+| **per seat over the bar** | | **−4.6** | **−15.7** |
+| both under the corrected keyed root (k4, 16 worlds) | **38.5% ± 1.1** | 41.1 | 35.2 |
+
+About −70 Elo raw and −80 searched at matched steps. The training metrics say it learns more slowly: entropy
+0.60 against 0.50 at 240–400M (0.64 / 0.57 at 120–240M), KL 0.024 / 0.019, and it beats its own pool 73% against
+the heads run's 79%. The search CE itself is not in `training_metrics.jsonl` (not on the metrics list), so its
+pull is not yet measured. Candidates: the CE is averaged over the few searched rows of a minibatch (~15 of
+4,096), so each such row carries ~270x a normal row's policy gradient, as R39 did at 1/256 (level there, as a
+branch); the searched snapshot lags the learner by up to 10M while it changes fastest; the root's moves
+played as environment take those rows out of the policy gradient. The plan reads it again at 800M and 2,000M.
