@@ -218,12 +218,15 @@ def test_a_non_canonical_player_id_is_caught(tmp_path: pathlib.Path) -> None:
     assert any("canonical id" in e for e in lb.validate(board))
 
 
-def _report(root: pathlib.Path, subject: str, generated: bool = True) -> str:
-    """A behaviour report on `subject`, as tools/scripts/checkpoint_report.py heads one, under `root`."""
+def _report(root: pathlib.Path, subject: str, generated: bool = True, played: bool = True) -> str:
+    """A behaviour report on `subject`, as tools/scripts/checkpoint_report.py heads one, under `root`;
+    `played` False for the searched-leak census written alone (`--games 0`), which has no Games line."""
     rel = f"{lb.REPORT_DIR}/{''.join(c if c.isalnum() else '_' for c in subject)}.md"
     (root / lb.REPORT_DIR).mkdir(parents=True, exist_ok=True)
     by = " by `tools/scripts/checkpoint_report.py` (commit abc1234)" if generated else ""
-    (root / rel).write_text(f"# {subject}: behaviour report\n\nGenerated 2026-10-17{by}.\n", encoding="utf-8")
+    games = "* **Games:** 16,384 greedy self-play games of the checkpoint against itself.\n" if played else ""
+    (root / rel).write_text(f"# {subject}: behaviour report\n\nGenerated 2026-10-17{by}.\n\n"
+                            f"## The checkpoint\n\n* **File:** `x.pt`\n{games}", encoding="utf-8")
     return rel
 
 
@@ -270,6 +273,11 @@ def test_a_report_link_is_the_scripts_behaviour_report_on_that_network_or_player
     board.players[search]["report"] = None
     board.networks["A@1M"]["report"] = _report(tmp_path, "B@1M")
     assert any("not a report on A@1M" in e for e in lb.validate(board, tmp_path))
+    # Nor is the searched-leak census written alone: it has no self-play.
+    board.networks["A@1M"]["report"] = None
+    board.players[search]["report"] = _report(tmp_path, search, played=False)
+    assert any("has no self-play" in e for e in lb.validate(board, tmp_path))
+    board.players[search]["report"] = None
     # A file in the directory that the script did not write is not one either.
     board.networks["A@1M"]["report"] = _report(tmp_path, "A@1M", generated=False)
     assert any("does not say it was generated" in e for e in lb.validate(board, tmp_path))

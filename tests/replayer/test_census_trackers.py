@@ -16,7 +16,7 @@ import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import feed_corpus_game, state_from_token
 from tools.lib.corpus_paths import corpus_dir
-from tools.scripts.event_play_census import HoldingTracker, _human_game, load_holding
+from tools.scripts.event_play_census import HoldingTracker, _human_game, _owner, load_holding
 from tools.scripts.placement_census import COUNTRY, PlacementTracker
 
 #: a complete game (it converts to the end), used throughout
@@ -36,11 +36,11 @@ def test_spent_holdings_point_at_their_own_decision() -> None:
         ctx = st.ctx()
         if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE:
             assert int(ctx.pending_op_card) == h.card
-            assert h.outcome in ("event", "ops", "space")
+            assert h.outcome in ("event", "ops", "space", "fired", "no event")
         else:
             assert ctx.decision_type == ts.DecisionType.SELECT_CARD
             assert int(ts.decode_flat_action(st, h.action).primary_id) == h.card
-            assert h.outcome in ("headline", "event")
+            assert h.outcome in ("headline", "event", "fired", "no event", "un")
 
 
 def test_every_holding_of_a_complete_game_is_accounted_for() -> None:
@@ -50,6 +50,10 @@ def test_every_holding_of_a_complete_game_is_accounted_for() -> None:
     for h in t.holdings:
         # A spent holding knows when; a kept one does not.
         assert (h.turn > 0) == (h.outcome != "kept")
+        # The opponent's card ends in its own outcomes, the holder's own or a neutral card in the holder's.
+        theirs = _owner(h.card) not in (None, h.side)
+        assert h.outcome in (("fired", "no event", "space", "un", "kept") if theirs
+                             else ("headline", "event", "ops", "space", "kept"))
     # A card still in a hand at the end is held by its latest holding, which nothing spent.
     latest = {h.card: h for h in t.holdings}
     for card in t.held:

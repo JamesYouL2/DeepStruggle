@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Per-checkpoint behaviour report: individual cards first, then events vs Ops for every card.
+"""Per-checkpoint behaviour report: individual cards first, then what each side does with every card.
 
 One pass of greedy self-play per checkpoint feeds every section:
 
-1. **Star Wars** -- the US's plays of it while ahead in space (headline / Ops / event / space race
-   in a round) and the card its event takes from the discard pile, split by who played Star Wars
+1. **Star Wars** -- the card its event takes from the discard pile, split by who played Star Wars
    (`tools/scripts/star_wars_play.py`).
 2. **Five Year Plan played by the USSR** -- the USSR playing the US card from its own hand so the
    US event fires (headline, or a round with the event first or the Ops first; not the space
@@ -20,17 +19,17 @@ One pass of greedy self-play per checkpoint feeds every section:
 7. **Blockade** -- the US's card choices while it controls West Germany and holds exactly one card
    that answers Blockade: how often it plays that card by where Blockade is, and the network's
    probability of playing it with Blockade moved to each place (the same positions).
-8. **UN Intervention** -- the opponent card each side plays with it.
-9. **Space race** -- the cards each side sends there most, and how often it plays each of them so
-   that the opponent's event fires in its own round.
-10. **Events vs Ops, every card** -- the event census of `tools/scripts/event_play_census.py`, the
-   same logic (one count per holding where the owner could have played the event).
+8. **Every card: what each side does with it** -- the census of `tools/scripts/event_play_census.py`,
+   the same logic, one count per holding: for a side's card, its owner's event / Ops / space / not
+   played and the opponent's event fired / no event / space / UN Intervention / not played; for a
+   neutral card, each side's and both.
 
 With `--leak`, a searched-leak census of the same network under the same player
 (`tools/search_bank.py` leak's `<out>.json`) goes first: where the player loses, in points of win
 probability a game, by decision kind, and the positions that cost it the most. It is not played
-here -- the census takes CI hours -- so `--games 0` writes it alone, and `--load` adds it to a report
-already played.
+here -- the census takes CI hours -- so `--games 0` writes it alone, `--load` adds it to a report
+already played, and a self-play run keeps the census its records already hold. A report with the
+census alone is not a behaviour report: the leaderboard links none (`tools/lib/leaderboard.py`).
 
     PYTHONPATH=.:build/release python tools/scripts/checkpoint_report.py \\
         --checkpoints <pt> [<pt> ...] --games 16384
@@ -70,8 +69,8 @@ from tools.lib.data_root import data_path, data_root
 from tools.lib.leaderboard import REPORT_DIR, load as load_leaderboard, player_spec
 from tools.lib.player_agent import NeuralAgent, load_agent
 from tools.lib.player_spec import Policy, kind_of, load_spec
-from tools.scripts.event_play_census import (EVENT, SCORING, Holding, HoldingTracker, dump_holding,
-                                             load_holding, table as census_table)
+from tools.scripts.event_play_census import (EVENT, HOLDINGS_VERSION, SCORING, Holding, HoldingTracker,
+                                             dump_holding, load_holding, table as census_table)
 from tools.scripts.star_wars_play import _tag_retrievals, retrieval_table
 
 US, USSR = int(ts.Player.US), int(ts.Player.USSR)
@@ -489,55 +488,6 @@ class SetupTracker:
             self.records.append(rec)
 
 
-class UNIntervention:
-    """The card a side plays with UN Intervention: the opponent card whose Ops it uses."""
-
-    def __init__(self) -> None:
-        self.picks: List[Dict[str, Any]] = []
-
-    def see(self, g: int, st: ts.GameState, a: int, mask: np.ndarray) -> None:
-        ctx = st.ctx()
-        if int(ctx.resolving_card) != UN_INTERVENTION or ctx.decision_type != ts.DecisionType.SELECT_CARD:
-            return
-        self.picks.append({"game": g, "turn": int(st.turn), "side": "US" if ctx.decision_player == ts.Player.US else "USSR",
-                           "card": int(ts.decode_flat_action(st, a).primary_id),
-                           "options": [int(ts.decode_flat_action(st, int(k)).primary_id)
-                                       for k in np.flatnonzero(mask[:ActionEncoder.PLAY_MODE_OFFSET])]})
-
-    def done(self, g: int) -> None:
-        pass
-
-
-class PlayModes:
-    """Every play-mode choice (a card played in an action round, not inside an event): which card,
-    which side, whether it went to the space race -- the denominator for the space-race list -- and,
-    for the opponent's card, whether its event fired: any mode but the space race, when the event can
-    trigger (`trigger_event`'s own test, on flags an Ops-first play cannot change before it resolves)."""
-
-    def __init__(self) -> None:
-        self.counts: Dict[str, Dict[str, int]] = {"US": {}, "USSR": {}}
-        self.space: Dict[str, Dict[str, int]] = {"US": {}, "USSR": {}}
-        self.fired: Dict[str, Dict[str, int]] = {"US": {}, "USSR": {}}
-
-    def see(self, g: int, st: ts.GameState, a: int) -> None:
-        ctx = st.ctx()
-        if (ctx.decision_type != ts.DecisionType.SELECT_PLAY_MODE or int(ctx.resolving_card) != 0
-                or st.current_phase != ts.Phase.ACTION_ROUND):
-            return
-        side = "US" if ctx.decision_player == ts.Player.US else "USSR"
-        card = str(int(ctx.pending_op_card))
-        self.counts[side][card] = self.counts[side].get(card, 0) + 1
-        if a == SPACE:
-            self.space[side][card] = self.space[side].get(card, 0) + 1
-        owner = ts.Player.USSR if side == "US" else ts.Player.US
-        if (a != SPACE and _side(int(card)) == ("ussr" if side == "US" else "us")
-                and ts.CardHandlers.can_trigger_event(st, int(card), owner)):
-            self.fired[side][card] = self.fired[side].get(card, 0) + 1
-
-    def done(self, g: int) -> None:
-        pass
-
-
 class BlockadeAnswer:
     """The US's card choices in an action round (not inside an event) while it controls West Germany,
     does not hold Blockade, and holds exactly one card Blockade would take (3 or more Ops as the event
@@ -666,7 +616,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
                          lambda st: int(ts.Scoring.is_controlled_by(st, SOUTH_KOREA, ts.Player.US)))
     opec = OwnCardChoices(OPEC, ts.Player.USSR, lambda st: _controlled(st, OPEC_COUNTRIES, ts.Player.USSR))
     alliance = OwnCardChoices(ALLIANCE, ts.Player.US, lambda st: _controlled(st, ALLIANCE_COUNTRIES, ts.Player.US))
-    un, modes, setup = UNIntervention(), PlayModes(), SetupTracker()
+    setup = SetupTracker()
     ortega_us = OpponentCardPlay(ORTEGA, ts.Player.US, {"cuba_us": lambda st: st.get_country(CUBA).us_influence})
     kal_ussr = OpponentCardPlay(KAL_007, ts.Player.USSR,
                                 {"sk_us": lambda st: ts.Scoring.is_controlled_by(st, SOUTH_KOREA, ts.Player.US)})
@@ -675,7 +625,7 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
     chern = ChernobylEffect(merged)
     blockade = BlockadeAnswer()
     endings: List[Dict[str, Any]] = []
-    observers = (census, sw, fyp, ames, kal, opec, alliance, un, modes, setup, ortega_us, kal_ussr, ortega, warsaw,
+    observers = (census, sw, fyp, ames, kal, opec, alliance, setup, ortega_us, kal_ussr, ortega, warsaw,
                  kal_after, chern_us, chern_ussr, chern, blockade)
     for b0 in (batches if batches is not None else range(0, games, batch)):
         n = min(batch, games - b0)
@@ -719,8 +669,6 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
                 kal.see(g, st, a)
                 opec.see(g, st, a)
                 alliance.see(g, st, a)
-                un.see(g, st, a, masks_np[i])
-                modes.see(g, st, a)
                 setup.see(g, st, a)
                 ortega_us.see(g, st, a)
                 kal_ussr.see(g, st, a)
@@ -744,11 +692,10 @@ def play(model: Any, merged: bool, games: int, seed: int, batch: int, agent: Any
                     o.done(b0 + i)
         blockade.evaluate(model, feats, device)
     return {"games": games, "seed": seed, "batch": batch, "player": player,
-            "holdings": [dump_holding(h) for h in census.holdings],
+            "holdings": [dump_holding(h) for h in census.holdings], "holdings_version": HOLDINGS_VERSION,
             "star_wars": {"plays": sw.plays, "retrievals": sw.retrievals},
             "five_year_plan": fyp.plays, "aldrich_ames": ames.plays,
             "kal_007": kal.choices, "opec": opec.choices, "alliance_for_progress": alliance.choices,
-            "un_intervention": un.picks, "play_modes": {"all": modes.counts, "space": modes.space, "fired": modes.fired},
             "setups": setup.records, "endings": endings,
             "ortega_us": ortega_us.plays, "ortega_response": ortega.responses, "kal_ussr": kal_ussr.plays,
             "warsaw_pact": warsaw.choices, "kal_aftermath": kal_after.plays,
@@ -804,7 +751,7 @@ def play_parallel(path: str, agent_spec: Optional[str], player: Optional[str], m
     d: Dict[str, Any] = {}
     for part in parts:
         d = _merge(d, part) if d else part
-    d.update(games=games, seed=seed, batch=batch, player=player)
+    d.update(games=games, seed=seed, batch=batch, player=player, holdings_version=HOLDINGS_VERSION)
     return d
 
 
@@ -895,21 +842,15 @@ def _pct(k: int, n: int) -> str:
 
 def star_wars_section(d: Dict[str, Any]) -> str:
     plays = d["plays"]
-    ahead = [p for p in plays if p["ahead"]]
-    n = len(ahead)
-    k = collections.Counter(p["outcome"] for p in ahead)
     behind = [p for p in plays if not p["ahead"]]
     dud = sum(p["outcome"] == "headline" for p in behind)
     tagged = _tag_retrievals({"plays": plays, "retrievals": d["retrievals"]})
     inside = sum(r["via"] == "inside another event" for r in tagged)
     out = ["## Star Wars", "",
            "Star Wars (US, 2 Ops): if the US is ahead on the Space Race, the US takes a non-scoring card from the "
-           "discard pile and plays it as an event. A *play* is the US selecting Star Wars at its own card choice; "
-           "\"ahead\" is the US space marker strictly above the USSR's at that choice.", "",
-           "| plays while ahead | headline | Ops in a round | event in a round | space race |",
-           "|---:|---:|---:|---:|---:|",
-           f"| {n:,} | {k['headline']} ({_pct(k['headline'], n)}) | {k['ops']} ({_pct(k['ops'], n)}) | "
-           f"{k['event']} ({_pct(k['event'], n)}) | {k['space']} ({_pct(k['space'], n)}) |", "",
+           "discard pile and plays it as an event. How the US plays it is in the per-card table; here, what it "
+           "takes. A *play* is the US selecting Star Wars at its own card choice; \"ahead\" is the US space marker "
+           "strictly above the USSR's at that choice.", "",
            f"Not ahead: {len(behind):,} plays, {dud} of them headlines (the event does nothing).", "",
            "### What Star Wars takes from the discard pile", "",
            "\"Offered in\": the share of retrievals where the card was a legal option; \"picked when offered\": how "
@@ -1353,57 +1294,6 @@ def chernobyl_section(c: Dict[str, Any], endings: Sequence[Dict[str, Any]]) -> s
     return "\n".join(out)
 
 
-def _pick_table(recs: Sequence[Dict[str, Any]], top: int = 15) -> str:
-    n = len(recs)
-    if n == 0:
-        return "None."
-    picked = collections.Counter(r["card"] for r in recs)
-    offered = collections.Counter(c for r in recs for c in r["options"])
-    out = [f"{n:,} plays, {sum(len(r['options']) for r in recs) / n:.1f} eligible cards in hand on average.", "",
-           "| card | played with it | share | eligible in | played when eligible |", "|:---|---:|---:|---:|---:|"]
-    for c, k in picked.most_common(top):
-        out.append(f"| {CARDS[c]['name']} | {k:,} | {100 * k / n:.1f}% | {100 * offered[c] / n:.0f}% | "
-                   f"{100 * k / offered[c]:.0f}% |")
-    return "\n".join(out)
-
-
-def un_section(picks: Sequence[Dict[str, Any]]) -> str:
-    out = ["## UN Intervention: the card played with it", "",
-           "UN Intervention is played with an opponent card from the same hand, whose Ops are used without its event. "
-           "\"Eligible\": the opponent's non-scoring cards in hand at that choice (the engine's options)."]
-    for side in ("US", "USSR"):
-        out += ["", f"### {side}", "", _pick_table([p for p in picks if p["side"] == side])]
-    return "\n".join(out)
-
-
-def space_section(modes: Dict[str, Dict[str, Dict[str, int]]], top: int = 15) -> str:
-    fired = modes.get("fired")
-    out = ["## Space race: the cards sent", "",
-           "Every card played in an action round goes through the play-mode choice; this counts those sent to the "
-           "space race. \"Share of its plays\": of that side's plays of the card in a round, the share spent on the "
-           "space race. \"Opponent's event fired\": for the opponent's card, that side's plays of it in its own "
-           "round that fired the opponent's event (any mode but the space race, when the event can trigger), with "
-           "their share of its plays of the card in a round; \"—\" for its own and neutral cards."
-           + ("" if fired is not None else " These records predate that column; rerun without `--load` to fill it.")]
-    for side in ("US", "USSR"):
-        allp, sp = modes["all"][side], modes["space"][side]
-        opp = "ussr" if side == "US" else "us"
-        n, tot = sum(sp.values()), sum(allp.values())
-        out += ["", f"### {side}", "", f"{n:,} space race plays, {_pct(n, tot)} of the {tot:,} cards it played in a round.", "",
-                "| card | sent to space | share of space plays | share of its plays | opponent's event fired |",
-                "|:---|---:|---:|---:|---:|"]
-        for c, k in sorted(sp.items(), key=lambda kv: -kv[1])[:top]:
-            if fired is None:
-                fire = "n/a"
-            elif _side(int(c)) != opp:
-                fire = "—"
-            else:
-                f = fired[side].get(c, 0)
-                fire = f"{f:,} ({_pct(f, allp.get(c, 0))})"
-            out.append(f"| {CARDS[int(c)]['name']} | {k:,} | {_pct(k, n)} | {_pct(k, allp.get(c, 0))} | {fire} |")
-    return "\n".join(out)
-
-
 def _paired_change(xs: Sequence[Dict[str, Any]], place: str) -> str:
     """The mean change in the network's probability, Blockade at `place` against "unknown", in points,
     with one standard error over games (each game's positions averaged first)."""
@@ -1702,9 +1592,8 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
             warsaw_section(d.get("warsaw_pact", [])), "",
             blockade_section(d.get("blockade"), d.get("player")), "",
             chernobyl_section(d.get("chernobyl", {}), d.get("endings", [])), "",
-            un_section(d["un_intervention"]), "",
-            space_section(d["play_modes"]), "",
-            "## Events vs Ops, every card", "", census_table(holdings, d["games"])]
+            "## Every card: what each side does with it", "",
+            census_table(holdings, d["games"], opponent=int(d.get("holdings_version", 1)) >= HOLDINGS_VERSION)]
     return _with_contents("\n".join(out)) + "\n"
 
 
@@ -1716,7 +1605,7 @@ def write_index() -> None:
             rows.append(f"* [{first}]({f})")
     open(os.path.join(REPORT_DIR, "README.md"), "w").write(
         "# Per-checkpoint behaviour reports\n\nGenerated by `tools/scripts/checkpoint_report.py`: for one "
-        "checkpoint, greedy self-play and from it the event census (events vs Ops), Star Wars plays and "
+        "checkpoint, greedy self-play and from it what each side does with every card, Star Wars "
         "retrievals, and when and with what hand the USSR plays Five Year Plan and the US plays Aldrich Ames "
         "Remix; with `--leak`, first, the searched-leak census (where the player loses, by decision kind; "
         "`tools/search_bank.py`).\n\n" + "\n".join(rows) + "\n")
@@ -1820,6 +1709,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             else:
                 agent = load_agent(agent_spec, device=dev) if agent_spec is not None else None
                 d = play(model, merged, a.games, a.seed, a.batch, agent=agent, player=player)
+            if leaks[k] is None and os.path.exists(dump):
+                # The searched-leak census these records hold (`--games 0 --leak`): a rerun keeps it.
+                kept = json.load(open(dump)).get("leak")
+                if kept is not None:
+                    d["leak"] = kept
             json.dump(d, open(dump, "w"))
         if leaks[k] is not None:
             d["leak"] = leaks[k]

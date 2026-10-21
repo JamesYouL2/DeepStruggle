@@ -290,9 +290,9 @@ PYTHONPATH=. python tools/leaderboard.py validate                    # what test
 behaviour digest, a network whose sha256 changed, and uncommitted changes under
 `ai/ bot/ bindings/ engine/ tools/`. A report link (a network's or a player's) is always the
 behaviour report `tools/scripts/checkpoint_report.py` generated for that exact network or player,
-in `research/log/per_checkpoint/` and titled with its id -- never the plan or log it was made for;
-`validate` refuses anything else, and with no report yet the link stays null (a greedy player then
-shows its network's). A pairing on record is skipped. Main players are the owner's
+in `research/log/per_checkpoint/` and titled with its id -- never the plan or log it was made for,
+nor the searched-leak census written alone (`--games 0`), which has no self-play; `validate` refuses
+anything else, and with no report yet the link stays null (a greedy player then shows its network's). A pairing on record is skipped. Main players are the owner's
 choice (`epochs.json`).
 
 **An epoch is defined by what the engine does, not by its sources.** `tools/lib/engine_behaviour.py`
@@ -714,7 +714,8 @@ searcher's candidates), `playouts` (paired raw-network playouts) and `report`. C
   [`E7_searched_leak_R39.md`](../research/log/E7_searched_leak_R39.md)). Beside `leak.md`, `leak.md.json`
   holds the headline numbers with the census's network and player, which
   `tools/scripts/checkpoint_report.py --leak` checks and puts first in that player's report
-  (`--games 0` for the census alone).
+  (`--games 0` for the census alone, which the leaderboard does not link; a later self-play run of
+  the player keeps it, and `--load --leak` adds it to one already played).
 * `event-select` / `event-report`: every action-round play-mode decision with a legal event, ranked
   by raw's measured loss per card.
 * `subs-select` / `subs` / `subs-report`: four paired branches at each US Nuclear Subs decision

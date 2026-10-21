@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """How often a card in its owner's hand is used for its event, in a checkpoint's self-play.
 
-One record per *holding*: the card entering a player's hand until it leaves. A holding counts as
-evented when the holder headlines the card, or plays it in an action round and chooses the event,
-the decision being the holder's own (not a choice inside another event's resolution -- Grain
-Sales' card, Star Wars' retrieval). For a US or USSR card only its owner's holdings count (playing
-the opponent's card, which fires the opponent's event, is ignored); a neutral card counts for
-whoever holds it, split by side.
+One record per *holding*: the card entering a player's hand until it leaves, by whoever holds it.
+A holding counts as evented when the holder headlines the card, or plays it in an action round and
+chooses the event, the decision being the holder's own (not a choice inside another event's
+resolution -- Grain Sales' card, Star Wars' retrieval). The table splits each side's card into its
+owner's holdings and the opponent's; a neutral card counts for whoever holds it, split by side.
 
-Every holding also records how it ended -- headline, event, Ops, space, or kept -- and the turn and
-action round it was spent in. `HoldingTracker` is fed one decision at a time, so the same counting
-runs on any decision stream, not only a model's self-play.
+Every holding also records how it ended and the turn and action round it was spent in. The holder's
+own or a neutral card: headline, event, Ops, space, or kept. The opponent's card: its event fired
+(headlined, or played for Ops in either order, and the event occurred), no event (played that way,
+but the event could not occur), space, UN Intervention's companion, or kept. `HoldingTracker` is fed
+one decision at a time, so the same counting runs on any decision stream, not only a model's
+self-play.
 
     PYTHONPATH=.:build/release python tools/scripts/event_play_census.py --checkpoint <pt|onnx> --games 4096
 """
@@ -43,6 +45,12 @@ US, USSR = int(ts.Player.US), int(ts.Player.USSR)
 _CARDS = rules_json("cards.json")
 SCORING = {int(c["id"]) for c in _CARDS if int(c.get("ops", 0)) == 0}
 _SIDES = {int(c["id"]): str(c.get("side", "neutral")).lower() for c in _CARDS}
+_STARRED = {int(c["id"]) for c in _CARDS if c.get("one_time")}
+UN_INTERVENTION = 32
+THE_CHINA_CARD = 6
+#: Holdings from version 2 on record the opponent's card's own outcomes ("fired", "no event", "un");
+#: before, they were filed as the holder's own ("headline", "ops"), and the table shows them n/a.
+HOLDINGS_VERSION = 2
 
 
 def _owner(card: int) -> Optional[int]:
@@ -53,8 +61,10 @@ def _owner(card: int) -> Optional[int]:
 @dataclass
 class Holding:
     card: int
-    side: int
-    outcome: str = "kept"          # "headline", "event", "ops", "space", or "kept" (left the hand otherwise)
+    side: int                      # the holder
+    # Own or neutral card: "headline", "event", "ops", "space"; the opponent's card: "fired", "no event",
+    # "space", "un"; either: "kept" (left the hand otherwise)
+    outcome: str = "kept"
     legal: bool = False            # the owner could have played the event at some point while holding it
     turn: int = 0                  # when it was spent (0 while kept)
     ar: int = 0                    # action round; 0 for a headline
@@ -123,6 +133,7 @@ class HoldingTracker:
         self.latest: Dict[int, Holding] = {}               # card -> its latest holding
         self.selected: Optional[Tuple[int, int]] = None    # (card, side) chosen for an action round
         self.turn = 0                                      # the turn of the last decision seen
+        self.pending: List[Holding] = []                   # starred opponent cards, their events not yet settled
 
     def _spent(self, st: ts.GameState, card: int, outcome: str, a: int) -> None:
         h = self.latest[card]
@@ -131,8 +142,41 @@ class HoldingTracker:
         if self.keep_positions:
             h.pos = position_token(st)
 
+    def _opponent_play(self, st: ts.GameState, card: int, mover: int, a: int) -> None:
+        """The holder headlining the opponent's card or playing it for Ops, either order: the event
+        fires when it can trigger (`trigger_event`'s own test, on flags an Ops-first play cannot
+        change before it resolves). A headline resolves after the other side's, which can change them
+        (Marshall Plan before NATO): for a card that is not starred -- Socialist Governments, OPEC,
+        Arab-Israeli War, Muslim Revolution -- the test at the choice misses that. Our Man in Tehran
+        and Kitchen Debates also test the board as they resolve (`event_has_effect`). So a starred
+        card waits for the engine's own verdict -- removed from the game means its event occurred --
+        at the next card choice after it has left the hand. A headlined card stays in the hand through the other side's headline choice, and is
+        resolved by the first action round; a card discarded rather than removed comes back to a hand
+        only at a later turn's deal, so it is still in flight only while it is in the holder's hand in
+        the same turn. A game that ends first keeps the test at the choice."""
+        owner = ts.Player.US if mover == USSR else ts.Player.USSR
+        fires = ts.CardHandlers.can_trigger_event(st, card, owner)
+        self._spent(st, card, "fired" if fires else "no event", a)
+        if card in _STARRED:
+            self.pending.append(self.latest[card])
+
+    def _settle(self, st: ts.GameState) -> None:
+        ctx = st.ctx()
+        if not self.pending or ctx.decision_type != ts.DecisionType.SELECT_CARD or int(ctx.resolving_card) != 0:
+            return
+        waiting = []
+        for h in self.pending:
+            loc = st.get_card_location(h.card)
+            holder = ts.Player.US if h.side == US else ts.Player.USSR
+            if int(st.turn) == h.turn and (ts.in_hand_of(loc, holder) or loc == ts.CardLocation.HEADLINE_COMMITTED):
+                waiting.append(h)                          # still played: the other side's headline choice
+            else:
+                h.outcome = "fired" if loc == ts.CardLocation.REMOVED_FROM_GAME else "no event"
+        self.pending = waiting
+
     def observe(self, st: ts.GameState, a: int) -> None:
         self.turn = int(st.turn)
+        self._settle(st)
         now = _holdings_now(st)
         for c, side in now.items():                        # a card entering a hand
             if self.held.get(c) != side:
@@ -141,9 +185,16 @@ class HoldingTracker:
                 self.latest[c] = h
         self.held = now
         ctx = st.ctx()
+        mover = int(ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player)
+        if (int(ctx.resolving_card) == UN_INTERVENTION and ctx.decision_type == ts.DecisionType.SELECT_CARD
+                and a < ActionEncoder.PLAY_MODE_OFFSET):
+            # UN Intervention's companion: its Ops, without its event (SELECT_OP_MODE, no play mode).
+            card = int(ts.decode_flat_action(st, a).primary_id)
+            if now.get(card) == mover and card in self.latest:
+                self._spent(st, card, "un", a)
+            return
         if int(ctx.resolving_card) != 0:
             return                                         # inside an event's resolution
-        mover = int(ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player)
         if ctx.decision_type == ts.DecisionType.SELECT_CARD and st.current_phase == ts.Phase.ACTION_ROUND:
             _mark_event_legal(st, mover, now, self.latest)
         elif ctx.decision_type == ts.DecisionType.SELECT_CARD and st.current_phase == ts.Phase.HEADLINE:
@@ -152,7 +203,9 @@ class HoldingTracker:
             # The flat index is not the card id: decode it (flat 102 is card 103).
             card = int(ts.decode_flat_action(st, a).primary_id)
             if now.get(card) == mover:
-                if st.current_phase == ts.Phase.HEADLINE:
+                if st.current_phase == ts.Phase.HEADLINE and _owner(card) not in (None, mover):
+                    self._opponent_play(st, card, mover, a)
+                elif st.current_phase == ts.Phase.HEADLINE:
                     self._spent(st, card, "headline", a)
                     self.latest[card].legal = True
                 elif st.current_phase == ts.Phase.ACTION_ROUND:
@@ -164,9 +217,12 @@ class HoldingTracker:
         elif ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and st.current_phase == ts.Phase.ACTION_ROUND:
             card = int(ctx.pending_op_card)
             if self.selected is not None and self.selected == (card, mover) and card in self.latest:
-                # On the opponent's card EVENT is the event-first branch of an Ops play.
-                own = _owner(card) in (None, mover)
-                self._spent(st, card, "event" if a == EVENT and own else "space" if a == SPACE else "ops", a)
+                if a == SPACE:
+                    self._spent(st, card, "space", a)
+                elif _owner(card) in (None, mover):
+                    self._spent(st, card, "event" if a == EVENT else "ops", a)
+                else:                                      # EVENT here is the event-first branch of an Ops play
+                    self._opponent_play(st, card, mover, a)
             self.selected = None
 
 
@@ -230,64 +286,87 @@ def load_holding(r: Sequence[Any]) -> Holding:
     return h
 
 
-def table(holdings: Sequence[Holding], games: int, source: str = "self-play") -> str:
-    cards = {int(c["id"]): c for c in _CARDS}
-    by: Dict[Tuple[int, int], collections.Counter] = collections.defaultdict(collections.Counter)
+#: How a holding ended that counts as a play in an action round, for the space-race share (records
+#: before HOLDINGS_VERSION 2 file the opponent's Ops plays as "ops").
+_ROUND_PLAYS = ("event", "ops", "space", "fired", "no event")
+
+
+def _pct(k: int, n: int) -> str:
+    return f"{100 * k / n:.0f}%" if n else "—"
+
+
+def table(holdings: Sequence[Holding], games: int, source: str = "self-play", opponent: bool = True) -> str:
+    """Every card, what each side does with it: for a side's card its owner's holdings and the
+    opponent's, for a neutral card each side's and both. `opponent` False for records before
+    HOLDINGS_VERSION 2, whose opponent outcomes were filed as the holder's own: those columns n/a."""
+    own: Dict[Tuple[int, int], collections.Counter] = collections.defaultdict(collections.Counter)
+    opp: Dict[int, collections.Counter] = collections.defaultdict(collections.Counter)
     for h in holdings:
-        if h.legal:
-            by[(h.card, h.side)][h.outcome] += 1
-
-    def counts(keys: Sequence[Tuple[int, int]]) -> collections.Counter:
-        c: collections.Counter = collections.Counter()
-        for k in keys:
-            c.update(by.get(k, collections.Counter()))
-        return c
-
-    def stats(keys: Sequence[Tuple[int, int]]) -> Tuple[int, int, int]:
-        c = counts(keys)
-        return sum(c.values()), c["headline"], c["event"]
-
-    def cell(n: int, hd: int, ev: int) -> str:
-        return "—" if n == 0 else f"{100 * (hd + ev) / n:.0f}% ({n:,})"
-
-    def pct(k: int, n: int) -> str:
-        return f"{100 * k / n:.0f}%"
-
-    rows = []
-    for cid, c in cards.items():
-        side = str(c.get("side", "neutral")).lower()
-        if cid == 6:                                   # The China Card: no event
-            continue
-        keys = [(cid, US if side == "us" else USSR)] if side in ("us", "ussr") else [(cid, US), (cid, USSR)]
-        n, hd, ev = stats(keys)
-        if side in ("us", "ussr"):
-            us_cell = ussr_cell = ""
+        if _owner(h.card) in (None, h.side):
+            if h.legal:
+                own[(h.card, h.side)][h.outcome] += 1
         else:
-            us_cell, ussr_cell = cell(*stats([(cid, US)])), cell(*stats([(cid, USSR)]))
+            opp[h.card][h.outcome] += 1
+
+    def own_cells(c: collections.Counter) -> List[str]:
+        n = sum(c.values())
         if n == 0:
-            continue
-        cc = counts(keys)
-        # Dumps written before the split hold "ops/space": shown under Ops, with space blank.
-        legacy = cc["ops/space"] > 0
-        ops = pct(cc["ops"] + cc["ops/space"], n)
-        space = "—" if legacy else pct(cc["space"], n)
-        rows.append(((hd + ev) / n, n, c["name"], side, hd, ev, ops, space, pct(cc["kept"], n), us_cell, ussr_cell))
-    rows.sort(key=lambda r: (-r[0], -r[1]))
+            return ["0", "—", "—", "—", "—"]
+        return [f"{n:,}", f"{_pct(c['headline'] + c['event'], n)} (H {_pct(c['headline'], n)})",
+                _pct(c["ops"], n), _pct(c["space"], n), _pct(c["kept"], n)]
+
+    def opp_cells(c: collections.Counter) -> List[str]:
+        n = sum(c.values())
+        if not opponent:
+            return [f"{n:,}"] + ["n/a"] * 5
+        return [f"{n:,}"] + [_pct(c[k], n) for k in ("fired", "no event", "space", "un", "kept")]
+
     what = "games of the human ts-replayer corpus" if source == "human" else "greedy self-play games"
-    out = [f"How often a card in its owner's hand is used for its event -- headlined, or played in an action "
-           f"round as the event -- {games:,} {what}. One count per holding (the card entering "
-           f"the hand until it leaves), counting only holdings in which the owner could have played the event at "
-           f"one of their decisions: a headline choice where the card may be headlined and its event can trigger, "
-           f"or an action-round card choice where selecting it offers the event. US/USSR cards: the owner's holdings only. Neutral "
-           f"cards: whoever holds it, with the split by side.", "",
-           "The rest of each holding: played for Ops (on an opponent's card that includes the event-first "
-           "branch -- it is the opponent's event), sent to the space race, or kept -- still in hand at the "
-           "end, or gone some other way (discarded, taken by an event, held when the game ended).", "",
-           "| card | side | evented (holdings) | headlined | event in a round | Ops | space | kept | held by US | held by USSR |",
-           "|:---|:---|---:|---:|---:|---:|---:|---:|---:|---:|"]
-    for frac, n, name, side, hd, ev, ops, space, kept, uc, sc in rows:
-        out.append(f"| {name} | {side} | **{100 * frac:.0f}%** ({n:,}) | {100 * hd / n:.0f}% | {100 * ev / n:.0f}% | "
-                   f"{ops} | {space} | {kept} | {uc} | {sc} |")
+    played = {s: [h for h in holdings if h.side == s and h.ar > 0 and h.outcome in _ROUND_PLAYS] for s in (US, USSR)}
+    space = ", ".join(f"{name} {_pct(sum(h.outcome == 'space' for h in played[s]), len(played[s]))} of its "
+                      f"{len(played[s]):,}" for name, s in (("US", US), ("USSR", USSR)))
+    out = [f"What each side does with every card in its hand, {games:,} {what}. One count per *holding* -- the "
+           "card entering a hand until it leaves -- so each group of columns adds up to 100% of its holdings.", "",
+           "**Owner**, and each side holding a neutral card: the holdings in which the holder could have played the "
+           "event at one of its decisions (a headline choice where the event can trigger, or an action-round card "
+           "choice where selecting it offers the event). \"Event\": headlined or played as the event in a round, "
+           "(H …) the headlines among them. \"Not played\": still in hand at the end, or gone some other way "
+           "(discarded, taken by an event).", "",
+           "**Opponent**: every holding of the other side's card. \"Fires event\": headlined, or played for Ops in "
+           "either order, and the event occurred (a starred card: removed from the game by the play). \"No event\": "
+           "played that way when the event could not occur -- Iron Lady on Socialist Governments, North Sea Oil on "
+           "OPEC, Our Man in Tehran with no US-controlled Middle East country. \"UN\": UN Intervention's companion, "
+           "its Ops without its event.", "",
+           f"Space race, of the cards each side played in its action rounds: {space}. Scoring cards (always their "
+           "event) and the China Card (no event) are left out."]
+    if not opponent:
+        out += ["", "These records predate the opponent's outcomes (they filed its plays as the holder's own); "
+                    "rerun without `--load` to fill those columns."]
+    cards = [c for c in _CARDS if int(c["id"]) not in SCORING and int(c["id"]) != THE_CHINA_CARD]
+    for side, owner in (("us", US), ("ussr", USSR)):
+        out += ["", f"### {side.upper()} cards", "",
+                "| card | Ops | owner: holdings | event (H) | Ops | space | not played "
+                "| opponent: holdings | fires event | no event | space | UN | not played |",
+                "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for c in cards:
+            cid = int(c["id"])
+            if _SIDES[cid] != side or not (own.get((cid, owner)) or opp.get(cid)):
+                continue
+            out.append(f"| {c['name']} | {c['ops']} | " + " | ".join(own_cells(own[(cid, owner)]) + opp_cells(opp[cid]))
+                       + " |")
+    out += ["", "### Neutral cards", "",
+            "| card | Ops | US: holdings | event (H) | Ops | space | not played "
+            "| USSR: holdings | event (H) | Ops | space | not played | both: event | Ops | space |",
+            "|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for c in cards:
+        cid = int(c["id"])
+        if _SIDES[cid] != "neutral" or not (own.get((cid, US)) or own.get((cid, USSR))):
+            continue
+        both = own[(cid, US)] + own[(cid, USSR)]
+        n = sum(both.values())
+        out.append(f"| {c['name']} | {c['ops']} | " + " | ".join(
+            own_cells(own[(cid, US)]) + own_cells(own[(cid, USSR)])
+            + [_pct(both["headline"] + both["event"], n), _pct(both["ops"], n), _pct(both["space"], n)]) + " |")
     return "\n".join(out)
 
 
@@ -315,15 +394,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         recs: List[Holding] = []
         games = 0
         sources = set()
+        current = True
         for f in a.merge:
             with open(f) as fh:
                 d = json.load(fh)
             games += int(d["games"])
             sources.add(str(d.get("source", "self-play")))
+            current = current and int(d.get("version", 1)) >= HOLDINGS_VERSION
             recs += [load_holding(r) for r in d["holdings"]]
         if len(sources) > 1:
             ap.error(f"--merge mixes human and self-play dumps ({sorted(sources)}); tabulate them apart")
-        md = table(recs, games, source=sources.pop())
+        md = table(recs, games, source=sources.pop(), opponent=current)
         print(md)
         if a.output_md:
             open(a.output_md, "w").write(md + "\n")
@@ -333,7 +414,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         games = status.get("complete", 0) + status.get("partial", 0)
         print(f"corpus: {status}", file=sys.stderr)
         if a.dump:
-            json.dump({"games": games, "source": "human", "status": status,
+            json.dump({"games": games, "source": "human", "status": status, "version": HOLDINGS_VERSION,
                        "holdings": [dump_holding(h) for h in hs]}, open(a.dump, "w"))
         md = table(hs, games, source="human")
         print(md)
@@ -360,7 +441,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         json.dump({"games": a.games, "records": [r for t in trackers for r in t.placement.records]},
                   open(a.placement_dump, "w"))
     if a.dump:
-        json.dump({"games": a.games, "holdings": [dump_holding(h) for h in hs]}, open(a.dump, "w"))
+        json.dump({"games": a.games, "version": HOLDINGS_VERSION, "holdings": [dump_holding(h) for h in hs]},
+                  open(a.dump, "w"))
     md = table(hs, a.games)
     print(md)
     if a.output_md:
