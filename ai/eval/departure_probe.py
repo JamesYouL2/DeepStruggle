@@ -8,6 +8,10 @@ there, scored by held-out AUC. Well above 0.5: there are patterns, and the move-
 reason; near 0.5: whether to depart is not visible in the observation at this scale.
 
     PYTHONPATH=.:build/release python -m ai.eval.departure_probe --dataset targets.npz --worlds 128 --checkpoint swa.pt
+    PYTHONPATH=.:build/release python -m ai.eval.departure_probe --dataset targets.npz --target h4 --checkpoint swa.pt
+
+`--target` reads any teacher of a `tools/distill_targets.py` set by name (the teacher ladder); `--worlds W` is
+P36c's teacher at W worlds.
 """
 
 from __future__ import annotations
@@ -54,6 +58,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--worlds", type=int, default=128)
+    ap.add_argument("--target", default=None, help="a teacher's name in the set (overrides --worlds)")
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--seed", type=int, default=7)
@@ -62,7 +67,8 @@ def main() -> int:
     model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
     z = np.load(a.dataset)
     held = z["heldout"].astype(bool)
-    dep = (z[f"acts_{a.worlds}"][:, 0].astype(np.int64) != z["net_argmax"].astype(np.int64)).astype(np.float32)
+    name = a.target or str(a.worlds)
+    dep = (z[f"acts_{name}"][:, 0].astype(np.int64) != z["net_argmax"].astype(np.int64)).astype(np.float32)
     codes = Codes(0, dev)
     x_codes = codes.encode(z["states"])
     masks = masks_of(z["states"])
@@ -87,7 +93,7 @@ def main() -> int:
     va = (~held) & np.isin(z["game"], list(va_games))
     tr = (~held) & ~va
     print(f"{int(tr.sum()):,} train / {int(va.sum()):,} validation / {int(held.sum()):,} held-out positions; the root "
-          f"departs at {100 * dep[held].mean():.1f}% of held-out positions ({a.worlds} worlds)")
+          f"departs at {100 * dep[held].mean():.1f}% of held-out positions (teacher {name})")
     for name, x in feats.items():
         mu, sd = x[tr].mean(0), x[tr].std(0) + 1e-6
         xt = torch.from_numpy((x - mu) / sd).float().to(dev)

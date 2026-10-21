@@ -647,6 +647,48 @@ export PYTHONPATH=.:build/release
     --model soft.pt --budget rollout --out check.json
 ```
 
+**Distillation diagnostics (P36c and after).** `tools/distill_targets.py` records teachers' improved
+policies on the network's own entry decisions, held out by game, and searches the held-out positions
+a second time (other seeds) for the teacher's self-agreement. A teacher is `--teacher name=spec`:
+* `root:k:worlds:horizon:rule[:stop][:own|decider][:keyed][:aligned][:box4]` -- the rollout root.
+  Horizon 0 is the critic read at the mover's next decision, so a ladder from `h0` to `h4`
+  separates what the critic knows from what the playouts add.
+* `net:<checkpoint>` -- another network's raw policy, a positive control: a target a network of
+  the same shape demonstrably represents.
+
+`--worlds 16 64 128` (with no `--teacher`) rebuilds P36c's set with its seeds. The search splits
+across machines: `--collect-only` writes the positions once; then `--states pos.npz --shard i/n`
+searches one part per runner; then `--states pos.npz --merge s1.npz ... --output targets.npz`
+joins them, refusing any row that is not covered exactly once. The raw states are readable only by
+the engine build that wrote them, and every step checks this.
+
+`tools/train.py --mode policy-fit --policy-target <name>` fits a student to any named teacher.
+`--policy-reinit-heads` re-initialises only the policy heads, keeping the trunk: a plasticity test
+between the fine-tune and `--policy-reinit`. `ai/eval/departure_probe.py --target <name>` asks
+whether the departures can be read from the trunk.
+
+`tools/distill_probe.py` reads a target set:
+* `agree` -- each teacher's departure rate, its self-agreement between seeds, and pairwise: on the
+  row teacher's departures, how often the column teacher picks the same move.
+* `knn` -- on the departures, whether the trunk's (or the observation's) nearest neighbours carry
+  the same correction (the teacher's local consistency).
+* `track` -- for each checkpoint, against the network the positions came from: where it takes the
+  teacher's move on departures, keeps the base move, and leaves the moves both agreed on. It reads a
+  policy fit's or an active-search run's snapshots offline.
+
+```bash
+tools/scripts/check_engine_fresh.sh && export PYTHONPATH=.:build/release
+.venv/bin/python tools/distill_targets.py --checkpoint <ckpt.pt> --games 2000 --collect-only --output pos.npz
+.venv/bin/python tools/distill_targets.py --checkpoint <ckpt.pt> --states pos.npz --shard 1/8 \
+    --teacher h4=root:4:16:4:z2:earlier:own:keyed:aligned:box4 --teacher h0=root:16:4:0:argmax:earlier:own:keyed \
+    --teacher soup=net:<soup.pt> --device cpu --output s1.npz
+.venv/bin/python tools/distill_targets.py --checkpoint <ckpt.pt> --states pos.npz --merge s*.npz --output targets.npz
+.venv/bin/python tools/distill_probe.py agree --dataset targets.npz
+.venv/bin/python tools/distill_probe.py knn --dataset targets.npz --checkpoint <ckpt.pt> --target h4
+.venv/bin/python tools/distill_probe.py track --dataset targets.npz --target h4 \
+    --checkpoints <student>/policy_fit_last.pt <student>/policy_fit_best_heldout.pt
+```
+
 ---
 
 ## 7d. The Two-Stage Catastrophic-Blunder Census
