@@ -17,6 +17,11 @@
 name: distill-ladder
 
 on:
+  # The push trigger only registers the workflow from this branch (a dispatch-only workflow that is
+  # not on the default branch cannot be dispatched); every job is skipped on it.
+  push:
+    branches: [exp/distill-ladder]
+    paths: [.github/workflows/distill_ladder.yml]
   workflow_dispatch:
     inputs:
       model:
@@ -62,6 +67,7 @@ env:
 
 jobs:
   plan:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -71,6 +77,7 @@ jobs:
         run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
 
   collect:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
