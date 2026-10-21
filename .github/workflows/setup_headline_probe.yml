@@ -6,6 +6,14 @@
 #   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f runners=10 \
 #     -f args="--card 'East European Unrest' --holder us --ussr EG4/Pol4/Yug1 Pol3/Yug3 --us WG4/It4/Ir2"
 #   gh run download <run-id> -n setup-headline-probe-<run-id> -D data/reports/t1_openings/eeu_a13
+#
+# stage=reply forces the holder's headline to the card and plays the other side's turn 1 twice, by
+# the network and by a searched player (a load_agent spec, {MODEL} for the model, which must then
+# be a .pt), the rest greedy to the end:
+#
+#   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f stage=reply -f runners=30 \
+#     -f model="E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt" -f worlds=30000 \
+#     -f args="--ussr Pol3/Yug3 EG4/Pol4/Yug1 --us WG3/Fr3/It2/Ir2 WG4/It4/Ir2"
 name: setup-headline-probe
 
 on:
@@ -16,6 +24,12 @@ on:
     paths: [.github/workflows/setup_headline_probe.yml]
   workflow_dispatch:
     inputs:
+      stage:
+        description: "headlines (greedy headlines only) or reply (the forced headline, turn 1 searched)"
+        default: "headlines"
+      player:
+        description: "stage=reply: the searched player"
+        default: "rollout:{MODEL}:4:32:4:z2:earlier:own"
       model:
         description: "Model in the Hugging Face repo (.onnx or .pt); the default is A13+R48's SWA"
         default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.onnx"
@@ -25,7 +39,7 @@ on:
       runners:
         default: "10"
       args:
-        description: "--ussr ... --us ... (required), --card, --holder, --seed"
+        description: "--ussr ... --us ... (required), --card, --holder, --seed; reply: --turns, --chunk"
         default: ""
       hf_repo:
         default: "mihaild/deepstruggle"
@@ -35,6 +49,8 @@ permissions:
 
 env:
   PYTHONPATH: .:build/release
+  STAGE: ${{ inputs.stage }}
+  PLAYER: ${{ inputs.player }}
   MODEL: ${{ inputs.model }}
   WORLDS: ${{ inputs.worlds }}
   RUNNERS: ${{ inputs.runners }}
@@ -55,7 +71,7 @@ jobs:
   run:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
@@ -68,11 +84,13 @@ jobs:
           mkdir -p models
           curl -sSfL --retry 3 -o "models/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
           sha256sum "models/$(basename "$MODEL")"
-      - name: Headlines (part ${{ matrix.part }})
+      - name: ${{ inputs.stage }} (part ${{ matrix.part }})
         run: |
           mkdir -p out
           eval "set -- $ARGS"
-          python tools/scripts/setup_deal_matrix.py headlines --model "models/$(basename "$MODEL")" \
+          if [ "$STAGE" = reply ]; then set -- --player "$PLAYER" "$@"; fi
+          tools/scripts/check_engine_fresh.sh
+          python tools/scripts/setup_deal_matrix.py "$STAGE" --model "models/$(basename "$MODEL")" \
             --worlds "$WORLDS" --part "${{ matrix.part }}/$RUNNERS" \
             --out "out/matrix-${{ matrix.part }}.jsonl.gz" "$@"
       - uses: actions/upload-artifact@v4
@@ -101,6 +119,7 @@ jobs:
             --out report/headlines.jsonl.gz
           {
             echo "commit: $GITHUB_SHA"
+            echo "stage: $STAGE  player: $PLAYER"
             echo "model: $HF_REPO $MODEL  worlds: $WORLDS  runners: $RUNNERS  args: $ARGS"
             echo "parts: $(cat report/headlines.jsonl.gz.parts.json)"
           } > report/provenance.txt

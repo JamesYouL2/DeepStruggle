@@ -2,12 +2,13 @@
 and the game it solves."""
 import json
 import os
-from typing import List
+from typing import List, Sequence
 
 import numpy as np
 import pytest
 import ts_engine as ts
 
+from bindings.action_encoder import ActionEncoder
 from tools.lib.jsonl import read_jsonl, write_jsonl
 from tools.scripts import setup_deal_matrix as sdm
 
@@ -210,3 +211,41 @@ def test_headlines_keep_the_card_holders_worlds_and_name_both_headlines(tmp_path
         for c, tg in zip(r["us_hl"], r["targets"]):
             assert (len(tg) == 3) == (c == cid)  # Early War: one Influence from three countries
     assert json.load(open(pooled + ".meta.json"))["stage"] == "headlines"
+
+
+class _Picker:
+    """A stand-in for a searched player: the first legal move (the fake network's) or the last."""
+
+    def __init__(self, last: bool) -> None:
+        self.name, self.last = "picker", last
+
+    def select_actions_batch(self, states: Sequence[ts.GameState]) -> List[int]:
+        legal = [np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st))) for st in states]
+        return [int(a[-1] if self.last else a[0]) for a in legal]
+
+
+@pytest.mark.parametrize("last", [False, True])
+def test_reply_forces_the_headline_and_pairs_the_two_arms(tmp_path, monkeypatch, last: bool) -> None:
+    monkeypatch.setattr(sdm, "load_policy", lambda path: (_first_legal, 0))
+    monkeypatch.setattr(sdm, "load_agent", lambda spec, device: _Picker(last))
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"not a model")
+    ussr, us = ["Pol3/Yug3", "EG4/Pol4/Yug1"], ["WG4/It4/Ir2"]
+    card = "East European Unrest"
+    out = str(tmp_path / "matrix-1.jsonl.gz")
+    sdm.reply(str(model), "picker:{MODEL}", 16, "1/1", 0, 4, out, ussr, us, card, "us", 1)
+    rows = list(read_jsonl([out]))
+    cid = sdm.card_ids()[card]
+    assert [r["world"] for r in rows] == [w for w in range(16) if cid in sdm.hand(sdm.dealt(sdm.world_deal(0, w)), ts.Player.US)]
+    assert rows
+    for r in rows:
+        for arm in ("net", "searched"):
+            a = r[arm]
+            assert len(a["s"]) == len(a["hl"]) == len(a["moves"]) == len(a["end"]) == 2
+            assert all(len(tg) == 3 for tg in a["targets"])  # the US headline was the card, every cell
+            assert all(c in r["ussr_hand"] for c in a["hl"])
+            assert all(m[0] == 1 for mv in a["moves"] for m in mv)
+        # the network's own move as the searched player gives the network's games, cell for cell
+        assert (r["net"] == r["searched"]) != last
+    meta = json.load(open(out + ".meta.json"))
+    assert meta["stage"] == "reply" and meta["player"] == "picker:{MODEL}" and meta["turns"] == 1
