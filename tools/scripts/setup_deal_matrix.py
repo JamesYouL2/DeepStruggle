@@ -875,11 +875,18 @@ def us_score(st: ts.GameState) -> int:
     return 2 if u > 0 else (1 if u == 0 else 0)
 
 
+OP_MODES = {0: "influence", 1: "coup", 2: "realign"}  # SELECT_OP_MODE's primary (engine types.hpp)
+
+
 def action_label(st: ts.GameState, action: int) -> str:
-    """A flat action in words, as far as its decision type allows: the card picked, the mode, or
-    the country pointed at; otherwise the decoded MicroAction's fields."""
+    """A flat action in words, as far as its decision type allows: the card picked, the mode, the
+    country pointed at, or "done" (stop early); otherwise the decoded MicroAction's fields."""
     ma = ts.decode_flat_action(st, int(action))
     dt, p, q = ma.decision_type, int(ma.primary_id), int(ma.secondary_id)
+    if int(ma.flags) & 0x80 or p == 255:
+        return "done"
+    if dt == ts.DecisionType.SELECT_OP_MODE:
+        return f"ops for {OP_MODES.get(p, p)}"
     if dt == ts.DecisionType.SELECT_CARD and 1 <= p <= 110:
         return f"card {ts.CardData.get_card_info(p)['name']}"
     if dt == ts.DecisionType.SELECT_PLAY_MODE:
