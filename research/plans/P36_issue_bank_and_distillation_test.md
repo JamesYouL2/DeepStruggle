@@ -447,6 +447,25 @@ tested (1/64 of entry decisions played as environment, the CE averaged over the 
 ~270x a normal row's gradient, a 10M-lagged snapshot) -- a lighter CE weight or targets without the
 environment moves are untested.
 
+**Does the search run train slower to the same plateau? (owner's question, 2026-10-22) -- no sign of it.** Both
+trajectories against one fixed reference, the heads run's SWA 1,920–2,000M, raw, 1,000 deals a side, 80M-window
+SWAs (`data/reports/p36_curve_*`):
+
+| window ending at | slot 1 (search) | heads run | gap |
+|---:|---:|---:|---:|
+| 400M | 22.2% | 24.0% | −1.8 |
+| 800M | 29.6% | 38.9% | −9.3 |
+| 1,200M | 37.5% | 43.2% | −5.7 |
+| 1,600M | 40.1% | 45.5% | −5.4 |
+| 2,000M | 42.2% | (the reference) | |
+
+The gap opens between 400M and 800M, as search takes effect, and then holds: from 1,200M both gain ~2–2.5 points a
+400M, so slot 1 is not closing. At 2,000M it plays where the heads run did at ~1,150M (43.2%); at matched strength
+it climbs at half the rate per step (37.5 → 42.2% in 800M, the heads run 38.9 → 43.2% in 400M), at 2.6x the cost
+a step -- ~5x the compute a point. Nothing in the curve points to a higher plateau, so it is not trained on. A
+different form (a much lighter CE weight, or the improved-policy targets without the root's moves played as
+environment) would be a new test, not more steps of this one.
+
 **Why slot 1's search CE was missing (2026-10-26).** Not a missing name on the list: `generic_trainer`
 registered the search-CE metrics only when the `--search-ce-coef` *argument* was above 0, and an
 active-search run sets the trainer's coefficient from `--active-search-ce-coef` with that argument left at 0.
