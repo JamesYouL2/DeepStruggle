@@ -829,7 +829,8 @@ def draws(model: str, worlds: int, part: str, seed: int, redeals: int, chunk: in
 
 def ever_games(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int) -> List[Dict[str, Any]]:
     """Each game from its random deal (the `draws` stage's base games), the network greedy on both
-    sides to the end: every card each side ever held, with the turn it first did, and the result."""
+    sides to the end: every card each side ever held, with the turns it did (bit t set if in hand at
+    any point of turn t), and the result."""
     states = [dealt(world_deal(seed, g)) for g in games]
     held: List[Dict[str, Dict[int, int]]] = [{"ussr": {}, "us": {}} for _ in games]
 
@@ -838,8 +839,8 @@ def ever_games(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int)
         for c in range(1, 111):
             side = ts.hand_holder(st.get_card_location(c))
             key = "ussr" if side == ts.Player.USSR else "us" if side == ts.Player.US else None
-            if key is not None and c not in held[k][key]:
-                held[k][key][c] = int(st.turn)
+            if key is not None:
+                held[k][key][c] = held[k][key].get(c, 0) | (1 << int(st.turn))
 
     for k in range(len(states)):
         look(k)
@@ -868,7 +869,8 @@ def ever_games(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int)
 
 def ever(model: str, worlds: int, part: str, seed: int, chunk: int, out: str) -> int:
     """This part's games (`worlds` of them in all), greedy from random deals, one row per game:
-    the cards each side ever held ([card, first turn]) and the US score (`s`, 0/1/2)."""
+    the cards each side ever held ([card, bitmask of the turns it was in hand]) and the US score
+    (`s`, 0/1/2)."""
     k, n = (int(x) for x in part.split("/"))
     logits_fn, feats = load_policy(model)
     t0 = time.time()

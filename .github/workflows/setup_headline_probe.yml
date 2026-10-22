@@ -29,7 +29,7 @@
 #     -f worlds=60000 -f args="--redeals 16"
 #
 # stage=ever plays games from random deals greedy to the end, one row per game: every card each side
-# ever held (with the turn it first did) and the result; --worlds is the number of games:
+# ever held (with every turn it did) and the result; --worlds is the number of games:
 #
 #   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f stage=ever -f runners=20 -f worlds=200000
 name: setup-headline-probe
