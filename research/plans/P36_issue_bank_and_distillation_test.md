@@ -331,6 +331,15 @@ searched opponent separates them.
   worth +15–25 Elo on its own (R47) -- read at matched steps against the heads run's own trajectory at 400M, 800M and
   2,000M (per seat, raw and under the keyed root), continued only if ahead; if the gate never opens,
   that is the answer at no search cost.
+* **The from-scratch active test failed (2026-10-22, `E7-A8-R69-S44`).** Against the heads run at
+  matched steps, raw / under the corrected keyed root: 400M 39.8 / 38.5%, 800M 42.7 / 43.0%, 2,000M
+  **42.2 / 40.1%** (per seat −4.7 / −10.3 at 2,000M) -- behind at every read, closing to 800M and not
+  after. The gate opened at the first check (the root beat its raw snapshot 87% at 40M), so the test was
+  active search from 40M; the run carried the R29 signature throughout (entropy 0.60 against 0.50, a
+  lower pool win rate), with a self-referential soft target from a lagged snapshot at ~270× a normal
+  row's gradient. **Search in the loop is closed in this form too**; search stays off the flagships.
+  The one variant not run is the root's move played with **no** cross-entropy target (the pure active
+  form); it goes to the reserve with its cost (~6 h from scratch to 400M).
 * **Launch order (owner, 2026-10-20), after the running session's current report is generated.**
   Slot 1: the gated search test on the A8 recipe from scratch (~a day). Slot 2, at the same time:
   P35 item 2, the scaled conventional architecture from scratch (~3× A8 per step), with the same
