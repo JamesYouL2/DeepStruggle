@@ -91,6 +91,15 @@ class RolloutConfig:
     #: (ai/search/belief.py) with this many importance-sampled hands; 0 = uniform redeals. Needs the
     #: tournament's game hooks (`RolloutRootAgent.observe`), since the belief reads the opponent's moves.
     belief: int = 0
+    #: Count every candidate's horizon from the end of the mover's own action round
+    #: (rollout_batch.hpp's Config::aligned). Off: a candidate that leaves choices inside the round
+    #: counts the round's end and is read an action round before one that ends it (2026-10-19); the
+    #: headline is one boundary however its events resolve.
+    aligned: bool = False
+    #: Space Race box 4 (rollout_batch.hpp's Config::box4): at the headline choice of the side holding Man
+    #: in Space alone, the opponent's headline -- chosen first and revealed -- stays in every world (and
+    #: in every belief hand). Off: the world forgets it and asks it again.
+    box4: bool = False
 
 
 class _GraphedForward:
@@ -156,6 +165,10 @@ def _stop_kw(cfg: RolloutConfig) -> Dict[str, Any]:
         kw["keyed"] = True
     if cfg.oracle:
         kw["oracle"] = True
+    if cfg.aligned:
+        kw["aligned"] = True
+    if cfg.box4:
+        kw["box4"] = True
     return kw
 
 
@@ -376,8 +389,13 @@ class RolloutTeacher:
         return self.subsample >= 1.0 or self._rng.random() < self.subsample
 
     def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
+        return self.decide(states)[1]
+
+    def decide(self, states: Sequence[ts.GameState]) -> Tuple[List[int], List[Tuple[List[int], np.ndarray]]]:
+        """The root's move at each position and its improved policy over the legal moves (P36's active
+        search plays the first and trains toward the second)."""
         states = list(states)
-        self.root.choose(states)                  # fills last_stats: candidates, worlds, Q
+        picks = self.root.choose(states)          # fills last_stats: candidates, worlds, Q
         lg, masks, v = self.root._forward(states)
         out: List[Tuple[List[int], np.ndarray]] = []
         for i, st in enumerate(self.root.last_stats):
@@ -395,7 +413,7 @@ class RolloutTeacher:
             z = np.array([logits[a] + sig[a] for a in acts], dtype=np.float64)
             z = np.exp(z - z.max())
             out.append((acts, z / z.sum()))
-        return out
+        return picks, out
 
 
 class RolloutRootAgent:
@@ -406,7 +424,7 @@ class RolloutRootAgent:
         self.name = name
         self.root = RolloutRoot(model, config, device=device, leaf_model=leaf_model)
         self.belief: Optional[BeliefTracker] = (
-            BeliefTracker(model, self.root.device, particles=config.belief, seed=config.seed)
+            BeliefTracker(model, self.root.device, particles=config.belief, seed=config.seed, reveal=config.box4)
             if config.belief else None)
 
     def reseed(self, seed: int) -> None:
@@ -540,7 +558,7 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             continue                                   # rollout_spec_config reads the leaf side
         elif p == "graphs":
             graphs = True
-        elif p in ("keyed", "oracle") or re.fullmatch(r"belief\d*", p):
+        elif p in ("keyed", "oracle", "aligned", "box4") or re.fullmatch(r"belief\d*", p):
             continue                                   # rollout_spec_config reads them
         else:
             leaf = p
@@ -563,10 +581,12 @@ def rollout_spec_leaf(spec: str) -> Optional[str]:
 
 
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed][:oracle][:graphs][:leaf checkpoint]]]]] ->
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed][:aligned][:box4][:oracle][:graphs][:leaf checkpoint]]]]] ->
     (checkpoint, config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries,
     the mover's side), the stop one of STOPS, `decider` reads each leaf from its decider's side, `own`
-    plays on to the mover's next decision, `oracle` keeps the opponent's true hand in every world, and the
+    plays on to the mover's next decision, `aligned` counts every candidate's horizon from the end of the mover's
+    own action round (the headline one boundary), `box4` keeps the opponent's headline revealed by Space Race box 4,
+    `oracle` keeps the opponent's true hand in every world, and the
     leaf checkpoint is `rollout_spec_leaf`'s."""
     parts = spec.split(":")
     if parts[0].lower() != "rollout" or len(parts) < 2:
@@ -581,6 +601,7 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
     cfg = RolloutConfig(k=int(field(2) or d.k), worlds=int(field(3) or d.worlds),
                         horizon=int(field(4) or d.horizon), rule=field(5) or d.rule, stop=stop, cuda_graphs=graphs,
                         leaf_side=side, keyed="keyed" in parts[6:], oracle="oracle" in parts[6:],
+                        aligned="aligned" in parts[6:], box4="box4" in parts[6:],
                         belief=_belief_particles(parts[6:]))
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
@@ -589,6 +610,6 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
                   "predeal": "-predeal", "earlier_predeal": "-untilpredeal"}[cfg.stop]
     horizon = "" if cfg.stop in ("turn", "predeal") else f"-h{cfg.horizon}"
     side_label = {"mover": "", "decider": "-dleaf", "own": "-ownleaf"}[cfg.leaf_side]
-    keyed = ("-keyed" if cfg.keyed else "") + ("-oracle" if cfg.oracle else "") + (
+    keyed = ("-keyed" if cfg.keyed else "") + ("-aligned" if cfg.aligned else "") + ("-box4" if cfg.box4 else "") + ("-oracle" if cfg.oracle else "") + (
         f"-belief{cfg.belief}" if cfg.belief else "")
     return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}{keyed}-{cfg.rule}"

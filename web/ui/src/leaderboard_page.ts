@@ -106,7 +106,15 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
-const KIND_LABEL: Record<string, string> = { policy: "", gumbel: "Gumbel", rollout: "rollout", search: "PUCT", bot: "bot" };
+/** The page opens on the newest epoch with a game played in it: a new engine epoch starts with its
+ *  anchor alone and nothing to show, and the one before it stays the board until games are played. */
+function defaultEpoch(epochs: Record<string, { pairs: unknown[] }>): string {
+  const names = Object.keys(epochs);
+  const played = names.filter(n => epochs[n].pairs.length > 0);
+  return played.length ? played[played.length - 1] : names[names.length - 1];
+}
+
+const KIND_LABEL: Record<string, string> ={ policy: "", gumbel: "Gumbel", rollout: "rollout", search: "PUCT", bot: "bot" };
 
 class LeaderboardPage {
   private epoch = "";
@@ -119,7 +127,7 @@ class LeaderboardPage {
   constructor(private readonly data: LeaderboardData) {
     const params = new URLSearchParams(location.search);
     const names = Object.keys(data.epochs);
-    this.epoch = names.includes(params.get("epoch") ?? "") ? params.get("epoch")! : names[names.length - 1];
+    this.epoch = names.includes(params.get("epoch") ?? "") ? params.get("epoch")! : defaultEpoch(data.epochs);
     const v = params.get("view");
     this.view = v === "lineage" || v === "all" ? v : "main";
     for (const l of (params.get("lineage") ?? "").split(",")) if (l) this.lineages.add(l);

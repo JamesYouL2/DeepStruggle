@@ -633,9 +633,9 @@ body {
   gap: 12px;
   margin-left: auto;
 }
-/* The technical bar: one line -- the engine, the play mode, the active model with its chooser and
-   search, the developer's tools -- each group with a small inline caption, so the bar reads as
-   settings, not as the position. The model group takes the width left over. */
+/* The technical bar: one line -- the engine, the play mode, the model · mode label, the
+   developer's tools -- each group with a small inline caption, so the bar reads as settings, not
+   as the position. The model group takes the width left over. */
 .tech-bar {
   min-height: 40px;
   flex-wrap: nowrap;
@@ -644,9 +644,37 @@ body {
   padding: 3px 12px;
 }
 .tech-bar .btn, .tech-bar .view-select, .tech-bar .status-badge { white-space: nowrap; }
-#search-mode-select { width: 128px; }
-/* The chooser's button: just the arrow, right after the model's name. */
-.model-choose { padding: 2px 7px; font-size: 11px; line-height: 1.2; }
+/* The model and how it plays, in one line (main.ts renderModelModeLabels); a click opens
+   #model-mode-dialog. The model's name gives way first, with an ellipsis. */
+.model-mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 560px;
+  padding: 3px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-main);
+  background: #1E293B;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.model-mode-label:hover, .model-mode-label:focus-visible { border-color: var(--border-highlight); outline: none; }
+.model-mode-label .mm-model {
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-mode-label .mm-model.off { color: var(--text-muted); font-weight: 600; }
+.model-mode-label .mm-model.loading { color: var(--warning); }
+.model-mode-label .mm-model.error { color: var(--danger); }
+.model-mode-label .mm-sep { color: var(--text-dim); }
+.model-mode-label .mm-mode { color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.model-mode-label .mm-caret { color: var(--text-dim); font-size: 10px; flex-shrink: 0; }
 .tech-group {
   display: flex;
   align-items: center;
@@ -665,8 +693,11 @@ body {
 }
 .tech-model { flex: 1 1 auto; min-width: 0; }
 .tech-dev { margin-left: auto; }
-/* The active model, in one line: its state while there is none, its name once loaded, ellipsis
-   where the line runs out. */
+/* The model & search section (#model-mode-section): in #model-mode-dialog, or folded in the
+   play-mode question. The model's state, then its source, then how it plays. */
+.model-mode-dialog-content { max-width: 680px; }
+.model-mode-section { display: flex; flex-direction: column; gap: 10px; }
+.mm-current { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .model-active-status {
   font-size: 11px;
   color: var(--text-muted);
@@ -675,30 +706,12 @@ body {
 .model-active-status.loading { color: var(--warning); }
 .model-active-status.error { color: var(--danger); }
 .model-active-status.hidden { display: none; }
-.tech-model .analysis-model-info {
+.model-mode-section .analysis-model-info {
   margin: 0;
-  flex: 0 1 auto;
   min-width: 0;
-  max-width: 520px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
-.tech-model .analysis-model-info .analysis-warning { display: inline; }
-/* The chooser: the source controls, dropped below the bar (main.ts: Change toggles it). */
-.model-chooser {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
-  width: min(640px, calc(100vw - 32px));
-  padding: 10px 12px;
-  background: var(--bg-panel-solid);
-  border: 1px solid var(--border-highlight);
-  border-radius: 6px;
-  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.6);
-}
-.model-chooser.hidden { display: none; }
+.model-mode-section .analysis-model-info .analysis-warning { display: inline; }
 .model-controls {
   display: flex;
   align-items: center;
@@ -708,18 +721,6 @@ body {
 .model-controls .analysis-select { flex: 0 1 190px; width: 190px; }
 .model-controls .analysis-snapshot { flex: 0 1 130px; width: 130px; }
 .model-controls .analysis-src { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.search-mode {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  white-space: nowrap;
-}
-.search-mode .analysis-select { flex: 0 0 auto; width: auto; }
 .analysis-toggle {
   display: flex;
   align-items: center;
@@ -803,6 +804,28 @@ body {
 .mode-opponent-option { display: flex; align-items: flex-start; gap: 8px; font-size: 11px; color: var(--text-muted); line-height: 1.4; cursor: pointer; }
 .mode-opponent-option b { color: var(--text-main); }
 .mode-opponent-option input { margin-top: 2px; }
+/* The play-mode question's model & search, folded under a one-line summary. */
+.mode-model-details {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+.mode-model-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mode-model-details[open] summary { margin-bottom: 8px; }
+.mode-model-summary-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
 
 /* Game over (index.html #result-dialog, result_dialog.ts). */
 .result-dialog-content { max-width: 520px; }
@@ -1593,44 +1616,26 @@ body.player-view .view-select {
   gap: 8px;
 }
 
-/* A pile at a glance (cards_view.ts showPileList): a column a side, a line a card. */
-.pile-columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-  align-items: start;
-}
-.pile-column { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pile-column-head {
+/* The Piles tab (cards_view.ts renderPile): each pile as the hands are drawn, packed -- no gap
+   between the cards -- and the tab scrolling as a whole rather than each pile. */
+.pile-head {
+  margin: 12px 0 4px;
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding-bottom: 4px;
-  margin-bottom: 2px;
-  border-bottom: 2px solid var(--neutral-gold);
   color: #F8FAFC;
 }
-.pile-column-head.us { border-bottom-color: var(--us-blue); }
-.pile-column-head.ussr { border-bottom-color: var(--ussr-red); }
-.pile-column-count { color: var(--text-muted); font-weight: 600; margin-left: 4px; }
-.pile-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  border-radius: 3px;
-  cursor: default;
-}
-.pile-row:hover { background: rgba(255, 255, 255, 0.06); }
-.pile-row .card-ops-badge { width: 18px; height: 18px; font-size: 11px; flex-shrink: 0; }
-.pile-row-name { font-size: 12px; color: #E2E8F0; line-height: 1.25; min-width: 0; }
-.pile-row-text {
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.35;
-  padding: 2px 4px 6px 28px;
-}
+.pile-head-count { color: var(--text-muted); font-weight: 600; margin-left: 4px; }
+.card-list.card-list-packed { gap: 0; max-height: none; overflow: visible; padding-right: 0; }
+.cards-sidebar .card-list.card-list-packed { flex: none; max-height: none; }
+.card-list-packed .card-item { border-radius: 0; padding: 5px 10px; cursor: default; }
+.card-list-packed .card-item + .card-item { border-top-width: 0; }
+.card-list-packed .card-item:first-child { border-radius: 6px 6px 0 0; }
+.card-list-packed .card-item:last-child { border-radius: 0 0 6px 6px; }
+.card-list-packed .card-item:only-child { border-radius: 6px; }
+.card-list-packed .card-item:hover { transform: none; background: #1A2333; }
+.pile-empty { color: var(--text-dim); font-size: 11px; padding: 4px 0; }
 
 .card-tooltip {
   position: fixed;
@@ -1814,6 +1819,13 @@ body.player-view .view-select {
   padding-left: 12px;
   line-height: 1.3;
 }
+/* A card named in the log (game/card_refs.ts): its tooltip on hover, as in the hand tabs. */
+.log-card {
+  cursor: help;
+  text-decoration: underline dotted rgba(148, 163, 184, 0.6);
+  text-underline-offset: 2px;
+}
+.log-card:hover { color: #F8FAFC; text-decoration-color: var(--border-highlight); }
 
 /* The step a log line can be matched to (game/log_view.ts LogEntry.steps). */
 .log-line-step {
@@ -2623,7 +2635,7 @@ body.drop-target #map-container { outline: 3px dashed var(--warning); outline-of
   .tech-group { flex-wrap: wrap; flex-shrink: 1; }
   .tech-model { flex-basis: 100%; }
   .tech-dev { margin-left: 0; }
-  .tech-model .analysis-model-info { max-width: 100%; }
+  .model-mode-label { max-width: 100%; }
   .game-bar { padding: 6px 10px; gap: 6px 10px; }
   .global-tracks { flex-wrap: wrap; justify-content: flex-start; gap: 8px 12px; }
   .global-tracks .track-group { align-items: flex-start; }

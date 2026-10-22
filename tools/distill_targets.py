@@ -39,6 +39,7 @@ if _ROOT not in sys.path:
 import ts_engine as ts  # noqa: E402
 from ai.search.rollout_root import RolloutConfig, RolloutTeacher  # noqa: E402
 from bindings.ts_env import model_obs_features  # noqa: E402
+from tools.lib.engine_fingerprint import fingerprint  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
 
 WIDTH = 16
@@ -150,7 +151,9 @@ def main() -> int:
     with open(a.output + ".meta.json", "w", encoding="utf-8") as f:
         json.dump({"checkpoint": a.checkpoint, "positions": len(states), "games": a.games, "worlds": a.worlds,
                    "holdout": a.holdout, "seed": a.seed, "teacher": "rollout k4 stop=earlier leaf=own keyed, R32 improved policy",
-                   "commit": commit, "engine": ts.BUILD_COMPILER}, f, indent=2)
+                   "commit": commit, "compiler": ts.BUILD_COMPILER,
+                   # raw states are read only by the build that wrote them (ai/training/policy_fit checks)
+                   "engine_fingerprint": fingerprint()}, f, indent=2)
     return 0
 
 

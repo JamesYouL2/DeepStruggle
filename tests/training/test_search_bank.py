@@ -21,7 +21,7 @@ from ai.eval.subs_followup import OPS_COUP, SubsWatch, bg_coup_open, is_us_coup_
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
-from tools.lib.corpus_driver import load_policy, state_from_token
+from tools.lib.corpus_driver import load_policy, selfplay, selfplay_seeded, state_from_token
 from tools.scripts.checkpoint_report import check_leak, leak_section
 from tools.search_bank import (CHINA, EVENT, SPACE, _paired_scores, china_select, china_verdict, confirm_select,
                                event_moves, event_select, event_verdict, is_china_decision, is_event_decision,
@@ -380,3 +380,22 @@ def test_a_kind_filtered_screen_leaves_the_other_rows_on_raws_move_unescalated()
     got = {r["id"]: r for r in confirm_select(rows, [run])}
     assert got["a"]["escalated"] and got["a"]["best"] == 5 and got["a"]["pmoves"] == [3, 5]
     assert not got["h"]["escalated"] and got["h"]["best"] == 3 and got["h"]["pmoves"] == [3]
+
+
+class _Moves:
+    def __init__(self) -> None:
+        self.moves: List[int] = []
+
+    def observe(self, state: "ts.GameState", action: int) -> None:
+        self.moves.append(int(action))
+
+
+def test_games_played_together_are_the_games_played_one_at_a_time(tmp_path: Path) -> None:
+    """annotate --games-at-once: each game starts from the deal its one-game run starts from, so a
+    deterministic policy plays the same moves together as alone."""
+    logits_fn, features = load_policy(_checkpoint(tmp_path))
+    seeds = [700_003, 700_009, 700_015]
+    alone = [selfplay(logits_fn, features, 1, s, 1, 0.0, _Moves)[0].moves for s in seeds]
+    together = [t.moves for t in selfplay_seeded(logits_fn, features, seeds, 0.0, [_Moves] * len(seeds))]
+    assert together == alone
+    assert len({tuple(m) for m in alone}) == len(seeds)

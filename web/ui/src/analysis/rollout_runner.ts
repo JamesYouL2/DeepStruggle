@@ -30,6 +30,7 @@ export class RolloutRunner {
   private beliefSeen: Move[] = [];
   private beliefHands = 0;
   private beliefOnWorker = false;
+  private beliefReveal = false;
 
   constructor(private readonly engine: WasmEngine, private readonly base: string = import.meta.env.BASE_URL) {}
 
@@ -53,7 +54,7 @@ export class RolloutRunner {
         this.loadWaiters = { resolve, reject };
         // A copy: the page keeps using its own bytes-backed session.
         w.postMessage({ type: "load", base: this.base, bytes: model.bytes.slice(), source: model.source,
-                        obsSize: model.meta.obsSize, actionSize: model.meta.actionSize });
+                        actionSize: model.meta.actionSize });
       });
       this.workerReady.catch(() => { this.workerModelKey = ""; });
     } catch {
@@ -88,13 +89,15 @@ export class RolloutRunner {
    * it saw is still the game's beginning only if the game is at least as long and its last seen move
    * is the same object (an undo followed by new moves replaces it).
    */
-  private beliefDelta(moves: Move[], hands: number, onWorker: boolean): { reset: boolean; add: Move[] } {
+  private beliefDelta(moves: Move[], hands: number, reveal: boolean, onWorker: boolean): { reset: boolean; add: Move[] } {
     const seen = this.beliefSeen;
-    const prefix = hands === this.beliefHands && onWorker === this.beliefOnWorker && seen.length <= moves.length
+    const prefix = hands === this.beliefHands && reveal === this.beliefReveal && onWorker === this.beliefOnWorker
+      && seen.length <= moves.length
       && (seen.length === 0 || moves[seen.length - 1] === seen[seen.length - 1]);
     const add = prefix ? moves.slice(seen.length) : moves.slice();
     this.beliefSeen = moves.slice();
     this.beliefHands = hands;
+    this.beliefReveal = reveal;
     this.beliefOnWorker = onWorker;
     return { reset: !prefix, add };
   }
@@ -105,8 +108,8 @@ export class RolloutRunner {
     if (this.worker && this.workerReady && this.workerModelKey === key) {
       await this.workerReady;
       if (spec.belief > 0) {
-        const { reset, add } = this.beliefDelta(moves, spec.belief, true);
-        this.worker.postMessage({ type: "belief", reset, hands: spec.belief, moves: add });
+        const { reset, add } = this.beliefDelta(moves, spec.belief, spec.box4, true);
+        this.worker.postMessage({ type: "belief", reset, hands: spec.belief, reveal: spec.box4, moves: add });
       }
       const id = this.next++;
       return new Promise<SearchResult | null>((resolve, reject) => {
@@ -119,8 +122,8 @@ export class RolloutRunner {
     const keep = this.engine.snapshot();
     try {
       if (spec.belief > 0) {
-        const { reset, add } = this.beliefDelta(moves, spec.belief, false);
-        if (reset) this.engine.beliefReset(spec.belief, 0);
+        const { reset, add } = this.beliefDelta(moves, spec.belief, spec.box4, false);
+        if (reset) this.engine.beliefReset(spec.belief, 0, true, spec.box4);
         for (const m of add) {
           this.engine.restore(m.before);
           this.engine.beliefObserve(m.action);

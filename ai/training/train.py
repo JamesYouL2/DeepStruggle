@@ -8,7 +8,8 @@ import os
 import sys
 import torch
 
-from ai.training.generic_trainer import train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits
+from ai.training.generic_trainer import (train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits,
+                                         DEFAULT_OBS_FEATURES, OBS_FEATURE_BITS)
 from ai.training.generic_trainer import run_search_distillation
 from ai.training.policy_fit import PolicyFitConfig, run_policy_fit
 from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
@@ -310,6 +311,12 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--policy-lr", type=float, default=3e-4)
     pf.add_argument("--policy-batch", type=int, default=4096)
     pf.add_argument("--policy-eval-every", type=int, default=200)
+    pf.add_argument("--policy-head-only", action="store_true", default=False,
+                    help="Freeze the network; train only a correction head on its trunk features added to its logits.")
+    pf.add_argument("--policy-kl-anchor", type=float, default=0.0,
+                    help="Weight of KL(initial policy || student) on every position: a fine-tune held near its start.")
+    pf.add_argument("--policy-train-fraction", type=float, default=1.0,
+                    help="Use this share of the training games (whole games): the data-scaling cells.")
     pf.add_argument("--policy-patience", type=int, default=10,
                     help="Stop when the training fit has not risen by 0.2 points in this many evaluations (convergence).")
     vf = parser.add_argument_group("value fit (--mode value-fit, P34)")
@@ -820,11 +827,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aux-min-batch", type=int, default=4096,
                         help="Labelled positions to gather before one aux training step.")
     # The view spec (owner, 2026-10-01): optional observation blocks appended to the base layout.
-    parser.add_argument("--obs-features", nargs="*", default=[], choices=["ops_budget"],
-                        help="Optional observation blocks the network reads, appended after the base "
-                             "v2.3 layout. ops_budget: the Ops the card at play will be granted (at "
-                             "SELECT_PLAY_MODE) and each side's per-card Ops modifier (Containment / "
-                             "Brezhnev / Red Scare). Recorded in the run's metadata and in the weights; "
+    parser.add_argument("--obs-features", nargs="*", default=list(DEFAULT_OBS_FEATURES),
+                        choices=sorted(OBS_FEATURE_BITS),
+                        help="Optional observation features the network reads. ops_budget: a block "
+                             "appended after the base v2.3 layout, the Ops the card at play will be "
+                             "granted (at SELECT_PLAY_MODE) and each side's per-card Ops modifier "
+                             "(Containment / Brezhnev / Red Scare). headline_reveal (no width): while "
+                             "the side holding Space Race box 4 alone chooses its headline, the "
+                             "opponent's, chosen first and revealed, shows in its card row. The list "
+                             "replaces the default, which since E8 is headline_reveal: name both to "
+                             "have both, and give the flag with no names for none (what every run "
+                             "before E8 read). Recorded in the run's metadata and in the weights; "
                              "every evaluator then builds this view for the model. Ladder only.")
     # P30 (research/log/P30_card_board_targets.md): what each held card's event and Ops would do.
     parser.add_argument("--aux-card-events", type=float, default=0.0,
@@ -964,6 +977,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--search-teacher-policy", action="store_true",
                         help="Search-CE targets are the frozen --search-teacher-checkpoint's own policy, with no search: the "
                              "control for the rollout-root teacher (same rows, same weight).")
+    # P36's gated active search (ai/training/active_search.py; owner, 2026-10-20).
+    parser.add_argument("--active-search-spec", type=str, default=None,
+                        help="P36: the rollout root that acts in this run, as a spec tail without its checkpoint "
+                             "(e.g. 4:16:4:z2:earlier:own:keyed:aligned:box4). Off by default. It joins only once its "
+                             "gate opens: a check every --active-search-gate-every-steps plays the raw snapshot "
+                             "under the root against itself raw, and the first at --active-search-gate-threshold "
+                             "or more opens it. Then the root plays --active-search-frac of the learner's entry "
+                             "decisions (headline and action-round card choices) as environment -- no policy "
+                             "gradient on them -- and its improved policy is their search-CE target, searching a "
+                             "lagged snapshot of the learner.")
+    parser.add_argument("--active-search-frac", type=float, default=1.0 / 64.0,
+                        help="P36: the share of the learner's entry decisions the root plays once its gate is open.")
+    parser.add_argument("--active-search-ce-coef", type=float, default=0.1,
+                        help="P36: weight of the cross-entropy toward the root's improved policy on the rows it played.")
+    parser.add_argument("--active-search-gate-every-steps", type=int, default=40_000_000,
+                        help="P36: steps between gate checks (run in a separate tools/tournament.py process).")
+    parser.add_argument("--active-search-gate-games", type=int, default=200,
+                        help="P36: games per gate check (half a side).")
+    parser.add_argument("--active-search-gate-threshold", type=float, default=0.55,
+                        help="P36: the root's score against its raw snapshot that opens the gate.")
+    parser.add_argument("--active-search-gate-only", action="store_true",
+                        help="P36: run the gate checks and record when the gate opened, but never join -- so a "
+                             "later resume without this flag switches search on at once if the gate is open.")
+    parser.add_argument("--active-search-refresh-steps", type=int, default=10_000_000,
+                        help="P36: steps between refreshes of the searched snapshot from the learner, early.")
+    parser.add_argument("--active-search-refresh-steps-late", type=int, default=50_000_000,
+                        help="P36: the same from --active-search-late-from on.")
+    parser.add_argument("--active-search-late-from", type=int, default=400_000_000,
+                        help="P36: the step the refresh cadence slows at.")
     parser.add_argument("--search-teacher-checkpoint", type=str, default=None,
                         help="P32: search with this FROZEN network for the search CE targets, instead of the "
                              "network being trained -- whose targets follow it as it changes. Same "
@@ -1135,6 +1177,16 @@ def main():
             searched_value_batch=args.searched_value_batch,
             search_workers=args.search_workers,
             search_teacher_policy=args.search_teacher_policy,
+            active_search_spec=args.active_search_spec,
+            active_search_frac=args.active_search_frac,
+            active_search_ce_coef=args.active_search_ce_coef,
+            active_search_gate_every_steps=args.active_search_gate_every_steps,
+            active_search_gate_games=args.active_search_gate_games,
+            active_search_gate_threshold=args.active_search_gate_threshold,
+            active_search_gate_only=args.active_search_gate_only,
+            active_search_refresh_steps=args.active_search_refresh_steps,
+            active_search_refresh_steps_late=args.active_search_refresh_steps_late,
+            active_search_late_from=args.active_search_late_from,
             resume_weights=args.resume_weights,
             resume_widen=args.resume_widen,
             resume_grow_tokens=args.resume_grow_tokens,
@@ -1238,7 +1290,8 @@ def main():
             aux_vp_coef=args.aux_vp_margin,
             aux_sample_frac=args.aux_sample_frac,
             aux_min_batch=args.aux_min_batch,
-            obs_features=obs_feature_bits(args.obs_features),
+            # Ladder only: the other architectures read the base layout, and record that they do.
+            obs_features=obs_feature_bits(args.obs_features) if args.arch == "ladder" else 0,
             aux_card_coef=args.aux_card_events,
             aux_card_sample_frac=args.aux_card_sample_frac,
             aux_card_min_batch=args.aux_card_min_batch,
@@ -1323,7 +1376,9 @@ def main():
             PolicyFitConfig(dataset=args.policy_dataset, worlds=args.policy_worlds, init=args.warmup_checkpoint,
                             reinit=args.policy_reinit, arch=parse_arch(args.policy_arch), batch=args.policy_batch,
                             lr=args.policy_lr, max_epochs=args.policy_epochs, eval_every=args.policy_eval_every,
-                            patience=args.policy_patience, seed=args.seed if args.seed is not None else 44,
+                            patience=args.policy_patience, train_fraction=args.policy_train_fraction,
+                            head_only=args.policy_head_only, kl_anchor=args.policy_kl_anchor,
+                            seed=args.seed if args.seed is not None else 44,
                             device=args.device),
             run_name=args.run_name, description=args.description, output_dir=args.output_dir,
             cli={k: v for k, v in vars(args).items()

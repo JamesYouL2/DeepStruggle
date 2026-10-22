@@ -13,6 +13,8 @@ import os
 import tempfile
 from types import ModuleType
 
+from ai.training.train import build_parser
+
 _PATH = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "scripts", "launch_flags.py")
 
 
@@ -94,3 +96,43 @@ def test_a_run_recording_no_rollout_temps_used_the_legacy_bands() -> None:
     assert lf.recorded(old)["rollout_temps"] == [0.15, 0.50, 0.10, 0.35]
     assert "rollout_temps" in lf.non_default(old)
     assert "rollout_temps" not in lf.non_default(new)
+
+
+def test_an_epoch_default_is_read_as_the_runs_own_epoch_had_it() -> None:
+    """E8 made headline_reveal the default view (owner, 2026-10-20). An E7 run that took the default
+    then read no optional feature, so it is still at its default -- its A code does not move -- while
+    an E8 run that named none departs from E8's."""
+    lf = _lf()
+    assert lf._defaults()["obs_features"] == ["headline_reveal"]
+    e7 = _run({"run_name": "E7-A8-R1-S44", "obs_features": []})
+    e7_branch = _run({"run_name": "E7-A8-R1-S44@6400M+R34", "obs_features": []})
+    legacy = _run({"run_name": "E7-20-44", "obs_features": []})
+    unnamed = _run({"obs_features": []})
+    e8 = _run({"run_name": "E8-A8-R1-S44", "obs_features": ["headline_reveal"]})
+    e8_none = _run({"run_name": "E8-A8-R1-S44", "obs_features": []})
+    e8_cont = _run({"run_name": "E7-A8-R1-S44@6800M+E8", "obs_features": []})
+    assert [lf.run_engine(d) for d in (e7, e7_branch, legacy, unnamed, e8, e8_cont)] == [7, 7, 7, None, 8, 8]
+    for d in (e7, e7_branch, legacy, unnamed, e8):
+        assert "obs_features" not in lf.non_default(d)
+    assert lf.non_default(e8_none)["obs_features"] == []
+    assert lf.non_default(e8_cont)["obs_features"] == []
+
+
+def test_the_diff_compares_the_view_each_run_actually_read() -> None:
+    """Each at its own default, an E7 and an E8 run read different observations: the diff says so.
+    An E8 run that named no feature reads what the E7 run did: the diff does not invent a row."""
+    lf = _lf()
+    e7 = _run({"run_name": "E7-A8-R1-S44", "obs_features": []})
+    e8 = _run({"run_name": "E8-A8-R1-S44", "obs_features": ["headline_reveal"]})
+    e8_none = _run({"run_name": "E8-A8-R1-S44", "obs_features": []})
+    assert lf.epoch_default_rows(e7, e8) == [("obs_features", [], ["headline_reveal"])]
+    assert lf.epoch_default_rows(e7, e8_none) == []
+
+
+def test_obs_features_default_and_opt_out_on_the_cli() -> None:
+    """Since E8 a new network reads headline_reveal; the list replaces the default, and the flag with
+    no names is none -- E7's view, which continuing an E7 run needs."""
+    p = build_parser()
+    assert p.parse_args([]).obs_features == ["headline_reveal"]
+    assert p.parse_args(["--obs-features"]).obs_features == []
+    assert p.parse_args(["--obs-features", "ops_budget"]).obs_features == ["ops_budget"]

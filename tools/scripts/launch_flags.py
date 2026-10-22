@@ -21,11 +21,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+from typing import Optional
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+from ai.training.run_name import LEGACY_RUN_NAME_RE, is_run_name, parse_run_name  # noqa: E402
 
 #: metadata keys that describe the outcome rather than the request, so they are never flags.
 _NOT_FLAGS = {
@@ -91,7 +95,8 @@ UNCHECKED_BY_DESIGN = frozenset({
     "value_leaf_weights",
     # --mode policy-fit's inputs: ai/training/policy_fit.py records them in its own metadata.json
     "policy_dataset", "policy_worlds", "policy_reinit", "policy_arch", "policy_epochs", "policy_lr",
-    "policy_batch", "policy_eval_every", "policy_patience",
+    "policy_batch", "policy_eval_every", "policy_patience", "policy_train_fraction", "policy_head_only",
+    "policy_kl_anchor",
 })
 
 
@@ -135,9 +140,54 @@ _BEFORE_RECORDED = {
     "aux_card_buffer": lambda meta: 65536,
     "aux_card_steps": lambda meta: 4,
     "aux_card_batch": lambda meta: 512,
+    # P36 (2026-10-20): no gated active search before it existed.
+    "active_search_frac": lambda meta: 1.0 / 64.0,
+    "active_search_ce_coef": lambda meta: 0.1,
+    "active_search_gate_every_steps": lambda meta: 40_000_000,
+    "active_search_gate_games": lambda meta: 200,
+    "active_search_gate_threshold": lambda meta: 0.55,
+    "active_search_gate_only": lambda meta: False,
+    "active_search_refresh_steps": lambda meta: 10_000_000,
+    "active_search_refresh_steps_late": lambda meta: 50_000_000,
+    "active_search_late_from": lambda meta: 400_000_000,
     # no forced opening before it existed (2026-09-28); None cannot be filled in, so it is recorded
     # below as "unrecorded" for older runs and diffs as the default.
 }
+
+
+#: Defaults that changed at an engine epoch: {dest: (the first epoch with today's default, the default
+#: every earlier run was launched under)}. A run is compared against its own epoch's default, so an
+#: old run that took the default then is not read as departing from the default now -- and its A and
+#: R codes (tools/scripts/run_codes.py, which reads non_default) stay what they were.
+_EPOCH_DEFAULTS = {
+    # E8 (owner, 2026-10-20): a new network reads Space Race box 4's revealed headline
+    # (HEADLINE_REVEAL) unless --obs-features says otherwise; before it, no optional feature.
+    "obs_features": (8, []),
+}
+_RUN_DIR_SUFFIX = re.compile(r"_\d{8}_\d{6}(_VOID)?$")
+
+
+def run_engine(run_dir: str) -> Optional[int]:
+    """The engine revision a run was launched on, from the name it was launched under (the last E of
+    a branch name, which an engine change names), or None for a run with no engine in its name."""
+    meta = _metadata(run_dir)
+    d = os.path.dirname(run_dir) if run_dir.endswith(".json") else run_dir
+    name = str(meta.get("run_name") or _RUN_DIR_SUFFIX.sub("", os.path.basename(d.rstrip("/"))))
+    if is_run_name(name) and not LEGACY_RUN_NAME_RE.match(name):
+        m = re.match(r"^(\d+)", parse_run_name(name).fields()["E"])
+    else:
+        m = re.match(r"^E(\d+)", name)
+    return int(m.group(1)) if m else None
+
+
+def defaults_for(run_dir: str) -> dict:
+    """The CLI defaults as they stood for this run's engine epoch (`_EPOCH_DEFAULTS`). A run with no
+    engine in its name predates the epochs that changed a default."""
+    dflt, engine = _defaults(), run_engine(run_dir)
+    for dest, (since, before) in _EPOCH_DEFAULTS.items():
+        if engine is None or engine < since:
+            dflt[dest] = before
+    return dflt
 
 
 def recorded(run_dir: str) -> dict:
@@ -189,9 +239,23 @@ def unrecorded(run_dir: str) -> list:
 
 
 def non_default(run_dir: str) -> dict:
-    """{dest: value} for every recorded setting that differs from the CLI default."""
-    dflt = _defaults()
+    """{dest: value} for every recorded setting that differs from the CLI default of its epoch."""
+    dflt = defaults_for(run_dir)
     return {k: v for k, v in recorded(run_dir).items() if k in dflt and v != dflt[k]}
+
+
+def epoch_default_rows(a_dir: str, b_dir: str) -> list:
+    """(dest, a's value, b's value) for each epoch-dependent setting the two runs differ in, by the
+    value each actually used: an E7 run and an E8 run that each took the default read different
+    observations, which a diff of non-default flags would hide, and an E8 run that named no feature
+    reads what an E7 run at its default did, which it would show as a difference."""
+    rows = []
+    for dest in _EPOCH_DEFAULTS:
+        va = recorded(a_dir).get(dest, defaults_for(a_dir)[dest])
+        vb = recorded(b_dir).get(dest, defaults_for(b_dir)[dest])
+        if va != vb:
+            rows.append((dest, va, vb))
+    return rows
 
 
 def as_flags(settings: dict) -> list:
@@ -228,7 +292,8 @@ def main() -> int:
     na = os.path.basename(args.run_dir.rstrip("/"))[:28]
     nb = os.path.basename(args.diff.rstrip("/"))[:28]
     rows = [(k, a.get(k, "<default>"), b.get(k, "<default>")) for k in keys
-            if a.get(k, "<default>") != b.get(k, "<default>")]
+            if k not in _EPOCH_DEFAULTS and a.get(k, "<default>") != b.get(k, "<default>")]
+    rows += epoch_default_rows(args.run_dir, args.diff)
     if not rows:
         print(f"# {na} and {nb} agree on every non-default flag they record")
     else:

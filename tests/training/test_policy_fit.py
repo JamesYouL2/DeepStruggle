@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net
 from ai.training.policy_fit import PolicyFitConfig, dense_targets, run_policy_fit
 from tests.training.test_ladder_tokens import SHALLOW
+from tools.lib.engine_fingerprint import fingerprint
 
 
 def _dataset(tmp: Path) -> str:
@@ -48,6 +50,8 @@ def _dataset(tmp: Path) -> str:
            "pick2_16": np.where(held, acts[:, 0], -1).astype(np.int16)}
     path = str(tmp / "targets.npz")
     np.savez(path, **out)
+    with open(path + ".meta.json", "w") as f:
+        json.dump({"engine_fingerprint": fingerprint()}, f)
     return path
 
 
@@ -77,3 +81,34 @@ def test_a_fit_converges_and_records_the_three_readings(tmp_path: Path) -> None:
     assert last["ceiling_all"] == 1.0
     after = torch.load(os.path.join(run, "policy_fit_last.pt"), weights_only=True)
     assert all(torch.equal(before[k], after[k]) for k in before), "the value heads moved"
+
+
+def test_a_dataset_from_another_build_is_refused(tmp_path: Path) -> None:
+    """Raw state bytes are read only by the build that wrote them (P36c's states decoded as other
+    positions after a layout change with the behaviour unchanged)."""
+    ds = _dataset(tmp_path)
+    with open(ds + ".meta.json", "w") as f:
+        json.dump({"engine_fingerprint": "0" * 64}, f)
+    torch.manual_seed(0)
+    ckpt = str(tmp_path / "init.pt")
+    torch.save(create_ladder_net("cpu", **SHALLOW).state_dict(), ckpt)
+    with pytest.raises(SystemExit, match="written by engine"):
+        run_policy_fit(PolicyFitConfig(dataset=ds, worlds=16, init=ckpt, device="cpu", bf16=False),
+                       run_name="E7-A1-R1-S44", description="t", output_dir=str(tmp_path / "E7-A1-R1-S44_x"))
+
+
+def test_a_head_only_fit_leaves_the_network_untouched_and_learns_the_residual(tmp_path: Path) -> None:
+    ds = _dataset(tmp_path)
+    torch.manual_seed(0)
+    net = create_ladder_net("cpu", **SHALLOW)
+    ckpt = str(tmp_path / "init.pt")
+    torch.save(net.state_dict(), ckpt)
+    run = run_policy_fit(PolicyFitConfig(dataset=ds, worlds=16, init=ckpt, batch=64, lr=1e-3, warmup_steps=5,
+                                         max_epochs=30, eval_every=20, patience=6, fit_sample=500, device="cpu",
+                                         bf16=False, head_only=True),
+                         run_name="E7-A1-R1-S44", description="t", output_dir=str(tmp_path / "E7-A1-R1-S44_h"))
+    after = torch.load(os.path.join(run, "policy_fit_last.pt"), weights_only=True)
+    assert all(torch.equal(v, after[k]) for k, v in net.state_dict().items()), "the frozen network moved"
+    rows = [json.loads(line) for line in open(os.path.join(run, "policy_fit_metrics.jsonl"))]
+    assert rows[-1]["train_fit"] > rows[0]["train_fit"] and "held_leave_agree" in rows[-1] or "held_keep_dep" in rows[-1]
+    assert os.path.exists(os.path.join(run, "policy_fit_head_last.pt"))

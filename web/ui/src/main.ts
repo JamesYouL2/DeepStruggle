@@ -27,10 +27,12 @@ import { ViewMode, opponentOf, redactState, viewFromParam, viewToParam } from ".
 import { lastTurnOf } from "./game/last_turn";
 import { recentRolls } from "./game/rolls";
 import { LogEntry, groupLog, replayItems } from "./game/log_view";
+import { CardNames, linkCardRefs } from "./game/card_refs";
 import { MoveHow, buildSubmission, sha256Hex, summarize } from "./game/record";
 import { loadStoredGame, storeGame } from "./game/saved_game";
 import { ResultDialog } from "./result_dialog";
 import { BUILD_COMMIT, BUILD_DIRTY } from "./build_info";
+import { CARDS_METADATA } from "./metadata";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
@@ -95,6 +97,10 @@ export class TSApp {
   private resultDialog: ResultDialog;
   /** The board showed a finished game at the last refresh: the dialog opens when a game ends. */
   private wasOver = false;
+  /** The log's card names (cardNames), once the engine is loaded. */
+  private logCardNames: CardNames | null = null;
+  /** The model in a few words (AnalysisPanel.onModelLabel), for the model · mode labels. */
+  private modelLabel: { text: string; status: "off" | "loading" | "ready" | "error" } = { text: "no model", status: "off" };
 
   constructor() {
     this.parseQueryParams();
@@ -144,7 +150,11 @@ export class TSApp {
     this.setReadoutShown(this.view === "DEV");
     this.setupAnalysisToggle();
     this.setupViewSelect();
-    this.setupSearchSelect();
+    this.analysisPanel.onModelLabel = (text, status) => {
+      this.modelLabel = { text, status };
+      this.renderModelModeLabels();
+    };
+    this.setupSearchChoice();
     this.setupGlobalControls();
     this.setupBottomResizer();
     this.setupFileDrop();
@@ -342,10 +352,11 @@ export class TSApp {
    * answering; Escape and the close button keep the current mode. On "new", the choice also deals
    * the new game -- cancelling deals nothing.
    *
-   * It also asks how the model plays when you play a side (#mode-opponent): the rollout root, its
-   * strongest player, or the policy -- the search select's two settings. A fresh open offers the
-   * rollout root unless the link named a search; New Game offers the setting in force. Choosing a
-   * side sets it; the Developer choice leaves the search select as it is, and cancelling sets nothing.
+   * It holds the model & search section (#model-mode-section), folded: the model, and how it plays
+   * when you play a side -- the rollout root, its strongest player, or the policy. A fresh open
+   * offers the rollout root unless the link named a search; New Game offers the setting in force.
+   * Choosing a side sets it; the Developer choice leaves it alone unless it was changed here, and
+   * cancelling sets nothing. A model picked here loads at once, as anywhere.
    */
   private askMode(reason: "open" | "new") {
     const dialog = document.getElementById("mode-dialog");
@@ -356,30 +367,25 @@ export class TSApp {
         ? "A fresh deal follows your choice. Close to keep the game on the board."
         : "You can change this any time in the Play mode select above.";
     }
-    const rolloutRadio = document.getElementById("mode-opponent-rollout") as HTMLInputElement | null;
-    const policyRadio = document.getElementById("mode-opponent-policy") as HTMLInputElement | null;
-    const offerRollout = this.searchSpec !== null || (reason === "open" && !this.urlSearch);
-    if (rolloutRadio) rolloutRadio.checked = offerRollout;
-    if (policyRadio) policyRadio.checked = !offerRollout;
-    // The spec choosing it keeps: the one in force, else the measured one.
-    const rolloutSpec = this.searchSpec ?? DEFAULT_ROLLOUT;
-    const specText = document.getElementById("mode-opponent-rollout-spec");
-    if (specText) {
-      specText.textContent = `its top ${rolloutSpec.k} move${rolloutSpec.k === 1 ? "" : "s"}, each played out in `
-        + `${rolloutSpec.worlds} sampled world${rolloutSpec.worlds === 1 ? "" : "s"}`;
-    }
+    this.closeModelMode();
+    this.moveModelSection("mode-model-slot");
+    const details = document.getElementById("mode-model-details") as HTMLDetailsElement | null;
+    if (details) details.open = false;
+    this.showSearchChoice(this.searchSpec !== null || (reason === "open" && !this.urlSearch));
+    this.searchChoiceTouched = false;
     dialog.classList.remove("hidden");
     const choose = (mode: ViewMode | null) => {
       dialog.classList.add("hidden");
       let searchChanged = false;
-      if ((mode === "US" || mode === "USSR") && rolloutRadio) {
-        const spec = rolloutRadio.checked ? rolloutSpec : null;
+      if (mode === "US" || mode === "USSR" || (mode !== null && this.searchChoiceTouched)) {
+        const spec = this.searchChoice();
         // Set without searching: the deal or the view below reads the position once, for both.
         if (spec !== this.searchSpec) {
           this.setSearch(spec, false);
           searchChanged = true;
         }
       }
+      this.showSearchChoice(this.searchSpec !== null);   // the setting in force, wherever it shows next
       for (const b of buttons) b.removeEventListener("click", onClick);
       document.getElementById("mode-dialog-close")?.removeEventListener("click", onClose);
       dialog.removeEventListener("click", onBackdrop);
@@ -406,6 +412,42 @@ export class TSApp {
     focus?.focus();
   }
 
+  /**
+   * The model & search section (#model-mode-section) is one copy, moved into whichever dialog
+   * shows it: folded in the play-mode question, or #model-mode-dialog from the technical bar.
+   */
+  private moveModelSection(slotId: string) {
+    const section = document.getElementById("model-mode-section");
+    const slot = document.getElementById(slotId);
+    if (section && slot && section.parentElement !== slot) slot.appendChild(section);
+  }
+
+  /** The model & search dialog, from the technical bar's model · mode label. */
+  private openModelMode() {
+    const dialog = document.getElementById("model-mode-dialog");
+    const question = document.getElementById("mode-dialog");
+    if (!dialog || (question && !question.classList.contains("hidden"))) return;
+    this.moveModelSection("model-mode-dialog-body");
+    this.showSearchChoice(this.searchSpec !== null);
+    dialog.classList.remove("hidden");
+    document.getElementById("btn-model-choose")?.setAttribute("aria-expanded", "true");
+  }
+
+  private closeModelMode() {
+    document.getElementById("model-mode-dialog")?.classList.add("hidden");
+    document.getElementById("btn-model-choose")?.setAttribute("aria-expanded", "false");
+  }
+
+  private get modelModeOpen(): boolean {
+    return !document.getElementById("model-mode-dialog")?.classList.contains("hidden");
+  }
+
+  /** The play-mode question is on screen (its search choice waits for a side). */
+  private get modeQuestionOpen(): boolean {
+    const question = document.getElementById("mode-dialog");
+    return !!question && !question.classList.contains("hidden");
+  }
+
   /** A fresh deal in `mode`. The link then names the new position. */
   private newGame(mode: ViewMode) {
     if (!this.session) return;
@@ -416,18 +458,69 @@ export class TSApp {
     this.refresh();
   }
 
+  /** The search radio was changed in the open play-mode question: the choice then counts for Developer too. */
+  private searchChoiceTouched = false;
+
   /**
-   * The search select (#search-mode-select): the policy's argmax, or the rollout root at the
-   * default spec (the leaderboard's best; another comes in through `search=rollout:k:worlds:horizon:rule[:stop][:leaf]` in the
-   * URL and is kept while the select says rollout). A change re-reads the position on screen.
+   * The search radios (#mode-opponent): the policy's argmax, or the rollout root at the default
+   * spec (the leaderboard's best; another comes in through `search=rollout:k:worlds:horizon:rule[:stop][:leaf]`
+   * in the URL and is kept while rollout is chosen). In #model-mode-dialog a change is the setting
+   * and re-reads the position on screen; in the play-mode question it waits for the choice of mode.
    */
-  private setupSearchSelect() {
-    const sel = document.getElementById("search-mode-select") as HTMLSelectElement | null;
-    if (!sel) return;
-    sel.value = this.searchSpec ? "rollout" : "policy";
-    sel.addEventListener("change", () => {
-      this.setSearch(sel.value === "rollout" ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null);
-    });
+  private setupSearchChoice() {
+    this.showSearchChoice(this.searchSpec !== null);
+    for (const id of ["mode-opponent-rollout", "mode-opponent-policy"]) {
+      document.getElementById(id)?.addEventListener("change", () => {
+        if (this.modeQuestionOpen) {
+          this.searchChoiceTouched = true;
+          this.renderModelModeLabels();
+        } else {
+          this.setSearch(this.searchChoice());
+        }
+      });
+    }
+  }
+
+  /** Check the rollout radio or the policy's; the rollout one describes the spec it would keep. */
+  private showSearchChoice(rollout: boolean) {
+    const rolloutRadio = document.getElementById("mode-opponent-rollout") as HTMLInputElement | null;
+    const policyRadio = document.getElementById("mode-opponent-policy") as HTMLInputElement | null;
+    if (rolloutRadio) rolloutRadio.checked = rollout;
+    if (policyRadio) policyRadio.checked = !rollout;
+    // The spec choosing it keeps: the one in force, else the measured one.
+    const spec = this.searchSpec ?? DEFAULT_ROLLOUT;
+    const specText = document.getElementById("mode-opponent-rollout-spec");
+    if (specText) {
+      specText.textContent = `its top ${spec.k} move${spec.k === 1 ? "" : "s"}, each played out in `
+        + `${spec.worlds} sampled world${spec.worlds === 1 ? "" : "s"}`;
+    }
+    this.renderModelModeLabels();
+  }
+
+  /** The search the radios say: the spec in force (else the measured one), or null for the policy. */
+  private searchChoice(): RolloutSpec | null {
+    const rolloutRadio = document.getElementById("mode-opponent-rollout") as HTMLInputElement | null;
+    return rolloutRadio?.checked ? (this.searchSpec ?? DEFAULT_ROLLOUT) : null;
+  }
+
+  /**
+   * The model and how it plays, in one line: the technical bar's label says the setting in force,
+   * the play-mode question's folded summary what its radios say.
+   */
+  private renderModelModeLabels() {
+    const modeName = (spec: RolloutSpec | null) => spec ? "Rollout root" : "Policy";
+    const { text, status } = this.modelLabel;
+    const model = document.getElementById("model-mode-label-model");
+    if (model) {
+      model.textContent = text;
+      model.className = `mm-model ${status}`;
+    }
+    const mode = document.getElementById("model-mode-label-mode");
+    if (mode) mode.textContent = modeName(this.searchSpec);
+    const btn = document.getElementById("btn-model-choose");
+    if (btn) btn.title = `${text} · ${modeName(this.searchSpec)} -- choose the model (a local checkpoint, a Hugging Face repo or an .onnx file) and how it plays`;
+    const summary = document.getElementById("mode-model-summary");
+    if (summary) summary.textContent = `${text} · ${modeName(this.searchChoice())}`;
   }
 
   /**
@@ -437,8 +530,7 @@ export class TSApp {
    */
   private setSearch(spec: RolloutSpec | null, apply = true) {
     this.searchSpec = spec;
-    const sel = document.getElementById("search-mode-select") as HTMLSelectElement | null;
-    if (sel) sel.value = spec ? "rollout" : "policy";
+    if (!this.modeQuestionOpen) this.showSearchChoice(spec !== null);
     this.searchRuns++;          // a search still running was asked for under the old setting
     // A new object: a search still running for the old one checks it is the readout on screen.
     const a = this.liveAnalysis;
@@ -683,7 +775,8 @@ export class TSApp {
     }
     this.analysisPanel.setLoading(pick.source);
     try {
-      const m = await Model.fetch(pick.source, this.engine!.obsSize, this.engine!.actionSize, pick.bytes);
+      const engine = this.engine!;
+      const m = await Model.fetch(pick.source, f => engine.obsSizeFor(f), engine.actionSize, pick.bytes);
       // The file's own hash names the model in a game's record: a revision like `main` moves.
       const sha = await sha256Hex(m.bytes).catch(() => "");
       if (load !== this.modelLoads) return;   // another pick superseded this one
@@ -782,6 +875,24 @@ export class TSApp {
     }
   }
 
+  /** The names the log calls each card by: the engine's (which writes the log) and the rules'. */
+  private cardNames(): CardNames {
+    if (!this.logCardNames) {
+      const names = new Map<number, string[]>();
+      const ids = new Map<string, number>();
+      for (const c of CARDS_METADATA) {
+        const engineName = this.engine?.cardName(c.id);
+        const all = [...new Set([engineName, c.name].filter((n): n is string => !!n))];
+        names.set(c.id, all);
+        for (const n of all) ids.set(n, c.id);
+      }
+      // Kept once the engine has named them; until then the rules' names stand in.
+      if (this.engine) this.logCardNames = { namesOf: id => names.get(id) ?? [], idOf: n => ids.get(n) };
+      else return { namesOf: id => names.get(id) ?? [], idOf: n => ids.get(n) };
+    }
+    return this.logCardNames;
+  }
+
   private getFilteredIndices(
     totalCount: number,
     isVpChanging: (index: number) => boolean
@@ -861,6 +972,7 @@ export class TSApp {
       return e.vp_delta !== 0 || e.lines.some(l => l.includes("Victory Points:") || l.includes(" VP"));
     };
     const { targetIndices, includedIndices } = this.getFilteredIndices(entries.length, isVpEntry);
+    const cardNames = this.cardNames();
 
     if (logCountBadge) {
       logCountBadge.textContent = this.isVpFilterActive
@@ -897,7 +1009,7 @@ export class TSApp {
         if (d.includes("Victory Points:") || /\(#\d+\): .*VP/.test(d)) lineClass += " log-vp-line";
         if (d.startsWith("  ▸ ")) lineClass += " log-sub-line";
         const n = e.steps[j];
-        return `<div class="${lineClass}"${n === null ? "" : ` data-step="${n}"`}>${stepTag(n)}${d}</div>`;
+        return `<div class="${lineClass}"${n === null ? "" : ` data-step="${n}"`}>${stepTag(n)}${linkCardRefs(d, cardNames)}</div>`;
       }).join("");
 
       // A replay's policy chips: every decision of the play, in order.
@@ -916,7 +1028,7 @@ export class TSApp {
             ${e.step === null ? "" : `<span class="log-index" style="font-size: 10px; color: var(--text-dim);">#${e.step}</span>`}
             <span class="log-step">[T${e.turn} AR${e.ar}]</span>
             <span class="log-player ${e.player}">${e.player}:</span>
-            <span class="log-main-text">${e.title}</span>
+            <span class="log-main-text">${linkCardRefs(e.title, cardNames)}</span>
             ${chips}
           </div>
           ${vpDeltaBadge}
@@ -1140,11 +1252,14 @@ export class TSApp {
     });
 
     // Global keyboard shortcuts (Ctrl+Z / Cmd+Z / Escape for undo). None while the play-mode
-    // question or the result dialog is open: their Escape closes them, and must not also take
-    // back a move.
+    // question, the model & search dialog or the result dialog is open: their Escape closes them,
+    // and must not also take back a move.
     window.addEventListener("keydown", (e) => {
-      const question = document.getElementById("mode-dialog");
-      if (question && !question.classList.contains("hidden")) return;
+      if (this.modeQuestionOpen) return;
+      if (this.modelModeOpen) {
+        if (e.key === "Escape") this.closeModelMode();
+        return;
+      }
       if (this.resultDialog.isOpen) {
         if (e.key === "Escape") this.resultDialog.close();
         return;
@@ -1178,25 +1293,13 @@ export class TSApp {
     });
     document.getElementById("btn-game-result")?.addEventListener("click", () => this.openResult());
 
-    // The model chooser: the source controls, dropped down from the technical bar by Change,
-    // closed by Change again, a click elsewhere, or Escape.
-    const chooser = document.getElementById("model-chooser");
-    const chooseBtn = document.getElementById("btn-model-choose");
-    if (chooser && chooseBtn) {
-      const setOpen = (open: boolean) => {
-        chooser.classList.toggle("hidden", !open);
-        chooseBtn.setAttribute("aria-expanded", String(open));
-        chooseBtn.textContent = open ? "▴" : "▾";
-      };
-      chooseBtn.addEventListener("click", () => setOpen(chooser.classList.contains("hidden")));
-      document.addEventListener("click", (e) => {
-        const t = e.target as Node;
-        if (!chooser.classList.contains("hidden") && !chooser.contains(t) && !chooseBtn.contains(t)) setOpen(false);
-      });
-      window.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && !chooser.classList.contains("hidden")) setOpen(false);
-      });
-    }
+    // The model & search dialog: opened by the technical bar's model · mode label, closed by its
+    // close button, a click on the backdrop, or Escape (the keyboard handler above).
+    document.getElementById("btn-model-choose")?.addEventListener("click", () => this.openModelMode());
+    document.getElementById("model-mode-dialog-close")?.addEventListener("click", () => this.closeModelMode());
+    document.getElementById("model-mode-dialog")?.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).id === "model-mode-dialog") this.closeModelMode();
+    });
 
     // Debug Tools button
     document.getElementById("btn-toggle-debug")?.addEventListener("click", () => {
@@ -1226,6 +1329,17 @@ export class TSApp {
       this.renderLogStream();
     });
 
+    // A card named in the action log shows its tooltip -- Ops, side, text -- as in the hand tabs.
+    const logStream = document.getElementById("action-log-stream");
+    logStream?.addEventListener("mouseover", (e) => {
+      const ref = (e.target as HTMLElement).closest<HTMLElement>(".log-card[data-card-id]");
+      if (ref) this.cardsView.showCardTooltip(e, Number(ref.dataset.cardId));
+    });
+    logStream?.addEventListener("mouseout", (e) => {
+      const ref = (e.target as HTMLElement).closest<HTMLElement>(".log-card[data-card-id]");
+      if (ref && !ref.contains(e.relatedTarget as Node | null)) this.cardsView.hideTooltip();
+    });
+
     // VP Filter Checkbox
     const vpFilterCheckbox = document.getElementById("chk-filter-vp") as HTMLInputElement;
     if (vpFilterCheckbox) {
@@ -1235,15 +1349,7 @@ export class TSApp {
       });
     }
 
-    // Discard & Removed pile modals
-    document.getElementById("btn-view-discard")?.addEventListener("click", () => {
-      if (this.state) this.cardsView.showPileList("Discard Pile", this.state.discard_pile || []);
-    });
-    document.getElementById("btn-view-removed")?.addEventListener("click", () => {
-      if (this.state) this.cardsView.showPileList("Removed from Game Pile", this.state.removed_pile || []);
-    });
-
-    // Modal Close button & ESC key. A pile's hover text would outlive a modal closed under it.
+    // Modal Close button & ESC key. A hover text would outlive a modal closed under it.
     const closeModal = () => {
       document.getElementById("modal-container")?.classList.add("hidden");
       this.cardsView.hideTooltip();

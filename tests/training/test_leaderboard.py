@@ -542,3 +542,26 @@ def test_the_belief_root_is_spelled_in_the_id_and_the_agent_string() -> None:
     assert rollout_spec_config(agent)[1].belief == 2048
     with pytest.raises(PlayerSpecError):
         parse_player_id(one[:-1] + ",belief=-1)")
+
+
+def test_the_aligned_horizon_is_spelled_in_the_id_and_the_agent_string() -> None:
+    """`aligned=true` (bindings/rollout_batch.hpp's Config::aligned) counts every candidate's horizon from
+    the end of the mover's own action round; ids without it keep meaning the count they were measured with."""
+    one = "E7-A8-R1-S44@6800M~rollout(k=4,worlds=16,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed)"
+    net, spec = parse_player_id(one)
+    assert isinstance(spec, Rollout) and not spec.aligned and player_id(net, spec) == one
+    assert spec_from_dict({k: v for k, v in spec_to_dict(spec).items() if k != "aligned"}) == spec
+    witha = one[:-1] + ",aligned=true)"
+    net, spec = parse_player_id(witha)
+    assert isinstance(spec, Rollout) and spec.aligned and player_id(net, spec) == witha
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned"
+    assert rollout_spec_config(agent)[1].aligned
+    withb = one[:-1] + ",aligned=true,box4=true)"
+    net, spec = parse_player_id(withb)
+    assert isinstance(spec, Rollout) and spec.box4 and player_id(net, spec) == withb
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned:box4"
+    assert rollout_spec_config(agent)[1].box4

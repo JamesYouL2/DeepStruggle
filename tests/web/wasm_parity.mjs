@@ -38,7 +38,7 @@ if (mode === "rollout") {
   const stop = { boundaries: 0, turn: 1, later: 2, earlier: 3, predeal: 4, earlier_predeal: 5 }[spec.stop ?? "boundaries"];
   const leaf = { mover: 0, decider: 1, own: 2 }[spec.leaf ?? "mover"];
   if (!M._ts_rollout_reset(spec.horizon, 1, 1, 0, spec.batch_seed >>> 0, Math.floor(spec.batch_seed / 4294967296) >>> 0, stop, leaf,
-                           spec.keyed ? 1 : 0)) {
+                           spec.keyed ? 1 : 0, spec.aligned ? 1 : 0, spec.box4 ? 1 : 0)) {
     console.log(JSON.stringify({ error: M.UTF8ToString(M._ts_last_error()) }));
     process.exit(0);
   }
@@ -147,8 +147,34 @@ if (mode === "belief") {
   process.exit(0);
 }
 
-// walk: {seed, actions: [[type, primary, secondary, flags], ...]}
-const { seed, actions } = JSON.parse(readFileSync(arg, "utf8"));
+// The observation in a model's own view (ts_observation_features), ts_obs_size_for(f) floats.
+const featureObs = (p, f) => {
+  const width = M._ts_obs_size_for(f >>> 0);
+  const ptr = M._ts_observation_features(p, f >>> 0);
+  if (!width || !ptr) throw new Error(M.UTF8ToString(M._ts_last_error()));
+  return new Uint8Array(M.HEAPU8.buffer, ptr, width * 4).slice();
+};
+
+// obs: {save, features} -- open a saved position and print the sha256 of each side's observation under
+// each feature set, for the Python side to compare with extract_observation_features. (Digests, not the
+// floats: process.exit does not wait for a long line on a pipe to drain.)
+if (mode === "obs") {
+  const spec = JSON.parse(readFileSync(arg, "utf8"));
+  const ptr = M.stringToNewUTF8(spec.save);
+  if (!M._ts_load_save_json(ptr)) {
+    console.log(JSON.stringify({ error: M.UTF8ToString(M._ts_last_error()) }));
+    process.exit(0);
+  }
+  const out = {};
+  for (const f of spec.features) {
+    for (const p of [1, -1]) out[`${f}:${p}`] = createHash("sha256").update(featureObs(p, f)).digest("hex");
+  }
+  console.log(JSON.stringify({ obs: out, unknown_width: M._ts_obs_size_for(1 << 30) }));
+  process.exit(0);
+}
+
+// walk: {seed, actions: [[type, primary, secondary, flags], ...], features: [obs_features sets]}
+const { seed, actions, features = [] } = JSON.parse(readFileSync(arg, "utf8"));
 const OBS = M._ts_obs_size();
 const ACT = M._ts_action_size();
 const hash = createHash("sha256");
@@ -158,6 +184,7 @@ const record = () => {
   hash.update(enc.encode(M.UTF8ToString(M._ts_save_json())));
   for (const p of [1, -1]) {
     hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_observation(p), OBS * 4).slice());
+    for (const f of features) hash.update(featureObs(p, f));
   }
   hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_mask(0), ACT).slice());
 };

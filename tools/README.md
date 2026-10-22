@@ -84,7 +84,7 @@ policy and value restored exactly).
 | `--ladder-head-center` / `--no-ladder-head-center` | centres per-entity head features across entities. **On by default** (auto: on for per-entity heads in the E4 view, follows the checkpoint on resume, refused with `--merged-influence`); recorded as `pe_center` | a shift common to every country logit gets no gradient and drifted without limit in the long runs |
 | `--z-loss-coef c` | adds `c·mean(logsumexp(logits)²)` (usually 1e-4); `logit_lse_mean`/`_absmax` are logged regardless | both 800M runs diverged through logit-level drift ([E4 long runs](../research/log/E4_long_runs.md)) |
 | `--ladder-token-layers L` / `--ladder-token-dim D` | a transformer token path over 84 countries + 110 cards + globals beside the grouped trunk; ~12x the shallow trunk's cost at D = 128, L = 2 | [P30 C1](../research/log/P30_C1_tokens.md) |
-| `--obs-features NAME...` | appends optional observation blocks (`ops_budget`, 3 floats); recorded in weights and metadata, so mixed sets play in one batch (`engine/AGENTS.md` §6a) | [P30 C4](../research/log/P30_C4_ops_budget.md) |
+| `--obs-features NAME...` | optional observation features: `ops_budget` (a 3-float block appended) and `headline_reveal` (no width: the box-4 holder sees the opponent's revealed headline). **Default since E8: `headline_reveal`**; the list replaces it, and the flag with no names is none (every pre-E8 run). Recorded in weights and metadata, so mixed sets play in one batch (`engine/AGENTS.md` §6a); a resume, `--resume-weights` or warm start whose weights read another set is refused | [P30 C4](../research/log/P30_C4_ops_budget.md) |
 
 **Optimiser** (P28: [LR schedule](../research/log/P28_step2a_lr_schedule.md), [EMA](../research/log/P28_step2b_ema_weights.md))
 
@@ -281,7 +281,7 @@ player never move a main rating.
 PYTHONPATH=. python tools/leaderboard.py add-network <name> <file.pt> --description "..."
 PYTHONPATH=. python tools/leaderboard.py add-player '<name>~gumbel(sims=256,k=8)'   # --report, --replace
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/leaderboard_play.py \
-  --epoch E7 --players '<player-id>' --games-per-side 1000    # --opponents ..., --round-robin, --base-seed
+  --epoch E8 --players '<player-id>' --games-per-side 1000    # --opponents ..., --round-robin, --base-seed
 PYTHONPATH=. python tools/leaderboard.py show --main-only            # or --lineage E7-A8-R1-S44
 PYTHONPATH=. python tools/leaderboard.py validate                    # what tests/training checks
 ```
@@ -491,7 +491,14 @@ turns whose recording stops part way.
   on: the players decided against the score the app showed.
 - `tools/lib/ts_replayer_hands.py`: both hands for a whole game solved at once as a z3 constraint
   problem from the rules, with preference heuristics as soft clauses. Without z3 it falls back to
-  per-turn heuristics and `Conversion.hands_solved` is False.
+  per-turn heuristics and `Conversion.hands_solved` is False. Before each entry the solved hands
+  are seated and every other card the engine holds goes back to the **draw deck**, never the
+  discard pile: the pile holds only what the log has spent, so the engine reshuffles where the
+  humans did, and the discard features and any redeal from a converted position read the real
+  pile (`tests/replayer/test_replay_deck_and_discards.py`). A card out of play -- removed from
+  the game or in effect -- is never seated: the solver forbids a starred card from the turn
+  after its event occurs, whatever is reshuffled, and the converter stops rather than take one
+  out of play (`tests/replayer/test_replay_removed_cards.py`).
 
 Two rules: **never force a decision the log does not state** (an invented choice teaches what no
 human did), and **the engine is the reference** -- the log is at least as likely to be wrong, so

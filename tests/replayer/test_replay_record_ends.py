@@ -57,6 +57,22 @@ def test_these_games_convert_up_to_where_the_log_ends(replay_id: int) -> None:
     assert conv.truncated_at is not None
 
 
+def test_a_die_the_log_never_prints_is_the_record_ending() -> None:
+    """Replay 132's last entry is turn 5 AR7, "Nuclear Test Ban: Space Race (3 Ops):".
+
+    The log prints every space race die, and here there is none. The engine rolled one of its
+    own, and with the US on 18 whether the game ended at 20 turned on where the deck happened to
+    be -- a US win the humans never recorded. The attempt is the recording stopping.
+    """
+    raws = _game(132)["all_turns"]
+    assert (raws[-1].get("text") or "").strip().endswith("Space Race (3 Ops):")
+    conv = convert_game(_game(132))
+    assert conv.failure is None, f"replay 132 reported {conv.failure}"
+    assert conv.truncated_at is not None
+    assert (conv.truncated_at.kind, conv.truncated_at.turn) == ("roll not in the log", 5)
+    assert not conv.game_ended
+
+
 def test_replay_182_is_whole_and_no_longer_stops_short() -> None:
     """Its last entry is turn 10 AR8, the US racing with the China Card.
 

@@ -956,17 +956,23 @@ NB_MODULE(ts_engine, m) {
     }
 
     // ---- the rollout root's playouts (bindings/rollout_batch.hpp, shared with the browser) ----
-    m.def("determinize", [](const ts::GameState& s, ts::Player me, uint64_t seed, bool keep_hand) {
+    m.def("determinize", [](const ts::GameState& s, ts::Player me, uint64_t seed, bool keep_hand, bool keep_revealed) {
               ts::GameState out = s;
               uint64_t rng = seed;
-              ts::rollout::determinize(out, me, rng, keep_hand);
+              ts::rollout::determinize(out, me, rng, keep_hand, keep_revealed);
               return out;
           }, nb::arg("state"), nb::arg("me"), nb::arg("seed"), nb::arg("keep_hand") = false,
+          nb::arg("keep_revealed") = false,
           "A clone with the cards `me` cannot see -- the opponent's unknown hand and the draw deck "
           "-- reshuffled between those two places from SplitMix64 state `seed`, every count kept, "
           "every seen card left; an unrevealed opposing headline is forgotten. The C++ port of "
           "ai.search.dmcts.determinize that the rollout root uses in both builds. keep_hand=True keeps the "
-          "opponent's true hand and reshuffles only the draw deck (the oracle's world).");
+          "opponent's true hand and reshuffles only the draw deck (the oracle's world). keep_revealed=True keeps "
+          "an opposing headline `me` has seen under Space Race box 4 (revealed_headline), chosen and in the hand.");
+    m.def("revealed_headline", [](const ts::GameState& s, ts::Player me) { return ts::SpaceRace::revealed_headline(s, me); },
+          nb::arg("state"), nb::arg("me"),
+          "The opposing headline `me` has seen, else 0: with Man in Space (Space Race box 4) held by `me` alone "
+          "the opponent chooses first and reveals it.");
     using Hands = nb::ndarray<const uint8_t, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
     m.def("place_hand", [](const ts::GameState& s, ts::Player me, nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> held) {
               if (held.shape(0) != 110) throw std::invalid_argument("held must have 110 entries");
@@ -1017,8 +1023,8 @@ NB_MODULE(ts_engine, m) {
             "The policy-likelihood belief over the opponent's unseen hand (bindings/belief.hpp, shared with "
             "the browser): observe() every decision of the games; at root decisions prepare(), evaluate the "
             "rows it lists (rows_patch or rows_full) at every temperature, set_log_likelihoods(), worlds().")
-            .def(nb::init<uint32_t, bool, uint64_t>(), nb::arg("particles") = 2048, nb::arg("all_decisions") = true,
-                 nb::arg("seed") = 0ull)
+            .def(nb::init<uint32_t, bool, uint64_t, bool>(), nb::arg("particles") = 2048, nb::arg("all_decisions") = true,
+                 nb::arg("seed") = 0ull, nb::arg("reveal") = false)
             .def_static("temperatures", []() {
                 std::vector<float> t(ts::belief::kTemperatures, ts::belief::kTemperatures + ts::belief::kTemps);
                 return t;
@@ -1161,7 +1167,8 @@ NB_MODULE(ts_engine, m) {
             "until all_done(); fill_leaves() -> critic -> set_leaf_values(); then values(). "
             "Written once for the Python searcher and the browser (bindings/rollout_batch.hpp).")
             .def("__init__", [](RB* self, int horizon, bool shared_dice, bool guard, uint32_t features,
-                                uint64_t seed, const std::string& stop, const std::string& leaf, bool keyed, bool oracle) {
+                                uint64_t seed, const std::string& stop, const std::string& leaf, bool keyed, bool oracle,
+                                bool aligned, bool box4) {
                      if (horizon < 0) throw std::invalid_argument("horizon must be >= 0");
                      if (features & ~ts::obs_features::ALL) throw std::invalid_argument("unknown obs_features bit");
                      ts::rollout::Stop s;
@@ -1178,10 +1185,12 @@ NB_MODULE(ts_engine, m) {
                      else if (leaf == "decider") l = ts::rollout::Leaf::kDecider;
                      else if (leaf == "own") l = ts::rollout::Leaf::kOwn;
                      else throw std::invalid_argument("leaf must be 'mover', 'decider' or 'own'");
-                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s, l, keyed, oracle}, seed);
+                     new (self) RB(ts::rollout::Config{horizon, shared_dice, guard, features, s, l, keyed, oracle,
+                                                       aligned, box4}, seed);
                  }, nb::arg("horizon") = 4, nb::arg("shared_dice") = true, nb::arg("guard") = true,
                  nb::arg("features") = 0u, nb::arg("seed") = 0ull, nb::arg("stop") = "boundaries",
-                 nb::arg("leaf") = "mover", nb::arg("keyed") = false, nb::arg("oracle") = false)
+                 nb::arg("leaf") = "mover", nb::arg("keyed") = false, nb::arg("oracle") = false,
+                 nb::arg("aligned") = false, nb::arg("box4") = false)
             .def("add", [](RB& self, const ts::GameState& base, const std::vector<int>& candidates, size_t worlds,
                            std::optional<Hands> hands) {
                      std::vector<uint16_t> c;
@@ -1375,6 +1384,7 @@ NB_MODULE(ts_engine, m) {
        "The base observation followed by the blocks `features` appends. features=0 is exactly "
        "extract_observation(state, perspective).");
     m.attr("OBS_FEATURE_OPS_BUDGET") = static_cast<uint32_t>(ts::obs_features::OPS_BUDGET);
+    m.attr("OBS_FEATURE_HEADLINE_REVEAL") = static_cast<uint32_t>(ts::obs_features::HEADLINE_REVEAL);
     m.attr("OBS_FEATURES_ALL") = static_cast<uint32_t>(ts::obs_features::ALL);
 
     m.attr("OBS_FLAG_STAGED_CARDS") = static_cast<uint32_t>(ts::obs_flags::STAGED_CARDS);

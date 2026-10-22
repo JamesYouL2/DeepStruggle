@@ -15,7 +15,9 @@ branch point on the way to it:
     E7-A4-R1-S44@4390M+A7-R23@4800M+R24            two changes in a row
     E7-A4-R1-S44-2                                 a same-seed replicate of the first
 
-- **`E`** — the engine revision, as below (`E7`; a minor version is `E4.1`).
+- **`E`** — the engine revision, as below (`E8` since 2026-10-20; a minor version is `E4.1`). An
+  engine revision can also move a training default: since E8 a new network reads
+  `headline_reveal` unless its A code lists `--obs-features`.
 - **`A`** — the **architecture**: the network's shape, what it reads (its observation features)
   and its policy heads. A code, defined in [`../architectures_and_recipes.md`](../architectures_and_recipes.md).
 - **`R`** — the **recipe**: every other training setting -- reward, loss, opponents, schedules,

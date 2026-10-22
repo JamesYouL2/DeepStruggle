@@ -232,6 +232,7 @@ and is mirrored in `ai/models/ladder_net.OBS_FEATURE_WIDTHS` (a test compares th
 | bit | name | width | contents |
 |:---|:---|---:|:---|
 | 1<<1 | `OPS_BUDGET` | 3 | at SELECT_PLAY_MODE, `Operations::grant_ops_for_card(pending_op_card, decider)/5`, else 0; my per-card Ops modifier; the opponent's (Containment/Brezhnev +1, Red Scare/Purge −1, summed) |
+| 1<<2 | `HEADLINE_REVEAL` | 0 | **no block: edits the base's card rows** (owner, 2026-10-20). While the side holding Man in Space alone chooses its headline, the opponent's -- chosen first and revealed (`SpaceRace::revealed_headline`) -- shows as `KNOWN_OPPONENT_HAND` with `ACTIVE_CARD` = `ACTIVE_NEXT`, as the second headline does while the first resolves; the base layout leaves it hidden. The one bit that changes base slots, so a model reads it only if trained with it and every other model's view is unchanged. A new network reads it by default since E8 (`tools/train.py --obs-features`) |
 
 **The extractor computes each country's control once** (2026-10-06) and reads it everywhere —
 control features, realignment neighbour counts (from a list of the 112 borders), regional scoring
@@ -345,7 +346,7 @@ bare commit (`tests/bindings/test_merged_influence.py`, `p23_wwby_pending_positi
 
 `StateMachine::finish_end_turn` adds the Mid War cards at turn 4 and the Late War cards at turn 8
 with `add_era_cards_to_deck` and nothing else (rule 4.4: the discards stay in the discard pile); the
-only reshuffle is in `deal_cards_to_hands` when the draw deck runs out. Until E6 both transitions
+discard is reshuffled only when a draw runs the deck out (§13). Until E6 both transitions
 also reshuffled the discard, so every pre-E6 checkpoint trained on that deck; the converter missed it
 because it sets hands from the log. Held by `EraTransitionKeepsTheDiscard.*`
 (`tests/test_bugs_regression.cpp`) and
@@ -389,3 +390,64 @@ affected" is contradicted by the rulebook, which outranks it. The `*_OpsModifier
 
 These fixes define engine **E7** (`research/findings/engine/engine_revisions.md`); each is on a rare
 situation. The human corpus (`tests/replayer`) passes with them.
+
+---
+
+## 13. A draw that runs the deck out reshuffles there, inside an Event too (ENG-4, 2026-10-19)
+
+Three places draw from the deck: the deal (`StateMachine::deal_cards_to_hands`), Our Man in
+Tehran's five (`trigger_our_man_in_tehran`, `src/events/mid_war.cpp`) and Ask Not's replacements
+(its confirm in `src/card_dispatcher.cpp`). All three treat the deck running out the same way: a
+draw that finds it empty, or takes its last card, reshuffles the discard pile into it **at that
+moment** (`StateMachine::reshuffle_discard_into_draw`; rules.md's Reshuffle Invariant), and the
+draws still owed come from the new deck. Until ENG-4 the two Events drew at most what the deck held
+and left the reshuffle to the next deal: in the human corpus, at turn 7 AR2 of ts-replayer game 207
+(Tehran, two cards in the deck), turn 7 AR6 of game 314 (Tehran, three), turn 6 AR4 of game 156
+(Tehran, exactly five) and turn 7 AR7 of game 272 (Ask Not, two from two), the log prints
+`*RESHUFFLE*` inside the Event.
+
+* **Tehran's peek stays out of the new deck.** The cards already drawn are at `PEEKED_TEMP`, not
+  in the pile; Tehran itself is still in hand or `HEADLINE_COMMITTED` (§11). **Ask Not's own
+  discards go in**: they are in the pile when the deck runs out, and the Reshuffle Invariant makes
+  no exception for cards discarded this turn.
+* **The empty deck reveals what it reveals at the deal.** At the deal both hands become public:
+  every card not in a hand is. Ask Not does the same (`reveal_both_hands`). Tehran reveals the USSR
+  hand only: the US sees the peek and can name the USSR hand, but the USSR cannot tell the US hand
+  from the cards being looked at. A card drawn after the reveal is hidden again, as at the deal.
+* **The PRNG stream is untouched unless the deck runs out.** The pool is rebuilt only after a draw
+  empties it, so a deck holding more than Tehran's five, or more than Ask Not's redraws, is drawn
+  exactly as before. This still moves the engine's behaviour digest (`runner`, `rollout` and `mcts`
+  sections; `tools/lib/engine_behaviour.py`), so it defines engine **E8**
+  (`research/findings/engine/engine_revisions.md`).
+
+Held by `Card108_OurManInTehran_ShortDeckReshufflesMidDraw`, `_DeckOfFiveReshufflesAfterTheDraw`,
+`_LongDeckLeavesThePileAlone`, `Card77_AskNot_RedrawEmptiesTheDeck` and
+`_DeckRunsOutBetweenRedraws` (`tests/test_cards_mid.cpp`).
+
+## 14. The deal alternates, the USSR first (ENG-5, 2026-10-22)
+
+`StateMachine::deal_cards_to_hands` deals one card at a time, USSR then US, and a hand already at
+the target (8 on turns 1-3, 9 after) sits out. Until ENG-5 it filled the USSR hand completely and
+then the US hand. The rules do not name an order ("deal" each player up to the hand size, §4.2 of
+`rules/rules.md`), and the order is invisible unless the deck runs out partway through the deal --
+which happens on **every turn 3**, when the last few Early War cards are dealt before the
+reshuffle. Filling the USSR first gave the USSR nearly every card left in the old deck; the US drew
+almost entirely from the reshuffled discard pile. That made a card the USSR missed on turn 2 near
+certain to reach it on turn 3, so the bots valued the USSR's turn-2 draws at almost nothing
+(an Op +0.05 pp, against about 1.3 pp on every other turn).
+
+* **The human games alternate.** In the ts-replayer corpus all 274 games that reach turn 4
+  reshuffle at turn 3. Of the 9.2 Early War cards on average not yet discarded at that deal (the
+  hands' kept cards and the deck), the US's turn-3 hand holds 3.8 (at least 3 in 247 games) and the
+  USSR's 4.3; a USSR-first fill leaves the US only the one or two cards it kept from turn 2. The USSR's half-card excess is what a USSR-first alternation gives an odd
+  number of cards. The reference engine (`external/struggler`, `_deal_to_limit`) alternates USSR
+  first too.
+* **Every seed deals different hands.** The PRNG draws the same number of times, but the draws
+  alternate between the hands, so from turn 1 a seed's hands are not E8's. The distribution of a
+  deal is unchanged except when the deck runs out partway through it. The behaviour digest moves in
+  every section (`runner`, `state`, `rollout`, `mcts`), so this needs a new engine epoch.
+* **A forced deal is still per player** (`GameState::set_forced_deal`): each hand's queue is drawn
+  in order whenever that hand's turn comes, so a recorded deal is replayed whatever the interleaving.
+
+Held by `CardEdgeCasesTest.Deal_AlternatesSoAShortDeckIsShared`, `Deal_USSRDrawsFirst` and
+`Deal_AFullHandSitsOut` (`tests/test_card_edge_cases.cpp`).

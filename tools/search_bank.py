@@ -107,7 +107,7 @@ import ts_engine as ts
 from ai.eval.paired_playouts import compare
 from ai.eval.subs_followup import BRANCHES, COUNTS, NUCLEAR_SUBS, subs_branches
 from bindings.action_encoder import ActionEncoder
-from tools.lib.corpus_driver import load_policy, position_token, selfplay, state_from_token
+from tools.lib.corpus_driver import load_policy, position_token, selfplay, selfplay_seeded, state_from_token
 from tools.lib.player_agent import OnnxAgent, load_agent
 from tools.lib.position_bank import position_seed
 from tools.scripts.bank_clarity import value_moves_per_world
@@ -256,34 +256,49 @@ def annotate(a: argparse.Namespace) -> int:
         searchers.append((label, f"gumbel:{sims}:{kk}", load_agent(spec, device=a.device)))
     t0 = time.time()
     total = 0
-    for gi, g in enumerate(todo):
+    gi = 0
+    for c0 in range(0, len(todo), a.games_at_once):
+        chunk = todo[c0:c0 + a.games_at_once]
         if player is not None:
-            player.reseed(a.seed + g)
-        trackers = selfplay(logits_fn, features, 1, a.seed + g, 1, a.temperature,
-                            lambda: Sampler(a.sample, a.seed + g),
-                            states_fn=None if player is None else player.select_actions_batch)
-        kept = trackers[0].kept
-        rows: List[Dict[str, Any]] = []
-        for lo in range(0, len(kept), a.chunk):
-            part = kept[lo:lo + a.chunk]
-            got = annotate_states([s for _, s, _ in part], logits_fn, features, searchers, seed=a.seed + g)
-            for (dec, _s, played), r in zip(part, got):
-                r.update({"model": os.path.basename(a.model), "game": {"seed": a.seed + g, "index": g},
-                          "decision": dec, "played": played})
-                if player is not None:
-                    # The player's move is the one under study; every later stage reads it as `raw`.
-                    r["net"], r["raw"] = r["raw"], int(played)
-                    r["names"].setdefault(str(int(played)), ActionEncoder.get_action_name(_s, int(played)))
-                rows.append(r)
-        with gzip.open(a.out, "at") as f:
-            for r in rows:
-                f.write(json.dumps(r, separators=(",", ":")) + "\n")
-        with open(ledger, "a") as f:
-            f.write(json.dumps({"game": g, "rows": len(rows)}) + "\n")
-        total += len(rows)
-        print(f"[{gi + 1}/{len(todo)}] game {g}: {len(rows)} positions ({total} this run, "
-              f"{time.time() - t0:.0f}s)", file=sys.stderr, flush=True)
+            player.reseed(a.seed + chunk[0])
+        if len(chunk) == 1:
+            trackers = selfplay(logits_fn, features, 1, a.seed + chunk[0], 1, a.temperature,
+                                lambda: Sampler(a.sample, a.seed + chunk[0]),
+                                states_fn=None if player is None else player.select_actions_batch)
+        else:
+            trackers = selfplay_seeded(logits_fn, features, [a.seed + g for g in chunk], a.temperature,
+                                       [lambda g=g: Sampler(a.sample, a.seed + g) for g in chunk],
+                                       states_fn=None if player is None else player.select_actions_batch)
+        for g, tracker in zip(chunk, trackers):
+            gi += 1
+            total += _annotate_game(a, g, gi, len(todo), tracker.kept, logits_fn, features, searchers, player,
+                                    ledger, total, t0)
     return 0
+
+
+def _annotate_game(a: Any, g: int, gi: int, n_todo: int, kept: List[Any], logits_fn: Any, features: int,
+                   searchers: List[Any], player: Any, ledger: str, total: int, t0: float) -> int:
+    """One played game's kept positions put to the searchers and appended to the part's output."""
+    rows: List[Dict[str, Any]] = []
+    for lo in range(0, len(kept), a.chunk):
+        part = kept[lo:lo + a.chunk]
+        got = annotate_states([s for _, s, _ in part], logits_fn, features, searchers, seed=a.seed + g)
+        for (dec, _s, played), r in zip(part, got):
+            r.update({"model": os.path.basename(a.model), "game": {"seed": a.seed + g, "index": g},
+                      "decision": dec, "played": played})
+            if player is not None:
+                # The player's move is the one under study; every later stage reads it as `raw`.
+                r["net"], r["raw"] = r["raw"], int(played)
+                r["names"].setdefault(str(int(played)), ActionEncoder.get_action_name(_s, int(played)))
+            rows.append(r)
+    with gzip.open(a.out, "at") as f:
+        for r in rows:
+            f.write(json.dumps(r, separators=(",", ":")) + "\n")
+    with open(ledger, "a") as f:
+        f.write(json.dumps({"game": g, "rows": len(rows)}) + "\n")
+    print(f"[{gi}/{n_todo}] game {g}: {len(rows)} positions ({total + len(rows)} this run, "
+          f"{time.time() - t0:.0f}s)", file=sys.stderr, flush=True)
+    return len(rows)
 
 
 def decision_group(r: Dict[str, Any]) -> str:
@@ -1607,6 +1622,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     an.add_argument("--device", default="cpu", help="where the player and searchers run the network (cpu, cuda)")
     an.add_argument("--out", required=True)
     an.add_argument("--resume", action="store_true")
+    an.add_argument("--games-at-once", type=int, default=1,
+                    help="games played together, so a searched --player decides all their positions in one batch "
+                         "(each game from the deal its one-game run starts from; the player's draws differ)")
     se = sub.add_parser("select", help="the stratified bank from annotated positions")
     se.add_argument("--annotated", nargs="+", required=True)
     se.add_argument("--size", type=int, default=8000)

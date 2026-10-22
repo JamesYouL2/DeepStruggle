@@ -25,6 +25,7 @@ import torch
 
 import ts_engine as ts
 from ai.search.belief import _hypothesis_obs
+from tests.bindings.test_obs_features import _box4_headline
 from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.game_step import drain_chance
 
@@ -50,6 +51,27 @@ def test_the_wasm_engine_was_built_from_these_sources() -> None:
         f"({fingerprint()[:12]}): rebuild it with tools/scripts/build_web.sh --engine")
 
 
+def test_the_page_shows_a_reveal_model_the_box4_headline_as_python_does(tmp_path) -> None:
+    """A model trained with HEADLINE_REVEAL (E8's default) must be shown its own view, which the base
+    layout cannot tell apart by width: at the US's box-4 headline choice the page's observation under
+    each feature set is Python's, byte for byte, and under HEADLINE_REVEAL it differs from the base
+    layout. A bit this engine does not know has no width (the page then refuses the model)."""
+    state = _box4_headline(5)
+    assert ts.revealed_headline(state, ts.Player.US) != 0
+    path = tmp_path / "obs.json"
+    path.write_text(json.dumps({"save": state.to_save_json(), "features": [0, *FEATURE_SETS]}))
+    wasm = _node("obs", str(path))
+    assert "error" not in wasm, wasm.get("error")
+    for f in [0, *FEATURE_SETS]:
+        for p, side in ((1, ts.Player.US), (-1, ts.Player.USSR)):
+            want = hashlib.sha256(np.asarray(ts.extract_observation_features(state, side, f),
+                                             dtype=np.float32).tobytes()).hexdigest()
+            assert wasm["obs"][f"{f}:{p}"] == want, f"features {f}, side {p}"
+    reveal = int(ts.OBS_FEATURE_HEADLINE_REVEAL)
+    assert wasm["obs"][f"{reveal}:1"] != wasm["obs"]["0:1"]
+    assert wasm["unknown_width"] == 0
+
+
 def test_whole_games_match_the_native_engine() -> None:
     native_digest, native_steps = ts.selftest_digest(200)
     wasm = _node("selftest", "200")
@@ -59,10 +81,14 @@ def test_whole_games_match_the_native_engine() -> None:
         f"(digest {wasm['digest']:08x} vs {native_digest:08x})")
 
 
+#: The feature sets a model can read, each checked as the page builds it for such a model.
+FEATURE_SETS = [int(ts.OBS_FEATURE_OPS_BUDGET), int(ts.OBS_FEATURE_HEADLINE_REVEAL), int(ts.OBS_FEATURES_ALL)]
+
+
 @pytest.mark.parametrize("seed", [11, 58])
 def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
-    """Display JSON, save JSON, both observations and the mask, at every step of a game driven
-    through the MicroActions a click sends."""
+    """Display JSON, save JSON, both observations -- the base layout and each feature set's view --
+    and the mask, at every step of a game driven through the MicroActions a click sends."""
     state = ts.GameState()
     ts.Engine.init_game(state, seed)
     drain_chance(state)
@@ -74,6 +100,8 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         h.update(state.to_save_json().encode())
         for p in (ts.Player.US, ts.Player.USSR):
             h.update(np.asarray(ts.extract_observation(state, p), dtype=np.float32).tobytes())
+            for f in FEATURE_SETS:
+                h.update(np.asarray(ts.extract_observation_features(state, p, f), dtype=np.float32).tobytes())
         h.update(np.asarray(ts.get_flat_action_mask(state, False), dtype=np.uint8).tobytes())
 
     record()
@@ -87,7 +115,7 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         record()
 
     path = tmp_path / "actions.json"
-    path.write_text(json.dumps({"seed": seed, "actions": actions}))
+    path.write_text(json.dumps({"seed": seed, "actions": actions, "features": FEATURE_SETS}))
     wasm = _node("walk", str(path))
     assert "error" not in wasm, wasm.get("error")
     assert wasm["steps"] == len(actions)
@@ -96,16 +124,18 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
-@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed", [
-    (21, 70, 2, "boundaries", "mover", False), (34, 150, 1, "boundaries", "mover", False),
-    (47, 40, 0, "boundaries", "mover", False), (58, 90, 4, "turn", "mover", False),
-    (63, 120, 2, "later", "mover", False), (71, 130, 3, "earlier", "mover", False),
-    (58, 90, 4, "turn", "decider", False), (77, 110, 2, "boundaries", "decider", False),
-    (58, 90, 4, "turn", "own", False), (83, 100, 3, "earlier", "own", False),
-    (58, 90, 4, "predeal", "mover", False), (93, 80, 3, "earlier_predeal", "own", False),
-    (83, 100, 3, "earlier", "own", True), (34, 150, 1, "boundaries", "mover", True)])
+@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed,aligned", [
+    (21, 70, 2, "boundaries", "mover", False, False), (35, 150, 1, "boundaries", "mover", False, False),
+    (47, 40, 0, "boundaries", "mover", False, False), (59, 90, 4, "turn", "mover", False, False),
+    (63, 120, 2, "later", "mover", False, False), (71, 130, 3, "earlier", "mover", False, False),
+    (59, 90, 4, "turn", "decider", False, False), (77, 110, 2, "boundaries", "decider", False, False),
+    (59, 90, 4, "turn", "own", False, False), (84, 100, 3, "earlier", "own", False, False),
+    (59, 90, 4, "predeal", "mover", False, False), (93, 80, 3, "earlier_predeal", "own", False, False),
+    (84, 100, 3, "earlier", "own", True, False), (35, 150, 1, "boundaries", "mover", True, False),
+    (84, 100, 3, "earlier", "own", True, True), (21, 70, 2, "boundaries", "mover", False, True)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
-                                                                 leaf: str, keyed: bool, tmp_path) -> None:
+                                                                 leaf: str, keyed: bool, aligned: bool,
+                                                                 tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
     critic: the same rows, the same worlds, the same observations ply by ply, the same values."""
     state = ts.GameState()
@@ -126,7 +156,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     act = int(mask.shape[0])
 
     batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed, stop=stop,
-                            leaf=leaf, keyed=keyed)
+                            leaf=leaf, keyed=keyed, aligned=aligned, box4=aligned)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
     plies_run = 0
@@ -154,7 +184,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
                                 "horizon": horizon, "batch_seed": batch_seed, "stop": stop, "leaf": leaf,
-                                "keyed": keyed}))
+                                "keyed": keyed, "aligned": aligned, "box4": aligned}))
     # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
     root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
     top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)
@@ -179,7 +209,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     assert rows > 0 and native["refused"] == 0
 
 
-@pytest.mark.parametrize("seed,plies", [(21, 70), (34, 150), (58, 95), (83, 120)])
+@pytest.mark.parametrize("seed,plies", [(21, 70), (35, 150), (59, 95), (84, 120)])
 def test_the_belief_tracker_is_the_same_in_both_builds(seed: int, plies: int, tmp_path) -> None:
     """The belief over the opponent's hand (bindings/belief.hpp) on one game: the page observes moves
     as clicks and finds their flat actions, Python observes the flat actions; at the last position the

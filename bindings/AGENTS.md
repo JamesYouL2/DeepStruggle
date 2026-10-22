@@ -75,7 +75,8 @@ are cited from elsewhere; keep them.
   flat C API compiled by Emscripten (`tools/scripts/build_web.sh`, into `web/ui/public/engine/`):
   new game, raw-bytes undo snapshots, display/save JSON, loading a save (refused unless it
   round-trips), stepping with the workbench's forced-die drain, masks in both action views, decode,
-  observations, names, debug setters, the action layout, the engine fingerprint baked in at build,
+  observations (the base layout, and a model's view under its obs_features bits:
+  `ts_observation_features`, `ts_obs_size_for`, which refuse an unknown bit), names, debug setters, the action layout, the engine fingerprint baked in at build,
   and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`). For the page's action log, a
   click also keeps what it did before the roll-less chance steps after it (`ts_settled_display_json`:
   the state after its action or its last die roll -- the turn's cleanup, resolved in the same click,
@@ -108,7 +109,22 @@ are cited from elsewhere; keep them.
   `kDecider` (the leaf's decider's, the side the critic is trained on, its value negated into the
   mover's frame where that is the opponent) or `kOwn` (past the stop, play on to the root mover's next
   decision and read it from the mover's side: on-distribution and with the mover's own hand; P33).
-  Python `leaf="mover"|"decider"|"own"`, the page's eighth argument (0 / 1 / 2). The network stays outside: the caller loops
+  Python `leaf="mover"|"decider"|"own"`, the page's eighth argument (0 / 1 / 2). `Config::aligned`
+  (Python `aligned=True`, the page's tenth argument, the spec's `:aligned`, the player id's
+  `aligned=true`; off by default, so every measured player keeps its count) counts every candidate's
+  horizon from the end of the mover's own action round: without it a candidate that leaves choices
+  inside the round (Ops points, an event's choices) counts the round's end as its first boundary and
+  one that ends the round inside its own settling (space, a decision-free event) does not, so the two
+  are read an action round apart (the owner's Decolonization replay, 2026-10-19). It also counts the
+  whole headline as one boundary: the headline's events set the phasing side to their owners, so one
+  that stops for a choice added boundaries and one that resolved at once did not -- at a headline
+  choice the candidate itself decided how far its playout read. `Config::box4` (Python `box4=True`, the
+  page's eleventh argument, `:box4`, `box4=true`; off by default) keeps the opponent's headline in every
+  world at the headline choice of the side holding Man in Space alone (Space Race box 4: the opponent
+  chose first and revealed it; `revealed_headline`, `determinize(..., keep_revealed)`), the rest of the
+  hand redealt around it; off, the world forgets it and asks it again. The belief tracker's `reveal`
+  (`BeliefTracker(..., reveal=True)`, `ts_belief_reset`'s fifth argument) draws every hand holding it.
+  No observation slot shows the revealed card to the network. The network stays outside: the caller loops
   `fill_live` → logits → `step` until `all_done`, then `fill_leaves` → critic → `set_leaf_values`,
   then reads `values`. The root's choice is here too: `top_candidates` (the k most probable legal
   moves), `parse_rule` (argmax / z<x> / kl<t>) and `decide` (each candidate's mean value, its paired

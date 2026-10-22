@@ -158,10 +158,24 @@ export class WasmEngine {
     return this.M._ts_is_merged_influence_action(idx) !== 0;
   }
 
-  /** The observation from one side's perspective (PLAYER_US / PLAYER_USSR). */
-  observation(player: number): Float32Array {
-    const p = this.M._ts_observation(player) >> 2;
-    return this.M.HEAPF32.slice(p, p + this.obsSize);
+  /**
+   * The observation from one side's perspective (PLAYER_US / PLAYER_USSR), in the view of a model
+   * reading the obs_features bits `features` (Model.obsFeatures; 0 is the base layout). A model must
+   * be shown its own view: HEADLINE_REVEAL has no width, so the base layout fed to a model trained
+   * with it runs without complaint and misreads Space Race box 4's headline.
+   */
+  observation(player: number, features = 0): Float32Array {
+    const width = this.obsSizeFor(features);
+    const p = this.M._ts_observation_features(player, features >>> 0) >> 2;
+    return this.M.HEAPF32.slice(p, p + width);
+  }
+
+  /** The observation width for the obs_features bits `features`; throws for a bit this engine does
+   *  not know (a model from a newer engine). */
+  obsSizeFor(features: number): number {
+    const w = this.M._ts_obs_size_for(features >>> 0);
+    if (!w) throw new Error(this.lastError());
+    return w;
   }
 
   // ---- the rollout root's playouts (bindings/rollout_batch.hpp, the same C++ as Python's) ------
@@ -178,11 +192,14 @@ export class WasmEngine {
   /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed, and
    *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier, 4 the turn-end park before
    *  the deal, 5 the earlier of the boundaries and that park); `keyed` ties every draw to its situation
-   *  (bindings/keyed_chance.hpp, the leaderboard's chance=keyed). */
+   *  (bindings/keyed_chance.hpp, the leaderboard's chance=keyed); `aligned` counts every candidate's
+   *  horizon from the end of the mover's own action round, the headline one boundary
+   *  (rollout::Config::aligned); `box4` keeps the opponent's headline revealed by Space Race box 4 in
+   *  every world (rollout::Config::box4). */
   rolloutReset(horizon: number, features: number, seed: number, sharedDice = true, guard = true, stop = 0,
-               leaf = 0, keyed = false): void {
+               leaf = 0, keyed = false, aligned = false, box4 = false): void {
     const ok = this.M._ts_rollout_reset(horizon, sharedDice ? 1 : 0, guard ? 1 : 0, features >>> 0,
-      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf, keyed ? 1 : 0);
+      seed >>> 0, Math.floor(seed / 4294967296) >>> 0, stop, leaf, keyed ? 1 : 0, aligned ? 1 : 0, box4 ? 1 : 0);
     if (!ok) throw new Error(this.lastError());
   }
 
@@ -207,8 +224,10 @@ export class WasmEngine {
   // the network -> the move's log-probability at each temperature -> beliefSetLogLikelihoods; then
   // rolloutAddBelief.
 
-  beliefReset(particles: number, seed: number, allDecisions = true): void {
-    this.M._ts_belief_reset(particles >>> 0, allDecisions ? 1 : 0, seed >>> 0, Math.floor(seed / 4294967296) >>> 0);
+  /** `reveal`: every hand holds the opponent's headline revealed by Space Race box 4 (the root's box4). */
+  beliefReset(particles: number, seed: number, allDecisions = true, reveal = false): void {
+    this.M._ts_belief_reset(particles >>> 0, allDecisions ? 1 : 0, seed >>> 0, Math.floor(seed / 4294967296) >>> 0,
+      reveal ? 1 : 0);
   }
   beliefTemperatures(): number[] {
     const n = this.M._ts_belief_temperatures();

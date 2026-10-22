@@ -53,6 +53,11 @@ import ts_engine as ts
 from tools.lib.leaderboard import BEHAVIOUR_VERSION, Behaviour
 
 _BASE_SEED = 880_000
+#: The observation feature set the digest's "with features" paths use: the bits that existed when the
+#: digest's version was defined (OPS_BUDGET), not ts.OBS_FEATURES_ALL. A bit added later changes no game
+#: a player without it plays, but under ALL it would move every section and read as a new engine epoch
+#: (HEADLINE_REVEAL, 2026-10-20, did exactly that); a new bit is covered by its own tests instead.
+_FEATURES = int(ts.OBS_FEATURE_OPS_BUDGET)
 #: 16 combinations of the two views and two feature sets for each side, 32 games of each.
 _RUNNER_ENVS = 512
 _STATE_GAMES = 64
@@ -63,12 +68,12 @@ _POSITIONS = 48
 #: (stop, leaf, features, rule) of each rollout batch.
 _ROLLOUTS: Tuple[Tuple[str, str, int, str], ...] = (
     ("boundaries", "mover", 0, "argmax"),
-    ("turn", "own", ts.OBS_FEATURES_ALL, "z2"),
-    ("later", "decider", ts.OBS_FEATURES_ALL, "kl0.5"),
+    ("turn", "own", _FEATURES, "z2"),
+    ("later", "decider", _FEATURES, "kl0.5"),
 )
 _ROLLOUT_K, _ROLLOUT_WORLDS, _ROLLOUT_HORIZON = 4, 4, 2
 #: (features, merged influence, fpu reduction, groups) of each search.
-_SEARCHES: Tuple[Tuple[int, bool, float, int], ...] = ((0, False, 0.0, 1), (ts.OBS_FEATURES_ALL, True, 0.25, 2))
+_SEARCHES: Tuple[Tuple[int, bool, float, int], ...] = ((0, False, 0.0, 1), (_FEATURES, True, 0.25, 2))
 _SIMULATIONS = 24
 
 
@@ -150,8 +155,8 @@ def _runner(out: _Stream, positions: List[ts.GameState]) -> None:
     runner.refresh_all()
     merged_us, merged_ussr = [bool(i & 1) for i in range(n)], [bool(i & 2) for i in range(n)]
     runner.set_merged_influence(merged_us, merged_ussr)
-    runner.set_obs_features([ts.OBS_FEATURES_ALL if i & 4 else 0 for i in range(n)],
-                            [ts.OBS_FEATURES_ALL if i & 8 else 0 for i in range(n)])
+    runner.set_obs_features([_FEATURES if i & 4 else 0 for i in range(n)],
+                            [_FEATURES if i & 8 else 0 for i in range(n)])
     pick = [random.Random(_BASE_SEED + i) for i in range(n)]
     active = np.ones(n, dtype=bool)
     for step in range(_MAX_STEPS):
@@ -208,7 +213,7 @@ def _state_api(out: _Stream) -> None:
             out.array(plain)
             out.array(ts.get_flat_action_mask(st, True))
             for side in (ts.Player.US, ts.Player.USSR):
-                out.array(ts.extract_observation_features(st, side, ts.OBS_FEATURES_ALL))
+                out.array(ts.extract_observation_features(st, side, _FEATURES))
             legal = [int(x) for x in np.flatnonzero(plain)]
             if not legal:
                 raise BehaviourError(f"state game {g}: no legal action at ply {ply}")

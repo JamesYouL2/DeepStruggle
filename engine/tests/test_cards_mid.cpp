@@ -1267,3 +1267,152 @@ TEST(MidCardsTest, Card108_OurManInTehran_NoMEControl) {
     bool done = ts::CardHandlers::trigger_event(state, ts::card_ids::OUR_MAN_IN_TEHRAN, ts::Player::US);
     ASSERT_TRUE(done); // Nothing happens
 }
+
+// A deck that runs out in the middle of the draw is reshuffled there, as at the deal. The cards
+// already drawn are not in the discard pile, so they stay out of the new deck. ts-replayer game
+// 207, turn 7 AR2: two cards in the deck, and the log prints *RESHUFFLE* inside the event.
+TEST(MidCardsTest, Card108_OurManInTehran_ShortDeckReshufflesMidDraw) {
+    using ts::CardLocation;
+    namespace id = ts::card_ids;
+    ts::GameState state{};
+    state.countries[ts::countries::ISRAEL].us_influence = 4; // US controls Israel
+    state.card_locations[id::OUR_MAN_IN_TEHRAN] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::ARAB_ISRAELI_WAR] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::COMECON] = ts::hand_of(ts::Player::USSR);
+    state.card_locations[id::NASSER] = ts::hand_of(ts::Player::USSR);
+    state.card_locations[id::DUCK_AND_COVER] = CardLocation::DRAW_DECK;
+    state.card_locations[id::FIVE_YEAR_PLAN] = CardLocation::DRAW_DECK;
+    const uint8_t pile[] = {id::FIDEL, id::VIETNAM_REVOLTS, id::BLOCKADE, id::KOREAN_WAR};
+    for (uint8_t c : pile) state.card_locations[c] = CardLocation::DISCARD_PILE;
+    state.card_locations[id::ROMANIAN_ABDICATION] = CardLocation::REMOVED_FROM_GAME;
+
+    ASSERT_FALSE(ts::CardHandlers::trigger_event(state, id::OUR_MAN_IN_TEHRAN, ts::Player::US));
+    ASSERT_EQ(state.ctx().remaining_steps, 5);
+    // Both deck cards, then three of the four from the reshuffled pile; the fourth is the deck.
+    ASSERT_EQ(state.card_locations[id::DUCK_AND_COVER], CardLocation::PEEKED_TEMP);
+    ASSERT_EQ(state.card_locations[id::FIVE_YEAR_PLAN], CardLocation::PEEKED_TEMP);
+    int peeked = 0, in_deck = 0;
+    for (uint8_t c : pile) {
+        peeked += state.card_locations[c] == CardLocation::PEEKED_TEMP;
+        in_deck += state.card_locations[c] == CardLocation::DRAW_DECK;
+    }
+    ASSERT_EQ(peeked, 3);
+    ASSERT_EQ(in_deck, 1);
+    ASSERT_EQ(state.card_locations[id::ROMANIAN_ABDICATION], CardLocation::REMOVED_FROM_GAME);
+    // The empty deck told the US the USSR's hand. The USSR, which cannot see the peek, learns
+    // nothing about the US's.
+    ASSERT_EQ(state.card_locations[id::COMECON], CardLocation::HAND_USSR_KNOWN);
+    ASSERT_EQ(state.card_locations[id::NASSER], CardLocation::HAND_USSR_KNOWN);
+    ASSERT_EQ(state.card_locations[id::ARAB_ISRAELI_WAR], CardLocation::HAND_US_UNKNOWN);
+
+    // Discard one; the other four go back to the new deck.
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, id::DUCK_AND_COVER, 0, 0});
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, 0, 0, ts::action_flags::CONFIRM_DONE});
+    ASSERT_EQ(state.card_locations[id::DUCK_AND_COVER], CardLocation::DISCARD_PILE);
+    int deck = 0;
+    for (uint8_t i = 1; i <= 110; ++i) deck += state.card_locations[i] == CardLocation::DRAW_DECK;
+    ASSERT_EQ(deck, 5);
+}
+
+// A deck of exactly five is drawn to the end, so it is reshuffled at once.
+TEST(MidCardsTest, Card108_OurManInTehran_DeckOfFiveReshufflesAfterTheDraw) {
+    using ts::CardLocation;
+    namespace id = ts::card_ids;
+    ts::GameState state{};
+    state.countries[ts::countries::ISRAEL].us_influence = 4;
+    state.card_locations[id::OUR_MAN_IN_TEHRAN] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::COMECON] = ts::hand_of(ts::Player::USSR);
+    const uint8_t deck[] = {id::DUCK_AND_COVER, id::FIVE_YEAR_PLAN, id::FIDEL, id::VIETNAM_REVOLTS, id::BLOCKADE};
+    for (uint8_t c : deck) state.card_locations[c] = CardLocation::DRAW_DECK;
+    state.card_locations[id::KOREAN_WAR] = CardLocation::DISCARD_PILE;
+
+    ASSERT_FALSE(ts::CardHandlers::trigger_event(state, id::OUR_MAN_IN_TEHRAN, ts::Player::US));
+    ASSERT_EQ(state.ctx().remaining_steps, 5);
+    for (uint8_t c : deck) ASSERT_EQ(state.card_locations[c], CardLocation::PEEKED_TEMP);
+    ASSERT_EQ(state.card_locations[id::KOREAN_WAR], CardLocation::DRAW_DECK);
+    ASSERT_EQ(state.card_locations[id::COMECON], CardLocation::HAND_USSR_KNOWN);
+}
+
+// A deck of more than five is drawn as it always was: no reshuffle and no reveal.
+TEST(MidCardsTest, Card108_OurManInTehran_LongDeckLeavesThePileAlone) {
+    using ts::CardLocation;
+    namespace id = ts::card_ids;
+    ts::GameState state{};
+    state.countries[ts::countries::ISRAEL].us_influence = 4;
+    state.card_locations[id::OUR_MAN_IN_TEHRAN] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::COMECON] = ts::hand_of(ts::Player::USSR);
+    const uint8_t deck[] = {id::DUCK_AND_COVER, id::FIVE_YEAR_PLAN, id::FIDEL, id::VIETNAM_REVOLTS, id::BLOCKADE, id::KOREAN_WAR};
+    for (uint8_t c : deck) state.card_locations[c] = CardLocation::DRAW_DECK;
+    state.card_locations[id::ROMANIAN_ABDICATION] = CardLocation::DISCARD_PILE;
+
+    ASSERT_FALSE(ts::CardHandlers::trigger_event(state, id::OUR_MAN_IN_TEHRAN, ts::Player::US));
+    ASSERT_EQ(state.ctx().remaining_steps, 5);
+    int peeked = 0, in_deck = 0;
+    for (uint8_t c : deck) {
+        peeked += state.card_locations[c] == CardLocation::PEEKED_TEMP;
+        in_deck += state.card_locations[c] == CardLocation::DRAW_DECK;
+    }
+    ASSERT_EQ(peeked, 5);
+    ASSERT_EQ(in_deck, 1);
+    ASSERT_EQ(state.card_locations[id::ROMANIAN_ABDICATION], CardLocation::DISCARD_PILE);
+    ASSERT_EQ(state.card_locations[id::COMECON], CardLocation::HAND_USSR_UNKNOWN);
+}
+
+// The US redraws two from a deck of two. The second takes the deck's last card, and the pile --
+// the two just discarded with it -- is reshuffled at once, as at the deal; it used to be left
+// for the deal to find. ts-replayer game 272, turn 7 AR7. The empty deck makes both hands public.
+TEST(MidCardsTest, Card77_AskNot_RedrawEmptiesTheDeck) {
+    using ts::CardLocation;
+    namespace id = ts::card_ids;
+    ts::GameState state{};
+    state.card_locations[id::ASK_NOT_WHAT_YOUR_COUNTRY_CAN_DO_FOR_YOU] = CardLocation::REMOVED_FROM_GAME;
+    state.card_locations[id::FIDEL] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::VIETNAM_REVOLTS] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::ARAB_ISRAELI_WAR] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::COMECON] = ts::hand_of(ts::Player::USSR);
+    state.card_locations[id::DUCK_AND_COVER] = CardLocation::DRAW_DECK;
+    state.card_locations[id::FIVE_YEAR_PLAN] = CardLocation::DRAW_DECK;
+    state.card_locations[id::BLOCKADE] = CardLocation::DISCARD_PILE;
+
+    ts::CardHandlers::trigger_event(state, id::ASK_NOT_WHAT_YOUR_COUNTRY_CAN_DO_FOR_YOU, ts::Player::US);
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, id::FIDEL, 0, 0});
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, id::VIETNAM_REVOLTS, 0, 0});
+    ASSERT_TRUE(ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, 0, 0, ts::action_flags::CONFIRM_DONE}));
+
+    ASSERT_EQ(state.card_locations[id::DUCK_AND_COVER], CardLocation::HAND_US_KNOWN);
+    ASSERT_EQ(state.card_locations[id::FIVE_YEAR_PLAN], CardLocation::HAND_US_KNOWN);
+    ASSERT_EQ(state.card_locations[id::ARAB_ISRAELI_WAR], CardLocation::HAND_US_KNOWN);
+    ASSERT_EQ(state.card_locations[id::COMECON], CardLocation::HAND_USSR_KNOWN);
+    ASSERT_EQ(state.card_locations[id::FIDEL], CardLocation::DRAW_DECK);
+    ASSERT_EQ(state.card_locations[id::VIETNAM_REVOLTS], CardLocation::DRAW_DECK);
+    ASSERT_EQ(state.card_locations[id::BLOCKADE], CardLocation::DRAW_DECK);
+}
+
+// The deck runs out on the first of two redraws: the second comes from the reshuffled pile, and
+// is hidden again, since it was drawn after the hands were made public.
+TEST(MidCardsTest, Card77_AskNot_DeckRunsOutBetweenRedraws) {
+    using ts::CardLocation;
+    namespace id = ts::card_ids;
+    ts::GameState state{};
+    state.card_locations[id::ASK_NOT_WHAT_YOUR_COUNTRY_CAN_DO_FOR_YOU] = CardLocation::REMOVED_FROM_GAME;
+    state.card_locations[id::FIDEL] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::VIETNAM_REVOLTS] = ts::hand_of(ts::Player::US);
+    state.card_locations[id::COMECON] = ts::hand_of(ts::Player::USSR);
+    state.card_locations[id::DUCK_AND_COVER] = CardLocation::DRAW_DECK;
+    state.card_locations[id::BLOCKADE] = CardLocation::DISCARD_PILE;
+
+    ts::CardHandlers::trigger_event(state, id::ASK_NOT_WHAT_YOUR_COUNTRY_CAN_DO_FOR_YOU, ts::Player::US);
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, id::FIDEL, 0, 0});
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, id::VIETNAM_REVOLTS, 0, 0});
+    ts::CardHandlers::handle_event_step(state, ts::MicroAction{ts::DecisionType::SELECT_CARD, 0, 0, ts::action_flags::CONFIRM_DONE});
+
+    ASSERT_EQ(state.card_locations[id::DUCK_AND_COVER], CardLocation::HAND_US_KNOWN);
+    ASSERT_EQ(state.card_locations[id::COMECON], CardLocation::HAND_USSR_KNOWN);
+    int hidden = 0, in_deck = 0;
+    for (uint8_t c : {id::FIDEL, id::VIETNAM_REVOLTS, id::BLOCKADE}) {
+        hidden += state.card_locations[c] == CardLocation::HAND_US_UNKNOWN;
+        in_deck += state.card_locations[c] == CardLocation::DRAW_DECK;
+    }
+    ASSERT_EQ(hidden, 1);
+    ASSERT_EQ(in_deck, 2);
+}

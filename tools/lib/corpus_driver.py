@@ -23,7 +23,7 @@ import json
 import multiprocessing
 import os
 import zlib
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -108,42 +108,67 @@ def selfplay(logits_fn: Optional[LogitsFn], obs_features: int, games: int, seed:
         env = TsVectorizedEnv(num_envs=n, base_seed=seed + b0)
         env.set_obs_features(obs_features, obs_features)
         obs, masks, _ = env.reset_all()
-        done = [False] * n
         trackers = [factory() for _ in range(n)]
-        for _ in range(20_000):
-            if all(done):
-                break
-            if states_fn is not None:
-                live = [i for i in range(n) if not done[i]
-                        and not ts.Engine.is_terminal(env.runner.get_state(i))]
-                # A finished game's slot still takes an action; its first legal one will do.
-                actions = np.asarray(masks).argmax(axis=1)
-                if live:
-                    for i, act in zip(live, states_fn([env.runner.get_state(i) for i in live])):
-                        actions[i] = act
-            elif logits_fn is None:
-                raise ValueError("selfplay needs logits_fn or states_fn")
-            elif temperature > 0:
-                logits = logits_fn(np.asarray(obs), np.asarray(masks))
-                z = np.exp((logits - logits.max(axis=1, keepdims=True)) / temperature)
-                cdf = np.cumsum(z, axis=1)
-                actions = np.minimum((cdf <= rng.random(len(cdf))[:, None] * cdf[:, -1:]).sum(axis=1),
-                                     logits.shape[1] - 1)
-            else:
-                actions = logits_fn(np.asarray(obs), np.asarray(masks)).argmax(axis=1)
-            for i in range(n):
-                if done[i]:
-                    continue
-                st = env.runner.get_state(i)
-                if not ts.Engine.is_terminal(st):
-                    trackers[i].observe(st, int(actions[i]))
-            obs, masks, _, dones, _ = env.step(actions)
-            for i, d in enumerate(dones):
-                if d:
-                    done[i] = True
+        _play(env, obs, masks, trackers, logits_fn, temperature, rng, states_fn)
         out += trackers
     return out
 
+
+def selfplay_seeded(logits_fn: Optional[LogitsFn], obs_features: int, seeds: Sequence[int], temperature: float,
+                    factories: Sequence[Callable[[], Any]], states_fn: Optional[StatesFn] = None) -> List[Any]:
+    """`selfplay` of the games `selfplay(..., games=1, seed=s, batch=1, ...)` plays for each s in `seeds`,
+    all at once: game i starts from the deal a one-game run seeded seeds[i] starts from (the runner
+    seeds env 0 with base_seed + 1), so a search agent decides every game's position in one batch -- a
+    rollout root's cost hardly grows with the positions it searches together. The agent's own random
+    draws come in another order, so a game is not bit-identical to its one-at-a-time version."""
+    n = len(seeds)
+    env = TsVectorizedEnv(num_envs=n, base_seed=int(seeds[0]))
+    env.set_obs_features(obs_features, obs_features)
+    env.reset_all()
+    for i, s in enumerate(seeds):
+        env.runner.reset_game(i, int(s) + 1)
+    obs = np.array(env.runner.get_observations())
+    masks = np.array(env.runner.get_action_masks())
+    trackers = [f() for f in factories]
+    _play(env, obs, masks, trackers, logits_fn, temperature, np.random.default_rng(int(seeds[0])), states_fn)
+    return trackers
+
+
+def _play(env: TsVectorizedEnv, obs: Any, masks: Any, trackers: List[Any], logits_fn: Optional[LogitsFn],
+          temperature: float, rng: np.random.Generator, states_fn: Optional[StatesFn]) -> None:
+    n = len(trackers)
+    done = [False] * n
+    for _ in range(20_000):
+        if all(done):
+            break
+        if states_fn is not None:
+            live = [i for i in range(n) if not done[i]
+                    and not ts.Engine.is_terminal(env.runner.get_state(i))]
+            # A finished game's slot still takes an action; its first legal one will do.
+            actions = np.asarray(masks).argmax(axis=1)
+            if live:
+                for i, act in zip(live, states_fn([env.runner.get_state(i) for i in live])):
+                    actions[i] = act
+        elif logits_fn is None:
+            raise ValueError("selfplay needs logits_fn or states_fn")
+        elif temperature > 0:
+            logits = logits_fn(np.asarray(obs), np.asarray(masks))
+            z = np.exp((logits - logits.max(axis=1, keepdims=True)) / temperature)
+            cdf = np.cumsum(z, axis=1)
+            actions = np.minimum((cdf <= rng.random(len(cdf))[:, None] * cdf[:, -1:]).sum(axis=1),
+                                 logits.shape[1] - 1)
+        else:
+            actions = logits_fn(np.asarray(obs), np.asarray(masks)).argmax(axis=1)
+        for i in range(n):
+            if done[i]:
+                continue
+            st = env.runner.get_state(i)
+            if not ts.Engine.is_terminal(st):
+                trackers[i].observe(st, int(actions[i]))
+        obs, masks, _, dones, _ = env.step(actions)
+        for i, d in enumerate(dones):
+            if d:
+                done[i] = True
 
 def untrusted_turn(conv: Conversion) -> Optional[int]:
     """The first turn of a converted game whose positions are not to be trusted, or None. Where the

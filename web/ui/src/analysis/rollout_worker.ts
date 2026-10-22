@@ -3,18 +3,18 @@
  * onnxruntime session on the same model, takes a position as raw state bytes, and answers with
  * the decision. The page stays responsive while a decision's forwards run (rollout_runner.ts).
  *
- *   { type: "load", base, bytes, source, obsSize, actionSize }  -> { type: "loaded" } | { type: "error" }
+ *   { type: "load", base, bytes, source, actionSize }  -> { type: "loaded" } | { type: "error" }
  *   { type: "search", id, state, spec, seed }                   -> { type: "result", id, result } | { type: "error", id }
- *   { type: "belief", reset, hands, moves }                     -> (nothing) the belief tracker sees the game's moves
+ *   { type: "belief", reset, hands, reveal, moves }             -> (nothing) the belief tracker sees the game's moves
  */
 import { WasmEngine } from "../engine/wasm_engine";
 import { Model, ModelSource } from "./model";
 import { RolloutSpec, SearchResult, rolloutRoot } from "./rollout";
 import type { Move } from "../game/session";
 
-interface LoadMsg { type: "load"; base: string; bytes: Uint8Array; source: ModelSource; obsSize: number; actionSize: number }
+interface LoadMsg { type: "load"; base: string; bytes: Uint8Array; source: ModelSource; actionSize: number }
 interface SearchMsg { type: "search"; id: number; state: Uint8Array; spec: RolloutSpec; seed: number }
-interface BeliefMsg { type: "belief"; reset: boolean; hands: number; moves: Move[] }
+interface BeliefMsg { type: "belief"; reset: boolean; hands: number; reveal: boolean; moves: Move[] }
 type InMsg = LoadMsg | SearchMsg | BeliefMsg;
 export type OutMsg =
   | { type: "loaded"; fingerprint: string }
@@ -40,13 +40,14 @@ async function handle(msg: InMsg): Promise<void> {
   try {
     if (msg.type === "load") {
       engine = await WasmEngine.load(msg.base);
-      model = await Model.fromBytes(msg.source, msg.bytes, msg.obsSize, msg.actionSize);
+      const own = engine;
+      model = await Model.fromBytes(msg.source, msg.bytes, f => own.obsSizeFor(f), msg.actionSize);
       post({ type: "loaded", fingerprint: engine.fingerprint });
       return;
     }
     if (!engine || !model) throw new Error("the search worker has no model loaded");
     if (msg.type === "belief") {
-      if (msg.reset) engine.beliefReset(msg.hands, 0);
+      if (msg.reset) engine.beliefReset(msg.hands, 0, true, msg.reveal);
       for (const m of msg.moves) {
         engine.restore(m.before);
         engine.beliefObserve(m.action);

@@ -501,6 +501,10 @@ class BaseNashPGTrainer:
         # policy loss and the advantages are untouched, so it cannot flatten the policy.
         self.search_value_beta = float(search_value_beta)
         self._searcher: Optional[Any] = None   # BatchedMCTS (Gumbel / PUCT) or RolloutTeacher
+        #: P36's gated active search (ai/training/active_search.py), set by the pipeline after
+        #: construction: the root plays a fraction of the learner's entry decisions as environment
+        #: once its gate is open, and its improved policy is the search-CE target there.
+        self.active_search: Optional[Any] = None
         if self.search_ce_coef > 0.0 or self.search_value_beta > 0.0:
             from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
             # The network the searcher runs: the one being trained, or a frozen teacher. Searching
@@ -1499,6 +1503,11 @@ class BaseNashPGTrainer:
             self._selfplay_mask = np.ones(self.num_envs, dtype=bool)
         self._apply_views()
         self.buffer.reset()
+        if self.active_search is not None:
+            if self.active_search.maybe_refresh(self.active_net, int(self.total_env_steps)):
+                print(f"[active search] the searched snapshot refreshed from the learner at "
+                      f"{self.total_env_steps / 1e6:.0f}M", flush=True)
+            self.active_search.begin_rollout(self.buffer)
         if self._behaviour_w is not None:
             self._behaviour_w.fill_(1.0)
         if self.opening_seeder is not None and not self._openings_started:
@@ -1662,6 +1671,19 @@ class BaseNashPGTrainer:
                             _s = self.buffer.step * self.num_envs
                             _w = self._behaviour_w[_s:_s + self.num_envs]
                             _w[_ev_t] = 1.0
+                if self.active_search is not None and self.active_search.joined:
+                    # P36: the root's move at a fraction of the learner's entry decisions, played as
+                    # ENVIRONMENT like a forced opening (learner 0, the stored log-prob the net's own of
+                    # the move), with the root's improved policy filed as the row's search target.
+                    _as = self.active_search.apply(actions_t, np.asarray(learner_np, dtype=bool),
+                                                   self.env.runner, self.buffer, self.buffer.step)
+                    if _as.any():
+                        learner_np = np.asarray(learner_np, dtype=bool) & ~_as
+                        learner_t = torch.from_numpy(learner_np).to(self.device)
+                        _pm_learner = _pm & learner_t
+                        _as_t = torch.from_numpy(_as).to(self.device)
+                        log_probs_t = torch.where(
+                            _as_t, unscaled_log_probs.gather(1, actions_t.unsqueeze(1)).squeeze(1), log_probs_t)
 
                 # Per-seat policy entropy of the LEARNER's own decisions. Every collapse shows
                 # entropy rising, and the pooled figure cannot say on which seat. Masked logits

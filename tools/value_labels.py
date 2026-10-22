@@ -107,17 +107,13 @@ def behaviour() -> str:
 
 
 def same_games(meta: Dict[str, Any], engine: str) -> bool:
-    """The build that wrote `meta` and this one play the same games, so the raw state bytes a dataset
-    stores are read the same way by both: the same source fingerprint, or the same behaviour digest
-    (recorded since 2026-10-17), or a fingerprint from before digests that the leaderboard epoch whose
-    digest this build reproduces lists among its pre_digest_engines."""
-    if meta["engine"] == engine:
-        return True
-    mine = behaviour()
-    if meta.get("behaviour") == mine:
-        return True
-    return any(leaderboard.behaviour_id(ep["behaviour"]) == mine and meta["engine"] in ep.get("pre_digest_engines", [])
-               for ep in leaderboard.load().epochs.values())
+    """The build that wrote `meta` is this one (the same engine source fingerprint), so the raw state bytes
+    the dataset stores are read as the positions they were. Only the same build: raw bytes are the struct's
+    memory (`ts.state_from_raw_bytes`), and a build that plays the same games can still lay the struct out
+    differently -- main's c9e5689 added fields to GameState with the behaviour digest unchanged, and a
+    dataset written before it decoded as other positions (P36c, 2026-10-19). An earlier version accepted
+    the same behaviour digest here, which is not enough."""
+    return meta["engine"] == engine
 
 
 def engine_checked() -> str:

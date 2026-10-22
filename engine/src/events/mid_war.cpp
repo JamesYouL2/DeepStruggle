@@ -7,6 +7,7 @@
 #include "ts/space_race.hpp"
 #include "ts/ops.hpp"
 #include "ts/prng.hpp"
+#include "ts/state_machine.hpp"
 #include <algorithm>
 
 namespace ts {
@@ -634,29 +635,43 @@ bool trigger_our_man_in_tehran(GameState& state, Player p) noexcept {
     // has one definition, not one here and a copy at the removal site.
     if (!CardHandlers::event_has_effect(state, card_ids::OUR_MAN_IN_TEHRAN, p)) return true;
 
-    // Draw up to 5 cards from draw deck
+    // Draw 5 cards. The deck running out is handled as at the deal (StateMachine::
+    // deal_cards_to_hands): the discard pile is reshuffled at once, so a deck holding fewer
+    // than five is drawn to the end and the rest come from the new deck. The cards already
+    // drawn are at PEEKED_TEMP and stay out of it. This used to draw only what the deck held:
+    // at turn 7 AR2 of ts-replayer game 207 the deck held two cards, the log prints *RESHUFFLE*
+    // inside the event, and the engine drew the two and left the reshuffle to the deal.
+    //
+    // At the deal an empty deck makes both hands public. Here only the USSR's is: every card
+    // the US cannot see is in the USSR hand, but the USSR cannot tell the US hand from the
+    // cards being looked at.
     uint8_t draw_pool[111];
     uint8_t draw_cnt = 0;
-    for (uint8_t i = 1; i <= 110; ++i) {
-        if (state.card_locations[i] == CardLocation::DRAW_DECK) draw_pool[draw_cnt++] = i;
-    }
-    if (draw_cnt == 0) {
+    auto collect_deck = [&]() {
+        draw_cnt = 0;
         for (uint8_t i = 1; i <= 110; ++i) {
-            if (i == card_ids::THE_CHINA_CARD) continue;
-            if (state.card_locations[i] == CardLocation::DISCARD_PILE) {
-                state.card_locations[i] = CardLocation::DRAW_DECK;
-                draw_pool[draw_cnt++] = i;
-            }
+            if (state.card_locations[i] == CardLocation::DRAW_DECK) draw_pool[draw_cnt++] = i;
         }
-    }
+    };
+    auto run_out = [&]() {
+        reveal_hand(state, Player::USSR);
+        StateMachine::reshuffle_discard_into_draw(state);
+        collect_deck();
+    };
+    collect_deck();
+    if (draw_cnt == 0) run_out();
     if (draw_cnt == 0) return true;
 
-    uint8_t sample_count = std::min(static_cast<uint8_t>(5), draw_cnt);
-    for (uint8_t k = 0; k < sample_count; ++k) {
+    uint8_t sample_count = 0;
+    while (sample_count < 5 && draw_cnt > 0) {
         uint32_t chosen_idx = Prng::random_index(state.rng_state, draw_cnt);
         uint8_t drawn_card = draw_pool[chosen_idx];
         draw_pool[chosen_idx] = draw_pool[--draw_cnt];
         state.card_locations[drawn_card] = CardLocation::PEEKED_TEMP;
+        ++sample_count;
+        // That was the deck's last card. The pool is rebuilt from the new deck only now, so a
+        // deck of more than five is drawn exactly as before.
+        if (draw_cnt == 0) run_out();
     }
     // The peek is the set of cards at PEEKED_TEMP. A list of the same ids was kept beside it
     // and shuffled down on each discard; the handler already trusted the locations over it.

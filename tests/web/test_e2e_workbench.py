@@ -139,11 +139,31 @@ def _open(browser: Any, url: str, setup: Optional[Callable[[Any], None]] = None,
 
 
 def _open_model_chooser(page: Any) -> None:
-    """The model's source controls sit in a chooser the technical bar opens on demand
-    (#btn-model-choose -> #model-chooser); open it before driving them."""
-    if page.locator("#model-chooser.hidden").count():
+    """The model's source controls and the search radios are the model & search section, which
+    the technical bar's model · mode label (#btn-model-choose) opens in #model-mode-dialog; open it
+    before driving them."""
+    if page.locator("#model-mode-dialog.hidden").count():
         page.click("#btn-model-choose")
-        page.wait_for_selector("#model-chooser:not(.hidden)")
+        page.wait_for_selector("#model-mode-dialog:not(.hidden)")
+
+
+def _close_model_chooser(page: Any) -> None:
+    """The dialog is modal: close it before clicking the board."""
+    if not page.locator("#model-mode-dialog.hidden").count():
+        page.click("#model-mode-dialog-close")
+        page.wait_for_selector("#model-mode-dialog", state="hidden")
+
+
+def _set_search(page: Any, search: str) -> None:
+    """How the model plays ("rollout" / "policy"), from the model & search dialog: at once."""
+    _open_model_chooser(page)
+    page.check(f"#mode-opponent-{search}")
+    _close_model_chooser(page)
+
+
+def _search(page: Any) -> str:
+    """How the model plays, as the section's radios say (outside the play-mode question, the setting in force)."""
+    return "rollout" if page.is_checked("#mode-opponent-rollout") else "policy"
 
 
 def _pick_local_model(page: Any) -> None:
@@ -152,6 +172,7 @@ def _pick_local_model(page: Any) -> None:
     page.wait_for_function(f"[...document.querySelectorAll('#analysis-run-select option')].some(o => o.value === '{RUN}')")
     page.select_option("#analysis-run-select", RUN)
     page.wait_for_selector("#analysis-body .analysis-choice", timeout=120000)
+    _close_model_chooser(page)
 
 
 def test_a_game_is_played_by_the_page_itself(browser: Any, server: str) -> None:
@@ -204,12 +225,13 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     spec = "rollout:3:2:1:z2:earlier:own"
     page = _open(browser, server + f"/?search={spec}")
     _pick_local_model(page)
-    assert page.input_value("#search-mode-select") == "rollout"
+    assert _search(page) == "rollout"
+    assert page.inner_text("#model-mode-label-mode") == "Rollout root"
     page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.search", timeout=120000)
     a = page.evaluate("window.__wb.liveAnalysis")
     s = a["search"]
     assert s["kind"] == "rollout" and s["spec"] == {"k": 3, "worlds": 2, "horizon": 1, "rule": "z2", "stop": "earlier", "leaf": "own",
-                                                   "keyed": False, "belief": 0}
+                                                   "keyed": False, "aligned": False, "box4": False, "belief": 0}
     assert s["pick"] in s["candidates"] and s["candidates"][0] == a["policy"]["argmax_idx"]
     assert s["worlds"] == 2 and len(s["q"]) == len(s["candidates"]) == 3
     assert parse_qs(page.url.split("?", 1)[1]).get("search") == [spec]
@@ -249,7 +271,8 @@ def test_the_page_searches_with_the_rollout_root_as_python_does(browser: Any, se
     page.wait_for_function("!!(window.__wb.liveAnalysis && window.__wb.liveAnalysis.search_pending) "
                            "&& typeof window.__release === 'function'")
     # Back to the policy: the section goes, and the address no longer names a search.
-    page.select_option("#search-mode-select", "policy")
+    _set_search(page, "policy")
+    assert page.inner_text("#model-mode-label-mode") == "Policy"
     page.wait_for_function("!new URLSearchParams(location.search).has('search')")
     page.wait_for_function("window.__wb.liveAnalysis && window.__wb.liveAnalysis.policy && !window.__wb.liveAnalysis.search")
     # The search asked for under the old setting answers now: it must not bring its section back.
@@ -380,6 +403,50 @@ def test_the_cards_panel_is_its_own_column_left_of_the_map(browser: Any, server:
     assert board and cards and cards["y"] >= board["y"] + board["height"] - 1
     assert page.evaluate("(() => { const m = document.querySelector('.main-content');"
                          " return m.scrollWidth <= m.clientWidth + 1; })()")
+    assert not page.errors
+
+
+def test_the_piles_tab_lists_each_pile_as_the_hands_do_by_side_then_ops(browser: Any, static_site: str) -> None:
+    """The Piles tab draws the discards and the removed cards as the hand tabs draw a hand --
+    packed, no gap between them -- by side (USSR, US, Neutral) and then highest Ops first."""
+    page = _open(browser, static_site + "/?model=off")
+    with open(os.path.join(REPO, "rules", "cards.json")) as f:
+        meta = {c["id"]: c for c in json.load(f)}
+    neutral = [i for i, c in meta.items() if c["side"] == "neutral" and i != 6][:2]
+    discard = [103, 8, 4, *neutral, 33, 21]
+    page.evaluate(f"(() => {{ const wb = window.__wb; wb.cardsView.render({{...wb.shown, discard_pile: {discard}, removed_pile: [] }}); }})()")
+    page.click("[data-tab='tab-board-cards']")
+    order = {"ussr": 0, "us": 1, "neutral": 2}
+    want = [f"#{i} {meta[i]['name']}" for i in sorted(discard, key=lambda i: (order[meta[i]["side"]], -meta[i]["ops"], meta[i]["name"]))]
+    rows = page.locator("#discard-cards-list .card-item")
+    assert [t.strip() for t in rows.locator(".card-name-single").all_inner_texts()] == want
+    assert page.inner_text("#discard-count") == str(len(discard))
+    assert page.inner_text("#removed-cards-list").strip() == "Empty"
+    boxes = [rows.nth(k).bounding_box() for k in range(rows.count())]
+    assert all(a and b and abs(a["y"] + a["height"] - b["y"]) < 1.5 for a, b in zip(boxes, boxes[1:])), "the pile is not packed"
+    # No probability badge lands on a pile: only the hands carry data-card-id.
+    assert page.locator("#discard-cards-list [data-card-id]").count() == 0
+    rows.first.hover()
+    assert page.is_visible("#card-tooltip") and meta[33]["name"] in page.inner_text("#card-tooltip")
+    assert not page.errors
+
+
+def test_a_card_named_in_the_log_shows_its_text_on_hover(browser: Any, static_site: str) -> None:
+    page = _open(browser, static_site + "/?model=off")
+    page.evaluate("""() => { const wb = window.__wb;
+        for (let n = 0; n < 5000 && !wb.state.is_terminal && wb.state.current_phase_name !== 'ACTION_ROUND'; n++) {
+            const m = wb.engine.mask(false); wb.sendFlatAction(m.findIndex(x => x), 0, true);
+        } }""")
+    ref = page.locator("#action-log-stream .log-card[data-card-id]").first
+    ref.wait_for()
+    cid = int(ref.get_attribute("data-card-id") or "0")
+    name = page.evaluate(f"window.__wb.engine.cardName({cid})")
+    assert name in ref.inner_text()
+    ref.hover()
+    tip = page.inner_text("#card-tooltip")
+    assert page.is_visible("#card-tooltip") and name in tip and "OPS" in tip
+    page.mouse.move(5, 5)
+    assert not page.is_visible("#card-tooltip")
     assert not page.errors
 
 
@@ -566,18 +633,26 @@ def test_a_repo_with_models_json_is_not_listed(browser: Any, static_site: str, o
 
 def test_the_leaderboard_page_filters_one_fit(browser: Any, static_site: str) -> None:
     """leaderboard.html shows the leaderboard.json that build_web.sh fitted from leaderboard/: the
-    main players by default, every player under "All", each with the same rating in both views;
-    a row opens its head-to-head results, and the view is kept in the link."""
+    newest epoch with games in it (a new engine epoch starts with its anchor alone), the main players
+    by default, every player under "All", each with the same rating in both views; a row opens its
+    head-to-head results, and the view is kept in the link."""
     with open(os.path.join(DIST, "leaderboard.json")) as f:
         data = json.load(f)
     with open(os.path.join(REPO, "leaderboard", "epochs.json")) as f:
-        epoch = list(json.load(f))[-1]
+        names = list(json.load(f))
+    epoch = [n for n in names if data["epochs"][n]["pairs"]][-1]
     ep = data["epochs"][epoch]
     page = browser.new_page(viewport={"width": 1280, "height": 900})
     errors: List[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
+    if epoch != names[-1]:
+        # An epoch with no games yet still opens when the link names it.
+        page.goto(static_site + f"/leaderboard.html?epoch={names[-1]}")
+        page.wait_for_selector("#lb-body tr")
+        assert page.input_value("#lb-epoch") == names[-1]
     page.goto(static_site + "/leaderboard.html")
     page.wait_for_selector("#lb-body tr")
+    assert page.input_value("#lb-epoch") == epoch
 
     def shown() -> Dict[str, str]:
         rows = page.eval_on_selector_all(

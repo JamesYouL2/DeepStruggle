@@ -8,6 +8,7 @@
 #include "ts/ops.hpp"
 #include "ts/prng.hpp"
 #include "ts/defcon.hpp"
+#include "ts/state_machine.hpp"
 #include <algorithm>
 
 namespace ts {
@@ -1564,27 +1565,37 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                 // Each card was discarded as it was chosen, so how many to draw is what the
                 // allowance has been spent down by -- no list of the cards themselves is kept.
                 uint8_t discard_count = static_cast<uint8_t>(ask_not::MAX_DISCARDS - state.ctx().remaining_steps);
+                // The deck running out is handled as at the deal (StateMachine::
+                // deal_cards_to_hands): both hands become public, since every other card is,
+                // and the discard pile -- this event's discards with it -- is reshuffled at
+                // once, not by whichever draw next finds the deck empty. At turn 7 AR7 of
+                // ts-replayer game 272 the US redraws two from a deck of two and the log prints
+                // *RESHUFFLE* in the same entry; the engine left the deck empty for the deal.
+                auto run_out = [&]() {
+                    reveal_both_hands(state);
+                    StateMachine::reshuffle_discard_into_draw(state);
+                };
                 for (uint8_t k = 0; k < discard_count; ++k) {
                     uint8_t draw_cards[111];
                     uint8_t draw_cnt = 0;
-                    for (uint8_t i = 1; i <= 110; ++i) {
-                        if (state.card_locations[i] == CardLocation::DRAW_DECK) {
-                            draw_cards[draw_cnt++] = i;
-                        }
-                    }
-                    if (draw_cnt == 0) {
+                    auto collect_deck = [&]() {
+                        draw_cnt = 0;
                         for (uint8_t i = 1; i <= 110; ++i) {
-                            if (i == card_ids::THE_CHINA_CARD) continue;
-                            if (state.card_locations[i] == CardLocation::DISCARD_PILE) {
-                                state.card_locations[i] = CardLocation::DRAW_DECK;
+                            if (state.card_locations[i] == CardLocation::DRAW_DECK) {
                                 draw_cards[draw_cnt++] = i;
                             }
                         }
+                    };
+                    collect_deck();
+                    if (draw_cnt == 0) {
+                        run_out();
+                        collect_deck();
                     }
                     if (draw_cnt > 0) {
                         uint32_t chosen_idx = Prng::random_index(state.rng_state, draw_cnt);
                         uint8_t drawn = draw_cards[chosen_idx];
                         state.card_locations[drawn] = hand_of(Player::US);
+                        if (draw_cnt == 1) run_out();   // that was the deck's last card
                     }
                 }
                 state.ctx().resolving_card = 0;

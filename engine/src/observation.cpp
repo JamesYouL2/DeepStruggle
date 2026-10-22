@@ -3,6 +3,7 @@
 #include "ts/card_data.hpp"
 #include "ts/scoring.hpp"
 #include "ts/ops.hpp"
+#include "ts/space_race.hpp"
 #include <cstring>
 #include <algorithm>
 #include <array>
@@ -484,6 +485,15 @@ size_t extract_observation_features(const GameState& state, Player perspective, 
         out[at + 1] = ops_modifier(state, perspective);
         out[at + 2] = ops_modifier(state, get_opponent(perspective));
         at += obs_features::OPS_BUDGET_WIDTH;
+    }
+    if (features & obs_features::HEADLINE_REVEAL) {
+        const uint8_t c = SpaceRace::revealed_headline(state, perspective);
+        if (c != 0) {
+            float* row = out + 84 * V23_BOARD_FEATURES + static_cast<size_t>(c - 1) * card_slots::V23_FEATURES;
+            for (size_t sl = 0; sl < 8; ++sl) row[sl] = 0.0f;
+            row[card_slots::KNOWN_OPPONENT_HAND] = 1.0f;
+            row[card_slots::ACTIVE_CARD] = std::max(row[card_slots::ACTIVE_CARD], card_slots::ACTIVE_NEXT);
+        }
     }
     return at;
 }

@@ -35,6 +35,7 @@ import torch.nn.functional as F
 import ts_engine as ts
 from ai.models.ladder_net import LadderNet, create_ladder_net, ladder_config_from_state_dict
 from ai.training.generic_trainer import _resolve_run_dir
+from tools.lib.engine_fingerprint import fingerprint
 
 #: Region order of the dataset's swing columns (tools/value_labels.REGIONS).
 N_REGIONS = 7
@@ -270,6 +271,10 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
     model.train()
     manifest = json.loads((ds / "manifest.json").read_text())
     engine = manifest["engine"]
+    if engine != fingerprint():
+        raise SystemExit(f"{ds}: its raw states were written by engine {engine[:8]}, this build is {fingerprint()[:8]} -- "
+                         "raw state bytes are read only by the build that wrote them (tools/value_labels.same_games); "
+                         "relabel on this build")
     features = int(getattr(model, "obs_feature_bits", 0))
     width = model.TOTAL_OBS_SIZE
 

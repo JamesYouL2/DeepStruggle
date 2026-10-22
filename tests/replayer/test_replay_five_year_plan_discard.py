@@ -18,23 +18,29 @@ Two things kept that search from ever running on the step that mattered:
 The log drew Nasser, a USSR card that does nothing. The reconstruction drew a US one and
 played its event, and the VP it paid stayed on the board until the Special Relationship at
 turn 3 AR5 asserted against it.
+
+Terrorism draws the same way, from whichever side it is played against, and is searched for
+with the same seed search.
 """
 import glob
 import gzip
 import json
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pytest
 import ts_engine as ts
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import _force_random_discard, convert_game
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import Entry, parse_entry
 
 CORPUS = str(corpus_dir())
 FIVE_YEAR_PLAN = 5
 NASSER = 15
+EUROPE_SCORING = 2
+MISSILE_ENVY = 49
+STAR_WARS = 85
 
 
 
@@ -78,6 +84,52 @@ def test_five_year_plan_discards_what_the_log_says_when_the_event_follows_the_op
 def test_the_five_year_plan_games_convert_end_to_end(replay_id: int) -> None:
     conv = convert_game(_game(replay_id))
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
+
+
+def _where_after(replay_id: int, turn: int, phase: str, card: int,
+                 player: Optional[str] = None) -> ts.CardLocation:
+    seen: List[ts.CardLocation] = []
+
+    def on_entry(st: ts.GameState, e: Entry) -> None:
+        if (e.turn, e.phase) == (turn, phase) and player in (None, e.player):
+            seen.append(st.get_card_location(card))
+
+    conv = convert_game(_game(replay_id), on_entry=on_entry)
+    assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
+    assert len(seen) == 1
+    return seen[0]
+
+
+def test_the_card_being_resolved_can_be_the_one_discarded() -> None:
+    """Replay 206 turn 4 headline: "USSR discards Missile Envy".
+
+    The US headlines Missile Envy, the USSR gives up Five Year Plan for it, and the US plays
+    Five Year Plan's event, which discards Missile Envy -- handed over a moment earlier, inside
+    the same step. It is neither in the USSR hand before the step nor out of play during it,
+    so the discard was left to chance and drew OAS Founded, whose placement the log never wrote.
+    """
+    assert _where_after(206, 4, "Headline", MISSILE_ENVY) == ts.CardLocation.DISCARD_PILE
+
+
+def test_a_card_another_draw_takes_is_not_the_one_discarded() -> None:
+    """Replay 270 turn 9 headline: "Event: Five Year Plan / USSR discards Europe Scoring".
+
+    Glasnost's last Influence sets off Grain Sales To Soviets in the same step, and a seed that
+    had Grain Sales take Europe Scoring into the US hand passed for the discard. Grain Sales was
+    then steered to Five Year Plan as the log says, and Five Year Plan threw out U-2 Incident.
+    """
+    assert _where_after(270, 9, "Headline", EUROPE_SCORING) == ts.CardLocation.DISCARD_PILE
+
+
+def test_terrorism_discards_what_the_log_says() -> None:
+    """Replay 104 turn 9 AR3: "Event: Terrorism / USSR discards Missile Envy".
+
+    Left to the seed, the draw took Star Wars. The next entry's hands then put Star Wars back in
+    the USSR hand, since the log has the USSR still holding it, and Missile Envy went to the deck
+    as a card nobody held -- a card the log discarded, back in play at the next reshuffle.
+    """
+    assert _where_after(104, 9, "AR3", MISSILE_ENVY, "US") == ts.CardLocation.DISCARD_PILE
+    assert ts.in_hand_of(_where_after(104, 9, "AR3", STAR_WARS, "US"), ts.Player.USSR)
 
 
 def test_a_score_past_the_end_of_the_track_is_the_replayers_arithmetic() -> None:

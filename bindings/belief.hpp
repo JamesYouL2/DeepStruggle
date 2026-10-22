@@ -55,8 +55,11 @@ struct Job {
 
 class Tracker {
 public:
-    Tracker(uint32_t particles, bool all_decisions, uint64_t seed) noexcept
-        : particles_(particles), all_decisions_(all_decisions), seed_(seed) {}
+    // `reveal` (the rollout root's box4): at the headline choice of the side holding Man in Space
+    // alone, every hand holds the opponent's revealed headline (rollout::revealed_headline) and the rest
+    // of it is drawn around that card.
+    Tracker(uint32_t particles, bool all_decisions, uint64_t seed, bool reveal = false) noexcept
+        : particles_(particles), all_decisions_(all_decisions), reveal_(reveal), seed_(seed) {}
 
     uint32_t particles() const noexcept { return particles_; }
     void reseed(uint64_t seed) noexcept { seed_ = seed; }
@@ -107,6 +110,7 @@ private:
     static size_t side_index(Player me) noexcept { return me == Player::US ? 0 : 1; }
     uint32_t particles_;
     bool all_decisions_;
+    bool reveal_;
     uint64_t seed_;
     std::unordered_map<size_t, Game> games_;
     std::vector<Job> jobs_;
