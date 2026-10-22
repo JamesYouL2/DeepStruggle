@@ -92,6 +92,11 @@ def test_china_card_is_never_in_a_pair() -> None:
 # -- space race --------------------------------------------------------------------------
 
 def _give(st: ts.GameState, player: ts.Player, cards) -> None:
+    """`player`'s hand becomes exactly `cards` (the China card aside). The seed's dealt hand goes
+    back to the deck first: a dealt card of the same Ops would pair with the ones under test."""
+    for c in range(1, 111):
+        if c != CHINA_CARD and ts.in_hand_of(st.get_card_location(c), player):
+            st.set_card_location(c, ts.CardLocation.DRAW_DECK)
     loc = ts.hand_of(ts.Player.US) if player == ts.Player.US else ts.hand_of(ts.Player.USSR)
     for c in cards:
         st.set_card_location(c, loc)
