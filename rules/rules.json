@@ -187,7 +187,7 @@
         "step": "B",
         "phase_enum": "Phase::SETUP",
         "phase_name": "DEAL_CARDS",
-        "logic": "Deal cards from draw deck to each player until hand size reaches target (8 on T1-T3, 9 on T4-T10). If draw deck exhausts, reshuffle discards (excluding permanently removed asterisk cards) and continue dealing. China card is excluded from hand limit calculations."
+        "logic": "Deal cards from draw deck to each player until hand size reaches target (8 on T1-T3, 9 on T4-T10), alternately one card at a time, USSR first, skipping a hand already at the target (the rules name no order; it matters only when the deck runs out mid-deal, as on T3). If draw deck exhausts, reshuffle discards (excluding permanently removed asterisk cards) and continue dealing. China card is excluded from hand limit calculations."
       },
       {
         "step": "C",

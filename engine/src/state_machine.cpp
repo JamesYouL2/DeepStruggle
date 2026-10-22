@@ -66,71 +66,80 @@ static uint8_t take_forced_deal(GameState& state, Player p) noexcept {
 void StateMachine::deal_cards_to_hands(GameState& state) noexcept {
     uint8_t target_hand = (state.turn <= 3) ? 8 : 9;
 
-    auto deal_to_player = [&](Player p) {
-        const CardLocation hand_loc = hand_of(p);
-        uint8_t current_count = 0;
+    // Draws one card into p's hand; false only when the deck is empty even after a reshuffle.
+    auto draw_one = [&](Player p) -> bool {
+        // Count cards in draw deck
+        uint8_t draw_cards[111];
+        uint8_t draw_count = 0;
         for (uint8_t i = 1; i <= 110; ++i) {
-            if (in_hand_of(state.card_locations[i], p)) current_count++;
+            if (state.card_locations[i] == CardLocation::DRAW_DECK) {
+                draw_cards[draw_count++] = i;
+            }
         }
 
-        while (current_count < target_hand) {
-            // Count cards in draw deck
-            uint8_t draw_cards[111];
-            uint8_t draw_count = 0;
+        if (draw_count == 0) {
+            // The deck is empty, so every card is now in a hand, the discard, removed, in
+            // play, or never in the game -- and all of those but the hands are public. Each
+            // player can therefore name the other's hand as the complement of what they can
+            // see. The shuffle that follows is the consequence, not the cause. It is also the
+            // only reshuffle there is: the era transitions at turns 4 and 8 add cards to the
+            // deck and leave the discard alone (rule 4.4).
+            reveal_both_hands(state);
+            reshuffle_discard_into_draw(state);
             for (uint8_t i = 1; i <= 110; ++i) {
                 if (state.card_locations[i] == CardLocation::DRAW_DECK) {
                     draw_cards[draw_count++] = i;
                 }
             }
+            if (draw_count == 0) return false; // Entire deck exhausted
+        }
 
-            if (draw_count == 0) {
-                // The deck is empty, so every card is now in a hand, the discard, removed, in
-                // play, or never in the game -- and all of those but the hands are public. Each
-                // player can therefore name the other's hand as the complement of what they can
-                // see. The shuffle that follows is the consequence, not the cause. It is also the
-                // only reshuffle there is: the era transitions at turns 4 and 8 add cards to the
-                // deck and leave the discard alone (rule 4.4).
-                reveal_both_hands(state);
-                reshuffle_discard_into_draw(state);
-                for (uint8_t i = 1; i <= 110; ++i) {
-                    if (state.card_locations[i] == CardLocation::DRAW_DECK) {
-                        draw_cards[draw_count++] = i;
-                    }
-                }
-                if (draw_count == 0) break; // Entire deck exhausted
-            }
-
-            // A replay source may name this card. Inert in normal play: the queue is empty
-            // and this costs one comparison.
-            uint8_t chosen_card = 0;
-            if (const uint8_t named = take_forced_deal(state, p)) {
-                if (named >= 1 && named <= 110 &&
-                    state.card_locations[named] == CardLocation::DRAW_DECK) {
-                    chosen_card = named;
-                } else {
-                    // The recording and the engine disagree about what is in the deck. Never
-                    // paper over it: a wrong card here changes the game from this point on and
-                    // every later entry would be compared against a position that never existed.
-                    report_anomaly("forced deal named a card that is not in the draw deck", state);
-                }
-            }
-            if (chosen_card == 0) {
-                const uint32_t chosen_idx = Prng::random_index(state.rng_state, draw_count);
-                chosen_card = draw_cards[chosen_idx];
-            }
-            state.card_locations[chosen_card] = hand_loc;
-            current_count++;
-            if (draw_count == 1) {
-                // That was the last card in the deck; same deduction as above, and it covers
-                // the card just drawn too, since the opponent can see the deck is now empty.
-                reveal_both_hands(state);
-                reshuffle_discard_into_draw(state);
+        // A replay source may name this card. Inert in normal play: the queue is empty
+        // and this costs one comparison.
+        uint8_t chosen_card = 0;
+        if (const uint8_t named = take_forced_deal(state, p)) {
+            if (named >= 1 && named <= 110 &&
+                state.card_locations[named] == CardLocation::DRAW_DECK) {
+                chosen_card = named;
+            } else {
+                // The recording and the engine disagree about what is in the deck. Never
+                // paper over it: a wrong card here changes the game from this point on and
+                // every later entry would be compared against a position that never existed.
+                report_anomaly("forced deal named a card that is not in the draw deck", state);
             }
         }
+        if (chosen_card == 0) {
+            const uint32_t chosen_idx = Prng::random_index(state.rng_state, draw_count);
+            chosen_card = draw_cards[chosen_idx];
+        }
+        state.card_locations[chosen_card] = hand_of(p);
+        if (draw_count == 1) {
+            // That was the last card in the deck; same deduction as above, and it covers
+            // the card just drawn too, since the opponent can see the deck is now empty.
+            reveal_both_hands(state);
+            reshuffle_discard_into_draw(state);
+        }
+        return true;
     };
 
-    deal_to_player(Player::USSR);
-    deal_to_player(Player::US);
+    // The players draw alternately, one card at a time, the USSR first, and a full hand sits
+    // out (ENG-5). The order only shows when the deck runs out mid-deal, as it does on turn 3:
+    // filling the USSR hand first handed the USSR nearly every card left in the old deck.
+    constexpr Player order[2] = {Player::USSR, Player::US};
+    uint8_t count[2] = {0, 0};
+    for (uint8_t i = 1; i <= 110; ++i) {
+        for (int k = 0; k < 2; ++k) {
+            if (in_hand_of(state.card_locations[i], order[k])) count[k]++;
+        }
+    }
+    bool exhausted = false;
+    while (!exhausted && (count[0] < target_hand || count[1] < target_hand)) {
+        for (int k = 0; k < 2 && !exhausted; ++k) {
+            if (count[k] >= target_hand) continue;
+            if (draw_one(order[k])) count[k]++;
+            else exhausted = true;
+        }
+    }
 
     // One deal, one queue. A source that wants to drive the next deal refills before it; a
     // leftover here would be applied to a deal it was never recorded for, which is exactly the

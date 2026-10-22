@@ -423,3 +423,31 @@ and left the reshuffle to the next deal: in the human corpus, at turn 7 AR2 of t
 Held by `Card108_OurManInTehran_ShortDeckReshufflesMidDraw`, `_DeckOfFiveReshufflesAfterTheDraw`,
 `_LongDeckLeavesThePileAlone`, `Card77_AskNot_RedrawEmptiesTheDeck` and
 `_DeckRunsOutBetweenRedraws` (`tests/test_cards_mid.cpp`).
+
+## 14. The deal alternates, the USSR first (ENG-5, 2026-10-22)
+
+`StateMachine::deal_cards_to_hands` deals one card at a time, USSR then US, and a hand already at
+the target (8 on turns 1-3, 9 after) sits out. Until ENG-5 it filled the USSR hand completely and
+then the US hand. The rules do not name an order ("deal" each player up to the hand size, §4.2 of
+`rules/rules.md`), and the order is invisible unless the deck runs out partway through the deal --
+which happens on **every turn 3**, when the last few Early War cards are dealt before the
+reshuffle. Filling the USSR first gave the USSR nearly every card left in the old deck; the US drew
+almost entirely from the reshuffled discard pile. That made a card the USSR missed on turn 2 near
+certain to reach it on turn 3, so the bots valued the USSR's turn-2 draws at almost nothing
+(an Op +0.05 pp, against about 1.3 pp on every other turn).
+
+* **The human games alternate.** In the ts-replayer corpus all 274 games that reach turn 4
+  reshuffle at turn 3. Of the 9.2 Early War cards on average not yet discarded at that deal (the
+  hands' kept cards and the deck), the US's turn-3 hand holds 3.8 (at least 3 in 247 games) and the
+  USSR's 4.3; a USSR-first fill leaves the US only the one or two cards it kept from turn 2. The USSR's half-card excess is what a USSR-first alternation gives an odd
+  number of cards. The reference engine (`external/struggler`, `_deal_to_limit`) alternates USSR
+  first too.
+* **Every seed deals different hands.** The PRNG draws the same number of times, but the draws
+  alternate between the hands, so from turn 1 a seed's hands are not E8's. The distribution of a
+  deal is unchanged except when the deck runs out partway through it. The behaviour digest moves in
+  every section (`runner`, `state`, `rollout`, `mcts`), so this needs a new engine epoch.
+* **A forced deal is still per player** (`GameState::set_forced_deal`): each hand's queue is drawn
+  in order whenever that hand's turn comes, so a recorded deal is replayed whatever the interleaving.
+
+Held by `CardEdgeCasesTest.Deal_AlternatesSoAShortDeckIsShared`, `Deal_USSRDrawsFirst` and
+`Deal_AFullHandSitsOut` (`tests/test_card_edge_cases.cpp`).

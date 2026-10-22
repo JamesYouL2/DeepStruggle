@@ -125,14 +125,14 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
 
 
 @pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed,aligned", [
-    (21, 70, 2, "boundaries", "mover", False, False), (34, 150, 1, "boundaries", "mover", False, False),
-    (47, 40, 0, "boundaries", "mover", False, False), (58, 90, 4, "turn", "mover", False, False),
+    (21, 70, 2, "boundaries", "mover", False, False), (35, 150, 1, "boundaries", "mover", False, False),
+    (47, 40, 0, "boundaries", "mover", False, False), (59, 90, 4, "turn", "mover", False, False),
     (63, 120, 2, "later", "mover", False, False), (71, 130, 3, "earlier", "mover", False, False),
-    (58, 90, 4, "turn", "decider", False, False), (77, 110, 2, "boundaries", "decider", False, False),
-    (58, 90, 4, "turn", "own", False, False), (83, 100, 3, "earlier", "own", False, False),
-    (58, 90, 4, "predeal", "mover", False, False), (93, 80, 3, "earlier_predeal", "own", False, False),
-    (83, 100, 3, "earlier", "own", True, False), (34, 150, 1, "boundaries", "mover", True, False),
-    (83, 100, 3, "earlier", "own", True, True), (21, 70, 2, "boundaries", "mover", False, True)])
+    (59, 90, 4, "turn", "decider", False, False), (77, 110, 2, "boundaries", "decider", False, False),
+    (59, 90, 4, "turn", "own", False, False), (84, 100, 3, "earlier", "own", False, False),
+    (59, 90, 4, "predeal", "mover", False, False), (93, 80, 3, "earlier_predeal", "own", False, False),
+    (84, 100, 3, "earlier", "own", True, False), (35, 150, 1, "boundaries", "mover", True, False),
+    (84, 100, 3, "earlier", "own", True, True), (21, 70, 2, "boundaries", "mover", False, True)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
                                                                  leaf: str, keyed: bool, aligned: bool,
                                                                  tmp_path) -> None:
@@ -209,7 +209,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     assert rows > 0 and native["refused"] == 0
 
 
-@pytest.mark.parametrize("seed,plies", [(21, 70), (34, 150), (58, 95), (83, 120)])
+@pytest.mark.parametrize("seed,plies", [(21, 70), (35, 150), (59, 95), (84, 120)])
 def test_the_belief_tracker_is_the_same_in_both_builds(seed: int, plies: int, tmp_path) -> None:
     """The belief over the opponent's hand (bindings/belief.hpp) on one game: the page observes moves
     as clicks and finds their flat actions, Python observes the flat actions; at the last position the
