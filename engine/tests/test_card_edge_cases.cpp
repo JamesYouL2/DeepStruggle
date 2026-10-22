@@ -256,6 +256,68 @@ TEST(CardEdgeCasesTest, Reshuffle_ImmediateWhenDrawDeckEmpty) {
     ASSERT_EQ(state.card_locations[card_ids::DUCK_AND_COVER], CardLocation::DRAW_DECK);
 }
 
+// The deal alternates, one card at a time, the USSR first (ENG-5). Each test empties the hands and
+// the deck into the discard pile, then seats the hands and the deck it names.
+static GameState deal_fixture(uint8_t turn, std::initializer_list<uint8_t> ussr,
+                              std::initializer_list<uint8_t> us,
+                              std::initializer_list<uint8_t> deck) {
+    GameState state{};
+    StateMachine::init_new_game(state, 42);
+    state.turn = turn;
+    for (uint8_t i = 1; i <= 110; ++i) {
+        if (state.card_locations[i] == CardLocation::DRAW_DECK ||
+            in_hand_of(state.card_locations[i], Player::US) ||
+            in_hand_of(state.card_locations[i], Player::USSR)) {
+            state.card_locations[i] = CardLocation::DISCARD_PILE;
+        }
+    }
+    for (uint8_t c : ussr) state.card_locations[c] = hand_of(Player::USSR);
+    for (uint8_t c : us) state.card_locations[c] = hand_of(Player::US);
+    for (uint8_t c : deck) state.card_locations[c] = CardLocation::DRAW_DECK;
+    return state;
+}
+
+static int count_held(const GameState& state, Player p, std::initializer_list<uint8_t> cards) {
+    int n = 0;
+    for (uint8_t c : cards) n += in_hand_of(state.card_locations[c], p) ? 1 : 0;
+    return n;
+}
+
+TEST(CardEdgeCasesTest, Deal_AlternatesSoAShortDeckIsShared) {
+    // Turn 3, both hands at 5, three cards left in the old deck: the draws go USSR, US, USSR, so
+    // the old deck splits 2-1 and the rest come from the reshuffled pile. Filling the USSR hand
+    // first gave the USSR all three and the US none.
+    GameState state = deal_fixture(3, {7, 8, 9, 10, 11}, {12, 13, 14, 15, 16}, {17, 18, 19});
+    StateMachine::deal_cards_to_hands(state);
+    ASSERT_EQ(count_held(state, Player::USSR, {17, 18, 19}), 2);
+    ASSERT_EQ(count_held(state, Player::US, {17, 18, 19}), 1);
+    int ussr = 0, us = 0;
+    for (uint8_t i = 1; i <= 110; ++i) {
+        ussr += in_hand_of(state.card_locations[i], Player::USSR) ? 1 : 0;
+        us += in_hand_of(state.card_locations[i], Player::US) ? 1 : 0;
+    }
+    ASSERT_EQ(ussr, 8);
+    ASSERT_EQ(us, 8);
+}
+
+TEST(CardEdgeCasesTest, Deal_USSRDrawsFirst) {
+    GameState state = deal_fixture(3, {7, 8, 9, 10, 11, 22, 23}, {12, 13, 14, 15, 16, 24, 25}, {17});
+    StateMachine::deal_cards_to_hands(state);
+    ASSERT_TRUE(in_hand_of(state.card_locations[17], Player::USSR));
+}
+
+TEST(CardEdgeCasesTest, Deal_AFullHandSitsOut) {
+    // The USSR already holds 8, so the US draws its three in a row and two stay in the deck.
+    GameState state = deal_fixture(3, {7, 8, 9, 10, 11, 22, 23, 24}, {12, 13, 14, 15, 16},
+                                   {17, 18, 19, 20, 21});
+    StateMachine::deal_cards_to_hands(state);
+    ASSERT_EQ(count_held(state, Player::USSR, {17, 18, 19, 20, 21}), 0);
+    ASSERT_EQ(count_held(state, Player::US, {17, 18, 19, 20, 21}), 3);
+    int deck = 0;
+    for (uint8_t c : {17, 18, 19, 20, 21}) deck += state.card_locations[c] == CardLocation::DRAW_DECK ? 1 : 0;
+    ASSERT_EQ(deck, 2);
+}
+
 // 2. War Cards Roll-Failure Tests
 TEST(CardEdgeCasesTest, KoreanWar_FailedRoll_AwardsMilOps_NoVPOrInfluence) {
     GameState state{};
