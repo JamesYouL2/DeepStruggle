@@ -109,6 +109,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         drop_static=bool(args.drop_static),
         hidden_dim=int(args.ladder_hidden_dim),
         num_res_blocks=int(args.ladder_res_blocks),
+        # Recorded only off its historical 0.05, so the configs of earlier runs stay comparable.
+        **({"res_dropout": float(args.ladder_res_dropout)} if float(args.ladder_res_dropout) != 0.05 else {}),
         num_attn_heads=4,
         card_lookup=bool(args.ladder_card_lookup),
         # Inert when the lookup is off, and LadderNet never reads them in that case.
@@ -184,6 +186,10 @@ def build_parser() -> argparse.ArgumentParser:
     lad.add_argument("--ladder-hidden-dim", type=int, default=None, help="Trunk width.")
     lad.add_argument("--ladder-res-blocks", type=int, default=None,
                      help="Number of residual blocks in the trunk.")
+    lad.add_argument("--ladder-res-dropout", type=float, default=0.05,
+                     help="Dropout inside each residual block. 0.05 is the historical default; use 0 for RL: the "
+                          "rollouts act in eval mode and the update in train mode, so dropout makes the update's "
+                          "log-probabilities and KL those of a policy that never played (2026-10-22).")
     lad.add_argument("--ladder-head-context", dest="ladder_head_context",
                      action="store_true", default=None,
                      help="Feed pe_trunk(h) into the per-entity head. The only path from the "

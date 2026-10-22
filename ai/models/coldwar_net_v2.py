@@ -160,6 +160,7 @@ class ColdWarNetV2(nn.Module):
     country_identity: nn.Embedding | None
 
     def __init__(self, hidden_dim: int = 512, num_res_blocks: int = 4, num_attn_heads: int = 4,
+                 res_dropout: float = 0.05,
                  card_features: int = CARD_FEATURES, use_history: bool = False,
                  global_features: int = GLOBAL_SIZE, has_tail: bool = False,
                  board_features: int = BOARD_FEATURES,
@@ -290,7 +291,11 @@ class ColdWarNetV2(nn.Module):
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
         )
-        self.res_blocks = nn.ModuleList([ResBlock(hidden_dim) for _ in range(num_res_blocks)])
+        # Dropout inside each residual block. 0.05 is the historical default, kept so every checkpoint means
+        # what it meant; an RL run wants 0: the rollouts act in eval mode and the PPO update runs in train
+        # mode, so with dropout the update's log-probabilities and KL are those of a noised policy that never
+        # played (the scaled network's failure, 2026-10-22).
+        self.res_blocks = nn.ModuleList([ResBlock(hidden_dim, dropout=res_dropout) for _ in range(num_res_blocks)])
 
         # End-of-trunk attention read-out. The board branch pools across all 84 countries before
         # the trunk is formed, and that pooling is lossy: a linear probe recovers a country's

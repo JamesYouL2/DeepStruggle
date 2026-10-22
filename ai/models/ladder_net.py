@@ -190,6 +190,7 @@ class LadderNet(ColdWarNetV2):
                  play_mode_head: bool = False,
                  obs_features: int = 0,
                  logit_cap: float = 0.0,
+                 res_dropout: float = 0.05,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
                  logit_cap_leak_up: float = 0.0,
@@ -251,7 +252,8 @@ class LadderNet(ColdWarNetV2):
                     "input is exactly a bias. With a shared per-entity encoder the static slots "
                     "are how it knows what kind of entity it is looking at.")
 
-        super().__init__(hidden_dim=hidden_dim, num_res_blocks=num_res_blocks,
+        self.res_dropout = float(res_dropout)
+        super().__init__(hidden_dim=hidden_dim, num_res_blocks=num_res_blocks, res_dropout=float(res_dropout),
                          num_attn_heads=num_attn_heads, categorical_value=categorical_value,
                          # Built for a raw-token head too: there the identity vector is the
                          # head's only way to tell two same-typed entities apart.
@@ -743,6 +745,8 @@ class LadderNet(ColdWarNetV2):
             play_mode_head=self.play_mode_head,
             obs_features=self.obs_feature_bits,
             **({"logit_cap": self.logit_cap_value} if self.logit_cap_value > 0.0 else {}),
+            # Recorded only off its historical 0.05, so every earlier config is unchanged.
+            **({"res_dropout": self.res_dropout} if self.res_dropout != 0.05 else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
