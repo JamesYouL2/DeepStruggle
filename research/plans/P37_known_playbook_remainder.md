@@ -108,3 +108,32 @@ belief root (not adopted); the belief input until pure search is settled (owner)
 ## Runs
 
 (filled in while running; mirrors [`../runs.md`](../runs.md))
+
+## `P37a` result (2026-10-22): the plasticity loss is in the policy head, not the trunk
+
+`ai/eval/plasticity_probe.py`, CPU; `data/reports/p37a_plasticity.json`. 20,000 positions from P36c's training games
+(decoded on this build after checking: every state's bytes round-trip, and the labelling network picks the recorded
+argmax at 100.00%). Adam 1e-3, batch 512, to convergence (under 0.3 points in 5 epochs, cap 40). "Fit" is the
+training-set accuracy; for P36c's 128-world targets, "departures" is the share of positions where the target's top move
+differs from the network's own argmax on which the fitted policy now picks the target's.
+
+| trunk | head | random labels, trunk frozen | random labels, full fine-tune | P36c targets, trunk frozen (departures) | P36c targets, full fine-tune (departures) |
+|:---|:---|---:|---:|---:|---:|
+| plateau (A13+R48 SWA 12,730–12,800M) | **its own trained head** | **33.3%** | **80.0%** | 74.0% (**44.9%**) | 97.7% (96.4%) |
+| plateau | a fresh head | **98.9%** | 99.7% | **97.8% (97.0%)** | 97.9% (97.1%) |
+| fresh, same shape | a fresh head | 91.1% | 99.2% | 95.6% (93.9%) | 96.1% (94.9%) |
+
+* **The trunk keeps its plasticity.** With a fresh head the plateau's features fit random labels at 98.9% frozen --
+  better than a fresh trunk's 91.1% -- and P36c's targets at 97.8% (departures 97.0%). The features are rich, not stuck.
+* **The trained head has lost it.** The same features under the network's own head fit random labels at 33.3% with the
+  trunk frozen and 80.0% fine-tuned, and switch only 44.9% of the departures with the trunk frozen -- P36c's failure
+  (22–41% of departures on 180k positions) reproduced at the head. With the trunk free and only 20,000 positions the
+  own head does reach 97.7%, so on P36c's 180k the fine-tune's ceiling was the head's, compounded by the data.
+* **The head's signature** (4,096 positions): weight norms 20–50x a fresh head's (`policy_head` 390 vs 20,
+  `branch_head_net` 220 vs 6.5, `play_mode_head_net` 251 vs 6.6), **13.5% dormant units at τ = 0.1** (6.6% at 0.025;
+  a fresh head 0%), and saturated outputs (median top-1 minus top-2 logit 1.82 against 0.20; mean top probability 0.77).
+  The trunk's dormant fraction is small: 2.5% at the plateau, 1.1–1.2% along the heads run (400M 0.7%), 0.1% fresh.
+* **Read for group 2.** Not target-specific -- the loss is real and measured -- but it sits in the last layers, which is
+  what **last-layer resets** (Nikishin et al.: re-initialise the heads, keep the trunk, re-warm) target directly; it is
+  promoted from conditional to first. **Shrink-and-perturb** and **L2-init** act on the measured weight-norm growth;
+  **ReDo** has something to act on in the head (13.5%) though little in the trunk, so if run it is aimed at the heads.
