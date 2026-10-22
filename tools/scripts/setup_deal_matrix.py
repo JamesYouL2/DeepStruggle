@@ -67,6 +67,7 @@ import numpy as np
 import numpy.typing as npt
 import ts_engine as ts
 
+from ai.eval.card_probe import MODE_NAMES
 from ai.eval.paired_playouts import apply_move, decider, play_safe
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import LogitsFn, load_policy, position_token
@@ -830,9 +831,11 @@ def draws(model: str, worlds: int, part: str, seed: int, redeals: int, chunk: in
 def ever_games(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int) -> List[Dict[str, Any]]:
     """Each game from its random deal (the `draws` stage's base games), the network greedy on both
     sides to the end: every card each side ever held, with the turns it did (bit t set if in hand at
-    any point of turn t), and the result."""
+    any point of turn t), the result, and the game itself: its `init_game` seed (`deal`) and every
+    flat action played, which `ever-replay` drives back through the engine."""
     states = [dealt(world_deal(seed, g)) for g in games]
     held: List[Dict[str, Dict[int, int]]] = [{"ussr": {}, "us": {}} for _ in games]
+    played: List[List[int]] = [[] for _ in games]
 
     def look(k: int) -> None:
         st = states[k]
@@ -854,23 +857,64 @@ def ever_games(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int)
         acts = np.asarray(logits_fn(obs, masks)).argmax(axis=1)
         for k, a in zip(live, acts):
             states[k] = apply_move(states[k], int(a))
+            played[k].append(int(a))
             look(k)
     else:
         raise RuntimeError(f"{len(live)} games unfinished after 10000 decisions")
     out: List[Dict[str, Any]] = []
-    for g, st, h in zip(games, states, held):
-        u = float(ts.Engine.get_terminal_utility(st))
+    for g, st, h, acts_g in zip(games, states, held, played):
         out.append({"game": g, "turn": int(st.turn), "vp": int(st.victory_points), "defcon": int(st.defcon),
-                    "s": 2 if u > 0 else (1 if u == 0 else 0),
-                    "ussr": sorted([c, t] for c, t in h["ussr"].items()),
-                    "us": sorted([c, t] for c, t in h["us"].items())})
+                    "s": us_score(st), "ussr": sorted([c, t] for c, t in h["ussr"].items()),
+                    "us": sorted([c, t] for c, t in h["us"].items()), "deal": world_deal(seed, g),
+                    "actions": acts_g})
     return out
+
+
+def us_score(st: ts.GameState) -> int:
+    u = float(ts.Engine.get_terminal_utility(st))
+    return 2 if u > 0 else (1 if u == 0 else 0)
+
+
+def action_label(st: ts.GameState, action: int) -> str:
+    """A flat action in words, as far as its decision type allows: the card picked, the mode, or
+    the country pointed at; otherwise the decoded MicroAction's fields."""
+    ma = ts.decode_flat_action(st, int(action))
+    dt, p, q = ma.decision_type, int(ma.primary_id), int(ma.secondary_id)
+    if dt == ts.DecisionType.SELECT_CARD and 1 <= p <= 110:
+        return f"card {ts.CardData.get_card_info(p)['name']}"
+    if dt == ts.DecisionType.SELECT_PLAY_MODE:
+        return f"mode {MODE_NAMES.get(q or p, q or p)}"
+    if dt == ts.DecisionType.POINT_NODE and 0 <= p < N_COUNTRIES:
+        return f"country {ts.MapData.get_country_name(p)}"
+    return f"{dt.name} primary={p} secondary={q} flags={int(ma.flags)}"
+
+
+def ever_replay(path: str, game: int, links: bool) -> int:
+    """Rebuild one `ever` game from its row (`deal` and `actions`), print every decision, and check
+    the engine reaches the row's result. `links`: a workbench link at the start of every turn."""
+    row = next((r for r in read_jsonl([path]) if r["game"] == game), None)
+    if row is None:
+        raise SystemExit(f"game {game} is not in {path}")
+    st = dealt(int(row["deal"]))
+    turn = 0
+    for i, a in enumerate(row["actions"]):
+        if links and st.turn != turn:
+            turn = int(st.turn)
+            print(f"-- turn {turn}: {WORKBENCH}/?pos={position_token(st)}")
+        side = "US" if decider(st) == ts.Player.US else "USSR"
+        print(f"{i:4d} T{int(st.turn)} AR{int(st.action_round)} {side:4s} {action_label(st, int(a))}")
+        st = apply_move(st, int(a))
+    if not ts.Engine.is_terminal(st) or us_score(st) != row["s"] or int(st.victory_points) != row["vp"]:
+        raise SystemExit("the replay does not reach the row's result: a different engine build?")
+    print(f"end: turn {int(st.turn)}, VP {int(st.victory_points)} (+ = US), DEFCON {int(st.defcon)}, "
+          f"{ {2: 'US wins', 1: 'draw', 0: 'USSR wins'}[row['s']] }")
+    return 0
 
 
 def ever(model: str, worlds: int, part: str, seed: int, chunk: int, out: str) -> int:
     """This part's games (`worlds` of them in all), greedy from random deals, one row per game:
-    the cards each side ever held ([card, bitmask of the turns it was in hand]) and the US score
-    (`s`, 0/1/2)."""
+    the cards each side ever held ([card, bitmask of the turns it was in hand]), the US score
+    (`s`, 0/1/2), the deal seed and every action."""
     k, n = (int(x) for x in part.split("/"))
     logits_fn, feats = load_policy(model)
     t0 = time.time()
@@ -1263,6 +1307,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     e.add_argument("--seed", type=int, default=0)
     e.add_argument("--chunk", type=int, default=1536, help="games per batch")
     e.add_argument("--out", required=True)
+    v = sub.add_parser("ever-replay")
+    v.add_argument("--file", required=True, help="an ever run's .jsonl.gz")
+    v.add_argument("--game", type=int, required=True)
+    v.add_argument("--links", action="store_true", help="a workbench link at the start of every turn")
     q = sub.add_parser("pool")
     q.add_argument("--parts", nargs="+", required=True)
     q.add_argument("--expect", type=int, default=0)
@@ -1287,6 +1335,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return draws(a.model, a.worlds, a.part, a.seed, a.redeals, a.chunk, a.out)
     if a.cmd == "ever":
         return ever(a.model, a.worlds, a.part, a.seed, a.chunk, a.out)
+    if a.cmd == "ever-replay":
+        return ever_replay(a.file, a.game, a.links)
     if a.cmd == "pool":
         return pool(a.parts, a.out, a.expect)
     return report(a.input, a.out, a.bootstrap)
