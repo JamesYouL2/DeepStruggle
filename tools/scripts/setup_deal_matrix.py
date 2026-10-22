@@ -827,6 +827,64 @@ def draws(model: str, worlds: int, part: str, seed: int, redeals: int, chunk: in
     return 0
 
 
+def ever_games(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int) -> List[Dict[str, Any]]:
+    """Each game from its random deal (the `draws` stage's base games), the network greedy on both
+    sides to the end: every card each side ever held, with the turn it first did, and the result."""
+    states = [dealt(world_deal(seed, g)) for g in games]
+    held: List[Dict[str, Dict[int, int]]] = [{"ussr": {}, "us": {}} for _ in games]
+
+    def look(k: int) -> None:
+        st = states[k]
+        for c in range(1, 111):
+            side = ts.hand_holder(st.get_card_location(c))
+            key = "ussr" if side == ts.Player.USSR else "us" if side == ts.Player.US else None
+            if key is not None and c not in held[k][key]:
+                held[k][key][c] = int(st.turn)
+
+    for k in range(len(states)):
+        look(k)
+    live = list(range(len(states)))
+    for _ in range(10000):
+        live = [k for k in live if not ts.Engine.is_terminal(states[k])]
+        if not live:
+            break
+        obs = np.stack([ts.extract_observation_features(states[k], decider(states[k]), feats) for k in live])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(states[k])) for k in live])
+        acts = np.asarray(logits_fn(obs, masks)).argmax(axis=1)
+        for k, a in zip(live, acts):
+            states[k] = apply_move(states[k], int(a))
+            look(k)
+    else:
+        raise RuntimeError(f"{len(live)} games unfinished after 10000 decisions")
+    out: List[Dict[str, Any]] = []
+    for g, st, h in zip(games, states, held):
+        u = float(ts.Engine.get_terminal_utility(st))
+        out.append({"game": g, "turn": int(st.turn), "vp": int(st.victory_points), "defcon": int(st.defcon),
+                    "s": 2 if u > 0 else (1 if u == 0 else 0),
+                    "ussr": sorted([c, t] for c, t in h["ussr"].items()),
+                    "us": sorted([c, t] for c, t in h["us"].items())})
+    return out
+
+
+def ever(model: str, worlds: int, part: str, seed: int, chunk: int, out: str) -> int:
+    """This part's games (`worlds` of them in all), greedy from random deals, one row per game:
+    the cards each side ever held ([card, first turn]) and the US score (`s`, 0/1/2)."""
+    k, n = (int(x) for x in part.split("/"))
+    logits_fn, feats = load_policy(model)
+    t0 = time.time()
+    mine = [w for w in range(worlds) if w % n == k - 1]
+    res: List[Dict[str, Any]] = []
+    for lo in range(0, len(mine), chunk):
+        res += ever_games(mine[lo:lo + chunk], seed, logits_fn, feats)
+        print(f"[{len(res)}/{len(mine)} games] {time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    write_jsonl(out, res)
+    with open(out + ".meta.json", "w") as f:
+        json.dump({"schema": 1, "stage": "ever", "model": os.path.basename(model),
+                   "model_sha256": sha256_file(model), "deal": RANDOM, "swaps": [],
+                   "hands": None, "ussr": [], "us": [], "net": None, "worlds": worlds, "part": part,
+                   "seed": seed, "rows": len(res), "wall_s": round(time.time() - t0, 1)}, f, indent=1)
+    return 0
+
 def pool(parts: Sequence[str], out: str, expect: int = 0) -> int:
     """Merge the parts (`matrix-<k>.jsonl.gz`, each with its `.meta.json`); with `expect`, name
     the parts that are missing in `<out>.parts.json`."""
@@ -1196,6 +1254,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     w.add_argument("--redeals", type=int, default=16, help="redeals of each snapshot's drawn cards")
     w.add_argument("--chunk", type=int, default=1536, help="games per playout batch")
     w.add_argument("--out", required=True)
+    e = sub.add_parser("ever")
+    e.add_argument("--model", required=True, help="a .pt checkpoint or its .onnx export")
+    e.add_argument("--worlds", type=int, default=100000, help="games")
+    e.add_argument("--part", default="1/1")
+    e.add_argument("--seed", type=int, default=0)
+    e.add_argument("--chunk", type=int, default=1536, help="games per batch")
+    e.add_argument("--out", required=True)
     q = sub.add_parser("pool")
     q.add_argument("--parts", nargs="+", required=True)
     q.add_argument("--expect", type=int, default=0)
@@ -1218,6 +1283,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return ar1(a.model, a.worlds, a.part, a.seed, a.chunk, a.out, a.ussr, a.us, a.card, a.holder, a.arms)
     if a.cmd == "draws":
         return draws(a.model, a.worlds, a.part, a.seed, a.redeals, a.chunk, a.out)
+    if a.cmd == "ever":
+        return ever(a.model, a.worlds, a.part, a.seed, a.chunk, a.out)
     if a.cmd == "pool":
         return pool(a.parts, a.out, a.expect)
     return report(a.input, a.out, a.bootstrap)
