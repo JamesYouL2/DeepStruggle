@@ -419,6 +419,25 @@ played as environment take those rows out of the policy gradient. The plan reads
 About −50 Elo at 800M against −70/−80 at 400M: behind in both seats, closing by ~3–4.5 points a 400M. The
 plan's decision point is 2,000M (on past it only if ahead).
 
+**Slot 1 at 2,000M (2026-10-22): the gated from-scratch search test fails.** SWAs of 1,920–2,000M, the same
+protocol (`data/reports/p36_slot1_2000M_*`):
+
+| | 400M | 800M | 2,000M |
+|:---|---:|---:|---:|
+| raw, slot 1 against the heads run | 39.8% | 42.7% | **42.2% ± 1.1** (US 43.8 / USSR 39.9) |
+| the heads run's own bar (US / USSR) | 45.8 / 53.0 | 47.9 / 51.6 | 48.5 / 50.2 |
+| raw, per seat over the bar | −4.6 / −15.7 | −6.0 / −9.1 | **−4.7 / −10.3** |
+| both under the corrected keyed root | 38.5% | 43.0% | **40.1% ± 1.1** (US 43.3 / USSR 36.1) |
+
+Behind in both seats at every read, about −55 Elo raw and −70 searched at 2,000M, and no longer closing after
+800M. By the plan's rule it stops at 2,000M (on past it only if ahead). **Active search targets inside a
+from-scratch run -- the one form P36c left untested -- make the base model worse here, raw and under the
+root**, at ~2.6x the cost per step once joined. So search stays off the flagships: the encoder (P35 item 1)
+launches in slot 1 without it, and slot 2's recorded gate is not used. What it does not settle: the form
+tested (1/64 of entry decisions played as environment, the CE averaged over the searched rows so each carries
+~270x a normal row's gradient, a 10M-lagged snapshot) -- a lighter CE weight or targets without the
+environment moves are untested.
+
 **Why slot 1's search CE was missing (2026-10-26).** Not a missing name on the list: `generic_trainer`
 registered the search-CE metrics only when the `--search-ce-coef` *argument* was above 0, and an
 active-search run sets the trainer's coefficient from `--active-search-ce-coef` with that argument left at 0.
