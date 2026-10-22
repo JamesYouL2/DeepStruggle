@@ -625,6 +625,32 @@
     "drop_static": true,
     "ladder_token_chunk": 4096
    }
+  },
+  "A34": {
+   "description": "A22 without dropout in its residual blocks (--ladder-res-dropout 0; the historical 0.05 otherwise): the rollouts act in eval mode and the PPO update in train mode, so with dropout the update's log-probabilities and KL are those of a policy that never played -- the leading suspect for the scaled network's failure (2026-10-22)",
+   "first": "E8-A34-R1-S44_20261022_222828",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 768,
+    "ladder_res_blocks": 4,
+    "ladder_res_dropout": 0.0,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1829,7 +1855,9 @@
   "E8-A8-R1-S44_20261022_113132": "E8-A8-R1-S44",
   "E8-A22-R1-S44_20261022_113133": "E8-A22-R1-S44",
   "E8-A22-R82-S44_20261022_180726": "E8-A22-R82-S44",
-  "E8-A22-R83-S44_20261022_180849": "E8-A22-R83-S44"
+  "E8-A22-R83-S44_20261022_180849": "E8-A22-R83-S44",
+  "E8-A34-R1-S44_20261022_222828": "E8-A34-R1-S44",
+  "E8-A34-R47-S44_20261022_222856": "E8-A34-R47-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
