@@ -38,7 +38,7 @@ on:
   # The push trigger only registers the workflow from this branch (a dispatch-only workflow that is
   # not on the default branch cannot be dispatched); every job is skipped on it.
   push:
-    branches: [exp/setup-deal-matrix]
+    branches: [exp/setup-deal-matrix, exp/ever-drawn-eng5]
     paths: [.github/workflows/setup_headline_probe.yml]
   workflow_dispatch:
     inputs:
