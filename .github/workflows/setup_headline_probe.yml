@@ -14,6 +14,13 @@
 #   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f stage=reply -f runners=30 \
 #     -f model="E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt" -f worlds=30000 \
 #     -f args="--ussr Pol3/Yug3 EG4/Pol4/Yug1 --us WG3/Fr3/It2/Ir2 WG4/It4/Ir2"
+#
+# stage=ar1 forces the holder's headline to the card and the other side's first action round of
+# turn 1 once per arm (--arms; net, card3, coup_italy, repair, repair_bg), greedy otherwise and to
+# the end; no searched player, so the .onnx default serves:
+#
+#   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f stage=ar1 -f runners=40 \
+#     -f args="--ussr Pol3/Yug3 EG4/Pol4/Yug1 --us WG3/Fr3/It2/Ir2 WG4/It4/Ir2"
 name: setup-headline-probe
 
 on:
@@ -25,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "headlines (greedy headlines only) or reply (the forced headline, turn 1 searched)"
+        description: "headlines (greedy headlines only), reply (the forced headline, turn 1 searched) or ar1 (the reply's AR1 forced, per arm)"
         default: "headlines"
       player:
         description: "stage=reply: the searched player"
@@ -39,7 +46,7 @@ on:
       runners:
         default: "10"
       args:
-        description: "--ussr ... --us ... (required), --card, --holder, --seed; reply: --turns, --chunk"
+        description: "--ussr ... --us ... (required), --card, --holder, --seed; reply: --turns, --chunk; ar1: --arms, --chunk"
         default: ""
       hf_repo:
         default: "mihaild/deepstruggle"

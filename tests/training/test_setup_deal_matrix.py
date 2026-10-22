@@ -249,3 +249,39 @@ def test_reply_forces_the_headline_and_pairs_the_two_arms(tmp_path, monkeypatch,
         assert (r["net"] == r["searched"]) != last
     meta = json.load(open(out + ".meta.json"))
     assert meta["stage"] == "reply" and meta["player"] == "picker:{MODEL}" and meta["turns"] == 1
+
+
+def test_ar1_forces_the_first_action_round_and_leaves_the_net_arm_to_the_network(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sdm, "load_policy", lambda path: (_first_legal, 0))
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"not a model")
+    ussr, us = ["Pol3/Yug3", "EG4/Pol4/Yug1"], ["WG4/It4/Ir2"]
+    card = "East European Unrest"
+    out, ref = str(tmp_path / "ar1.jsonl.gz"), str(tmp_path / "reply.jsonl.gz")
+    sdm.ar1(str(model), 16, "1/1", 0, 4, out, ussr, us, card, "us", sdm.AR1_ARMS)
+    monkeypatch.setattr(sdm, "load_agent", lambda spec, device: _Picker(False))
+    sdm.reply(str(model), "picker:{MODEL}", 16, "1/1", 0, 4, ref, ussr, us, card, "us", 1)
+    rows, replies = list(read_jsonl([out])), list(read_jsonl([ref]))
+    assert rows and [r["world"] for r in rows] == [r["world"] for r in replies]
+    big = {c for c in range(1, 111) if c != sdm.CHINA and ts.CardData.get_card_info(c)["ops"] >= 3}
+    italy, pol = sdm.country_ids()["Italy"], sdm.country_ids()["Poland"]
+    coups = []
+    for r, y in zip(rows, replies):
+        assert r["net"] == y["net"]
+        for arm in sdm.AR1_ARMS[1:]:
+            for mv in r[arm]["moves"]:
+                ar1 = [m for m in mv if m[1] == 1]
+                if ar1[0][4] not in big:  # no 3+ Ops card in hand: the arm leaves the round alone
+                    continue
+                mode, node = ar1[1][4], ar1[2][4]
+                if arm == "coup_italy":
+                    assert mode == 3
+                    coups.append(node == italy)  # not when a headline took DEFCON to 4
+                if arm.startswith("repair"):
+                    assert mode == 2
+        # Pol3/Yug3: where the headline took Poland below control, repair puts a point back
+        first = [m for m in r["repair"]["moves"][0] if m[1] == 1]
+        if first[0][4] in big and pol in r["repair"]["targets"][0]:
+            assert pol in [m[4] for m in first[2:]]
+    assert any(coups)
+    assert json.load(open(out + ".meta.json"))["arms"] == list(sdm.AR1_ARMS)

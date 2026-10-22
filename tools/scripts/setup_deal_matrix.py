@@ -25,6 +25,10 @@ the matrix by where each scoring card was dealt.
   (`--player`, a load_agent spec, {MODEL} for the checkpoint); the holder plays the network, and
   both sides the network to the end. Each arm's every decision of the replying side, the board
   at the end of the searched turns and the result, paired cell by cell.
+* `ar1` -- on the same worlds and the same forced headline, the other side's first action round
+  of turn 1 forced, once per arm (`--arms`; `ar1_restrict`): a 3+ Ops card, as a coup on Italy,
+  or for influence back into the countries the headline broke; `net` leaves it to the network.
+  Everything else is the network's, greedy, to the end.
 * `pool` -- merge the parts.
 * `report` -- the US score of every cell, each side's best reply to each setup, the score against
   the corpus's human setups, the equilibrium of the matrix game and paired contrasts; over random
@@ -51,7 +55,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -64,6 +68,8 @@ from tools.lib.jsonl import read_jsonl, sha256_file, write_jsonl
 from tools.lib.player_agent import BatchSelector, load_agent
 
 FloatArray = npt.NDArray[np.float64]
+#: the legal mask of game k's state, narrowed: (k, state, legal mask) -> mask
+Restrict = Callable[[int, ts.GameState, np.ndarray], np.ndarray]
 
 NODE = ActionEncoder.NODE_OFFSET
 N_COUNTRIES = 84
@@ -439,20 +445,7 @@ def headlines(model: str, worlds: int, part: str, seed: int, chunk: int, out: st
     step = max(1, chunk // n_cells)
     res: List[Dict[str, Any]] = []
     for lo in range(0, len(mine), step):
-        rows: List[Dict[str, Any]] = []
-        starts: List[ts.GameState] = []
-        for w in mine[lo:lo + step]:
-            d = world_deal(seed, w)
-            b0 = dealt(d)
-            if cid not in hand(b0, side):
-                continue
-            r = world_rng(d, seed, w)
-            for a in ussr:
-                for c in us:
-                    s = cell_start(b0, a, c)
-                    s.rng_state = r
-                    starts.append(s)
-            rows.append({"world": w, "deal": d, "ussr_hand": hand(b0, ts.Player.USSR), "us_hand": hand(b0, ts.Player.US)})
+        rows, starts = card_worlds(mine[lo:lo + step], seed, cid, side, ussr, us)
         if not rows:
             continue
         us_hl, ussr_hl, tg = greedy_headlines(starts, logits_fn, feats, cid)
@@ -482,11 +475,13 @@ def forced_card(st: ts.GameState, card: int) -> int:
 
 
 def play_turns(states: List[ts.GameState], logits_fn: LogitsFn, feats: int, turns: int, holder: ts.Player,
-               card: int, player: Optional[BatchSelector]) -> Tuple[List[int], List[List[List[int]]], List[List[int]]]:
+               card: int, player: Optional[BatchSelector], restrict: Optional[Restrict] = None
+               ) -> Tuple[List[int], List[List[List[int]]], List[List[int]]]:
     """Play each state through turn `turns`: the holder's turn-1 headline forced to `card`, the
-    other side by `player` (the network greedily when None), everything else the network greedily.
-    Per state the other side's turn-1 headline, its every decision as [turn, action round,
-    decision type, resolving card, decoded id], and the countries the card's event targeted."""
+    other side by `player` (the network greedily when None), everything else the network greedily,
+    within `restrict(k, state, legal mask)` when given. Per state the other side's turn-1
+    headline, its every decision as [turn, action round, decision type, resolving card, decoded
+    id], and the countries the card's event targeted."""
     other = ts.Player.USSR if holder == ts.Player.US else ts.Player.US
     hl = [0] * len(states)
     moves: List[List[List[int]]] = [[] for _ in states]
@@ -514,6 +509,8 @@ def play_turns(states: List[ts.GameState], logits_fn: LogitsFn, feats: int, turn
         if greedy:
             obs = np.stack([ts.extract_observation_features(states[k], decider(states[k]), feats) for k in greedy])
             masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(states[k])) for k in greedy])
+            if restrict is not None:
+                masks = np.stack([restrict(k, states[k], m) for k, m in zip(greedy, masks)])
             acts.update(zip(greedy, (int(a) for a in np.asarray(logits_fn(obs, masks)).argmax(axis=1))))
         for k in live:
             st, a = states[k], int(acts[k])
@@ -535,6 +532,27 @@ def board(st: ts.GameState) -> Dict[str, Any]:
     us, ussr = influence(st, ts.Player.US), influence(st, ts.Player.USSR)
     return {"vp": int(st.victory_points), "defcon": int(st.defcon),
             "inf": [[c, us[c], ussr[c]] for c in range(N_COUNTRIES) if us[c] or ussr[c]]}
+
+
+def card_worlds(worlds: Sequence[int], seed: int, card: int, side: ts.Player, ussr: Sequence[Mapping[int, int]],
+                us: Sequence[Mapping[int, int]]) -> Tuple[List[Dict[str, Any]], List[ts.GameState]]:
+    """Of `worlds`, those where `card` was dealt to `side`: a row each (world, deal, both hands)
+    and every cell's start, USSR setups outer, with the world's dice."""
+    rows: List[Dict[str, Any]] = []
+    starts: List[ts.GameState] = []
+    for w in worlds:
+        d = world_deal(seed, w)
+        b0 = dealt(d)
+        if card not in hand(b0, side):
+            continue
+        r = world_rng(d, seed, w)
+        for a in ussr:
+            for c in us:
+                s = cell_start(b0, a, c)
+                s.rng_state = r
+                starts.append(s)
+        rows.append({"world": w, "deal": d, "ussr_hand": hand(b0, ts.Player.USSR), "us_hand": hand(b0, ts.Player.US)})
+    return rows, starts
 
 
 def reply(model: str, player_spec: str, worlds: int, part: str, seed: int, chunk: int, out: str,
@@ -568,20 +586,7 @@ def reply(model: str, player_spec: str, worlds: int, part: str, seed: int, chunk
     step = max(1, chunk // n_cells)
     res: List[Dict[str, Any]] = []
     for lo in range(0, len(mine), step):
-        rows: List[Dict[str, Any]] = []
-        starts: List[ts.GameState] = []
-        for w in mine[lo:lo + step]:
-            d = world_deal(seed, w)
-            b0 = dealt(d)
-            if cid not in hand(b0, side):
-                continue
-            r = world_rng(d, seed, w)
-            for a in ussr:
-                for c in us:
-                    s = cell_start(b0, a, c)
-                    s.rng_state = r
-                    starts.append(s)
-            rows.append({"world": w, "deal": d, "ussr_hand": hand(b0, ts.Player.USSR), "us_hand": hand(b0, ts.Player.US)})
+        rows, starts = card_worlds(mine[lo:lo + step], seed, cid, side, ussr, us)
         if not rows:
             continue
         for arm, who in (("net", None), ("searched", agent)):
@@ -604,6 +609,113 @@ def reply(model: str, player_spec: str, worlds: int, part: str, seed: int, chunk
                    "net": None, "card": card, "holder": holder, "turns": turns, "worlds": worlds, "part": part,
                    "seed": seed, "rows": len(res), "wall_s": round(time.time() - t0, 1)}, f, indent=1)
     print(f"{len(res)} worlds, {2 * len(res) * n_cells} games in {time.time() - t0:.0f}s", file=sys.stderr)
+    return 0
+
+
+#: the replying side's first action round of turn 1, forced (stage `ar1`; `ar1_restrict`)
+AR1_ARMS = ("net", "card3", "coup_italy", "repair", "repair_bg")
+#: the Ops resolutions' slots (OP_MODE_OFFSET + OpMode lands on the same ones)
+INFLUENCE, COUP = ActionEncoder.PLAY_MODE_OFFSET + 2, ActionEncoder.PLAY_MODE_OFFSET + 3
+CHINA = 6
+
+
+def ar1_restrict(arm: str, side: ts.Player, ctrl0: Sequence[Sequence[int]]) -> Optional[Restrict]:
+    """`side`'s legal moves in its first action round of turn 1 under `arm`, game k having
+    started with `side` controlling `ctrl0[k]`; outside that round, and wherever the arm leaves no
+    legal move, the legal mask itself. None for `net`.
+
+    * card3 -- a card of 3+ Ops (not the China Card; scoring cards have none), the network's pick,
+      played as the network likes.
+    * coup_italy -- that card, as a coup on Italy.
+    * repair / repair_bg -- that card for influence, every point into a country `side` controlled
+      at the start and no longer does (repair_bg: battlegrounds only) while one is left, the rest
+      the network's."""
+    if arm not in AR1_ARMS:
+        raise ValueError(f"unknown arm {arm!r}")
+    if arm == "net":
+        return None
+    big = np.zeros(ActionEncoder.FLAT_ACTION_SIZE, dtype=np.uint8)
+    for c in range(1, 111):
+        if c != CHINA and ts.CardData.get_card_info(c)["ops"] >= 3:
+            big[c - 1] = 1
+    italy = country_ids()["Italy"]
+    bg = {c for c in range(N_COUNTRIES) if ts.MapData.get_country_info(c)["battleground"]}
+    choose_mode = (ts.DecisionType.SELECT_PLAY_MODE, ts.DecisionType.SELECT_OP_MODE)
+
+    def restrict(k: int, st: ts.GameState, legal: np.ndarray) -> np.ndarray:
+        if (decider(st) != side or st.turn != 1 or st.current_phase != ts.Phase.ACTION_ROUND
+                or st.action_round != 1):
+            return legal
+        c = st.ctx()
+        want = np.zeros_like(big)
+        if c.decision_type == ts.DecisionType.SELECT_CARD and c.resolving_card == 0:
+            want = big
+        elif arm == "card3":
+            return legal
+        elif c.decision_type in choose_mode:
+            want[COUP if arm == "coup_italy" else INFLUENCE] = 1
+        elif c.decision_type == ts.DecisionType.POINT_NODE and c.resolving_card == 0:
+            if arm == "coup_italy":
+                want[NODE + italy] = 1
+            else:
+                for x in ctrl0[k]:
+                    if (arm == "repair" or x in bg) and not ts.Scoring.is_controlled_by(st, x, side):
+                        want[NODE + x] = 1
+        out = legal * want
+        return out if out.any() else legal
+    return restrict
+
+
+def ar1(model: str, worlds: int, part: str, seed: int, chunk: int, out: str, ussr_names: Sequence[str],
+        us_names: Sequence[str], card: str, holder: str, arms: Sequence[str]) -> int:
+    """On the worlds where `card` was dealt to `holder`, every cell once per arm from one start
+    (the world's dice): the holder's headline forced to `card`, the other side's first action
+    round of turn 1 forced by the arm (`ar1_restrict`), the network greedy everywhere else and
+    to the end. `net` is the `reply` stage's `net` arm, game for game."""
+    k, n = (int(x) for x in part.split("/"))
+    ids = card_ids()
+    if card not in ids:
+        raise ValueError(f"unknown card {card!r}")
+    cid, side = ids[card], ts.Player.US if holder == "us" else ts.Player.USSR
+    other = ts.Player.USSR if side == ts.Player.US else ts.Player.US
+    base = dealt(world_deal(seed, 0))
+    ussr = [parse_setup(nm, base, ts.Player.USSR) for nm in ussr_names]
+    us = [parse_setup(nm, base, ts.Player.US) for nm in us_names]
+    n_cells = len(ussr) * len(us)
+    logits_fn, feats = load_policy(model)
+
+    def act(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
+        return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
+
+    t0 = time.time()
+    mine = [w for w in range(worlds) if w % n == k - 1]
+    step = max(1, chunk // n_cells)
+    res: List[Dict[str, Any]] = []
+    for lo in range(0, len(mine), step):
+        rows, starts = card_worlds(mine[lo:lo + step], seed, cid, side, ussr, us)
+        if not rows:
+            continue
+        ctrl0 = [[x for x in range(N_COUNTRIES) if ts.Scoring.is_controlled_by(s, x, other)] for s in starts]
+        for arm in arms:
+            states = [s.clone() for s in starts]
+            hl, moves, tg = play_turns(states, logits_fn, feats, 1, side, cid, None, ar1_restrict(arm, other, ctrl0))
+            ends = [board(s) for s in states]
+            scores = play_safe(states, [ts.Player.US] * len(states), [NO_KEY] * len(states), act, seed)
+            for b, row in enumerate(rows):
+                cells = slice(b * n_cells, (b + 1) * n_cells)
+                row[arm] = {"s": "".join(str(round(2 * x)) for x in scores[cells]), "hl": hl[cells],
+                            "moves": moves[cells], "targets": tg[cells], "end": ends[cells]}
+        res.extend(rows)
+        print(f"[{min(lo + step, len(mine))}/{len(mine)} worlds] {len(res)} with {card} in the {holder.upper()} hand, "
+              f"{time.time() - t0:.0f}s", file=sys.stderr, flush=True)
+    write_jsonl(out, res)
+    with open(out + ".meta.json", "w") as f:
+        json.dump({"schema": 1, "stage": "ar1", "model": os.path.basename(model),
+                   "model_sha256": sha256_file(model), "arms": list(arms),
+                   "deal": RANDOM, "swaps": [], "hands": None, "ussr": list(ussr_names), "us": list(us_names),
+                   "net": None, "card": card, "holder": holder, "turns": 1, "worlds": worlds, "part": part,
+                   "seed": seed, "rows": len(res), "wall_s": round(time.time() - t0, 1)}, f, indent=1)
+    print(f"{len(res)} worlds, {len(arms) * len(res) * n_cells} games in {time.time() - t0:.0f}s", file=sys.stderr)
     return 0
 
 
@@ -956,6 +1068,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     y.add_argument("--holder", choices=("us", "ussr"), default="us", help="... and the side it was dealt to")
     y.add_argument("--turns", type=int, default=1, help="the replying side is searched through this turn")
     y.add_argument("--out", required=True)
+    f1 = sub.add_parser("ar1")
+    f1.add_argument("--model", required=True, help="a .pt checkpoint or its .onnx export")
+    f1.add_argument("--worlds", type=int, default=200000)
+    f1.add_argument("--part", default="1/1")
+    f1.add_argument("--seed", type=int, default=0)
+    f1.add_argument("--chunk", type=int, default=1536, help="cells per batch")
+    f1.add_argument("--ussr", nargs="+", required=True, help="USSR setups by name")
+    f1.add_argument("--us", nargs="+", required=True, help="US setups by name")
+    f1.add_argument("--card", default="East European Unrest", help="the holder's forced turn-1 headline ...")
+    f1.add_argument("--holder", choices=("us", "ussr"), default="us", help="... and the side it was dealt to")
+    f1.add_argument("--arms", nargs="+", choices=AR1_ARMS, default=list(AR1_ARMS))
+    f1.add_argument("--out", required=True)
     q = sub.add_parser("pool")
     q.add_argument("--parts", nargs="+", required=True)
     q.add_argument("--expect", type=int, default=0)
@@ -974,6 +1098,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if a.cmd == "reply":
         return reply(a.model, a.player, a.worlds, a.part, a.seed, a.chunk, a.out, a.ussr, a.us, a.card,
                      a.holder, a.turns)
+    if a.cmd == "ar1":
+        return ar1(a.model, a.worlds, a.part, a.seed, a.chunk, a.out, a.ussr, a.us, a.card, a.holder, a.arms)
     if a.cmd == "pool":
         return pool(a.parts, a.out, a.expect)
     return report(a.input, a.out, a.bootstrap)
