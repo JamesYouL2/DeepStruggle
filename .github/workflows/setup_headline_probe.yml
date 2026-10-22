@@ -21,6 +21,12 @@
 #
 #   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f stage=ar1 -f runners=40 \
 #     -f args="--ussr Pol3/Yug3 EG4/Pol4/Yug1 --us WG3/Fr3/It2/Ir2 WG4/It4/Ir2"
+#
+# stage=draws plays games from random deals and redeals every turn's newly drawn cards --redeals
+# ways (what each card is worth to draw, by turn); --worlds is the number of games:
+#
+#   gh workflow run setup_headline_probe.yml --ref exp/setup-deal-matrix -f stage=draws -f runners=40 \
+#     -f worlds=60000 -f args="--redeals 16"
 name: setup-headline-probe
 
 on:
@@ -32,7 +38,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "headlines (greedy headlines only), reply (the forced headline, turn 1 searched) or ar1 (the reply's AR1 forced, per arm)"
+        description: "headlines (greedy headlines only), reply (the forced headline, turn 1 searched), ar1 (the reply's AR1 forced, per arm) or draws (every turn's draw redealt)"
         default: "headlines"
       player:
         description: "stage=reply: the searched player"
@@ -46,7 +52,7 @@ on:
       runners:
         default: "10"
       args:
-        description: "--ussr ... --us ... (required), --card, --holder, --seed; reply: --turns, --chunk; ar1: --arms, --chunk"
+        description: "--ussr ... --us ... (required but for draws), --card, --holder, --seed; reply: --turns, --chunk; ar1: --arms, --chunk; draws: --redeals, --chunk"
         default: ""
       hf_repo:
         default: "mihaild/deepstruggle"

@@ -29,6 +29,11 @@ the matrix by where each scoring card was dealt.
   of turn 1 forced, once per arm (`--arms`; `ar1_restrict`): a 3+ Ops card, as a coup on Italy,
   or for influence back into the countries the headline broke; `net` leaves it to the network.
   Everything else is the network's, greedy, to the end.
+* `draws` -- what each card is worth to draw, on every turn: games from random deals played by
+  the network, each snapshotted just after every turn's deal, and each snapshot's newly drawn
+  cards redealt `--redeals` ways from the same pool (the deck plus those cards; the cards each
+  side kept stay put), every redeal played to the end. A row is one snapshot; `redeal` rebuilds
+  its hands, so rows carry the pool rather than every redeal's cards.
 * `pool` -- merge the parts.
 * `report` -- the US score of every cell, each side's best reply to each setup, the score against
   the corpus's human setups, the equilibrium of the matrix game and paired contrasts; over random
@@ -52,6 +57,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import re
 import sys
 import time
@@ -719,6 +725,108 @@ def ar1(model: str, worlds: int, part: str, seed: int, chunk: int, out: str, uss
     return 0
 
 
+def redeal(pool: Sequence[int], n_ussr: int, n_us: int, seed: int, game: int, turn: int, k: int
+           ) -> Tuple[List[int], List[int]]:
+    """Redeal k of a `draws` snapshot: the cards each side draws, from (seed, game, turn, k) alone."""
+    h = hashlib.sha256(f"draws:{seed}:{game}:{turn}:{k}".encode()).digest()
+    got = random.Random(int.from_bytes(h[:8], "little")).sample(sorted(pool), n_ussr + n_us)
+    return got[:n_ussr], got[n_ussr:]
+
+
+def redeal_start(row: Mapping[str, Any], st: ts.GameState, seed: int, k: int) -> ts.GameState:
+    """Snapshot `st` with redeal k's cards in the hands and the rest of the pool in the deck; the
+    dice are the snapshot's, the same for every redeal."""
+    u, a = redeal(row["pool"], row["n_ussr"], row["n_us"], seed, row["game"], row["turn"], k)
+    s = st.clone()
+    for c in row["pool"]:
+        s.set_card_location(c, ts.CardLocation.DRAW_DECK)
+    for cards, loc in ((u, row["loc_ussr"]), (a, row["loc_us"])):
+        for c in cards:
+            s.set_card_location(c, ts.CardLocation(loc))
+    h = hashlib.sha256(f"draws-dice:{seed}:{row['game']}:{row['turn']}".encode()).digest()
+    s.rng_state = int.from_bytes(h[:8], "little")
+    return s
+
+
+def draw_snapshots(games: Sequence[int], seed: int, logits_fn: LogitsFn, feats: int
+                   ) -> List[Tuple[Dict[str, Any], ts.GameState]]:
+    """Each game from its random deal, the network greedy on both sides, snapshotted just after
+    every deal (turn 1: before the setups): a row (game, turn, board, the cards each side kept,
+    the pool, how many each side drew and where they lie) and the state."""
+    out: List[Tuple[Dict[str, Any], ts.GameState]] = []
+
+    def snap(g: int, before: Optional[ts.GameState], st: ts.GameState) -> None:
+        row: Dict[str, Any] = {"game": g, "turn": int(st.turn), "vp": int(st.victory_points), "defcon": int(st.defcon)}
+        pool = [c for c in range(1, 111) if st.get_card_location(c) == ts.CardLocation.DRAW_DECK]
+        for side, key in ((ts.Player.USSR, "ussr"), (ts.Player.US, "us")):
+            now = hand(st, side)
+            kept = set(hand(before, side)) if before is not None else set()
+            drawn = [c for c in now if c not in kept]
+            pool += drawn
+            row.update({f"kept_{key}": [c for c in now if c in kept], f"n_{key}": len(drawn),
+                        f"loc_{key}": int(st.get_card_location(drawn[0])) if drawn else 0})
+        row["pool"] = sorted(pool)
+        out.append((row, st.clone()))
+
+    states = []
+    for g in games:
+        st = dealt(world_deal(seed, g))
+        snap(g, None, st)
+        states.append(st)
+    live = list(range(len(states)))
+    for _ in range(10000):
+        live = [k for k in live if not ts.Engine.is_terminal(states[k])]
+        if not live:
+            return out
+        obs = np.stack([ts.extract_observation_features(states[k], decider(states[k]), feats) for k in live])
+        masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(states[k])) for k in live])
+        acts = np.asarray(logits_fn(obs, masks)).argmax(axis=1)
+        for k, a in zip(live, acts):
+            before = states[k]
+            states[k] = apply_move(before, int(a))
+            st = states[k]
+            if st.turn > before.turn and not ts.Engine.is_terminal(st):
+                snap(games[k], before, st)
+    raise RuntimeError(f"{len(live)} games unfinished after 10000 decisions")
+
+
+def draws(model: str, worlds: int, part: str, seed: int, redeals: int, chunk: int, out: str) -> int:
+    """This part's games (`worlds` of them in all), every snapshot redealt `redeals` ways and
+    played to the end; per snapshot the US score of each redeal (`s`, 0/1/2 for loss/draw/win)."""
+    k, n = (int(x) for x in part.split("/"))
+    logits_fn, feats = load_policy(model)
+
+    def act(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
+        return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
+
+    t0 = time.time()
+    mine = [w for w in range(worlds) if w % n == k - 1]
+    step = max(1, chunk // redeals)
+    res: List[Dict[str, Any]] = []
+    for lo in range(0, len(mine), step):
+        snaps = draw_snapshots(mine[lo:lo + step], seed, logits_fn, feats)
+        starts: List[ts.GameState] = []
+        for row, st in snaps:
+            starts += [redeal_start(row, st, seed, j) for j in range(redeals)]
+        scores: List[float] = []
+        for b in range(0, len(starts), chunk):
+            part_starts = starts[b:b + chunk]
+            scores += play_safe(part_starts, [ts.Player.US] * len(part_starts), [NO_KEY] * len(part_starts), act, seed)
+        for i, (row, _) in enumerate(snaps):
+            row["s"] = "".join(str(round(2 * x)) for x in scores[i * redeals:(i + 1) * redeals])
+            res.append(row)
+        print(f"[{min(lo + step, len(mine))}/{len(mine)} games] {len(res)} snapshots, {time.time() - t0:.0f}s",
+              file=sys.stderr, flush=True)
+    write_jsonl(out, res)
+    with open(out + ".meta.json", "w") as f:
+        json.dump({"schema": 1, "stage": "draws", "model": os.path.basename(model),
+                   "model_sha256": sha256_file(model), "redeals": redeals, "deal": RANDOM, "swaps": [],
+                   "hands": None, "ussr": [], "us": [], "net": None, "worlds": worlds, "part": part,
+                   "seed": seed, "rows": len(res), "wall_s": round(time.time() - t0, 1)}, f, indent=1)
+    print(f"{len(res)} snapshots, {len(res) * redeals} games in {time.time() - t0:.0f}s", file=sys.stderr)
+    return 0
+
+
 def pool(parts: Sequence[str], out: str, expect: int = 0) -> int:
     """Merge the parts (`matrix-<k>.jsonl.gz`, each with its `.meta.json`); with `expect`, name
     the parts that are missing in `<out>.parts.json`."""
@@ -1080,6 +1188,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     f1.add_argument("--holder", choices=("us", "ussr"), default="us", help="... and the side it was dealt to")
     f1.add_argument("--arms", nargs="+", choices=AR1_ARMS, default=list(AR1_ARMS))
     f1.add_argument("--out", required=True)
+    w = sub.add_parser("draws")
+    w.add_argument("--model", required=True, help="a .pt checkpoint or its .onnx export")
+    w.add_argument("--worlds", type=int, default=24000, help="games, each snapshotted after every deal")
+    w.add_argument("--part", default="1/1")
+    w.add_argument("--seed", type=int, default=0)
+    w.add_argument("--redeals", type=int, default=16, help="redeals of each snapshot's drawn cards")
+    w.add_argument("--chunk", type=int, default=1536, help="games per playout batch")
+    w.add_argument("--out", required=True)
     q = sub.add_parser("pool")
     q.add_argument("--parts", nargs="+", required=True)
     q.add_argument("--expect", type=int, default=0)
@@ -1100,6 +1216,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                      a.holder, a.turns)
     if a.cmd == "ar1":
         return ar1(a.model, a.worlds, a.part, a.seed, a.chunk, a.out, a.ussr, a.us, a.card, a.holder, a.arms)
+    if a.cmd == "draws":
+        return draws(a.model, a.worlds, a.part, a.seed, a.redeals, a.chunk, a.out)
     if a.cmd == "pool":
         return pool(a.parts, a.out, a.expect)
     return report(a.input, a.out, a.bootstrap)

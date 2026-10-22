@@ -285,3 +285,44 @@ def test_ar1_forces_the_first_action_round_and_leaves_the_net_arm_to_the_network
             assert pol in [m[4] for m in first[2:]]
     assert any(coups)
     assert json.load(open(out + ".meta.json"))["arms"] == list(sdm.AR1_ARMS)
+
+
+def test_draws_snapshot_every_deal_and_redeal_only_the_drawn_cards(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(sdm, "load_policy", lambda path: (_first_legal, 0))
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"not a model")
+    out = str(tmp_path / "draws.jsonl.gz")
+    sdm.draws(str(model), 4, "1/1", 0, 3, 8, out)
+    rows = list(read_jsonl([out]))
+    assert {r["game"] for r in rows} == {0, 1, 2, 3}
+    for g in range(4):
+        turns = [r["turn"] for r in rows if r["game"] == g]
+        assert turns == list(range(1, len(turns) + 1)) and len(turns) >= 2
+    snaps = sdm.draw_snapshots([1], 0, _first_legal, 0)
+    assert [r["turn"] for r, _ in snaps] == [r["turn"] for r in rows if r["game"] == 1]
+    for row, st in snaps:
+        size = 8 if row["turn"] <= 3 else 9
+        for side, key in ((ts.Player.USSR, "ussr"), (ts.Player.US, "us")):
+            assert len(row[f"kept_{key}"]) + row[f"n_{key}"] == len(sdm.hand(st, side))
+            assert len(sdm.hand(st, side)) == size or not [c for c in range(1, 111) if st.get_card_location(c) == ts.CardLocation.DRAW_DECK]
+        if row["turn"] == 1:
+            assert row["kept_ussr"] == row["kept_us"] == [] and row["n_ussr"] == row["n_us"] == 8
+        deck = [c for c in range(1, 111) if st.get_card_location(c) == ts.CardLocation.DRAW_DECK]
+        assert len(row["pool"]) == len(deck) + row["n_ussr"] + row["n_us"]
+        u, a = sdm.redeal(row["pool"], row["n_ussr"], row["n_us"], 0, 1, row["turn"], 2)
+        assert len(u) == row["n_ussr"] and len(a) == row["n_us"] and not set(u) & set(a)
+        assert set(u) | set(a) <= set(row["pool"]) and not (set(u) | set(a)) & set(row["kept_ussr"] + row["kept_us"])
+        assert (u, a) == sdm.redeal(row["pool"], row["n_ussr"], row["n_us"], 0, 1, row["turn"], 2)
+        s = sdm.redeal_start(row, st, 0, 2)
+        assert sorted(sdm.hand(s, ts.Player.USSR)) == sorted(row["kept_ussr"] + u)
+        assert sorted(sdm.hand(s, ts.Player.US)) == sorted(row["kept_us"] + a)
+        assert sorted(c for c in range(1, 111) if s.get_card_location(c) == ts.CardLocation.DRAW_DECK) == \
+            sorted(set(row["pool"]) - set(u) - set(a))
+        moved = {c for c in range(1, 111) if s.get_card_location(c) != st.get_card_location(c)}
+        assert moved <= set(row["pool"])
+    assert any(r["turn"] >= 4 for r, _ in snaps)  # the Mid War deal is in the pool
+    later = [r for r, _ in snaps if r["turn"] >= 4][0]
+    assert any(ts.CardData.get_card_info(c)["era"] == 1 for c in later["pool"])
+    assert all(len(r["s"]) == 3 and set(r["s"]) <= set("012") for r in rows)
+    meta = json.load(open(out + ".meta.json"))
+    assert meta["stage"] == "draws" and meta["redeals"] == 3
