@@ -651,6 +651,33 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A25": {
+   "description": "A22 with a LayerNorm on the trunk output after its residual blocks and no residual dropout (--ladder-trunk-norm --ladder-res-dropout 0; owner, 2026-10-23): A22's pre-LN blocks let the trunk output grow unbounded (RMS 28.9 by 400M, A8 0.37) and the play-mode, Ops-mode and branch heads, which read it raw, reached logit spreads of thousands",
+   "first": "E8-A25-R1-S44_20261023_001525",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 768,
+    "ladder_res_blocks": 4,
+    "ladder_res_dropout": 0.0,
+    "ladder_trunk_norm": true,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1857,7 +1884,9 @@
   "E8-A22-R82-S44_20261022_180726": "E8-A22-R82-S44",
   "E8-A22-R83-S44_20261022_180849": "E8-A22-R83-S44",
   "E8-A34-R1-S44_20261022_222828": "E8-A34-R1-S44",
-  "E8-A34-R47-S44_20261022_222856": "E8-A34-R47-S44"
+  "E8-A34-R47-S44_20261022_222856": "E8-A34-R47-S44",
+  "E8-A25-R1-S44_20261023_001525": "E8-A25-R1-S44",
+  "E8-A25-R47-S44_20261023_001540": "E8-A25-R47-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
