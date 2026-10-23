@@ -137,3 +137,29 @@ differs from the network's own argmax on which the fitted policy now picks the t
   what **last-layer resets** (Nikishin et al.: re-initialise the heads, keep the trunk, re-warm) target directly; it is
   promoted from conditional to first. **Shrink-and-perturb** and **L2-init** act on the measured weight-norm growth;
   **ReDo** has something to act on in the head (13.5%) though little in the trunk, so if run it is aimed at the heads.
+
+## `P37a` on the E8 recipe search (2026-10-23): the scaled network's trunk loses rank
+
+`/workspace/data/reports/p37a_e8_2400M.json`; the same probe (20,000 of P36c's positions, trunk frozen, Adam 1e-3, batch
+512, cap 40) on 80M-window SWAs: the E8 scaled network `E8-A25-R47-S44` (A25: A22 with the trunk norm, 16k minibatch)
+and the E8 control `E8-A8-R1-S44-2` at 2,400M, beside the E7 heads run at 2,000M and 6,400M.
+
+| network | random labels, own head | random labels, fresh head | P36c targets, own head (departures) | head dormant τ 0.1 | head norm / fresh (`policy_head`, `play_mode_head_net`) |
+|:---|---:|---:|---:|---:|:---|
+| E7 heads run, 2,000M | 47.2% | 98.4% | 74.6% (59.2%) | 3.8% | 9.2x, 21.3x |
+| E8 control, 2,400M | 44.3% | 98.7% | 71.1% (53.9%) | 4.7% | 10.0x, 22.7x |
+| E7 heads run, 6,400M | 34.6% | 98.2% | 67.4% (46.0%) | 5.7% | 15.5x, 29.9x |
+| A13+R48 plateau (P37a) | 33.3% | 98.9% | 74.0% (44.9%) | 13.5% | 20x, 38x |
+| **E8 scaled, 2,400M** | **37.3%** | **59.6%** (71.7% at 80 epochs) | **59.8% (40.3%)** | 7.8% | 7.3x, 16.0x |
+
+* **A8's head loses plasticity gradually** along the heads line (own-head random-label fit 47 → 44 → 35 → 33%), its
+  trunk does not (a fresh head fits its features at 98% throughout).
+* **The scaled network's trunk loses it too.** A fresh head on its frozen 2,400M trunk fits random labels at 71.7% after
+  80 epochs, where a fresh, untrained trunk of its shape reaches 88.1% (68 epochs) and a fresh A8 trunk 93.5% (39) --
+  A8's trained trunk improves on its fresh self (98.7%), the scaled one falls below it.
+* **The mechanism: the residual stream still grows, in a few dimensions, and the norm compresses the rest.** Before
+  the trunk norm its RMS is 1.3 / 8.2 / 25 / 37 at 0 / 400 / 1,600 / 2,400M, with its largest dimension 46x the median
+  one; after the norm the features' effective rank (exp of the singular values' entropy, 4,096 positions) falls 64 →
+  24 → 21 → 22 of 768 (top-10 components 51 → 70% of the variance), where A8's rises 51 → 94 of 480 (6,400M: 95). The
+  trunk norm stopped the logit blow-up, not the growth: the heads read a 768-wide vector with ~22 effective dimensions,
+  a quarter of A8's ~94, so the extra capacity is not used.
