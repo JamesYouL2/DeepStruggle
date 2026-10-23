@@ -12,6 +12,13 @@ from tools.lib import ts_replayer_hands as solver
 from tools.lib.corpus_paths import corpus_path
 
 
+def test_empty_download_needs_no_hand_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(solver, "HAVE_Z3", False)
+    conv = converter.convert_game({"replay_id": 214, "all_turns": []})
+    assert not conv.samples and conv.failure is None and not conv.game_ended
+    assert conv.entries_converted == 0 and not conv.hands_solved
+
+
 @pytest.mark.parametrize("mode", ["unsolved", "missing-dependency", "missing-turn"])
 @pytest.mark.parametrize("fragment", [False, True])
 def test_hand_solver_failure_emits_nothing(monkeypatch: pytest.MonkeyPatch, mode: str, fragment: bool) -> None:

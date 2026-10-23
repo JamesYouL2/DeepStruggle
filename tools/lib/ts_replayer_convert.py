@@ -3661,6 +3661,8 @@ def convert_game(game: Dict, on_decision: Optional[Callable] = None,
     """
     conv = Conversion(replay_id=int(game.get("replay_id", -1)))
     raws = game.get("all_turns", [])
+    if not raws:
+        return conv  # An empty download has no decisions or hands to reconstruct.
     hands = game.get("hands", {}) or {}
 
     handicap = unsupported_handicap(raws)
