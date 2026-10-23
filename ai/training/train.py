@@ -111,6 +111,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         num_res_blocks=int(args.ladder_res_blocks),
         # Recorded only off its historical 0.05, so the configs of earlier runs stay comparable.
         **({"res_dropout": float(args.ladder_res_dropout)} if float(args.ladder_res_dropout) != 0.05 else {}),
+        # Recorded only when on, so the configs of earlier runs stay comparable.
+        **({"trunk_norm": True} if args.ladder_trunk_norm else {}),
         num_attn_heads=4,
         card_lookup=bool(args.ladder_card_lookup),
         # Inert when the lookup is off, and LadderNet never reads them in that case.
@@ -190,6 +192,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Dropout inside each residual block. 0.05 is the historical default; use 0 for RL: the "
                           "rollouts act in eval mode and the update in train mode, so dropout makes the update's "
                           "log-probabilities and KL those of a policy that never played (2026-10-22).")
+    lad.add_argument("--ladder-trunk-norm", action="store_true",
+                     help="A LayerNorm on the trunk output after the residual blocks, so the heads read a "
+                          "bounded input. Without it the pre-LN blocks' sum grows unbounded (A22: RMS 28.9 by "
+                          "400M, A8 0.37) and the play-mode, Ops-mode and branch heads' logits reach spreads "
+                          "of thousands (2026-10-23). Needs --ladder-res-blocks > 0.")
     lad.add_argument("--ladder-head-context", dest="ladder_head_context",
                      action="store_true", default=None,
                      help="Feed pe_trunk(h) into the per-entity head. The only path from the "

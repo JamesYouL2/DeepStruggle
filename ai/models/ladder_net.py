@@ -191,6 +191,7 @@ class LadderNet(ColdWarNetV2):
                  obs_features: int = 0,
                  logit_cap: float = 0.0,
                  res_dropout: float = 0.05,
+                 trunk_norm: bool = False,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
                  logit_cap_leak_up: float = 0.0,
@@ -505,6 +506,18 @@ class LadderNet(ColdWarNetV2):
         # the good moves together. Monotonic, so the greedy move is unchanged. A buffer only when
         # on, so uncapped checkpoints are unchanged.
         self.logit_cap_value = float(logit_cap)
+        # --ladder-trunk-norm (owner, 2026-10-23): a LayerNorm on the trunk output, after the residual
+        # blocks. The blocks are pre-LN, so each adds an unnormalised increment to the stream and
+        # nothing bounds the sum; the play-mode, Ops-mode and branch heads read it raw. In A22 (four
+        # blocks) its RMS grew 1.3 -> 4.4 -> 28.9 at 0 / 40 / 400M (A8, whose trunk ends in the
+        # fusion's LayerNorm, 0.37) and those heads' logits reached spreads of 1,000-15,000: the
+        # decisions turned deterministic, stopped learning, and a flip cost a KL of thousands
+        # (research/runs.md, E8-A34-R1-S44). A module only when on, so every earlier checkpoint is
+        # unchanged; it initialises to the identity affine and draws no random numbers.
+        if trunk_norm and num_res_blocks == 0:
+            raise ValueError("trunk_norm normalises the residual blocks' output; with none the trunk "
+                             "already ends in the fusion's LayerNorm")
+        self.trunk_norm: nn.LayerNorm | None = nn.LayerNorm(hidden_dim) if trunk_norm else None
         # How the gradient passes the cap. "tanh": through it -- d/dz of c*tanh(d/c) is
         # 1 - tanh^2(d/c), ~0.0013 at a 28-nat deficit, so a saturated move's raw logit learns
         # ~750x slower than its capped probability says, and moving the top logit moves every
@@ -747,6 +760,7 @@ class LadderNet(ColdWarNetV2):
             **({"logit_cap": self.logit_cap_value} if self.logit_cap_value > 0.0 else {}),
             # Recorded only off its historical 0.05, so every earlier config is unchanged.
             **({"res_dropout": self.res_dropout} if self.res_dropout != 0.05 else {}),
+            **({"trunk_norm": True} if self.trunk_norm is not None else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
@@ -927,6 +941,8 @@ class LadderNet(ColdWarNetV2):
 
         for block in self.res_blocks:
             h = block(h)
+        if self.trunk_norm is not None:
+            h = self.trunk_norm(h)
         return h, attn_weights, tokens
 
     def extract_features(self, obs: torch.Tensor, return_attn_weights: bool = False):
@@ -1088,6 +1104,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         play_mode_head=any(k.startswith("play_mode_head_net.") for k in sd),
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
         **({"logit_cap": float(sd["logit_cap"])} if "logit_cap" in sd else {}),
+        **({"trunk_norm": True} if "trunk_norm.weight" in sd else {}),
         **({"region_attn_dim": int(sd["region_attn.qkv.weight"].shape[0]) // 3,
             "region_attn_heads": int(sd["region_attn.n_heads"])} if "region_attn.qkv.weight" in sd else {}),
     )

@@ -294,7 +294,8 @@ class ColdWarNetV2(nn.Module):
         # Dropout inside each residual block. 0.05 is the historical default, kept so every checkpoint means
         # what it meant; an RL run wants 0: the rollouts act in eval mode and the PPO update runs in train
         # mode, so with dropout the update's log-probabilities and KL are those of a noised policy that never
-        # played (the scaled network's failure, 2026-10-22).
+        # played. Small in practice (KL 0.003 between the two modes on A22) -- not the scaled network's
+        # failure, which was its unnormalised trunk output (LadderNet's trunk_norm).
         self.res_blocks = nn.ModuleList([ResBlock(hidden_dim, dropout=res_dropout) for _ in range(num_res_blocks)])
 
         # End-of-trunk attention read-out. The board branch pools across all 84 countries before
