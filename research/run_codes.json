@@ -678,6 +678,31 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A26": {
+   "description": "Width without depth (owner, 2026-10-23): A13's 512 grouped projections with the fusion at 768 (A8: 256 / 480), no residual blocks, so the fusion's LayerNorm bounds the trunk as in A8 -- the first step toward bigger networks after the residual-block trunk lost rank (A25; research/method/network_stability.md)",
+   "first": "E8-A26-R1-S44_20261023_210114",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 768,
+    "ladder_res_blocks": 0,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1887,7 +1912,8 @@
   "E8-A34-R47-S44_20261022_222856": "E8-A34-R47-S44",
   "E8-A25-R1-S44_20261023_001525": "E8-A25-R1-S44",
   "E8-A25-R47-S44_20261023_001540": "E8-A25-R47-S44",
-  "E8-A8-R1-S44-2_20261023_032854": "E8-A8-R1-S44-2"
+  "E8-A8-R1-S44-2_20261023_032854": "E8-A8-R1-S44-2",
+  "E8-A26-R1-S44_20261023_210114": "E8-A26-R1-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

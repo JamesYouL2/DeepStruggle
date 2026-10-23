@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 1000" width="1240" height="1000" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#202124">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5f6368"/>
+    </marker>
+    <style>
+      .box { stroke: #5f6368; stroke-width: 1; rx: 8; }
+      .in { fill: #e8f0fe; }
+      .enc { fill: #e6f4ea; }
+      .fus { fill: #fef7e0; }
+      .head { fill: #fce8e6; }
+      .val { fill: #f3e8fd; }
+      .out { fill: #f1f3f4; }
+      .t { font-weight: bold; font-size: 13px; }
+      .s { fill: #5f6368; font-size: 11px; }
+      .a { stroke: #5f6368; stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
+      .d { stroke: #9aa0a6; stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+      .l { stroke: #5f6368; stroke-width: 1.3; fill: none; }
+    </style>
+  </defs>
+  <rect width="1240" height="1000" fill="#ffffff"/>
+
+  <text x="620" y="30" text-anchor="middle" font-size="18" font-weight="bold">A8 — LadderNet as trained in E7-A8-R1-S44 and E8-A8-R1-S44-2 (1.48M parameters)</text>
+  <text x="620" y="52" text-anchor="middle" class="s">observation v2.3: 3,824 floats (board 84×26, cards 110×14, global 100); since E8 the headline_reveal bit edits the base card rows, no extra width</text>
+
+  <!-- inputs -->
+  <rect class="box in" x="40" y="70" width="360" height="60"/>
+  <text x="220" y="93" text-anchor="middle" class="t">Board: 84 countries × 26 features</text>
+  <text x="220" y="114" text-anchor="middle">static slots dropped → 84 × 15 = 1,260</text>
+  <rect class="box in" x="440" y="70" width="360" height="60"/>
+  <text x="620" y="93" text-anchor="middle" class="t">Cards: 110 × 14 features</text>
+  <text x="620" y="114" text-anchor="middle">static slots dropped → 110 × 10 = 1,100</text>
+  <rect class="box in" x="840" y="70" width="360" height="60"/>
+  <text x="1020" y="93" text-anchor="middle" class="t">Global: 100</text>
+  <text x="1020" y="114" text-anchor="middle">turn, action round, DEFCON, VP, space race, …</text>
+
+  <!-- encoders -->
+  <line class="a" x1="220" y1="130" x2="220" y2="178"/>
+  <line class="a" x1="620" y1="130" x2="620" y2="178"/>
+  <line class="a" x1="1020" y1="130" x2="1020" y2="178"/>
+  <rect class="box enc" x="40" y="180" width="360" height="60"/>
+  <text x="220" y="203" text-anchor="middle" class="t">Linear 1,260→256 · LayerNorm · GELU</text>
+  <text x="220" y="224" text-anchor="middle" class="s">lad_board · 323k params (the whole board, flattened)</text>
+  <rect class="box enc" x="440" y="180" width="360" height="60"/>
+  <text x="620" y="203" text-anchor="middle" class="t">Linear 1,100→256 · LayerNorm · GELU</text>
+  <text x="620" y="224" text-anchor="middle" class="s">lad_card · 282k params (all cards, flattened)</text>
+  <rect class="box enc" x="840" y="180" width="360" height="60"/>
+  <text x="1020" y="203" text-anchor="middle" class="t">Linear 100→128 · LayerNorm · GELU</text>
+  <text x="1020" y="224" text-anchor="middle" class="s">global_proj · 13k params</text>
+
+  <!-- concat and fusion -->
+  <line class="a" x1="220" y1="240" x2="450" y2="288"/>
+  <line class="a" x1="620" y1="240" x2="590" y2="288"/>
+  <line class="a" x1="1020" y1="240" x2="760" y2="288"/>
+  <rect class="box out" x="380" y="290" width="420" height="40"/>
+  <text x="590" y="315" text-anchor="middle">concatenate: 256 + 256 + 128 = 640</text>
+  <line class="a" x1="590" y1="330" x2="590" y2="368"/>
+  <rect class="box fus" x="380" y="370" width="420" height="60"/>
+  <text x="590" y="393" text-anchor="middle" class="t">Linear 640→480 · LayerNorm · GELU</text>
+  <text x="590" y="414" text-anchor="middle" class="s">fusion_in · 309k — the trunk output h (480); no residual blocks</text>
+
+  <!-- bus to the heads -->
+  <line class="l" x1="590" y1="430" x2="590" y2="462"/>
+  <line class="l" x1="135" y1="462" x2="1115" y2="462"/>
+  <line class="a" x1="135" y1="462" x2="135" y2="498"/>
+  <line class="a" x1="420" y1="462" x2="420" y2="498"/>
+  <line class="a" x1="640" y1="462" x2="640" y2="498"/>
+  <line class="a" x1="860" y1="462" x2="860" y2="498"/>
+  <line class="a" x1="1115" y1="462" x2="1115" y2="498"/>
+  <text x="600" y="455" class="s">h (480) to every head</text>
+
+  <!-- side inputs to heads -->
+  <path class="d" d="M40,112 L14,112 L14,484 L330,484 L330,498"/>
+  <text x="146" y="478" class="s">26 features per country</text>
+  <path class="d" d="M800,112 L820,112 L820,488 L700,488 L700,498"/>
+  <path class="d" d="M820,488 L920,488 L920,498"/>
+  <text x="826" y="300" class="s" transform="rotate(90 826 300)">active card (110 one-hot)</text>
+
+  <!-- heads -->
+  <rect class="box head" x="20" y="500" width="230" height="180"/>
+  <text x="135" y="522" text-anchor="middle" class="t">policy_head (base)</text>
+  <text x="135" y="546" text-anchor="middle">Linear 480→256</text>
+  <text x="135" y="564" text-anchor="middle">LayerNorm · GELU</text>
+  <text x="135" y="582" text-anchor="middle">Linear 256→220</text>
+  <text x="135" y="606" text-anchor="middle" class="s">180k params</text>
+  <text x="135" y="660" text-anchor="middle" class="t">220 base logits</text>
+
+  <rect class="box head" x="265" y="500" width="270" height="180"/>
+  <text x="400" y="522" text-anchor="middle" class="t">per-country head (64, centred)</text>
+  <text x="400" y="546" text-anchor="middle">context: Linear 480→64 (pe_trunk)</text>
+  <text x="400" y="564" text-anchor="middle">each country: [26 features, context]</text>
+  <text x="400" y="582" text-anchor="middle">→ Linear 90→64 · GELU</text>
+  <text x="400" y="600" text-anchor="middle">centred across the 84 countries</text>
+  <text x="400" y="618" text-anchor="middle">→ Linear 64→1 (shared by all 84)</text>
+  <text x="400" y="638" text-anchor="middle" class="s">37k params</text>
+  <text x="400" y="664" text-anchor="middle" class="t">+84 logits at slots 116–199</text>
+
+  <rect class="box head" x="550" y="500" width="215" height="180"/>
+  <text x="657" y="522" text-anchor="middle" class="t">play-mode head</text>
+  <text x="657" y="546" text-anchor="middle">[h, active card] = 590</text>
+  <text x="657" y="564" text-anchor="middle">Linear 590→128 · GELU</text>
+  <text x="657" y="582" text-anchor="middle">Linear 128→5</text>
+  <text x="657" y="600" text-anchor="middle" class="s">last layer zero-initialised</text>
+  <text x="657" y="618" text-anchor="middle" class="s">76k params</text>
+  <text x="657" y="664" text-anchor="middle" class="t">+5 logits at 110–114</text>
+
+  <rect class="box head" x="780" y="500" width="215" height="180"/>
+  <text x="887" y="522" text-anchor="middle" class="t">branch head</text>
+  <text x="887" y="546" text-anchor="middle">[h, active card] = 590</text>
+  <text x="887" y="564" text-anchor="middle">Linear 590→128 · GELU</text>
+  <text x="887" y="582" text-anchor="middle">Linear 128→20</text>
+  <text x="887" y="600" text-anchor="middle" class="s">last layer zero-initialised</text>
+  <text x="887" y="618" text-anchor="middle" class="s">78k params</text>
+  <text x="887" y="664" text-anchor="middle" class="t">+20 logits at 200–219</text>
+
+  <rect class="box val" x="1010" y="500" width="210" height="180"/>
+  <text x="1115" y="522" text-anchor="middle" class="t">value heads</text>
+  <text x="1115" y="546" text-anchor="middle">val_win: Linear 480→128</text>
+  <text x="1115" y="564" text-anchor="middle">LayerNorm · GELU → 1 · tanh</text>
+  <text x="1115" y="582" text-anchor="middle">val_vp: the same, no tanh</text>
+  <text x="1115" y="600" text-anchor="middle">defcon_risk: the same (aux)</text>
+  <text x="1115" y="618" text-anchor="middle" class="s">62k params each</text>
+  <text x="1115" y="664" text-anchor="middle" class="t">critic: v_win, v_vp</text>
+
+  <!-- outputs -->
+  <line class="a" x1="135" y1="680" x2="135" y2="738"/>
+  <line class="a" x1="400" y1="680" x2="400" y2="738"/>
+  <line class="a" x1="657" y1="680" x2="657" y2="738"/>
+  <line class="a" x1="887" y1="680" x2="887" y2="738"/>
+  <line class="a" x1="1115" y1="680" x2="1115" y2="738"/>
+  <rect class="box out" x="20" y="740" width="975" height="56"/>
+  <text x="507" y="763" text-anchor="middle" class="t">Σ  220 logits = base + per-country + play-mode + branch corrections</text>
+  <text x="507" y="783" text-anchor="middle">illegal actions masked to −1e9 → softmax → π(a | s), one decision at a time</text>
+  <rect class="box out" x="1010" y="740" width="210" height="56"/>
+  <text x="1115" y="763" text-anchor="middle" class="t">v_win in (−1, 1), v_vp</text>
+  <text x="1115" y="783" text-anchor="middle">zero-sum GAE targets</text>
+
+  <!-- legend -->
+  <rect x="20" y="820" width="1200" height="74" fill="#f8f9fa" stroke="#dadce0" rx="8"/>
+  <text x="36" y="842" class="t">The flat action space (220 slots)</text>
+  <text x="36" y="862">0–109 play card · 110–114 play mode (event, space race, Ops → influence / coup / realign; 112–114 are also the deferred Ops-mode choice) · 115 die roll</text>
+  <text x="36" y="881">116–199 a country (influence point, coup or realignment target) · 200–207 event branches · 208 confirm done · 209–213 set DEFCON to V · 214–219 a region</text>
+
+  <!-- notes -->
+  <text x="20" y="922" class="t">Where the scale is bounded</text>
+  <text x="20" y="942">Every trunk layer ends in a LayerNorm, so h is bounded (RMS ~0.3) and its effective rank grows with training (51 fresh → ~94–130 at 2,400M).</text>
+  <text x="20" y="960">The per-country, play-mode and branch heads have no LayerNorm of their own: they rely on h being bounded. Residual blocks after the fusion</text>
+  <text x="20" y="978">(A21/A22) broke exactly that — the logits of these heads reached spreads of thousands (research/runs.md, P37 plan).</text>
+</svg>
