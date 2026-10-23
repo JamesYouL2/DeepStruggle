@@ -192,6 +192,7 @@ class LadderNet(ColdWarNetV2):
                  logit_cap: float = 0.0,
                  res_dropout: float = 0.05,
                  trunk_norm: bool = False,
+                 res_post_norm: bool = False,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
                  logit_cap_leak_up: float = 0.0,
@@ -254,7 +255,11 @@ class LadderNet(ColdWarNetV2):
                     "are how it knows what kind of entity it is looking at.")
 
         self.res_dropout = float(res_dropout)
+        if res_post_norm and num_res_blocks == 0:
+            raise ValueError("res_post_norm normalises each residual block's output; there are none")
+        self.res_post_norm = bool(res_post_norm)
         super().__init__(hidden_dim=hidden_dim, num_res_blocks=num_res_blocks, res_dropout=float(res_dropout),
+                         res_post_norm=bool(res_post_norm),
                          num_attn_heads=num_attn_heads, categorical_value=categorical_value,
                          # Built for a raw-token head too: there the identity vector is the
                          # head's only way to tell two same-typed entities apart.
@@ -761,6 +766,7 @@ class LadderNet(ColdWarNetV2):
             # Recorded only off its historical 0.05, so every earlier config is unchanged.
             **({"res_dropout": self.res_dropout} if self.res_dropout != 0.05 else {}),
             **({"trunk_norm": True} if self.trunk_norm is not None else {}),
+            **({"res_post_norm": True} if self.res_post_norm else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
@@ -1105,6 +1111,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         obs_features=int(sd["obs_features"]) if "obs_features" in sd else 0,
         **({"logit_cap": float(sd["logit_cap"])} if "logit_cap" in sd else {}),
         **({"trunk_norm": True} if "trunk_norm.weight" in sd else {}),
+        **({"res_post_norm": True} if "res_blocks.0.ln_post.weight" in sd else {}),
         **({"region_attn_dim": int(sd["region_attn.qkv.weight"].shape[0]) // 3,
             "region_attn_heads": int(sd["region_attn.n_heads"])} if "region_attn.qkv.weight" in sd else {}),
     )

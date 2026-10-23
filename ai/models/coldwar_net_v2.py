@@ -75,19 +75,24 @@ class GraphConvLayer(nn.Module):
 class ResBlock(nn.Module):
     """Pre-LN Residual MLP Block."""
 
-    def __init__(self, dim: int, dropout: float = 0.05):
+    def __init__(self, dim: int, dropout: float = 0.05, post_norm: bool = False):
         super().__init__()
         self.ln1 = nn.LayerNorm(dim)
         self.fc1 = nn.Linear(dim, dim)
         self.ln2 = nn.LayerNorm(dim)
         self.fc2 = nn.Linear(dim, dim)
         self.dropout = nn.Dropout(dropout)
+        # post_norm: a LayerNorm after the residual add, so the stream is renormalised at every block and cannot
+        # grow. Pre-LN alone bounds each block's input, not the sum it adds to (A25's stream: RMS 37 by 2,400M,
+        # its features' effective rank down to ~22 of 768). A module only when on; it draws no random numbers.
+        self.ln_post: nn.LayerNorm | None = nn.LayerNorm(dim) if post_norm else None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = F.gelu(self.fc1(self.ln1(x)))
         h = self.dropout(h)
         h = self.fc2(self.ln2(h))
-        return x + h
+        out = x + h
+        return self.ln_post(out) if self.ln_post is not None else out
 
 
 class ColdWarNetV2(nn.Module):
@@ -160,7 +165,7 @@ class ColdWarNetV2(nn.Module):
     country_identity: nn.Embedding | None
 
     def __init__(self, hidden_dim: int = 512, num_res_blocks: int = 4, num_attn_heads: int = 4,
-                 res_dropout: float = 0.05,
+                 res_dropout: float = 0.05, res_post_norm: bool = False,
                  card_features: int = CARD_FEATURES, use_history: bool = False,
                  global_features: int = GLOBAL_SIZE, has_tail: bool = False,
                  board_features: int = BOARD_FEATURES,
@@ -296,7 +301,8 @@ class ColdWarNetV2(nn.Module):
         # mode, so with dropout the update's log-probabilities and KL are those of a noised policy that never
         # played. Small in practice (KL 0.003 between the two modes on A22) -- not the scaled network's
         # failure, which was its unnormalised trunk output (LadderNet's trunk_norm).
-        self.res_blocks = nn.ModuleList([ResBlock(hidden_dim, dropout=res_dropout) for _ in range(num_res_blocks)])
+        self.res_blocks = nn.ModuleList([ResBlock(hidden_dim, dropout=res_dropout, post_norm=res_post_norm)
+                                         for _ in range(num_res_blocks)])
 
         # End-of-trunk attention read-out. The board branch pools across all 84 countries before
         # the trunk is formed, and that pooling is lossy: a linear probe recovers a country's

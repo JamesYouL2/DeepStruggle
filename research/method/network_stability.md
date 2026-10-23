@@ -84,5 +84,7 @@ beside the control's at matched steps, and one head-to-head with the control onc
   checkpoint's weights do not record its dropout, so a reloaded network has the historical 0.05 whatever it trained with.
 * **A residual stream must be bounded, not only its output.** `--ladder-trunk-norm` stopped A22's logit blow-up and
   left the stream growing in a few dimensions, which the norm then turned into a rank collapse (A25).
+  `--ladder-res-post-norm` (a LayerNorm after every residual add) renormalises the stream at each block; it is the
+  prepared next step on the ladder (depth on A26's width, dropout off), not yet run.
 * **Stop at the check, not at the read.** A network that fails check 1 or 2 is stopped there; strength reads only
   confirm.

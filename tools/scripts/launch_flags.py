@@ -75,6 +75,7 @@ _LADDER = {
     "branch_head": "ladder_branch_head", "play_mode_head": "ladder_play_mode_head",
     "logit_cap": "ladder_logit_cap", "logit_cap_grad": "ladder_logit_cap_grad",
     "res_dropout": "ladder_res_dropout", "trunk_norm": "ladder_trunk_norm",
+    "res_post_norm": "ladder_res_post_norm",
     "logit_cap_leak": "ladder_logit_cap_leak", "logit_cap_leak_up": "ladder_logit_cap_leak_up",
     "region_attn_dim": "ladder_region_attn_dim", "region_attn_heads": "ladder_region_attn_heads",
 }
