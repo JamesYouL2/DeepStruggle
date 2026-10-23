@@ -45,6 +45,23 @@ Measured on 4,096 positions of 16 self-play games of the first checkpoint given 
 The effective rank is the check A25 needed: its logits were bounded, its strength was level with the control's to
 1,600M, and its features had already collapsed to a quarter of A8's.
 
+**At 60M already** (`data/reports/network_health_bigger_60M.json`; 4,096 positions of A26's self-play, every
+network against its own shape freshly initialised on the same positions), the rank's growth separates every network
+that scaled from every one that did not, before the logits or the strength do:
+
+| network | head input effective rank, fresh → 60M | growth | logits, \|lse\| max / worst spread | outcome |
+|:---|:---|---:|:---|:---|
+| A8 control (no residual blocks) | 42.5 → 96.5 of 480 | 2.3x | 21 / 44 | healthy |
+| A26 (width only, no residual blocks) | 38.4 → 124.3 of 768 | 3.2x | 24 / 52 | passes so far |
+| A25 on R1 (4 blocks, trunk norm) | 49.7 → 66.6 | 1.3x | 19 / 40 | failed (3.1% at 400M) |
+| A25 on R47 (4 blocks, trunk norm) | 49.7 → 61.9 | 1.2x | 20 / 35 | rank 22 by 2,400M |
+| A34 (4 blocks, no dropout, no norm) | 49.6 → 61.4 | 1.2x | 167 / 334 | stopped |
+| A22 on R1 (4 blocks) | 49.6 → 25.7 | 0.5x | 123 / 245 | failed |
+| A22 on R70, the flagship | 49.6 → 18.7 | 0.4x | 83 / 131 | failed |
+
+**Rule: at 60M the head input's effective rank should be at least ~2x its fresh value** (the networks that train well:
+2.3–3.2x; every residual-block trunk: 0.4–1.3x).
+
 ## 3. Plasticity probe (400M and later; CPU, ~10 minutes)
 
 P37a's fits on 20,000 of P36c's positions ([`../plans/P37_known_playbook_remainder.md`](../plans/P37_known_playbook_remainder.md)):

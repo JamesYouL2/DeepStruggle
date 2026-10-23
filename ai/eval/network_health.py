@@ -6,7 +6,8 @@ Two modes, both cheap enough to run at 30-60M and again at 400M:
   KL to pi_ref's max, the entropy and the critic's explained variance -- the series that flagged A22 within 30M.
 * ``--checkpoints FILE ...`` measures the networks on positions from a few self-play games of the first one: the
   logits' level and spread by decision type, the geometry of what the heads read (RMS, largest dimension over the
-  median one, effective rank, top-10 principal components) and of the residual stream before the trunk norm, the
+  median one, effective rank, top-10 principal components; beside the same shape freshly initialised, from which the
+  rank should grow) and of the residual stream before the trunk norm, the
   policy head's weight norms against a fresh head of the same shape, and dormant units in the head and the trunk.
   (Not the train/eval gap of residual dropout: a checkpoint's weights do not record its dropout, so a loaded network
   has the historical 0.05 whatever it trained with.)
@@ -125,10 +126,15 @@ def measure(model: nn.Module, obs: torch.Tensor, masks: torch.Tensor, dtypes: Se
         hook.remove()
     torch.manual_seed(seed)
     fresh = create_like(model).eval()
+    fresh_extract = getattr(fresh, "extract_features")
+    with torch.no_grad():
+        h_fresh = fresh_extract(obs)
     fresh_norms = head_norms(fresh)
     out: Dict[str, Any] = {
         "logits": logit_stats(raw, masks, dtypes),
         "head_input": geometry(h),
+        # The same network freshly initialised, on the same positions: the effective rank should grow from here.
+        "head_input_fresh": geometry(h_fresh),
         "head_norm_over_fresh": {k: v / max(1e-12, fresh_norms.get(k, 0.0)) for k, v in head_norms(model).items()},
         "head_dormant_tau_0.1": head_dormant(model, obs, masks),
         "trunk_dormant_tau_0.1": dormant(model, obs, masks)["all"]["tau_0.1"],
@@ -207,7 +213,8 @@ def _print_checkpoints(report: Dict[str, Any]) -> None:
         print(f"  logits: |lse| max {lg['all']['lse_absmax']:.1f}, spread median {lg['all']['spread_median']:.1f}, "
               f"worst decision type's spread max {worst['spread_max']:.1f}")
         print(f"  head input: RMS {g['rms']:.2f}, max/median dim {g['max_over_median_dim_rms']:.1f}, effective rank "
-              f"{g['effective_rank']:.1f} of {g['width']:.0f}, top-10 PCs {100 * g['top10_variance']:.1f}%")
+              f"{g['effective_rank']:.1f} of {g['width']:.0f} (fresh {r['head_input_fresh']['effective_rank']:.1f}), "
+              f"top-10 PCs {100 * g['top10_variance']:.1f}%")
         if "stream_before_trunk_norm" in r:
             s = r["stream_before_trunk_norm"]
             print(f"  stream before the trunk norm: RMS {s['rms']:.2f}, max/median dim {s['max_over_median_dim_rms']:.1f}")

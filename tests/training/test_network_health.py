@@ -42,6 +42,7 @@ def test_measure_reports_the_stream_under_a_trunk_norm() -> None:
     obs, masks = torch.randn(64, 3824), torch.ones(64, 220, dtype=torch.bool)
     normed = measure(create_ladder_net("cpu", **{**CFG, "trunk_norm": True}), obs, masks, ["SELECT_CARD"] * 64)
     assert "stream_before_trunk_norm" in normed and normed["head_input"]["width"] == 64
+    assert normed["head_input_fresh"]["width"] == 64 and normed["head_input_fresh"]["effective_rank"] > 1
     plain = measure(create_ladder_net("cpu", **{**CFG, "num_res_blocks": 0}), obs, masks, ["SELECT_CARD"] * 64)
     assert "stream_before_trunk_norm" not in plain
     assert set(plain["head_norm_over_fresh"]) >= {"policy_head", "play_mode_head_net", "branch_head_net"}
