@@ -126,20 +126,25 @@ def test_supplied_positions_actually_change_the_games() -> None:
 
     a, b = _agent(13), _agent(14)
 
-    # Advance a few games well past the opening, then resume from there.
+    # Advance a few games well past the opening, then resume from the start of the last turn each
+    # reached. Not from wherever a fixed step count lands: a walk of first-legal moves ends its
+    # game within a few turns, and where it ends moves with every change to the deal or the rules.
     advanced = []
     for seed in range(4):
         st = ts.GameState()
         ts.Engine.init_game(st, 8100 + seed)
         _drain_chance_nodes(st)
+        turn_start = None
         for _ in range(220):
             if ts.Engine.is_terminal(st):
                 break
             legal = np.flatnonzero(np.asarray(ts.ActionMask.generate_flat_mask(st)))
             ts.Engine.step_flat(st, int(legal[0]) if len(legal) else 0)
             _drain_chance_nodes(st)
-        if not ts.Engine.is_terminal(st):
-            advanced.append(st.clone())
+            if not ts.Engine.is_terminal(st) and int(st.turn) > (int(turn_start.turn) if turn_start else 1):
+                turn_start = st.clone()
+        if turn_start is not None:
+            advanced.append(turn_start)
 
     assert advanced, "fixture produced no non-terminal mid-game positions"
     start_turn = min(int(s.turn) for s in advanced)

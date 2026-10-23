@@ -38,9 +38,11 @@ def mid_game_token() -> str:
     s.set_country(_country("East Germany"), 0, 3)   # USSR control (stability 3)
     s.set_country(_country("France"), 1, 1)         # influence on both sides, no control
     save = s.to_save_dict()
+    # Exactly these effects, not added to the walk's own: what the walk's game has in effect moves
+    # with every change to the deal (since ENG-5 it holds a Brezhnev Doctrine, a second chip).
     bits = ts.EffectBits
-    save["persistent_effects"] |= (int(bits.CONTAINMENT_ACTIVE) | int(bits.NATO_ACTIVE)
-                                   | int(bits.QUAGMIRE_ACTIVE) | int(bits.SPACE_US_ATTEMPT_1))
+    save["persistent_effects"] = (int(bits.CONTAINMENT_ACTIVE) | int(bits.NATO_ACTIVE)
+                                  | int(bits.QUAGMIRE_ACTIVE) | int(bits.SPACE_US_ATTEMPT_1))
     return _token(ts.state_from_save_dict(save))
 
 

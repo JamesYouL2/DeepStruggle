@@ -18,20 +18,15 @@ const golden = JSON.parse(gunzipSync(readFileSync(goldenPath)).toString("utf8"))
 //   with a "Headlines Simultaneously Revealed" pair for it; the port says what happened to the card,
 //   so for those steps the action's own lines are left out of the comparison;
 // - the port says Five Year Plan's and Terrorism's random discards on lines of their own ("  ✂ "),
-//   and Missile Envy's exchange with how the taken card resolves ("  ⇄ ");
-// - it counted the Olympic sponsor's +2 twice: the engine's roll1 then held it (roll1 = die + 2),
-//   so the golden's sponsor die, total and winning margin are each 2 too high -- corrected here
-//   (`olympicsCorrected`), the rest of the line still compared.
+//   and Missile Envy's exchange with how the taken card resolves ("  ⇄ ").
+// The golden used to be corrected for the Olympic sponsor's +2 as well: the engine's roll1 held it
+// (roll1 = die + 2) when the earlier golden was recorded, so the original counted it twice. The
+// engine now records the die alone, and the golden re-recorded on it reads the Olympics as the port.
 const comparable = (lines: string[], eventChoice: boolean) => {
   let out = lines.filter(l => !l.includes(" MilOps: ") && !l.startsWith("  • Space Race: ")
     && !l.startsWith("  ✂ ") && !l.startsWith("  ⇄ "));
   if (eventChoice) out = out.slice(1).filter(l => !l.startsWith("  ★ "));
   return out;
-};
-const olympicsCorrected = (l: string): string => {
-  if (!l.startsWith("  🎲 Olympic Games Competition: ")) return l;
-  return l.replace(/rolls (\d+) \(\+2 = (\d+)\)/, (_, die, total) => `rolls ${+die - 2} (+2 = ${+total - 2})`)
-    .replace(/wins by \+(\d+)/, (_, by) => `wins by +${+by - 2}`);
 };
 
 let steps = 0;
@@ -49,7 +44,7 @@ for (const g of golden.games) {
     const eventChoice = (action.decision_type === 1 && (ctx?.resolving_card ?? 0) !== 0 && ctx?.resolving_card !== 250)
       || action.decision_type === 6;
     const got = comparable(describeActionAndDeltas(engine, before, engine.display(), action), eventChoice);
-    const want = comparable((g.lines[i] as string[]).map(olympicsCorrected), eventChoice);
+    const want = comparable(g.lines[i] as string[], eventChoice);
     steps += 1;
     if (JSON.stringify(got) !== JSON.stringify(want)) {
       mismatches += 1;

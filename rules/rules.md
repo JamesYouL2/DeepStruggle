@@ -130,6 +130,7 @@ $$\text{defcon} \leftarrow \min(5, \text{defcon} + 1)$$
 - **Early War (Turns 1–3)**: Target hand size is $8$.
 - **Mid War (Turns 4–7)**: Target hand size is $9$. At start of Turn 4, Mid War cards (Cards 36–79) are shuffled into the draw deck.
 - **Late War (Turns 8–10)**: Target hand size is $9$. At start of Turn 8, Late War cards (Cards 80–110) are shuffled into the draw deck.
+- **Deal order**: The rules name none. The engine deals alternately, one card at a time, USSR first; a hand already at the target is skipped. The order matters only when the deck runs out partway through the deal (every Turn 3), and the human games in the ts-replayer corpus show alternation.
 - **Reshuffle Invariant**: When draw deck is exhausted, shuffle the discard pile (excluding permanently removed cards marked with asterisk `*`) to form a new draw deck. Mid/Late War cards are added to the existing draw deck without reshuffling discards until the draw deck is empty. The China Card is never counted toward hand limits.
 
 ### 4.3 Phase C: Headline Phase
