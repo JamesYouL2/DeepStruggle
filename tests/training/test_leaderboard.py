@@ -22,6 +22,7 @@ from tools.lib.player_spec import (Bot, Gumbel, Policy, PlayerSpecError, Rollout
                                    parse_player_id, player_id, spec_from_dict, spec_to_dict, workbench_search)
 from ai.search.rollout_root import rollout_spec_config
 from tools.leaderboard_play import plan_pairs
+from tools.lib.batch_tournament import _Chunking
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -128,11 +129,16 @@ def _expected(r_a: float, r_b: float, seat: float, n: int) -> Tuple[lb.Seat, lb.
     return seat_counts(r_a - r_b + seat), seat_counts(r_a - r_b - seat)
 
 
+#: A base seed whose deals no test record at seed 10000 reaches.
+FRESH = 10000 + 10 ** 6
+
+
 def _play(board: lb.Board, truth: Dict[str, float], pairs: List[Tuple[str, str]], seat: float = 40.0,
           n: int = 20000, seed: int = 10000) -> None:
     for a, b in pairs:
         us, ussr = _expected(truth[a], truth[b], seat, n)
-        lb.append_record(board, "T", lb.make_record(f"{a}@1M", f"{b}@1M", us, ussr, seed, ENGINE, BEHAVIOUR_ID, "c", "d"))
+        lb.append_record(board, "T", lb.make_record(f"{a}@1M", f"{b}@1M", us, ussr, seed, n, 1000, ENGINE,
+                                                    BEHAVIOUR_ID, "c", "d"))
 
 
 def test_the_fit_recovers_known_ratings_and_the_seat_term(tmp_path: pathlib.Path) -> None:
@@ -155,7 +161,7 @@ def test_games_without_a_main_player_never_move_the_main_ratings(tmp_path: pathl
     _play(board, truth, [("A", "B"), ("A", "C"), ("B", "C"), ("D", "A")])
     before = {r.player: r.elo for r in lb.fit_epoch(board, "T").ratings if r.main}
     truth_shifted = dict(truth, D=1800.0)       # a non-main player who now plays very differently
-    _play(board, truth_shifted, [("D", "B"), ("E", "D")], seed=20000)
+    _play(board, truth_shifted, [("D", "B"), ("E", "D")], seed=FRESH)
     after = {r.player: r.elo for r in lb.fit_epoch(board, "T").ratings if r.main}
     assert before == after
 
@@ -196,7 +202,83 @@ def test_the_same_deals_cannot_be_recorded_twice(tmp_path: pathlib.Path) -> None
     _play(board, {"A": 1500.0, "B": 1600.0}, [("A", "B")])
     with pytest.raises(lb.LeaderboardError, match="already recorded"):
         _play(board, {"A": 1500.0, "B": 1600.0}, [("B", "A")])       # either side as `a`
-    _play(board, {"A": 1500.0, "B": 1600.0}, [("B", "A")], seed=20000)  # other deals are fine
+    with pytest.raises(lb.LeaderboardError, match="already recorded"):
+        _play(board, {"A": 1500.0, "B": 1600.0}, [("B", "A")], seed=10001)  # nearly the same deals (EVAL-1)
+    _play(board, {"A": 1500.0, "B": 1600.0}, [("B", "A")], seed=FRESH)  # other deals are fine
+
+
+@pytest.mark.parametrize("gps,chunk", [(1000, 1000), (100, 200), (1000, 200), (7, 4), (5, 3), (1, 2), (999, 1000)])
+def test_deal_seeds_are_the_tournament_s(gps: int, chunk: int) -> None:
+    base = 12345
+    c = _Chunking.of(gps, chunk)
+    played = {c.pair_seed(base, k) for k in range(gps)}
+    assert {s for lo, hi in lb.deal_seeds(base, gps, chunk) for s in range(lo, hi)} == played
+    hull = lb.legacy_hull(lb.make_record("A@1M", "B@1M", {"w": gps, "l": 0, "d": 0}, {"w": 0, "l": gps, "d": 0},
+                                         base, gps, chunk, ENGINE, BEHAVIOUR_ID, "c", "d"))
+    assert all(hull[0][0] <= s < hull[0][1] for s in played)
+
+
+def _rec(seed: int, gps: int, chunk: int, a: str = "A@1M", b: str = "B@1M") -> lb.Record:
+    seat: lb.Seat = {"w": gps, "l": 0, "d": 0}
+    return lb.make_record(a, b, seat, seat, seed, gps, chunk, ENGINE, BEHAVIOUR_ID, "c", "d")
+
+
+def _legacy(rec: lb.Record) -> lb.Record:
+    """The record as it was written before EVAL-1, without its protocol and deals."""
+    body = {k: v for k, v in rec.items() if k not in ("id", "protocol", "deals")}
+    return cast(lb.Record, {"id": lb.record_id(body), **body})
+
+
+def test_deal_overlap_is_by_deal_set_not_base_seed(tmp_path: pathlib.Path) -> None:
+    board = _board(tmp_path, ["A", "B", "C"], [])
+    # The default protocol: 10000 and 10001 share 999 of their 1000 deals.
+    assert lb.records_overlap(_rec(10000, 1000, 1000), _rec(10001, 1000, 1000))
+    # ... and 11000, a thousand on, its second batch of 500: deals 11000-11499 are in both.
+    assert lb.records_overlap(_rec(10000, 1000, 1000), _rec(11000, 1000, 1000))
+    assert not lb.records_overlap(_rec(10000, 1000, 1000), _rec(12000, 1000, 1000))
+    # The CI workflow's slices of one pairing: 100 games a side at chunk 200, bases 100 apart.
+    assert not lb.records_overlap(_rec(10000, 100, 200), _rec(10100, 100, 200))
+    # Only the same pairing matters.
+    board.matches["T"] = [_rec(10000, 1000, 1000), _rec(10001, 1000, 1000, b="C@1M")]
+    assert lb.validate(board) == []
+    board.matches["T"] = [_rec(10000, 1000, 1000), _rec(10001, 1000, 1000, "B@1M", "A@1M")]
+    assert any("shares deals with line 1" in e for e in lb.validate(board))
+
+
+def test_a_legacy_record_is_held_to_its_hull_and_its_base_seed(tmp_path: pathlib.Path) -> None:
+    board = _board(tmp_path, ["A", "B"], [])
+    old = _legacy(_rec(10000, 100, 200))
+    assert lb.legacy_hull(old) == [[10000, 10200]]
+    # A new record inside the hull may replay it: its chunk size is not known, so it is refused.
+    assert lb.records_overlap(old, _rec(10150, 100, 200))
+    assert not lb.records_overlap(old, _rec(10200, 100, 200))
+    # Two legacy records keep the rule they were written under: only the same base seed clashes,
+    # so the CI slices already on record stay valid.
+    assert not lb.records_overlap(old, _legacy(_rec(10100, 100, 200)))
+    assert lb.records_overlap(old, _legacy(_rec(10000, 100, 200)))
+    board.matches["T"] = [old, _legacy(_rec(10100, 100, 200))]
+    assert lb.validate(board) == []
+
+
+def test_a_record_s_protocol_deals_and_games_must_agree(tmp_path: pathlib.Path) -> None:
+    board = _board(tmp_path, ["A", "B"], [])
+
+    def problems(**change: object) -> List[str]:
+        body = {k: v for k, v in _rec(10000, 100, 200).items() if k != "id"}
+        body.update(change)
+        board.matches["T"] = [cast(lb.Record, {"id": lb.record_id(body), **body})]
+        return lb.validate(board)
+
+    assert problems() == []
+    assert any("deals are not" in e for e in problems(deals=[[10000, 10099]]))
+    assert any("protocol must be" in e for e in problems(protocol={"games_per_side": 100}))
+    assert any("no deals" in e for e in problems(protocol={"games_per_side": 100, "batch_chunk_size": 1}))
+    assert any("holds 90 games, not 100" in e for e in problems(a_as_ussr={"w": 90, "l": 0, "d": 0}))
+    body = {k: v for k, v in _rec(10000, 100, 200).items() if k not in ("id", "deals")}
+    board.matches["T"] = [cast(lb.Record, {"id": lb.record_id(body), **body})]
+    assert any("together, or neither" in e for e in lb.validate(board))
+    with pytest.raises(lb.LeaderboardError):
+        lb.deal_seeds(10000, 0, 1000)
 
 
 def test_a_line_merged_in_twice_and_an_edited_record_are_caught(tmp_path: pathlib.Path) -> None:
@@ -292,7 +374,8 @@ def test_a_report_link_is_the_scripts_behaviour_report_on_that_network_or_player
 def test_site_data_aggregates_a_pair_from_the_first_players_side(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B"], [])
     lb.append_record(board, "T", lb.make_record("B@1M", "A@1M", {"w": 7, "l": 3, "d": 0},
-                                                {"w": 6, "l": 3, "d": 1}, 1, ENGINE, BEHAVIOUR_ID, "c", "d"))
+                                                {"w": 6, "l": 3, "d": 1}, 1, 10, 20, ENGINE, BEHAVIOUR_ID,
+                                                "c", "d"))
     pair = lb.site_data(board)["epochs"]["T"]["pairs"][0]  # type: ignore[index]
     assert (pair["a"], pair["b"]) == ("A@1M", "B@1M")
     # A as US is B as USSR (B won 6, lost 3): A won 3, lost 6.
@@ -303,15 +386,15 @@ def test_site_data_aggregates_a_pair_from_the_first_players_side(tmp_path: pathl
 def test_a_record_is_of_its_epoch_by_behaviour_or_by_a_frozen_pre_digest_engine(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B"], [])
     win: lb.Seat = {"w": 1, "l": 0, "d": 0}
-    board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, BEHAVIOUR_ID, "c", "d")]
+    board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, 1, 2, ENGINE, BEHAVIOUR_ID, "c", "d")]
     assert lb.validate(board) == []
     # Another engine's behaviour is another epoch, whatever the engine's sources.
     other = lb.behaviour_id({**BEHAVIOUR, "mcts": "5" * 64})
-    board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, other, "c", "d")]
+    board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, 1, 2, ENGINE, other, "c", "d")]
     assert any("not T's" in e for e in lb.validate(board))
     # A record from before behaviour digests is held to the epoch's frozen list of engines.
-    old = {k: v for k, v in lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, "", "c", "d").items()
-           if k not in ("id", "behaviour")}
+    old = {k: v for k, v in lb.make_record("A@1M", "B@1M", win, win, 1, 1, 2, ENGINE, "", "c", "d").items()
+           if k not in ("id", "behaviour", "protocol", "deals")}
     board.matches["T"] = [cast(lb.Record, {"id": lb.record_id(old), **old})]
     assert any("pre_digest_engines" in e for e in lb.validate(board))
     board.epochs["T"]["pre_digest_engines"] = [ENGINE]
@@ -386,13 +469,16 @@ def test_the_codes_tab_lists_run_codes_with_the_networks_trained_under_each(tmp_
 def test_plan_pairs_skips_what_is_recorded(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B", "C"], ["D"])
     _play(board, {"A": 1500.0, "B": 1600.0, "D": 1550.0}, [("D", "A")])
-    play, skipped = plan_pairs(board, "T", ["D@1M"], None, False, None)
+    play, skipped = plan_pairs(board, "T", ["D@1M"], None, False, None, 1000, 1000)
     assert skipped == [("D@1M", "A@1M")]
     assert play == [("D@1M", "B@1M"), ("D@1M", "C@1M")]
-    play, _ = plan_pairs(board, "T", ["D@1M"], None, False, 20000)
+    play, _ = plan_pairs(board, "T", ["D@1M"], None, False, FRESH, 1000, 1000)
     assert len(play) == 3
     with pytest.raises(lb.LeaderboardError):
-        plan_pairs(board, "T", ["D@1M"], None, False, 10000)
+        plan_pairs(board, "T", ["D@1M"], None, False, 10000, 1000, 1000)
+    # A neighbouring base seed replays nearly the same deals (EVAL-1).
+    with pytest.raises(lb.LeaderboardError, match="would replay deals"):
+        plan_pairs(board, "T", ["D@1M"], None, False, 10001, 1000, 1000)
 
 
 # ---- the committed records --------------------------------------------------------------------

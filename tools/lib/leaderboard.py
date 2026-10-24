@@ -16,11 +16,15 @@ log that mentions it, nor the leak census written alone (`--games 0`), which has
   digest of tools/lib/engine_behaviour.py: any build that reproduces it plays the epoch's games,
   whatever its sources), the main players, and the anchor that fixes the scale.
 * `matches/<epoch>.jsonl` -- one line per pairing played, append-only: both seats' wins, losses
-  and draws, the first deal seed, the engine (its source fingerprint), its behaviour digest's id
-  and the commit. Records from before epochs were defined by behaviour carry no behaviour; their
+  and draws, the first deal seed, the sampling protocol (games a side and batch chunk size) and the
+  deal seeds it played, the engine (its source fingerprint), its behaviour digest's id and the
+  commit. Records from before epochs were defined by behaviour carry no behaviour; their
   engine must be one of the epoch's `pre_digest_engines`, a frozen list. `.gitattributes` merges these files
   by union, so two branches that both appended merge cleanly; a record's `id` is a hash of its
-  content, so a line that arrives twice is caught here.
+  content, so a line that arrives twice is caught here. No two records of a pairing may share a
+  deal (`deal_seeds`, `records_overlap`): the deals a match plays depend on its base seed, its
+  games a side and its batch chunk size, so neighbouring base seeds can replay nearly the same
+  deals (EVAL-1).
 
 The fit is Bradley-Terry with a seat term: P(a beats b, a as US) = logistic((r_a - r_b + h) / s),
 s = 400 / ln 10, a draw half a win. It runs in two stages so that the main players' ratings do not
@@ -119,6 +123,12 @@ class Seat(TypedDict):
     d: int
 
 
+class Protocol(TypedDict):
+    """How a match's deals were sampled: with its base seed, this fixes `deal_seeds`."""
+    games_per_side: int
+    batch_chunk_size: int
+
+
 class Record(TypedDict):
     id: str
     a: str
@@ -126,6 +136,11 @@ class Record(TypedDict):
     a_as_us: Seat
     a_as_ussr: Seat
     base_seed: int
+    #: Absent from records played before EVAL-1, whose chunk size was not kept: their deals are
+    #: not known exactly, only that they lie in `legacy_hull`.
+    protocol: NotRequired[Protocol]
+    #: The deal seeds played, from both seats, as sorted half-open ranges [start, stop).
+    deals: NotRequired[List[List[int]]]
     engine: str
     #: `behaviour_id` of the epoch's behaviour, which the engine reproduced; absent from records
     #: played before epochs were defined by behaviour.
@@ -260,33 +275,89 @@ def behaviour_mismatch(want: Behaviour, have: Behaviour) -> List[str]:
     return [s for s in BEHAVIOUR_SECTIONS if w[s] != h[s]]
 
 
-def make_record(a: str, b: str, a_as_us: Seat, a_as_ussr: Seat, base_seed: int, engine: str,
-                behaviour: str, commit: str, date: str) -> Record:
+def deal_seeds(base_seed: int, games_per_side: int, batch_chunk_size: int) -> List[List[int]]:
+    """The deal seeds a match plays, as sorted half-open ranges [start, stop): each batch of the
+    match holds `batch_chunk_size // 2` deals, played from both seats, and the next batch starts a
+    whole chunk on. The formula is tools/lib/batch_tournament.py's `_Chunking.pair_seed`, repeated
+    here because the fit must not import the engine; a test holds the two together."""
+    if games_per_side < 1 or batch_chunk_size < 2:
+        raise LeaderboardError(f"no deals at {games_per_side} games a side, batch chunk {batch_chunk_size}")
+    half = min(games_per_side, batch_chunk_size // 2)
+    out: List[List[int]] = []
+    for c in range(-(-games_per_side // half)):
+        lo = base_seed + c * 2 * half
+        hi = lo + min(half, games_per_side - c * half)
+        if out and out[-1][1] == lo:
+            out[-1][1] = hi
+        else:
+            out.append([lo, hi])
+    return out
+
+
+def legacy_hull(rec: Record) -> List[List[int]]:
+    """Where the deals of a record without a protocol can lie, whatever its chunk size: from its
+    base seed to twice its games a side past it (every chunk size of 2 or more stays inside). Its
+    chunk size is never guessed (EVAL-1)."""
+    games = max(_games(rec["a_as_us"]), _games(rec["a_as_ussr"]))
+    return [[rec["base_seed"], rec["base_seed"] + 2 * games]]
+
+
+def _games(seat: Seat) -> int:
+    return seat["w"] + seat["l"] + seat["d"]
+
+
+def _ranges_meet(x: Sequence[Sequence[int]], y: Sequence[Sequence[int]]) -> bool:
+    return any(a[0] < b[1] and b[0] < a[1] for a in x for b in y)
+
+
+def records_overlap(r: Record, s: Record) -> bool:
+    """Whether two records of one pairing may share a deal, and so count the same games twice: by
+    their deal seeds when both have them, by a legacy record's hull against a recorded set; two
+    records from before EVAL-1 overlap, as they always have, only at the same base seed."""
+    if "deals" not in r and "deals" not in s:
+        return r["base_seed"] == s["base_seed"]
+    return _ranges_meet(_span(r), _span(s))
+
+
+def _span(rec: Record) -> List[List[int]]:
+    return rec["deals"] if "deals" in rec else legacy_hull(rec)
+
+
+def recorded_overlap(board: Board, epoch: str, a: str, b: str, deals: Sequence[Sequence[int]]) -> Optional[Record]:
+    """The first record of the pairing a-b in `epoch` that may share a deal with `deals`, or None."""
+    for rec in board.matches.get(epoch, []):
+        if {rec["a"], rec["b"]} == {a, b} and _ranges_meet(_span(rec), deals):
+            return rec
+    return None
+
+
+def same_pairing(r: Record, s: Record) -> bool:
+    """A pairing plays the same deals whichever side is `a`."""
+    return {r["a"], r["b"]} == {s["a"], s["b"]}
+
+
+def make_record(a: str, b: str, a_as_us: Seat, a_as_ussr: Seat, base_seed: int, games_per_side: int,
+                batch_chunk_size: int, engine: str, behaviour: str, commit: str, date: str) -> Record:
     body = {"a": a, "b": b, "a_as_us": dict(a_as_us), "a_as_ussr": dict(a_as_ussr),
-            "base_seed": int(base_seed), "engine": engine, "behaviour": behaviour, "commit": commit,
-            "date": date}
+            "base_seed": int(base_seed),
+            "protocol": {"games_per_side": int(games_per_side), "batch_chunk_size": int(batch_chunk_size)},
+            "deals": deal_seeds(int(base_seed), int(games_per_side), int(batch_chunk_size)),
+            "engine": engine, "behaviour": behaviour, "commit": commit, "date": date}
     return {"id": record_id(body), **body}  # type: ignore[return-value]
 
 
 def append_record(board: Board, epoch: str, rec: Record) -> None:
-    """Append one pairing to the epoch's match file (and to `board`), refusing a repeat."""
-    key = _pair_key(rec)
+    """Append one pairing to the epoch's match file (and to `board`), refusing one that shares a
+    deal with a record of the same pairing."""
     for old in board.matches.setdefault(epoch, []):
-        if old["id"] == rec["id"] or _pair_key(old) == key:
-            raise LeaderboardError(f"{rec['a']} vs {rec['b']} at base seed {rec['base_seed']} is "
-                                   f"already recorded ({old['id']})")
+        if old["id"] == rec["id"] or (same_pairing(old, rec) and records_overlap(old, rec)):
+            raise LeaderboardError(f"{rec['a']} vs {rec['b']} at base seed {rec['base_seed']} replays deals "
+                                   f"already recorded ({old['id']}, base seed {old['base_seed']})")
     path = board.root / "matches" / f"{epoch}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     board.matches[epoch].append(rec)
-
-
-def _pair_key(rec: Record) -> Tuple[str, str, int]:
-    """A pairing at a base seed plays the same deals whichever side is `a`, so this is what must
-    be unique: a second record of it would count the same games twice."""
-    x, y = sorted((rec["a"], rec["b"]))
-    return x, y, int(rec["base_seed"])
 
 
 # ---- validation -------------------------------------------------------------------------------
@@ -398,12 +469,15 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
         if ep["anchor"] not in ep["main"]:
             errs.append(f"{where}: the anchor {ep['anchor']!r} must be a main player")
         seen_ids: Set[str] = set()
-        seen_pairs: Dict[Tuple[str, str, int], str] = {}
+        seen_pairs: Dict[Tuple[str, str], List[Tuple[int, Record]]] = {}
         for n, rec in enumerate(board.matches.get(name, []), 1):
             at = f"matches/{name}.jsonl:{n}"
             want_r = {"id", "a", "b", "a_as_us", "a_as_ussr", "base_seed", "engine", "commit", "date"}
-            if not isinstance(rec, dict) or not want_r <= set(rec) <= want_r | {"behaviour"}:
-                errs.append(f"{at}: fields must be {sorted(want_r)} and behaviour")
+            if not isinstance(rec, dict) or not want_r <= set(rec) <= want_r | {"behaviour", "protocol", "deals"}:
+                errs.append(f"{at}: fields must be {sorted(want_r)}, behaviour, protocol and deals")
+                continue
+            if ("protocol" in rec) != ("deals" in rec):
+                errs.append(f"{at}: a record names its protocol and its deals together, or neither")
                 continue
             if rec["a"] == rec["b"]:
                 errs.append(f"{at}: a player against itself")
@@ -412,8 +486,16 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
                     errs.append(f"{at}: player {rec[side]!r} is not in players.json")
             if not (_seat_ok(rec["a_as_us"]) and _seat_ok(rec["a_as_ussr"])):
                 errs.append(f"{at}: a_as_us / a_as_ussr must be {{w, l, d}} of non-negative integers")
-            elif sum(int(s[k]) for s in (rec["a_as_us"], rec["a_as_ussr"]) for k in ("w", "l", "d")) == 0:
+                continue
+            # A record whose deals are not its protocol's is reported, and not compared for overlap.
+            deals_ok = True
+            if sum(int(s[k]) for s in (rec["a_as_us"], rec["a_as_ussr"]) for k in ("w", "l", "d")) == 0:
                 errs.append(f"{at}: no games")
+            elif "protocol" in rec:
+                problem = _deals_problem(rec)
+                if problem:
+                    errs.append(f"{at}: {problem}")
+                    deals_ok = False
             if "behaviour" in rec:
                 if rec["behaviour"] != behaviour_id(beh):
                     errs.append(f"{at}: played on an engine of behaviour {str(rec['behaviour'])[:12]}…, "
@@ -427,15 +509,41 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             if rec["id"] in seen_ids:
                 errs.append(f"{at}: record {rec['id']} appears twice")
             seen_ids.add(rec["id"])
-            key = _pair_key(rec)
-            if key in seen_pairs and seen_pairs[key] != rec["id"]:
-                errs.append(f"{at}: {key[0]} vs {key[1]} at base seed {key[2]} is already recorded "
-                            f"({seen_pairs[key]}) -- the same deals, counted twice")
-            seen_pairs.setdefault(key, rec["id"])
+            if not deals_ok:
+                continue
+            x, y = sorted((rec["a"], rec["b"]))
+            for m, old in seen_pairs.get((x, y), []):
+                if old["id"] != rec["id"] and records_overlap(old, rec):
+                    errs.append(f"{at}: {x} vs {y} at base seed {rec['base_seed']} shares deals with "
+                                f"line {m} ({old['id']}, base seed {old['base_seed']}) -- the same "
+                                f"games, counted twice")
+            seen_pairs.setdefault((x, y), []).append((n, rec))
     for name in board.matches:
         if name not in board.epochs:
             errs.append(f"matches/{name}.jsonl: no epoch {name!r} in epochs.json")
     return errs
+
+
+def _deals_problem(rec: Record) -> Optional[str]:
+    """Why a record's protocol, deals and games disagree, or None."""
+    proto = rec["protocol"]
+    if (not isinstance(proto, dict) or set(proto) != {"games_per_side", "batch_chunk_size"}
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in proto.values())
+            or not isinstance(rec["base_seed"], int)):
+        return "protocol must be {games_per_side, batch_chunk_size}, integers"
+    gps, chunk = proto["games_per_side"], proto["batch_chunk_size"]
+    try:
+        want = deal_seeds(rec["base_seed"], gps, chunk)
+    except LeaderboardError as e:
+        return str(e)
+    if rec["deals"] != want:
+        return (f"deals are not the ones base seed {rec['base_seed']} deals at {gps} games a side, "
+                f"batch chunk {chunk}")
+    for seat in ("a_as_us", "a_as_ussr"):
+        games = _games(rec["a_as_us"] if seat == "a_as_us" else rec["a_as_ussr"])
+        if games != gps:
+            return f"{seat} holds {games} games, not {gps}"
+    return None
 
 
 # ---- the fit ----------------------------------------------------------------------------------

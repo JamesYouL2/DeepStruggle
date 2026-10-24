@@ -9,22 +9,6 @@ the full write-up is in git history.
 
 ---
 
-## EVAL-1 — leaderboard records do not identify overlapping deal sets
-
-**Area:** leaderboard evaluation · **Severity:** P2 · **Status:** open
-
-Duplicate detection compares base seeds, while the deals played depend on the base, game count
-and chunk size. With 1,000 games per side and chunk size 1,000, neighboring bases share 998 of
-1,000 deal seeds for the same pairing, yet both records are accepted as independent evidence.
-Historical match records omit chunk size, so their actual seed sets cannot be reconstructed
-reliably from the records alone.
-
-**Fix.** Record the actual deal set and sampling protocol for future matches and reject overlap
-per pairing. Recover historical chunk provenance before migrating existing evidence; preserve
-its original interpretation rather than inferring a chunk size from current defaults.
-
----
-
 ## TEST-1 — the differential fuzzing suite does not run
 
 **Area:** tests · **Severity:** low · **Status:** open
@@ -109,4 +93,5 @@ carries the marker.
 | CONV-1 | the human-log converter seated cards in hands the player never held (Our Man in Tehran peeks, reveals not used as evidence, late arrivals placed at AR1): over-limit hands in trusted turns 178 games / 2,590 decisions → 39 / 186. Rebuild anything made from converted human positions after it | `8aec4db`; `tests/replayer/test_replay_hand_contents.py` |
 | CONV-2 | the human-log converter put every card the solved hands leave out in the discard pile, not the deck: at 99.7% of converted decisions the pile held cards nobody had played (14.2 on average) and the engine reshuffled where the humans had not, 24 games losing a SALT pick to it. Terrorism's random discard was never steered, and Five Year Plan's took the wrong card in 5 of 237 entries. Now 0.34 per decision from turn 4 (CONV-3), none before. Rebuild anything made from converted human positions after it | `0f112d7`; `tests/replayer/test_replay_deck_and_discards.py`, `tests/replayer/test_replay_five_year_plan_discard.py` |
 | CONV-4 | the hand solver freed a starred card its event had removed at the next `*RESHUFFLE*`, like any spent card, and the converter seated it out of the engine's removed cards: a removed card was back in a hand or the deck at 19.1% of converted decisions, in 252 of the 300 games. Each one left the engine's deck a card bigger than the humans', so the turn-7 deals of replays 59, 119, 228 and 302 did not reshuffle where the log does. Our Man in Tehran's peek was seeded from every discard in its entry, so in replay 277 Our Man in Tehran, fired by a Five Year Plan discard, went into its own peek and on to the pile. Now none; the pile holds 0.25 unspent cards per decision, from 0.34, and 465 of 469 markers match, from 461. Rebuild anything made from converted human positions after it | `de64176`; `tests/replayer/test_replay_removed_cards.py` |
+| EVAL-1 | leaderboard records were told apart by base seed, while the deals a match plays depend on the base, the games a side and the batch chunk size: at 1,000 and 1,000, bases 10000 and 10001 share 998 of 1,000 deals, and both were accepted as independent evidence. A record now carries its `protocol` and the `deals` it played, and a pairing's records may not share a deal (`append_record`, `plan_pairs`, `validate`). Records from before it are not migrated: no chunk size is inferred, each is bounded by its hull (base to base + 2 × games a side) against new records, and two of them keep the same-base-seed rule they were written under | `pr/eval-1-deal-overlap`; `tools/README.md` §2b, `test_deal_seeds_are_the_tournament_s`, `test_deal_overlap_is_by_deal_set_not_base_seed`, `test_a_legacy_record_is_held_to_its_hull_and_its_base_seed` in `tests/training/test_leaderboard.py` |
 | TODO (forced deal) | no way to drive a deal from a recording, so replays could not survive a shuffle change | `dfadce5`: `GameState.set_forced_deal` / `get_forced_deal_remaining`; `tests/bindings/test_forced_deal.py` |

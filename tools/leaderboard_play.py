@@ -9,8 +9,12 @@ Every player plays every opponent (the epoch's main players unless --opponents i
 the epoch's strong tier, for a newcomer rated near or above the top of the main set), each pairing
 `--games-per-side` deals from both seats, through tools/tournament.py's batched path.
 `--round-robin` plays every pairing among --players instead. A pairing already on record is
-skipped; to add games to it, pass a `--base-seed` it has not been played at (the same seed would
-replay the same deals). Each pairing is appended as it finishes, so a crash keeps what was done.
+skipped; to add games to it, pass a `--base-seed` whose deals it has not played. The deals a match
+plays follow from its base seed, its games a side and its batch chunk size together
+(`leaderboard.deal_seeds`), so a neighbouring base seed can replay nearly the same deals: a
+`--base-seed` whose deals meet any recorded match of the pairing is refused, and each record keeps
+its protocol and its deal seeds (EVAL-1). Each pairing is appended as it finishes, so a crash
+keeps what was done.
 
 Refuses to play on an engine that does not reproduce the epoch's behaviour digest
 (tools/lib/engine_behaviour.py: seeded games through every path a player takes -- the batch runner,
@@ -29,7 +33,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
 import ts_engine as ts
 
@@ -38,7 +42,8 @@ from tools.lib.data_root import data_path
 from tools.lib.engine_behaviour import measure
 from tools.lib.engine_fingerprint import fingerprint, staleness_reason
 from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, append_record, behaviour_id, behaviour_mismatch,
-                                   fit_epoch, load, make_record, markdown_table, player_spec, validate, view)
+                                   deal_seeds, fit_epoch, load, make_record, markdown_table, player_spec,
+                                   recorded_overlap, validate, view)
 from tools.lib.player_spec import PlayerSpecError, Rollout, load_spec
 from tools.tournament import run_massive_tournament
 
@@ -59,9 +64,15 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
+#: The first deal seed when --base-seed is not given.
+DEFAULT_BASE_SEED = 10000
+
+
 def plan_pairs(board: Board, epoch: str, players: Sequence[str], opponents: Optional[Sequence[str]],
-               round_robin: bool, base_seed: Optional[int]) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
-    """(pairs to play, pairs skipped as already recorded). Unordered pairs, each once."""
+               round_robin: bool, base_seed: Optional[int], games_per_side: int,
+               batch_chunk_size: int) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """(pairs to play, pairs skipped as already recorded). Unordered pairs, each once. With a base
+    seed, a pairing whose recorded matches meet the deals it would play is refused."""
     wanted: List[Tuple[str, str]] = []
     seen: Set[Tuple[str, str]] = set()
 
@@ -79,18 +90,19 @@ def plan_pairs(board: Board, epoch: str, players: Sequence[str], opponents: Opti
         for x in players:
             for y in (opponents if opponents is not None else board.epochs[epoch]["main"]):
                 add(x, y)
-    recorded: Dict[Tuple[str, str], Set[int]] = {}
-    for r in board.matches.get(epoch, []):
-        recorded.setdefault((min(r["a"], r["b"]), max(r["a"], r["b"])), set()).add(int(r["base_seed"]))
+    recorded: Set[Tuple[str, str]] = {(min(r["a"], r["b"]), max(r["a"], r["b"])) for r in board.matches.get(epoch, [])}
+    deals = deal_seeds(DEFAULT_BASE_SEED if base_seed is None else base_seed, games_per_side, batch_chunk_size)
     play, skipped = [], []
     for x, y in wanted:
-        seeds = recorded.get((min(x, y), max(x, y)), set())
-        if base_seed is None and seeds:
+        if base_seed is None and (min(x, y), max(x, y)) in recorded:
             skipped.append((x, y))
-        elif base_seed is not None and base_seed in seeds:
-            raise LeaderboardError(f"{x} vs {y} is already recorded at base seed {base_seed}")
-        else:
-            play.append((x, y))
+            continue
+        old = recorded_overlap(board, epoch, x, y, deals)
+        if old is not None:
+            raise LeaderboardError(f"{x} vs {y} at base seed {base_seed} ({games_per_side} games a side, batch "
+                                   f"chunk {batch_chunk_size}) would replay deals of the match recorded at base "
+                                   f"seed {old['base_seed']} ({old['id']})")
+        play.append((x, y))
     return play, skipped
 
 
@@ -106,7 +118,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--round-robin", action="store_true", help="every pairing among --players instead")
     ap.add_argument("--games-per-side", type=int, default=1000)
     ap.add_argument("--base-seed", type=int, default=None,
-                    help="first deal seed (default 10000); give an unused one to add games to a recorded pairing")
+                    help=f"first deal seed (default {DEFAULT_BASE_SEED}); to add games to a recorded pairing, "
+                         f"one whose deals it has not played")
     ap.add_argument("--batch-chunk-size", type=int, default=1000)
     ap.add_argument("--pack-pairs", type=int, default=25)
     ap.add_argument("--device", default="cuda")
@@ -137,7 +150,8 @@ def _run(a: argparse.Namespace) -> int:
         if pid not in board.players:
             raise LeaderboardError(f"player {pid!r} is not registered (tools/leaderboard.py add-player)")
 
-    pairs, skipped = plan_pairs(board, a.epoch, a.players, a.opponents, a.round_robin, a.base_seed)
+    pairs, skipped = plan_pairs(board, a.epoch, a.players, a.opponents, a.round_robin, a.base_seed,
+                                a.games_per_side, a.batch_chunk_size)
     for x, y in skipped:
         print(f" already recorded, skipped: {x} vs {y}")
     if not pairs:
@@ -190,7 +204,7 @@ def _run(a: argparse.Namespace) -> int:
         specs.append(load_spec(spec, path, leaf))
     index = {pid: i for i, pid in enumerate(entrants)}
     matchups = [(min(index[x], index[y]), max(index[x], index[y])) for x, y in pairs]
-    base_seed = 10000 if a.base_seed is None else a.base_seed
+    base_seed = DEFAULT_BASE_SEED if a.base_seed is None else a.base_seed
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
     def on_matchup(name_a: str, name_b: str, m: MatchupResult) -> None:
@@ -198,7 +212,7 @@ def _run(a: argparse.Namespace) -> int:
             name_a, name_b,
             {"w": m["a_wins_as_us"], "l": m["a_losses_as_us"], "d": m["a_draws_as_us"]},
             {"w": m["a_wins_as_ussr"], "l": m["a_losses_as_ussr"], "d": m["a_draws_as_ussr"]},
-            base_seed, engine, behaviour, commit, date)
+            base_seed, a.games_per_side, a.batch_chunk_size, engine, behaviour, commit, date)
         append_record(board, a.epoch, rec)
 
     anchor = board.epochs[a.epoch]["anchor"]

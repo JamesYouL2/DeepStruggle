@@ -262,7 +262,7 @@ One Elo scale per engine epoch, kept as reviewed records in `leaderboard/` and f
 | `networks.json` | each network: file (relative to `data/`), sha256, `hf` path once published, behaviour `report`, description, `old_names` |
 | `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`), description, its own `report` |
 | `epochs.json` | each engine epoch: its engine `behaviour` digest, main players, anchor and rating, an optional `strong` tier of main players, and the frozen `pre_digest_engines` of records played before digests |
-| `matches/<epoch>.jsonl` | one line per pairing: both seats' w/l/d, base seed, engine (source fingerprint), behaviour digest id, commit -- append-only |
+| `matches/<epoch>.jsonl` | one line per pairing: both seats' w/l/d, base seed, `protocol` (games a side, batch chunk size), the `deals` it played (seed ranges), engine (source fingerprint), behaviour digest id, commit -- append-only |
 
 **A player is a network plus an inference spec**, spelled in its id: the bare network name is its
 greedy policy; otherwise `<network>~<kind>(<field>=<value>,...)` with every field named, e.g.
@@ -292,7 +292,14 @@ behaviour digest, a network whose sha256 changed, and uncommitted changes under
 behaviour report `tools/scripts/checkpoint_report.py` generated for that exact network or player,
 in `research/log/per_checkpoint/` and titled with its id -- never the plan or log it was made for,
 nor the searched-leak census written alone (`--games 0`), which has no self-play; `validate` refuses
-anything else, and with no report yet the link stays null (a greedy player then shows its network's). A pairing on record is skipped. Main players are the owner's
+anything else, and with no report yet the link stays null (a greedy player then shows its network's). A pairing on record is skipped. To add games to it,
+pass a `--base-seed` whose deals it has not played: the deals follow from the base seed, the games
+a side and the batch chunk size together (`leaderboard.deal_seeds`; at the default 1,000 and 1,000,
+base 10001 replays 998 of base 10000's deals and base 11000 half of them, base 12000 none), and a
+seed whose deals meet a recorded match of the pairing is refused, as `validate` refuses two such
+records (EVAL-1). A record from before EVAL-1 has no protocol, so its deals are bounded by its
+hull, base seed to twice its games a side past it, never by a guessed chunk size; two such records
+clash, as they always did, only at the same base seed. Main players are the owner's
 choice (`epochs.json`).
 
 **An epoch is defined by what the engine does, not by its sources.** `tools/lib/engine_behaviour.py`
