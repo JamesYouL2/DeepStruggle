@@ -10,7 +10,7 @@ import torch
 
 from ai.models.coldwar_net_v2 import create_like
 from ai.models.hyperspherical import SphereBlock, SphereTrunk
-from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
+from ai.models.ladder_net import LadderNet, create_ladder_net, ladder_config_from_state_dict
 from ai.training.nash_pg import make_optimizer
 
 CFG = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_proj_dim=64,
@@ -21,7 +21,7 @@ CFG = dict(input_mode="grouped", aggregation="flatten", entity_dim=16, entity_pr
            categorical_value=False, branch_head=True, play_mode_head=True)
 
 
-def _sphere_net(blocks: int = 2) -> torch.nn.Module:
+def _sphere_net(blocks: int = 2) -> LadderNet:
     torch.manual_seed(0)
     return create_ladder_net("cpu", **{**CFG, "sphere_blocks": blocks, "sphere_expansion": 4})
 

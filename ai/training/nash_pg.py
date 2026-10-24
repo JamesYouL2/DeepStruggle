@@ -324,7 +324,9 @@ def make_optimizer(net: nn.Module, lr: float, weight_decay: float = 1e-4,
     # the step is taken (the update and every auxiliary fit share this optimiser).
     project = getattr(net, "project_weights", None)
     if getattr(net, "sphere", None) is not None and callable(project):
-        opt.register_step_post_hook(lambda _opt, _args, _kwargs: project())
+        def _project(_opt: torch.optim.Optimizer, _args: Any, _kwargs: Any) -> None:
+            project()
+        opt.register_step_post_hook(_project)
     return opt
 
 
