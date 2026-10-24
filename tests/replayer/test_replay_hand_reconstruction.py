@@ -17,8 +17,8 @@ import pytest
 import ts_engine as ts
 
 from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import (_mid_turn_acquisitions, _pad_hand,
-                                           _sort_key_for_keeping, convert_game)
+from tools.lib.ts_replayer_convert import (_mid_turn_acquisitions, _sort_key_for_keeping,
+                                           convert_game)
 
 CORPUS = str(corpus_dir())
 SALT_NEGOTIATIONS = 43
@@ -97,30 +97,14 @@ def test_the_keeping_order_is_ops_then_side() -> None:
             pytest.fail("US and neutral cards come before USSR ones at the same Ops")
 
 
-def test_an_ordinarily_short_hand_is_left_as_the_log_has_it() -> None:
-    """A player who carries a card over never reveals it, so most lists run one short.
-
-    Those are left alone, wrong hand size and all, rather than guessed at: inventing a card is
-    not free, because the rules read the hand where inventing changes what they read.
-    """
-    state = ts.GameState()
-    ts.Engine.init_game(state, 12345)
-    held = [c for c in range(1, 111)
-            if ts.in_hand_of(state.get_card_location(c), ts.Player.US)][:8]
-    assert _pad_hand(state, held, 9, None, set(held)) == held
-
-
-def test_an_obviously_truncated_hand_is_still_filled() -> None:
-    """A game that stopped mid-turn leaves a hand of one or two, which is not a position
-    anyone played from."""
-    state = ts.GameState()
-    ts.Engine.init_game(state, 12345)
-    held = [c for c in range(1, 111)
-            if ts.in_hand_of(state.get_card_location(c), ts.Player.US)][:2]
-    padded = _pad_hand(state, held, 9, None, set(held))
-    assert len(padded) == 9
-    assert not any(ts.CardData.get_card_info(c)["is_scoring"] for c in padded), (
-        "a scoring card held at the end of a turn loses the game, so it is never invented")
+def test_the_solved_hands_hold_the_cards_carried_over() -> None:
+    """A player carries what they do not play into the next turn, and never reveals it there,
+    so the turn's list runs short by that card; the solved hands put it back."""
+    for replay_id in (100, 105, 111, 114, 237, 78, 96, 73):
+        with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
+            conv = convert_game(json.load(f))
+        assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
+        assert conv.cards_carried_over > 0
 
 
 def test_replay_64_still_converts_end_to_end() -> None:
