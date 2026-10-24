@@ -251,6 +251,30 @@ tools/tournament.py --models heuristic_mcts <model.onnx> --games-per-side 200 --
 tools/tournament.py --pool-parts parts/part-*.json --output-json data/reports/pooled.json
 ```
 
+### E. Luck taken out: AIVAT over the game log
+
+`--log-games` writes one line per game, with its deal seed, each seat's action view and every
+flat action in order. That is enough to replay the game, so `ai/eval/aivat.py` replays it. At
+every step whose resolution draws on the RNG (dice, deals, random discards), and at the initial
+deal, it subtracts how far the draw moved a value estimate: v(actual) minus the mean of v over
+`--clones` fresh draws. Each correction has mean zero, so the score stays unbiased whatever the
+value is. A good critic only makes it less noisy.
+
+The output reports two checks:
+* the variance ratio, the number of times the games the corrected score is worth;
+* the mean correction with its z, which should be zero up to noise.
+
+A game that does not replay to its logged utility and VP is refused. That happens when the log
+comes from another engine.
+
+```bash
+tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release .venv/bin/python tools/tournament.py \
+  --models A.pt B.pt --games-per-side 1000 --temperature 0 --log-games games.jsonl
+PYTHONPATH=.:build/release .venv/bin/python -m ai.eval.aivat --games games.jsonl --value A.pt --clones 8
+```
+
+`--value vp` uses tanh(VP / 10) and needs no network.
+
 ---
 
 ## 2b. The Elo leaderboard (`tools/leaderboard.py`, `tools/leaderboard_play.py`)

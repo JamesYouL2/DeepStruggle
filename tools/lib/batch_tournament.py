@@ -639,6 +639,10 @@ class BatchMatchRunner:
             chunk_steps = np.zeros(cur_games, dtype=np.int32)
             chunk_causes = [""] * cur_games
 
+            # Every flat action each game was given, in order, for the game log: with the deal seed
+            # and each seat's action view, it replays the game (ai/eval/aivat.py).
+            chunk_actions: List[List[int]] = [[] for _ in range(cur_games)]
+
             chunk_ussr_total = np.zeros(cur_games, dtype=np.int32)
             chunk_ussr_single = np.zeros(cur_games, dtype=np.int32)
             chunk_us_total = np.zeros(cur_games, dtype=np.int32)
@@ -727,6 +731,9 @@ class BatchMatchRunner:
                         setup_override.apply(actions, obs, masks, d_players, np.where(is_b_turn)[0], open_b)
                 for ob in observers:
                     _report_decisions(ob, np.where(active)[0], runner, actions, d_players)
+                if log_games_file:
+                    for idx in np.where(active)[0]:
+                        chunk_actions[idx].append(int(actions[idx]))
                 step_results = runner.step_flat_all(actions.tolist(),
                                                     auto_advance=auto_advance)
                 # 0 = refused. A refused action here means a game silently did not advance and the
@@ -783,6 +790,16 @@ class BatchMatchRunner:
                             "ussr_agent": ussr_agent,
                             "us_agent": us_agent,
                             "winner": winner,
+                            # The terminal utility from the US's side (0 for a game stopped at
+                            # max_steps), and what replays the game: its deal seed above, unless
+                            # it resumed from a supplied position, and every action in order, each
+                            # in its seat's action view.
+                            "utility": float(term_util),
+                            "start_state": start_states is not None,
+                            "auto_advance": auto_advance,
+                            "us_merged": mv_b if a_is_ussr else mv_a,
+                            "ussr_merged": mv_a if a_is_ussr else mv_b,
+                            "actions": chunk_actions[idx],
                             "victory_points": int(chunk_vps[idx]),
                             "turn": int(chunk_turns[idx]),
                             "ply": int(chunk_plies[idx]),

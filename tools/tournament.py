@@ -299,6 +299,13 @@ def run_massive_tournament(
         pack = 1 if (track_choices or log_games) else max(1, int(pack_pairs))
         groups_of_pairs = (_pack_schedule(len(agents), pack, matchups) if pack > 1
                            else [[pr] for pr in matchups])
+        # play_parallel_matchup starts its log afresh, so each matchup writes its own and the
+        # tournament's log gathers them; written straight to `log_games`, every matchup but the
+        # last was lost.
+        matchup_log = f"{log_games}.matchup" if log_games else None
+        if log_games:
+            os.makedirs(os.path.dirname(os.path.abspath(log_games)), exist_ok=True)
+            open(log_games, "w", encoding="utf-8").close()
         for group in groups_of_pairs:
             t_g = time.time()
             if len(group) == 1:
@@ -306,8 +313,12 @@ def run_massive_tournament(
                 res = [BatchMatchRunner.play_parallel_matchup(
                     agents[gi], agents[gj], games_per_side=games_per_side, device=dev,
                     base_seed=base_seed, temperature=temperature, batch_chunk_size=batch_chunk_size,
-                    track_choices=track_choices, log_games_file=log_games,
+                    track_choices=track_choices, log_games_file=matchup_log,
                     auto_advance=auto_advance)]
+                if log_games and matchup_log:
+                    with open(matchup_log, encoding="utf-8") as src, open(log_games, "a", encoding="utf-8") as dst:
+                        dst.write(src.read())
+                    os.remove(matchup_log)
             else:
                 res = BatchMatchRunner.play_packed_matchups(
                     [(agents[gi], agents[gj]) for gi, gj in group], games_per_side=games_per_side,

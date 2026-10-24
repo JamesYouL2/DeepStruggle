@@ -66,6 +66,21 @@ die nodes (P2's clone average) and deal nodes (the pre-deal critic); ~20 Elo →
 tournament. [`../log/variance_and_noise.md`](../log/variance_and_noise.md),
 [`../method/references.md`](../method/references.md) §3.
 
+**Built, chance nodes only** (`ai/eval/aivat.py` over a `tools/tournament.py --log-games` file;
+[`../../tools/README.md`](../../tools/README.md) §2E). Decision nodes are not corrected: a greedy
+player's term is zero and a searcher's policy is not known. **First measurement (2026-10-24, CPU,
+100 deal pairs):** A13 SWA vs the R34 soup, valued by A13's critic, at 48 chance steps per game.
+* 4 clones: variance ratio 1.30×.
+* 16 clones: 1.51×, raw ±41.6 Elo → ±33.2.
+* `vp` (tanh(VP / 10)): 1.00×.
+* Mean correction: z −2.3 at 4 clones and −1.4 at 16. These use the same games, so the two are not
+  independent checks.
+
+That is ~1.5× the games, not the 16× hoped for above. Most of the outcome's variance is not in the
+dice or the deal as this critic reads them. Before relying on it:
+* repeat at 1,000 games per side on CI to settle the z;
+* try 32 clones, since the ratio still rose from 4 to 16.
+
 ## Q-boosting proper (action-value critic, Expected SARSA(λ))
 **Trigger:** chance is handled (P2) and the remaining return variance is attributed to policy
 sampling. An action-value head over the flat action space; [`../method/references.md`](../method/references.md) §3.
