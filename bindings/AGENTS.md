@@ -167,9 +167,14 @@ are cited from elsewhere; keep them.
   event cards wherever they reach the same situation; at the turn's end the next deal is forced
   (the engine's forced-deal slots) from one card priority order per world, with one card in reserve
   per hand for the Space Walk discard. A single continuation plays the same game distribution; only
-  the coupling between continuations changes. Player fields are narrowed to unsigned bytes before
-  packing: USSR is -1 and must not overwrite neighboring fields. Keyed measurements and labels
-  from before this correction must be retaken; ordinary engine dice are unchanged.
+  the coupling between continuations changes. Measured on P34's sibling slice: two candidates'
+  results in one world correlate at 0.39 keyed against 0.22 with the shared stream (measured before
+  the fix below). Player fields are narrowed to a byte before they are packed: USSR is -1, and
+  widened as it was it set every higher bit, so whenever the USSR was phasing the turn, action
+  round and phase dropped out of the situation (and the decision type and staged roll when it
+  decided or rolled) -- two USSR draws of one world could reuse a die across turns. Keyed play
+  measured before the fix (2026-10-23) is of that searcher; the behaviour digest's rollout section
+  covers keyed playouts since, so the fix moves it. Unkeyed dice are unchanged.
   `ts.keyed_key(state, key)` is the keying step, for references and tests.
 - **The oracle's worlds** (`RolloutBatch(oracle=True)`, `ts.determinize(..., keep_hand=True)`; the
   rollout agent string's `:oracle`): every world keeps the opponent's true hand and reshuffles only

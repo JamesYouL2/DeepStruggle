@@ -22,8 +22,8 @@ Four sections, each a sha256, so a mismatch says where the engines part:
 * `state` -- the same through the single-position API the searchers and the page use
   (`get_flat_action_mask` in both views, `extract_observation_features` from both sides).
 * `rollout` -- the rollout root's batch (`RolloutBatch`) on positions from the runner's games,
-  under each stop and leaf setting: playout observations and masks, leaf values, each position's
-  decision.
+  under each stop and leaf setting and keyed chance (since version 2): playout observations and
+  masks, leaf values, each position's decision.
 * `mcts` -- the C++ search tree (`BatchedSearch`) on the same positions: its leaves, the roots'
   statistics and the generator state it hands back.
 
@@ -65,11 +65,13 @@ _MAX_STEPS = 10_000
 #: Every this many runner steps, one live game's position is kept for the searches.
 _POSITION_EVERY = 11
 _POSITIONS = 48
-#: (stop, leaf, features, rule) of each rollout batch.
-_ROLLOUTS: Tuple[Tuple[str, str, int, str], ...] = (
-    ("boundaries", "mover", 0, "argmax"),
-    ("turn", "own", _FEATURES, "z2"),
-    ("later", "decider", _FEATURES, "kl0.5"),
+#: (stop, leaf, features, rule, keyed) of each rollout batch. The keyed one is the deployed root's
+#: (earlier:own:keyed:aligned:box4), whose draws come from bindings/keyed_chance.hpp, not the stream.
+_ROLLOUTS: Tuple[Tuple[str, str, int, str, bool], ...] = (
+    ("boundaries", "mover", 0, "argmax", False),
+    ("turn", "own", _FEATURES, "z2", False),
+    ("later", "decider", _FEATURES, "kl0.5", False),
+    ("earlier", "own", _FEATURES, "z2", True),
 )
 _ROLLOUT_K, _ROLLOUT_WORLDS, _ROLLOUT_HORIZON = 4, 4, 2
 #: (features, merged influence, fpu reduction, groups) of each search.
@@ -229,9 +231,9 @@ def _state_api(out: _Stream) -> None:
 
 
 def _rollout(out: _Stream, positions: List[ts.GameState]) -> None:
-    for c, (stop, leaf, features, rule) in enumerate(_ROLLOUTS):
+    for c, (stop, leaf, features, rule, keyed) in enumerate(_ROLLOUTS):
         batch = ts.RolloutBatch(horizon=_ROLLOUT_HORIZON, shared_dice=True, guard=True, features=features,
-                                seed=_BASE_SEED + c, stop=stop, leaf=leaf)
+                                seed=_BASE_SEED + c, stop=stop, leaf=leaf, keyed=keyed, aligned=keyed, box4=keyed)
         added: List[Tuple[int, List[int], npt.NDArray[np.float32], npt.NDArray[np.uint8]]] = []
         for st in positions:
             obs = ts.extract_observation_features(st, st.ctx().decision_player, features)
