@@ -88,3 +88,7 @@ beside the control's at matched steps, and one head-to-head with the control onc
   prepared next step on the ladder (depth on A26's width, dropout off), not yet run.
 * **Stop at the check, not at the read.** A network that fails check 1 or 2 is stopped there; strength reads only
   confirm.
+* **The rungs themselves** -- weight decay 1e-2 on the width rung, then the SimbaV2 trunk (unit-norm stream, lerp
+  residual, weights projected to unit norm each step) at 2 then 4 blocks, then attention on it -- with what transfers
+  from SimBa / SimbaV2 and what does not, are [P38](../plans/P38_stability_ladder.md). Head weight norm over a fresh
+  head's is logged every 50M as the plasticity trajectory from now on.
