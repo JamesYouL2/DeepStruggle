@@ -314,11 +314,18 @@ def make_optimizer(net: nn.Module, lr: float, weight_decay: float = 1e-4,
     optimiser states resume unchanged); with `decay_norms_biases` False, the parameters of fewer than two dimensions
     -- LayerNorm gains and biases -- go undecayed in a second group."""
     if decay_norms_biases:
-        return torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=float(weight_decay))
-    decay = [p for p in net.parameters() if p.ndim >= 2]
-    keep = [p for p in net.parameters() if p.ndim < 2]
-    return torch.optim.AdamW([{"params": decay, "weight_decay": float(weight_decay)},
-                              {"params": keep, "weight_decay": 0.0}], lr=lr)
+        opt = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=float(weight_decay))
+    else:
+        decay = [p for p in net.parameters() if p.ndim >= 2]
+        keep = [p for p in net.parameters() if p.ndim < 2]
+        opt = torch.optim.AdamW([{"params": decay, "weight_decay": float(weight_decay)},
+                                 {"params": keep, "weight_decay": 0.0}], lr=lr)
+    # A hyperspherical trunk (P38 rung 2) keeps its weight rows at unit norm: re-projected after every step, wherever
+    # the step is taken (the update and every auxiliary fit share this optimiser).
+    project = getattr(net, "project_weights", None)
+    if getattr(net, "sphere", None) is not None and callable(project):
+        opt.register_step_post_hook(lambda _opt, _args, _kwargs: project())
+    return opt
 
 
 class BaseNashPGTrainer:

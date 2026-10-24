@@ -1,0 +1,72 @@
+"""SimbaV2's hyperspherical trunk (Lee et al., ICML 2025), P38 rung 2 (research/plans/P38_stability_ladder.md).
+
+The two failures the record measured in deeper trunks are removed by construction: the residual stream cannot grow,
+because it lives on the unit sphere and is renormalised after every block (A22's stream grew to RMS 37, A25's
+features' effective rank fell to ~22 of 768), and the blocks' weights cannot grow, because every row is projected
+back to unit norm after each optimiser step (the measured head-weight growth, P37a, is the same disease in the heads).
+
+    h_0      = l2(stem)                                   the fusion's LayerNorm + GELU output, on the sphere
+    h~       = l2(W2 ReLU((W1 h) * s))                    W1: d -> e*d, W2: e*d -> d, unit-norm rows, no bias
+    h        = l2(h + alpha * (h~ - h))                   alpha per dimension, init 1 / (L + 1)
+    out      = sqrt(d) * h_L                              so the heads read a vector of per-element RMS 1
+
+`s` (per hidden unit, init 1) only reweights the hidden units: ReLU is scale-equivariant and the branch is
+renormalised, so a uniform scale changes nothing. A small alpha at initialisation keeps a fresh deep trunk close to
+its stem -- what depth-muP's 1/sqrt(L) residual scaling also buys. Not taken from SimbaV2: RSNorm and the input
+shift (our observation is 0/1 and fractions by design; the fusion is the stem), the categorical critic and reward
+scaling (continuous-control return scales).
+"""
+
+from __future__ import annotations
+
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class SphereBlock(nn.Module):
+    """One SimbaV2 block on unit-norm rows of width `dim`."""
+
+    def __init__(self, dim: int, expansion: int, num_blocks: int) -> None:
+        super().__init__()
+        self.w1 = nn.Linear(dim, expansion * dim, bias=False)
+        self.w2 = nn.Linear(expansion * dim, dim, bias=False)
+        self.scaler = nn.Parameter(torch.ones(expansion * dim))
+        self.alpha = nn.Parameter(torch.full((dim,), 1.0 / (num_blocks + 1)))
+        self.project()
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        branch = F.normalize(self.w2(F.relu(self.w1(h) * self.scaler)), dim=-1)
+        return F.normalize(h + self.alpha * (branch - h), dim=-1)
+
+    @torch.no_grad()
+    def project(self) -> None:
+        """Every weight row back to unit L2 norm (rows are output units, so each unit computes a cosine)."""
+        for lin in (self.w1, self.w2):
+            lin.weight.copy_(F.normalize(lin.weight, dim=1))
+
+
+class SphereTrunk(nn.Module):
+    """`num_blocks` SphereBlocks between the stem and the heads (see the module docstring)."""
+
+    def __init__(self, dim: int, num_blocks: int, expansion: int = 4) -> None:
+        super().__init__()
+        if num_blocks <= 0 or expansion <= 0:
+            raise ValueError(f"a sphere trunk needs blocks and an expansion, got {num_blocks} / {expansion}")
+        self.dim = int(dim)
+        self.expansion = int(expansion)
+        self.blocks = nn.ModuleList([SphereBlock(dim, expansion, num_blocks) for _ in range(num_blocks)])
+
+    def forward(self, stem: torch.Tensor) -> torch.Tensor:
+        h = F.normalize(stem, dim=-1)
+        for block in self.blocks:
+            h = block(h)
+        return h * math.sqrt(self.dim)
+
+    @torch.no_grad()
+    def project(self) -> None:
+        for block in self.blocks:
+            assert isinstance(block, SphereBlock)
+            block.project()

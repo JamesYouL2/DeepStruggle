@@ -114,6 +114,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         # Recorded only when on, so the configs of earlier runs stay comparable.
         **({"trunk_norm": True} if args.ladder_trunk_norm else {}),
         **({"res_post_norm": True} if args.ladder_res_post_norm else {}),
+        **({"sphere_blocks": int(args.ladder_sphere_blocks), "sphere_expansion": int(args.ladder_sphere_expansion)}
+           if int(args.ladder_sphere_blocks) > 0 else {}),
         num_attn_heads=4,
         card_lookup=bool(args.ladder_card_lookup),
         # Inert when the lookup is off, and LadderNet never reads them in that case.
@@ -198,6 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
                           "bounded input. Without it the pre-LN blocks' sum grows unbounded (A22: RMS 28.9 by "
                           "400M, A8 0.37) and the play-mode, Ops-mode and branch heads' logits reach spreads "
                           "of thousands (2026-10-23). Needs --ladder-res-blocks > 0.")
+    lad.add_argument("--ladder-sphere-blocks", type=int, default=0,
+                     help="SimbaV2's hyperspherical trunk after the fusion (P38 rung 2): this many blocks with the "
+                          "stream on the unit sphere, a learned interpolation residual and unit-norm weight rows "
+                          "re-projected after every optimiser step (ai/models/hyperspherical.py). 0 is off. "
+                          "Replaces --ladder-res-blocks and --ladder-trunk-norm.")
+    lad.add_argument("--ladder-sphere-expansion", type=int, default=4,
+                     help="Hidden width of each sphere block as a multiple of the fusion width (SimbaV2: 4).")
     lad.add_argument("--ladder-res-post-norm", action="store_true",
                      help="A LayerNorm after each residual block's add (post-LN), so the residual stream is "
                           "renormalised at every block and cannot grow. With pre-LN blocks alone it grew in a few "

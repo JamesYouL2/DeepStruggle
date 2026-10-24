@@ -36,6 +36,7 @@ import ts_engine as ts
 
 from ai.models.coldwar_net_v2 import (STATIC_BOARD_SLOTS, STATIC_CARD_SLOTS,
                                       ColdWarNetV2, static_input_mask)
+from ai.models.hyperspherical import SphereTrunk
 from bindings.action_encoder import ActionEncoder
 
 #: The branch block of the flat action space (event branches, CONFIRM_DONE, DEFCON values, regions).
@@ -193,6 +194,8 @@ class LadderNet(ColdWarNetV2):
                  res_dropout: float = 0.05,
                  trunk_norm: bool = False,
                  res_post_norm: bool = False,
+                 sphere_blocks: int = 0,
+                 sphere_expansion: int = 4,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
                  logit_cap_leak_up: float = 0.0,
@@ -523,6 +526,14 @@ class LadderNet(ColdWarNetV2):
             raise ValueError("trunk_norm normalises the residual blocks' output; with none the trunk "
                              "already ends in the fusion's LayerNorm")
         self.trunk_norm: nn.LayerNorm | None = nn.LayerNorm(hidden_dim) if trunk_norm else None
+        # --ladder-sphere-blocks (P38 rung 2, owner 2026-10-24): SimbaV2's hyperspherical trunk after the fusion
+        # (ai/models/hyperspherical.py) -- the stream on the unit sphere, renormalised at every block, and the
+        # blocks' weight rows projected back to unit norm after each optimiser step (`project_weights`, which
+        # nash_pg.make_optimizer hooks to every step). It replaces the residual blocks, not a patch to them.
+        if sphere_blocks and (num_res_blocks or trunk_norm):
+            raise ValueError("sphere_blocks replaces the residual blocks and the trunk norm; give neither")
+        self.sphere: SphereTrunk | None = (SphereTrunk(hidden_dim, int(sphere_blocks), int(sphere_expansion))
+                                           if sphere_blocks else None)
         # How the gradient passes the cap. "tanh": through it -- d/dz of c*tanh(d/c) is
         # 1 - tanh^2(d/c), ~0.0013 at a 28-nat deficit, so a saturated move's raw logit learns
         # ~750x slower than its capped probability says, and moving the top logit moves every
@@ -767,6 +778,8 @@ class LadderNet(ColdWarNetV2):
             **({"res_dropout": self.res_dropout} if self.res_dropout != 0.05 else {}),
             **({"trunk_norm": True} if self.trunk_norm is not None else {}),
             **({"res_post_norm": True} if self.res_post_norm else {}),
+            **({"sphere_blocks": len(self.sphere.blocks), "sphere_expansion": self.sphere.expansion}
+               if self.sphere is not None else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
@@ -949,7 +962,15 @@ class LadderNet(ColdWarNetV2):
             h = block(h)
         if self.trunk_norm is not None:
             h = self.trunk_norm(h)
+        if self.sphere is not None:
+            h = self.sphere(h)
         return h, attn_weights, tokens
+
+    @torch.no_grad()
+    def project_weights(self) -> None:
+        """The sphere trunk's weight rows back to unit norm (no-op without one); run after every optimiser step."""
+        if self.sphere is not None:
+            self.sphere.project()
 
     def extract_features(self, obs: torch.Tensor, return_attn_weights: bool = False):
         h, attn, _tokens = self._encode(obs)
@@ -1112,6 +1133,9 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         **({"logit_cap": float(sd["logit_cap"])} if "logit_cap" in sd else {}),
         **({"trunk_norm": True} if "trunk_norm.weight" in sd else {}),
         **({"res_post_norm": True} if "res_blocks.0.ln_post.weight" in sd else {}),
+        **({"sphere_blocks": len({k.split(".")[2] for k in sd if k.startswith("sphere.blocks.")}),
+            "sphere_expansion": int(sd["sphere.blocks.0.w1.weight"].shape[0]) // int(sd["sphere.blocks.0.w1.weight"].shape[1])}
+           if "sphere.blocks.0.w1.weight" in sd else {}),
         **({"region_attn_dim": int(sd["region_attn.qkv.weight"].shape[0]) // 3,
             "region_attn_heads": int(sd["region_attn.n_heads"])} if "region_attn.qkv.weight" in sd else {}),
     )
