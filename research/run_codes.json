@@ -1723,6 +1723,18 @@
     "block_lambda": "off",
     "lr": 0.0002
    }
+  },
+  "R85": {
+   "description": "R84 (lr 2e-4) with AdamW weight decay 1e-2, LayerNorm gains and biases undecayed (--weight-decay 0.01 --no-decay-norms-biases): P38 rung 1, SimBa's decay against the policy heads' weight growth",
+   "first": "E8-A26-R85-S44_20261024_204210",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off",
+    "lr": 0.0002,
+    "weight_decay": 0.01,
+    "decay_norms_biases": false
+   }
   }
  },
  "overrides": {
@@ -1924,7 +1936,8 @@
   "E8-A25-R47-S44_20261023_001540": "E8-A25-R47-S44",
   "E8-A8-R1-S44-2_20261023_032854": "E8-A8-R1-S44-2",
   "E8-A26-R1-S44_20261023_210114": "E8-A26-R1-S44",
-  "E8-A26-R84-S44_20261024_101857": "E8-A26-R84-S44"
+  "E8-A26-R84-S44_20261024_101857": "E8-A26-R84-S44",
+  "E8-A26-R85-S44_20261024_204210": "E8-A26-R85-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

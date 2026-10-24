@@ -101,3 +101,8 @@ any target or search change (P34 / P36, closed).
 ## Runs
 
 (filled in while running; mirrors [`../runs.md`](../runs.md))
+
+| rung | run | result |
+|:---|:---|:---|
+| 0 | `E8-A26-R84-S44_20261024_101857` (A26, lr 2e-4) | **Does not pass**: checks hold (step size at the control's, effective rank 3.0–4.2x fresh, outlier dimension near A8's), strength does not -- against A13+R48's SWA 8.0 / 13.8 / 16.0 / 19.5% at 400 / 800 / 1,200 / 1,600M, the control 9.8 / 16.4 / 18.4 / 24.5%; head dormant 2.1% at 1,600M (control 0.0%). Stopped at 1,926M for rung 1 |
+| 1 | `E8-A26-R85-S44_20261024_204210` (rung 0 + weight decay 1e-2, norms and biases undecayed; R85) | Running (launched 2026-10-24 20:42 UTC); `--weight-decay` / `--no-decay-norms-biases` and the per-iteration `head_norm_over_fresh_*` added for it (5be8ee5) |
