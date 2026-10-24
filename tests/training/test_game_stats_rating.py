@@ -142,7 +142,7 @@ def test_rating_counts_only_clean_games_per_model_player(tmp_path: Any, capsys: 
     assert "human_moves_for_model=1" in capsys.readouterr().out
 
 
-def test_rating_rejects_unplayed_and_other_engine_records(tmp_path: Any) -> None:
+def test_rating_rejects_unplayed_records_and_counts_other_engines_unverified(tmp_path: Any) -> None:
     refused = _submission(0, "p", 2000, "USSR", "US")
     refused["build"]["engine_fingerprint"] = cli.engine_fingerprint()
     other_engine = _submission(1, "p", 2000, "USSR", "US")
@@ -150,5 +150,11 @@ def test_rating_rejects_unplayed_and_other_engine_records(tmp_path: Any) -> None
     export.write_text(json.dumps([refused, other_engine]))
     assert cli.main(["rating", str(export), "--bootstrap", "0", "--json", str(output)]) == 0
     fit = json.loads(output.read_text())
-    assert not fit["fits"]
+    assert [f["games"] for f in fit["fits"]] == [1]
+    assert fit["skipped"] == {"verification: refused": 1} and fit["unverified_other_engine"] == 1
+
+    assert cli.main(["rating", str(export), "--bootstrap", "0", "--json", str(output),
+                     "--this-engine-only"]) == 0
+    fit = json.loads(output.read_text())
+    assert not fit["fits"] and fit["unverified_other_engine"] == 0
     assert fit["skipped"] == {"verification: refused": 1, "verification: other-engine": 1}
