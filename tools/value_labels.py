@@ -742,7 +742,9 @@ def run_merge(a: argparse.Namespace) -> int:
     files: Dict[str, str] = {}
     for split, sel in (("train", ~pos["holdout"]), ("holdout", pos["holdout"])):
         f = d / f"{split}.npz"
-        np.savez(f, **{k: v[sel] for k, v in pos.items()}, **{k: v[sel] for k, v in labels.items()})
+        # Any-valued: numpy's stub would otherwise match an array against savez's allow_pickle.
+        arrays: Dict[str, Any] = {k: v[sel] for k, v in (*pos.items(), *labels.items())}
+        np.savez(f, **arrays)
         files[f.name] = sha256(f)
     sfiles = sorted(d.glob("siblings_*.npz"))
     if sfiles:

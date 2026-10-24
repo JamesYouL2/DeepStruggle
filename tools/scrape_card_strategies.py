@@ -8,8 +8,8 @@ with complete metadata, official card text, historical context, strategic analys
 import os
 import re
 import json
-import bs4  # type: ignore
-from typing import Dict, Any, List, Tuple
+import bs4
+from typing import Dict, Any, List, Optional, Tuple
 
 CACHE_DIR = "scratch/twilightstrategy_cache"
 CARDS_JSON = "rules/cards.json"
@@ -38,25 +38,26 @@ if os.path.exists(list_page_path):
                     continue
                 row_text = [td.get_text(strip=True) for td in tds]
                 a = tr.find("a")
-                if a and a.get("href"):
+                href = a.get("href") if isinstance(a, bs4.Tag) else None
+                if href:
                     match = re.match(r"^#?(\d+)", row_text[0])
                     if match:
-                        card_urls[int(match.group(1))] = a.get("href")
+                        card_urls[int(match.group(1))] = str(href)
 
 
-def clean_inner_html_to_markdown(elem: bs4.PageElement) -> str:
+def clean_inner_html_to_markdown(elem: Optional[bs4.PageElement]) -> str:
     """Converts a BeautifulSoup HTML element into clean Markdown text."""
-    if elem is None:
-        return ""
-    if isinstance(elem, str):
+    if isinstance(elem, bs4.NavigableString):
         return str(elem)
-    
+    if not isinstance(elem, bs4.Tag):
+        return ""
+
     tag_name = elem.name.lower()
     
     # Ignore widgets / scripts / sharing
     if tag_name in ["script", "style", "noscript"]:
         return ""
-    if elem.get("class") and any(c in ["sharedaddy", "sd-sharing-enabled", "wpcnt", "jp-relatedposts"] for c in elem.get("class")):
+    if any(c in ["sharedaddy", "sd-sharing-enabled", "wpcnt", "jp-relatedposts"] for c in elem.get_attribute_list("class")):
         return ""
     if elem.get("id") in ["jp-post-flair"]:
         return ""
@@ -68,7 +69,7 @@ def clean_inner_html_to_markdown(elem: bs4.PageElement) -> str:
         inner = "".join(clean_inner_html_to_markdown(c) for c in elem.contents).strip()
         return f"*{inner}*" if inner else ""
     elif tag_name == "a":
-        href = elem.get("href", "").strip()
+        href = str(elem.get("href") or "").strip()
         inner = "".join(clean_inner_html_to_markdown(c) for c in elem.contents).strip()
         if href and inner:
             return f"[{inner}]({href})"

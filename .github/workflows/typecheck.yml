@@ -27,6 +27,9 @@ jobs:
         with:
           build-engine: "false"
       - name: pyrefly
+        # bash, not the default `bash -e`: with pipefail, pyrefly's exit status survives `| tee`.
+        # Without it the job passed with errors reported.
+        shell: bash
         run: |
           python -m pyrefly check ai tools tests web bindings 2>&1 | tee pyrefly.log
           if grep -q "No Python files matched" pyrefly.log; then
