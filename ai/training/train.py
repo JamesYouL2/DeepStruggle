@@ -539,6 +539,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--buffer-size", type=int, default=128, help="Rollout buffer size per environment")
     parser.add_argument("--batch-size", type=int, default=4096, help="Mini-batch size for SGD updates")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--weight-decay", type=float, default=1e-4,
+                        help="AdamW's decoupled weight decay in the RL update (1e-4, every run before P38; SimBa uses "
+                             "1e-2 -- P38 rung 1).")
+    parser.add_argument("--no-decay-norms-biases", dest="decay_norms_biases", action="store_false",
+                        help="Leave LayerNorm gains and biases (every parameter of fewer than two dimensions) "
+                             "undecayed, in a second optimiser group. Default: one group, everything decayed, as "
+                             "before P38.")
     parser.add_argument("--eta", type=float, default=0.1, help="NashPG reference KL penalty weight")
     parser.add_argument("--vf-coef", type=float, default=0.5,
                         help="Weight on the value loss in the shared-trunk objective. 0.5 suits\n"
@@ -1163,6 +1170,8 @@ def main():
             buffer_size=args.buffer_size,
             batch_size=args.batch_size,
             lr=args.lr,
+            weight_decay=args.weight_decay,
+            decay_norms_biases=args.decay_norms_biases,
             eta=args.eta,
             vf_coef=args.vf_coef,
             value_dist_coef=args.value_dist_coef,

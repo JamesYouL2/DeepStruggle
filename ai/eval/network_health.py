@@ -32,7 +32,7 @@ import torch.nn as nn
 import ts_engine as ts
 
 from ai.eval.plasticity_probe import POLICY_HEAD, dormant
-from ai.models.coldwar_net_v2 import create_like
+from ai.models.coldwar_net_v2 import create_like, policy_head_norms
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 from tools.lib.corpus_driver import selfplay
@@ -80,16 +80,6 @@ def logit_stats(raw: torch.Tensor, masks: torch.Tensor, dtypes: Sequence[str]) -
     return out
 
 
-def head_norms(model: nn.Module) -> Dict[str, float]:
-    """The L2 norm of each policy-head module's parameters."""
-    out: Dict[str, float] = {}
-    for top in POLICY_HEAD:
-        mod = getattr(model, top, None)
-        if isinstance(mod, nn.Module):
-            out[top] = float(torch.sqrt(torch.stack([(p.detach().float() ** 2).sum() for p in mod.parameters()]).sum()))
-    return out
-
-
 def head_dormant(model: nn.Module, obs: torch.Tensor, masks: torch.Tensor, tau: float = 0.1) -> float:
     """ReDo's dormant fraction over the policy head's activation units (as `plasticity_probe.dormant` for the trunk)."""
     stats: List[torch.Tensor] = []
@@ -129,13 +119,13 @@ def measure(model: nn.Module, obs: torch.Tensor, masks: torch.Tensor, dtypes: Se
     fresh_extract = getattr(fresh, "extract_features")
     with torch.no_grad():
         h_fresh = fresh_extract(obs)
-    fresh_norms = head_norms(fresh)
+    fresh_norms = policy_head_norms(fresh)
     out: Dict[str, Any] = {
         "logits": logit_stats(raw, masks, dtypes),
         "head_input": geometry(h),
         # The same network freshly initialised, on the same positions: the effective rank should grow from here.
         "head_input_fresh": geometry(h_fresh),
-        "head_norm_over_fresh": {k: v / max(1e-12, fresh_norms.get(k, 0.0)) for k, v in head_norms(model).items()},
+        "head_norm_over_fresh": {k: v / max(1e-12, fresh_norms.get(k, 0.0)) for k, v in policy_head_norms(model).items()},
         "head_dormant_tau_0.1": head_dormant(model, obs, masks),
         "trunk_dormant_tau_0.1": dormant(model, obs, masks)["all"]["tau_0.1"],
     }

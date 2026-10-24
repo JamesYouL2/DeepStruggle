@@ -29,7 +29,7 @@ import torch.nn.functional as F
 
 import ts_engine as ts
 
-from ai.models.coldwar_net_v2 import create_like
+from ai.models.coldwar_net_v2 import POLICY_HEAD_MODULES, create_like
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import NeuralAgent
 
@@ -42,7 +42,7 @@ TREND = {
     "heads run 6,400M": "/workspace/data/checkpoints/E7-A8-R1-S44_20261007_162257/swa_6320-6400M.pt",
 }
 TRUNK = ("lad_board", "lad_card", "global_proj", "fusion_in", "res_blocks")
-POLICY_HEAD = ("policy_head", "pe_trunk", "pe_country", "branch_head_net", "play_mode_head_net")
+POLICY_HEAD = POLICY_HEAD_MODULES
 A = 220
 
 

@@ -308,6 +308,19 @@ def phase_lock(path: str) -> Any:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def make_optimizer(net: nn.Module, lr: float, weight_decay: float = 1e-4,
+                   decay_norms_biases: bool = True) -> torch.optim.AdamW:
+    """The RL update's AdamW. By default one group with every parameter decayed (every run before P38, so their
+    optimiser states resume unchanged); with `decay_norms_biases` False, the parameters of fewer than two dimensions
+    -- LayerNorm gains and biases -- go undecayed in a second group."""
+    if decay_norms_biases:
+        return torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=float(weight_decay))
+    decay = [p for p in net.parameters() if p.ndim >= 2]
+    keep = [p for p in net.parameters() if p.ndim < 2]
+    return torch.optim.AdamW([{"params": decay, "weight_decay": float(weight_decay)},
+                              {"params": keep, "weight_decay": 0.0}], lr=lr)
+
+
 class BaseNashPGTrainer:
     """Abstract base class for Nash Policy Gradient self-play trainers."""
 
@@ -320,6 +333,8 @@ class BaseNashPGTrainer:
         buffer_size: int = 128,
         batch_size: int = 4096,
         lr: float = 3e-4,
+        weight_decay: float = 1e-4,    # AdamW's decoupled decay
+        decay_norms_biases: bool = True,
         eta: float = 0.1,              # NashPG KL-regularization strength
         clip_eps: float = 0.2,         # PPO clipping epsilon
         search_ce_coef: float = 0.0,   # P15-X4b: weight on CE toward the searcher. 0 = off
@@ -798,7 +813,12 @@ class BaseNashPGTrainer:
                   f"{'the policy' + chr(39) + 's own' if force_event_credit == 'own' else 'environment'}",
                   flush=True)
 
-        self.optimizer = torch.optim.AdamW(self.active_net.parameters(), lr=lr, weight_decay=1e-4)
+        # AdamW at `weight_decay` (1e-4, every parameter, one group: what every run before P38 used, so their
+        # optimiser states resume unchanged). P38 rung 1 (owner, 2026-10-24): SimBa's 1e-2 against the measured
+        # growth of the policy heads' weights (20-50x a fresh head's at the plateau, P37a), with the norms' gains
+        # and every bias -- the parameters of fewer than two dimensions -- left undecayed, as is standard: decaying
+        # a LayerNorm's gain shrinks the normalised features themselves.
+        self.optimizer = make_optimizer(self.active_net, lr, weight_decay, decay_norms_biases)
 
         self.env = env if env is not None else TsVectorizedEnv(num_envs=self.num_envs, base_seed=int(time.time()))
         # Tier-1 critic discrimination. Holds one sample per game per turn until that

@@ -882,6 +882,32 @@ def create_coldwar_net_mlp(device: torch.device | str,
                          drop_static=drop_static).to(dev)
 
 
+#: The policy head's modules (those a network has): the base head, the per-entity heads and their trunk context,
+#: and the card-conditioned branch and play-mode heads. P37a found the plateau's plasticity loss here.
+POLICY_HEAD_MODULES: tuple[str, ...] = ("policy_head", "pe_trunk", "pe_country", "branch_head_net",
+                                        "play_mode_head_net")
+
+
+def policy_head_norms(model: nn.Module) -> dict[str, float]:
+    """The L2 norm of each policy-head module's parameters."""
+    out: dict[str, float] = {}
+    for top in POLICY_HEAD_MODULES:
+        mod = getattr(model, top, None)
+        if isinstance(mod, nn.Module):
+            params = [p.detach().float() for p in mod.parameters()]
+            if params:
+                out[top] = float(torch.sqrt(torch.stack([(p ** 2).sum() for p in params]).sum()))
+    return out
+
+
+def fresh_policy_head_norms(model: nn.Module) -> dict[str, float]:
+    """`policy_head_norms` of a fresh network shaped like `model`, built on the CPU under a forked, fixed-seed RNG
+    so the caller's random stream is untouched."""
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(0)
+        return policy_head_norms(create_like(model))
+
+
 def create_like(model: nn.Module, device: torch.device | str = "cpu") -> ColdWarNetV2:
     """A network shaped exactly like `model`.
 

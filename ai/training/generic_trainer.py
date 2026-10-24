@@ -25,7 +25,8 @@ import torch.nn.functional as F
 
 import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
-from ai.models.coldwar_net_v2 import ColdWarNetV2, create_coldwar_net_v2, create_like
+from ai.models.coldwar_net_v2 import (ColdWarNetV2, create_coldwar_net_v2, create_like, fresh_policy_head_norms,
+                                      policy_head_norms)
 from ai.models.grow import (grow_tokens_optimizer_state, grow_tokens_state_dict, widen_factor,
                             widen_optimizer_state, widen_state_dict)
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
@@ -1638,6 +1639,8 @@ def train_pipeline(
     buffer_size: int = 128,
     batch_size: int = 4096,
     lr: float = 3e-4,
+    weight_decay: float = 1e-4,
+    decay_norms_biases: bool = True,
     eta: float = 0.1,
     vf_coef: float = 0.5,
     value_dist_coef: float = 0.02,
@@ -2176,6 +2179,8 @@ def train_pipeline(
         # diff them. Until 2026-09-24 none of these was recorded, so a run launched with a
         # different lr, batch or buffer size, gamma or eval budget passed the drift check.
         "lr": float(lr),
+        "weight_decay": float(weight_decay),
+        "decay_norms_biases": bool(decay_norms_biases),
         "batch_size": int(batch_size),
         "buffer_size": int(buffer_size),
         "gamma": float(gamma),
@@ -2378,6 +2383,8 @@ def train_pipeline(
         buffer_size=buffer_size,
         batch_size=batch_size,
         lr=lr,
+        weight_decay=weight_decay,
+        decay_norms_biases=decay_norms_biases,
         eta=eta,
         vf_coef=vf_coef,
         value_dist_coef=value_dist_coef,
@@ -2795,6 +2802,9 @@ def train_pipeline(
     # snapshotted every ~5M. Snapshots feed the opponent pool, so that silently made the arm a
     # two-factor experiment. There is no time flag left to get wrong.
     step_budget = int(train_steps)
+    # The denominators of the head-norm trajectory logged every iteration (P38), from a fresh network of the
+    # model's shape; the caller's random stream is untouched.
+    fresh_head_norms: Dict[str, float] = (fresh_policy_head_norms(model) if isinstance(model, ColdWarNetV2) else {})
     eval_every_steps = int(snapshot_every_steps)
     next_eval_steps = eval_every_steps
     # The pool grows on its own schedule (5M, as it always has), not the snapshot's: snapshots
@@ -3139,6 +3149,11 @@ def train_pipeline(
             step_metrics[_aux] = float(iteration_metrics.get(_aux, 0.0))
 
         step_metrics.update(episode_stats)
+        # P38: the policy heads' weight norms over a fresh head's of the same shape, every iteration -- P37a's
+        # plasticity signature (20-50x at the A13+R48 plateau), as a trajectory instead of a probe.
+        for _hn, _hv in policy_head_norms(model).items():
+            if fresh_head_norms.get(_hn, 0.0) > 0.0:
+                step_metrics[f"head_norm_over_fresh_{_hn}"] = _hv / fresh_head_norms[_hn]
         if "entropy_fixed_probe" in iteration_metrics:
             step_metrics["entropy_fixed_probe"] = float(iteration_metrics["entropy_fixed_probe"])
         _as = trainer.active_search
