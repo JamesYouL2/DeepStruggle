@@ -239,9 +239,6 @@ settings, the build's commit) to a Cloudflare Worker that keeps it in D1
 is hosted here. `tools/game_stats.py` exports the table, re-drives each game in the engine, and
 fits each model player's rating on Playdek's scale from the clean games
 ([`tools/README.md`](tools/README.md) §2d).
-The rating command verifies each record in the current engine before including it, reporting
-failed verification and other-engine exclusions. Browser rollout search always owns its engine;
-model replacement terminates the old worker and settles its initialization and search requests.
 
 ### 3.4 CLIs
 
@@ -251,14 +248,6 @@ loss causes; more or a directory: a round robin with Bradley-Terry Elo) and `too
 downloaded by `tools/download_ts_replayer.py` and converted, verified entry by entry against the
 log's own boards, by `tools/lib/ts_replayer_*.py`; every game converts in full. Everything else,
 with flags: [`tools/README.md`](tools/README.md).
-Human conversion requires successful whole-game hand solving with z3; it reports failure before
-emitting decisions when solving is unavailable. The terminal heuristic reads influence from
-name-keyed display countries; tournament `HeuristicAgent` is a separate implementation.
-
-Save loaders reject a supplied context depth outside the six-entry decision stack before
-publishing a state. Keyed chance packs player values as unsigned bytes so USSR (-1) cannot erase
-turn, round, decision or roll-target fields; keyed-search measurements and labels from before
-this correction need to be retaken.
 
 ---
 
