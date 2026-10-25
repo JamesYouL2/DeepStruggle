@@ -86,6 +86,7 @@ beside the control's at matched steps, and one head-to-head with the control onc
   left the stream growing in a few dimensions, which the norm then turned into a rank collapse (A25).
   `--ladder-res-post-norm` (a LayerNorm after every residual add) renormalises the stream at each block; it is the
   prepared next step on the ladder (depth on A26's width, dropout off), not yet run.
+* **Blocks after the fusion need the 16k minibatch.** **Every trunk with blocks after the fusion takes 2.6–3.6x the control's step per update on the 4,096 minibatch** (per-update approximate KL at 50–60M: A8 control 0.016; A26, no blocks, 0.017 at 2e-4; A34 / A25 / A29 0.041–0.043; the sphere trunk 0.050–0.057 at lr 2e-4, 1e-4 and output RMS 0.5 alike; A22 with dropout 0.05 0.022), and the 16k minibatch brings it back (A25 on R47: 0.019, the one block network level with the control to 1,600M). The lever is the number of gradient steps per iteration, not the learning rate (2026-10-25). Keeping a run past a failed step-size check by exception cost a collapse (the sphere trunk at 1e-4: 2.3% against A13+R48's SWA at 400M, its rank falling).
 * **Stop at the check, not at the read.** A network that fails check 1 or 2 is stopped there; strength reads only
   confirm.
 * **The rungs themselves** -- weight decay 1e-2 on the width rung, then the SimbaV2 trunk (unit-norm stream, lerp

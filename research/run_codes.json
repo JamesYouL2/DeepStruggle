@@ -1815,6 +1815,17 @@
     "weight_decay": 0.01,
     "decay_norms_biases": false
    }
+  },
+  "R86": {
+   "description": "R84 (lr 2e-4) at the 16,384 minibatch: 4x fewer, noise-averaged gradient steps per iteration, which brings a trunk with blocks after the fusion back to the control's per-update step (P38)",
+   "first": "E8-A29-R86-S44_20261025_054307",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "block_lambda": "off",
+    "lr": 0.0002,
+    "batch_size": 16384
+   }
   }
  },
  "overrides": {
@@ -2021,7 +2032,8 @@
   "E8-A27-R84-S44_20261025_010608": "E8-A27-R84-S44",
   "E8-A27-R82-S44_20261025_013823": "E8-A27-R82-S44",
   "E8-A28-R84-S44_20261025_044640": "E8-A28-R84-S44",
-  "E8-A29-R84-S44_20261025_051812": "E8-A29-R84-S44"
+  "E8-A29-R84-S44_20261025_051812": "E8-A29-R84-S44",
+  "E8-A29-R86-S44_20261025_054307": "E8-A29-R86-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
