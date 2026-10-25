@@ -300,7 +300,7 @@ plays seeded random games (passing over a move that ends the game at once or tak
 they reach the Late War) and hashes every observation, legal mask and action, in four sections:
 `runner` (the batch runner leaderboard games are played on, under both action views and both
 feature sets for each side), `state` (the single-position API), `rollout` (`RolloutBatch` under each
-stop and leaf setting) and `mcts` (`BatchedSearch`), the searches driven by a stand-in network that
+stop and leaf setting, and keyed chance since version 2) and `mcts` (`BatchedSearch`), the searches driven by a stand-in network that
 is a hash of the rows it is shown. It takes about 5 seconds. Any build that reproduces an epoch's
 digest plays its games -- a refactor, a comment or a change to the web page needs nothing done --
 and one that does not is refused, naming the sections that differ: a new epoch if the change is

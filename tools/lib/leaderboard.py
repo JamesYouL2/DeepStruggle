@@ -65,8 +65,10 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 REPORT_DIR = "research/log/per_checkpoint"
 _REPORT_SCRIPT = "tools/scripts/checkpoint_report.py"
 #: Of tools/lib/engine_behaviour.py's digest: bumped whenever what it hashes changes, so a digest
-#: taken one way is never compared with one taken another.
-BEHAVIOUR_VERSION = 1
+#: taken one way is never compared with one taken another. 2: the rollout section plays a keyed
+#: batch (2026-10-24); before, no section built one, so a change to how keyed chance draws moved
+#: nothing.
+BEHAVIOUR_VERSION = 2
 BEHAVIOUR_SECTIONS: Tuple[str, ...] = ("runner", "state", "rollout", "mcts")
 
 
