@@ -67,8 +67,9 @@ _REPORT_SCRIPT = "tools/scripts/checkpoint_report.py"
 #: Of tools/lib/engine_behaviour.py's digest: bumped whenever what it hashes changes, so a digest
 #: taken one way is never compared with one taken another. 2: the rollout section plays a keyed
 #: batch (2026-10-24); before, no section built one, so a change to how keyed chance draws moved
-#: nothing.
-BEHAVIOUR_VERSION = 2
+#: nothing. 3: that batch also plays Space Race box 4 headlines (2026-10-25), where its box4 acts;
+#: under 2 it never met one. No epoch was taken under 2.
+BEHAVIOUR_VERSION = 3
 BEHAVIOUR_SECTIONS: Tuple[str, ...] = ("runner", "state", "rollout", "mcts")
 
 

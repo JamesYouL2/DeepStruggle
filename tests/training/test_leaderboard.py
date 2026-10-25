@@ -351,6 +351,33 @@ def test_the_behaviour_digest_is_the_same_every_time_it_is_taken() -> None:
     assert engine_behaviour.measure() == first
 
 
+def test_the_keyed_rollout_batch_moves_with_each_of_its_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    """keyed, aligned and box4 each change what the keyed batch hashes, so a change to any of them
+    moves the rollout section (box4 acts only at a Space Race box 4 headline, which the positions
+    taken by cadence never are)."""
+    positions: List[engine_behaviour.ts.GameState] = []
+    box4: List[engine_behaviour.ts.GameState] = []
+    engine_behaviour._runner(engine_behaviour._Stream(), positions, box4)
+    assert len(box4) == engine_behaviour._BOX4_POSITIONS
+    assert all(engine_behaviour.ts.revealed_headline(st, st.ctx().decision_player) for st in box4)
+    monkeypatch.setattr(engine_behaviour, "_ROLLOUTS", tuple(r for r in engine_behaviour._ROLLOUTS if r[4]))
+    batch = engine_behaviour.ts.RolloutBatch
+
+    def digest(**off: bool) -> str:
+        def make(**kw: Any) -> engine_behaviour.ts.RolloutBatch:
+            args: Dict[str, Any] = {**kw, **off}
+            return batch(**args)
+
+        monkeypatch.setattr(engine_behaviour.ts, "RolloutBatch", make)
+        out = engine_behaviour._Stream()
+        engine_behaviour._rollout(out, positions, box4)
+        return out.hexdigest()
+
+    full = digest()
+    for flag in ("keyed", "aligned", "box4"):
+        assert digest(**{flag: False}) != full, f"{flag} moves nothing in the keyed batch"
+
+
 def test_a_network_is_trained_under_the_last_code_of_each_kind_in_its_name() -> None:
     assert lb.network_codes("E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M") == ("A13", "R48")
     assert lb.network_codes("E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M") == ("A8", "R34")

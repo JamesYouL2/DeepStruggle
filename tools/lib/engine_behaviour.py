@@ -22,8 +22,9 @@ Four sections, each a sha256, so a mismatch says where the engines part:
 * `state` -- the same through the single-position API the searchers and the page use
   (`get_flat_action_mask` in both views, `extract_observation_features` from both sides).
 * `rollout` -- the rollout root's batch (`RolloutBatch`) on positions from the runner's games,
-  under each stop and leaf setting and keyed chance (since version 2): playout observations
-  and masks, leaf values, each position's decision.
+  under each stop and leaf setting and keyed chance (since version 2), the keyed batch also on
+  positions at a Space Race box 4 headline (since version 3): playout observations and masks, leaf
+  values, each position's decision.
 * `mcts` -- the C++ search tree (`BatchedSearch`) on the same positions: its leaves, the roots'
   statistics and the generator state it hands back.
 
@@ -65,8 +66,13 @@ _MAX_STEPS = 10_000
 #: Every this many runner steps, one live game's position is kept for the searches.
 _POSITION_EVERY = 11
 _POSITIONS = 48
+#: Runner positions at a Space Race box 4 headline (the decider holds box 4 alone and has seen the
+#: opponent's headline), kept for the keyed batch: its box4 acts only there, and the positions taken
+#: every _POSITION_EVERY steps never land on one, so without them box4 moved no section.
+_BOX4_POSITIONS = 4
 #: (stop, leaf, features, rule, keyed) of each rollout batch. The keyed one is the deployed root's
-#: (earlier:own:keyed:aligned:box4), whose draws come from bindings/keyed_chance.hpp, not the stream.
+#: (earlier:own:keyed:aligned:box4), whose draws come from bindings/keyed_chance.hpp, not the stream;
+#: it also plays the _BOX4_POSITIONS.
 _ROLLOUTS: Tuple[Tuple[str, str, int, str, bool], ...] = (
     ("boundaries", "mover", 0, "argmax", False),
     ("turn", "own", _FEATURES, "z2", False),
@@ -149,7 +155,7 @@ def _choose(st: ts.GameState, legal: List[int], merged: bool) -> int:
     return legal[0]
 
 
-def _runner(out: _Stream, positions: List[ts.GameState]) -> None:
+def _runner(out: _Stream, positions: List[ts.GameState], box4: List[ts.GameState]) -> None:
     n = _RUNNER_ENVS
     runner = ts.VectorizedBatchRunner(n, _BASE_SEED)
     for i in range(n):
@@ -181,7 +187,10 @@ def _runner(out: _Stream, positions: List[ts.GameState]) -> None:
                 raise BehaviourError(f"runner game {i}: no legal action at step {step}")
             pick[i].shuffle(legal)
             merged = merged_us[i] if players[i] == int(ts.Player.US) else merged_ussr[i]
-            actions[i] = _choose(runner.get_state(int(i)), legal, merged)
+            st = runner.get_state(int(i))
+            if len(box4) < _BOX4_POSITIONS and ts.revealed_headline(st, st.ctx().decision_player):
+                box4.append(st.clone())
+            actions[i] = _choose(st, legal, merged)
             out.ints(step, int(i), int(players[i]), int(actions[i]))
             out.array(obs[i])
             out.array(masks[i])
@@ -230,13 +239,13 @@ def _state_api(out: _Stream) -> None:
         out.text(ts.game_ending_reason(st))
 
 
-def _rollout(out: _Stream, positions: List[ts.GameState]) -> None:
+def _rollout(out: _Stream, positions: List[ts.GameState], box4: List[ts.GameState]) -> None:
     for c, (stop, leaf, features, rule, keyed) in enumerate(_ROLLOUTS):
         batch = ts.RolloutBatch(horizon=_ROLLOUT_HORIZON, shared_dice=True, guard=True, features=features,
                                 seed=_BASE_SEED + c, stop=stop, leaf=leaf, keyed=keyed,
                                 aligned=keyed, box4=keyed)
         added: List[Tuple[int, List[int], npt.NDArray[np.float32], npt.NDArray[np.uint8]]] = []
-        for st in positions:
+        for st in positions + box4 if keyed else positions:
             obs = ts.extract_observation_features(st, st.ctx().decision_player, features)
             mask = np.asarray(ts.get_flat_action_mask(st, False), dtype=np.uint8)
             logits = stand_in(obs[None, :], mask[None, :])[0][0]
@@ -313,10 +322,14 @@ def _mcts(out: _Stream, positions: List[ts.GameState]) -> None:
 def measure() -> Behaviour:
     """The digest of the engine this process imported."""
     positions: List[ts.GameState] = []
+    box4: List[ts.GameState] = []
     runner, state, rollout, mcts = _Stream(), _Stream(), _Stream(), _Stream()
-    _runner(runner, positions)
+    _runner(runner, positions, box4)
+    if len(box4) < _BOX4_POSITIONS:
+        raise BehaviourError(f"the runner's games reached {len(box4)} Space Race box 4 headlines, "
+                             f"not {_BOX4_POSITIONS}")
     _state_api(state)
-    _rollout(rollout, positions)
+    _rollout(rollout, positions, box4)
     _mcts(mcts, positions)
     return {"version": BEHAVIOUR_VERSION, "runner": runner.hexdigest(), "state": state.hexdigest(),
             "rollout": rollout.hexdigest(), "mcts": mcts.hexdigest()}
