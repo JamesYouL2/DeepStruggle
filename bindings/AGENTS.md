@@ -67,6 +67,8 @@ are cited from elsewhere; keep them.
     mid-decision restored at a different decision — 91 of 97 positions on one seed — with every
     visible field matching. `action_history` and `turn_aggregates` are deliberately not saved: no
     rule or observation reads them. If one ever does, add it here.
+    Both loaders reject a supplied `ctx_stack_depth` unless it is an integer inside the six-entry
+    stack. Missing depth still defaults; an invalid Wasm load leaves the live position intact.
 - [`state_json.hpp`](state_json.hpp) / [`state_json.cpp`](state_json.cpp): **the display state, the
   save and its loader, and the ending reason, written once** as a dependency-free JSON value tree,
   converted to Python objects here and printed by the WebAssembly build — two hand-kept copies
