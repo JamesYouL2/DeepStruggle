@@ -59,6 +59,7 @@ import re
 import multiprocessing
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -718,8 +719,17 @@ def _worker_init(path: str, agent_spec: Optional[str], player: Optional[str], me
                    player=player, merged=merged)
 
 
-def _worker_batch(job: Tuple[int, int, int, int]) -> Dict[str, Any]:
-    games, seed, batch, b0 = job
+@dataclass(frozen=True)
+class _BatchJob:
+    """One batch of `play` for a worker: the run's games, seed and batch size, and the batch's first game."""
+    games: int
+    seed: int
+    batch: int
+    b0: int
+
+
+def _worker_batch(job: _BatchJob) -> Dict[str, Any]:
+    games, seed, batch, b0 = job.games, job.seed, job.batch, job.b0
     t0 = time.time()
     d = play(_WORKER["model"], _WORKER["merged"], games, seed, batch, agent=_WORKER["agent"],
              player=_WORKER["player"], batches=[b0])
@@ -747,7 +757,7 @@ def play_parallel(path: str, agent_spec: Optional[str], player: Optional[str], m
     """`play` over `workers` processes, a batch at a time, merged in batch order. Every batch is its own
     game (the env seeded by its first game id, the agent reseeded likewise), so this is the same run
     as `play` in one process -- the engine's playouts are single-threaded, and a search is CPU-bound."""
-    jobs = [(games, seed, batch, b0) for b0 in range(0, games, batch)]
+    jobs = [_BatchJob(games, seed, batch, b0) for b0 in range(0, games, batch)]
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(workers, initializer=_worker_init, initargs=(path, agent_spec, player, merged)) as pool:
         parts = list(pool.imap(_worker_batch, jobs))

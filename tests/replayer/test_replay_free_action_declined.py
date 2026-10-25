@@ -20,7 +20,7 @@ import ts_engine as ts
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import convert_game
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
 
 CORPUS = str(corpus_dir())
 JUNTA, TEAR_DOWN_THIS_WALL = 47, 96
@@ -44,7 +44,7 @@ def _entry(replay_id: int, turn: int, phase: str, player: str):
 def test_the_entry_records_the_placement_and_nothing_after_it() -> None:
     e = _entry(174, 5, "AR6", "US")
     assert e.card == "Junta"
-    assert e.influence == [("US", 2, CHILE, 2, 0)]
+    assert e.influence == [InfluenceLine("US", 2, CHILE, 2, 0)]
     assert e.sections == [], "no Ops header, so no free action was taken"
     assert e.mode is None
 

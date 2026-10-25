@@ -306,23 +306,24 @@ def _counted(decisions: List[WinDecision]) -> Tuple[int, int]:
 
 
 def test_a_win_is_counted_once_across_its_decisions() -> None:
-    took: List[WinDecision] = [(US, 7, 1, True), (US, 4, 1, True), (US, 2, 1, True)]   # card, event, branch
+    took = [WinDecision(US, 7, 1, True), WinDecision(US, 4, 1, True), WinDecision(US, 2, 1, True)]   # card, event, branch
     assert _counted(took) == (1, 1)
-    ops: List[WinDecision] = [(US, 7, 1, True), (US, 4, 1, False)]                     # card, then Ops
+    ops = [WinDecision(US, 7, 1, True), WinDecision(US, 4, 1, False)]                                # card, then Ops
     assert _counted(ops) == (1, 0)
-    declined: List[WinDecision] = [(US, 7, 1, True), (US, 4, 1, True), (US, 2, 1, False)]
+    declined = [WinDecision(US, 7, 1, True), WinDecision(US, 4, 1, True), WinDecision(US, 2, 1, False)]
     assert _counted(declined) == (1, 0)
 
 
 def test_separate_chances_count_separately() -> None:
-    seq: List[WinDecision] = [(US, 7, 1, False), (USSR, 5, 0, False), (US, 6, 1, True), (US, 2, 1, True)]
+    seq = [WinDecision(US, 7, 1, False), WinDecision(USSR, 5, 0, False),
+           WinDecision(US, 6, 1, True), WinDecision(US, 2, 1, True)]
     assert fold_win_opportunities(seq) == [(0, False), (2, True)]
 
 
 def test_a_win_with_no_way_to_decline_it_is_not_a_chance() -> None:
-    assert _counted([(US, 3, 3, True)]) == (0, 0)
+    assert _counted([WinDecision(US, 3, 3, True)]) == (0, 0)
     # ...but it does not break a line that is already open
-    assert _counted([(US, 7, 1, True), (US, 1, 1, True), (US, 2, 1, True)]) == (1, 1)
+    assert _counted([WinDecision(US, 7, 1, True), WinDecision(US, 1, 1, True), WinDecision(US, 2, 1, True)]) == (1, 1)
 
 
 # --- a battleground coup at DEFCON 2 ---------------------------------------------------------------

@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set,
 import numpy as np
 import ts_engine as ts
 
-from ai.eval.safety import classify_legal_actions, fold_win_opportunities
+from ai.eval.safety import WinDecision, classify_legal_actions, fold_win_opportunities
 from tools.lib.ts_replayer_convert import Conversion, convert_game
 
 # Predicted win probability for a batch of (observation, mask) pairs, in the mover's frame.
@@ -249,8 +249,8 @@ def measure_game(game: Dict[str, Any], value_fn: Optional[ValueFn] = None) -> Ga
 
     values: Optional[np.ndarray] = None
     if value_fn is not None and n:
-        obs_batch = np.stack([np.asarray(s[0], dtype=np.float32) for s in conv.samples])
-        mask_batch = np.stack([np.asarray(s[1]) for s in conv.samples])
+        obs_batch = np.stack([np.asarray(s.obs, dtype=np.float32) for s in conv.samples])
+        mask_batch = np.stack([np.asarray(s.mask) for s in conv.samples])
         values = value_fn(obs_batch, mask_batch)
 
     for i in range(n):
@@ -262,7 +262,7 @@ def measure_game(game: Dict[str, Any], value_fn: Optional[ValueFn] = None) -> Ga
             out.excluded_no_legal += 1
             continue
         wins = obs.win_actions[i]
-        action = int(conv.samples[i][2])
+        action = int(conv.samples[i].action)
         out.decisions.append(DecisionRecord(
             turn=turns[i],
             victory_points=vps[i],
@@ -403,7 +403,7 @@ def summarize_forced_wins(m: CorpusMeasurement) -> ForcedWinSummary:
         # One entry per chance to win, not per decision: Wargames from hand is three decisions
         # labelled "win" (the card, its event, its branch) and one chance (`fold_win_opportunities`).
         chances = fold_win_opportunities(
-            [(d.mover, d.legal_actions, d.win_actions, d.win_taken) for d in g.decisions])
+            [WinDecision(d.mover, d.legal_actions, d.win_actions, d.win_taken) for d in g.decisions])
         had = False
         for first, taken in chances:
             d = g.decisions[first]

@@ -44,7 +44,7 @@ def test_the_entry_states_the_die_and_moves_the_country_afterwards() -> None:
     e = _entry(30, 5, "Headline", "both")
     assert e.war_targets == [_PANAMA]
     assert e.war_rolls == [(1, 0, False)], "DEFEAT: 1 < 3"
-    assert e.influence_by_event["Panama Canal Returned*"][0][2] == _PANAMA, (
+    assert e.influence_by_event["Panama Canal Returned*"][0].country == _PANAMA, (
         "and the Influence in Panama is that card's, printed under its own header")
 
 

@@ -244,6 +244,16 @@ def _git(*args: str) -> str:
         return "unknown"
 
 
+@dataclass(frozen=True)
+class _DecisionMeans:
+    """Sibling decisions' per-candidate means over their shared worlds (decisions x k), and the
+    leaves behind them for the per-leaf loss."""
+    pred: torch.Tensor          # mean leaf value as a score (a leafless row's: its result)
+    target: torch.Tensor        # mean result
+    leaf_logits: torch.Tensor   # the leaves' win logits
+    leaf_results: torch.Tensor  # their results
+
+
 def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Optional[str],
                   output_dir: Optional[str] = None, cli: Optional[Dict[str, Any]] = None) -> str:
     """Fit, evaluate on held-out games, keep the best; returns the run directory. `cli` is the
@@ -346,10 +356,9 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         p = torch.sigmoid(2.0 * z)
         return (((p - p.mean(1, keepdim=True)) - (y - y.mean(1, keepdim=True))) ** 2).mean()
 
-    def decision_means(dec: Dict[str, np.ndarray], di: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """For decisions `di`: (P, T) the per-candidate means over the shared worlds of the leaf values
-        and of the results (decisions x k), the leaves' win logits and their results (for the per-leaf
-        loss). A leafless row's value is its result."""
+    def decision_means(dec: Dict[str, np.ndarray], di: np.ndarray) -> _DecisionMeans:
+        """For decisions `di`: the per-candidate means of the leaf values and of the results, and the
+        leaves' win logits and results. A leafless row's value is its result."""
         row, y, leaf = dec["row"][di], dec["y"][di], dec["leaf"][di]
         ok = np.broadcast_to(dec["ok"][di][:, None, :], row.shape)
         use = leaf & ok
@@ -362,7 +371,7 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         okt = torch.from_numpy(ok.astype(np.float32)).to(dev)
         n = okt.sum(2).clamp(min=1.0)
         yt = torch.from_numpy(y).to(dev)
-        return (p * okt).sum(2) / n, (yt * okt).sum(2) / n, z_leaf, yt[mask_use]
+        return _DecisionMeans((p * okt).sum(2) / n, (yt * okt).sum(2) / n, z_leaf, yt[mask_use])
 
     def centred_loss(pm: torch.Tensor, tm: torch.Tensor) -> torch.Tensor:
         return (((pm - pm.mean(1, keepdim=True)) - (tm - tm.mean(1, keepdim=True))) ** 2).mean()
@@ -417,9 +426,9 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
             n = min(dec_hold["row"].shape[0], 3000)
             pms, tms = [], []
             for lo in range(0, n, 64):
-                pm, tm, _, _ = decision_means(dec_hold, np.arange(lo, min(n, lo + 64)))
-                pms.append(pm)
-                tms.append(tm)
+                means = decision_means(dec_hold, np.arange(lo, min(n, lo + 64)))
+                pms.append(means.pred)
+                tms.append(means.target)
             pm, tm = torch.cat(pms), torch.cat(tms)
             dp = pm[:, :, None] - pm[:, None, :]
             dt = tm[:, :, None] - tm[:, None, :]
@@ -495,7 +504,8 @@ def run_value_fit(cfg: ValueFitConfig, run_name: Optional[str], description: Opt
         loss_leaf = torch.zeros((), device=dev)
         if cfg.sibling_loss == "decision" and dec_train["row"].shape[0]:
             di = rng.integers(0, dec_train["row"].shape[0], size=cfg.sibling_decisions)
-            pm, tm, z_leaf, y_leaf = decision_means(dec_train, di)
+            means = decision_means(dec_train, di)
+            pm, tm, z_leaf, y_leaf = means.pred, means.target, means.leaf_logits, means.leaf_results
             loss_sib = centred_loss(pm, tm)
             loss = loss + cfg.sibling_coef * loss_sib
             if cfg.leaf_coef > 0 and z_leaf.numel():

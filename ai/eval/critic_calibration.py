@@ -29,6 +29,26 @@ import ts_engine as ts
 VP_CAP = 20.0
 
 
+@dataclass(frozen=True)
+class EndingSummary:
+    """The positions of one kind of ending: how many, and their mean prediction and outcomes."""
+
+    count: int
+    mean_predicted: float
+    mean_realized_win: float
+    mean_realized_vp: float
+
+
+@dataclass(frozen=True)
+class CalibrationBucket:
+    """One predicted-value bucket: its label, size, mean prediction and realised win rate."""
+
+    label: str
+    count: int
+    mean_predicted: float
+    mean_realized_win: float
+
+
 @dataclass
 class Calibration:
     """Predictions against outcomes, over a set of visited positions."""
@@ -51,16 +71,16 @@ class Calibration:
         y = (np.asarray(self.realized_win) + 1.0) / 2.0
         return float(np.mean((p - y) ** 2)) if p.size else float("nan")
 
-    def by_ending(self) -> Dict[str, Tuple[int, float, float, float]]:
+    def by_ending(self) -> Dict[str, EndingSummary]:
         """Per ending: how many, mean prediction, mean realised win, mean realised VP."""
-        out: Dict[str, Tuple[int, float, float, float]] = {}
+        out: Dict[str, EndingSummary] = {}
         endings = np.asarray(self.ended_by)
         for kind in sorted(set(self.ended_by)):
             sel = endings == kind
-            out[kind] = (int(sel.sum()),
-                         float(np.mean(np.asarray(self.predicted)[sel])),
-                         float(np.mean(np.asarray(self.realized_win)[sel])),
-                         float(np.mean(np.asarray(self.realized_vp)[sel])))
+            out[kind] = EndingSummary(int(sel.sum()),
+                                      float(np.mean(np.asarray(self.predicted)[sel])),
+                                      float(np.mean(np.asarray(self.realized_win)[sel])),
+                                      float(np.mean(np.asarray(self.realized_vp)[sel])))
         return out
 
 
@@ -143,15 +163,15 @@ def measure(model: Any, device: Any, num_envs: int = 256, base_seed: int = 8181,
 
 
 def calibration_buckets(cal: Calibration, edges: Sequence[float] = (-1.0, -0.6, -0.2, 0.2, 0.6, 1.0),
-                        ) -> List[Tuple[str, int, float, float]]:
+                        ) -> List[CalibrationBucket]:
     """Predicted value against realised win rate, bucketed -- the usual calibration check."""
     p = np.asarray(cal.predicted)
     y = np.asarray(cal.realized_win)
-    rows: List[Tuple[str, int, float, float]] = []
+    rows: List[CalibrationBucket] = []
     for lo, hi in zip(edges[:-1], edges[1:]):
         sel = (p >= lo) & (p < hi) if hi < edges[-1] else (p >= lo) & (p <= hi)
         if not sel.any():
             continue
-        rows.append((f"[{lo:+.1f}, {hi:+.1f})", int(sel.sum()),
-                     float(p[sel].mean()), float(y[sel].mean())))
+        rows.append(CalibrationBucket(f"[{lo:+.1f}, {hi:+.1f})", int(sel.sum()),
+                                      float(p[sel].mean()), float(y[sel].mean())))
     return rows

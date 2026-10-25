@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import ts_engine as ts
-from ai.eval.paired_playouts import ar_key, decider
+from ai.eval.paired_playouts import ARKey, ar_key, decider
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import drain_chance
 
@@ -212,7 +212,7 @@ def test_the_boundary_count_matches_ar_key_changes() -> None:
     cands = _legal(st)[:1] + _legal(st)[1:2]
     b = ts.RolloutBatch(horizon=3, shared_dice=True, guard=False, seed=11)
     b.add(st, cands, 1)
-    starts: List[Tuple[int, ...]] = [ar_key(b.row_state(r)) for r in range(b.rows())]
+    starts: List[ARKey] = [ar_key(b.row_state(r)) for r in range(b.rows())]
     _play(b, seed=1)
     for r in range(b.rows()):
         if b.row_terminal()[r]:

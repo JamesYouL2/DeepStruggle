@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -178,10 +179,29 @@ SPLIT_HEADER = ["| snapshot | games played | plays while ahead | headline | Ops 
                 "|:---|---:|---:|---:|---:|---:|---:|"]
 
 
-#: (outcome, label, light, dark, marker) -- categorical slots 1-3 of the reference palette.
-SERIES = [("headline", "headline", "#2a78d6", "#3987e5", "circle"),
-          ("ops", "Ops in a round", "#eb6834", "#d95926", "square"),
-          ("event", "event in a round", "#1baf7a", "#199e70", "triangle")]
+@dataclass(frozen=True)
+class _Series:
+    """One line of the chart: a play outcome, its label, light and dark colours, and marker."""
+    outcome: str
+    label: str
+    light: str
+    dark: str
+    marker: str
+
+
+#: categorical slots 1-3 of the reference palette.
+SERIES = [_Series("headline", "headline", "#2a78d6", "#3987e5", "circle"),
+          _Series("ops", "Ops in a round", "#eb6834", "#d95926", "square"),
+          _Series("event", "event in a round", "#1baf7a", "#199e70", "triangle")]
+
+
+@dataclass(frozen=True, order=True)
+class _EndLabel:
+    """A series' direct label at the right end of the chart; ordered by height, then series."""
+    y: float
+    series: int
+    label: str
+    share: float
 
 
 def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -208,8 +228,8 @@ def plot_svg(points: Sequence[tuple[float, Dict[str, Any]]], title: str, branch_
 
     sizes = {sum(p["ahead"] for p in d["plays"]) for _, d in points}
     n_label = f"{sizes.pop():,}" if len(sizes) == 1 else "all"
-    css_l = "".join(f".s{i}{{stroke:{c};fill:{c}}}.t{i}{{fill:{c}}}" for i, (_, _, c, _, _) in enumerate(SERIES))
-    css_d = "".join(f".s{i}{{stroke:{c};fill:{c}}}.t{i}{{fill:{c}}}" for i, (_, _, _, c, _) in enumerate(SERIES))
+    css_l = "".join(f".s{i}{{stroke:{s.light};fill:{s.light}}}.t{i}{{fill:{s.light}}}" for i, s in enumerate(SERIES))
+    css_d = "".join(f".s{i}{{stroke:{s.dark};fill:{s.dark}}}.t{i}{{fill:{s.dark}}}" for i, s in enumerate(SERIES))
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
          f'font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="{title}">',
          "<style>.bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.ink2{fill:#52514e}.mut{fill:#898781}"
@@ -234,8 +254,9 @@ def plot_svg(points: Sequence[tuple[float, Dict[str, Any]]], title: str, branch_
         o.append(f'<line class="axis" x1="{x:.1f}" x2="{x:.1f}" y1="{T - 2}" y2="{Y(0):.1f}" stroke-width="1" stroke-dasharray="3 3"/>')
         o.append(f'<text class="mut" x="{x - 4:.1f}" y="{T - 6}" font-size="10" text-anchor="end">E7-01-44</text>')
         o.append(f'<text class="mut" x="{x + 4:.1f}" y="{T - 6}" font-size="10">E7-02-44</text>')
-    ends: List[tuple[float, int, str, float]] = []
-    for i, (key, label, _, _, marker) in enumerate(SERIES):
+    ends: List[_EndLabel] = []
+    for i, series in enumerate(SERIES):
+        key, label, marker = series.outcome, series.label, series.marker
         rows = []
         for x, d in points:
             pl = [p for p in d["plays"] if p["ahead"]]
@@ -256,14 +277,14 @@ def plot_svg(points: Sequence[tuple[float, Dict[str, Any]]], title: str, branch_
             else:
                 o.append(f'<polygon class="s{i} mark" points="{cx:.1f},{cy - 4.8:.1f} {cx + 4.6:.1f},{cy + 3.4:.1f} '
                          f'{cx - 4.6:.1f},{cy + 3.4:.1f}" style="stroke-width:1.5"/>')
-        ends.append((Y(rows[-1][1]), i, label, rows[-1][1]))
+        ends.append(_EndLabel(Y(rows[-1][1]), i, label, rows[-1][1]))
     ends.sort()                                    # direct labels at the right end, kept 16px apart
-    ys = [e[0] for e in ends]
+    ys = [e.y for e in ends]
     for j in range(1, len(ys)):
         ys[j] = max(ys[j], ys[j - 1] + 16)
-    for y, (_, i, label, p) in zip(ys, ends):
-        o.append(f'<text class="t{i}" x="{W - R + 10}" y="{y + 4:.1f}" font-size="12" font-weight="600">'
-                 f'{label} {100 * p:.0f}%</text>')
+    for y, e in zip(ys, ends):
+        o.append(f'<text class="t{e.series}" x="{W - R + 10}" y="{y + 4:.1f}" font-size="12" font-weight="600">'
+                 f'{e.label} {100 * e.share:.0f}%</text>')
     o.append("</svg>")
     return "\n".join(o)
 

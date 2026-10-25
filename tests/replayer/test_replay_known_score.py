@@ -27,7 +27,7 @@ import ts_engine as ts
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import _KNOWN_SCORE, convert_game, country_id
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import VpGain, parse_entry
 
 CORPUS = str(corpus_dir())
 ASIA = ts.Region.ASIA
@@ -44,9 +44,9 @@ def test_the_log_scores_the_ussr_six_where_best_play_allows_five() -> None:
     scoring = parse_entry(raws[59])
     assert (scoring.turn, scoring.phase, scoring.player) == (5, "AR3", "USSR")
     assert scoring.card == "Asia Scoring"
-    assert scoring.vp_gains == [("USSR", 6, "USSR", 5)]
+    assert scoring.vp_gains == [VpGain("USSR", 6, "USSR", 5)]
     assert "Shuttle Diplomacy is no longer in play." in (scoring.text or "")
-    assert parse_entry(raws[58]).vp_gains == [("USSR", 1, "US", 1)], (
+    assert parse_entry(raws[58]).vp_gains == [VpGain("USSR", 1, "US", 1)], (
         "the score going in is US 1, so a gain of 6 leaves USSR 5")
 
 

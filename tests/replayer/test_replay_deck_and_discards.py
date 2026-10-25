@@ -13,7 +13,8 @@ really gave up went through the engine, which moved it to the discard pile or ou
 import gzip
 import json
 import os
-from typing import Dict, List, Set, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Set
 
 import pytest
 import ts_engine as ts
@@ -26,6 +27,15 @@ CORPUS = str(corpus_dir())
 THE_CHINA_CARD = 6
 RED_SCARE_PURGE = 31
 SALT_NEGOTIATIONS = 43
+
+
+@dataclass(frozen=True)
+class _Piles:
+    """The engine's piles at one decision, and what the log has spent since its last reshuffle."""
+    where: str
+    discard: Set[int]
+    deck: Set[int]
+    spent: Set[int]
 
 
 def _game(replay_id: int) -> Dict:
@@ -45,9 +55,8 @@ def _spent(e: Entry) -> Set[int]:
     return {c for c in cards if c and c != THE_CHINA_CARD}
 
 
-def _piles_at_each_decision(replay_id: int, last_turn: int) -> List[Tuple[str, Set[int], Set[int], Set[int]]]:
-    """At every decision up to `last_turn`: where, the engine's discard pile and deck, and what the
-    log has spent since its last reshuffle."""
+def _piles_at_each_decision(replay_id: int, last_turn: int) -> List[_Piles]:
+    """The piles at every decision up to `last_turn`."""
     game = _game(replay_id)
     entries = [parse_entry(r) for r in game["all_turns"]]
     spent_by: Dict[int, Set[int]] = {}
@@ -57,7 +66,7 @@ def _piles_at_each_decision(replay_id: int, last_turn: int) -> List[Tuple[str, S
             since_reshuffle = set()
         since_reshuffle |= _spent(e)
         spent_by[i] = set(since_reshuffle)
-    rows: List[Tuple[str, Set[int], Set[int], Set[int]]] = []
+    rows: List[_Piles] = []
     cursor = [0]
 
     def on_decision(st: ts.GameState, mover: ts.Player, e: Entry, chosen: int) -> None:
@@ -68,8 +77,9 @@ def _piles_at_each_decision(replay_id: int, last_turn: int) -> List[Tuple[str, S
             cursor[0] += 1
         at = {loc: {c for c in range(1, 111) if st.get_card_location(c) == loc}
               for loc in (ts.CardLocation.DISCARD_PILE, ts.CardLocation.DRAW_DECK)}
-        rows.append((f"turn {e.turn} {e.phase} {e.player}", at[ts.CardLocation.DISCARD_PILE],
-                     at[ts.CardLocation.DRAW_DECK], spent_by[cursor[0]]))
+        rows.append(_Piles(f"turn {e.turn} {e.phase} {e.player}",
+                           at[ts.CardLocation.DISCARD_PILE], at[ts.CardLocation.DRAW_DECK],
+                           spent_by[cursor[0]]))
 
     conv = convert_game(game, on_decision=on_decision)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
@@ -83,10 +93,10 @@ def _name(cards: Set[int]) -> List[str]:
 def test_turn_1_of_replay_51_discards_only_what_was_played() -> None:
     """At turn 1 AR2 of replay 51 the pile held 13 cards, 9 of them never played --
     Middle East Scoring among them."""
-    rows = [r for r in _piles_at_each_decision(51, 1) if r[0].startswith("turn 1 AR2")]
+    rows = [r for r in _piles_at_each_decision(51, 1) if r.where.startswith("turn 1 AR2")]
     assert rows
-    for where, discard, _deck, spent in rows:
-        assert discard <= spent, f"{where}: never played {_name(discard - spent)}"
+    for r in rows:
+        assert r.discard <= r.spent, f"{r.where}: never played {_name(r.discard - r.spent)}"
 
 
 @pytest.mark.parametrize("replay_id", [51, 107, 119, 206])
@@ -95,9 +105,10 @@ def test_the_early_war_piles_are_the_logs(replay_id: int) -> None:
     spend, and nothing they spent back in the deck by a reshuffle they never had."""
     rows = _piles_at_each_decision(replay_id, 3)
     assert rows
-    for where, discard, deck, spent in rows:
-        assert discard <= spent, f"{where}: never played {_name(discard - spent)}"
-        assert not spent & deck, f"{where}: spent and back in the deck {_name(spent & deck)}"
+    for r in rows:
+        assert r.discard <= r.spent, f"{r.where}: never played {_name(r.discard - r.spent)}"
+        assert not r.spent & r.deck, (
+            f"{r.where}: spent and back in the deck {_name(r.spent & r.deck)}")
 
 
 def test_salt_takes_back_the_card_the_log_names() -> None:

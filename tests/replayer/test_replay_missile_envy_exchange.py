@@ -23,7 +23,7 @@ import pytest
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import _missile_envy_took, card_id, convert_game
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
 
 CORPUS = str(corpus_dir())
 NICARAGUA = 69
@@ -85,8 +85,8 @@ def test_the_coup_the_empty_hand_prevented() -> None:
     assert e.card == "UN Intervention" and e.played_card == "Liberation Theology"
     assert e.mode == "coup" and e.ops == 2 and e.targets == [NICARAGUA]
     assert e.coup_rolls == [(4, True)]
-    assert ("USSR", -1, NICARAGUA, 0, 0) in e.influence
-    assert ("US", 3, NICARAGUA, 3, 0) in e.influence
+    assert InfluenceLine("USSR", -1, NICARAGUA, 0, 0) in e.influence
+    assert InfluenceLine("US", 3, NICARAGUA, 3, 0) in e.influence
 
 
 @pytest.mark.parametrize("replay_id", [141, 114, 115])

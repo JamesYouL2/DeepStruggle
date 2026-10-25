@@ -31,7 +31,7 @@ import pytest
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import convert_game, point_queue
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
 
 CORPUS = str(corpus_dir())
 NIGERIA, PANAMA, ANGOLA, ARGENTINA, POLAND = 53, 70, 59, 82, 15
@@ -65,7 +65,7 @@ def test_a_failed_coup_explains_nothing_that_follows_it() -> None:
     """Replay 150 turn 6 AR3: the coup on Angola fails and NORAD places there."""
     e = _entry(150, 6, "AR3", "USSR")
     assert e.coup_rolls == [(1, False)]
-    assert e.influence == [("US", 1, ANGOLA, 2, 0)], "no removal: the coup took nothing"
+    assert e.influence == [InfluenceLine("US", 1, ANGOLA, 2, 0)], "no removal: the coup took nothing"
     assert point_queue(e) == [ANGOLA, ANGOLA], "the target, then NORAD's placement"
 
 

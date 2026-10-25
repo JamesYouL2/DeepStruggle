@@ -55,7 +55,7 @@ def test_the_entry_holds_a_space_section_ahead_of_the_coup() -> None:
 def test_the_free_action_is_the_coup_the_log_records() -> None:
     """Junta places 2 in Chile, then coups Panama."""
     e = _headline(156, 6)
-    placed = [(cid, delta) for _s, delta, cid, _u, _ss in e.influence if cid == CHILE]
+    placed = [(row.country, row.delta) for row in e.influence if row.country == CHILE]
     assert placed == [(CHILE, 2)]
     assert e.event_mode == "coup"
 

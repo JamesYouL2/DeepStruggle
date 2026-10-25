@@ -15,7 +15,7 @@ import pytest
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import convert_game
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import VpGain, parse_entry
 
 _CORPUS = str(corpus_dir())
 
@@ -34,7 +34,7 @@ def test_the_record_states_a_score_past_the_cap() -> None:
     last = parse_entry(raws[-1])
     assert (last.turn, last.phase) == (10, "AR8")
     assert not last.card
-    assert last.vp_gains == [("US", 28, "US", 34)]
+    assert last.vp_gains == [VpGain("US", 28, "US", 34)]
 
 
 def test_replay_69_converts_in_full_and_ends_where_the_log_ends() -> None:

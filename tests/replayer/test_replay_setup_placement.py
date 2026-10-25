@@ -65,8 +65,8 @@ def test_the_totals_survive_the_reordering() -> None:
     for replay_id in (100, 107, 109, 136, 152):
         entry = _first(replay_id)
         want: collections.Counter = collections.Counter()
-        for _side, delta, cid, _u, _s in entry.ops_influence:
-            want[cid] += abs(int(delta))
+        for row in entry.ops_influence:
+            want[row.country] += abs(int(row.delta))
         assert collections.Counter(point_queue(entry)) == want, replay_id
 
 

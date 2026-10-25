@@ -20,6 +20,7 @@ v1 sampled dice).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import math
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -34,13 +35,16 @@ import importlib
 
 #: version 2 (main, PR #6) folds chances to win; version 1 has no fold and counts per decision.
 _fold: Any = getattr(importlib.import_module("ai.eval.safety"), "fold_win_opportunities", None)
+#: The fold's input record where it is a dataclass (a plain tuple in codebases before it became one).
+_win_decision: Any = getattr(importlib.import_module("ai.eval.safety"), "WinDecision", None)
 VERSION = 2 if _fold is not None else 1
 
 
 def _opportunities(decisions: List[Tuple[int, int, int, bool]]) -> List[Tuple[int, bool]]:
     """(mover, taken) per chance to win in one game."""
     if _fold is not None:
-        return [(decisions[i][0], taken) for i, taken in _fold(decisions)]
+        folded = [_win_decision(*d) for d in decisions] if dataclasses.is_dataclass(_win_decision) else decisions
+        return [(decisions[i][0], taken) for i, taken in _fold(folded)]
     return [(mover, taken) for mover, _n, n_wins, taken in decisions if n_wins]
 
 

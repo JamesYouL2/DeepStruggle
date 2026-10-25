@@ -28,13 +28,13 @@ import json
 import math
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
 
 import ts_engine as ts
-from ai.eval.paired_playouts import ar_key, decider
+from ai.eval.paired_playouts import ARKey, ar_key, decider
 from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
@@ -153,7 +153,7 @@ def mover_values(model: Any, device: Any, states: Sequence[ts.GameState], movers
     return out
 
 
-def settle(model: Any, device: Any, states: List[ts.GameState], keys: Sequence[Tuple[int, int, int, int]],
+def settle(model: Any, device: Any, states: List[ts.GameState], keys: Sequence[ARKey],
            max_steps: int = 64) -> None:
     """Play each state on greedily with `model` (both sides) until its action round, phasing side,
     phase or turn differs from `keys[i]` -- the move's own action round resolved -- or the game ends.
@@ -186,7 +186,7 @@ def critic_differences(model: Any, device: Any, pairs: Sequence[LeakPair], dice:
     seeds = [[rng.getrandbits(64) for _ in range(dice)] for _ in pairs]
     states: List[ts.GameState] = []
     movers: List[ts.Player] = []
-    keys: List[Tuple[int, int, int, int]] = []
+    keys: List[ARKey] = []
     for p, ss in zip(pairs, seeds):
         for move in (p.best, p.played):
             for s in ss:

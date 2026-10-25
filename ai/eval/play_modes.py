@@ -33,6 +33,16 @@ import ts_engine as ts
 MODES = ("EVENT", "OPS", "SPACE", "PASS")
 
 
+@dataclass(frozen=True)
+class PlayModeRow:
+    """One (card, side) row of `PlayModes.table`: how often it was played and how it was spent."""
+    card: str
+    side: str
+    plays: int
+    #: Share of plays per mode, in `MODES` order.
+    distribution: np.ndarray
+
+
 @dataclass
 class PlayModes:
     #: (card_id, side) -> counts per mode
@@ -51,12 +61,12 @@ class PlayModes:
             return None
         return c / c.sum()
 
-    def table(self, min_plays: int = 20) -> List[Tuple[str, str, int, np.ndarray]]:
-        rows = []
+    def table(self, min_plays: int = 20) -> List[PlayModeRow]:
+        rows: List[PlayModeRow] = []
         for (cid, side), c in sorted(self.counts.items(), key=lambda kv: -kv[1].sum()):
             if c.sum() < min_plays:
                 continue
-            rows.append((ts.CardData.get_card_name(cid), side, int(c.sum()), c / c.sum()))
+            rows.append(PlayModeRow(ts.CardData.get_card_name(cid), side, int(c.sum()), c / c.sum()))
         return rows
 
 

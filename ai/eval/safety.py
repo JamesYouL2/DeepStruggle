@@ -41,6 +41,7 @@ Key engine facts these rules encode, each verified by stepping to a terminal sta
   reads there. `resolving_card` is the card whose event *asked* -- Grain Sales, for the card it drew.
 """
 
+from dataclasses import dataclass
 from typing import Dict, Hashable, List, Optional, Sequence, Tuple
 
 import ts_engine as ts
@@ -427,8 +428,15 @@ def find_instant_win(state: ts.GameState, player: Optional[ts.Player] = None) ->
     return None
 
 
-#: One decision as the win counters see it: (mover, legal actions, winning actions, chose a win).
-WinDecision = Tuple[Hashable, int, int, bool]
+@dataclass(frozen=True)
+class WinDecision:
+    """One decision as the win counters see it."""
+    mover: Hashable
+    #: How many legal actions, and how many of them win outright.
+    legal_actions: int
+    win_actions: int
+    #: The action chosen wins.
+    chose_win: bool
 
 
 def fold_win_opportunities(decisions: Sequence[WinDecision]) -> List[Tuple[int, bool]]:
@@ -446,15 +454,15 @@ def fold_win_opportunities(decisions: Sequence[WinDecision]) -> List[Tuple[int, 
     """
     out: List[Tuple[int, bool]] = []
     continuing: Optional[Hashable] = None       # mover of the open entry, while they keep taking it
-    for i, (mover, n_legal, n_wins, taken) in enumerate(decisions):
-        if n_wins and continuing is not None and continuing == mover:
-            out[-1] = (out[-1][0], out[-1][1] and taken)
-        elif 0 < n_wins < n_legal:
-            out.append((i, taken))
+    for i, d in enumerate(decisions):
+        if d.win_actions and continuing is not None and continuing == d.mover:
+            out[-1] = (out[-1][0], out[-1][1] and d.chose_win)
+        elif 0 < d.win_actions < d.legal_actions:
+            out.append((i, d.chose_win))
         else:
             continuing = None
             continue
-        continuing = mover if taken else None
+        continuing = d.mover if d.chose_win else None
     return out
 
 

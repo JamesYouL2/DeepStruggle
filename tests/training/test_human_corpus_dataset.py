@@ -14,15 +14,16 @@ import pytest
 
 from ai.training.human_corpus_dataset import (MASK_BITS, HumanCorpusDataset,
                                               HumanCorpusWriter)
+from tools.lib.ts_replayer_convert import DecisionSample
 
 OBS_DIM = 12
 
 
-def _sample(action: int, legal: list[int], side: int):
+def _sample(action: int, legal: list[int], side: int) -> DecisionSample:
     mask = np.zeros(MASK_BITS, dtype=np.uint8)
     for a in legal:
         mask[a] = 1
-    return (np.arange(OBS_DIM, dtype=np.float32) + action, mask, action, side)
+    return DecisionSample(np.arange(OBS_DIM, dtype=np.float32) + action, mask, action, side)
 
 
 @pytest.fixture()

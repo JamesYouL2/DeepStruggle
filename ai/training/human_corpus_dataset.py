@@ -24,11 +24,16 @@ from __future__ import annotations
 import gzip
 import json
 import os
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
 from bindings.action_encoder import ActionEncoder
+
+if TYPE_CHECKING:
+    # Annotation only: importing the converter at runtime would load the replay pipeline
+    # into every training process that reads this dataset.
+    from tools.lib.ts_replayer_convert import DecisionSample
 
 OBS_DTYPE = np.float16
 MASK_BITS = ActionEncoder.FLAT_ACTION_SIZE
@@ -67,14 +72,14 @@ class HumanCorpusWriter:
         self.games = 0
         self.games_with_outcome = 0
 
-    def add_game(self, samples: List[Tuple[Any, Any, int, int]],
+    def add_game(self, samples: List[DecisionSample],
                  us_utility: Optional[float], final_vp: Optional[int],
                  plays: Optional[List[List[int]]] = None) -> None:
         """Add one converted game.
 
-        `samples` is `Conversion.samples`: (observation, mask, action, side) with side +1 for the
-        US and -1 for the USSR. `us_utility` is None when the game never reached a terminal
-        state, which is what marks its positions as having no value target.
+        `samples` is `Conversion.samples`, each with side +1 for the US and -1 for the USSR.
+        `us_utility` is None when the game never reached a terminal state, which is what marks
+        its positions as having no value target.
         """
         self.games += 1
         settled = us_utility is not None
@@ -89,9 +94,10 @@ class HumanCorpusWriter:
                 self._plays += 1
                 for idx in group:
                     play_of[idx] = self._plays
-        for position, (obs, mask, action, side) in enumerate(samples):
-            arr = np.asarray(obs, dtype=OBS_DTYPE)
-            packed = np.packbits(np.asarray(mask, dtype=np.uint8)[:MASK_BITS])
+        for position, sample in enumerate(samples):
+            action, side = sample.action, sample.side
+            arr = np.asarray(sample.obs, dtype=OBS_DTYPE)
+            packed = np.packbits(np.asarray(sample.mask, dtype=np.uint8)[:MASK_BITS])
             self.obs.append(arr)
             self.mask.append(packed)
             self.action.append(int(action))

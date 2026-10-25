@@ -141,7 +141,7 @@ def test_a_score_past_the_end_of_the_track_is_the_replayers_arithmetic() -> None
     """
     raws = _raws(109)
     last = parse_entry(raws[-1])
-    assert last.vp_gains and last.vp_gains[-1][3] == 21
+    assert last.vp_gains and last.vp_gains[-1].lead == 21
     conv = convert_game(_game(109))
     assert conv.failure is None, f"replay 109 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total

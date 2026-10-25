@@ -467,17 +467,34 @@ class EpochFit:
     unrated: List[str] = field(default_factory=list)
 
 
-# One binomial: (a, b, seat sign, score of a, games). seat +1 = a played the US.
-_Obs = Tuple[str, str, int, float, int]
+@dataclass(frozen=True)
+class _Binomial:
+    """One pairing's games from one seat."""
+    a: str
+    b: str
+    #: +1 when a played the US, -1 when a played the USSR.
+    sign: int
+    #: a's score, draws half a win.
+    score: float
+    games: int
 
 
-def _observations(records: Iterable[Record]) -> List[_Obs]:
-    out: List[_Obs] = []
+@dataclass(frozen=True)
+class _Fit:
+    """`_newton`'s optimum, in Elo: the free ratings, the seat term, and their standard errors."""
+    ratings: Dict[str, float]
+    seat: float
+    se: Dict[str, float]
+    seat_se: float
+
+
+def _observations(records: Iterable[Record]) -> List[_Binomial]:
+    out: List[_Binomial] = []
     for r in records:
         for sign, s in ((1, r["a_as_us"]), (-1, r["a_as_ussr"])):
             n = s["w"] + s["l"] + s["d"]
             if n:
-                out.append((r["a"], r["b"], sign, s["w"] + 0.5 * s["d"], n))
+                out.append(_Binomial(r["a"], r["b"], sign, s["w"] + 0.5 * s["d"], n))
     return out
 
 
@@ -513,11 +530,10 @@ def _cholesky_solve_and_inverse_diag(m: List[List[float]], g: List[float]) -> Tu
     return x, diag
 
 
-def _newton(free: Sequence[str], fixed: Mapping[str, float], obs: Sequence[_Obs], fit_seat: bool,
-            seat: float, prior_mean: float) -> Tuple[Dict[str, float], float, Dict[str, float], float]:
+def _newton(free: Sequence[str], fixed: Mapping[str, float], obs: Sequence[_Binomial], fit_seat: bool,
+            seat: float, prior_mean: float) -> _Fit:
     """Maximise the binomial log-likelihood plus the weak prior over the `free` ratings (and the
-    seat term when `fit_seat`), the rest held at `fixed` / `seat`. Returns the ratings, the seat
-    term, and their standard errors, all in Elo."""
+    seat term when `fit_seat`), the rest held at `fixed` / `seat`."""
     idx = {p: i for i, p in enumerate(free)}
     n_var = len(free) + (1 if fit_seat else 0)
     h_i = len(free)
@@ -534,20 +550,22 @@ def _newton(free: Sequence[str], fixed: Mapping[str, float], obs: Sequence[_Obs]
     def loglik(vec: List[float]) -> float:
         ll = -0.5 * inv_var * sum((x - m) ** 2 for x, m in zip(vec, mu))
         h = seat_of(vec)
-        for a, b, sign, s, n in obs:
+        for o in obs:
+            a, b, sign, s, n = o.a, o.b, o.sign, o.score, o.games
             x = (rating(a, vec) - rating(b, vec) + sign * h) / ELO_SCALE
             # log p = -log(1 + e^-x), log(1 - p) = -log(1 + e^x), computed stably
             ll += -s * _softplus(-x) - (n - s) * _softplus(x)
         return ll
 
     if n_var == 0:
-        return {}, seat, {}, 0.0
+        return _Fit({}, seat, {}, 0.0)
     ll = loglik(v)
     for _ in range(200):
         grad = [-(x - m) * inv_var for x, m in zip(v, mu)]
         hess = [[inv_var if i == j else 0.0 for j in range(n_var)] for i in range(n_var)]
         h = seat_of(v)
-        for a, b, sign, s, n in obs:
+        for o in obs:
+            a, b, sign, s, n = o.a, o.b, o.sign, o.score, o.games
             x = (rating(a, v) - rating(b, v) + sign * h) / ELO_SCALE
             p = 1.0 / (1.0 + math.exp(-x))
             d: List[Tuple[int, float]] = []
@@ -578,7 +596,8 @@ def _newton(free: Sequence[str], fixed: Mapping[str, float], obs: Sequence[_Obs]
     # Standard errors from the curvature at the optimum.
     hess = [[inv_var if i == j else 0.0 for j in range(n_var)] for i in range(n_var)]
     h = seat_of(v)
-    for a, b, sign, s, n in obs:
+    for o in obs:
+        a, b, sign, n = o.a, o.b, o.sign, o.games
         x = (rating(a, v) - rating(b, v) + sign * h) / ELO_SCALE
         p = 1.0 / (1.0 + math.exp(-x))
         d = [(idx[a], 1.0 / ELO_SCALE)] if a in idx else []
@@ -592,7 +611,7 @@ def _newton(free: Sequence[str], fixed: Mapping[str, float], obs: Sequence[_Obs]
     _, var = _cholesky_solve_and_inverse_diag(hess, [0.0] * n_var)
     ratings = {p: v[i] for p, i in idx.items()}
     ses = {p: math.sqrt(var[i]) for p, i in idx.items()}
-    return ratings, seat_of(v), ses, (math.sqrt(var[h_i]) if fit_seat else 0.0)
+    return _Fit(ratings, seat_of(v), ses, math.sqrt(var[h_i]) if fit_seat else 0.0)
 
 
 def _softplus(x: float) -> float:
@@ -630,10 +649,11 @@ def fit_epoch(board: Board, epoch: str) -> EpochFit:
         raise LeaderboardError(f"{epoch}: no main-vs-main pairings connect these main players to the "
                                f"anchor {anchor}: {', '.join(cut_off)}")
     free1 = [p for p in mains if p != anchor]
-    r1, seat, se1, seat_se = _newton(free1, {anchor: anchor_elo}, _observations(main_recs),
-                                     fit_seat=bool(main_recs), seat=0.0, prior_mean=anchor_elo)
-    elo: Dict[str, float] = {anchor: anchor_elo, **r1}
-    se: Dict[str, float] = {anchor: 0.0, **se1}
+    fit1 = _newton(free1, {anchor: anchor_elo}, _observations(main_recs),
+                   fit_seat=bool(main_recs), seat=0.0, prior_mean=anchor_elo)
+    seat, seat_se = fit1.seat, fit1.seat_se
+    elo: Dict[str, float] = {anchor: anchor_elo, **fit1.ratings}
+    se: Dict[str, float] = {anchor: 0.0, **fit1.se}
 
     # Stage 2: everyone else, against the main players held fixed.
     other_recs = [r for r in records if not (r["a"] in main_set and r["b"] in main_set)]
@@ -646,10 +666,9 @@ def fit_epoch(board: Board, epoch: str) -> EpochFit:
     unrated = [p for p in others if comp2[p] != comp2[hub]]
     rated_set = set(rated) | main_set
     obs2 = _observations(r for r in other_recs if r["a"] in rated_set and r["b"] in rated_set)
-    r2, _, se2, _ = _newton(rated, {p: elo[p] for p in mains}, obs2, fit_seat=False, seat=seat,
-                            prior_mean=anchor_elo)
-    elo.update(r2)
-    se.update(se2)
+    fit2 = _newton(rated, {p: elo[p] for p in mains}, obs2, fit_seat=False, seat=seat, prior_mean=anchor_elo)
+    elo.update(fit2.ratings)
+    se.update(fit2.se)
 
     # Per-player tallies over every record of the epoch.
     games: Dict[str, int] = {}

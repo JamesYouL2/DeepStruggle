@@ -98,6 +98,7 @@ import os
 import random
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -326,12 +327,26 @@ def departure(r: Dict[str, Any], label: Optional[str] = None) -> float:
     return float(qc) - float(qr)
 
 
-def stratum(r: Dict[str, Any]) -> Tuple[str, str, str, str]:
+@dataclass(frozen=True, order=True)
+class Stratum:
+    """A bank row's sampling stratum; ordered as the fields read, the order `select` allocates in."""
+    kind: str        #: "agree" (every searcher plays the raw move) or "disagree"
+    decision: str    #: `decision_group`
+    era: str         #: `era` of the turn
+    size: str        #: the departure's size, "-" where every searcher agrees
+
+    @property
+    def label(self) -> str:
+        """The stored `stratum` field: the four parts joined by "/"."""
+        return "/".join((self.kind, self.decision, self.era, self.size))
+
+
+def stratum(r: Dict[str, Any]) -> Stratum:
     choices = {m["choice"] for m in r["methods"].values()}
     agree = choices == {r["raw"]}
     d = departure(r)
     size = "-" if agree else ("small" if d < 0.02 else ("medium" if d < 0.08 else "large"))
-    return ("agree" if agree else "disagree", decision_group(r), era(int(r["turn"])), size)
+    return Stratum("agree" if agree else "disagree", decision_group(r), era(int(r["turn"])), size)
 
 
 def select(rows: Sequence[Dict[str, Any]], size: int, control: int, seed: int) -> List[Dict[str, Any]]:
@@ -339,12 +354,12 @@ def select(rows: Sequence[Dict[str, Any]], size: int, control: int, seed: int) -
     (water-filling), and `control` agreement rows the same way; each row weighted by its stratum's
     population over its sample."""
     rng = random.Random(seed)
-    groups: Dict[Tuple[str, str, str, str], List[Dict[str, Any]]] = {}
+    groups: Dict[Stratum, List[Dict[str, Any]]] = {}
     for r in sorted(rows, key=lambda r: r["id"]):
         groups.setdefault(stratum(r), []).append(r)
     out: List[Dict[str, Any]] = []
     for kind, budget in (("disagree", size - control), ("agree", control)):
-        keys = sorted(k for k in groups if k[0] == kind)
+        keys = sorted(k for k in groups if k.kind == kind)
         alloc = {k: 0 for k in keys}
         left = budget
         open_ = [k for k in keys if groups[k]]
@@ -364,7 +379,7 @@ def select(rows: Sequence[Dict[str, Any]], size: int, control: int, seed: int) -
             pick = rng.sample(groups[k], alloc[k])
             w = len(groups[k]) / alloc[k]
             for r in pick:
-                out.append(dict(r, stratum="/".join(k), weight=round(w, 4)))
+                out.append(dict(r, stratum=k.label, weight=round(w, 4)))
     return out
 
 
@@ -1004,6 +1019,16 @@ def _wq(xs: Sequence[float], ws: Sequence[float], q: float) -> float:
     return pairs[-1][0] if pairs else math.nan
 
 
+@dataclass(frozen=True)
+class _Comparison:
+    """One raw-play decision where playouts compare a move against the raw move (`analysis`)."""
+    bank: Dict[str, Any]
+    verdict: Dict[str, Any]
+    weight: float                  #: population weight
+    playout: Tuple[float, float]   #: playout lead and its SE
+    search_lead: float             #: search-valued lead
+
+
 def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, Any]],
              oracle_rows: Sequence[Dict[str, Any]] = (), playout_rows: Sequence[Dict[str, Any]] = (),
              cards: Optional[Dict[int, str]] = None,
@@ -1159,10 +1184,8 @@ def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, A
             mu = sum(d) / len(d)
             return mu, math.sqrt(sum((t - mu) ** 2 for t in d) / max(1, len(d) - 1) / len(d))
 
-        # (bank row, verdict, population weight, playout lead and SE, search-valued lead) per comparison
-        Cmp = Tuple[Dict[str, Any], Dict[str, Any], float, Tuple[float, float], float]
-        vs_best: List[Cmp] = []
-        vs_g256: List[Cmp] = []
+        vs_best: List[_Comparison] = []
+        vs_g256: List[_Comparison] = []
         for b, _, v in rows:
             p = pl.get(b["id"])
             if p is None:
@@ -1170,16 +1193,16 @@ def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, A
             w = b["weight"] / incl.get(b["id"], 1.0)
             db = diff(p, v["best"], b["raw"])
             if db is not None:
-                vs_best.append((b, v, w, db, v["regret"]["raw"][0]))
+                vs_best.append(_Comparison(b, v, w, db, v["regret"]["raw"][0]))
             if "g256" in b["methods"]:
                 dg = diff(p, b["methods"]["g256"]["choice"], b["raw"])
                 if dg is not None:
-                    vs_g256.append((b, v, w, dg, v["regret"]["raw"][0] - v["regret"]["g256"][0]))
+                    vs_g256.append(_Comparison(b, v, w, dg, v["regret"]["raw"][0] - v["regret"]["g256"][0]))
         for name, sel in (("the reference best", vs_best), ("Gumbel k=8 @256's move", vs_g256)):
-            sw = sum(g[2] for g in sel) or 1.0
-            pl_gain = sum(g[2] * g[3][0] for g in sel) / sw
-            se = math.sqrt(sum((g[2] * g[3][1]) ** 2 for g in sel)) / sw
-            sv_gain = sum(g[2] * g[4] for g in sel) / sw / 2
+            sw = sum(g.weight for g in sel) or 1.0
+            pl_gain = sum(g.weight * g.playout[0] for g in sel) / sw
+            se = math.sqrt(sum((g.weight * g.playout[1]) ** 2 for g in sel)) / sw
+            sv_gain = sum(g.weight * g.search_lead for g in sel) / sw / 2
             line = (f"**{name} over the raw move**, per raw-play decision: playouts {100 * pl_gain:+.3f} "
                     f"± {100 * se:.3f} points of win probability; search-valued {100 * sv_gain:+.3f}.")
             if decisions_per_game:
@@ -1193,13 +1216,13 @@ def analysis(bank_rows: Sequence[Dict[str, Any]], ref_rows: Sequence[Dict[str, A
         body = []
         for lo, hi_, lab in ((-9.0, 0.01, "< 1 point"), (0.01, 0.04, "1-2 points"),
                              (0.04, 0.1, "2-5 points"), (0.1, 9.0, "5+ points")):
-            bucket = [g for g in vs_best if g[1]["best"] != g[0]["raw"] and lo <= g[4] < hi_]
+            bucket = [g for g in vs_best if g.verdict["best"] != g.bank["raw"] and lo <= g.search_lead < hi_]
             if not bucket:
                 continue
-            m = sum(g[3][0] for g in bucket) / len(bucket)
-            se = math.sqrt(sum(g[3][1] ** 2 for g in bucket)) / len(bucket)
-            body.append([lab, len(bucket), f"{100 * sum(g[4] for g in bucket) / len(bucket) / 2:+.2f}",
-                         f"{100 * m:+.2f} ± {100 * se:.2f}", pct(sum(g[3][0] > 0 for g in bucket) / len(bucket))])
+            m = sum(g.playout[0] for g in bucket) / len(bucket)
+            se = math.sqrt(sum(g.playout[1] ** 2 for g in bucket)) / len(bucket)
+            body.append([lab, len(bucket), f"{100 * sum(g.search_lead for g in bucket) / len(bucket) / 2:+.2f}",
+                         f"{100 * m:+.2f} ± {100 * se:.2f}", pct(sum(g.playout[0] > 0 for g in bucket) / len(bucket))])
         out += ["Where the reference best differs from raw, by the search-valued regret (unweighted):", ""]
         table(["search-valued regret", "positions", "search says (points)", "playouts say (points)",
                "playouts favour best"], body)

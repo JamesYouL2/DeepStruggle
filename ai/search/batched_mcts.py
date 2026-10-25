@@ -178,6 +178,16 @@ class BatchedMCTSConfig(PIMCTSConfig):
 GRAPH_BUCKET = 64
 
 
+@dataclass(frozen=True)
+class _CapturedGraph:
+    """One captured batch size: the graph, its input buffers and its output tensors."""
+    graph: torch.cuda.CUDAGraph
+    obs: torch.Tensor
+    masks: torch.Tensor
+    probs: torch.Tensor
+    values: torch.Tensor
+
+
 class _GraphedNetwork:
     """The network (and the softmax of its policy) as CUDA graphs, one per padded batch size, all
     in one memory pool. Rows are independent in this network, so the padding rows -- whatever was
@@ -190,12 +200,10 @@ class _GraphedNetwork:
         self.obs_width = obs_width
         self.device = device
         self.pool: Optional[Any] = None       # torch's memory-pool handle (a private type)
-        #: Batch size -> (graph, obs input, mask input, probs output, values output).
-        self.graphs: Dict[int, Tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor,
-                                     torch.Tensor, torch.Tensor]] = {}
+        #: Batch size -> its captured graph.
+        self.graphs: Dict[int, _CapturedGraph] = {}
 
-    def _capture(self, n: int) -> Tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor,
-                                        torch.Tensor, torch.Tensor]:
+    def _capture(self, n: int) -> _CapturedGraph:
         obs = torch.zeros((n, self.obs_width), dtype=torch.float32, device=self.device)
         masks = torch.zeros((n, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.uint8, device=self.device)
         masks[:, 0] = 1                       # padding rows never have an empty mask
@@ -212,7 +220,7 @@ class _GraphedNetwork:
             values = v_win.float().reshape(-1)
         if self.pool is None:
             self.pool = graph.pool()
-        entry = (graph, obs, masks, probs, values)
+        entry = _CapturedGraph(graph, obs, masks, probs, values)
         self.graphs[n] = entry
         return entry
 
@@ -221,11 +229,11 @@ class _GraphedNetwork:
         tensors), as device tensors valid until the next replay on this stream."""
         k = int(obs_src.shape[0])
         n = -(-k // GRAPH_BUCKET) * GRAPH_BUCKET
-        graph, obs, masks, probs, values = self.graphs.get(n) or self._capture(n)
-        obs[:k].copy_(obs_src, non_blocking=True)
-        masks[:k].copy_(masks_src, non_blocking=True)
-        graph.replay()
-        return probs[:k], values[:k]
+        g = self.graphs.get(n) or self._capture(n)
+        g.obs[:k].copy_(obs_src, non_blocking=True)
+        g.masks[:k].copy_(masks_src, non_blocking=True)
+        g.graph.replay()
+        return g.probs[:k], g.values[:k]
 
 
 @dataclass

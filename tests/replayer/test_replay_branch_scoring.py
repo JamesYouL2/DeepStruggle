@@ -27,7 +27,7 @@ import pytest
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import convert_game, event_queue
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
 
 CORPUS = str(corpus_dir())
 SOUTH_AFRICA, ANGOLA = 63, 59
@@ -51,8 +51,8 @@ def test_the_log_takes_the_split_branch() -> None:
     """1 Influence in South Africa and 2 in Angola, not 2 in South Africa."""
     e = _entry(234, 8, "AR7", "US")
     assert e.card == "South African Unrest"
-    assert ("USSR", 1, SOUTH_AFRICA, 3, 1) in e.influence
-    assert ("USSR", 2, ANGOLA, 5, 4) in e.influence
+    assert InfluenceLine("USSR", 1, SOUTH_AFRICA, 3, 1) in e.influence
+    assert InfluenceLine("USSR", 2, ANGOLA, 5, 4) in e.influence
     assert event_queue(e) == [SOUTH_AFRICA, ANGOLA, ANGOLA]
 
 

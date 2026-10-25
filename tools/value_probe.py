@@ -37,6 +37,7 @@ import os
 import random
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -191,8 +192,18 @@ def sibling_accuracy(pred: Dict[str, Dict[int, float]], truth: Dict[str, Dict[in
     return (hit / n if n else float("nan")), n
 
 
+@dataclass(frozen=True)
+class _Groups:
+    """`_groups`' tensors, one row per (position, world) group of G, K moves wide."""
+    features: Any        #: H, G x K x d
+    signs: Any           #: S, G x K
+    labels: Any          #: L, the mover-value labels, G x K
+    mask: Any            #: M, G x K
+    positions: List[int]  #: each group's position index
+
+
 def _groups(net: Any, feats: int, rows: Sequence[Dict[str, Any]], worlds: int, seed: int,
-            perspective: str) -> Tuple[Any, Any, Any, Any, List[int]]:
+            perspective: str) -> _Groups:
     """Per (position, world): the children of the position's moves (the network's own move first),
     as features H (G x K x d), signs S and the mover-value labels L (G x K), a mask M, and each
     group's position index. A child that ends the game is left out (masked)."""
@@ -220,8 +231,8 @@ def _groups(net: Any, feats: int, rows: Sequence[Dict[str, Any]], worlds: int, s
             if m[0] == 0:
                 continue                                  # the network's own move is the reference
             Hs.append(h); Ss.append(sg); Ls.append(lab); Ms.append(m); P.append(pi)
-    return (torch.from_numpy(np.stack(Hs)), torch.from_numpy(np.stack(Ss)), torch.from_numpy(np.stack(Ls)),
-            torch.from_numpy(np.stack(Ms)), P)
+    return _Groups(torch.from_numpy(np.stack(Hs)), torch.from_numpy(np.stack(Ss)), torch.from_numpy(np.stack(Ls)),
+                   torch.from_numpy(np.stack(Ms)), P)
 
 
 def _ranking(pred: np.ndarray, rows: Sequence[Dict[str, Any]], P: List[int]) -> Dict[str, float]:
@@ -275,9 +286,9 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
     test_rows, train_rows = lab[:n_test], lab[n_test:]
     t0 = time.time()
     with torch.no_grad():
-        Htr, Str, Ltr, Mtr, Ptr = _groups(net, feats, train_rows, worlds, 11, perspective)
-        Hte, Ste, Lte, Mte, Pte = _groups(net, feats, test_rows, worlds, 11, perspective)
-    print(f"{len(train_rows)} train / {len(test_rows)} held-out positions; {len(Ptr)} / {len(Pte)} "
+        tr = _groups(net, feats, train_rows, worlds, 11, perspective)
+        te = _groups(net, feats, test_rows, worlds, 11, perspective)
+    print(f"{len(train_rows)} train / {len(test_rows)} held-out positions; {len(tr.positions)} / {len(te.positions)} "
           f"groups; features in {time.time() - t0:.0f}s", file=sys.stderr)
 
     def mover_values(fn: Any, H: Any, S: Any, M: Any) -> Any:
@@ -287,8 +298,8 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
 
     def heldout(fn: Any) -> Dict[str, float]:
         with torch.no_grad():
-            pred = mover_values(fn, Hte, Ste, Mte).numpy()
-        return _ranking(pred, test_rows, Pte)
+            pred = mover_values(fn, te.features, te.signs, te.mask).numpy()
+        return _ranking(pred, test_rows, te.positions)
 
     # The bank: adversarial for any critic-like judge (its positions are where critic-driven search
     # disagreed with the network), reported second.
@@ -334,13 +345,13 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
     def train(module: nn.Module, name: str, lr: float, w_abs: float, w_pair: float,
               keep: Optional[List[int]] = None) -> Dict[str, float]:
         opt = torch.optim.Adam(module.parameters(), lr=lr)
-        idx_all = np.arange(len(Ptr)) if keep is None else np.asarray(keep)
+        idx_all = np.arange(len(tr.positions)) if keep is None else np.asarray(keep)
         for ep in range(epochs):
             idx = idx_all.copy()
             np.random.default_rng(seed + ep).shuffle(idx)
             for lo in range(0, len(idx), 512):
                 b = torch.from_numpy(idx[lo:lo + 512])
-                H, S, L, M = Htr[b], Str[b], Ltr[b], Mtr[b]
+                H, S, L, M = tr.features[b], tr.signs[b], tr.labels[b], tr.mask[b]
                 g, k, dd = H.shape
                 v = module(H.reshape(g * k, dd)).reshape(g, k) * S
                 l_abs = (((v - L) ** 2) * M).sum() / M.sum()
@@ -357,7 +368,7 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
         return heldout(module)
 
     def mlp() -> nn.Module:
-        return nn.Sequential(nn.Linear(Htr.shape[2], 256), nn.GELU(), nn.Linear(256, 1), nn.Tanh())
+        return nn.Sequential(nn.Linear(tr.features.shape[2], 256), nn.GELU(), nn.Linear(256, 1), nn.Tanh())
 
     tuned = copy.deepcopy(head)
     for p_ in tuned.parameters():
@@ -371,7 +382,7 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
     curve = {}
     for frac in (0.25, 0.5):
         keep_pos = set(range(int(len(train_rows) * frac)))
-        keep = [g for g, pi in enumerate(Ptr) if pi in keep_pos]
+        keep = [g for g, pi in enumerate(tr.positions) if pi in keep_pos]
         curve[f"{len(keep_pos)} positions"] = train(mlp(), f"curve{frac}", 1e-3, 1.0, pair_weight, keep)["accuracy"]
     curve[f"{len(train_rows)} positions"] = results["fresh MLP on frozen h (abs + pair)"]["accuracy"]
 
@@ -418,7 +429,8 @@ def tune(model_path: str, labels: Sequence[str], worlds: int, epochs: int, pair_
     feats = int(model_obs_features(net))
     rows = [r for r in _read(labels) if len(r["moves"]) >= 2]
     with torch.no_grad():
-        H, S, L, M, _P = _groups(net, feats, rows, worlds, 11, "acting")
+        grp = _groups(net, feats, rows, worlds, 11, "acting")
+    H, S, L, M = grp.features, grp.signs, grp.labels, grp.mask
     if net.val_win_head is None:
         raise ValueError(f"{model_path} has no scalar win head to tune")
     head = copy.deepcopy(net.val_win_head)

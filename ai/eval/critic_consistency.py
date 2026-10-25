@@ -59,6 +59,27 @@ class Boundary:
     game: int
 
 
+@dataclass(frozen=True)
+class Park:
+    """A turn-end park: the game, the turn, and each side's reading from its own side."""
+    game: int
+    turn: int
+    v_us: float
+    v_ussr: float
+
+
+@dataclass(frozen=True)
+class DealRow:
+    """One boundary under reseeded deals, in the mover's frame (`deal_test`)."""
+    game: int
+    #: Mean over deals of v_mover(post) - v_pre.
+    mover_change: float
+    #: The same, read from the post decider's side with the sign put in the mover's frame.
+    decider_change: float
+    #: SD of v_mover(post) across deals.
+    spread: float
+
+
 @dataclass
 class Table:
     g: List[int] = field(default_factory=list)
@@ -68,8 +89,8 @@ class Table:
     phase: List[str] = field(default_factory=list)
     v_dec: List[float] = field(default_factory=list)
     v_non: List[float] = field(default_factory=list)
-    #: The turn-end parks: (game, turn, v_US from the US side, v_USSR from the USSR side).
-    parks: List[Tuple[int, int, float, float]] = field(default_factory=list)
+    #: The turn-end parks.
+    parks: List[Park] = field(default_factory=list)
 
 
 def _values(model: Any, device: Any, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
@@ -123,8 +144,8 @@ def play(model: Any, device: Any, num_envs: int, seed: int, max_boundaries: int,
             vu = _values(model, device, np.ascontiguousarray(pus[pe], dtype=np.float32), zero)
             vr = _values(model, device, np.ascontiguousarray(pussr[pe], dtype=np.float32), zero)
             for j, i in enumerate(pe):
-                tab.parks.append((seed * 100_000 + int(i), int(states[int(i)].turn) if int(i) in states else 0,
-                                  float(vu[j]), float(vr[j])))
+                tab.parks.append(Park(seed * 100_000 + int(i), int(states[int(i)].turn) if int(i) in states else 0,
+                                      float(vu[j]), float(vr[j])))
         if len(bounds) < max_boundaries:
             term = np.asarray(runner.get_terminals(), dtype=bool)
             for i in live:
@@ -161,7 +182,7 @@ def _bucket(phase: str, ar: int) -> str:
     return phase.lower()
 
 
-def report(tab: Table, outcome: Dict[int, float], deal_rows: Optional[List[Tuple[int, float, float, float]]]) -> str:
+def report(tab: Table, outcome: Dict[int, float], deal_rows: Optional[List[DealRow]]) -> str:
     g = np.asarray(tab.g)
     keep = np.asarray([outcome.get(int(x), 0.0) != 0.0 for x in g])
     side = np.asarray(tab.side, dtype=np.float64)
@@ -255,10 +276,10 @@ def report(tab: Table, outcome: Dict[int, float], deal_rows: Optional[List[Tuple
         out.append(f"   {name:12s}" + "".join(cells))
 
     if tab.parks:
-        pg = np.asarray([p[0] for p in tab.parks])
+        pg = np.asarray([p.game for p in tab.parks])
         pk = np.asarray([outcome.get(int(x), 0.0) != 0.0 for x in pg])
-        vu = np.asarray([p[2] for p in tab.parks])
-        vr = np.asarray([p[3] for p in tab.parks])
+        vu = np.asarray([p.v_us for p in tab.parks])
+        vr = np.asarray([p.v_ussr for p in tab.parks])
         uw = np.asarray([1.0 if outcome.get(int(x), 0.0) > 0 else 0.0 for x in pg])
         m, se = _clustered_mean((vu + vr)[pk], pg[pk])
         out.append(f"\n6. The turn-end park (after the last action, before the deal): {int(pk.sum())} positions "
@@ -269,22 +290,23 @@ def report(tab: Table, outcome: Dict[int, float], deal_rows: Optional[List[Tuple
                    f"{_ll((vu[pk] - vr[pk] + 2) / 4, uw[pk]).mean():.4f}")
     if deal_rows:
         out.append("\n4. The deal: mean value after reseeded deals minus the value before (the last mover's frame)")
-        gd = np.asarray([r[0] for r in deal_rows])
-        for col, title in ((1, "read from the last mover's side"), (2, "read from the decider's side, sign-corrected")):
-            d = np.asarray([r[col] for r in deal_rows])
+        gd = np.asarray([r.game for r in deal_rows])
+        for d, title in ((np.asarray([r.mover_change for r in deal_rows]), "read from the last mover's side"),
+                         (np.asarray([r.decider_change for r in deal_rows]),
+                          "read from the decider's side, sign-corrected")):
             m, se = _clustered_mean(d, gd)
             out.append(f"   {title:46s} mean {m:+.4f} ± {se:.4f}   mean |.| {np.abs(d).mean():.3f}")
-        spread = np.asarray([r[3] for r in deal_rows])
+        spread = np.asarray([r.spread for r in deal_rows])
         out.append(f"   the critic's spread across deals of one position (SD): mean {spread.mean():.3f}")
     return "\n".join(out)
 
 
 def deal_test(model: Any, device: Any, bounds: Sequence[Boundary], deals: int, seed: int
-              ) -> List[Tuple[int, float, float, float]]:
-    """Per boundary: (game, mean over deals of v_mover(post) - v_pre, the same read from the post
-    decider's side with the sign put in the mover's frame, the SD of v_mover(post) across deals)."""
+              ) -> List[DealRow]:
+    """Per boundary: the game, mean over deals of v_mover(post) - v_pre, the same read from the post
+    decider's side with the sign put in the mover's frame, the SD of v_mover(post) across deals."""
     feats = model_obs_features(model)
-    rows: List[Tuple[int, float, float, float]] = []
+    rows: List[DealRow] = []
     rng = np.random.default_rng(seed)
     for b in bounds:
         mover_obs, dec_obs, signs, masks = [], [], [], []
@@ -304,7 +326,7 @@ def deal_test(model: Any, device: Any, bounds: Sequence[Boundary], deals: int, s
         m = np.asarray(masks)
         vm = _values(model, device, np.asarray(mover_obs, dtype=np.float32), m)
         vd = _values(model, device, np.asarray(dec_obs, dtype=np.float32), m) * np.asarray(signs)
-        rows.append((b.game, float(vm.mean() - b.v_pre), float(vd.mean() - b.v_pre), float(vm.std())))
+        rows.append(DealRow(b.game, float(vm.mean() - b.v_pre), float(vd.mean() - b.v_pre), float(vm.std())))
     return rows
 
 

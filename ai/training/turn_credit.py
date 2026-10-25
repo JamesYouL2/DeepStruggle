@@ -35,6 +35,7 @@ import queue as _queue
 import random
 import time
 import traceback
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -56,12 +57,36 @@ def turn_credit_loss(logits: torch.Tensor, target: torch.Tensor, weight: torch.T
     return (weight.float() * ce).mean()
 
 
-#: A priced decision as it travels: observation (float16), legal mask, target (float16) over the flat
-#: action space, evidence weight, gain over the policy's expectation, and its z.
-Row = Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float]
+@dataclass(frozen=True)
+class Row:
+    """A priced decision as it travels (from a pricing worker too)."""
+    obs: np.ndarray           # float16
+    mask: np.ndarray          # the legal mask
+    target: np.ndarray        # float16, over the flat action space
+    weight: float             # evidence weight
+    gain: float               # the best option's gain over the policy's expectation
+    z: float                  # that gain over its standard error
 
 
-def make_row(c: Candidate, obs_features: int, beta: float, k_se: float, floor: float) -> "Row | None":
+@dataclass(frozen=True)
+class _ReadyRow:
+    """A filed row, on the training device."""
+    obs: torch.Tensor
+    mask: torch.Tensor
+    target: torch.Tensor
+    weight: float
+
+
+@dataclass(frozen=True)
+class _PricingItem:
+    """A queued decision as sent to a pricing worker."""
+    save_json: str
+    options: List[int]
+    probs: List[float]
+    taken: int
+
+
+def make_row(c: Candidate, obs_features: int, beta: float, k_se: float, floor: float) -> Optional[Row]:
     v = c.values
     if v is None or v.shape[1] < 4:
         return None
@@ -79,7 +104,7 @@ def make_row(c: Candidate, obs_features: int, beta: float, k_se: float, floor: f
     mask = np.asarray(ActionEncoder.get_legal_mask(c.state), dtype=bool)
     full = np.zeros(mask.shape[0], dtype=np.float16)
     full[c.options] = tgt
-    return obs, mask, full, float(w), d, (d / se if se > 0 else 0.0)
+    return Row(obs, mask, full, float(w), d, (d / se if se > 0 else 0.0))
 
 
 def price_job(net: Any, device: torch.device, cands: List[Candidate], params: Dict[str, Any],
@@ -121,8 +146,9 @@ def _worker_main(jobs: Any, results: Any, model_bytes: bytes, device: str) -> No
         weights, items, params, seed = msg
         try:
             net.load_state_dict(torch.load(io.BytesIO(weights), map_location=dev, weights_only=True))
-            cands = [Candidate(game=-1, choice=-1, state=ts.state_from_save_json(js), options=list(opts),
-                               probs=list(pr), taken=int(tk)) for js, opts, pr, tk in items]
+            cands = [Candidate(game=-1, choice=-1, state=ts.state_from_save_json(it.save_json),
+                               options=list(it.options), probs=list(it.probs), taken=int(it.taken))
+                     for it in items]
             results.put(("ok",) + price_job(net, dev, cands, params, seed))
         except Exception:                            # surfaced in the trainer, not swallowed here
             results.put(("error", traceback.format_exc(), {}))
@@ -146,7 +172,7 @@ class TurnCredit:
         self.rng = random.Random(seed)
         self.queue: List[Any] = []
         self.seen = 0
-        self.ready: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]] = []
+        self.ready: List[_ReadyRow] = []
         self.stats: Dict[str, float] = {}
         #: With workers, pricing runs beside the next rollout: each flush sends this rollout's
         #: decisions and the current weights, then takes the previous flush's rows (one rollout late).
@@ -224,9 +250,9 @@ class TurnCredit:
         buf = io.BytesIO()
         torch.save({k: v.detach().cpu() for k, v in net.state_dict().items()}, buf)
         weights = buf.getvalue()
-        parts: List[List[Tuple[str, List[int], List[float], int]]] = [[] for _ in range(self.workers)]
+        parts: List[List[_PricingItem]] = [[] for _ in range(self.workers)]
         for k, c in enumerate(cands):
-            parts[k % self.workers].append((c.state.to_save_json(), c.options, c.probs, c.taken))
+            parts[k % self.workers].append(_PricingItem(c.state.to_save_json(), c.options, c.probs, c.taken))
         p_w = dict(params, nested_budget=int(params["nested_budget"]) // self.workers)
         for w in range(self.workers):
             self._jobs[w].put((weights, parts[w], p_w, self.rng.getrandbits(30)))
@@ -283,17 +309,17 @@ class TurnCredit:
         self._procs, self._jobs = [], []
 
     def _file(self, rows: List[Row], st: Dict[str, float], device: torch.device) -> None:
-        for obs, mask, tgt, w, _d, _z in rows:
-            self.ready.append((torch.from_numpy(obs).to(device), torch.from_numpy(mask).to(device),
-                               torch.from_numpy(tgt).to(device), float(w)))
+        for r in rows:
+            self.ready.append(_ReadyRow(torch.from_numpy(r.obs).to(device), torch.from_numpy(r.mask).to(device),
+                                        torch.from_numpy(r.target).to(device), float(r.weight)))
         if len(self.ready) > self.buffer:
             del self.ready[:len(self.ready) - self.buffer]
         self.stats.update({
             "tc_priced": st.get("priced", 0.0), "tc_nested_found": st.get("nested_found", 0.0),
             "tc_nested_priced": st.get("nested_priced", 0.0), "tc_pricing_seconds": st.get("seconds", 0.0),
-            "tc_gain_mean": float(np.mean([r[4] for r in rows])) if rows else 0.0,
-            "tc_clear_frac": float(np.mean([r[5] >= 3.0 for r in rows])) if rows else 0.0,
-            "tc_weight_mean": float(np.mean([r[3] for r in rows])) if rows else 0.0,
+            "tc_gain_mean": float(np.mean([r.gain for r in rows])) if rows else 0.0,
+            "tc_clear_frac": float(np.mean([r.z >= 3.0 for r in rows])) if rows else 0.0,
+            "tc_weight_mean": float(np.mean([r.weight for r in rows])) if rows else 0.0,
             "tc_ready": float(len(self.ready))})
 
     # -- the update ----------------------------------------------------------------------------
@@ -309,10 +335,10 @@ class TurnCredit:
         for _ in range(self.steps):
             pick = np.random.randint(0, n, size=min(self.batch, n))
             recs = [self.ready[int(k)] for k in pick]
-            obs = torch.stack([r[0] for r in recs]).float()
-            mask = torch.stack([r[1] for r in recs])
-            tgt = torch.stack([r[2] for r in recs])
-            w = torch.tensor([r[3] for r in recs], device=obs.device)
+            obs = torch.stack([r.obs for r in recs]).float()
+            mask = torch.stack([r.mask for r in recs])
+            tgt = torch.stack([r.target for r in recs])
+            w = torch.tensor([r.weight for r in recs], device=obs.device)
             logits = net(obs, mask)[0]
             loss = turn_credit_loss(logits, tgt, w)
             optimizer.zero_grad(set_to_none=True)
