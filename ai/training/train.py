@@ -116,6 +116,8 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
         **({"res_post_norm": True} if args.ladder_res_post_norm else {}),
         **({"sphere_blocks": int(args.ladder_sphere_blocks), "sphere_expansion": int(args.ladder_sphere_expansion)}
            if int(args.ladder_sphere_blocks) > 0 else {}),
+        **({"sphere_out_scale": float(args.ladder_sphere_out_scale)}
+           if int(args.ladder_sphere_blocks) > 0 and float(args.ladder_sphere_out_scale) != 1.0 else {}),
         num_attn_heads=4,
         card_lookup=bool(args.ladder_card_lookup),
         # Inert when the lookup is off, and LadderNet never reads them in that case.
@@ -207,6 +209,10 @@ def build_parser() -> argparse.ArgumentParser:
                           "Replaces --ladder-res-blocks and --ladder-trunk-norm.")
     lad.add_argument("--ladder-sphere-expansion", type=int, default=4,
                      help="Hidden width of each sphere block as a multiple of the fusion width (SimbaV2: 4).")
+    lad.add_argument("--ladder-sphere-out-scale", type=float, default=1.0,
+                     help="The per-element RMS of the sphere trunk's output, the heads' input (1 by default; A8's "
+                          "heads read ~0.4-0.55). At 1 the per-update KL sat at ~3x the control's whatever the "
+                          "learning rate (P38 rung 2b).")
     lad.add_argument("--ladder-res-post-norm", action="store_true",
                      help="A LayerNorm after each residual block's add (post-LN), so the residual stream is "
                           "renormalised at every block and cannot grow. With pre-LN blocks alone it grew in a few "

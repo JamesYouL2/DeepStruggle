@@ -196,6 +196,7 @@ class LadderNet(ColdWarNetV2):
                  res_post_norm: bool = False,
                  sphere_blocks: int = 0,
                  sphere_expansion: int = 4,
+                 sphere_out_scale: float = 1.0,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
                  logit_cap_leak_up: float = 0.0,
@@ -532,7 +533,8 @@ class LadderNet(ColdWarNetV2):
         # nash_pg.make_optimizer hooks to every step). It replaces the residual blocks, not a patch to them.
         if sphere_blocks and (num_res_blocks or trunk_norm):
             raise ValueError("sphere_blocks replaces the residual blocks and the trunk norm; give neither")
-        self.sphere: SphereTrunk | None = (SphereTrunk(hidden_dim, int(sphere_blocks), int(sphere_expansion))
+        self.sphere: SphereTrunk | None = (SphereTrunk(hidden_dim, int(sphere_blocks), int(sphere_expansion),
+                                                       float(sphere_out_scale))
                                            if sphere_blocks else None)
         # How the gradient passes the cap. "tanh": through it -- d/dz of c*tanh(d/c) is
         # 1 - tanh^2(d/c), ~0.0013 at a 28-nat deficit, so a saturated move's raw logit learns
@@ -780,6 +782,8 @@ class LadderNet(ColdWarNetV2):
             **({"res_post_norm": True} if self.res_post_norm else {}),
             **({"sphere_blocks": len(self.sphere.blocks), "sphere_expansion": self.sphere.expansion}
                if self.sphere is not None else {}),
+            **({"sphere_out_scale": self.sphere.out_scale}
+               if self.sphere is not None and self.sphere.out_scale != 1.0 else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
@@ -1136,6 +1140,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
         **({"sphere_blocks": len({k.split(".")[2] for k in sd if k.startswith("sphere.blocks.")}),
             "sphere_expansion": int(sd["sphere.blocks.0.w1.weight"].shape[0]) // int(sd["sphere.blocks.0.w1.weight"].shape[1])}
            if "sphere.blocks.0.w1.weight" in sd else {}),
+        **({"sphere_out_scale": float(sd["sphere.out_scale_buf"])} if "sphere.out_scale_buf" in sd else {}),
         **({"region_attn_dim": int(sd["region_attn.qkv.weight"].shape[0]) // 3,
             "region_attn_heads": int(sd["region_attn.n_heads"])} if "region_attn.qkv.weight" in sd else {}),
     )

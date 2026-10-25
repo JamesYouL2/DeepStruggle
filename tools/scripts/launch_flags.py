@@ -77,6 +77,7 @@ _LADDER = {
     "res_dropout": "ladder_res_dropout", "trunk_norm": "ladder_trunk_norm",
     "res_post_norm": "ladder_res_post_norm",
     "sphere_blocks": "ladder_sphere_blocks", "sphere_expansion": "ladder_sphere_expansion",
+    "sphere_out_scale": "ladder_sphere_out_scale",
     "logit_cap_leak": "ladder_logit_cap_leak", "logit_cap_leak_up": "ladder_logit_cap_leak_up",
     "region_attn_dim": "ladder_region_attn_dim", "region_attn_heads": "ladder_region_attn_heads",
 }

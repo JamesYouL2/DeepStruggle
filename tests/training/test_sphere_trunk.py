@@ -85,3 +85,16 @@ def test_it_replaces_the_residual_blocks_and_the_trunk_norm() -> None:
         create_ladder_net("cpu", **{**CFG, "num_res_blocks": 2, "sphere_blocks": 2})
     with pytest.raises(ValueError, match="sphere_blocks"):
         create_ladder_net("cpu", **{**CFG, "num_res_blocks": 2, "trunk_norm": True, "sphere_blocks": 2})
+
+
+def test_the_output_scale_sets_the_heads_input_and_is_recovered_only_off_one() -> None:
+    torch.manual_seed(0)
+    net = create_ladder_net("cpu", **{**CFG, "sphere_blocks": 2, "sphere_out_scale": 0.5})
+    extract = getattr(net, "extract_features")
+    h = extract(torch.randn(8, 3824))
+    assert torch.allclose(h.pow(2).mean(-1).sqrt(), torch.full((8,), 0.5), atol=1e-4)
+    assert net.ladder_config()["sphere_out_scale"] == 0.5
+    assert (ladder_config_from_state_dict(net.state_dict()) or {}).get("sphere_out_scale") == 0.5
+    plain = _sphere_net()
+    assert "sphere_out_scale" not in plain.ladder_config()
+    assert not any("out_scale" in k for k in plain.state_dict())

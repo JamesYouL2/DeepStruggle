@@ -8,7 +8,7 @@ back to unit norm after each optimiser step (the measured head-weight growth, P3
     h_0      = l2(stem)                                   the fusion's LayerNorm + GELU output, on the sphere
     h~       = l2(W2 ReLU((W1 h) * s))                    W1: d -> e*d, W2: e*d -> d, unit-norm rows, no bias
     h        = l2(h + alpha * (h~ - h))                   alpha per dimension, init 1 / (L + 1)
-    out      = sqrt(d) * h_L                              so the heads read a vector of per-element RMS 1
+    out      = c * sqrt(d) * h_L                          the heads read per-element RMS c (default 1)
 
 `s` (per hidden unit, init 1) only reweights the hidden units: ReLU is scale-equivariant and the branch is
 renormalised, so a uniform scale changes nothing. A small alpha at initialisation keeps a fresh deep trunk close to
@@ -51,19 +51,26 @@ class SphereBlock(nn.Module):
 class SphereTrunk(nn.Module):
     """`num_blocks` SphereBlocks between the stem and the heads (see the module docstring)."""
 
-    def __init__(self, dim: int, num_blocks: int, expansion: int = 4) -> None:
+    def __init__(self, dim: int, num_blocks: int, expansion: int = 4, out_scale: float = 1.0) -> None:
         super().__init__()
-        if num_blocks <= 0 or expansion <= 0:
-            raise ValueError(f"a sphere trunk needs blocks and an expansion, got {num_blocks} / {expansion}")
+        if num_blocks <= 0 or expansion <= 0 or out_scale <= 0.0:
+            raise ValueError(f"a sphere trunk needs blocks, an expansion and a positive output scale, got "
+                             f"{num_blocks} / {expansion} / {out_scale}")
         self.dim = int(dim)
         self.expansion = int(expansion)
         self.blocks = nn.ModuleList([SphereBlock(dim, expansion, num_blocks) for _ in range(num_blocks)])
+        # The heads' input RMS. 1 by default; A8's heads read ~0.55 (60M) to ~0.37 (400M), and at 1 the sphere trunk's
+        # per-update KL sat at ~3x the control's whatever the learning rate (P38 rung 2b). A buffer only off 1, so the
+        # first sphere checkpoints load unchanged and the value is recovered from the weights.
+        self.out_scale = float(out_scale)
+        if self.out_scale != 1.0:
+            self.register_buffer("out_scale_buf", torch.tensor(self.out_scale, dtype=torch.float32))
 
     def forward(self, stem: torch.Tensor) -> torch.Tensor:
         h = F.normalize(stem, dim=-1)
         for block in self.blocks:
             h = block(h)
-        return h * math.sqrt(self.dim)
+        return h * (self.out_scale * math.sqrt(self.dim))
 
     @torch.no_grad()
     def project(self) -> None:
