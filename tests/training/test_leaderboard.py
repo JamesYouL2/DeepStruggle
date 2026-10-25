@@ -514,6 +514,17 @@ def test_a_rollout_players_chance_is_named_only_when_keyed() -> None:
     path, cfg, label = rollout_spec_config(agent)
     assert cfg.keyed and path == "m.pt" and "keyed" in label
     assert not rollout_spec_config(load_spec(parse_player_id(one)[1], "m.pt"))[1].keyed
+    # keyed2, the packing that keeps every situation field (bindings/keyed_chance.hpp), is its own
+    # chance, so the keyed players already measured keep their meaning.
+    keyed2 = one[:-1] + ",chance=keyed2)"
+    net, spec = parse_player_id(keyed2)
+    assert isinstance(spec, Rollout) and spec.chance == "keyed2" and player_id(net, spec) == keyed2
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed2"
+    _, cfg, label = rollout_spec_config(agent)
+    assert cfg.keyed2 and not cfg.keyed and label.endswith("-keyed2-z2")
+    assert not rollout_spec_config("rollout:m.pt:4:16:4:z2:earlier:own:keyed")[1].keyed2
     with pytest.raises(PlayerSpecError):
         parse_player_id(one[:-1] + ",chance=fresh)")
 

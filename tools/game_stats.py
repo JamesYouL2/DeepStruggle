@@ -11,8 +11,8 @@
 The page submits a finished game to the stats database (web/stats_worker/, Cloudflare D1);
 `fetch` exports its table with wrangler. `verify` re-drives every game played on this build's
 engine and checks it ends on the submitted position; a game from another engine names the commit
-to check out. `rating` fits each model player's rating on Playdek's scale from the clean games
-(tools/lib/game_stats.py has the model). See tools/README.md, "Games against people".
+to check out. `rating` repeats that verification and fits each model player's rating on Playdek's
+scale from the clean games (tools/lib/game_stats.py has the model). See tools/README.md, "Games against people".
 """
 
 from __future__ import annotations
@@ -128,7 +128,18 @@ def cmd_verify(a: argparse.Namespace) -> int:
 def cmd_rating(a: argparse.Namespace) -> int:
     by_player: Dict[str, List[RatedGame]] = {}
     skipped: Dict[str, int] = {}
+    # A game from another engine cannot be re-driven on this build, so it counts unverified: an
+    # engine change would otherwise drop every earlier game from the fit.
+    unverified = 0
+    fingerprint = engine_fingerprint()
     for sub in load_export(a.export):
+        verdict = verify(sub, fingerprint)
+        if verdict.status == "other-engine" and not a.this_engine_only:
+            unverified += 1
+        elif verdict.status != "ok":
+            why = f"verification: {verdict.status}"
+            skipped[why] = skipped.get(why, 0) + 1
+            continue
         s = summarize_submission(sub)
         why = ("not clean" if not s["clean"] else
                "too many undos" if a.max_undos is not None and s["undos"] > a.max_undos else
@@ -152,9 +163,12 @@ def cmd_rating(a: argparse.Namespace) -> int:
               f"{f.interval[0]:.0f}..{f.interval[1]:.0f} |")
     if skipped:
         print("\nLeft out: " + ", ".join(f"{n} {k}" for k, n in sorted(skipped.items())))
+    if unverified:
+        print(f"\nUnverified: {unverified} played on another engine (--this-engine-only to leave them out)")
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
             json.dump({"ussr_advantage": a.ussr_advantage, "prior_sd": a.prior_sd, "skipped": skipped,
+                       "unverified_other_engine": unverified,
                        "fits": [dataclasses.asdict(f) for f in fits]}, fh, indent=2)
     return 0
 
@@ -182,6 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the prior's mean (default: the mean opponent rating)")
     p.add_argument("--prior-sd", type=float, default=400.0)
     p.add_argument("--max-undos", type=int, default=None, help="leave out games with more takebacks")
+    p.add_argument("--this-engine-only", action="store_true",
+                   help="leave out games played on another engine, which cannot be verified here")
     p.add_argument("--min-games", type=int, default=1)
     p.add_argument("--bootstrap", type=int, default=1000)
     p.add_argument("--json", default=None, help="also write the fits here")
