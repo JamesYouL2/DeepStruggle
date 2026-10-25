@@ -25,8 +25,8 @@ import torch.nn.functional as F
 
 import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
-from ai.models.coldwar_net_v2 import (ColdWarNetV2, create_coldwar_net_v2, create_like, fresh_policy_head_norms,
-                                      policy_head_norms)
+from ai.models.coldwar_net_v2 import (POLICY_HEAD_MODULES, ColdWarNetV2, create_coldwar_net_v2, create_like,
+                                      fresh_policy_head_norms, policy_head_norms)
 from ai.models.grow import (grow_tokens_optimizer_state, grow_tokens_state_dict, widen_factor,
                             widen_optimizer_state, widen_state_dict)
 from ai.rewards.reward_calculator import ZeroSumTerminalReward, ShapedZeroSumReward, BlunderAwareRewardCalculator, UsefulActionsReward, VPPotentialShaping
@@ -1487,8 +1487,30 @@ def check_state_obs_features(model: nn.Module, state_dict: Mapping[str, Any], so
                          f" (E8's default is headline_reveal; the flag with no names is none)")
 
 
+def reset_policy_head(model: nn.Module, optimizer: torch.optim.Optimizer, seed: int = 0) -> List[str]:
+    """Re-initialise the policy head's modules (`POLICY_HEAD_MODULES`) from a fresh network of the model's shape and
+    drop their optimiser moments, keeping the trunk and the value heads -- P37's last-layer reset, aimed where P37a
+    measured the plateau's plasticity loss (the head's weights 20-50x a fresh head's, 13.5% dormant units). The fresh
+    weights come from a forked, fixed-seed RNG, so the run's random stream is untouched. Returns the modules reset."""
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(seed))
+        fresh = create_like(model)
+    done: List[str] = []
+    for top in POLICY_HEAD_MODULES:
+        mod, new = getattr(model, top, None), getattr(fresh, top, None)
+        if not (isinstance(mod, nn.Module) and isinstance(new, nn.Module)):
+            continue
+        with torch.no_grad():
+            for p, q in zip(mod.parameters(), new.parameters()):
+                p.copy_(q.to(device=p.device, dtype=p.dtype))
+                optimizer.state.pop(p, None)
+        done.append(top)
+    return done
+
+
 def load_resume_state(path: str, model: nn.Module, trainer: Any,
-                      seed: Optional[int] = None, widen: bool = False, grow_tokens: bool = False) -> Dict[str, Any]:
+                      seed: Optional[int] = None, widen: bool = False, grow_tokens: bool = False,
+                      reset_head: bool = False) -> Dict[str, Any]:
     """Restore a run in place and return where it left off.
 
     `seed` is the seed the *resuming* run was given. Where it differs from the one the state was
@@ -1554,6 +1576,10 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
     else:
         trainer.optimizer.load_state_dict(blob["optimizer_state_dict"])
         trainer.reference_net.load_state_dict(blob["reference_state_dict"])
+    if reset_head:
+        heads = reset_policy_head(model, trainer.optimizer)
+        print(f"[resume reset-policy-head] re-initialised {heads} with fresh Adam moments; the trunk, the value heads "
+              f"and pi_ref are restored as saved (pi_ref refreshes on its own schedule)", flush=True)
     trainer.total_env_steps = int(blob["total_env_steps"])
     if hasattr(trainer, "total_iterations"):
         trainer.total_iterations = int(blob.get("total_iterations", 0))
@@ -1718,6 +1744,7 @@ def train_pipeline(
     resume_weights: Optional[str] = None,
     resume_widen: bool = False,
     resume_grow_tokens: bool = False,
+    resume_reset_policy_head: bool = False,
     teacher_checkpoint: Optional[str] = None,
     teacher_coef: float = 0.0,
     teacher_seat: str = "us",
@@ -2028,6 +2055,7 @@ def train_pipeline(
         "resume_weights": resume_weights,
         "resume_widen": bool(resume_widen),
         "resume_grow_tokens": bool(resume_grow_tokens),
+        "resume_reset_policy_head": bool(resume_reset_policy_head),
         "teacher_checkpoint": teacher_checkpoint,
         "teacher_coef": float(teacher_coef),
         "teacher_seat": teacher_seat,
@@ -2849,10 +2877,12 @@ def train_pipeline(
     resume_path = os.path.join(out_dir, RESUME_FILENAME)
     resumed_elapsed = 0.0
     _ema_state: Optional[Dict[str, Any]] = None
+    if resume_reset_policy_head and not resume:
+        raise ValueError("--resume-reset-policy-head re-initialises a resumed network's policy head; give --resume")
     if resume:
         src = resolve_resume(resume)
         state = load_resume_state(src, model, trainer, seed=seed, widen=resume_widen,
-                                  grow_tokens=resume_grow_tokens)
+                                  grow_tokens=resume_grow_tokens, reset_head=resume_reset_policy_head)
         _ema_state = state.get("ema_state_dict")
         it = state["iteration"]
         resumed_elapsed = state["elapsed_seconds"]

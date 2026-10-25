@@ -320,6 +320,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="With --resume: the model's grouped input projections (--ladder-entity-proj-dim) are an "
                              "integer multiple of the state's; widen the network, pi_ref and Adam's moments without "
                              "changing what it plays (ai/models/grow.py) and continue.")
+    parser.add_argument("--resume-reset-policy-head", action="store_true", default=False,
+                        help="With --resume: re-initialise the policy head (policy_head, the per-entity heads and their "
+                             "trunk context, the branch and play-mode heads) with fresh weights and Adam moments, keeping "
+                             "the trunk and the value heads -- P37's last-layer reset, once at the branch point, aimed at "
+                             "the policy head's measured plasticity loss (P37a).")
     parser.add_argument("--resume-grow-tokens", action="store_true", default=False,
                         help="With --resume: the model has --ladder-token-layers the state lacks. The token path "
                              "starts fresh and the fusion layer and per-entity heads read it through zero weights, "
@@ -1260,6 +1265,7 @@ def main():
             resume_weights=args.resume_weights,
             resume_widen=args.resume_widen,
             resume_grow_tokens=args.resume_grow_tokens,
+            resume_reset_policy_head=args.resume_reset_policy_head,
             teacher_checkpoint=args.teacher_checkpoint,
             teacher_coef=args.teacher_coef,
             teacher_seat=args.teacher_seat,
