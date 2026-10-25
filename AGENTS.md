@@ -214,6 +214,8 @@ How to launch: `CLAUDE.md` ("Running training ..."): derive the flags from a hea
 is in env steps (there is no wall-clock flag, since steps/sec depends on the policy), and both arms
 must share `--train-steps` **and** `--pool-every-steps`, which sets how fast the opponent pool grows.
 `--snapshot-every-steps` is reporting only: evaluation restores the RNG streams it draws from.
+Training pools reject members whose observation feature bits differ from the learner's, including
+equal-width feature sets and newly added league members.
 Every `training_metrics.jsonl` metric is mirrored to `<run-dir>/tb` for TensorBoard
 (`.venv/bin/python -m tensorboard.main --logdir <run-dir>/tb`; `--no-tensorboard` to skip).
 How to run and rate an arm, and how to record it: `research/method/running_experiments.md`,
