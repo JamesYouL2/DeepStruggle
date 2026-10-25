@@ -527,8 +527,8 @@ export class TSApp {
     for (const id of ["mode-opponent-rollout", "mode-opponent-policy"]) {
       document.getElementById(id)?.addEventListener("change", () => this.searchChoiceChanged());
     }
-    for (const id of ["ss-k", "ss-worlds", "ss-horizon", "ss-rule", "ss-stop", "ss-leaf", "ss-keyed", "ss-keyed2",
-                      "ss-aligned", "ss-box4", "ss-belief"]) {
+    for (const id of ["ss-k", "ss-worlds", "ss-horizon", "ss-rule", "ss-stop", "ss-leaf", "ss-chance", "ss-aligned",
+                      "ss-box4", "ss-belief"]) {
       document.getElementById(id)?.addEventListener("change", () => this.searchSettingsChanged());
     }
     document.getElementById("ss-default")?.addEventListener("click", (ev) => {
@@ -555,8 +555,9 @@ export class TSApp {
     const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
     const on = (id: string) => !!(document.getElementById(id) as HTMLInputElement | null)?.checked;
     const belief = Number(val("ss-belief") || "0");
+    const chance = val("ss-chance");
     const text = `rollout:${val("ss-k")}:${val("ss-worlds")}:${val("ss-horizon")}:${val("ss-rule").trim()}:${val("ss-stop")}`
-      + `:${val("ss-leaf")}${on("ss-keyed") ? ":keyed" : ""}${on("ss-keyed2") ? ":keyed2" : ""}${on("ss-aligned") ? ":aligned" : ""}${on("ss-box4") ? ":box4" : ""}`
+      + `:${val("ss-leaf")}${chance === "keyed" || chance === "keyed2" ? `:${chance}` : ""}${on("ss-aligned") ? ":aligned" : ""}${on("ss-box4") ? ":box4" : ""}`
       + (belief ? `:belief${belief}` : "");
     const spec = Number.isInteger(belief) && belief >= 0 ? parseRolloutParam(text) : null;
     const error = document.getElementById("ss-error");
@@ -602,8 +603,7 @@ export class TSApp {
     set("ss-rule", spec.rule);
     set("ss-stop", spec.stop);
     set("ss-leaf", spec.leaf);
-    tick("ss-keyed", spec.keyed);
-    tick("ss-keyed2", spec.keyed2);
+    set("ss-chance", spec.keyed2 ? "keyed2" : spec.keyed ? "keyed" : "shared");
     tick("ss-aligned", spec.aligned);
     tick("ss-box4", spec.box4);
     set("ss-belief", String(spec.belief));

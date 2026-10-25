@@ -361,7 +361,9 @@ web/ui/
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
      The spec takes the leaderboard's other modes too: `:keyed` (chance=keyed,
      `bindings/keyed_chance.hpp`), `:keyed2` (chance=keyed2, the packing that keeps the turn when the
-     USSR is phasing; the default stays `:keyed` until keyed2 is measured) and `:belief[N]` (belief=N, 2,048 hands by default: the worlds dealt
+     USSR is phasing; the default stays `:keyed` until keyed2 is measured; it implies keyed, so the
+     settings' one Chance selector picks shared, keyed or keyed2 and `:keyed:keyed2` parses as
+     `:keyed2`, `tests/web/test_rollout_spec.py`) and `:belief[N]` (belief=N, 2,048 hands by default: the worlds dealt
      from the policy-likelihood belief over the opponent's hand, `bindings/belief.hpp`, the same C++
      as Python's). For the belief the session records every move (`GameSession.moves`, undone with
      undo) and `rollout_runner.ts` brings the searching engine's tracker up to them before each

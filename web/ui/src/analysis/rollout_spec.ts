@@ -20,7 +20,8 @@ export interface RolloutSpec {
   /** Each draw tied to its situation (bindings/keyed_chance.hpp). */
   keyed: boolean;
   /** Keyed chance with the situation's player fields narrowed to a byte (keyed_chance.hpp's keyed2):
-   *  `keyed` alone keeps the original packing, in which a USSR side hides the turn. */
+   *  `keyed` alone keeps the original packing, in which a USSR side hides the turn. It implies keyed, so a
+   *  parsed spec never sets both: at most one of the two is true. */
   keyed2: boolean;
   /** Every candidate's horizon counted from the end of the mover's own action round, the headline one boundary. */
   aligned: boolean;
@@ -74,6 +75,8 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
     else if (b) spec.belief = b[1] ? Number(b[1]) : DEFAULT_BELIEF_HANDS;
     else return null;
   }
+  // keyed2 is keyed chance with its own packing, so `:keyed:keyed2` is the one search keyed2 spells alone.
+  if (spec.keyed2) spec.keyed = false;
   if ([spec.k, spec.worlds, spec.horizon].some(v => Number.isNaN(v))) return null;
   if (!/^(argmax|z(\d+(\.\d+)?)?|kl(\d+(\.\d+)?)?)$/.test(spec.rule)) return null;
   return spec;
@@ -83,7 +86,7 @@ export function parseRolloutParam(s: string | null): RolloutSpec | null {
  *  becomes (the default is the Hugging Face repo's, and changes there). */
 export function rolloutParam(spec: RolloutSpec): string {
   return `rollout:${spec.k}:${spec.worlds}:${spec.horizon}:${spec.rule}:${spec.stop}:${spec.leaf}`
-    + (spec.keyed ? ":keyed" : "") + (spec.keyed2 ? ":keyed2" : "") + (spec.aligned ? ":aligned" : "") + (spec.box4 ? ":box4" : "")
+    + (spec.keyed2 ? ":keyed2" : spec.keyed ? ":keyed" : "") + (spec.aligned ? ":aligned" : "") + (spec.box4 ? ":box4" : "")
     + (spec.belief ? `:belief${spec.belief}` : "");
 }
 
