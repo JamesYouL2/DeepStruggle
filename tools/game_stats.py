@@ -11,7 +11,8 @@
 The page submits a finished game to the stats database (web/stats_worker/, Cloudflare D1);
 `fetch` exports its table with wrangler. `verify` re-drives every game played on this build's
 engine and checks it ends on the submitted position; a game from another engine names the commit
-to check out. `rating` repeats that verification and fits each model player's rating on Playdek's
+to check out. `rating` re-drives every game it would count, whatever engine it names, and fits
+each model player's rating on Playdek's
 scale from the clean games (tools/lib/game_stats.py has the model). See tools/README.md, "Games against people".
 """
 
@@ -28,8 +29,9 @@ from typing import Dict, List, Optional, Sequence, cast
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint
-from tools.lib.game_stats import (RatedGame, SubmissionDict, decode_log, fit_rating, load_export, outcome,
-                                  play_step, player_key, rated_game, start_state, summarize_submission, verify)
+from tools.lib.game_stats import (BAD_LOG, RatedGame, SubmissionDict, decode_log, fit_rating, load_export,
+                                  outcome, play_step, player_key, rated_game, start_state, summarize_submission,
+                                  verify)
 from web.server.replay import ReplayLogger, replays_dir
 from web.server.replay_types import GameStateDict, ReplayActionDict
 
@@ -128,22 +130,30 @@ def cmd_verify(a: argparse.Namespace) -> int:
 def cmd_rating(a: argparse.Namespace) -> int:
     by_player: Dict[str, List[RatedGame]] = {}
     skipped: Dict[str, int] = {}
-    # A game from another engine cannot be re-driven on this build, so it counts unverified: an
-    # engine change would otherwise drop every earlier game from the fit.
+    # Every game that would count is re-driven on this build, whatever engine it names: the record's
+    # fingerprint is the submitter's claim. Most games outlive an engine change and replay here;
+    # one that does not cannot be told from a forgery, so it counts only with --include-unverified.
+    other_engine_replayed = 0
     unverified = 0
     fingerprint = engine_fingerprint()
     for sub in load_export(a.export):
-        verdict = verify(sub, fingerprint)
-        if verdict.status == "other-engine" and not a.this_engine_only:
-            unverified += 1
-        elif verdict.status != "ok":
-            why = f"verification: {verdict.status}"
-            skipped[why] = skipped.get(why, 0) + 1
+        try:
+            s = summarize_submission(sub)
+        except BAD_LOG:
+            skipped["verification: bad-log"] = skipped.get("verification: bad-log", 0) + 1
             continue
-        s = summarize_submission(sub)
+        # The cheap checks first, so a game left out anyway is never re-driven.
         why = ("not clean" if not s["clean"] else
                "too many undos" if a.max_undos is not None and s["undos"] > a.max_undos else
                "no rating" if sub["playdek"]["rating"] <= 0 else None)
+        if why is None:
+            verdict = verify(sub, fingerprint, replay_other_engine=True)
+            if verdict.status == "ok" and sub["build"]["engine_fingerprint"] != fingerprint:
+                other_engine_replayed += 1
+            elif verdict.status == "other-engine" and a.include_unverified:
+                unverified += 1
+            elif verdict.status != "ok":
+                why = f"verification: {verdict.status}"
         if why:
             skipped[why] = skipped.get(why, 0) + 1
             continue
@@ -163,12 +173,15 @@ def cmd_rating(a: argparse.Namespace) -> int:
               f"{f.interval[0]:.0f}..{f.interval[1]:.0f} |")
     if skipped:
         print("\nLeft out: " + ", ".join(f"{n} {k}" for k, n in sorted(skipped.items())))
+    if other_engine_replayed:
+        print(f"\nVerified: {other_engine_replayed} played on another engine replay on this one")
     if unverified:
-        print(f"\nUnverified: {unverified} played on another engine (--this-engine-only to leave them out)")
+        print(f"\nUnverified: {unverified} played on another engine and not replaying on this one, "
+              "counted (--include-unverified)")
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
             json.dump({"ussr_advantage": a.ussr_advantage, "prior_sd": a.prior_sd, "skipped": skipped,
-                       "unverified_other_engine": unverified,
+                       "other_engine_replayed": other_engine_replayed, "unverified_other_engine": unverified,
                        "fits": [dataclasses.asdict(f) for f in fits]}, fh, indent=2)
     return 0
 
@@ -196,8 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the prior's mean (default: the mean opponent rating)")
     p.add_argument("--prior-sd", type=float, default=400.0)
     p.add_argument("--max-undos", type=int, default=None, help="leave out games with more takebacks")
-    p.add_argument("--this-engine-only", action="store_true",
-                   help="leave out games played on another engine, which cannot be verified here")
+    p.add_argument("--include-unverified", action="store_true",
+                   help="also count games played on another engine that do not replay on this one "
+                        "(an engine change and a forged record look alike from here)")
     p.add_argument("--min-games", type=int, default=1)
     p.add_argument("--bootstrap", type=int, default=1000)
     p.add_argument("--json", default=None, help="also write the fits here")

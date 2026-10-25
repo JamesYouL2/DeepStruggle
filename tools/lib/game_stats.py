@@ -257,14 +257,36 @@ class Verdict:
     detail: str = ""
 
 
-def verify(sub: SubmissionDict, engine_fingerprint: str) -> Verdict:
-    """Re-drive `sub` in this build and check it ends where the page said, as the page said."""
-    if sub["build"]["engine_fingerprint"] != engine_fingerprint:
-        return Verdict("other-engine", f"played on engine {sub['build']['engine_fingerprint'][:12]} "
-                                       f"(commit {sub['build']['commit'][:12] or '?'}); this build is {engine_fingerprint[:12]}")
+#: What decode_log raises on a log that is not one.
+BAD_LOG = (ValueError, zlib.error, struct.error)
+
+
+def verify(sub: SubmissionDict, engine_fingerprint: str, *, replay_other_engine: bool = False) -> Verdict:
+    """Re-drive `sub` in this build and check it ends where the page said, as the page said.
+
+    A game the record says was played on another engine is "other-engine" without being re-driven,
+    unless `replay_other_engine`: then it is re-driven here all the same, and "ok" if it ends where
+    the page said. The fingerprint is the submitter's own claim, so it cannot excuse a record from
+    the check; a game that does not replay here stays "other-engine", since from this build an
+    engine change and a forged record look alike.
+    """
+    where = (f"played on engine {sub['build']['engine_fingerprint'][:12]} "
+             f"(commit {sub['build']['commit'][:12] or '?'}); this build is {engine_fingerprint[:12]}")
+    if sub["build"]["engine_fingerprint"] == engine_fingerprint:
+        return _replay(sub)
+    if not replay_other_engine:
+        return Verdict("other-engine", where)
+    v = _replay(sub)
+    if v.status == "ok":
+        return Verdict("ok", f"{where}; replays here")
+    return Verdict("other-engine", f"{where}; does not replay here ({v.status}: {v.detail})")
+
+
+def _replay(sub: SubmissionDict) -> Verdict:
+    """Re-drive `sub` in this build, whatever engine it names."""
     try:
         seed, steps = decode_log(sub["log"])
-    except (ValueError, zlib.error, struct.error) as e:
+    except BAD_LOG as e:
         return Verdict("bad-log", str(e))
     try:
         state = start_state(seed, sub["start_position"])

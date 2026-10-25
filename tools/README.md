@@ -383,10 +383,12 @@ PYTHONPATH=.:build/release python tools/game_stats.py rating data/game_stats/gam
   no forced dice, no debug overrides, not from a loaded position. Take-backs are counted
   (`--max-undos` to leave them out), not disqualifying.
 * `rating` fits each **model player** -- model file and search -- on the clean games, after
-  re-driving each game played on this build's engine as `verify` does: one that fails is left
-  out. A game from another engine cannot be re-driven here, so it counts unverified (the output
-  says how many; `--this-engine-only` leaves them out) -- otherwise every engine change would drop
-  every earlier game from the fit. The fit uses Elo's
+  re-driving each one on this build as `verify` does, *whatever engine its record names*: the
+  fingerprint is the submitter's own claim, so it cannot excuse a game from the check. One played
+  on this engine that fails is left out. One played on another engine counts when it replays here
+  to its submitted end, as most games do across an engine change (the output says how many); one
+  that does not cannot be told from a forged record, so it is left out unless `--include-unverified`.
+  Only the clean games with a rating are re-driven. The fit uses Elo's
   logistic on a 400-point scale against each human's self-reported Playdek rating, with
   `--ussr-advantage` the USSR's edge between equal players (not fitted; the default 0 assumes
   none). Playdek does not publish its formula; the 400-point Elo scale is what players report it
