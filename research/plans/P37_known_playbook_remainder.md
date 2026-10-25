@@ -163,3 +163,7 @@ and the E8 control `E8-A8-R1-S44-2` at 2,400M, beside the E7 heads run at 2,000M
   24 → 21 → 22 of 768 (top-10 components 51 → 70% of the variance), where A8's rises 51 → 94 of 480 (6,400M: 95). The
   trunk norm stopped the logit blow-up, not the growth: the heads read a 768-wide vector with ~22 effective dimensions,
   a quarter of A8's ~94, so the extra capacity is not used.
+
+## The last-layer reset on the E8 control (2026-10-25)
+
+`E8-A8-R1-S44-2@10010M+R87`: the A8 control on E8 (ENG-5), plateaued at 36–40% against A13+R48's SWA from 5,600M to 10,000M, branched at 10,010M with the policy head re-initialised once (`--resume-reset-policy-head`: `policy_head`, `pe_trunk`, `pe_country`, `branch_head_net`, `play_mode_head_net` get a fresh network's weights and lose their Adam moments; the trunk, the value heads and pi_ref are kept), 800M on the control's recipe. The plateau is the control's own band, so the read is whether it moves again: reads at 10,200 / 10,400 / 10,800M against A13+R48's SWA, the head-norm trajectory in the training log (`head_norm_over_fresh_*`). Value heads are not reset: P37a measured the loss in the policy head, and a fresh critic would void the advantages the new head learns from.

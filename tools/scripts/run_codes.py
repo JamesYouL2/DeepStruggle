@@ -270,7 +270,11 @@ def load_runs(root: str) -> List[Run]:
         r.parent = parent
         m = _RESUME_STEP_RE.search(src_file)
         swa = _SWA_STEP_RE.search(src_file)
-        r.branch_step = int(m.group(1)) if m else int(swa.group(1)) * 1_000_000 if swa else parent.end_step
+        # A resume from the run directory (its newest state) branches where that state stood, which the
+        # branch records as start_steps -- not the parent's budget, which a parent stopped early never reached.
+        recorded = (r.meta.get("legs") or [r.meta])[0].get("start_steps")     # the first leg's, never the latest
+        r.branch_step = (int(m.group(1)) if m else int(swa.group(1)) * 1_000_000 if swa
+                         else int(recorded) if recorded else parent.end_step)
     runs.sort(key=lambda r: r.ts)
     return runs
 
