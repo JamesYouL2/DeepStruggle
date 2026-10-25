@@ -672,6 +672,16 @@ the engine build that wrote them, and every step checks this.
 between the fine-tune and `--policy-reinit`. `ai/eval/departure_probe.py --target <name>` asks
 whether the departures can be read from the trunk.
 
+`tools/train.py --mode q-fit --q-dataset <npz> --q-target <name> --warmup-checkpoint <pt>` fits
+those statistics instead: an action-value head on a copy of the network, so that each candidate's
+predicted value less the network's move's is its lead, weighted by 1 / SE^2 (`--q-weighting unit`
+for the control). `--q-head mlp` is a fresh head on the trunk's features (frozen and cached unless
+`--q-train-trunk`, so it runs on a CPU); `--q-head policy` reads the network's own logits times a
+learned scale. On the held-out rows it records the correlation with the two seeds' mean lead,
+disattenuated by that mean's reliability (`r_dis`), beside the same for the starting logits and for
+`--q-baseline` (h0), and the take / leave rates of the Q root at each threshold against the
+teacher's stable picks (`q_fit_metrics.jsonl`, `metadata.json`).
+
 `tools/distill_probe.py` reads a target set:
 * `agree` -- each teacher's departure rate, its self-agreement between seeds, and pairwise: on the
   row teacher's departures, how often the column teacher picks the same move.
