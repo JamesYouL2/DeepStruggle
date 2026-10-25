@@ -703,6 +703,32 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A27": {
+   "description": "A26 (512 projections, fusion 768) with SimbaV2's hyperspherical trunk, 2 blocks, expansion 4 (--ladder-sphere-blocks 2): the stream on the unit sphere renormalised at every block, lerp residual, unit-norm weight rows re-projected after every step -- P38 rung 2",
+   "first": "E8-A27-R84-S44_20261025_010608",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 768,
+    "ladder_res_blocks": 0,
+    "ladder_sphere_blocks": 2,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1937,7 +1963,8 @@
   "E8-A8-R1-S44-2_20261023_032854": "E8-A8-R1-S44-2",
   "E8-A26-R1-S44_20261023_210114": "E8-A26-R1-S44",
   "E8-A26-R84-S44_20261024_101857": "E8-A26-R84-S44",
-  "E8-A26-R85-S44_20261024_204210": "E8-A26-R85-S44"
+  "E8-A26-R85-S44_20261024_204210": "E8-A26-R85-S44",
+  "E8-A27-R84-S44_20261025_010608": "E8-A27-R84-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
