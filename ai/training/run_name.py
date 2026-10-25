@@ -7,6 +7,7 @@ is named by where it started and every change made to it since:
     E7-A4-R1-S44@4390M+S45             that run's 4,390M state, continued under seed 45
     E7-A4-R1-S44@4390M+A7-R10          ... with architecture 7 and recipe 10 from 4,390M
     E7-A4-R1-S44-2                     a same-seed replicate of the first
+    E7-A4-R1-S44-2@4390M+R10           a branch of that replicate (its index stays with the root)
 
 `@<n>M` is always an **absolute** step on the lineage's own clock, never a length. In a run's
 name every `@` is a branch point; a continuation that changes nothing keeps the name. A field in a
@@ -81,9 +82,13 @@ class RunPath:
     root: Tuple[Tuple[str, str], ...]          # (("E","7"),("A","4"),("R","1"),("S","44"))
     segments: Tuple[Segment, ...] = ()
     index: Optional[int] = None                # same-seed replicate (or league generation)
+    #: The root's own replicate index when the run branches from a replicate (`E8-A8-R1-S44-2@10010M+R87`):
+    #: it belongs to the root and is written there, before the branch points.
+    root_index: Optional[int] = None
 
     def text(self) -> str:
-        s = "-".join(f"{k}{v}" for k, v in self.root) + "".join(g.text() for g in self.segments)
+        s = "-".join(f"{k}{v}" for k, v in self.root)
+        s += (f"-{self.root_index}" if self.root_index is not None else "") + "".join(g.text() for g in self.segments)
         return s + (f"-{self.index}" if self.index is not None else "")
 
     def fields(self) -> Dict[str, str]:
@@ -106,7 +111,9 @@ class RunPath:
         if step <= self.last_step():
             raise RunNameError(f"branch at {step}M is not after the last branch point "
                                f"({self.last_step()}M) of {self.text()}")
-        return RunPath(self.root, self.segments + (Segment(step, diff),), None)
+        # A branch of a from-scratch replicate keeps the replicate's index on its root.
+        root_index = self.root_index if self.segments else self.index
+        return RunPath(self.root, self.segments + (Segment(step, diff),), None, root_index)
 
 
 @dataclass(frozen=True)
@@ -202,13 +209,14 @@ def _path(text: str) -> RunPath:
         if "+" not in part:
             raise RunNameError(f"'@{part}' in a run's name must be a branch point, @<n>M+<changes>")
         step_s, ch = part.split("+", 1)
-        if run.index is not None:
-            raise RunNameError(f"{text!r}: a replicate index ends a name")
+        if run.index is not None and run.segments:
+            raise RunNameError(f"{text!r}: a replicate index ends a name (only a from-scratch replicate, "
+                               "the root, can be branched from)")
         pairs, index = _changes(ch)
         step = _millions(step_s, "branch point")
         _no_restated(run, pairs, part)
         nxt = run.branch(step, dict(pairs))
-        run = RunPath(nxt.root, nxt.segments, index)
+        run = RunPath(nxt.root, nxt.segments, index, nxt.root_index)
     return run
 
 

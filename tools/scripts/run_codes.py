@@ -391,10 +391,24 @@ def _replicates(runs: List[Run], names: Dict[str, RunPath]) -> None:
     for r in runs:
         if r.dir in names and r.parent is None:
             seen.setdefault(names[r.dir].text(), []).append(r.dir)
+    replicate: Dict[str, int] = {}
     for _, dirs in seen.items():
         for i, d in enumerate(dirs[1:], start=2):
             p = names[d]
             names[d] = RunPath(p.root, p.segments, i)
+            replicate[d] = i
+    # A branch of a replicate carries the index on its root (`E8-A8-R1-S44-2@10010M+R87`); its name was built
+    # from the parent's before the index was known, so it is added here, down every branch.
+    by_dir = {r.dir: r for r in runs}
+    for r in runs:
+        if r.parent is None or r.dir not in names:
+            continue
+        top = r
+        while top.parent is not None and top.parent.dir in by_dir:
+            top = by_dir[top.parent.dir]
+        if top.dir in replicate:
+            p = names[r.dir]
+            names[r.dir] = RunPath(p.root, p.segments, p.index, replicate[top.dir])
 
 
 def write_map(runs: List[Run], names: Dict[str, RunPath], codes: Dict[str, Any]) -> None:

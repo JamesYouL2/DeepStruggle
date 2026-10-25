@@ -61,7 +61,9 @@ recorded by hand as an `override` in the JSON and makes a recipe of its own.
 snapshots already use, so a typo cannot silently shift every later number. In a run's name every
 `@` is a **branch point**: `+` and the fields that change, in E, A, R, S order, naming only what
 changed. A **continuation that changes nothing keeps its name and its directory**; a re-run of a
-from-scratch run takes a replicate index `-2`.
+from-scratch run takes a replicate index `-2`. A branch of such a replicate keeps the index on its
+root, before the branch points (`E8-A8-R1-S44-2@10010M+R87`, since 2026-10-25); an index after a
+branch point still ends a name.
 
 **A run is one directory (since 2026-10-07).** `tools/train.py --resume <run-dir> --run-name <its
 name>`, from the run's newest state, writes into that directory: metrics and TensorBoard are

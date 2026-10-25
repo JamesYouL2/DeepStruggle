@@ -46,11 +46,22 @@ class TestRunNames:
         ("E7-A4-R1-S44@100+S45", "absolute steps in millions"),
         ("E7-A4-R1-S44@100M+(S45,S46)", "no group or range"),     # a soup names a model, not a run
         ("E7-A4-R1-S44@4720..4800M", "no group or range"),
-        ("E7-A4-R1-S44-2@100M+S45", "a replicate index ends a name"),
+        ("E7-A4-R1-S44@100M+S45-2@200M+R2", "a replicate index ends a name"),   # only a root replicate branches
     ])
     def test_refused(self, bad: str, why: str) -> None:
         with pytest.raises(RunNameError, match=why):
             parse_run_name(bad)
+
+    def test_a_from_scratch_replicate_can_be_branched_from(self) -> None:
+        # The E8 control relaunched under ENG-5 is a replicate (-2) of the first E8 control; its continuations
+        # keep the index on the root, before the branch points.
+        run = parse_run_name("E8-A8-R1-S44-2@10010M+R87")
+        assert run.text() == "E8-A8-R1-S44-2@10010M+R87"
+        assert run.root_index == 2 and run.index is None and run.fields()["R"] == "87"
+        branched = parse_run_name("E8-A8-R1-S44-2").branch(10010, {"R": "87"})
+        assert branched.text() == "E8-A8-R1-S44-2@10010M+R87"
+        assert branched.branch(10800, {"S": "45"}).text() == "E8-A8-R1-S44-2@10010M+R87@10800M+S45"
+        assert parse_run_name("E8-A8-R1-S44@10010M+R87").text() != run.text()
 
     def test_legacy_names_stay_valid(self) -> None:
         for n in ("E7-20-44", "E7-20-44-4390M.45", "E4-08-01-2", "E4-17-06-5M.11-90M.07"):
