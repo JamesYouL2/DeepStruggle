@@ -15,6 +15,7 @@ import pytest
 
 from ai.training.run_name import parse_label, parse_run_name
 from tools.scripts import run_codes as rc
+from tools.value_labels import labelling_signature
 
 TS = iter(f"2026100{7 + h // 24}_{h % 24:02d}0000" for h in range(72))
 
@@ -141,6 +142,16 @@ def test_a_labelling_recipe_gets_one_d_code_and_keeps_it(tmp_path: Any, monkeypa
     assert rc.labelling_code(dict(reversed(list(sig.items()))), update=False) == "D1"
     assert rc.labelling_code({**sig, "worlds": 64}, update=True) == "D2"
     assert set(json.loads(codes.read_text())["labellings"]) == {"D1", "D2"}
+
+
+def test_a_labellings_chance_is_named_only_when_keyed() -> None:
+    """keyed2 is its own recipe, and a labelling without keyed chance keeps the code it had."""
+    pmeta = {"temperature": 0.25, "keep": 8, "candidates": 4, "holdout": 0.05}
+    lmeta: Dict[str, Any] = {"worlds": 32, "safe": True, "siblings": 0, "sibling_worlds": 0, "sibling_k": 4,
+                             "leaf_horizon": 0}
+    assert "chance" not in labelling_signature(pmeta, lmeta)
+    assert labelling_signature(pmeta, {**lmeta, "keyed": True})["chance"] == "keyed"
+    assert labelling_signature(pmeta, {**lmeta, "keyed": False, "keyed2": True})["chance"] == "keyed2"
 
 
 def test_a_value_fit_is_its_networks_shape_read_for_its_value(tmp_path: Any) -> None:

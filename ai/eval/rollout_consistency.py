@@ -4,7 +4,7 @@ sampled at rate p (all node types, as the training targets were; `--entry`: card
 decisions). Each position searched R times, reseeded -- at every world count of `--worlds` (P36b: the
 target's signal-to-noise against the number of worlds, with `--keyed --stop earlier --leaf own`).
     PYTHONPATH=.:build/release python -m ai.eval.rollout_consistency <checkpoint> <games> <p> <repeats>
-        [--worlds 16 64 128] [--keyed] [--stop earlier] [--leaf own] [--entry] [--positions 3000]
+        [--worlds 16 64 128] [--keyed | --keyed2] [--stop earlier] [--leaf own] [--entry] [--positions 3000]
 
 Findings: research/log/E7_search_depth_and_value.md section 6; research/plans/P36_*.md (P36b).
 """
@@ -77,6 +77,8 @@ def main() -> None:
     ap.add_argument("repeats", type=int)
     ap.add_argument("--worlds", type=int, nargs="+", default=[16])
     ap.add_argument("--keyed", action="store_true", help="keyed chance (bindings/keyed_chance.hpp)")
+    ap.add_argument("--keyed2", action="store_true",
+                    help="keyed chance with the player fields narrowed (keyed_chance.hpp's keyed2); implies --keyed")
     ap.add_argument("--stop", default="boundaries")
     ap.add_argument("--leaf", default="mover")
     ap.add_argument("--entry", action="store_true", help="card choices only (the entry decisions)")
@@ -92,9 +94,10 @@ def main() -> None:
     states = collect(model, dev, games, p, rng, a.entry, a.positions)
     print(f"{len(states)} positions from {games} greedy games{' (entry decisions)' if a.entry else ''}")
     for worlds in a.worlds:
-        print(f"\n======== {worlds} worlds ({'keyed' if a.keyed else 'shared-stream'} chance, stop={a.stop}, leaf={a.leaf})")
+        chance = "keyed2" if a.keyed2 else "keyed" if a.keyed else "shared-stream"
+        print(f"\n======== {worlds} worlds ({chance} chance, stop={a.stop}, leaf={a.leaf})")
         report(model, dev, states, R, RolloutConfig(k=4, worlds=worlds, horizon=4, rule="z2", stop=a.stop,
-                                                     leaf_side=a.leaf, keyed=a.keyed))
+                                                     leaf_side=a.leaf, keyed=a.keyed, keyed2=a.keyed2))
 
 
 def report(model: Any, dev: torch.device, states: List[Any], R: int, cfg: RolloutConfig) -> None:
