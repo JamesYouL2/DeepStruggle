@@ -756,6 +756,33 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A29": {
+   "description": "A26 (512 projections, fusion 768) with 2 post-LN residual blocks (--ladder-res-blocks 2 --ladder-res-post-norm --ladder-res-dropout 0): depth with the stream renormalised at every block -- P38's named fallback for the SimbaV2 trunk",
+   "first": "E8-A29-R84-S44_20261025_051812",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 512,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 768,
+    "ladder_res_blocks": 2,
+    "ladder_res_dropout": 0.0,
+    "ladder_res_post_norm": true,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -1993,7 +2020,8 @@
   "E8-A26-R85-S44_20261024_204210": "E8-A26-R85-S44",
   "E8-A27-R84-S44_20261025_010608": "E8-A27-R84-S44",
   "E8-A27-R82-S44_20261025_013823": "E8-A27-R82-S44",
-  "E8-A28-R84-S44_20261025_044640": "E8-A28-R84-S44"
+  "E8-A28-R84-S44_20261025_044640": "E8-A28-R84-S44",
+  "E8-A29-R84-S44_20261025_051812": "E8-A29-R84-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
