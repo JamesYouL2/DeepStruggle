@@ -603,10 +603,6 @@ _HOW_I_LEARNED_TO_STOP_WORRYING = 46
 _TEAR_DOWN_THIS_WALL = 96
 
 
-_COLONIAL_REAR_GUARDS = 63
-_RED_SCARE_PURGE = 31
-
-
 def _narrated_score(entry: Entry) -> Optional[int]:
     """The score this entry states in words, US positive, or None if it states none.
 
@@ -3444,12 +3440,10 @@ def _convert_entries(state: ts.GameState, raws, hands, conv: Conversion,
     conv.hands_solved = solved_hands is not None
     conv.reveal_conflict_turns = sorted(conflicts)
     if solved_hands is None:
-        first = parse_entry(raws[0]) if raws else None
-        mismatch = Mismatch(conv.replay_id, first.turn if first else 0,
-                            first.phase if first else "", first.player if first else "", first.card if first else None,
-                            "hand reconstruction failed",
-                            "no whole-game hand model; ensure z3-solver is installed and diagnose the log")
-        raise ConversionFailure(mismatch)
+        first = parse_entry(raws[0])   # convert_game returns before this on a log with no entries
+        raise ConversionFailure(Mismatch(conv.replay_id, first.turn, first.phase, first.player, first.card,
+                                         "hand reconstruction failed",
+                                         "no whole-game hand model; ensure z3-solver is installed and diagnose the log"))
     cur_turn = None
     turn_hands = {"US": [], "USSR": []}
     played = {"US": set(), "USSR": set()}
