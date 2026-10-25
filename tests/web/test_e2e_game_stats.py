@@ -75,6 +75,10 @@ _UNTIL_FORCED_ROLL = """() => { const wb = window.__wb;
 
 def test_a_forced_die_is_for_one_roll(browser: Any, static_site: str) -> None:
     page = _open(browser, f"{static_site}/?model=off")
+    # A fixed deal, not the page's random one: first-legal play ends some games before any die is
+    # rolled (22 of seeds 0..399 on 2026-10-25, ending on turn 2 to 4), which failed this test at
+    # random. Seed 1 rolls one; if an engine change makes it stop doing so, pick another seed.
+    page.evaluate("() => { const wb = window.__wb; wb.session.newGame(1); wb.refresh(); }")
     out = page.evaluate(_UNTIL_FORCED_ROLL)
     assert out is not None, "no target click rolled a die"
     assert out["kept"] == 6, "a move that rolled nothing keeps the forced face"
