@@ -656,6 +656,11 @@ a second time (other seeds) for the teacher's self-agreement. A teacher is `--te
 * `net:<checkpoint>` -- another network's raw policy, a positive control: a target a network of
   the same shape demonstrably represents.
 
+A root teacher also writes its per-candidate statistics (`cand_T`, `q_T`, `lead_T`, `lead_se_T`,
+`worlds_T`, and the second seed's `cand2_T`, ... on the held-out rows): each candidate's mean, its
+paired lead over the network's move and that lead's standard error -- the regression targets of an
+action-value head, which a pick or an improved policy throws away.
+
 `--worlds 16 64 128` (with no `--teacher`) rebuilds P36c's set with its seeds. The search splits
 across machines: `--collect-only` writes the positions once; then `--states pos.npz --shard i/n`
 searches one part per runner; then `--states pos.npz --merge s1.npz ... --output targets.npz`

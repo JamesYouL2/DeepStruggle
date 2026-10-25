@@ -13,8 +13,13 @@ exactly those positions, the ceiling any student's held-out agreement is read ag
 
 Output: one `.npz` (`--output`): `states` (N x state_size raw GameStates), `game`, `heldout`, `net_argmax`,
 and per teacher T: `acts_T`, `probs_T` (N x 16, padded with -1 / 0, sorted by probability), `pick_T`, and for
-the held-out rows `acts2_T`, `probs2_T`, `pick2_T` (the second seed; -1 elsewhere). A sidecar `.meta.json`
-records the checkpoint, the teachers, the configuration and the commit.
+the held-out rows `acts2_T`, `probs2_T`, `pick2_T` (the second seed; -1 elsewhere). A root teacher also writes
+its statistics, the regression targets of an action-value head: `cand_T` (N x 16, the root's candidates, the
+network's own move first, padded with -1), `q_T` (each candidate's mean value), `lead_T` / `lead_se_T` (its
+paired lead over the network's move and that lead's standard error; 0 / 0 for the move itself), `worlds_T`
+(0 where the root did not search), and the second seed's `cand2_T`, `q2_T`, `lead2_T`, `lead_se2_T`,
+`worlds2_T` on the held-out rows; NaN, -1 or 0 elsewhere. A sidecar `.meta.json` records the checkpoint, the
+teachers, the configuration and the commit.
 
 **Teachers** (`--teacher NAME=SPEC`, repeatable; `--worlds W` is P36c's `W=root:4:W:4:z2:earlier:own:keyed`):
 
@@ -112,6 +117,26 @@ def z2_pick(stats: Dict[str, Any]) -> int:
 
 
 Targets = Tuple[np.ndarray, np.ndarray, np.ndarray]
+#: A root's per-candidate statistics: candidates, mean, paired lead, its standard error, worlds.
+Stats = Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+STAT_KEYS = ("cand", "q", "lead", "lead_se", "worlds")
+
+
+def empty_stats(n: int) -> Stats:
+    nan = np.full((n, WIDTH), np.nan, dtype=np.float32)
+    return (np.full((n, WIDTH), -1, dtype=np.int16), nan.copy(), nan.copy(), nan.copy(), np.zeros(n, dtype=np.int16))
+
+
+def _put_stats(out: Stats, row: int, stats: Dict[str, Any]) -> None:
+    cand, q, lead, se, worlds = out
+    cands = [int(c) for c in stats["candidates"]][:WIDTH]
+    cand[row, :len(cands)] = cands
+    worlds[row] = int(stats["worlds"])
+    if stats["worlds"] <= 0:
+        return
+    for j, c in enumerate(cands):
+        q[row, j] = stats["q"][c]
+        lead[row, j], se[row, j] = stats["lead"][c]
 
 
 def _put(acts: np.ndarray, probs: np.ndarray, row: int, a: Sequence[int], p: np.ndarray) -> None:
@@ -120,17 +145,19 @@ def _put(acts: np.ndarray, probs: np.ndarray, row: int, a: Sequence[int], p: np.
     probs[row, :len(order)] = np.asarray(p)[order]
 
 
-def search(teacher: RolloutTeacher, states: List[ts.GameState], chunk: int) -> Targets:
+def search(teacher: RolloutTeacher, states: List[ts.GameState], chunk: int) -> Tuple[Targets, Stats]:
     n = len(states)
     acts = np.full((n, WIDTH), -1, dtype=np.int16)
     probs = np.zeros((n, WIDTH), dtype=np.float32)
     pick = np.full(n, -1, dtype=np.int16)
+    st = empty_stats(n)
     for lo in range(0, n, chunk):
         part = states[lo:lo + chunk]
         for k, ((a, p), stats) in enumerate(zip(teacher.improved_policies(part), teacher.root.last_stats)):
             _put(acts, probs, lo + k, a, p)
             pick[lo + k] = z2_pick(stats)
-    return acts, probs, pick
+            _put_stats(st, lo + k, stats)
+    return (acts, probs, pick), st
 
 
 def net_policy(model: Any, dev: torch.device, states: List[ts.GameState], chunk: int = 4096) -> Targets:
@@ -202,17 +229,24 @@ def run_teacher(name: str, spec: str, model: Any, dev: torch.device, states: Lis
         other = NeuralAgent.from_checkpoint(spec[4:], device=str(dev)).model.eval()
         first = net_policy(other, dev, states)
         second: Targets = (first[0][hidx], first[1][hidx], first[2][hidx])
+        stats1: Optional[Stats] = None
+        hstats = empty_stats(len(hidx))
     else:
         cfg = root_config(spec)
         chunk = max(32, 16384 // max(1, cfg.worlds * max(1, cfg.k // 4)))
         s1, s2 = teacher_seeds(name, spec, seed, shard)
-        first = search(RolloutTeacher(model, cfg, device=dev, seed=s1), states, chunk)
-        second = search(RolloutTeacher(model, cfg, device=dev, seed=s2), hstates, chunk)
+        first, stats1 = search(RolloutTeacher(model, cfg, device=dev, seed=s1), states, chunk)
+        second, hstats = search(RolloutTeacher(model, cfg, device=dev, seed=s2), hstates, chunk)
     out = {f"acts_{name}": first[0], f"probs_{name}": first[1], f"pick_{name}": first[2],
            f"acts2_{name}": np.full((n, WIDTH), -1, dtype=np.int16),
            f"probs2_{name}": np.zeros((n, WIDTH), dtype=np.float32),
            f"pick2_{name}": np.full(n, -1, dtype=np.int16)}
     out[f"acts2_{name}"][hidx], out[f"probs2_{name}"][hidx], out[f"pick2_{name}"][hidx] = second
+    if stats1 is not None:
+        stats2 = empty_stats(n)
+        for key, v1, v2, h in zip(STAT_KEYS, stats1, stats2, hstats):
+            v2[hidx] = h
+            out[f"{key}_{name}"], out[f"{key}2_{name}"] = v1, v2
     return out
 
 
@@ -235,7 +269,7 @@ def merge(base: Dict[str, np.ndarray], shards: Sequence[Dict[str, np.ndarray]]) 
             if key == "rows":
                 continue
             if key not in out:
-                out[key] = (np.full((n,) + v.shape[1:], -1, dtype=v.dtype) if key.startswith(("acts", "pick"))
+                out[key] = (np.full((n,) + v.shape[1:], -1, dtype=v.dtype) if key.startswith(("acts", "pick", "cand"))
                             else np.zeros((n,) + v.shape[1:], dtype=v.dtype))
             out[key][rows] = v
             seen.setdefault(key, np.zeros(n, dtype=np.int32))[rows] += 1
