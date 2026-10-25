@@ -41,9 +41,9 @@ build directory created under GCC. The batch runner's parallel loops call GCC's 
 OpenMP adds a second pool, measured 5-7% slower. `tests/bindings/test_build_toolchain.py` fails on
 a non-clang engine, a second pool, or loops that silently run serially (`bindings/AGENTS.md` §3).
 
-Three requirements degrade rather than break if absent: `z3-solver` (the human-log converter then
-falls back to per-turn heuristics and no longer reproduces the corpus), `tensorboard` (training
-still writes `training_metrics.jsonl`) and `playwright` (browser E2E tests only).
+`z3-solver` is required for human-log conversion: unavailable or unsuccessful hand solving is a
+conversion failure before any decisions are emitted. Two requirements degrade if absent:
+`tensorboard` (training still writes `training_metrics.jsonl`) and `playwright` (browser E2E tests only).
 
 The extension lands at `build/release/ts_engine.cpython-*.so` — the binary root, not
 `build/release/bindings/` — and is imported via `PYTHONPATH=.:build/release`.

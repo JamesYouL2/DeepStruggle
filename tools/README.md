@@ -499,8 +499,9 @@ turns whose recording stops part way.
   (`_shuttle_japan_asia_miscount`). Where the log's score is wrong the engine adopts it from there
   on: the players decided against the score the app showed.
 - `tools/lib/ts_replayer_hands.py`: both hands for a whole game solved at once as a z3 constraint
-  problem from the rules, with preference heuristics as soft clauses. Without z3 it falls back to
-  per-turn heuristics and `Conversion.hands_solved` is False. Before each entry the solved hands
+  problem from the rules, with preference heuristics as soft clauses. Missing z3 or an unsolved
+  hand model is a conversion failure before any decisions or callbacks are emitted; a turn absent
+  from the model also fails instead of padding a hand. Before each entry the solved hands
   are seated and every other card the engine holds goes back to the **draw deck**, never the
   discard pile: the pile holds only what the log has spent, so the engine reshuffles where the
   humans did, and the discard features and any redeal from a converted position read the real
