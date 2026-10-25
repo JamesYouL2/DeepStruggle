@@ -172,7 +172,7 @@ bool RolloutBatch::at_stop(const Row& r) const noexcept {
 
 void RolloutBatch::advance(Row& r) const noexcept {
     if (cfg_.stop != Stop::kPredeal && cfg_.stop != Stop::kEarlierPredeal) {
-        if (cfg_.keyed) keyed::advance(r.state, r.world_key);
+        if (cfg_.keyed) keyed::advance(r.state, r.world_key, cfg_.keyed2);
         else Engine::auto_advance_step(r.state);
         return;
     }
@@ -180,7 +180,7 @@ void RolloutBatch::advance(Row& r) const noexcept {
     // would otherwise.
     for (size_t k = 0; k < 256; ++k) {
         if (at_turn_cleanup(r.state)) { r.parked = true; return; }
-        if (cfg_.keyed) keyed::key(r.state, r.world_key);
+        if (cfg_.keyed) keyed::key(r.state, r.world_key, cfg_.keyed2);
         if (Engine::auto_advance_step(r.state, 1) == 0) return;
     }
 }
@@ -242,7 +242,7 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
             r.start_turn = base.turn;
             r.value = std::numeric_limits<float>::quiet_NaN();
             r.world_key = world.rng_state;
-            if (cfg_.keyed) keyed::key(r.state, r.world_key);
+            if (cfg_.keyed) keyed::key(r.state, r.world_key, cfg_.keyed2);
             if (!Engine::step_flat(r.state, candidates[c])) {
                 r.refused = r.done = true;
             } else {
@@ -372,7 +372,7 @@ void RolloutBatch::step(const float* logits) {
             if (mask[a] && (best < 0 || lg[a] > lg[best])) best = static_cast<int>(a);
         }
         if (best < 0) { r.refused = r.done = true; return; }
-        if (cfg_.keyed) keyed::key(r.state, r.world_key);   // the guard's probes see the same draws
+        if (cfg_.keyed) keyed::key(r.state, r.world_key, cfg_.keyed2);   // the guard's probes see the same draws
         const uint16_t a = guarded_choice(r.state, lg, mask, static_cast<uint16_t>(best));
         if (!Engine::step_flat(r.state, a)) { r.refused = r.done = true; return; }
         settle_and_mark(r);

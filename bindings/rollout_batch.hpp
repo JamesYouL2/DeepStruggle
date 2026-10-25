@@ -125,6 +125,9 @@ struct Config {
     // opponent's hand is redealt around it. Off: the world forgets it and asks it again, as every
     // rollout player measured before it did.
     bool box4 = false;
+    // With keyed: the situation packed with its player fields narrowed to a byte (keyed_chance.hpp's
+    // keyed2). Off: the original packing, which every keyed player measured before it played.
+    bool keyed2 = false;
 };
 
 struct Row {

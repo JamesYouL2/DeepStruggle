@@ -69,7 +69,9 @@ class Rollout:
     #: The registered network that reads the leaves (P34's evaluator); "" = the root's own network.
     leaf_net: str = ""
     #: How a world's randomness is shared by its candidates: "shared" (one dice stream, the measured
-    #: root) or "keyed" (each draw tied to its situation, bindings/keyed_chance.hpp).
+    #: root), "keyed" (each draw tied to its situation, bindings/keyed_chance.hpp) or "keyed2" (keyed
+    #: with the situation's player fields narrowed, so a USSR side no longer hides the turn; "keyed"
+    #: keeps the original packing every keyed player was measured with).
     chance: str = "shared"
     #: P35 3b: the worlds dealt from the policy-likelihood belief over the opponent's hand with this
     #: many importance-sampled hands, the likelihood temperature model-averaged from the opponent's own
@@ -122,7 +124,7 @@ _LEAVES: Final = ("mover", "decider", "own")
 LATE_FIELDS: Final[Dict[str, Dict[str, Union[str, int]]]] = {
     "rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "", "chance": "shared", "belief": 0,
                 "aligned": False, "box4": False}}
-_CHANCES: Final = ("shared", "keyed")
+_CHANCES: Final = ("shared", "keyed", "keyed2")
 #: Characters a leaf_net name may not hold: the id grammar's own separators.
 _LEAF_NET_BAD: Final = frozenset("(),~:= ")
 #: ai.search.rollout_root.parse_rule's grammar, without importing it (torch-free here).
@@ -271,7 +273,7 @@ def workbench_search(spec: Inference) -> Optional[str]:
     if not isinstance(spec, Rollout) or spec.leaf_net:
         return None
     return (f"rollout:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}:{spec.stop}:{spec.leaf}"
-            + (":keyed" if spec.chance == "keyed" else "") + (":aligned" if spec.aligned else "")
+            + (f":{spec.chance}" if spec.chance != "shared" else "") + (":aligned" if spec.aligned else "")
             + (":box4" if spec.box4 else "") + (f":belief{spec.belief}" if spec.belief else ""))
 
 
@@ -323,7 +325,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str], leaf_checkpoint: Optio
         return f"gumbel:{checkpoint}:{spec.sims}:{spec.k}:{_fmt(spec.fpu)}"
     if isinstance(spec, Rollout):
         tail = (f":{spec.stop}" if spec.stop != "boundaries" else "") + (f":{spec.leaf}" if spec.leaf != "mover" else "")
-        tail += ":keyed" if spec.chance == "keyed" else ""
+        tail += f":{spec.chance}" if spec.chance != "shared" else ""
         tail += ":aligned" if spec.aligned else ""
         tail += ":box4" if spec.box4 else ""
         tail += f":belief{spec.belief}" if spec.belief else ""

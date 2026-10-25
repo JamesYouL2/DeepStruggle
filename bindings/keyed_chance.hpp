@@ -14,6 +14,14 @@
 // Each world's draws are still a fresh random stream (the world key is), so a single continuation
 // plays the same game distribution as before; only the coupling between continuations changes.
 // No engine change: the engine reads rng_state, and this sets it.
+//
+// Two packings of the situation, chosen by `keyed2` (the batches' keyed2=True, the rollout player's
+// chance=keyed2). The first, `keyed`, widens the player fields as signed bytes: Player::USSR is -1,
+// so it sets every higher bit of its word, and whenever the USSR is phasing the turn, action round
+// and phase drop out of the situation (and the decision type and staged roll when it decides or
+// rolls) -- two of a world's USSR draws can then reuse one die across turns. It is kept bit for bit,
+// so every keyed result measured with it stays a measurement of one searcher. `keyed2` narrows each
+// player field to its byte first, so every field it lists separates situations.
 #pragma once
 
 #include <algorithm>
@@ -33,15 +41,19 @@ inline uint64_t mix(uint64_t h, uint64_t v) noexcept {
     return Prng::next_u64(z);
 }
 
-// The situation a step is taken in, hashed with the world's key.
-inline uint64_t situation(const GameState& s, uint64_t world_key) noexcept {
+// The situation a step is taken in, hashed with the world's key. `keyed2` narrows the player
+// fields to their byte (see the top of this file); without it the original packing stands.
+inline uint64_t situation(const GameState& s, uint64_t world_key, bool keyed2) noexcept {
+    const auto player = [keyed2](Player p) noexcept {
+        return keyed2 ? uint64_t{static_cast<uint8_t>(p)} : uint64_t(p);
+    };
     const auto& c = s.ctx();
     uint64_t h = world_key;
     h = mix(h, (uint64_t{s.turn} << 24) | (uint64_t{s.action_round} << 16) |
-               (uint64_t(s.phasing_player) << 8) | uint64_t(s.current_phase));
-    h = mix(h, (uint64_t(c.decision_type) << 40) | (uint64_t(c.decision_player) << 32) |
+               (player(s.phasing_player) << 8) | uint64_t(s.current_phase));
+    h = mix(h, (uint64_t(c.decision_type) << 40) | (player(c.decision_player) << 32) |
                (uint64_t(c.pending_roll) << 24) | (uint64_t{c.roll_target} << 16) |
-               (uint64_t(c.roll_actor) << 8) | uint64_t{c.remaining_steps});
+               (player(c.roll_actor) << 8) | uint64_t{c.remaining_steps});
     h = mix(h, (uint64_t{c.resolving_card} << 24) | (uint64_t{c.pending_op_card} << 16) |
                (uint64_t{s.ctx_stack_depth} << 8) | uint64_t{s.headline_stage});
     return h;
@@ -103,18 +115,18 @@ inline void force_deal(GameState& s, uint64_t world_key) noexcept {
 }
 
 // Key the stream for the step about to be taken from `s` (and, at the turn's end, the deal).
-inline void key(GameState& s, uint64_t world_key) noexcept {
-    s.rng_state = situation(s, world_key);
+inline void key(GameState& s, uint64_t world_key, bool keyed2) noexcept {
+    s.rng_state = situation(s, world_key, keyed2);
     if (at_turn_end(s)) force_deal(s, world_key);
 }
 
 // Engine::auto_advance_step, one micro-step at a time with the stream keyed before each: the
 // position the full drain would reach, every draw on the way keyed. Returns the steps taken.
-inline size_t advance(GameState& s, uint64_t world_key) noexcept {
+inline size_t advance(GameState& s, uint64_t world_key, bool keyed2) noexcept {
     size_t n = 0;
     for (; n < 4096; ++n) {
         if (Engine::is_terminal(s)) break;
-        key(s, world_key);
+        key(s, world_key, keyed2);
         if (Engine::auto_advance_step(s, 1) == 0) break;
     }
     return n;

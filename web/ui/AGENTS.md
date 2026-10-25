@@ -349,7 +349,7 @@ web/ui/
      auto-play on, *Cancel* keeps undoing until the decision is the other side's again.
      `ActionHud.onRerender` re-applies badges after the HUD redraws itself (the die selector).
    - **Search.** The section's search radios (`#mode-opponent`) choose the policy's argmax (`search=policy`) or the **rollout root**
-     (`search=rollout:k:worlds:horizon:rule:stop:leaf[:keyed][:aligned][:box4][:beliefN]`, always written with every field --
+     (`search=rollout:k:worlds:horizon:rule:stop:leaf[:keyed|keyed2][:aligned][:box4][:beliefN]`, always written with every field --
      `analysis/rollout_spec.ts`, the grammar without the engine, which the leaderboard page reads too). Its spec is the
      default search -- the Hugging Face repo's `models.json` `default_search` (`tools/publish_hf.py default --player`),
      read once with the default model (`defaultHfCatalog`), else the built-in `DEFAULT_ROLLOUT`, the corrected keyed root
@@ -360,7 +360,8 @@ web/ui/
      (`bindings/rollout_batch.hpp`, the same C++ as Python's searcher) driven by
      `analysis/rollout.ts` in a worker (`rollout_runner.ts`, inline where there are no workers).
      The spec takes the leaderboard's other modes too: `:keyed` (chance=keyed,
-     `bindings/keyed_chance.hpp`) and `:belief[N]` (belief=N, 2,048 hands by default: the worlds dealt
+     `bindings/keyed_chance.hpp`), `:keyed2` (chance=keyed2, the packing that keeps the turn when the
+     USSR is phasing; the default stays `:keyed` until keyed2 is measured) and `:belief[N]` (belief=N, 2,048 hands by default: the worlds dealt
      from the policy-likelihood belief over the opponent's hand, `bindings/belief.hpp`, the same C++
      as Python's). For the belief the session records every move (`GameSession.moves`, undone with
      undo) and `rollout_runner.ts` brings the searching engine's tracker up to them before each

@@ -169,7 +169,16 @@ are cited from elsewhere; keep them.
   per hand for the Space Walk discard. A single continuation plays the same game distribution; only
   the coupling between continuations changes. Measured on P34's sibling slice: two candidates'
   results in one world correlate at 0.39 keyed against 0.22 with the shared stream.
-  `ts.keyed_key(state, key)` is the keying step, for references and tests.
+  **Two packings.** `keyed` widens the player fields as signed bytes: USSR is -1, so it sets every
+  higher bit of its word, and whenever the USSR is phasing the turn, action round and phase drop
+  out of the situation (and the decision type and staged roll when it decides or rolls) -- two USSR
+  draws of one world can reuse a die across turns. It is kept bit for bit, so every keyed player
+  measured with it (the leaderboard's `chance=keyed`, the web default, the 0.39 above) stays one
+  searcher. `keyed2=True` (both batches; `chance=keyed2`, the agent string's `:keyed2`, the web
+  spec's `:keyed2`) narrows each player field to its byte first, so every field separates
+  situations; it implies keyed, and keys exactly as `keyed` does wherever no player field is the
+  USSR. Its play is not yet measured against `keyed`'s.
+  `ts.keyed_key(state, key, keyed2=False)` is the keying step, for references and tests.
 - **The oracle's worlds** (`RolloutBatch(oracle=True)`, `ts.determinize(..., keep_hand=True)`; the
   rollout agent string's `:oracle`): every world keeps the opponent's true hand and reshuffles only
   the draw deck, so the deck order, the dice and an unrevealed headline stay unknown. Not a

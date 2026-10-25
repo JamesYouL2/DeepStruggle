@@ -76,6 +76,7 @@ struct Config {
     int leaf_horizon = 0;       // sibling leaves: boundaries before the mover's own decision is the leaf
     uint32_t max_plies = 8000;  // a world still running after this many decisions is a failure
     bool keyed = false;         // keyed chance (keyed_chance.hpp): a world's candidates draw alike
+    bool keyed2 = false;        // with keyed: the situation's player fields narrowed (keyed_chance.hpp)
 };
 
 // One world's labels, from the mover's side.

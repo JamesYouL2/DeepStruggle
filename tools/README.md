@@ -272,6 +272,9 @@ root whose leaves another network reads (P34's evaluator) names it: `...~rollout
 the evaluator is a registered network like any other (its file and sha256 are checked the same way).
 `chance=keyed` ties each world's dice and deals to the situation they are drawn in
 (`bindings/keyed_chance.hpp`), so the candidates' playouts stay paired longer than on one shared stream.
+`chance=keyed2` is the same with the situation packed so a USSR side no longer hides the turn from
+it; `chance=keyed` keeps the original packing, so every keyed player recorded before it is unchanged
+(`bindings/AGENTS.md`, keyed_chance.hpp).
 
 **The fit** is Bradley-Terry with a US-seat term, draws half a win, in two stages: the main players
 among themselves (anchor pinned), then everyone else against them held fixed. Games without a main

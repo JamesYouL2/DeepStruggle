@@ -131,13 +131,15 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
     (59, 90, 4, "turn", "decider", False, False), (77, 110, 2, "boundaries", "decider", False, False),
     (59, 90, 4, "turn", "own", False, False), (84, 100, 3, "earlier", "own", False, False),
     (59, 90, 4, "predeal", "mover", False, False), (93, 80, 3, "earlier_predeal", "own", False, False),
-    (84, 100, 3, "earlier", "own", True, False), (35, 150, 1, "boundaries", "mover", True, False),
-    (84, 100, 3, "earlier", "own", True, True), (21, 70, 2, "boundaries", "mover", False, True)])
+    (84, 100, 3, "earlier", "own", 1, False), (35, 150, 1, "boundaries", "mover", 1, False),
+    (84, 100, 3, "earlier", "own", 1, True), (21, 70, 2, "boundaries", "mover", 0, True),
+    (84, 100, 3, "earlier", "own", 2, True), (35, 150, 1, "boundaries", "mover", 2, False)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
-                                                                 leaf: str, keyed: bool, aligned: bool,
+                                                                 leaf: str, keyed: int, aligned: bool,
                                                                  tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
-    critic: the same rows, the same worlds, the same observations ply by ply, the same values."""
+    critic: the same rows, the same worlds, the same observations ply by ply, the same values. `keyed`
+    is the page's code: 0 off, 1 keyed, 2 keyed2."""
     state = ts.GameState()
     ts.Engine.init_game(state, seed)
     drain_chance(state)
@@ -156,7 +158,8 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     act = int(mask.shape[0])
 
     batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed, stop=stop,
-                            leaf=leaf, keyed=keyed, aligned=aligned, box4=aligned)
+                            leaf=leaf, keyed=keyed == 1, keyed2=keyed == 2, aligned=aligned,
+                            box4=aligned)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
     plies_run = 0

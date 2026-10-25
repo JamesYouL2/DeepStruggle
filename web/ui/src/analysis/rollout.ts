@@ -6,7 +6,7 @@
  * the leaves, and the decision with its statistics. This file is the loop that feeds
  * onnxruntime's logits and values in -- the same loop the Python searcher runs with torch.
  *
- * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed][:aligned][:box4][:belief[N]]`
+ * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed|keyed2][:aligned][:box4][:belief[N]]`
  * (`rollout` alone is the best 32-world player there, 4:32:4:z2:earlier:own:keyed:aligned:box4). `keyed` ties
  * every draw to its situation (the leaderboard's chance=keyed); `belief` deals the worlds from the
  * policy-likelihood belief over the opponent's hand (bindings/belief.hpp, N hands, 2,048 by default --
@@ -105,7 +105,7 @@ export async function rolloutRoot(engine: WasmEngine, model: Model, spec: Rollou
 
   engine.rolloutReset(spec.horizon, model.obsFeatures, seed, true, true,
                       STOPS.indexOf(spec.stop as typeof STOPS[number]), LEAVES.indexOf(spec.leaf as typeof LEAVES[number]),
-                      spec.keyed, spec.aligned, spec.box4);
+                      spec.keyed2 ? 2 : spec.keyed ? 1 : 0, spec.aligned, spec.box4);
   const width = engine.rolloutObsWidth();
   if (width !== model.meta.obsSize) {
     throw new Error(`the batch writes ${width} observation floats for this feature set; the model reads ${model.meta.obsSize}`);
