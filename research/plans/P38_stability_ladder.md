@@ -75,6 +75,7 @@ From [`../method/network_stability.md`](../method/network_stability.md), stopped
 
 * A rung **passes** when checks 1–3 hold and its 1,600M read is level with or above the control's. A
   pass is the base of the next rung.
+* **Amended for the sphere trunk on 16k (owner, 2026-10-25):** closing the gap is too strong a bar for a network that starts slower; it passes if its gap to the control **decreases at 2,000M** -- the 2,000M gap (control 25.7%) smaller than the 1,600M one -- with the checks holding; a pass is extended in place.
 * A rung that fails check 1 or 2 is stopped at 60–100M; the change is recorded as the cause and the
   next rung is built from the last pass.
 * Rung 1 is adopted into the recipe (an R code carried by every later rung) if the head norm's trajectory
