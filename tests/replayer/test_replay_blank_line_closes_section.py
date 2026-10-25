@@ -48,7 +48,7 @@ def test_a_placement_after_the_gap_is_not_the_coups() -> None:
     e = _entry(281, 6, "AR4", "US")
     coup = [s for s in e.sections if s.mode == "coup"]
     assert len(coup) == 1
-    assert [row[1] for row in coup[0].influence] == [-3], (
+    assert [row.delta for row in coup[0].influence] == [-3], (
         "the removal, and nothing after the gap")
     assert point_queue(e).count(_ARGENTINA) == 2, "the coup's target, and NORAD's placement"
 

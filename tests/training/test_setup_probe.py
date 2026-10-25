@@ -149,5 +149,5 @@ def test_the_composite_is_the_conjunction_of_the_targets() -> None:
         expected &= (side.final[:, t.cid] >= t.threshold)
     assert rate == pytest.approx(expected.mean())
 
-    for t, r, _lo, _hi in target_rates(m):
-        assert rate <= r + 1e-9, f"the composite cannot exceed {t.name}'s own rate"
+    for tr in target_rates(m):
+        assert rate <= tr.rate + 1e-9, f"the composite cannot exceed {tr.target.name}'s own rate"

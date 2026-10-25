@@ -69,6 +69,16 @@ class Target:
         return _country_name(self.cid)
 
 
+@dataclass(frozen=True)
+class TargetRate:
+    """A target's rate on the finished board, with its Wilson 95% band."""
+
+    target: Target
+    rate: float
+    lo: float
+    hi: float
+
+
 #: What the opening has to achieve. Every one of these is the *control* threshold for its
 #: country -- control is `mine >= theirs + stability`, and with the opponent at zero that is
 #: just the stability -- so the set asks one question: does the opening take the four countries
@@ -410,7 +420,8 @@ def format_corpus_report(m: SetupMeasurement) -> str:
     std = split["standard"]
     lines = [f"=== setup probe: human corpus ({m.games} games"
              + (f", {m.malformed} unusable" if m.malformed else "") + ") ==="]
-    for t, rate, lo, hi in target_rates(m):
+    for tr in target_rates(m):
+        t, rate, lo, hi = tr.target, tr.rate, tr.lo, tr.hi
         side = m.ussr if t.side == "USSR" else m.us
         sub = SideSetup(side.influence[std], side.hand_has_europe_scoring[std],
                         side.final[std], side.opponent_final[std])
@@ -440,13 +451,13 @@ def _margin_line(side: "SideSetup") -> str:
             f"surplus beyond one buffer {side.surplus().mean():.2f}")
 
 
-def target_rates(m: SetupMeasurement) -> List[Tuple[Target, float, float, float]]:
+def target_rates(m: SetupMeasurement) -> List[TargetRate]:
     """Each target's rate on the finished board, with a Wilson 95% band."""
-    out: List[Tuple[Target, float, float, float]] = []
+    out: List[TargetRate] = []
     for t in SETUP_TARGETS:
         side = m.ussr if t.side == "USSR" else m.us
         rate, lo, hi = side.final_at_least(t.cid, t.threshold)
-        out.append((t, rate, lo, hi))
+        out.append(TargetRate(t, rate, lo, hi))
     return out
 
 
@@ -471,7 +482,8 @@ def format_report(m: SetupMeasurement, label: str = "") -> str:
         lines.append(f"  !! {m.malformed} games did not have a well-formed setup block; "
                      f"every number below is suspect")
 
-    for t, rate, lo, hi in target_rates(m):
+    for tr in target_rates(m):
+        t, rate, lo, hi = tr.target, tr.rate, tr.lo, tr.hi
         side = m.ussr if t.side == "USSR" else m.us
         lines.append(
             f"  {t.side:<4} {t.name:<13} >= {t.threshold}  {rate * 100:5.1f}% "

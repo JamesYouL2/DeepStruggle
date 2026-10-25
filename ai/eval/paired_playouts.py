@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import random
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
 import numpy as np
@@ -53,8 +54,17 @@ def decider(st: ts.GameState) -> ts.Player:
     return ctx.decision_player if ctx.decision_player != ts.Player.NONE else st.phasing_player
 
 
-def ar_key(st: ts.GameState) -> Tuple[int, int, int, int]:
-    return (int(st.turn), int(st.action_round), int(st.phasing_player), int(st.current_phase))
+@dataclass(frozen=True)
+class ARKey:
+    """Which action round a position is in: two positions share one when all four fields match."""
+    turn: int
+    action_round: int
+    phasing_player: int
+    phase: int
+
+
+def ar_key(st: ts.GameState) -> ARKey:
+    return ARKey(int(st.turn), int(st.action_round), int(st.phasing_player), int(st.current_phase))
 
 
 def pair_start(state: ts.GameState, k: int, seed: int) -> ts.GameState:
@@ -86,7 +96,7 @@ def loses_now(st: ts.GameState, a: int, mover: ts.Player) -> bool:
 
 
 def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
-              keys: Sequence[Tuple[int, int, int, int]], act: PolicyFn, seed: int,
+              keys: Sequence[ARKey], act: PolicyFn, seed: int,
               max_steps: int = 4000, select: Optional[StateSelector] = None,
               watch: Optional[Watch] = None) -> List[float]:
     """Play every state to the end with `act` on both sides, in one batch, never taking an

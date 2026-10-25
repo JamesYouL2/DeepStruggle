@@ -106,6 +106,16 @@ class RolloutConfig:
     box4: bool = False
 
 
+@dataclass(frozen=True)
+class _CapturedGraph:
+    """One captured batch size: the graph, its input buffers and its output tensors."""
+    graph: Any                        # torch.cuda.CUDAGraph
+    obs: torch.Tensor
+    masks: torch.Tensor
+    logits: torch.Tensor
+    values: torch.Tensor
+
+
 class _GraphedForward:
     """A network's logits and values as CUDA graphs, one per padded batch size, in one memory pool --
     the rollout root's playout plies and leaf reads, which are many small forwards on one thread.
@@ -117,7 +127,7 @@ class _GraphedForward:
         self.model = model
         self.device = device
         self.pool: Optional[Any] = None
-        self.graphs: Dict[int, Tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = {}
+        self.graphs: Dict[int, _CapturedGraph] = {}
 
     @staticmethod
     def bucket(k: int) -> int:
@@ -128,7 +138,7 @@ class _GraphedForward:
             return n
         return -(-k // 1024) * 1024
 
-    def _capture(self, n: int, width: int) -> Tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _capture(self, n: int, width: int) -> _CapturedGraph:
         obs = torch.zeros((n, width), dtype=torch.float32, device=self.device)
         masks = torch.zeros((n, ActionEncoder.FLAT_ACTION_SIZE), dtype=torch.uint8, device=self.device)
         masks[:, 0] = 1                       # a padding row never has an empty mask
@@ -145,18 +155,18 @@ class _GraphedForward:
             values = v.float().reshape(-1)
         if self.pool is None:
             self.pool = graph.pool()
-        entry = (graph, obs, masks, logits, values)
+        entry = _CapturedGraph(graph, obs, masks, logits, values)
         self.graphs[n] = entry
         return entry
 
     def __call__(self, obs: np.ndarray, masks: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         k = int(obs.shape[0])
         n = self.bucket(k)
-        graph, g_obs, g_masks, logits, values = self.graphs.get(n) or self._capture(n, int(obs.shape[1]))
-        g_obs[:k].copy_(torch.from_numpy(obs))
-        g_masks[:k].copy_(torch.from_numpy(masks))
-        graph.replay()
-        return logits[:k].cpu().numpy(), values[:k].cpu().numpy()
+        g = self.graphs.get(n) or self._capture(n, int(obs.shape[1]))
+        g.obs[:k].copy_(torch.from_numpy(obs))
+        g.masks[:k].copy_(torch.from_numpy(masks))
+        g.graph.replay()
+        return g.logits[:k].cpu().numpy(), g.values[:k].cpu().numpy()
 
 
 def _stop_kw(cfg: RolloutConfig) -> Dict[str, Any]:

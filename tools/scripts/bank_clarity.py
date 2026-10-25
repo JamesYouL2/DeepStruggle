@@ -32,7 +32,7 @@ import math
 import random
 import sys
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -49,6 +49,15 @@ from tools.scripts.disagreement_bank import row_id
 
 WHO = ("human", "network", "search")
 _UINT64 = 1 << 64
+
+
+@dataclass(frozen=True)
+class _MoveJob:
+    """One move of one position, in one redeal, searched from `child` (the move applied)."""
+    position: int
+    world: int
+    action: int
+    child: ts.GameState
 
 
 def move_index(st: ts.GameState, name: str) -> int:
@@ -93,7 +102,7 @@ def value_moves_per_world(mcts: Any, states: Sequence[ts.GameState], moves: Sequ
                   gumbel_k=0, reuse_subtree=False, dirichlet_frac=0.0)
     sub = BatchedMCTS(mcts.model, device=mcts.device, config=cfg, featurise_capacity=mcts._featurise_capacity)
     rng = random.Random(seed)
-    jobs: List[Tuple[int, int, int, ts.GameState]] = []
+    jobs: List[_MoveJob] = []
     for i, (st, ms) in enumerate(zip(states, moves)):
         for w in range(worlds):
             world = determinize(st.clone(), decider(st), rng)
@@ -104,10 +113,11 @@ def value_moves_per_world(mcts: Any, states: Sequence[ts.GameState], moves: Sequ
                     continue                   # the redeal made it illegal (Cambridge Five and the like)
                 ts.Engine.step_flat(child, a)
                 settle(child, cfg.auto_advance)
-                jobs.append((i, w, a, child))
+                jobs.append(_MoveJob(i, w, a, child))
     vals: List[Dict[int, List[Optional[float]]]] = [{a: [None] * worlds for a in ms} for ms in moves]
-    roots = sub._search([j[3] for j in jobs])
-    for (i, w, a, child), r in zip(jobs, roots):
+    roots = sub._search([j.child for j in jobs])
+    for j, r in zip(jobs, roots):
+        i, w, a = j.position, j.world, j.action
         if r is None:
             continue
         if r.terminal or not r.actions:

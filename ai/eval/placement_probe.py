@@ -18,6 +18,7 @@ Two reads on the searched-leak bank's placement positions (decision type POINT_N
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -29,6 +30,17 @@ from ai.models.ladder_net import region_bounds
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 from tools.lib.player_agent import NeuralAgent
+
+
+@dataclass(frozen=True)
+class _Placement:
+    """How the model reads one placement pair."""
+    #: Rank of the better country among the model's choices (1 = top).
+    rank: float
+    p_better: float
+    p_played: float
+    #: 1.0 when the better country is the model's top choice.
+    better_is_top: float
 
 
 def _region(country: int, bounds: Sequence[tuple[int, int]]) -> int:
@@ -79,7 +91,7 @@ def contribution(model: Any, device: torch.device, pairs: Sequence[LeakPair]) ->
 
 def placement(model: Any, device: torch.device, pairs: Sequence[LeakPair], bounds: Sequence[tuple[int, int]]) -> str:
     lg = _logits(model, device, pairs)
-    rows: Dict[str, List[tuple[float, float, float, float]]] = {"all": [], "same region": [], "other region": []}
+    rows: Dict[str, List[_Placement]] = {"all": [], "same region": [], "other region": []}
     for i, p in enumerate(pairs):
         z = lg[i]
         order = np.argsort(-z)
@@ -87,16 +99,19 @@ def placement(model: Any, device: torch.device, pairs: Sequence[LeakPair], bound
         pr = np.exp(z - z[np.isfinite(z)].max()); pr[~np.isfinite(z)] = 0.0; pr /= pr.sum()
         cb, cp = p.best - ActionEncoder.NODE_OFFSET, p.played - ActionEncoder.NODE_OFFSET
         same = 0 <= cb < 84 and 0 <= cp < 84 and _region(cb, bounds) == _region(cp, bounds)
-        rec = (float(rank), float(pr[p.best]), float(pr[p.played]), float(order[0] == p.best))
+        rec = _Placement(float(rank), float(pr[p.best]), float(pr[p.played]), float(order[0] == p.best))
         rows["all"].append(rec)
         rows["same region" if same else "other region"].append(rec)
     out = []
     for k, v in rows.items():
         if not v:
             continue
-        a = np.asarray(v)
-        out.append(f"   {k:13s} n={len(v):4d}  rank of the better country {a[:, 0].mean():5.2f}  "
-                   f"P(better) {a[:, 1].mean():.3f}  P(played) {a[:, 2].mean():.3f}  better is top {100 * a[:, 3].mean():5.1f}%")
+        mean_rank = np.asarray([r.rank for r in v]).mean()
+        p_better = np.asarray([r.p_better for r in v]).mean()
+        p_played = np.asarray([r.p_played for r in v]).mean()
+        top = np.asarray([r.better_is_top for r in v]).mean()
+        out.append(f"   {k:13s} n={len(v):4d}  rank of the better country {mean_rank:5.2f}  "
+                   f"P(better) {p_better:.3f}  P(played) {p_played:.3f}  better is top {100 * top:5.1f}%")
     return "\n".join(out)
 
 

@@ -25,22 +25,22 @@ import torch
 
 import ts_engine as ts
 from ai.search.rollout_root import RolloutConfig, RolloutRoot
+from ai.training.search_workers import WorkerRolloutConfig
 from bindings.ts_env import model_obs_features
 
 #: (observations (n, width) float32, targets (n,) float32 in [-1, 1], games finished)
 Rows = Tuple[np.ndarray, np.ndarray, int]
 
 
-def _worker_main(control: Any, results: Any, model_bytes: bytes, cfg: Tuple[int, int, int, str, str, str],
+def _worker_main(control: Any, results: Any, model_bytes: bytes, cfg: WorkerRolloutConfig,
                  envs: int, device: str, seed: int) -> None:
     torch.set_num_threads(2)
     parent = os.getppid()
     dev = torch.device(device)
     try:
         net = torch.load(io.BytesIO(model_bytes), map_location=dev, weights_only=False).eval()
-        k, worlds, horizon, rule, stop, leaf_side = cfg
-        root = RolloutRoot(net, RolloutConfig(k=k, worlds=worlds, horizon=horizon, rule=rule, seed=seed, stop=stop,
-                                              leaf_side=leaf_side), device=dev)
+        root = RolloutRoot(net, RolloutConfig(k=cfg.k, worlds=cfg.worlds, horizon=cfg.horizon, rule=cfg.rule,
+                                              seed=seed, stop=cfg.stop, leaf_side=cfg.leaf_side), device=dev)
         feats = model_obs_features(net)
         runner = ts.VectorizedBatchRunner(envs, seed)
         if feats:
@@ -96,8 +96,7 @@ class SearchedGames:
         self._results = ctx.Queue()
         self._control: List[Any] = []
         self._procs: List[Any] = []
-        cfg = (int(config.k), int(config.worlds), int(config.horizon), str(config.rule), str(config.stop),
-               str(config.leaf_side))
+        cfg = WorkerRolloutConfig.of(config)
         for w in range(int(n)):
             q = ctx.Queue()
             p = ctx.Process(target=_worker_main, args=(q, self._results, buf.getvalue(), cfg, int(envs), str(device),

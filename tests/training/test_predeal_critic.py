@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 from ai.models.ladder_net import create_ladder_net
-from ai.training.nash_pg import NashPGTrainer
+from ai.training.nash_pg import NashPGTrainer, PredealRows
 from bindings.ts_env import TsVectorizedEnv
 
 
@@ -29,7 +29,7 @@ def test_each_side_gets_its_next_decisions_return_or_the_result() -> None:
                           buffer_size=T)
     us_row, ussr_row = torch.ones(3, W), -torch.ones(3, W)
     fake = SimpleNamespace(buffer=buf, device=torch.device("cpu"),
-                           _predeal_rows=[(1, np.array([0, 1, 2]), us_row, ussr_row)], _pd_obs=None, _pd_tgt=None)
+                           _predeal_rows=[PredealRows(1, np.array([0, 1, 2]), us_row, ussr_row)], _pd_obs=None, _pd_tgt=None)
     NashPGTrainer._build_predeal_targets(cast(Any, fake))
     got = sorted(zip(fake._pd_obs[:, 0].tolist(), fake._pd_tgt.tolist()))
     want = sorted([

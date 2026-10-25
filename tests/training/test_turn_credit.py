@@ -38,10 +38,10 @@ def test_a_rollout_prices_and_the_update_trains() -> None:
     assert tc.stats["tc_queue"] > 0 and tc.stats["tc_priced"] > 0
     assert tc.stats["tc_priced"] + tc.stats["tc_nested_priced"] <= 6
     assert len(tc.ready) > 0
-    for obs, mask, tgt, w in tc.ready:
-        assert 0.0 <= w <= 1.0
-        assert abs(float(tgt.float().sum()) - 1.0) < 1e-2
-        assert float(tgt.float()[~mask].abs().sum()) == 0.0      # no mass off the legal set
+    for r in tc.ready:
+        assert 0.0 <= r.weight <= 1.0
+        assert abs(float(r.target.float().sum()) - 1.0) < 1e-2
+        assert float(r.target.float()[~r.mask].abs().sum()) == 0.0      # no mass off the legal set
     before = [p.detach().clone() for p in t.active_net.parameters()]
     out = tc.update(t.active_net, t.optimizer, t.max_grad_norm)
     assert "tc_loss" in out and np.isfinite(out["tc_loss"])
@@ -63,7 +63,7 @@ def test_worker_pricing_files_rows_one_rollout_late() -> None:
         assert len(tc.ready) == 0 and tc._outstanding == 1
         t.collect_rollouts()
         assert tc.stats["tc_priced"] > 0 and len(tc.ready) > 0
-        for obs, mask, tgt, w in tc.ready:
-            assert abs(float(tgt.float().sum()) - 1.0) < 1e-2 and 0.0 <= w <= 1.0
+        for r in tc.ready:
+            assert abs(float(r.target.float().sum()) - 1.0) < 1e-2 and 0.0 <= r.weight <= 1.0
     finally:
         tc.close()

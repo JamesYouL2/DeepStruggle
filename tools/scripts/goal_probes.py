@@ -45,8 +45,8 @@ BLUNDER_RULES = {
 def setup_row(m: setup_probe.SetupMeasurement) -> Dict[str, float]:
     """Each setup target's rate, plus the composite: every target taken in one opening."""
     row: Dict[str, float] = {}
-    for t, rate, _lo, _hi in setup_probe.target_rates(m):
-        row[f"setup/{t.side} {t.name} >= {t.threshold}"] = rate
+    for tr in setup_probe.target_rates(m):
+        row[f"setup/{tr.target.side} {tr.target.name} >= {tr.target.threshold}"] = tr.rate
     row["setup/all targets"] = setup_probe.all_targets_met(m)[0]
     return row
 

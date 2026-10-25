@@ -26,7 +26,7 @@ one.
 
 from __future__ import annotations
 
-from typing import Tuple
+from dataclasses import dataclass
 
 import pytest
 
@@ -36,11 +36,19 @@ INDIA = 33
 DUCK_AND_COVER = 4
 
 
-def _realign(realigner: ts.Player, actor_die: int, opponent_die: int) -> Tuple[int, int, int, int]:
+@dataclass(frozen=True)
+class _Realigned:
+    """The realignment's two rolls and India's influence afterwards."""
+    us_roll: int
+    ussr_roll: int
+    us_influence: int
+    ussr_influence: int
+
+
+def _realign(realigner: ts.Player, actor_die: int, opponent_die: int) -> _Realigned:
     """Realign India as `realigner`, forcing both dice at the chance node.
 
-    India starts even at 3/3, so the roll alone decides it. Returns
-    (us_roll, ussr_roll, us_influence, ussr_influence) afterwards.
+    India starts even at 3/3, so the roll alone decides it.
     """
     state = ts.GameState()
     ts.Engine.init_game(state, 12345)
@@ -65,14 +73,15 @@ def _realign(realigner: ts.Player, actor_die: int, opponent_die: int) -> Tuple[i
 
     record = state.to_dict()["die_roll"]
     country = state.get_country(INDIA)
-    return (int(record["roll1"]), int(record["roll2"]),
-            int(country.us_influence), int(country.ussr_influence))
+    return _Realigned(int(record["roll1"]), int(record["roll2"]),
+                      int(country.us_influence), int(country.ussr_influence))
 
 
 @pytest.mark.parametrize("realigner,name", [(ts.Player.US, "US"), (ts.Player.USSR, "USSR")])
 def test_the_acting_player_gets_the_die_they_were_given(realigner: ts.Player, name: str) -> None:
     """primary_id is the actor's die, whether the actor is the US or the USSR."""
-    us_roll, ussr_roll, us_inf, ussr_inf = _realign(realigner, actor_die=6, opponent_die=1)
+    r = _realign(realigner, actor_die=6, opponent_die=1)
+    us_roll, ussr_roll, us_inf, ussr_inf = r.us_roll, r.ussr_roll, r.us_influence, r.ussr_influence
 
     actor_roll = us_roll if realigner == ts.Player.US else ussr_roll
     other_roll = ussr_roll if realigner == ts.Player.US else us_roll
@@ -91,9 +100,9 @@ def test_the_acting_player_gets_the_die_they_were_given(realigner: ts.Player, na
 @pytest.mark.parametrize("realigner", [ts.Player.US, ts.Player.USSR])
 def test_the_dice_are_not_simply_ignored(realigner: ts.Player) -> None:
     """Swapping the two dice must swap the outcome -- otherwise nothing is being forced."""
-    _, _, us_win, ussr_win = _realign(realigner, actor_die=6, opponent_die=1)
-    _, _, us_lose, ussr_lose = _realign(realigner, actor_die=1, opponent_die=6)
-    assert (us_win, ussr_win) != (us_lose, ussr_lose), (
+    win = _realign(realigner, actor_die=6, opponent_die=1)
+    lose = _realign(realigner, actor_die=1, opponent_die=6)
+    assert (win.us_influence, win.ussr_influence) != (lose.us_influence, lose.ussr_influence), (
         "the same realignment produced the same board with the dice reversed, so the forced "
         "dice are reaching nothing"
     )

@@ -167,6 +167,15 @@ def scores(p: np.ndarray, y: np.ndarray, m: np.ndarray) -> Tuple[float, float]:
     return ll, _auc(p[sel], yy)
 
 
+@dataclass(frozen=True, order=True)
+class _CardAuc:
+    """One card's AUC under the trunk probe and the public one; orders by the trunk's gain."""
+    gain: float
+    card: int
+    public: float
+    trunk: float
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", required=True)
@@ -212,19 +221,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"  {title:38s} log loss {ll:.4f} ({100 * (base_ll - ll) / base_ll:+5.1f}% vs the prior)  AUC {auc:.3f}")
     # per card: the trunk probe's AUC against the public probe's, where the card is often in the pool
     p_pub, p_tr = rows[1][1], rows[3][1]
-    per: List[Tuple[float, int, float, float]] = []
+    per: List[_CardAuc] = []
     for c in range(110):
         sel = m[:, c] > 0.5
         if sel.sum() < 200 or y[sel, c].sum() < 20:
             continue
         a_pub, a_tr = _auc(p_pub[sel, c], y[sel, c]), _auc(p_tr[sel, c], y[sel, c])
-        per.append((a_tr - a_pub, c + 1, a_pub, a_tr))
+        per.append(_CardAuc(a_tr - a_pub, c + 1, a_pub, a_tr))
     per.sort()
-    names = {c: str(ts.CardData.get_card_info(c)["name"]) for _, c, _, _ in per}
+    names = {r.card: str(ts.CardData.get_card_info(r.card)["name"]) for r in per}
     print("  cards where the trunk knows most beyond public information (AUC trunk vs public):")
-    for d, c, ap_, at in per[-8:][::-1]:
-        print(f"    {names[c]:32s} {at:.3f} vs {ap_:.3f} ({d:+.3f})")
-    print(f"  mean per-card AUC: public {np.mean([x[2] for x in per]):.3f}, trunk {np.mean([x[3] for x in per]):.3f} "
+    for r in per[-8:][::-1]:
+        print(f"    {names[r.card]:32s} {r.trunk:.3f} vs {r.public:.3f} ({r.gain:+.3f})")
+    print(f"  mean per-card AUC: public {np.mean([x.public for x in per]):.3f}, trunk {np.mean([x.trunk for x in per]):.3f} "
           f"over {len(per)} cards")
     return 0
 

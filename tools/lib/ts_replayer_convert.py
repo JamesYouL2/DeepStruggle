@@ -32,8 +32,8 @@ import numpy as np
 import ts_engine as ts
 
 from tools.lib.ts_replayer_hands import _peeked_from_the_pile, solve_hands
-from tools.lib.ts_replayer_parse import (Entry, RE_PASSED_ROUND, Section, country_id,
-                                        parse_entry)
+from tools.lib.ts_replayer_parse import (Entry, InfluenceLine, RE_PASSED_ROUND, Section,
+                                        country_id, parse_entry)
 from bindings.action_encoder import ActionEncoder
 
 
@@ -257,10 +257,19 @@ def distinct_replays(games: Dict[int, List[Dict]]) -> Dict[int, int]:
     return out
 
 
+@dataclass(frozen=True)
+class DecisionSample:
+    """One emitted decision: what the mover saw, what was legal, and what they chose."""
+    obs: np.ndarray
+    mask: np.ndarray
+    action: int
+    side: int                        # +1 for the US, -1 for the USSR
+
+
 @dataclass
 class Conversion:
     replay_id: int
-    samples: List[Tuple[np.ndarray, np.ndarray, int, int]] = field(default_factory=list)
+    samples: List[DecisionSample] = field(default_factory=list)
     entries_total: int = 0
     entries_converted: int = 0
     entries_guessed: int = 0
@@ -446,8 +455,8 @@ def event_point_queues(e: Entry) -> Dict[int, List[int]]:
         if cid is None:
             continue
         points = out.setdefault(cid, [])
-        for _side, delta, country, _u, _s in rows:
-            points.extend([country] * abs(int(delta)))
+        for row in rows:
+            points.extend([row.country] * abs(int(row.delta)))
     return out
 
 
@@ -613,11 +622,11 @@ def _narrated_score(entry: Entry) -> Optional[int]:
     # then takes 1 from Europe Scoring, leaving 1, and asserting on the 2 called the engine
     # wrong where it was right.
     score = None
-    for _side, _amount, total_side, total in (entry.vp_gains or []):
-        if total_side == "US":
-            score = int(total)
-        elif total_side == "USSR":
-            score = -int(total)
+    for gain in (entry.vp_gains or []):
+        if gain.leader == "US":
+            score = int(gain.lead)
+        elif gain.leader == "USSR":
+            score = -int(gain.lead)
         else:                                      # "Score is even."
             score = 0
     return score
@@ -694,11 +703,11 @@ def _reconcile_scalars(state: ts.GameState, entry: Entry,
     # of the real game at turn 7 AR2, so Central America Scoring's 5 VP -- which the engine
     # awards exactly as the log does -- landed on 20 and ended a game that ran to turn 10.
     narrated = None
-    for _side, _amount, total_side, total in (entry.vp_gains or []):
-        if total_side == "US":
-            narrated = int(total)
-        elif total_side == "USSR":
-            narrated = -int(total)
+    for gain in (entry.vp_gains or []):
+        if gain.leader == "US":
+            narrated = int(gain.lead)
+        elif gain.leader == "USSR":
+            narrated = -int(gain.lead)
         else:                                  # "Score is even."
             narrated = 0
     if narrated is not None and take_score:
@@ -735,8 +744,9 @@ def _settle_cuban_missile_offer(state: ts.GameState, e: Entry) -> None:
     if cancels:
         # The country paid from is the one the entry removes Influence in, and the mask offers
         # only the ones that could pay.
-        for _side, delta, cid, _u, _s in (e.influence or []):
-            if int(delta) < 0 and 0 <= cid < 84 and mask[ActionEncoder.NODE_OFFSET + cid]:
+        for row in (e.influence or []):
+            cid = row.country
+            if int(row.delta) < 0 and 0 <= cid < 84 and mask[ActionEncoder.NODE_OFFSET + cid]:
                 chosen = ActionEncoder.NODE_OFFSET + cid
                 break
     if chosen is None and mask[_PASS]:
@@ -755,7 +765,7 @@ def _settle_cuban_missile_offer(state: ts.GameState, e: Entry) -> None:
     # Saudi Arabia.
     paid = int(chosen) - ActionEncoder.NODE_OFFSET
     for rec in list(e.influence or []):
-        if rec[2] == paid and int(rec[1]) < 0:
+        if rec.country == paid and int(rec.delta) < 0:
             e.influence.remove(rec)
             if rec in (e.ops_influence or []):
                 e.ops_influence.remove(rec)
@@ -1067,8 +1077,7 @@ def _drive_passed_rounds(state: ts.GameState, e: Entry, conv: "Conversion") -> N
         _drain(state)
 
 
-def _coup_extras(rows: List[Tuple[str, int, int, int, int]],
-                 targets: List[int]) -> List[int]:
+def _coup_extras(rows: List[InfluenceLine], targets: List[int]) -> List[int]:
     """Influence in a coup's own lines that the coup itself cannot explain.
 
     A coup takes the opponent's Influence away and then puts the couper's down; a realignment
@@ -1082,10 +1091,11 @@ def _coup_extras(rows: List[Tuple[str, int, int, int, int]],
     6 AR3 of replay 104 the US put it into Poland instead, where being in another country made
     it obvious.
     """
-    victim = {cid: side for side, delta, cid, _u, _s in rows
-              if int(delta) < 0 and cid in targets}
+    victim = {row.country: row.side for row in rows
+              if int(row.delta) < 0 and row.country in targets}
     out: List[int] = []
-    for side, delta, cid, _u, _s in rows:
+    for row in rows:
+        side, delta, cid = row.side, row.delta, row.country
         if cid not in targets:
             out.extend([cid] * abs(int(delta)))
         elif int(delta) > 0 and victim.get(cid, side) == side:
@@ -1122,7 +1132,7 @@ def rows_queued_twice(e: Entry) -> Dict[int, int]:
         if rec in claimed:
             claimed.remove(rec)
             continue
-        cid, count = int(rec[2]), abs(int(rec[1]))
+        cid, count = int(rec.country), abs(int(rec.delta))
         held = min(count, in_event.count(cid) - shared.get(cid, 0))
         if held > 0:
             shared[cid] = shared.get(cid, 0) + held
@@ -1160,15 +1170,15 @@ def point_queue(e: Entry) -> List[int]:
                 if rec in claimed:
                     claimed.remove(rec)
                 else:
-                    extra.extend([rec[2]] * abs(int(rec[1])))
+                    extra.extend([rec.country] * abs(int(rec.delta)))
         return list(e.targets) + extra
 
     if e.setup:
         return _setup_point_queue(e)
 
     q: List[int] = []
-    for _side, delta, cid, _u, _s in (e.ops_influence or []):
-        q.extend([cid] * abs(int(delta)))
+    for row in (e.ops_influence or []):
+        q.extend([row.country] * abs(int(row.delta)))
     if not q and e.targets:
         q = list(e.targets)
     return q
@@ -1194,7 +1204,8 @@ def _setup_point_queue(e: Entry) -> List[int]:
     """
     out: List[int] = []
     runs: List[Tuple[str, List[List[int]]]] = []
-    for side, delta, cid, _u, _s in (e.ops_influence or []):
+    for row in (e.ops_influence or []):
+        side, delta, cid = row.side, row.delta, row.country
         if not runs or runs[-1][0] != side:
             runs.append((side, []))
         counts = runs[-1][1]
@@ -1220,8 +1231,8 @@ def section_queue(section) -> List[int]:
     if section.mode in ("coup", "realign"):
         return list(section.targets)
     q: List[int] = []
-    for _side, delta, cid, _u, _s in section.influence:
-        q.extend([cid] * abs(int(delta)))
+    for row in section.influence:
+        q.extend([row.country] * abs(int(row.delta)))
     return q or list(section.targets)
 
 
@@ -1237,10 +1248,10 @@ def section_outcomes(section) -> List[Tuple[int, int, int]]:
     US influence -- so the roll went unforced and the US was left with nothing to coup.
     """
     if section.mode == "realign":
-        return [(cid, us, ussr) for _s, _d, cid, us, ussr in section.influence]
+        return [(row.country, row.us_after, row.ussr_after) for row in section.influence]
     last: Dict[int, Tuple[int, int]] = {}
-    for _s, _d, cid, us, ussr in section.influence:
-        last[cid] = (us, ussr)
+    for row in section.influence:
+        last[row.country] = (row.us_after, row.ussr_after)
     return [(cid, us, ussr) for cid, (us, ussr) in last.items()]
 
 
@@ -1270,7 +1281,7 @@ def event_queue(e: Entry) -> List[int]:
     """
     ops = list(e.ops_influence or [])
     sectioned = [rec for s in (e.sections or []) if s.mode in ("coup", "realign")
-                 for rec in s.influence if rec[2] in s.targets]
+                 for rec in s.influence if rec.country in s.targets]
     q: List[int] = list(e.war_targets or [])
     for rec in (e.influence or []):
         if rec in ops:
@@ -1279,7 +1290,7 @@ def event_queue(e: Entry) -> List[int]:
         if rec in sectioned:
             sectioned.remove(rec)
             continue
-        q.extend([rec[2]] * abs(int(rec[1])))
+        q.extend([rec.country] * abs(int(rec.delta)))
     return q
 
 
@@ -1332,8 +1343,8 @@ def expected_counts(e, raw: Optional[Dict] = None) -> Dict[int, Tuple[int, int]]
     States succeeded in the engine where the log has it fail.
     """
     out: Dict[int, Tuple[int, int]] = {}
-    for _side, _delta, cid, res_us, res_ussr in e.influence:
-        out[cid] = (res_us, res_ussr)
+    for row in e.influence:
+        out[row.country] = (row.us_after, row.ussr_after)
     countries = (raw or {}).get("countries") or {}
     for cid in list(e.targets) + list(e.war_targets):
         if cid in out:
@@ -1965,7 +1976,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
     # The die each war in this entry was decided on, in log order.
     war_roll_queue = [int(r) for r, _mod, _won in (e.war_rolls or [])]
     coup_roll_queue = [int(r) for r, _ok in (e.coup_rolls or [])]
-    realign_roll_queue = [(side, int(r)) for side, r, _m, _t in (e.realign_rolls or [])]
+    realign_roll_queue = [(roll.side, int(roll.die)) for roll in (e.realign_rolls or [])]
     # A war with a fixed target resolves in a chance node, so its outcome has to be steered
     # there rather than at a decision. Only the war's own countries are constrained: the rest
     # of the entry has not happened yet at that point.
@@ -1984,7 +1995,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
         if _rec in _ops_rows:
             _ops_rows.remove(_rec)
         else:
-            _event_last[_rec[2]] = (_rec[3], _rec[4])
+            _event_last[_rec.country] = (_rec.us_after, _rec.ussr_after)
     # ...and only the rows printed under the war's *own* event header. Another card in the
     # entry can move the same country afterwards: at turn 5's headline of replay 30 the USSR
     # loses Brush War in Panama, and the US's Grain Sales To Soviets then hands over Panama
@@ -1995,7 +2006,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
         _wc = card_id(_nm)
         if _wc and bool(ts.CardData.get_card_info(_wc)["is_war_card"]):
             for _rec in _rows:
-                _war_rows[_rec[2]] = (_rec[3], _rec[4])
+                _war_rows[_rec.country] = (_rec.us_after, _rec.ussr_after)
     war_outcome: Dict[int, Tuple[int, int]] = {}
     for _c in e.war_targets:
         if _c in _war_rows:
@@ -2037,7 +2048,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
     cur_mode = e.mode
     # The log states the space race die outright, so it is handed to the chance node rather
     # than searched for. Any other roll in a space entry belongs to something else.
-    space_roll = int(e.die_rolls[0][0]) if (e.mode == "space" and e.die_rolls) else 0
+    space_roll = int(e.die_rolls[0].die) if (e.mode == "space" and e.die_rolls) else 0
     # A Quagmire or Bear Trap discard is an entry with no play at all: the log records the card
     # discarded and the die rolled to escape ("Trap Roll: 4 <= 4 -- Trap Escaped"). The engine
     # asks for the card and then rolls, so the logged die is handed to that chance node the
@@ -2071,7 +2082,7 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
                 _rows.append(rec)
     else:
         _rows = []
-    step_outcomes = [(cid, us, ussr) for _s, _d, cid, us, ussr in _rows]
+    step_outcomes = [(row.country, row.us_after, row.ussr_after) for row in _rows]
 
     # What the last step was answered from and the board it started from, settled after the
     # drain that follows it. See the accounting below.
@@ -2846,8 +2857,8 @@ def _drive_entry(state: ts.GameState, e: Entry, conv: Conversion,
 
         if informative and int(e.turn or 0) not in conv.reveal_conflict_turns:
             obs = np.asarray(ts.extract_observation(state, mover), dtype=np.float32)
-            conv.samples.append((obs, mask.copy(), int(chosen),
-                                 1 if mover == ts.Player.US else -1))
+            conv.samples.append(DecisionSample(obs, mask.copy(), int(chosen),
+                                               1 if mover == ts.Player.US else -1))
             conv.decisions_emitted += 1
             if on_decision is not None:
                 on_decision(state.clone(), mover, e, int(chosen))

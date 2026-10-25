@@ -5,6 +5,7 @@ is the mover's next decision; a position's labels do not depend on the batch aro
 state bytes round-trip."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -59,8 +60,18 @@ def _drive(pl: ts.PlayoutLabels) -> None:
         assert steps < 20000
 
 
+@dataclass(frozen=True)
+class _Played:
+    """What the labeller records of one world, VP from the mover's side."""
+    score: float          #: 1 win, 0.5 draw, 0 loss
+    vp: int               #: at the end of the game
+    turn_end_vp: int      #: when the base's turn ended (or the game, if sooner)
+    turn_end_defcon: int
+    final: ts.GameState
+
+
 def _reference(base: ts.GameState, world: ts.GameState,
-               keyed: bool = False, keyed2: bool = False) -> Tuple[float, int, int, int, ts.GameState]:
+               keyed: bool = False, keyed2: bool = False) -> _Played:
     """One world played the way play_safe plays it, recording what the labeller records. With `keyed`
     every engine step is keyed first (ts.keyed_key, the world's rng_state its key), as keyed=True does
     (`keyed2`: keyed2's packing)."""
@@ -99,7 +110,7 @@ def _reference(base: ts.GameState, world: ts.GameState,
     sign = 1 if mover == ts.Player.US else -1
     u = float(ts.Engine.get_terminal_utility(st)) * sign
     score = 1.0 if u > 0 else (0.5 if u == 0 else 0.0)
-    return score, sign * int(st.victory_points), sign * turn[0], turn[1], st
+    return _Played(score, sign * int(st.victory_points), sign * turn[0], turn[1], st)
 
 
 def test_raw_bytes_round_trip() -> None:
@@ -124,13 +135,13 @@ def test_every_world_is_the_python_playout_of_that_world() -> None:
         ref = [_reference(base, pl.world(base, pid, w)) for w in range(worlds)]
         assert got["count"][row].tolist() == [worlds, 0]
         s = got["sums"][row]
-        assert s[0] == pytest.approx(sum(r[0] for r in ref))
-        assert s[2] == pytest.approx(sum(r[1] for r in ref))
-        assert s[3] == pytest.approx(sum(r[2] for r in ref))
-        assert s[4] == pytest.approx(sum(r[3] for r in ref))
+        assert s[0] == pytest.approx(sum(r.score for r in ref))
+        assert s[2] == pytest.approx(sum(r.vp for r in ref))
+        assert s[3] == pytest.approx(sum(r.turn_end_vp for r in ref))
+        assert s[4] == pytest.approx(sum(r.turn_end_defcon for r in ref))
         # A game that reached Final Scoring scored all six regions; the region columns are the
         # engine tap's (engine/tests/test_scoring.cpp), here only consistent with how games end.
-        finals = sum(1 for r in ref if r[4].turn == 11)
+        finals = sum(1 for r in ref if r.final.turn == 11)
         assert (got["swing_n"][row][:6] >= finals).all()
 
 
@@ -223,9 +234,9 @@ def test_a_keyed_world_is_the_keyed_python_playout_of_it_and_deals_cleanly(keyed
         base = positions[pid]
         ref = [_reference(base, pl.world(base, pid, w), keyed=True, keyed2=keyed2) for w in range(worlds)]
         s = got["sums"][row]
-        assert s[0] == pytest.approx(sum(r[0] for r in ref))
-        assert s[2] == pytest.approx(sum(r[1] for r in ref))
-        assert s[3] == pytest.approx(sum(r[2] for r in ref))
+        assert s[0] == pytest.approx(sum(r.score for r in ref))
+        assert s[2] == pytest.approx(sum(r.vp for r in ref))
+        assert s[3] == pytest.approx(sum(r.turn_end_vp for r in ref))
     sib = ts.PlayoutLabels(worlds=8, capacity=64, seed=3, keyed=True, keyed2=keyed2)
     for i, st in enumerate(_positions(4, seed=13)):
         legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))

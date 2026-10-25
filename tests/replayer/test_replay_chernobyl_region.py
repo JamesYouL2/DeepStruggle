@@ -62,7 +62,7 @@ def test_the_barred_region_lets_north_sea_oil_place_where_the_log_places_it() ->
     """Turn 8 AR4: 3 Ops into East Germany and Spain/Portugal, both in Europe."""
     e = _entry(161, 8, "AR4", "USSR")
     assert e.card == "North Sea Oil*"
-    touched = {cid for _s, _d, cid, _u, _ss in e.influence}
+    touched = {row.country for row in e.influence}
     assert {EAST_GERMANY, SPAIN_PORTUGAL} <= touched
     conv = convert_game(_game(161))
     assert conv.failure is None, f"replay 161 stopped at {conv.failure}"

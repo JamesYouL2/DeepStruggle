@@ -32,6 +32,20 @@ import numpy as np
 import ts_engine as ts
 
 
+@dataclass(frozen=True)
+class CountryReadout:
+    """One country's read-out (`battleground_detail`)."""
+    name: str
+    battleground: bool
+    region: int
+    #: Held-out R^2 for the viewer's influence.
+    r2_own: float
+    #: Held-out R^2 for the opponent's influence.
+    r2_opp: float
+    #: AUC for "the viewer controls it".
+    control_auc: float
+
+
 @dataclass
 class Readout:
     scores: Dict[str, float] = field(default_factory=dict)
@@ -210,7 +224,7 @@ def within_group_accuracy(x: np.ndarray, hand: np.ndarray, tr: np.ndarray,
             chance_num / trials if trials else float("nan"), trials)
 
 
-def battleground_detail(model: Any, **kw) -> List[Tuple[str, bool, int, float, float, float]]:
+def battleground_detail(model: Any, **kw) -> List[CountryReadout]:
     """Per-country read-out, so the aggregate board R^2 can be split by what matters.
 
     A battleground is where the game is decided -- it is what regional scoring counts and the
@@ -228,7 +242,7 @@ def battleground_detail(model: Any, **kw) -> List[Tuple[str, bool, int, float, f
     cut = int(0.7 * len(x))
     tr, te = perm[:cut], perm[cut:]
 
-    rows: List[Tuple[str, bool, int, float, float, float]] = []
+    rows: List[CountryReadout] = []
     preds = {}
     for key in ("board", "board_opp", "control"):
         w = _ridge(x[tr], targets[key][tr])
@@ -248,8 +262,8 @@ def battleground_detail(model: Any, **kw) -> List[Tuple[str, bool, int, float, f
             ranks[order] = np.arange(len(order))
             n1, n0 = y.sum(), (~y).sum()
             auc = float((ranks[y].sum() - n1 * (n1 - 1) / 2) / (n1 * n0))
-        rows.append((str(info["name"]), bool(info["battleground"]), int(info["region"]),
-                     r2("board"), r2("board_opp"), auc))
+        rows.append(CountryReadout(str(info["name"]), bool(info["battleground"]), int(info["region"]),
+                                   r2("board"), r2("board_opp"), auc))
     return rows
 
 

@@ -130,7 +130,7 @@ def test_select_weights_reproduce_each_strata_population() -> None:
     assert sum(r["stratum"].startswith("agree") for r in bank) == 20
     pop: dict = {}
     for r in rows:
-        k = "/".join(stratum(r))
+        k = stratum(r).label
         pop[k] = pop.get(k, 0) + 1
     got: dict = {}
     for r in bank:

@@ -101,6 +101,42 @@ RE_PLAYS = re.compile(r"(US|USSR) plays (.+?)\.?$")
 RE_OLYMPICS = re.compile(r"^(?:US|USSR) chooses to (participate|boycott)\b", re.M)
 
 
+@dataclass(frozen=True)
+class InfluenceLine:
+    """One "US +2 in Chile [2][0]" line: the change, and the counts it left in the country."""
+    side: str
+    delta: int
+    country: int                     # country id
+    us_after: int
+    ussr_after: int
+
+
+@dataclass(frozen=True)
+class RealignRoll:
+    """One side's realignment die, "US rolls 4 (+3) = 7"; total is the die when unmodified."""
+    side: str
+    die: int
+    modifier: int
+    total: int
+
+
+@dataclass(frozen=True)
+class DieRoll:
+    """One "Die roll: 2 -- Success! (Needed 4 or less)" line."""
+    die: int
+    succeeded: bool
+    needed: int
+
+
+@dataclass(frozen=True)
+class VpGain:
+    """One "USSR gains 2 VP. Score is USSR 5." line: the gain and the score it leaves."""
+    side: str
+    amount: int
+    leader: str                      # "US", "USSR" or "even"
+    lead: int                        # 0 when even
+
+
 @dataclass
 class Section:
     """One Ops header and the lines under it, in log order."""
@@ -111,7 +147,7 @@ class Section:
     # holds two cards and each one's Ops are printed under its own "Event:" header, which is
     # the only thing that says whose they are.
     under_event: Optional[str] = None
-    influence: List[Tuple[str, int, int, int, int]] = field(default_factory=list)
+    influence: List[InfluenceLine] = field(default_factory=list)
     targets: List[int] = field(default_factory=list)
 
 
@@ -125,8 +161,8 @@ class Entry:
     defcon: Optional[int]
     mode: Optional[str] = None
     ops: Optional[int] = None
-    influence: List[Tuple[str, int, int, int, int]] = field(default_factory=list)
-    ops_influence: List[Tuple[str, int, int, int, int]] = field(default_factory=list)
+    influence: List[InfluenceLine] = field(default_factory=list)
+    ops_influence: List[InfluenceLine] = field(default_factory=list)
     coup_target: Optional[int] = None
     targets: List[int] = field(default_factory=list)
     # Country a war event is fought in, from "War in India". The engine asks for it as a
@@ -158,7 +194,7 @@ class Entry:
     # Influence lines grouped by the event that printed them, keyed by card name. A headline
     # resolves two cards and the log writes each one's placements under its own "Event:"
     # header, which is the only thing that says which placement belongs to which card.
-    influence_by_event: Dict[str, List[Tuple[str, int, int, int, int]]] = field(
+    influence_by_event: Dict[str, List[InfluenceLine]] = field(
         default_factory=dict)
     # Action rounds this entry says were passed, as (turn, side, action round). A player who
     # has run out of cards skips their round -- at turn 5 of replay 114 the USSR skips four in
@@ -179,9 +215,9 @@ class Entry:
     # keeps only the last, and an entry can hold several -- Che coups twice.
     coup_rolls: List[Tuple[int, bool]] = field(default_factory=list)
     coup_success: Optional[bool] = None
-    realign_rolls: List[Tuple[str, int, int, int]] = field(default_factory=list)
-    die_rolls: List[Tuple[int, bool, int]] = field(default_factory=list)
-    vp_gains: List[Tuple[str, int, str, int]] = field(default_factory=list)
+    realign_rolls: List[RealignRoll] = field(default_factory=list)
+    die_rolls: List[DieRoll] = field(default_factory=list)
+    vp_gains: List[VpGain] = field(default_factory=list)
     defcon_changes: List[Tuple[str, int]] = field(default_factory=list)
     milops: List[Tuple[str, int]] = field(default_factory=list)
     space: List[Tuple[str, int]] = field(default_factory=list)
@@ -326,8 +362,8 @@ def parse_entry(raw: Dict) -> Entry:
             if cid is None:
                 e.unparsed.append(line)
             else:
-                rec = (m.group(1), int(m.group(2)), cid,
-                       int(m.group(4)), int(m.group(5)))
+                rec = InfluenceLine(m.group(1), int(m.group(2)), cid,
+                                    int(m.group(4)), int(m.group(5)))
                 e.influence.append(rec)
                 if in_event and current_event:
                     e.influence_by_event.setdefault(current_event, []).append(rec)
@@ -384,16 +420,17 @@ def parse_entry(raw: Dict) -> Entry:
         if m:
             _roll = int(m.group(2))
             _mod = int(m.group(3)) if m.group(3) else 0
-            e.realign_rolls.append((m.group(1), _roll, _mod,
-                                    int(m.group(4)) if m.group(4) else _roll))
+            e.realign_rolls.append(RealignRoll(m.group(1), _roll, _mod,
+                                               int(m.group(4)) if m.group(4) else _roll))
             continue
         m = RE_DIE.search(line)
         if m:
-            e.die_rolls.append((int(m.group(1)), m.group(2) == "Success!", int(m.group(3))))
+            e.die_rolls.append(DieRoll(int(m.group(1)), m.group(2) == "Success!",
+                                       int(m.group(3))))
             continue
         m = RE_VP.search(line)
         if m:
-            e.vp_gains.append((m.group(1), int(m.group(2)), m.group(3), int(m.group(4))))
+            e.vp_gains.append(VpGain(m.group(1), int(m.group(2)), m.group(3), int(m.group(4))))
             continue
         m = RE_DEFCON.search(line)
         if m:
@@ -413,7 +450,7 @@ def parse_entry(raw: Dict) -> Entry:
             continue
         m = RE_VP_EVEN.search(line)
         if m:
-            e.vp_gains.append((m.group(1), int(m.group(2)), "even", 0))
+            e.vp_gains.append(VpGain(m.group(1), int(m.group(2)), "even", 0))
             e.score_assertions.append(0)
             continue
         m = RE_NO_VP.search(line)
@@ -542,13 +579,14 @@ def verify_game(game: Dict, max_notes: int = 6) -> Tuple[GameCheck, List[Entry]]
         chk.effects_ended += len(e.effects_ended)
 
         # 1. every influence line's bracketed result must match our running board
-        for side, delta, cid, res_us, res_ussr in e.influence:
+        for row in e.influence:
             chk.influence_lines += 1
+            cid, res_us, res_ussr = row.country, row.us_after, row.ussr_after
             us, ussr = board.get(cid, (0, 0))
-            if side == "US":
-                us += delta
+            if row.side == "US":
+                us += row.delta
             else:
-                ussr += delta
+                ussr += row.delta
             if (us, ussr) != (res_us, res_ussr):
                 chk.influence_mismatch += 1
                 if len(chk.notes) < max_notes:
@@ -574,8 +612,8 @@ def verify_game(game: Dict, max_notes: int = 6) -> Tuple[GameCheck, List[Entry]]
             board[cid] = (lus, lussr)            # the snapshot is authoritative
 
         # 3. VP: the running score quoted on each VP line must match the entry's score
-        quoted = [(0 if ss == "even" else (sv if ss == "US" else -sv))
-                  for _, _, ss, sv in e.vp_gains] + e.score_assertions
+        quoted = [(0 if g.leader == "even" else (g.lead if g.leader == "US" else -g.lead))
+                  for g in e.vp_gains] + e.score_assertions
         if quoted and e.score is not None:
             chk.vp_checked += 1
             if quoted[-1] != e.score:

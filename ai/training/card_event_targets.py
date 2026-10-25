@@ -26,6 +26,7 @@ Every card in the mover's hand is labelled with quantities that depend on that c
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -165,9 +166,18 @@ def t2(st: "ts.GameState", mover: "ts.Player", obs: np.ndarray, card: int) -> Op
                      float((reach & BATTLEGROUND).sum()), best, best_bg], dtype=np.float32)
 
 
-def _ctx(st: "ts.GameState") -> Tuple[int, int, int, int]:
+@dataclass(frozen=True)
+class _Ctx:
+    """The decision a state waits on, compared before and after an event fires."""
+    decision_type: int
+    decision_player: int
+    pending_op_card: int
+    remaining_steps: int
+
+
+def _ctx(st: "ts.GameState") -> _Ctx:
     c = st.ctx()
-    return int(c.decision_type), int(c.decision_player), int(c.pending_op_card), int(c.remaining_steps)
+    return _Ctx(int(c.decision_type), int(c.decision_player), int(c.pending_op_card), int(c.remaining_steps))
 
 
 #: `_score`'s weights: a won or lost game, VP, the regional scoring margins, battleground balance,
@@ -250,7 +260,7 @@ def t3_t4(st: "ts.GameState", mover: "ts.Player", card: int, base_obs: np.ndarra
         vp0, dc0 = int(x.victory_points), int(x.defcon)
         ts.CardHandlers.trigger_event(x, card, fire, 0)
         c1 = _ctx(x)
-        if c1 != c0 and c1[0] != 0 and not resolve_choices(x, card):
+        if c1 != c0 and c1.decision_type != 0 and not resolve_choices(x, card):
             return True, None                         # did not finish: not labelled
         after = _summary(np.asarray(ts.extract_observation(x, mover)))
         deltas.append(np.concatenate([[sign * (int(x.victory_points) - vp0), float(int(x.defcon) - dc0)],

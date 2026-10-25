@@ -104,7 +104,7 @@ def measure_game(game: Dict[str, Any], tally: DominanceTally, replay_id: int) ->
     for i in range(min(n, len(cap.states))):
         state = cap.states[i]
         mover = cap.movers[i]
-        chosen = int(conv.samples[i][2])
+        chosen = int(conv.samples[i].action)
         ctx = state.ctx()
 
         # --- discard under a trap -------------------------------------------------------

@@ -195,12 +195,12 @@ class GameFacts:
                     self.played_at.setdefault((turn, e.player, cid), at)
             card = self.card_id(e.card) if e.card and " & " not in e.card else None
             if card and bool(ts.CardData.get_card_info(card)["is_scoring"]):
-                for gain_side, amount, _total_side, _total in (e.vp_gains or []):
+                for gain in (e.vp_gains or []):
                     for side in self.sides:
-                        if gain_side != side:
+                        if gain.side != side:
                             key = (turn, side)
                             self.lost_to_scoring[key] = max(
-                                self.lost_to_scoring.get(key, 0), int(amount))
+                                self.lost_to_scoring.get(key, 0), int(gain.amount))
             for side in self.sides:
                 if f"{side} has no cards to discard" in text:
                     self.empty_hand.add((turn, side))

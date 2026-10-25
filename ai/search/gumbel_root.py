@@ -43,6 +43,7 @@ builds the root, and importing it back would make the two modules a cycle.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, TypedDict
 
 import numpy as np
@@ -70,6 +71,27 @@ class GumbelStats(TypedDict):
     q: Dict[int, Optional[float]]          # mean value of its position for the mover (None: unvisited)
     dropped: Dict[int, Optional[int]]      # the halving phase it was dropped in; None if it survived
     value: float                           # the network's value of the position for the mover
+
+
+@dataclass(frozen=True)
+class _Halving:
+    """Sequential halving's result per position, from the mover's side."""
+    logits: List[Dict[int, float]]         # legal moves' logits / gumbel_prior_temperature
+    noise: List[Dict[int, float]]          # each legal move's Gumbel noise
+    survivors: List[List[int]]             # best first
+    visits: List[Dict[int, float]]         # evaluations spent on each move
+    value_sums: List[Dict[int, float]]     # summed values of those evaluations
+    net_value: np.ndarray                  # the network's value of the position
+
+
+@dataclass(frozen=True)
+class _CandidateJob:
+    """One candidate's position in one world of a halving phase, searched with `share`
+    evaluations."""
+    position: int                          # index into the halved states
+    action: int
+    state: ts.GameState
+    share: int
 
 
 def world_shares(per: int, worlds: int) -> List[int]:
@@ -160,7 +182,7 @@ class GumbelRoot:
         """The move to play at each position: the last survivor of the halving. `candidates`, for
         a diagnostic only (tools/search_bank.py oracle), replaces a position's top-k candidates
         with the given legal moves (None keeps the usual ones)."""
-        alive = self._halve(states, candidates)[2]
+        alive = self._halve(states, candidates).survivors
         return [int(c[0]) if c else 0 for c in alive]
 
     def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
@@ -171,7 +193,8 @@ class GumbelRoot:
         network it stays the network's policy, and it moves only where the searched values differ.
         It also cannot move a policy whose logits are saturated beyond sigma's reach (at most
         ~15 at 256 evaluations), hence the logit cap it is meant to run with."""
-        logits, _g, _alive, n, w, v = self._halve(states)
+        h = self._halve(states)
+        logits, n, w, v = h.logits, h.visits, h.value_sums, h.net_value
         out: List[Tuple[List[int], np.ndarray]] = []
         #: P32 T2: each position's search value from the mover's side, the improved policy's
         #: expectation of the completed Q (NaN where nothing was legal), read by the trainer.
@@ -192,11 +215,8 @@ class GumbelRoot:
         return out
 
     def _halve(self, states: Sequence[ts.GameState],
-               candidates: Optional[Sequence[Optional[Sequence[int]]]] = None) -> Tuple[
-            List[Dict[int, float]], List[Dict[int, float]], List[List[int]],
-            List[Dict[int, float]], List[Dict[int, float]], np.ndarray]:
-        """Sequential halving at each position: (logits, Gumbel noise, survivors best first,
-        visits, value sums -- from the mover's side -- and the network's value)."""
+               candidates: Optional[Sequence[Optional[Sequence[int]]]] = None) -> _Halving:
+        """Sequential halving at each position."""
         mcts, cfg = self.mcts, self.mcts.cfg
         states = list(states)
         lg, masks, v = self._network(states)
@@ -232,7 +252,7 @@ class GumbelRoot:
         phases = [halving_phases(len(c)) for c in alive]
         remaining = [cfg.simulations] * len(states)
         for ph in range(max(phases, default=0)):
-            jobs: List[Tuple[int, int, ts.GameState, int]] = []
+            jobs: List[_CandidateJob] = []
             searched: List[int] = []
             for i, st in enumerate(states):
                 if ph >= phases[i]:
@@ -255,14 +275,15 @@ class GumbelRoot:
                         s = world.clone()
                         ts.Engine.step_flat(s, a)
                         settle(s, SettleMode.FORCED if cfg.auto_advance else SettleMode.CHANCE)
-                        jobs.append((i, a, s, share))
+                        jobs.append(_CandidateJob(i, a, s, share))
             # Every candidate of the phase in one search, each with its own share, so the phase
             # takes as many network rounds as its largest share rather than the sum of them.
             # The root's mover is the side searching, also in candidate positions where the
             # opponent moves next (read only by a best-response search, opponent="greedy").
-            roots = self._search([j[2] for j in jobs], [j[3] for j in jobs],
-                                 [movers[j[0]] for j in jobs]) if jobs else []
-            for (i, a, _s, k), r in zip(jobs, roots):
+            roots = self._search([j.state for j in jobs], [j.share for j in jobs],
+                                 [movers[j.position] for j in jobs]) if jobs else []
+            for j, r in zip(jobs, roots):
+                i, a, k = j.position, j.action, j.share
                 if r is None:
                     continue
                 if r.terminal or not r.actions:
@@ -286,7 +307,7 @@ class GumbelRoot:
                                  for a in initial[i]},
                         value=float(v[i]))
             for i in range(len(states))]
-        return logits, g, alive, n, w, v
+        return _Halving(logits=logits, noise=g, survivors=alive, visits=n, value_sums=w, net_value=v)
 
     def _search(self, positions: Sequence[ts.GameState], evaluations: Sequence[int],
                 searchers: Optional[Sequence[int]] = None) -> List[Optional["_BNode"]]:

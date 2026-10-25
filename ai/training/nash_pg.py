@@ -17,6 +17,7 @@ import copy
 import fcntl
 import os
 import time
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Any, Sequence, Tuple, cast
 import numpy as np
 import torch
@@ -57,6 +58,25 @@ ENTROPY_PROBE_INTERVAL = 10
 #: Positions per call to the training searcher when a rollout's queued decisions are answered:
 #: the batch the network runs at, and the size of the searcher's largest featuriser.
 SEARCH_CHUNK = 1024
+
+
+@dataclass(frozen=True)
+class PredealRows:
+    """One rollout step's pre-deal parks (P33): the buffer step, the envs parked, and their
+    observations from each side, until the update."""
+    step: int
+    envs: np.ndarray
+    us: torch.Tensor
+    ussr: torch.Tensor
+
+
+@dataclass(frozen=True)
+class CardAuxRow:
+    """A labelled card-event target (`card_event_targets.aux_label`) with its observation."""
+    obs: torch.Tensor           # float16, on the device
+    cards: np.ndarray           # (12,) held cards
+    target: np.ndarray          # (12, AUX_DIM) standardised targets
+    mask: np.ndarray            # (12, AUX_DIM) which targets are labelled
 
 
 def filter_search_visits(
@@ -584,10 +604,10 @@ class BaseNashPGTrainer:
         #: P33, the pre-deal critic: each env's turn-end park (after a turn's last action, before the
         #: deal; nobody's decision) is recorded from both sides by the runner, and joins the value loss
         #: with that side's next-decision lambda-return as its target (the result where the game ends
-        #: first). _predeal_rows holds (buffer step, envs, US rows, USSR rows) until the update.
+        #: first). _predeal_rows holds each step's parks until the update.
         self.predeal_value_coef = float(predeal_value_coef)
         self._predeal_on = False
-        self._predeal_rows: List[Tuple[int, np.ndarray, torch.Tensor, torch.Tensor]] = []
+        self._predeal_rows: List[PredealRows] = []
         self._pd_obs: Optional[torch.Tensor] = None
         self._pd_tgt: Optional[torch.Tensor] = None
         #: P33, the critic on searched games (ai/training/searched_games.py): workers playing whole games
@@ -903,7 +923,7 @@ class BaseNashPGTrainer:
         self.aux_card_buffer = int(aux_card_buffer)
         self.aux_card_steps = int(aux_card_steps)
         self.aux_card_batch = int(aux_card_batch)
-        self._card_ready: List[Tuple[Any, np.ndarray, np.ndarray, np.ndarray]] = []
+        self._card_ready: List[CardAuxRow] = []
         self._card_labelled = 0
         self._card_label_seconds = 0.0
         if self.aux_card_coef > 0.0 and not getattr(self.active_net, "card_aux", False):
@@ -1215,7 +1235,7 @@ class BaseNashPGTrainer:
             st = self.env.runner.get_state(int(i))
             lab = aux_label(st, ts.Player(int(dp[i])), o_np[j], int(np.random.randint(1, 1 << 30)))
             if lab is not None:
-                self._card_ready.append((o16[j], *lab))
+                self._card_ready.append(CardAuxRow(o16[j], *lab))
                 self._card_labelled += 1
         if len(self._card_ready) > self.aux_card_buffer:
             del self._card_ready[:len(self._card_ready) - self.aux_card_buffer]
@@ -1314,11 +1334,11 @@ class BaseNashPGTrainer:
         for _ in range(self.aux_card_steps):
             pick = np.random.randint(0, n, size=min(self.aux_card_batch, n))
             recs = [self._card_ready[int(k)] for k in pick]
-            dev = recs[0][0].device
-            obs = torch.stack([r[0] for r in recs]).float()
-            cards = torch.from_numpy(np.stack([r[1] for r in recs]).astype(np.int64)).to(dev)
-            y = torch.from_numpy(np.stack([r[2] for r in recs])).to(dev)
-            m = torch.from_numpy(np.stack([r[3] for r in recs])).to(dev)
+            dev = recs[0].obs.device
+            obs = torch.stack([r.obs for r in recs]).float()
+            cards = torch.from_numpy(np.stack([r.cards for r in recs]).astype(np.int64)).to(dev)
+            y = torch.from_numpy(np.stack([r.target for r in recs])).to(dev)
+            m = torch.from_numpy(np.stack([r.mask for r in recs])).to(dev)
             pred = net.forward_card_aux(obs).float()                           # (b, 110, D)
             idx = (cards - 1).clamp_min(0).unsqueeze(-1).expand(-1, -1, pred.shape[-1])
             g = torch.gather(pred, 1, idx)                                     # (b, 12, D)
@@ -1752,7 +1772,7 @@ class BaseNashPGTrainer:
                 _pe = np.flatnonzero(np.asarray(_pf))
                 if _pe.size:
                     _w = self.buffer.obs_dim
-                    self._predeal_rows.append((
+                    self._predeal_rows.append(PredealRows(
                         self.buffer.step, _pe,
                         torch.from_numpy(np.array(np.asarray(_pus)[_pe, :_w])).to(self.device),
                         torch.from_numpy(np.array(np.asarray(_pussr)[_pe, :_w])).to(self.device)))
@@ -2363,7 +2383,8 @@ class NashPGTrainer(BaseNashPGTrainer):
         horizon = self.buffer.buffer_size
         obs: List[torch.Tensor] = []
         tgt: List[float] = []
-        for t, envs, rows_us, rows_ussr in rows:
+        for pd in rows:
+            t, envs, rows_us, rows_ussr = pd.step, pd.envs, pd.us, pd.ussr
             for j, e in enumerate(envs):
                 for side, row in ((1, rows_us[j]), (-1, rows_ussr[j])):
                     target: Optional[float] = None

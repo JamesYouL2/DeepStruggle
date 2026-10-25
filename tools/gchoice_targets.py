@@ -49,6 +49,7 @@ import json
 import math
 import os
 import sys
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -164,9 +165,17 @@ def arm(inputs: Sequence[str], form: str, budget: str, min_margin: float, out: s
     return meta
 
 
-def replay(paths: Sequence[str]) -> Iterator[Tuple[np.ndarray, np.ndarray, Dict[str, Any], int]]:
-    """(observation, mask, gchoice record, decision type) at every searched record of the games,
-    replayed through the engine as `WarmupDataset.stream_policy_transitions` does."""
+@dataclass(frozen=True)
+class SearchedRecord:
+    """A searched record of a game, as `replay` reaches it."""
+    obs: np.ndarray
+    mask: np.ndarray
+    gchoice: Dict[str, Any]
+    decision_type: int
+
+
+def replay(paths: Sequence[str]) -> Iterator[SearchedRecord]:
+    """Every searched record of the games, replayed through the engine as `WarmupDataset.stream_policy_transitions` does."""
     import ts_engine as ts
     for game in _read_games(paths):
         st = ts.GameState()
@@ -181,8 +190,8 @@ def replay(paths: Sequence[str]) -> Iterator[Tuple[np.ndarray, np.ndarray, Dict[
                                    "the engine is not the one that generated it")
             rec = a.get("gchoice")
             if rec is not None:
-                yield (np.array(ts.extract_observation(st, p_), copy=True), mask, rec,
-                       int(st.ctx().decision_type))
+                yield SearchedRecord(np.array(ts.extract_observation(st, p_), copy=True), mask, rec,
+                                     int(st.ctx().decision_type))
             ts.Engine.step(st, ts.decode_flat_action(st, fa))
             while (not ts.Engine.is_terminal(st) and st.ctx().decision_player == ts.Player.NONE
                    and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
@@ -215,17 +224,18 @@ def check(inputs: Sequence[str], base: str, model: str, budget: str,
     ent_b: List[float] = []
     ent_m: List[float] = []
     same: List[float] = []
-    rows: List[Tuple[np.ndarray, np.ndarray, Dict[str, Any], int]] = []
+    rows: List[SearchedRecord] = []
 
     def flush() -> None:
         if not rows:
             return
-        obs = np.stack([r[0] for r in rows])
-        masks = np.stack([r[1] for r in rows])
+        obs = np.stack([r.obs for r in rows])
+        masks = np.stack([r.mask for r in rows])
         pb, pm = _policies(nb, obs, masks), _policies(nm, obs, masks)
         ent_b.extend(_entropy(pb).tolist())
         ent_m.extend(_entropy(pm).tolist())
-        for i, (_o, _mk, rec, dt) in enumerate(rows):
+        for i, row in enumerate(rows):
+            rec, dt = row.gchoice, row.decision_type
             # The generator's argmax: the base's own here, unless a near tie split differently.
             raw, c = int(rec["raw"]), int(rec["g"][b]["c"])
             same.append(float(int(np.argmax(pb[i])) == raw))

@@ -111,7 +111,7 @@ def measure_decisive(
                 st_out.decisions += 1
                 n_wins = sum(1 for k in kinds.values() if k == "win")
                 losses = [a for a, k in kinds.items() if k == "loss"]
-                win_decisions.append((player, len(kinds), n_wins, kinds.get(action) == "win"))
+                win_decisions.append(WinDecision(player, len(kinds), n_wins, kinds.get(action) == "win"))
                 if losses:
                     if len(losses) < len(kinds):
                         st_out.loss_avoidable += 1
@@ -226,7 +226,7 @@ def measure_decisive_batched(
 
     def flush(i: int) -> None:
         nonlocal episodes
-        out.add_wins([(player, n_kinds, n_wins, chosen_kind == "win")
+        out.add_wins([WinDecision(player, n_kinds, n_wins, chosen_kind == "win")
                       for (player, n_kinds, n_wins, n_losses, chosen_kind) in pending[i]])
         for (_, n_kinds, n_wins, n_losses, chosen_kind) in pending[i]:
             out.decisions += 1

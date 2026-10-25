@@ -13,7 +13,8 @@ import json
 import pytest
 
 from tools.lib.corpus_paths import corpus_files
-from tools.lib.ts_replayer_parse import (country_id, initial_board, parse_entry,
+from tools.lib.ts_replayer_parse import (DieRoll, InfluenceLine, RealignRoll, VpGain,
+                                         country_id, initial_board, parse_entry,
                                          verify_game)
 
 CORPUS = [str(p) for p in corpus_files()]
@@ -40,14 +41,14 @@ def test_influence_line_carries_delta_and_resulting_counts() -> None:
                "USSR +1 in Laos/Cambodia [0][1]")
     assert e.mode == "influence" and e.ops == 3
     assert len(e.influence) == 2
-    side, delta, cid, us, ussr = e.influence[0]
-    assert (side, delta, us, ussr) == ("USSR", 2, 0, 2)
-    assert cid == country_id("Thailand")
+    row = e.influence[0]
+    assert (row.side, row.delta, row.us_after, row.ussr_after) == ("USSR", 2, 0, 2)
+    assert row.country == country_id("Thailand")
 
 
 def test_negative_influence_is_parsed() -> None:
     e = _entry("USSR -1 in Poland [0][4]")
-    assert e.influence[0][1] == -1
+    assert e.influence[0].delta == -1
 
 
 def test_coup_target_roll_and_outcome() -> None:
@@ -59,8 +60,8 @@ def test_coup_target_roll_and_outcome() -> None:
 
 def test_realignment_and_war_rolls_are_captured() -> None:
     e = _entry("US rolls 5 (+1) = 6\nDie roll: 2 -- Success! (Needed 4 or less)")
-    assert e.realign_rolls == [("US", 5, 1, 6)]
-    assert e.die_rolls == [(2, True, 4)]
+    assert e.realign_rolls == [RealignRoll("US", 5, 1, 6)]
+    assert e.die_rolls == [DieRoll(2, True, 4)]
 
 
 def test_trap_rolls_are_captured() -> None:
@@ -79,7 +80,7 @@ def test_prefixed_lines_are_not_silently_dropped() -> None:
     and 600 VP lines across the corpus were being lost this way.
     """
     e = _entry("Turn 9, Cleanup: USSR gains 2 VP. Score is USSR 5.", score=-5)
-    assert e.vp_gains == [("USSR", 2, "USSR", 5)]
+    assert e.vp_gains == [VpGain("USSR", 2, "USSR", 5)]
     assert e.unparsed == []
 
     e2 = _entry("Turn 7, US AR4: Brush War: USSR gains 2 VP. Score is USSR 4.", score=-4)
@@ -87,7 +88,7 @@ def test_prefixed_lines_are_not_silently_dropped() -> None:
 
 
 def test_score_even_and_no_award_forms() -> None:
-    assert _entry("US gains 3 VP. Score is even.").vp_gains == [("US", 3, "even", 0)]
+    assert _entry("US gains 3 VP. Score is even.").vp_gains == [VpGain("US", 3, "even", 0)]
     assert _entry("No VP awarded. Score is USSR 8.").score_assertions == [-8]
     assert _entry("No VP awarded. Score is even.").score_assertions == [0]
 

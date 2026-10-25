@@ -39,6 +39,15 @@ class Candidate:
     focus: int = -1           # the option of interest for a target decision: its event / its headline
 
 
+@dataclass(frozen=True)
+class _OptionJob:
+    """One candidate's option in one world, played out from `start` (the option applied)."""
+    candidate: int
+    option: int
+    world: int
+    start: ts.GameState
+
+
 def forward(model: Any, obs: np.ndarray, masks: np.ndarray, device: torch.device
              ) -> Tuple[np.ndarray, np.ndarray]:
     with torch.no_grad():
@@ -77,7 +86,7 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
     decisions met in the branches of options the policy did not take -- positions its own play does
     not reach -- for pricing on their own."""
     feats = model_obs_features(model)
-    jobs: List[Tuple[int, int, int, ts.GameState]] = []        # (candidate, option, world, start)
+    jobs: List[_OptionJob] = []
     rng = random.Random(seed)
     for ci, c in enumerate(cands):
         c.values = np.full((len(c.options), worlds), np.nan)
@@ -88,7 +97,7 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
                 st = base.clone()
                 st.rng_state = rng.getrandbits(64) % _UINT64        # this option's own dice
                 try:
-                    jobs.append((ci, oi, w, apply_move(st, a)))
+                    jobs.append(_OptionJob(ci, oi, w, apply_move(st, a)))
                 except ValueError:
                     pass                    # illegal in this deal: the world is dropped below
     for lo in range(0, len(jobs), chunk):
@@ -100,8 +109,9 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
         start_turn = np.zeros(n, dtype=np.int64)
         sides = np.zeros(n, dtype=np.int64)
         off_policy = np.zeros(n, dtype=bool)
-        for i, (ci, oi, _w, st) in enumerate(part):
-            runner.set_state(i, st)
+        for i, j in enumerate(part):
+            ci, oi = j.candidate, j.option
+            runner.set_state(i, j.start)
             start_turn[i] = int(cands[ci].state.turn)
             sides[i] = int(decider(cands[ci].state))
             off_policy[i] = cands[ci].options[oi] != cands[ci].taken
@@ -183,7 +193,7 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
                         lg_i = lg_t[int(pos[i])].float().cpu().numpy()
                         z = lg_i[legal] - lg_i[legal].max()
                         pz = np.exp(z) / np.exp(z).sum()
-                        nested.append(Nested(part[i][0], part[i][1],
+                        nested.append(Nested(part[i].candidate, part[i].option,
                                              Candidate(game=-1, choice=-1, state=st.clone(), options=legal,
                                                        probs=[float(x) for x in pz], taken=int(acts[i]))))
                     if look_rows[i]:
@@ -201,10 +211,10 @@ def price(model: Any, device: torch.device, cands: Sequence[Candidate], worlds: 
                 raise RuntimeError("the engine refused a greedy playout action")
         else:
             raise RuntimeError(f"{int((~done).sum())} playouts still running after {max_plies} plies")
-        for (ci, oi, w, _st), v_ in zip(part, value):
-            vals = cands[ci].values
+        for j, v_ in zip(part, value):
+            vals = cands[j.candidate].values
             assert vals is not None
-            vals[oi, w] = v_
+            vals[j.option, j.world] = v_
     for c in cands:                          # a world with any option missing is dropped whole
         assert c.values is not None
         c.values = c.values[:, ~np.isnan(c.values).any(axis=0)]

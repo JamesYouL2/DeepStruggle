@@ -25,7 +25,7 @@ import pytest
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import _mid_turn_acquisitions, card_id, convert_game
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
 
 CORPUS = str(corpus_dir())
 CANADA, GREECE = 0, 11
@@ -49,7 +49,8 @@ def test_the_entry_plays_a_card_through_un_intervention() -> None:
              == (8, "AR3", "US"))
     assert e.card == "UN Intervention"
     assert e.played_card == "Arab-Israeli War"
-    assert e.influence == [("US", 1, CANADA, 4, 0), ("US", 1, GREECE, 1, 0)]
+    assert e.influence == [InfluenceLine("US", 1, CANADA, 4, 0),
+                       InfluenceLine("US", 1, GREECE, 1, 0)]
 
 
 def test_that_card_is_not_taken_for_an_ask_not_draw() -> None:

@@ -16,6 +16,7 @@ import os
 import multiprocessing as mp
 import queue as _queue
 import traceback
+from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
@@ -28,15 +29,30 @@ from ai.search.rollout_root import RolloutConfig, RolloutTeacher
 Answer = Tuple[int, List[int], np.ndarray]
 
 
-def _worker_main(jobs: Any, results: Any, model_bytes: bytes, cfg: Tuple[int, int, int, str, str, str],
+@dataclass(frozen=True)
+class WorkerRolloutConfig:
+    """The `RolloutConfig` fields a worker process builds its root from (picklable, sent at spawn)."""
+    k: int
+    worlds: int
+    horizon: int
+    rule: str
+    stop: str
+    leaf_side: str
+
+    @classmethod
+    def of(cls, config: RolloutConfig) -> WorkerRolloutConfig:
+        return cls(k=int(config.k), worlds=int(config.worlds), horizon=int(config.horizon), rule=str(config.rule),
+                   stop=str(config.stop), leaf_side=str(config.leaf_side))
+
+
+def _worker_main(jobs: Any, results: Any, model_bytes: bytes, cfg: WorkerRolloutConfig,
                  device: str, seed: int) -> None:
     torch.set_num_threads(2)
     parent = os.getppid()
     dev = torch.device(device)
     net = torch.load(io.BytesIO(model_bytes), map_location=dev, weights_only=False).eval()
-    k, worlds, horizon, rule, stop, leaf_side = cfg
-    teacher = RolloutTeacher(net, RolloutConfig(k=k, worlds=worlds, horizon=horizon, rule=rule, stop=stop,
-                                                leaf_side=leaf_side),
+    teacher = RolloutTeacher(net, RolloutConfig(k=cfg.k, worlds=cfg.worlds, horizon=cfg.horizon, rule=cfg.rule,
+                                                stop=cfg.stop, leaf_side=cfg.leaf_side),
                              device=dev, subsample=1.0, seed=seed)
     while True:
         try:
@@ -70,8 +86,7 @@ class SearchWorkers:
         self._results = ctx.Queue()
         self._jobs: List[Any] = []
         self._procs: List[Any] = []
-        cfg = (int(config.k), int(config.worlds), int(config.horizon), str(config.rule), str(config.stop),
-               str(config.leaf_side))
+        cfg = WorkerRolloutConfig.of(config)
         for w in range(self.n):
             q = ctx.Queue()
             p = ctx.Process(target=_worker_main, args=(q, self._results, buf.getvalue(), cfg, str(device), seed + w),

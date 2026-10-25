@@ -22,7 +22,7 @@ import pytest
 
 from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import convert_game, point_queue
-from tools.lib.ts_replayer_parse import parse_entry
+from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
 
 CORPUS = str(corpus_dir())
 ARGENTINA = 82
@@ -48,8 +48,8 @@ def test_norad_into_the_couped_country_is_queued() -> None:
     """Replay 131 turn 6 AR1: the USSR coups Argentina, the US puts 1 back into Argentina."""
     e = _entry(131, 6, "AR1", "USSR")
     assert e.mode == "coup" and e.targets == [ARGENTINA]
-    assert ("US", -1, ARGENTINA, 1, 0) in e.influence, "the coup's removal"
-    assert ("US", 1, ARGENTINA, 2, 0) in e.influence, "NORAD's placement"
+    assert InfluenceLine("US", -1, ARGENTINA, 1, 0) in e.influence, "the coup's removal"
+    assert InfluenceLine("US", 1, ARGENTINA, 2, 0) in e.influence, "NORAD's placement"
     assert point_queue(e) == [ARGENTINA, ARGENTINA], (
         "the target, and then the placement the log records after it")
 
@@ -67,8 +67,8 @@ def test_the_coupers_own_influence_is_not_a_placement() -> None:
     """
     e = _entry(143, 4, "AR1", "USSR")
     assert e.targets == [PANAMA]
-    gains = [(side, delta) for side, delta, cid, _u, _s in e.influence
-             if cid == PANAMA and delta > 0]
+    gains = [(row.side, row.delta) for row in e.influence
+             if row.country == PANAMA and row.delta > 0]
     assert gains == [("US", 1)], "the USSR couped, so a US gain is NORAD's"
     assert point_queue(e) == [PANAMA, PANAMA]
 

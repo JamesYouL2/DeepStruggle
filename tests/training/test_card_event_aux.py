@@ -15,7 +15,7 @@ from ai.models.ladder_net import CARD_AUX_DIM, create_ladder_net, ladder_config_
 from ai.training.card_event_targets import (AUX_DIM, AUX_MEAN, AUX_SCALE, BREZHNEV, CARD_OFFSET, CONTAINMENT,
                                             GLOBAL_OFFSET, N_T2, OPS, PURGE_US, PURGE_USSR, SCORING, VIETNAM,
                                             aux_label, effective_ops, held_cards, label)
-from ai.training.nash_pg import NashPGTrainer
+from ai.training.nash_pg import CardAuxRow, NashPGTrainer
 from bindings.ts_env import TsVectorizedEnv
 
 _update = cast(Any, NashPGTrainer._card_aux_update)
@@ -139,7 +139,7 @@ def test_the_update_lowers_its_loss_on_a_fixed_batch() -> None:
         return SimpleNamespace(active_net=net, optimizer=opt, max_grad_norm=10.0, aux_card_coef=1.0,
                                aux_card_min_batch=n, aux_card_steps=2, aux_card_batch=32,
                                _card_label_seconds=0.0, _card_labelled=n,
-                               _card_ready=[(obs[i], cards[i], y[i], m[i]) for i in range(n)])
+                               _card_ready=[CardAuxRow(obs[i], cards[i], y[i], m[i]) for i in range(n)])
 
     first = _update(fake())
     for _ in range(40):
