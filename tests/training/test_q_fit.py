@@ -102,6 +102,8 @@ def test_the_q_head_learns_the_leads_and_takes_the_stable_departures(tmp_path: P
     assert best["r_dis"] > 0.8 > fixed["r_dis_logits"]
     assert best["r_dis"] > fixed["r_dis_base"]
     assert best["take_0.04"] > 0.7 and best["leave_0.04"] < 0.2  # the teacher departs past 0.04
+    assert best["r_within_dis"] > 0.7
+    assert fixed["gain_judge_xseed"] > 0 and best["gain_0.04"] > 0.7 * fixed["gain_judge_xseed"]
     after = torch.load(Path(run) / "q_fit_best.pt", weights_only=True)["model"]
     assert all(torch.equal(before[k], after[k]) for k in before if k != "keep_idx")
 
