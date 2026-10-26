@@ -172,6 +172,7 @@ per-seat control ratings, setup placement and temperature self-play.
 | [`E7_search_depth_and_value.md`](E7_search_depth_and_value.md) | search gains from depth; the critic cannot choose; the rollout root (+177) |
 | [`E7_gchoice_distill.md`](E7_gchoice_distill.md) | one offline round of Gumbel-choice distillation: slightly weaker |
 | [`E7_distill_ladder.md`](E7_distill_ladder.md) | the rollout root's corrections are local; an action-value head ranks them (r 0.80) and still cannot play them |
+| [`E7_p34_d3_worlds.md`](E7_p34_d3_worlds.md) | P34 D3 measured before building it: 128 keyed worlds give reliability 0.72, carried by the easy decisions; a label's pick beats the network by +0.16 ± 0.09 ×100, and search follow-up prices candidates like greedy (r 0.98): D3 dropped |
 | [`R32_rollout_cpu_experiments.md`](R32_rollout_cpu_experiments.md) | R32 absorbed Gumbel's gain, not the rollout root's |
 | [`E7_blunder_census.md`](E7_blunder_census.md) | engine-proven blunders are rare; the costly ones are late placements |
 | [`E7_blunder_bank.md`](E7_blunder_bank.md) | 35 positions where the network's move costs 10+ points |

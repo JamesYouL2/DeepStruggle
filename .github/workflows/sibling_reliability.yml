@@ -10,15 +10,12 @@
 #   label      N runners, each its share of both sets' siblings (label --no-main --part i/N).
 #   pool       the reliability tables, per set: all decisions, entry decisions, contested ones.
 #
-#   gh workflow run sibling_reliability.yml --ref exp/p34-reliability -R JamesYouL2/DeepStruggle
+#   gh workflow run sibling_reliability.yml --ref <branch> [-f entry=400 -f uniform=0 \
+#     -f extra="--follow search --search-worlds 8"]   # the search follow-up pilot
 #   gh run download <run-id> -n sibling-reliability-<run-id> -D data/reports/p34_reliability/<run-id>
 name: sibling-reliability
 
 on:
-  # The push trigger only registers the workflow from this branch; every job is skipped on it.
-  push:
-    branches: [exp/p34-reliability]
-    paths: [.github/workflows/sibling_reliability.yml]
   workflow_dispatch:
     inputs:
       model:
@@ -50,6 +47,12 @@ on:
 permissions:
   contents: read
 
+# bash -eo pipefail: without a shell named a step runs as `bash -e`, so `python ... | tee` passes when
+# python fails.
+defaults:
+  run:
+    shell: bash
+
 env:
   PYTHONPATH: .:build/release
   TS_PYTHON: python
@@ -66,7 +69,6 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -87,7 +89,8 @@ jobs:
           mkdir -p work
           curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
           sha256sum work/net.pt
-          tools/scripts/check_engine_fresh.sh && python tools/value_labels.py positions --model work/net.pt \
+          tools/scripts/check_engine_fresh.sh
+          python tools/value_labels.py positions --model work/net.pt \
             --games "$GAMES" --envs 256 --device cpu --out pos/uniform
           python tools/value_labels.py select --what entry --n "$ENTRY" --dir pos/uniform --out pos/entry
       - uses: actions/upload-artifact@v4

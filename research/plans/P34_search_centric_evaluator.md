@@ -325,6 +325,19 @@ keyed from now on.
    Spearman–Brown 64 keyed worlds give ~0.74 (ceiling 0.86) and 128 give ~0.85 (ceiling 0.92).
    D3 reports its split-half reliability and uses enough worlds for a ceiling of at least 0.85, so
    that a follow-up effect is not hidden under world noise the way the sibling slice's was.
+   **D3 measured, and dropped (2026-10-26; [`E7_p34_d3_worlds`](../log/E7_p34_d3_worlds.md)).** Two
+   CPU runs in D2's recipe, both at 128 keyed worlds.
+   * *The reliability curve.* 2,321 entry decisions reach 0.72 (contested 0.76). Spearman–Brown
+     holds, so 0.85 needs ~256 worlds. The pooled figure is carried by the top 10% by spread (0.94);
+     the bottom half reaches 0.33.
+   * *What a label is worth.* Its pick, scored against the generator's own move on disjoint worlds,
+     gains +0.16 ± 0.09 ×100 a decision at 64 worlds, and is worse than the network at D2's 16.
+   * *A stronger follow-up.* On 294 of those decisions the keyed root at entry decisions prices the
+     candidates like greedy follow-up (disattenuated r 0.98). Its pick beats greedy's by +0.43 ± 0.19
+     on its own scoring and by −0.06 ± 0.19 on greedy's.
+
+   So neither the worlds nor the follow-up gives D3 a target worth fitting, and step 5 reads as
+   "neither moves".
 5. **Judge the direction on step 4.** The leak-pair ranking moves and the searched rating beats the
    keyed root by clearly more than +10 → the generation loop runs, and the capacity question is
    re-asked cheaply with a deep variant **grown from the RL trunk at identity** (new residual blocks
