@@ -1,0 +1,174 @@
+# The distillation diagnostics' targets on CPU (tools/distill_targets.py, tools/README.md §7c):
+#
+#   collect -- the network's greedy games, its entry decisions written once (--collect-only). With
+#              the default seed, games and positions, the same positions as P36c's.
+#   search  -- N runners, each searching every teacher on its slice of the rows (--shard i/N).
+#   pool    -- the shards merged into one target set, then tools/distill_probe.py agree on all
+#              teachers and knn (trunk and observation) on each teacher in `knn_teachers`.
+#
+# The policy-fit students (tools/train.py --mode policy-fit --policy-target <name>) want a GPU and
+# run elsewhere on the pooled targets.npz.
+#
+#   gh workflow run distill_ladder.yml --ref main
+#   gh run download <run-id> -n distill-ladder-<run-id> -D data/reports/distill_ladder/<run-id>
+#
+# `states_from=<run id>` searches another run's positions (more teachers on the same rows); its
+# merge then holds only this run's teachers.
+name: distill-ladder
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "The network, a .pt path in hf_repo (A13+R48's SWA)"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt"
+      soup:
+        description: "A second network fetched as work/soup.pt, for a net:work/soup.pt teacher"
+        default: "_models/E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M.pt"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+      teachers:
+        description: "name=spec, space-separated (tools/distill_targets.py --teacher)"
+        default: "h4=root:4:16:4:z2:earlier:own:keyed:aligned:box4 h2=root:4:16:2:z2:earlier:own:keyed:aligned:box4 h1=root:4:16:1:z2:earlier:own:keyed:aligned:box4 h0=root:16:4:0:argmax:earlier:own:keyed soup=net:work/soup.pt"
+      knn_teachers:
+        default: "h4 h0 soup"
+      games:
+        default: "2000"
+      positions:
+        default: "200000"
+      runners:
+        default: "20"
+      states_from:
+        description: "Search this earlier run's positions instead of collecting"
+        default: ""
+
+permissions:
+  contents: read
+  actions: read   # states_from reads another run's artifacts
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  MODEL: ${{ inputs.model }}
+  SOUP: ${{ inputs.soup }}
+  HF_REPO: ${{ inputs.hf_repo }}
+  TEACHERS: ${{ inputs.teachers }}
+  KNN_TEACHERS: ${{ inputs.knn_teachers }}
+  GAMES: ${{ inputs.games }}
+  POSITIONS: ${{ inputs.positions }}
+  RUNNERS: ${{ inputs.runners }}
+  STATES_FROM: ${{ inputs.states_from }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Positions
+        run: |
+          mkdir -p work pos
+          if [ -n "$STATES_FROM" ]; then
+            gh run download "$STATES_FROM" -R "$GITHUB_REPOSITORY" -n "distill-ladder-pos-$STATES_FROM" -D pos
+            tools/scripts/check_engine_fresh.sh
+          else
+            curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+            sha256sum work/net.pt
+            tools/scripts/check_engine_fresh.sh && python tools/distill_targets.py --checkpoint work/net.pt \
+              --games "$GAMES" --positions "$POSITIONS" --collect-only --device cpu --output pos/pos.npz
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distill-ladder-pos-${{ github.run_id }}
+          path: pos/
+          retention-days: 90
+
+  search:
+    needs: [plan, collect]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: distill-ladder-pos-${{ github.run_id }}
+          path: pos
+      - name: Networks
+        run: |
+          mkdir -p work
+          curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          curl -sSfL --retry 3 -o work/soup.pt "https://huggingface.co/$HF_REPO/resolve/main/$SOUP"
+          sha256sum work/*.pt
+      - name: Search, part ${{ matrix.part }}
+        run: |
+          mkdir -p out
+          args=(); for t in $TEACHERS; do args+=(--teacher "$t"); done
+          tools/scripts/check_engine_fresh.sh && OMP_NUM_THREADS=4 python tools/distill_targets.py \
+            --checkpoint work/net.pt --states pos/pos.npz --shard "${{ matrix.part }}/$RUNNERS" --device cpu \
+            "${args[@]}" --output "out/shard-${{ matrix.part }}.npz" | tee "out/shard-${{ matrix.part }}.log"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distill-ladder-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 30
+
+  pool:
+    needs: [plan, search]
+    if: always() && needs.search.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: distill-ladder-pos-${{ github.run_id }}
+          path: pos
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: distill-ladder-part-${{ github.run_id }}-*
+          path: shards
+          merge-multiple: true
+      - name: Merge and read
+        run: |
+          mkdir -p work res
+          curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          tools/scripts/check_engine_fresh.sh && python tools/distill_targets.py --checkpoint work/net.pt \
+            --states pos/pos.npz --merge shards/shard-*.npz --output res/targets.npz
+          python tools/distill_probe.py agree --dataset res/targets.npz --json res/agree.json | tee res/agree.md
+          for t in $KNN_TEACHERS; do
+            python tools/distill_probe.py knn --dataset res/targets.npz --checkpoint work/net.pt --target "$t" \
+              --space trunk obs --device cpu --json "res/knn-$t.json" | tee "res/knn-$t.md"
+          done
+          cp shards/*.log res/
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL ($(sha256sum work/net.pt | cut -c1-16))"
+            echo "soup: $SOUP"
+            echo "teachers: $TEACHERS"
+            echo "games: $GAMES  positions: $POSITIONS  runners: $RUNNERS  states_from: ${STATES_FROM:-none}"
+            echo
+            cat res/agree.md
+          } > res/provenance.md
+          cat res/provenance.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distill-ladder-${{ github.run_id }}
+          path: res/
+          retention-days: 90

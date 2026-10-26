@@ -48,7 +48,7 @@ ACTIONS = 220
 @dataclass
 class PolicyFitConfig:
     dataset: str                    # a tools/distill_targets.py .npz
-    worlds: int                     # which world count's targets
+    worlds: int                     # which world count's targets (P36c's teachers, named by world count)
     init: str                       # an RL checkpoint: its weights (fine-tune) or its shape (reinit)
     reinit: bool = False
     #: Changes to the init network's ladder config (LadderNet keyword -> value), with reinit only.
@@ -70,6 +70,11 @@ class PolicyFitConfig:
     #: Weight of KL(the initial network's policy || the student's) on every position: a fine-tune held near
     #: the policy it started from.
     kl_anchor: float = 0.0
+    #: Which teacher's targets by name (`tools/distill_targets.py --teacher NAME=...`); None = `worlds`.
+    target: Optional[str] = None
+    #: Re-initialise the policy heads (the trunk kept): plasticity -- can fresh heads on the trained trunk read
+    #: the corrections the fine-tuned ones do not?
+    reinit_heads: bool = False
     seed: int = 44
     device: str = "cuda"
     bf16: bool = True
@@ -84,6 +89,27 @@ def dense_targets(acts: np.ndarray, probs: np.ndarray) -> np.ndarray:
     ok = a >= 0
     out[rows[ok], a[ok]] = p[ok]            # a row's moves are distinct
     return out
+
+
+#: The modules that turn the trunk's features into logits (whichever of them a LadderNet has).
+POLICY_MODULES = ("policy_head", "pe_trunk", "pe_card", "pe_country", "play_mode_head_net", "branch_head_net")
+
+
+def reinit_policy_heads(model: nn.Module) -> int:
+    """Fresh weights for every policy-head layer (the trunk and the value heads kept); returns the parameters reset."""
+    n = 0
+    for name in POLICY_MODULES:
+        mod = getattr(model, name, None)
+        if not isinstance(mod, nn.Module):
+            continue
+        for sub in mod.modules():
+            reset = getattr(sub, "reset_parameters", None)
+            if callable(reset) and any(True for _ in sub.parameters(recurse=False)):
+                reset()
+                n += sum(p.numel() for p in sub.parameters(recurse=False))
+    if n == 0:
+        raise SystemExit("--policy-reinit-heads: this network has none of the policy modules " + ", ".join(POLICY_MODULES))
+    return n
 
 
 def masks_of(states: np.ndarray) -> np.ndarray:
@@ -114,6 +140,10 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     model = create_ladder_net(dev, **lcfg)
     if not cfg.reinit:
         model.load_state_dict(sd, strict=True)
+    if cfg.reinit_heads:
+        if cfg.reinit or cfg.head_only:
+            raise SystemExit("--policy-reinit-heads keeps the trained trunk: not with --policy-reinit or --policy-head-only")
+        print(f"policy heads re-initialised: {reinit_policy_heads(model) / 1e6:.2f}M parameters", flush=True)
     # The value path frozen: the student is read and trained on its policy only.
     for name, p in model.named_parameters():
         if name.startswith(("val_win_head", "val_vp_head", "val_logits_head")):
@@ -148,9 +178,10 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
                          f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
     with np.load(cfg.dataset) as z:
         d = {k: z[k] for k in z.files}
-    w = cfg.worlds
+    w = cfg.target or str(cfg.worlds)
     if f"acts_{w}" not in d:
-        raise SystemExit(f"{cfg.dataset} has no targets at {w} worlds")
+        names = sorted(k[5:] for k in d if k.startswith("acts_"))
+        raise SystemExit(f"{cfg.dataset} has no targets {w!r} (it has {names})")
     heldout = d["heldout"].astype(bool)
     codes = Codes(int(getattr(model, "obs_feature_bits", 0)), dev)
     x_all = codes.encode(d["states"])
@@ -173,7 +204,7 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     ceiling = float((top2[dep_ho] == top[dep_ho]).mean()) if dep_ho.size else float("nan")
     ceiling_all = float((top2[ho] == top[ho]).mean()) if ho.size else float("nan")
     ceiling_pick = float((pick2[pdep_ho] == pick[pdep_ho]).mean()) if pdep_ho.size else float("nan")
-    print(f"policy fit at {w} worlds: {tr.size:,} train / {ho.size:,} held-out positions; teacher departures "
+    print(f"policy fit to {w}: {tr.size:,} train / {ho.size:,} held-out positions; teacher departures "
           f"{100 * dep_tr.size / max(1, tr.size):.1f}% / {100 * dep_ho.size / max(1, ho.size):.1f}%; the teacher's own "
           f"held-out agreement {100 * ceiling:.1f}% on departures, {100 * ceiling_all:.1f}% overall, z2 picks "
           f"{100 * ceiling_pick:.1f}%; {n_params / 1e6:.2f}M parameters; loaded in {time.time() - t0:.0f}s", flush=True)

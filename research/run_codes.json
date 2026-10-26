@@ -548,6 +548,56 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A23": {
+   "description": "A13's trunk frozen under an action-value head (--mode q-fit): a 220-wide head fitted to the rollout root's per-candidate paired leads; the E7 network read at its own view on E8 (no observation features)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R72_20261026_164442",
+   "flags": {
+    "obs_features": [],
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 0,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_token_dim": 0,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_entity_proj_dim": 512,
+    "ladder_head_center": true,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "q_only": true
+   }
+  },
+  "A24": {
+   "description": "A19 on E8 with an E7 network's view (no observation features): the X0 policy-fit student",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A19-R71_20261026_163916",
+   "flags": {
+    "obs_features": [],
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 0,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_token_dim": 0,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_entity_proj_dim": 512,
+    "ladder_head_center": true,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "policy_only": true
+   }
   }
  },
  "recipes": {
@@ -1419,6 +1469,114 @@
     "block_lambda": "off",
     "batch_size": 16384
    }
+  },
+  "R71": {
+   "description": "X0: R62 (fine-tune, lr 1e-3) on the aligned h4w128 targets of distill-ladder run 40244320871",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A19-R71_20261026_163916",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "policy_dataset": "/workspace/data/datasets/distill_ladder_40244320871/targets.npz",
+    "policy_target": "h4w128",
+    "policy_lr": 0.001
+   }
+  },
+  "R72": {
+   "description": "Q head on the frozen trunk, h4w128 paired leads weighted 1/SE^2 (distill-ladder run 40244320871)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R72_20261026_164442",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "/workspace/data/datasets/distill_ladder_40244320871/targets.npz",
+    "q_target": "h4w128"
+   }
+  },
+  "R73": {
+   "description": "R72 fitted to the 4x noisier h4w32 leads, judged by h4w128 (--q-judge)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R73_20261026_164451",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "/workspace/data/datasets/distill_ladder_40244320871/targets.npz",
+    "q_target": "h4w32",
+    "q_judge": "h4w128"
+   }
+  },
+  "R74": {
+   "description": "R72 with the trunk trained (--q-train-trunk)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R74_20261026_164500",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "/workspace/data/datasets/distill_ladder_40244320871/targets.npz",
+    "q_target": "h4w128",
+    "q_train_trunk": true
+   }
+  },
+  "R75": {
+   "description": "R72 with Q read from the policy logits times a learned scale (--q-head policy)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R75_20261026_164509",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "/workspace/data/datasets/distill_ladder_40244320871/targets.npz",
+    "q_target": "h4w128",
+    "q_head": "policy"
+   }
+  },
+  "R76": {
+   "description": "R72 on 1/16 of the training games, on CPU (q_fit_curve.yml; dataset path ds/targets.npz)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R76-S45_20261026_165633",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "ds/targets.npz",
+    "q_target": "h4w128",
+    "q_train_fraction": 0.0625
+   }
+  },
+  "R77": {
+   "description": "R72 on 1/8 of the training games, on CPU (q_fit_curve.yml)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R77-S45_20261026_165625",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "ds/targets.npz",
+    "q_target": "h4w128",
+    "q_train_fraction": 0.125
+   }
+  },
+  "R78": {
+   "description": "R72 on 1/4 of the training games, on CPU (q_fit_curve.yml)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R78-S45_20261026_165635",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "ds/targets.npz",
+    "q_target": "h4w128",
+    "q_train_fraction": 0.25
+   }
+  },
+  "R79": {
+   "description": "R72 on 1/2 of the training games, on CPU (q_fit_curve.yml)",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R79-S45_20261026_165623",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "ds/targets.npz",
+    "q_target": "h4w128",
+    "q_train_fraction": 0.5
+   }
+  },
+  "R80": {
+   "description": "R72 on all the training games, on CPU (q_fit_curve.yml): R72's flags but the dataset path ds/targets.npz, the same file by sha256; launched as R72-S45",
+   "first": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R72-S45_20261026_165623",
+   "flags": {
+    "tf32": false,
+    "block_lambda": "off",
+    "q_dataset": "ds/targets.npz",
+    "q_target": "h4w128"
+   }
   }
  },
  "overrides": {
@@ -1598,7 +1756,17 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R68_20261019_215356": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+A19-R68",
   "E7-A21-R70-S44_20261020_194250": "E7-A21-R70-S44",
   "E7-A8-R69-S44_20261020_194250": "E7-A8-R69-S44",
-  "E8-A22-R70-S44_20261020_234241": "E8-A22-R70-S44"
+  "E8-A22-R70-S44_20261020_234241": "E8-A22-R70-S44",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A19-R71_20261026_163916": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A24-R71",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R72_20261026_164442": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R72",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R73_20261026_164451": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R73",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R74_20261026_164500": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R74",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R75_20261026_164509": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R75",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R79-S45_20261026_165623": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R79-S45",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R72-S45_20261026_165623": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R80-S45",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R77-S45_20261026_165625": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R77-S45",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R76-S45_20261026_165633": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R76-S45",
+  "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R78-S45_20261026_165635": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R78-S45"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

@@ -12,6 +12,7 @@ from ai.training.generic_trainer import (train_pipeline, run_behavioral_cloning_
                                          DEFAULT_OBS_FEATURES, OBS_FEATURE_BITS)
 from ai.training.generic_trainer import run_search_distillation
 from ai.training.policy_fit import PolicyFitConfig, run_policy_fit
+from ai.training.q_fit import QFitConfig, run_q_fit
 from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
 from tools.lib.data_root import data_path
 from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR
@@ -267,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Which per-entity heads exist. The card-collision finding predicts "
                           "`country` carries most of M2's gain (arms M2d/M2e).")
     parser.add_argument("--mode", type=str, default="train",
-                        choices=["train", "warmup", "eval", "curriculum", "distill", "value-fit", "policy-fit"],
+                        choices=["train", "warmup", "eval", "curriculum", "distill", "value-fit", "policy-fit", "q-fit"],
                         help="Execution mode. `distill` is P15-X4a: soft cross-entropy "
                              "toward a searcher's visit distribution, from a dataset made "
                              "by tools/generate_search_targets.py. `value-fit` is P34's "
@@ -303,6 +304,10 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--policy-dataset", type=str, default=None,
                     help="A tools/distill_targets.py .npz: the keyed root's improved policy on entry decisions.")
     pf.add_argument("--policy-worlds", type=int, default=128, help="Which world count's targets to fit.")
+    pf.add_argument("--policy-target", type=str, default=None,
+                    help="Which teacher's targets to fit, by its distill_targets.py --teacher name (overrides --policy-worlds).")
+    pf.add_argument("--policy-reinit-heads", action="store_true", default=False,
+                    help="Re-initialise the policy heads, keeping the trained trunk (plasticity).")
     pf.add_argument("--policy-reinit", action="store_true", default=False,
                     help="Train --warmup-checkpoint's architecture from fresh weights instead of fine-tuning it.")
     pf.add_argument("--policy-arch", nargs="+", default=None, metavar="KEY=VALUE",
@@ -319,6 +324,27 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Use this share of the training games (whole games): the data-scaling cells.")
     pf.add_argument("--policy-patience", type=int, default=10,
                     help="Stop when the training fit has not risen by 0.2 points in this many evaluations (convergence).")
+    qf = parser.add_argument_group("action-value fit (--mode q-fit): the root's per-candidate leads as values")
+    qf.add_argument("--q-dataset", type=str, default=None,
+                    help="A tools/distill_targets.py .npz carrying a root teacher's candidate statistics (lead_T, lead_se_T).")
+    qf.add_argument("--q-target", type=str, default=None, help="Which teacher's leads to fit, by its --teacher name.")
+    qf.add_argument("--q-head", choices=["mlp", "policy"], default="mlp",
+                    help="mlp: a fresh head on the trunk's features; policy: the network's logits times a learned scale.")
+    qf.add_argument("--q-train-trunk", action="store_true", default=False,
+                    help="Train the copy's trunk too (a GPU); otherwise the trunk is frozen and its features cached.")
+    qf.add_argument("--q-weighting", choices=["inverse_variance", "unit"], default="inverse_variance")
+    qf.add_argument("--q-se-floor", type=float, default=0.01,
+                    help="Added in quadrature to every lead's SE: no pair weighs more than 1 / floor^2.")
+    qf.add_argument("--q-baseline", type=str, default="h0", help="A second teacher's leads read as the bar.")
+    qf.add_argument("--q-judge", type=str, default=None,
+                    help="The teacher whose two seeds judge the held-out rows (default --q-target).")
+    qf.add_argument("--q-epochs", type=float, default=40.0)
+    qf.add_argument("--q-lr", type=float, default=3e-4)
+    qf.add_argument("--q-batch", type=int, default=1024)
+    qf.add_argument("--q-eval-every", type=int, default=200)
+    qf.add_argument("--q-patience", type=int, default=10)
+    qf.add_argument("--q-train-fraction", type=float, default=1.0,
+                    help="Fit on this share of the training games (whole games): the data-scaling cells.")
     vf = parser.add_argument_group("value fit (--mode value-fit, P34)")
     vf.add_argument("--value-dataset", type=str, default=None,
                     help="A tools/value_labels.py dataset directory (train.npz, holdout.npz, siblings.npz, manifest.json).")
@@ -1378,11 +1404,24 @@ def main():
                             lr=args.policy_lr, max_epochs=args.policy_epochs, eval_every=args.policy_eval_every,
                             patience=args.policy_patience, train_fraction=args.policy_train_fraction,
                             head_only=args.policy_head_only, kl_anchor=args.policy_kl_anchor,
+                            target=args.policy_target, reinit_heads=args.policy_reinit_heads,
                             seed=args.seed if args.seed is not None else 44,
                             device=args.device),
             run_name=args.run_name, description=args.description, output_dir=args.output_dir,
             cli={k: v for k, v in vars(args).items()
                  if k.startswith("policy_") or k in ("mode", "warmup_checkpoint", "seed")})
+    elif args.mode == "q-fit":
+        if not args.q_dataset or not args.q_target or not args.warmup_checkpoint:
+            raise SystemExit("--mode q-fit needs --q-dataset, --q-target and --warmup-checkpoint (the network copied)")
+        run_q_fit(
+            QFitConfig(dataset=args.q_dataset, target=args.q_target, init=args.warmup_checkpoint, head=args.q_head,
+                       train_trunk=args.q_train_trunk, weighting=args.q_weighting, se_floor=args.q_se_floor,
+                       baseline=args.q_baseline or None, judge=args.q_judge, batch=args.q_batch, lr=args.q_lr, max_epochs=args.q_epochs,
+                       eval_every=args.q_eval_every, patience=args.q_patience, train_fraction=args.q_train_fraction,
+                       seed=args.seed if args.seed is not None else 44, device=args.device),
+            run_name=args.run_name, description=args.description, output_dir=args.output_dir,
+            cli={k: v for k, v in vars(args).items()
+                 if k.startswith("q_") or k in ("mode", "warmup_checkpoint", "seed")})
     elif args.mode == "value-fit":
         if not args.value_dataset or not args.warmup_checkpoint:
             raise SystemExit("--mode value-fit needs --value-dataset and --warmup-checkpoint (the weights to "

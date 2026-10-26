@@ -96,7 +96,10 @@ UNCHECKED_BY_DESIGN = frozenset({
     # --mode policy-fit's inputs: ai/training/policy_fit.py records them in its own metadata.json
     "policy_dataset", "policy_worlds", "policy_reinit", "policy_arch", "policy_epochs", "policy_lr",
     "policy_batch", "policy_eval_every", "policy_patience", "policy_train_fraction", "policy_head_only",
-    "policy_kl_anchor",
+    "policy_kl_anchor", "policy_target", "policy_reinit_heads",
+    # --mode q-fit's inputs: ai/training/q_fit.py records them in its own metadata.json
+    "q_dataset", "q_target", "q_head", "q_train_trunk", "q_weighting", "q_se_floor", "q_baseline", "q_judge",
+    "q_epochs", "q_lr", "q_batch", "q_eval_every", "q_patience", "q_train_fraction",
 })
 
 

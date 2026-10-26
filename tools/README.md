@@ -647,6 +647,71 @@ export PYTHONPATH=.:build/release
     --model soft.pt --budget rollout --out check.json
 ```
 
+**Distillation diagnostics (P36c and after).** `tools/distill_targets.py` records teachers' improved
+policies on the network's own entry decisions, held out by game, and searches the held-out positions
+a second time (other seeds) for the teacher's self-agreement. A teacher is `--teacher name=spec`:
+* `root:k:worlds:horizon:rule[:stop][:own|decider][:keyed][:aligned][:box4]` -- the rollout root.
+  Horizon 0 is the critic read at the mover's next decision, so a ladder from `h0` to `h4`
+  separates what the critic knows from what the playouts add.
+* `net:<checkpoint>` -- another network's raw policy, a positive control: a target a network of
+  the same shape demonstrably represents.
+
+A root teacher also writes its per-candidate statistics (`cand_T`, `q_T`, `lead_T`, `lead_se_T`,
+`worlds_T`, and the second seed's `cand2_T`, ... on the held-out rows): each candidate's mean, its
+paired lead over the network's move and that lead's standard error -- the regression targets of an
+action-value head, which a pick or an improved policy throws away.
+
+`--worlds 16 64 128` (with no `--teacher`) rebuilds P36c's set with its seeds. The search splits
+across machines: `--collect-only` writes the positions once; then `--states pos.npz --shard i/n`
+searches one part per runner; then `--states pos.npz --merge s1.npz ... --output targets.npz`
+joins them, refusing any row that is not covered exactly once. The raw states are readable only by
+the engine build that wrote them, and every step checks this.
+
+`tools/train.py --mode policy-fit --policy-target <name>` fits a student to any named teacher.
+`--policy-reinit-heads` re-initialises only the policy heads, keeping the trunk: a plasticity test
+between the fine-tune and `--policy-reinit`. `ai/eval/departure_probe.py --target <name>` asks
+whether the departures can be read from the trunk.
+
+`tools/train.py --mode q-fit --q-dataset <npz> --q-target <name> --warmup-checkpoint <pt>` fits
+those statistics instead: an action-value head on a copy of the network, so that each candidate's
+predicted value less the network's move's is its lead, weighted by 1 / SE^2 (`--q-weighting unit`
+for the control). `--q-head mlp` is a fresh head on the trunk's features (frozen and cached unless
+`--q-train-trunk`, so it runs on a CPU); `--q-head policy` reads the network's own logits times a
+learned scale. On the held-out rows it records the correlation with the two seeds' mean lead,
+disattenuated by that mean's reliability (`r_dis`), beside the same for the starting logits and for
+`--q-baseline` (h0), the same centred within each position (`r_within_dis`), and the take / leave
+rates of the Q root at each threshold against the teacher's stable picks. The number that decides is
+the Q root's **realised gain** (`gain_<θ>`, with its standard error): the judge's two-seed mean lead
+of the move the Q root plays, per decision (the network's move scores 0), unbiased because the head
+never saw those seeds. Its bars are `gain_judge_xseed` (the teacher's pick on one seed, valued by the
+other) and `gain_base` (the baseline's own pick). `--q-judge <name>` judges with another teacher than
+the one fitted (fit 32 worlds, judge by 128); `--q-train-fraction f` keeps the first share of the
+training games, whole, for a data-scaling curve with the held-out rows unchanged
+(`.github/workflows/q_fit_curve.yml` runs one on CPU). Records in `q_fit_metrics.jsonl` and
+`metadata.json`.
+
+`tools/distill_probe.py` reads a target set:
+* `agree` -- each teacher's departure rate, its self-agreement between seeds, and pairwise: on the
+  row teacher's departures, how often the column teacher picks the same move.
+* `knn` -- on the departures, whether the trunk's (or the observation's) nearest neighbours carry
+  the same correction (the teacher's local consistency).
+* `track` -- for each checkpoint, against the network the positions came from: where it takes the
+  teacher's move on departures, keeps the base move, and leaves the moves both agreed on. It reads a
+  policy fit's or an active-search run's snapshots offline.
+
+```bash
+tools/scripts/check_engine_fresh.sh && export PYTHONPATH=.:build/release
+.venv/bin/python tools/distill_targets.py --checkpoint <ckpt.pt> --games 2000 --collect-only --output pos.npz
+.venv/bin/python tools/distill_targets.py --checkpoint <ckpt.pt> --states pos.npz --shard 1/8 \
+    --teacher h4=root:4:16:4:z2:earlier:own:keyed:aligned:box4 --teacher h0=root:16:4:0:argmax:earlier:own:keyed \
+    --teacher soup=net:<soup.pt> --device cpu --output s1.npz
+.venv/bin/python tools/distill_targets.py --checkpoint <ckpt.pt> --states pos.npz --merge s*.npz --output targets.npz
+.venv/bin/python tools/distill_probe.py agree --dataset targets.npz
+.venv/bin/python tools/distill_probe.py knn --dataset targets.npz --checkpoint <ckpt.pt> --target h4
+.venv/bin/python tools/distill_probe.py track --dataset targets.npz --target h4 \
+    --checkpoints <student>/policy_fit_last.pt <student>/policy_fit_best_heldout.pt
+```
+
 ---
 
 ## 7d. The Two-Stage Catastrophic-Blunder Census
