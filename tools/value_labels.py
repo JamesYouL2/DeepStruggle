@@ -526,7 +526,8 @@ def run_select(a: argparse.Namespace) -> int:
     """A subset of a labelled set's positions as a positions file of its own, to be labelled again:
     `contested` -- entry decisions (card choice, headline) whose label lies in [lo, hi], positions of
     the sibling slice whose candidate means differ by --spread or more first, then a fixed shuffle --
-    or `exact`, the exact slice's positions."""
+    `entry`, --n entry decisions of a fixed shuffle (no labels needed), or `exact`, the exact slice's
+    positions."""
     src = pathlib.Path(a.dir)
     pos, pmeta = _load_positions(src)
     out = pathlib.Path(a.out)
@@ -541,6 +542,13 @@ def run_select(a: argparse.Namespace) -> int:
             if f.with_suffix(".json").exists():
                 (out / f.with_suffix(".json").name).write_bytes(f.with_suffix(".json").read_bytes())
         params: Dict[str, Any] = {"what": "exact", "of": pmeta.get("dataset", src.name)}
+    elif a.what == "entry":
+        entry = np.asarray([ts.state_from_raw_bytes(b.tobytes()).ctx().decision_type == ts.DecisionType.SELECT_CARD
+                            for b in pos["state"]])
+        order = np.random.default_rng([a.seed, 5]).permutation(pos["id"].size)
+        want = np.sort(pos["id"][order[entry[order]][:a.n]])
+        params = {"what": "entry", "of": pmeta.get("dataset", src.name), "n": int(want.size), "seed": a.seed,
+                  "eligible": int(entry.sum())}
     else:
         lab = [dict(np.load(f)) for f in sorted(src.glob("labels_*.npz"))]
         if not lab:
@@ -831,7 +839,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     se = sub.add_parser("select", help="a subset of a labelled set's positions, to label again")
     se.add_argument("--dir", required=True)
     se.add_argument("--out", required=True)
-    se.add_argument("--what", choices=["contested", "exact"], default="contested")
+    se.add_argument("--what", choices=["contested", "entry", "exact"], default="contested")
     se.add_argument("--n", type=int, default=50000)
     se.add_argument("--lo", type=float, default=0.25, help="contested: the label's lower bound")
     se.add_argument("--hi", type=float, default=0.75, help="contested: the label's upper bound")
