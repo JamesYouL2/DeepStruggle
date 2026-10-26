@@ -170,3 +170,4 @@ and the E8 control `E8-A8-R1-S44-2` at 2,400M, beside the E7 heads run at 2,000M
 
 **10,200M: 31.4%** (US 25.4 / USSR 36.3; the control 38.4% at 10,000M, its band 36–40%): most of the strength back within 190M of a fresh head; the head's norm regrows fast (policy head 1.65x → 3.2x a fresh head's, play-mode head 3.6x → 7.7x over 10,010–10,210M), entropy back to 0.49, the kept critic steady (explained variance 0.85–0.87).
 **10,400M: 34.6%** (US 28.9 / USSR 39.5) -- recovering (10,200M 31.4%), not yet back in the control's 36–40% band.
+**10,800M: 36.5%** (US 31.2 / USSR 41.0) -- back inside the control's 36–40% band, not above it. **Verdict: a single last-layer reset does not move the plateau**: a fresh policy head on the plateau trunk recovers to the same level in ~800M (31.4 / 34.6 / 36.5% at 10,200 / 10,400 / 10,800M), its weights regrowing as before -- the ceiling is not the head's plasticity alone.
