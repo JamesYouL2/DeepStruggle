@@ -1,0 +1,140 @@
+# The action-value head's data-scaling curve on CPU (tools/train.py --mode q-fit, frozen trunk):
+# the same fit at several shares of the training games, each at two seeds, on a distill-ladder
+# run's pooled targets. Does the Q root's realised gain (`gain_*`, judged by the target's own two
+# held-out seeds) rise with the data?
+#
+#   gh workflow run q_fit_curve.yml --ref exp/distill-ladder -R JamesYouL2/DeepStruggle
+#   gh run download <run-id> -n q-fit-curve-<run-id> -D data/reports/distill_ladder/<source>/curve
+#
+# `cells` maps each share of the games to its recipe code (research/architectures_and_recipes.md):
+# R72 is the whole training set; R76..R79 are R72 at 1/16, 1/8, 1/4 and 1/2 of its games.
+name: q-fit-curve
+
+on:
+  # The push trigger only registers the workflow from this branch; every job is skipped on it.
+  push:
+    branches: [exp/distill-ladder]
+    paths: [.github/workflows/q_fit_curve.yml]
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "The distill-ladder run whose pooled targets.npz is fitted"
+        default: "40244320871"
+      model:
+        description: "The network, a .pt path in hf_repo (A13+R48's SWA)"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+      target:
+        default: "h4w128"
+      cells:
+        description: "share=recipe, space-separated"
+        default: "0.0625=R76 0.125=R77 0.25=R78 0.5=R79 1=R72"
+      seeds:
+        default: "44 45"
+
+permissions:
+  contents: read
+  actions: read   # the source run's artifact
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  SOURCE: ${{ inputs.source }}
+  MODEL: ${{ inputs.model }}
+  HF_REPO: ${{ inputs.hf_repo }}
+  TARGET: ${{ inputs.target }}
+  CELLS: ${{ inputs.cells }}
+  SEEDS: ${{ inputs.seeds }}
+  PREFIX: E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cells: ${{ steps.p.outputs.cells }}
+    steps:
+      - id: p
+        run: |
+          echo "cells=$(python3 -c "
+          import json, os
+          print(json.dumps([{'share': c.split('=')[0], 'recipe': c.split('=')[1], 'seed': s}
+                            for c in os.environ['CELLS'].split() for s in os.environ['SEEDS'].split()]))")" >> "$GITHUB_OUTPUT"
+
+  fit:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJson(needs.plan.outputs.cells) }}
+    env:
+      SHARE: ${{ matrix.cell.share }}
+      RECIPE: ${{ matrix.cell.recipe }}
+      SEED: ${{ matrix.cell.seed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Targets and network
+        run: |
+          mkdir -p work ds
+          gh run download "$SOURCE" -R "$GITHUB_REPOSITORY" -n "distill-ladder-$SOURCE" -D ds
+          curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum ds/targets.npz work/net.pt
+      - name: Fit, share ${{ matrix.cell.share }} seed ${{ matrix.cell.seed }}
+        run: |
+          mkdir -p out
+          tools/scripts/check_engine_fresh.sh && python tools/train.py --mode q-fit --device cpu \
+            --warmup-checkpoint work/net.pt --q-dataset ds/targets.npz --q-target "$TARGET" \
+            --q-train-fraction "$SHARE" --seed "$SEED" \
+            --run-name "$PREFIX-A23-$RECIPE-S$SEED" \
+            --description "Q head, frozen trunk, $TARGET leads, $SHARE of the training games (run $SOURCE)" \
+            2>&1 | tee "out/fit.log"
+          run=$(ls -d data/checkpoints/*-A23-"$RECIPE"-S"$SEED"_*)
+          cp "$run"/metadata.json "$run"/q_fit_metrics.jsonl out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: q-fit-curve-part-${{ github.run_id }}-${{ matrix.cell.recipe }}-${{ matrix.cell.seed }}
+          path: out/
+          retention-days: 30
+
+  pool:
+    needs: fit
+    if: always() && needs.fit.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: q-fit-curve-part-${{ github.run_id }}-*
+          path: parts
+      - name: Table
+        run: |
+          mkdir -p res && cp -r parts res/
+          python3 - <<'EOF' | tee res/curve.md >> "$GITHUB_STEP_SUMMARY"
+          import glob, json
+          rows = []
+          for p in sorted(glob.glob("parts/*/metadata.json")):
+              m = json.load(open(p))
+              b, f = m["best"], m["fixed"]
+              rows.append((m["config"]["train_fraction"], m["seed"], f["train_positions"], b, f, m["git_commit"]))
+          rows.sort(key=lambda r: (r[0], r[1]))
+          f0 = rows[0][4]
+          print(f"commit `{rows[0][5][:8]}`; judge root {100 * f0['gain_judge_xseed']:+.2f}, "
+                f"baseline root {100 * f0['gain_base']:+.2f} (gain x100 per decision)\n")
+          print("| share | seed | train pos | r_dis | within | gain@0.02 | gain@0.04 | gain@0.08 | depart@0.04 |")
+          print("|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+          for share, seed, n, b, _, _ in rows:
+              g = lambda t: f"{100 * b['gain_' + t]:+.2f} ± {100 * b['gain_se_' + t]:.2f}"
+              print(f"| {share:g} | {seed} | {n:,} | {b['r_dis']:.3f} | {b['r_within_dis']:.3f} | {g('0.02')} | "
+                    f"{g('0.04')} | {g('0.08')} | {b['depart_0.04']:.3f} |")
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: q-fit-curve-${{ github.run_id }}
+          path: res/
+          retention-days: 90

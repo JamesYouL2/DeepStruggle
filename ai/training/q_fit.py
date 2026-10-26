@@ -36,6 +36,7 @@ Readings on the held-out games, whose rows were searched twice (two seeds, indep
   it is worth per decision over the network, unbiased since the head never saw those seeds. The bars are
   in `fixed`: `gain_judge_xseed` (the judge's root, one seed's pick valued by the other) and `gain_base`
   (the baseline teacher's pick).
+  `gain_se_*` is its standard error over rows (a game's rows are not independent: a lower bound).
 * The **Q root's** move: the candidate with the largest predicted lead when it clears `theta`, else the
   network's. Against the teacher's z2 pick where both seeds agree: `take_*` (it plays the teacher's move
   on the stable departures), `leave_*` (it leaves the network's move where both seeds keep it -- damage),
@@ -88,7 +89,10 @@ class QFitConfig:
     eval_every: int = 200
     patience: int = 10              # evaluations without the validation loss falling
     val_every: int = 10             # one training game in this many is the validation slice
-    thetas: List[float] = field(default_factory=lambda: [0.0, 0.01, 0.02, 0.04])
+    thetas: List[float] = field(default_factory=lambda: [0.0, 0.01, 0.02, 0.04, 0.08])
+    #: Fit on this share of the training games (whole games, the first by id): the data-scaling cells.
+    #: The validation slice and the held-out games are unchanged.
+    train_fraction: float = 1.0
     seed: int = 44
     device: str = "cuda"
     bf16: bool = True
@@ -164,6 +168,9 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
     game = d["game"].astype(np.int64)
     val_mask = ~heldout & (game % cfg.val_every == cfg.val_every // 2)
     tr = np.flatnonzero(~heldout & ~val_mask & searched)
+    if cfg.train_fraction < 1.0:
+        games = np.unique(game[tr])
+        tr = tr[np.isin(game[tr], games[:max(1, int(round(cfg.train_fraction * games.size)))])]
     va = np.flatnonzero(val_mask & searched)
     jt = cfg.judge or t
     if f"lead2_{jt}" not in d:
@@ -343,6 +350,7 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
             out[f"leave_{th:g}"] = float((move[stable_keep] != net[ho][stable_keep]).mean()) if stable_keep.any() else float("nan")
             gain = np.where(lead_best > th, mean12[np.arange(best.size), best], 0.0)
             out[f"gain_{th:g}"] = float(gain.mean())
+            out[f"gain_se_{th:g}"] = float(gain.std() / math.sqrt(max(1, gain.size)))
         return out
 
     def gain_of(moves: np.ndarray, cands: List[str], leads_: List[str]) -> Dict[str, float]:
@@ -356,7 +364,8 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
 
     lg_ho = base_logits(ho)
     fixed: Dict[str, float] = {"reliability_single": r12, "reliability_mean": rel, "reliability_within": rel_within,
-                               "stable_departures": int(stable_dep.sum()), "sure_pairs": int(sure.sum())}
+                               "stable_departures": int(stable_dep.sum()), "sure_pairs": int(sure.sum()),
+                               "train_positions": int(tr.size)}
     # The bars for `gain_*`: the judge's own root, each seed's pick valued by the other seed (no winner's curse),
     # and the baseline teacher's pick valued by both of the judge's seeds (independent searches).
     xs1, xs2 = gain_of(pick[ho], ["cand2"], ["lead2"]), gain_of(pick2[ho], ["cand"], ["lead"])

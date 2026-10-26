@@ -118,6 +118,18 @@ def test_a_fit_to_noisy_leads_is_judged_by_the_better_teacher(tmp_path: Path) ->
     assert meta["best"]["r_dis"] > 0.7                      # pooling over positions averages the noise out
 
 
+def test_a_train_fraction_keeps_whole_games_and_the_same_held_out_rows(tmp_path: Path) -> None:
+    data, init = _dataset(tmp_path), _init(tmp_path)
+    fixed = {}
+    for frac in (1.0, 0.5):
+        run = run_q_fit(QFitConfig(dataset=data, target="hq", init=init, batch=64, max_epochs=1, eval_every=50,
+                                   warmup_steps=10, device="cpu", bf16=False, train_fraction=frac),
+                        run_name=None, description="test", output_dir=str(tmp_path / f"run{frac}"))
+        fixed[frac] = json.loads((Path(run) / "metadata.json").read_text())["fixed"]
+    assert 0.2 < fixed[0.5]["train_positions"] / fixed[1.0]["train_positions"] < 0.8
+    assert fixed[0.5]["gain_judge_xseed"] == fixed[1.0]["gain_judge_xseed"]
+
+
 def test_a_teacher_without_statistics_is_refused(tmp_path: Path) -> None:
     data, init = _dataset(tmp_path), _init(tmp_path)
     with pytest.raises(SystemExit, match="no candidate statistics"):
