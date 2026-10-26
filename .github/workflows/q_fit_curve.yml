@@ -88,13 +88,15 @@ jobs:
       - name: Fit, share ${{ matrix.cell.share }} seed ${{ matrix.cell.seed }}
         run: |
           mkdir -p out
+          # The lineage's own seed (S44) takes no suffix: the name grammar refuses one that restates it.
+          SUFFIX=$([ "$SEED" = 44 ] || echo "-S$SEED")
           tools/scripts/check_engine_fresh.sh && python tools/train.py --mode q-fit --device cpu \
             --warmup-checkpoint work/net.pt --q-dataset ds/targets.npz --q-target "$TARGET" \
             --q-train-fraction "$SHARE" --seed "$SEED" \
-            --run-name "$PREFIX-A23-$RECIPE-S$SEED" \
+            --run-name "$PREFIX-A23-$RECIPE$SUFFIX" \
             --description "Q head, frozen trunk, $TARGET leads, $SHARE of the training games (run $SOURCE)" \
             2>&1 | tee "out/fit.log"
-          run=$(ls -d data/checkpoints/*-A23-"$RECIPE"-S"$SEED"_*)
+          run=$(ls -d data/checkpoints/*-A23-"$RECIPE$SUFFIX"_*)
           cp "$run"/metadata.json "$run"/q_fit_metrics.jsonl out/
       - uses: actions/upload-artifact@v4
         with:
