@@ -142,7 +142,7 @@ differs from the network's own argmax on which the fitted policy now picks the t
 
 `/workspace/data/reports/p37a_e8_2400M.json`; the same probe (20,000 of P36c's positions, trunk frozen, Adam 1e-3, batch
 512, cap 40) on 80M-window SWAs: the E8 scaled network `E8-A25-R47-S44` (A25: A22 with the trunk norm, 16k minibatch)
-and the E8 control `E8-A8-R1-S44-2` at 2,400M, beside the E7 heads run at 2,000M and 6,400M.
+and the E8 control `E8-A8-R1-S44` at 2,400M, beside the E7 heads run at 2,000M and 6,400M.
 
 | network | random labels, own head | random labels, fresh head | P36c targets, own head (departures) | head dormant τ 0.1 | head norm / fresh (`policy_head`, `play_mode_head_net`) |
 |:---|---:|---:|---:|---:|:---|
@@ -166,7 +166,7 @@ and the E8 control `E8-A8-R1-S44-2` at 2,400M, beside the E7 heads run at 2,000M
 
 ## The last-layer reset on the E8 control (2026-10-25)
 
-`E8-A8-R1-S44-2@10010M+R87`: the A8 control on E8 (ENG-5), plateaued at 36–40% against A13+R48's SWA from 5,600M to 10,000M, branched at 10,010M with the policy head re-initialised once (`--resume-reset-policy-head`: `policy_head`, `pe_trunk`, `pe_country`, `branch_head_net`, `play_mode_head_net` get a fresh network's weights and lose their Adam moments; the trunk, the value heads and pi_ref are kept), 800M on the control's recipe. The plateau is the control's own band, so the read is whether it moves again: reads at 10,200 / 10,400 / 10,800M against A13+R48's SWA, the head-norm trajectory in the training log (`head_norm_over_fresh_*`). Value heads are not reset: P37a measured the loss in the policy head, and a fresh critic would void the advantages the new head learns from.
+`E8-A8-R1-S44@10010M+R87`: the A8 control on E8 (ENG-5), plateaued at 36–40% against A13+R48's SWA from 5,600M to 10,000M, branched at 10,010M with the policy head re-initialised once (`--resume-reset-policy-head`: `policy_head`, `pe_trunk`, `pe_country`, `branch_head_net`, `play_mode_head_net` get a fresh network's weights and lose their Adam moments; the trunk, the value heads and pi_ref are kept), 800M on the control's recipe. The plateau is the control's own band, so the read is whether it moves again: reads at 10,200 / 10,400 / 10,800M against A13+R48's SWA, the head-norm trajectory in the training log (`head_norm_over_fresh_*`). Value heads are not reset: P37a measured the loss in the policy head, and a fresh critic would void the advantages the new head learns from.
 
 **10,200M: 31.4%** (US 25.4 / USSR 36.3; the control 38.4% at 10,000M, its band 36–40%): most of the strength back within 190M of a fresh head; the head's norm regrows fast (policy head 1.65x → 3.2x a fresh head's, play-mode head 3.6x → 7.7x over 10,010–10,210M), entropy back to 0.49, the kept critic steady (explained variance 0.85–0.87).
 **10,400M: 34.6%** (US 28.9 / USSR 39.5) -- recovering (10,200M 31.4%), not yet back in the control's 36–40% band.

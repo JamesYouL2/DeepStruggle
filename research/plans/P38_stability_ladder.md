@@ -39,7 +39,7 @@ path; the policy heads stay small and are reset (P37's first branch).
 
 Each rung is **one change** from a rung that passes every check, on the control's recipe (R1, 4,096
 minibatch) unless the change is the recipe; `--ladder-res-dropout 0` on every block rung. Codes at
-launch. The control is `E8-A8-R1-S44-2` (A8 on R1, E8 with ENG-5, running long).
+launch. The control is `E8-A8-R1-S44` (A8 on R1, E8 with ENG-5, running long).
 
 | rung | change | from | what it tests |
 |:---|:---|:---|:---|

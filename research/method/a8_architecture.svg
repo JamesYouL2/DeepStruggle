@@ -20,7 +20,7 @@
   </defs>
   <rect width="1240" height="1000" fill="#ffffff"/>
 
-  <text x="620" y="30" text-anchor="middle" font-size="18" font-weight="bold">A8 — LadderNet as trained in E7-A8-R1-S44 and E8-A8-R1-S44-2 (1.48M parameters)</text>
+  <text x="620" y="30" text-anchor="middle" font-size="18" font-weight="bold">A8 — LadderNet as trained in E7-A8-R1-S44 and E8-A8-R1-S44 (1.48M parameters)</text>
   <text x="620" y="52" text-anchor="middle" class="s">observation v2.3: 3,824 floats (board 84×26, cards 110×14, global 100); since E8 the headline_reveal bit edits the base card rows, no extra width</text>
 
   <!-- inputs -->

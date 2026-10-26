@@ -16,7 +16,7 @@ PYTHONPATH=.:build/release .venv/bin/python -m ai.eval.network_health \
   --checkpoints <new>/snapshot_<N>steps.pt <control>/snapshot_<N>steps.pt --out <report.json>
 ```
 
-The control is `E8-A8-R1-S44-2` (A8 on R1, E8 with ENG-5), training long for exactly this purpose.
+The control is `E8-A8-R1-S44` (A8 on R1, E8 with ENG-5), training long for exactly this purpose.
 
 ## 1. The training log (from 30M)
 

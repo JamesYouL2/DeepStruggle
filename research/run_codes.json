@@ -1829,7 +1829,7 @@
   },
   "R87": {
    "description": "R1 with the policy head re-initialised once at the branch point (--resume-reset-policy-head: fresh weights and Adam moments for the policy head, the per-entity heads and their trunk context, the branch and play-mode heads; trunk, value heads and pi_ref kept) -- P37's last-layer reset",
-   "first": "E8-A8-R1-S44-2@10010M+R87_20261025_184833",
+   "first": "E8-A8-R1-S44@10010M+R87_20261025_184833",
    "flags": {
     "resume_reset_policy_head": true,
     "opponent_frac": 0.3,
@@ -2051,7 +2051,6 @@
   "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R78-S45_20261026_165635": "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@12800M+E8-A23-R78-S45",
   "E8-A25-R1-S44_20261023_001525": "E8-A25-R1-S44",
   "E8-A25-R47-S44_20261023_001540": "E8-A25-R47-S44",
-  "E8-A8-R1-S44-2_20261023_032854": "E8-A8-R1-S44",
   "E8-A26-R1-S44_20261023_210114": "E8-A26-R1-S44",
   "E8-A26-R84-S44_20261024_101857": "E8-A26-R84-S44",
   "E8-A26-R85-S44_20261024_204210": "E8-A26-R85-S44",
@@ -2061,7 +2060,8 @@
   "E8-A29-R84-S44_20261025_051812": "E8-A29-R84-S44",
   "E8-A29-R86-S44_20261025_054307": "E8-A29-R86-S44",
   "E8-A27-R86-S44_20261025_102344": "E8-A27-R86-S44",
-  "E8-A8-R1-S44-2@10010M+R87_20261025_184833": "E8-A8-R1-S44@10010M+R87"
+  "E8-A8-R1-S44_20261023_032854": "E8-A8-R1-S44",
+  "E8-A8-R1-S44@10010M+R87_20261025_184833": "E8-A8-R1-S44@10010M+R87"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
