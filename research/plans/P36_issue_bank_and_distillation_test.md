@@ -418,3 +418,31 @@ played as environment take those rows out of the policy gradient. The plan reads
 
 About −50 Elo at 800M against −70/−80 at 400M: behind in both seats, closing by ~3–4.5 points a 400M. The
 plan's decision point is 2,000M (on past it only if ahead).
+
+**Why slot 1's search CE was missing (2026-10-26).** Not a missing name on the list: `generic_trainer`
+registered the search-CE metrics only when the `--search-ce-coef` *argument* was above 0, and an
+active-search run sets the trainer's coefficient from `--active-search-ce-coef` with that argument left at 0.
+Fixed in this change (the trainer's coefficient decides; `tests/training/test_search_ce.py` refuses the
+argument form). `E7-A8-R69-S44` logs the CE only from a resume on fixed code; its snapshots can be read
+offline meanwhile with `tools/distill_probe.py track`.
+
+**The correction form re-read, closed in every form tried (2026-10-26;
+[`../log/E7_distill_ladder.md`](../log/E7_distill_ladder.md)).** P36c's targets predate the aligned root, and
+a pick throws away the root's per-candidate values and their noise, so three ways out were left. On 200k
+positions of A13+R48's SWA, offline:
+
+* a teacher ladder (h0 the critic alone, horizons 1, 2 and 4, 16 to 128 worlds, the soup as a positive
+  control): every root's departures are local on the trunk (+2 to +4 points at the nearest neighbours,
+  the soup +9);
+* P36c's best student refitted on the aligned 128-world targets: 18.3% of held-out departures against
+  the teacher's 75.2% (P36c 20.2%);
+* an action-value head fitted to each candidate's lead, weighted by its standard error: it ranks the
+  root's candidates at r = 0.80 disattenuated (the critic alone 0.37), within a position too, and its
+  argmax still plays worse than the network, −0.10 per decision ×100 on the judge's held-out seeds
+  against the root's +1.35. A 4× noisier fit, a trained trunk and the policy logits as the head change
+  nothing; a doubling of the data gains +0.06, toward the network's 0.
+
+What stays open is the active form (slot 1), the root's own bias (a blind human-judge bank, built on the
+fork, labels not in) and a better critic (P34 revision 2). **A pre-registered check for any further
+distillation proposal:** a realised gain above 0 on the judge's held-out seeds, at a departure rate of at
+least 5%, before any games.
