@@ -1,4 +1,4 @@
-# P34 D3 measured before it is built (2026-10-26): more keyed worlds and a stronger follow-up make the sibling labels more reliable, not more useful
+# P34 D3 measured before it is built (2026-10-26): more keyed worlds make the sibling labels reliable, and a stronger follow-up does not change them
 
 **Question.** [P34 revision 2, step 4](../plans/P34_search_centric_evaluator.md) plans `D3`: relabel the
 contested entry decisions with a stronger follow-up, "at enough worlds for a ceiling of at least 0.85".
@@ -21,17 +21,25 @@ candidate was played in 128 shared worlds.
 * **That reliability comes from the easy decisions.** Ranked by candidate spread on worlds the
   measurement does not use, the top 10% of entry decisions reach 0.94 and carry 55% of the signal.
   The bottom half reaches 0.33.
-* **A label's pick barely beats the network's own move.** The pick is made on some worlds and scored
-  against the generator's argmax on disjoint ones. Even by the label's own evaluator it gains
-  **+0.16 ± 0.09** (×100, per entry decision) at 64 worlds, although it departs from the network
-  60% of the time. At 8–16 worlds, D2's scale, it is worse than the network.
+* **A label's pick is worth what play-time search is worth, and no more.** The pick is made on
+  some worlds and scored against the generator's argmax on disjoint ones. By the label's own
+  evaluator it gains **+0.16 ± 0.09** (×100, per entry decision) at 64 worlds, although it departs
+  from the network 60% of the time.
+  * At 8–16 worlds, D2's scale, the pick is worse than the network.
+  * A game has ~118 entry decisions (positions kept 1 in 8), ~77% of them with four candidates. So
+    +0.16 sums to roughly +7 points a side per game. That is the order of the rollout root's whole
+    gain at play time, which the [distillation ladder](E7_distill_ladder.md) could not transfer.
+  * It is not a correction the critic is missing.
 * **A stronger follow-up does not change the ranking.** With the keyed rollout root at the playout's
   entry decisions, the candidate means correlate with greedy follow-up's at **0.98** after
   disattenuation, on disjoint worlds.
   * Scored by search follow-up, the search pick beats the greedy pick by +0.43 ± 0.19.
   * Scored by greedy follow-up, the difference is −0.06 ± 0.19.
-* **So D3 is dropped.** Under step 5, this is the "neither moves" branch: direction 1's ceiling is
-  the follow-up's quality, and the remaining strength is search at play time.
+* **So D3 is dropped.** Its premise is that a stronger follow-up reveals values greedy play hides,
+  and the follow-up does not change the prices. What the labels do resolve is the search's own
+  gain, which is already collected at play time. Under step 5, this is the "neither moves" branch:
+  direction 1's ceiling is the follow-up's quality, and the remaining strength is search at play
+  time.
 
 ## Run 1: the reliability curve (greedy follow-up, CI 40373298241)
 
@@ -86,7 +94,9 @@ win-probability points ×100 per decision.
 | 64 | 0.60 | +0.16 ± 0.09 | 0.64 | +0.22 ± 0.15 |
 
 This is the label's own evaluator (greedy playouts of the same network) judging its own picks, so it
-is the most favourable reading. Even so, the trend is about +0.2 per doubling of worlds.
+is the most favourable reading. The trend is about +0.2 per doubling of worlds. Summed over a game's
+~90 four-candidate entry decisions, +0.16 is ~+7 points a side. That is the size of search at play
+time, and it is what offline distillation failed to carry.
 
 ## Run 2: a stronger follow-up (CI 40383481065)
 
@@ -126,8 +136,8 @@ scoring its own pick, is 2.3 SE, and the other evaluator does not reproduce it. 
 D3 was meant to show a candidate difference that the critic misses and that greedy play hides. Both
 halves of that fail here:
 
-* At the world counts D3 could afford, the labels resolve only the differences the network already
-  plays correctly.
+* The labels' reliability is carried by the decisions the network already plays correctly.
+* What remains, a pick worth +0.16 a decision, is play-time search's own gain, not a hidden value.
 * Searching inside the playouts does not change the price of the candidates.
 
 This agrees with the [distillation ladder](E7_distill_ladder.md) from the other direction. The
@@ -138,7 +148,8 @@ Not tested here:
 
 * A follow-up from a *different*, stronger network.
 * The turn-10 exact tail (step 6, bindings work).
-* Fits. No fit was run, because the label itself carries less than half a point per decision.
+* Fits. No fit was run: the labels resolve the search's own gain, which the
+  [ladder](E7_distill_ladder.md) showed does not transfer, and nothing beyond it.
 
 ## Reproduce
 

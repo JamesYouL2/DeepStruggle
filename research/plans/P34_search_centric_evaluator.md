@@ -331,12 +331,15 @@ keyed from now on.
      holds, so 0.85 needs ~256 worlds. The pooled figure is carried by the top 10% by spread (0.94);
      the bottom half reaches 0.33.
    * *What a label is worth.* Its pick, scored against the generator's own move on disjoint worlds,
-     gains +0.16 ± 0.09 ×100 a decision at 64 worlds, and is worse than the network at D2's 16.
+     gains +0.16 ± 0.09 ×100 a decision at 64 worlds, and is worse than the network at D2's 16. Over
+     a game that is ~+7 points a side, the size of play-time search's own gain, not a value the
+     critic misses.
    * *A stronger follow-up.* On 294 of those decisions the keyed root at entry decisions prices the
      candidates like greedy follow-up (disattenuated r 0.98). Its pick beats greedy's by +0.43 ± 0.19
      on its own scoring and by −0.06 ± 0.19 on greedy's.
 
-   So neither the worlds nor the follow-up gives D3 a target worth fitting, and step 5 reads as
+   So the follow-up premise fails (the stronger player does not change the prices), and what the
+   labels resolve is the search gain the distillation ladder could not transfer. Step 5 reads as
    "neither moves".
 5. **Judge the direction on step 4.** The leak-pair ranking moves and the searched rating beats the
    keyed root by clearly more than +10 → the generation loop runs, and the capacity question is
