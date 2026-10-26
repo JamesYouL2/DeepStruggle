@@ -20,7 +20,7 @@ times on the E4 ladder (CLAUDE.md, invariant 15).
 A value fit (`--mode value-fit`, P34's evaluators) takes its network's A code with `value_only`
 added -- the same shape read only for its value is a different thing to name -- and its R code from
 the value-fit flags, the dataset among them. A policy fit (`--mode policy-fit`, P36c's students) is
-the same with `policy_only`. A labelling recipe (`D`, tools/value_labels.py) is the
+the same with `policy_only`, and an action-value fit (`--mode q-fit`) with `q_only`. A labelling recipe (`D`, tools/value_labels.py) is the
 same idea for datasets: `labelling_code` maps a dataset's labelling settings to its code under
 `labellings`, assigning the next one for a new set.
 
@@ -154,7 +154,7 @@ class Run:
 
     @property
     def seed(self) -> str:
-        if self.meta.get("mode") in ("value-fit", "policy-fit"):
+        if self.meta.get("mode") in ("value-fit", "policy-fit", "q-fit"):
             return str(self.meta.get("seed"))      # a supervised fit has one seed
         s = {self.meta.get(k) for k in ("seed_env", "seed_sampling", "seed_pool")}
         if len(s) != 1:
@@ -281,6 +281,8 @@ def arch_sig(r: Run) -> Dict[str, Any]:
         sig["value_only"] = True
     if r.meta.get("mode") == "policy-fit":
         sig["policy_only"] = True
+    if r.meta.get("mode") == "q-fit":
+        sig["q_only"] = True
     return sig
 
 
