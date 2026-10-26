@@ -810,6 +810,32 @@
     "per_entity_heads": 64,
     "drop_static": true
    }
+  },
+  "A31": {
+   "description": "A8 with a LayerNorm after the first layer of the heads that had none -- the per-entity (country), branch and play-mode heads (--ladder-head-norm), as the base policy head has: the heads without one die in every network measured",
+   "first": "E8-A8-R1-S44@10010M+R48@12400M+A31_20261026_175945",
+   "flags": {
+    "arch": "ladder",
+    "ladder_input_mode": "grouped",
+    "ladder_aggregation": "flatten",
+    "ladder_entity_dim": 16,
+    "ladder_entity_proj_dim": 256,
+    "ladder_card_self_attention": false,
+    "ladder_cross_attention": false,
+    "ladder_head_entities": "country",
+    "ladder_head_center": true,
+    "ladder_hidden_dim": 480,
+    "ladder_res_blocks": 0,
+    "ladder_head_norm": true,
+    "ladder_card_lookup": false,
+    "ladder_card_lookup_heads": 0,
+    "ladder_card_lookup_dim": 0,
+    "ladder_card_lookup_identity_dim": 0,
+    "ladder_branch_head": true,
+    "ladder_play_mode_head": true,
+    "per_entity_heads": 64,
+    "drop_static": true
+   }
   }
  },
  "recipes": {
@@ -2090,7 +2116,8 @@
   "E8-A8-R1-S44_20261023_032854": "E8-A8-R1-S44",
   "E8-A8-R1-S44@10010M+R87_20261025_184833": "E8-A8-R1-S44@10010M+R87",
   "E8-A8-R1-S44@10010M+R48_20261026_010224": "E8-A8-R1-S44@10010M+R48",
-  "E8-A30-R86-S44_20261026_022112": "E8-A30-R86-S44"
+  "E8-A30-R86-S44_20261026_022112": "E8-A30-R86-S44",
+  "E8-A8-R1-S44@10010M+R48@12400M+A31_20261026_175945": "E8-A8-R1-S44@10010M+R48@12400M+A31"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
