@@ -1435,6 +1435,8 @@ ADDABLE_HEADS: Tuple[str, ...] = ("card_aux_head.", "aux_own_head.", "aux_vp_hea
                                  "branch_head_net.", "play_mode_head_net.",
                                  # Cell A's region attention: a zero output projection, registered last
                                  "region_attn.",
+                                 # --ladder-head-norm: LayerNorms in the heads that have none, registered last
+                                 "head_norms.",
                                  # --ladder-logit-cap: a constant, no weights; the greedy move is
                                  # unchanged and the sampled policy moves by the cap alone
                                  "logit_cap")

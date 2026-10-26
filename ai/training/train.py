@@ -118,6 +118,7 @@ def _ladder_config(args: argparse.Namespace) -> "dict[str, object] | None":
            if int(args.ladder_sphere_blocks) > 0 else {}),
         **({"sphere_out_scale": float(args.ladder_sphere_out_scale)}
            if int(args.ladder_sphere_blocks) > 0 and float(args.ladder_sphere_out_scale) != 1.0 else {}),
+        **({"head_norm": True} if args.ladder_head_norm else {}),
         num_attn_heads=4,
         card_lookup=bool(args.ladder_card_lookup),
         # Inert when the lookup is off, and LadderNet never reads them in that case.
@@ -213,6 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="The per-element RMS of the sphere trunk's output, the heads' input (1 by default; A8's "
                           "heads read ~0.4-0.55). At 1 the per-update KL sat at ~3x the control's whatever the "
                           "learning rate (P38 rung 2b).")
+    lad.add_argument("--ladder-head-norm", action="store_true",
+                     help="A LayerNorm between the first Linear and the GELU of the per-entity, branch and play-mode "
+                          "heads, as the base policy head has. Only those heads go dormant (the plateaued control, "
+                          "R48 and the sphere trunk alike; 2026-10-26). Registered last, so it can be added at a "
+                          "branch point with --resume.")
     lad.add_argument("--ladder-res-post-norm", action="store_true",
                      help="A LayerNorm after each residual block's add (post-LN), so the residual stream is "
                           "renormalised at every block and cannot grow. With pre-LN blocks alone it grew in a few "

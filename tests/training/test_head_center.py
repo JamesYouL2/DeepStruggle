@@ -63,8 +63,8 @@ def test_the_country_correction_has_no_common_component_but_its_bias() -> None:
     cap: Dict[str, torch.Tensor] = {}
     orig = net._entity_out
     def spy(head: torch.nn.Module, x: torch.Tensor,
-            ctx: torch.Tensor | None = None) -> torch.Tensor:
-        cap["out"] = orig(head, x, ctx)
+            ctx: torch.Tensor | None = None, norm: torch.nn.Module | None = None) -> torch.Tensor:
+        cap["out"] = orig(head, x, ctx, norm)
         return cap["out"]
     net._entity_out = spy  # type: ignore[method-assign]
     obs, mask = _inputs()

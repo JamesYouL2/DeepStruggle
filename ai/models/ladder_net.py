@@ -197,6 +197,7 @@ class LadderNet(ColdWarNetV2):
                  sphere_blocks: int = 0,
                  sphere_expansion: int = 4,
                  sphere_out_scale: float = 1.0,
+                 head_norm: bool = False,
                  logit_cap_grad: str = "tanh",
                  logit_cap_leak: float = 0.0,
                  logit_cap_leak_up: float = 0.0,
@@ -618,6 +619,38 @@ class LadderNet(ColdWarNetV2):
             if not self.per_entity_heads or self.pe_country is None:
                 raise ValueError("region attention feeds the per-country head; this network has none")
             self.region_attn = RegionAttention(self._country_head_in, self.region_attn_dim, self.region_attn_heads)
+        # --ladder-head-norm (owner, 2026-10-26): a LayerNorm between the first Linear and the GELU of every policy head
+        # that has none -- the per-entity heads, the branch head, the play-mode head -- as the base policy head and the
+        # value heads already have. Those heads, and only those, go dormant in every network measured (the plateaued
+        # control: per-country 15.6%, branch 10.2%; R48 at 12,120M: 35.9% / 31.2% / play-mode 12.5%; the sphere trunk:
+        # 50% / 18% / 14%; the base head 0-2%): their pre-activations drift into GELU's dead region as their inputs and
+        # weights grow, which a per-sample norm stops. Separate modules, registered last, so the heads' own weights keep
+        # their names and a state written without them resumes into them (generic_trainer.ADDABLE_HEADS).
+        self.head_norms: nn.ModuleDict | None = None
+        if head_norm:
+            norms: Dict[str, nn.Module] = {}
+            for name in ("pe_country", "pe_card", "branch_head_net", "play_mode_head_net"):
+                head = getattr(self, name, None)
+                if isinstance(head, nn.Sequential) and isinstance(head[0], nn.Linear):
+                    norms[name] = nn.LayerNorm(head[0].out_features)
+            if not norms:
+                raise ValueError("head_norm normalises the per-entity, branch and play-mode heads; this network has none")
+            self.head_norms = nn.ModuleDict(norms)
+
+    def _head_norm(self, name: str) -> nn.Module | None:
+        norms = self.head_norms
+        if norms is None or name not in norms:
+            return None
+        return norms[name]
+
+    def _mlp_head(self, name: str, x: torch.Tensor) -> torch.Tensor:
+        """A Linear -> GELU -> Linear head, with --ladder-head-norm's LayerNorm before the GELU when there is one."""
+        head = getattr(self, name)
+        assert isinstance(head, nn.Sequential)
+        norm = self._head_norm(name)
+        if norm is None:
+            return head(x)                         # exactly the head as it was, hooks and all
+        return head[2](head[1](norm(head[0](x))))
 
     def forward_card_aux(self, obs: torch.Tensor) -> torch.Tensor:
         """The card-event predictions, (B, 110, CARD_AUX_DIM): per card, the standardised
@@ -711,7 +744,7 @@ class LadderNet(ColdWarNetV2):
     # ------------------------------------------------------------------ config
 
     def _entity_out(self, head: nn.Module, x: torch.Tensor,
-                    ctx: torch.Tensor | None = None) -> torch.Tensor:
+                    ctx: torch.Tensor | None = None, norm: nn.Module | None = None) -> torch.Tensor:
         """A per-entity head over [batch, entities, features] -> [batch, entities]; under
         head_center the hidden features are centred across entities before the last layer.
 
@@ -726,14 +759,16 @@ class LadderNet(ColdWarNetV2):
         """
         assert isinstance(head, nn.Sequential)
         if ctx is None:
-            f = head[:-1](x)
+            pre = head[0](x)
         else:
             first = head[0]
             assert isinstance(first, nn.Linear)
             kx = x.shape[-1]
             pre = (F.linear(x, first.weight[:, :kx])
                    + F.linear(ctx, first.weight[:, kx:], first.bias).unsqueeze(1))
-            f = head[1:-1](pre)
+        if norm is not None:                       # --ladder-head-norm, per entity over the hidden features
+            pre = norm(pre)
+        f = head[1:-1](pre)
         if self.head_center:
             f = f - f.mean(dim=1, keepdim=True)
         return head[-1](f).squeeze(-1)
@@ -784,6 +819,7 @@ class LadderNet(ColdWarNetV2):
                if self.sphere is not None else {}),
             **({"sphere_out_scale": self.sphere.out_scale}
                if self.sphere is not None and self.sphere.out_scale != 1.0 else {}),
+            **({"head_norm": True} if self.head_norms is not None else {}),
             **({"logit_cap_grad": self.logit_cap_grad} if self.logit_cap_grad != "tanh" else {}),
             **({"logit_cap_leak": self.logit_cap_leak} if self.logit_cap_leak > 0.0 else {}),
             **({"logit_cap_leak_up": self.logit_cap_leak_up} if self.logit_cap_leak_up > 0.0 else {}),
@@ -831,9 +867,9 @@ class LadderNet(ColdWarNetV2):
         card_nodes = tokens[3]
         x = torch.cat([h, (card_nodes[..., ACTIVE_CARD_SLOT] > 0.95).to(h.dtype)], dim=-1)   # (B, H + 110)
         zero = logits.new_zeros(())
-        pm = (self.play_mode_head_net(x).to(logits.dtype) if self.play_mode_head
+        pm = (self._mlp_head("play_mode_head_net", x).to(logits.dtype) if self.play_mode_head
               else zero.expand(logits.shape[0], PLAY_MODE_BLOCK))
-        br = (self.branch_head_net(x).to(logits.dtype) if self.branch_head
+        br = (self._mlp_head("branch_head_net", x).to(logits.dtype) if self.branch_head
               else zero.expand(logits.shape[0], BRANCH_BLOCK))
         a, b = ActionEncoder.PLAY_MODE_OFFSET, ActionEncoder.BRANCH_OFFSET
         return torch.cat([logits[:, :a], logits[:, a:a + PLAY_MODE_BLOCK] + pm,
@@ -870,12 +906,13 @@ class LadderNet(ColdWarNetV2):
         country_block = base[:, _A.NODE_OFFSET:_A.BRANCH_OFFSET]
         gap_end = base[:, _A.BRANCH_OFFSET:] * 0.0
 
-        card_corr = (self._entity_out(self.pe_card, torch.cat([h_cards, card_nodes], dim=-1), ctx)
+        card_corr = (self._entity_out(self.pe_card, torch.cat([h_cards, card_nodes], dim=-1), ctx,
+                                      self._head_norm("pe_card"))
                      if self.pe_card is not None else card_block * 0.0)
         country_in = torch.cat([h_board, board_nodes], dim=-1)
         if self.region_attn is not None:
             country_in = self.region_attn(country_in)
-        country_corr = (self._entity_out(self.pe_country, country_in, ctx)
+        country_corr = (self._entity_out(self.pe_country, country_in, ctx, self._head_norm("pe_country"))
                         if self.pe_country is not None else country_block * 0.0)
         return base + torch.cat([card_corr, gap_mid, country_corr, gap_end], dim=-1)
 
@@ -1141,6 +1178,7 @@ def ladder_config_from_state_dict(sd: Dict[str, Any]) -> Dict[str, Any] | None:
             "sphere_expansion": int(sd["sphere.blocks.0.w1.weight"].shape[0]) // int(sd["sphere.blocks.0.w1.weight"].shape[1])}
            if "sphere.blocks.0.w1.weight" in sd else {}),
         **({"sphere_out_scale": float(sd["sphere.out_scale_buf"])} if "sphere.out_scale_buf" in sd else {}),
+        **({"head_norm": True} if any(k.startswith("head_norms.") for k in sd) else {}),
         **({"region_attn_dim": int(sd["region_attn.qkv.weight"].shape[0]) // 3,
             "region_attn_heads": int(sd["region_attn.n_heads"])} if "region_attn.qkv.weight" in sd else {}),
     )
