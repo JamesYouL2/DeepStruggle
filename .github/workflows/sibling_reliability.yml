@@ -29,7 +29,7 @@ on:
       games:
         default: "1000"
       uniform:
-        description: "Sibling decisions from the plain shuffle (D2's population)"
+        description: "Sibling decisions from the plain shuffle (D2's population); 0 skips the set"
         default: "1000"
       entry:
         description: "Entry decisions (D3's population)"
@@ -118,6 +118,7 @@ jobs:
           tools/scripts/check_engine_fresh.sh
           for set in uniform entry; do
             n=$([ "$set" = uniform ] && echo "$UNIFORM" || echo "$ENTRY")
+            [ "$n" = 0 ] && continue
             OMP_NUM_THREADS=4 python tools/value_labels.py label --dir "pos/$set" --no-main --siblings "$n" \
               --sibling-worlds "$WORLDS" --leaf-horizon "$LEAF_HORIZON" "--$CHANCE" --device cpu --no-graphs \
               --capacity 4096 --part "${{ matrix.part }}/$RUNNERS" $EXTRA 2>&1 | tee "out/$set/label-${{ matrix.part }}.log"
@@ -150,6 +151,7 @@ jobs:
         run: |
           mkdir -p res
           for set in uniform entry; do
+            ls pos/$set/siblings_*_of_*.npz >/dev/null 2>&1 || continue
             python tools/scripts/sibling_reliability.py --dir "pos/$set" --json "res/$set.json" | tee "res/$set.md"
             cp pos/$set/siblings_*.json pos/$set/label-*.log res/ 2>/dev/null || true
           done
@@ -158,7 +160,7 @@ jobs:
             echo "model: $HF_REPO $MODEL"
             echo "games: $GAMES  uniform: $UNIFORM  entry: $ENTRY  worlds: $WORLDS  chance: $CHANCE"
             echo "leaf_horizon: $LEAF_HORIZON  extra: ${EXTRA:-none}  runners: $RUNNERS"
-            for set in uniform entry; do echo; echo "## $set"; echo; cat "res/$set.md"; done
+            for set in uniform entry; do [ -f "res/$set.md" ] || continue; echo; echo "## $set"; echo; cat "res/$set.md"; done
           } > res/provenance.md
           cat res/provenance.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
