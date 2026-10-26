@@ -45,8 +45,8 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from tools.scripts import launch_flags as lf  # noqa: E402
-from ai.training.run_name import (LEGACY_RUN_NAME_RE, RunPath, is_run_name, parse_label,  # noqa: E402
-                                  parse_run_name)
+from ai.training.run_name import (LEGACY_RUN_NAME_RE, RunNameError, RunPath, is_run_name,  # noqa: E402
+                                  parse_label, parse_run_name)
 from tools.lib.data_root import checkpoints_dir  # noqa: E402
 
 CODES_JSON = os.path.join(_ROOT, "research", "run_codes.json")
@@ -459,13 +459,30 @@ def _flags_text(flags: Dict[str, Any], base: Optional[Dict[str, Any]] = None) ->
     return text + (f" -- *{flags['_note']}*" if "_note" in flags else "")
 
 
-def write_codes_md(codes: Dict[str, Any], names: Dict[str, RunPath], runs: List[Run]) -> None:
+def recorded_elsewhere(codes: Dict[str, Any], runs: List[Run]) -> Dict[str, str]:
+    """The named runs in run_codes.json whose directories are not under this checkpoint root: runs made on
+    another machine (CI's fits, a teammate's box), recorded by an update there. Kept, since nothing here can
+    re-derive them; a run deleted for good is removed from the JSON by hand."""
+    local = {r.dir for r in runs}
+    return {d: n for d, n in codes.get("runs", {}).items() if d not in local}
+
+
+def write_codes_md(codes: Dict[str, Any], names: Dict[str, RunPath], runs: List[Run],
+                   elsewhere: Optional[Dict[str, str]] = None) -> None:
     used: Dict[str, List[str]] = {}
     for r in runs:
         if r.dir in names:
             f = names[r.dir].fields()
             used.setdefault("A" + f["A"], []).append(r.name0)
             used.setdefault("R" + f["R"], []).append(r.name0)
+    for d, name in (elsewhere or {}).items():
+        try:
+            f = parse_run_name(name).fields()
+        except RunNameError:
+            continue
+        launched = re.sub(r"_\d{8}_\d{6}$", "", d)
+        used.setdefault("A" + f["A"], []).append(launched)
+        used.setdefault("R" + f["R"], []).append(launched)
     out = [
         "# Architectures and recipes",
         "",
@@ -541,12 +558,16 @@ def main() -> int:
     for line in missing:
         print("MISSING", line)
     if a.update:
-        codes["runs"] = {d: p.text() for d, p in names.items()}
+        elsewhere = recorded_elsewhere(codes, runs)
+        here = {d: p.text() for d, p in names.items()}
+        codes["runs"] = {d: here.get(d, elsewhere.get(d)) for d in codes.get("runs", {})
+                         if d in here or d in elsewhere}
+        codes["runs"].update({d: n for d, n in here.items() if d not in codes["runs"]})
         with open(CODES_JSON, "w", encoding="utf-8") as f:
             json.dump(codes, f, indent=1, sort_keys=False, default=str)
             f.write("\n")
         write_map(runs, names, codes)
-        write_codes_md(codes, names, runs)
+        write_codes_md(codes, names, runs, elsewhere)
         print(f"wrote {os.path.relpath(CODES_JSON, _ROOT)}, {os.path.relpath(MAP_MD, _ROOT)}, "
               f"{os.path.relpath(CODES_MD, _ROOT)}")
     else:

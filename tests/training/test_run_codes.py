@@ -71,6 +71,23 @@ def test_without_update_an_unknown_recipe_is_reported(lineage: Dict[str, str]) -
     assert missing and all("no " in m for m in missing)
 
 
+def test_runs_recorded_on_another_machine_are_kept_and_counted(lineage: Dict[str, str],
+                                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run made elsewhere (CI's fits) is in run_codes.json but not under this root: an update here keeps its
+    entry and lists it against its codes, where re-deriving from local directories alone would drop it."""
+    runs = rc.load_runs(lineage["root"])
+    codes: Dict[str, Any] = {"architectures": {}, "recipes": {}, "overrides": {}}
+    names, _ = rc.assign(runs, codes, True)
+    ci = "E9-A1-R1-S44@100M+S46_20261009_000000"
+    codes["runs"] = {lineage["a"]: names[lineage["a"]].text(), ci: "E9-A1-R1-S44@100M+S46"}
+    assert rc.recorded_elsewhere(codes, runs) == {ci: "E9-A1-R1-S44@100M+S46"}
+    md = os.path.join(lineage["root"], "codes.md")
+    monkeypatch.setattr(rc, "CODES_MD", md)
+    rc.write_codes_md(codes, names, runs, rc.recorded_elsewhere(codes, runs))
+    row = next(l for l in open(md, encoding="utf-8") if l.startswith("| **R1** |"))
+    assert "E9-A1-R1-S44@100M+S46" in row
+
+
 def test_an_inert_setting_does_not_split_a_recipe(tmp_path: Any) -> None:
     """A card-event batch size with the card-event target off trains exactly as without it."""
     root = str(tmp_path)
