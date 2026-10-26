@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from tools.scripts.sibling_reliability import reliability, spearman_brown
+from tools.scripts.sibling_reliability import pick_gain, reliability, spearman_brown
 
 
 def _slice(decisions: int, worlds: int, signal: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
@@ -37,3 +37,16 @@ def test_failed_worlds_are_left_out_of_both_halves() -> None:
     y[:, :, 5] = 1e6   # a failed world's result must not reach the means
     got = reliability(y, ok, 32)
     assert 0.5 < got["reliability"] < 1.0
+
+
+def test_pick_gain_scores_the_pick_on_worlds_it_did_not_see() -> None:
+    rng = np.random.default_rng(3)
+    y = rng.normal(0.0, 1.0, (4000, 4, 64))
+    ok = np.ones((4000, 64), bool)
+    # pure noise: a pick on some worlds is worth nothing on the others, though it departs ~3/4
+    got, _ = pick_gain(y, ok, 32)
+    assert abs(got["gain"]) < 100 * 3 / np.sqrt(4000 * 32), got
+    assert 0.7 < got["departs"] < 0.8
+    # candidate 1 truly better by 0.5: the pick finds it and the held-out worlds credit it
+    y[:, 1] += 0.5
+    assert pick_gain(y, ok, 32)[0]["gain"] > 40
