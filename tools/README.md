@@ -679,8 +679,16 @@ for the control). `--q-head mlp` is a fresh head on the trunk's features (frozen
 `--q-train-trunk`, so it runs on a CPU); `--q-head policy` reads the network's own logits times a
 learned scale. On the held-out rows it records the correlation with the two seeds' mean lead,
 disattenuated by that mean's reliability (`r_dis`), beside the same for the starting logits and for
-`--q-baseline` (h0), and the take / leave rates of the Q root at each threshold against the
-teacher's stable picks (`q_fit_metrics.jsonl`, `metadata.json`).
+`--q-baseline` (h0), the same centred within each position (`r_within_dis`), and the take / leave
+rates of the Q root at each threshold against the teacher's stable picks. The number that decides is
+the Q root's **realised gain** (`gain_<θ>`, with its standard error): the judge's two-seed mean lead
+of the move the Q root plays, per decision (the network's move scores 0), unbiased because the head
+never saw those seeds. Its bars are `gain_judge_xseed` (the teacher's pick on one seed, valued by the
+other) and `gain_base` (the baseline's own pick). `--q-judge <name>` judges with another teacher than
+the one fitted (fit 32 worlds, judge by 128); `--q-train-fraction f` keeps the first share of the
+training games, whole, for a data-scaling curve with the held-out rows unchanged
+(`.github/workflows/q_fit_curve.yml` runs one on CPU). Records in `q_fit_metrics.jsonl` and
+`metadata.json`.
 
 `tools/distill_probe.py` reads a target set:
 * `agree` -- each teacher's departure rate, its self-agreement between seeds, and pairwise: on the

@@ -3,7 +3,7 @@
 # run's pooled targets. Does the Q root's realised gain (`gain_*`, judged by the target's own two
 # held-out seeds) rise with the data?
 #
-#   gh workflow run q_fit_curve.yml --ref exp/distill-ladder -R JamesYouL2/DeepStruggle
+#   gh workflow run q_fit_curve.yml --ref main
 #   gh run download <run-id> -n q-fit-curve-<run-id> -D data/reports/distill_ladder/<source>/curve
 #
 # `cells` maps each share of the games to its recipe code (research/architectures_and_recipes.md):
@@ -11,15 +11,11 @@
 name: q-fit-curve
 
 on:
-  # The push trigger only registers the workflow from this branch; every job is skipped on it.
-  push:
-    branches: [exp/distill-ladder]
-    paths: [.github/workflows/q_fit_curve.yml]
   workflow_dispatch:
     inputs:
       source:
-        description: "The distill-ladder run whose pooled targets.npz is fitted"
-        default: "40244320871"
+        description: "The distill-ladder run whose pooled targets.npz is fitted (written by this engine build)"
+        required: true
       model:
         description: "The network, a .pt path in hf_repo (A13+R48's SWA)"
         default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt"
@@ -51,7 +47,6 @@ env:
 
 jobs:
   plan:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
