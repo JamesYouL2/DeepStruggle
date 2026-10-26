@@ -1,0 +1,168 @@
+# How many keyed worlds a D3 label needs (P34 revision 2, step 4), on CPU: a sibling slice in D2's
+# recipe (keyed chance, the root's leaf at --leaf-horizon 4, the generator's top 4 moves), labelled at
+# `worlds` shared worlds, and tools/scripts/sibling_reliability.py's split-half reliability of the
+# centred candidate means at 8 .. `worlds` worlds -- against D2's 0.41 at 16 and the plan's
+# Spearman-Brown extrapolation (~0.85 at 128).
+#
+#   positions  the generator's games (tools/value_labels.py positions), then `entry` entry decisions
+#              of them (select --what entry): D3's population, beside `uniform` positions of the
+#              plain sibling shuffle, D2's.
+#   label      N runners, each its share of both sets' siblings (label --no-main --part i/N).
+#   pool       the reliability tables, per set: all decisions, entry decisions, contested ones.
+#
+#   gh workflow run sibling_reliability.yml --ref exp/p34-reliability -R JamesYouL2/DeepStruggle
+#   gh run download <run-id> -n sibling-reliability-<run-id> -D data/reports/p34_reliability/<run-id>
+name: sibling-reliability
+
+on:
+  # The push trigger only registers the workflow from this branch; every job is skipped on it.
+  push:
+    branches: [exp/p34-reliability]
+    paths: [.github/workflows/sibling_reliability.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "The generator and playout network, a .pt path in hf_repo (A13+R48's SWA, D2's)"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_11920-12000M.pt"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+      games:
+        default: "1000"
+      uniform:
+        description: "Sibling decisions from the plain shuffle (D2's population)"
+        default: "1000"
+      entry:
+        description: "Entry decisions (D3's population)"
+        default: "3000"
+      worlds:
+        default: "128"
+      chance:
+        description: "keyed (D2's) or keyed2"
+        default: "keyed"
+      leaf_horizon:
+        default: "4"
+      extra:
+        description: "More label flags, e.g. --follow search --search-worlds 8"
+        default: ""
+      runners:
+        default: "20"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  MODEL: ${{ inputs.model }}
+  HF_REPO: ${{ inputs.hf_repo }}
+  GAMES: ${{ inputs.games }}
+  UNIFORM: ${{ inputs.uniform }}
+  ENTRY: ${{ inputs.entry }}
+  WORLDS: ${{ inputs.worlds }}
+  CHANCE: ${{ inputs.chance }}
+  LEAF_HORIZON: ${{ inputs.leaf_horizon }}
+  EXTRA: ${{ inputs.extra }}
+  RUNNERS: ${{ inputs.runners }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(int(os.environ['RUNNERS'])))))")" >> "$GITHUB_OUTPUT"
+
+  positions:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Positions
+        run: |
+          mkdir -p work
+          curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum work/net.pt
+          tools/scripts/check_engine_fresh.sh && python tools/value_labels.py positions --model work/net.pt \
+            --games "$GAMES" --envs 256 --device cpu --out pos/uniform
+          python tools/value_labels.py select --what entry --n "$ENTRY" --dir pos/uniform --out pos/entry
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sibling-reliability-pos-${{ github.run_id }}
+          path: pos/
+          retention-days: 30
+
+  label:
+    needs: [plan, positions]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: sibling-reliability-pos-${{ github.run_id }}
+          path: pos
+      - name: Label, part ${{ matrix.part }}
+        run: |
+          mkdir -p work out/uniform out/entry
+          curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          tools/scripts/check_engine_fresh.sh
+          for set in uniform entry; do
+            n=$([ "$set" = uniform ] && echo "$UNIFORM" || echo "$ENTRY")
+            OMP_NUM_THREADS=4 python tools/value_labels.py label --dir "pos/$set" --no-main --siblings "$n" \
+              --sibling-worlds "$WORLDS" --leaf-horizon "$LEAF_HORIZON" "--$CHANCE" --device cpu --no-graphs \
+              --capacity 4096 --part "${{ matrix.part }}/$RUNNERS" $EXTRA 2>&1 | tee "out/$set/label-${{ matrix.part }}.log"
+            cp pos/$set/siblings_* "out/$set/"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sibling-reliability-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 30
+
+  pool:
+    needs: [plan, label]
+    if: always() && needs.label.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: sibling-reliability-pos-${{ github.run_id }}
+          path: pos
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sibling-reliability-part-${{ github.run_id }}-*
+          path: pos
+          merge-multiple: true
+      - name: Reliability
+        run: |
+          mkdir -p res
+          for set in uniform entry; do
+            python tools/scripts/sibling_reliability.py --dir "pos/$set" --json "res/$set.json" | tee "res/$set.md"
+            cp pos/$set/siblings_*.json pos/$set/label-*.log res/ 2>/dev/null || true
+          done
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL"
+            echo "games: $GAMES  uniform: $UNIFORM  entry: $ENTRY  worlds: $WORLDS  chance: $CHANCE"
+            echo "leaf_horizon: $LEAF_HORIZON  extra: ${EXTRA:-none}  runners: $RUNNERS"
+            for set in uniform entry; do echo; echo "## $set"; echo; cat "res/$set.md"; done
+          } > res/provenance.md
+          cat res/provenance.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sibling-reliability-${{ github.run_id }}
+          path: res/
+          retention-days: 90

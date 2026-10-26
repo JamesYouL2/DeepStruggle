@@ -790,6 +790,12 @@ budget a world). `merge` then reports `exact.bias`, the mean of (label - exact v
 solved in every world -- what the labels inherit from the generator's greedy follow-up -- with the
 solved count, since the solvable positions are the simpler ones.
 
+`select` writes a subset of a set's positions as a positions directory of its own, to be labelled
+again: `--what contested` (D3's screen), `entry` (`--n` card choices and headlines, no labels needed)
+or `exact`. `tools/scripts/sibling_reliability.py` reads a sibling slice's split-half reliability at
+each world count (P34 revision 2, step 4: how many worlds D3 needs); `sibling_reliability.yml` labels
+one on CPU runners.
+
 `label --keyed` plays the worlds under keyed chance (`bindings/keyed_chance.hpp`): the sibling
 slice's candidates then correlate at 0.39 within a world instead of 0.22. It is part of the labelling
 recipe, so it takes its own D code.
