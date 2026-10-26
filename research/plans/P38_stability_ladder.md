@@ -128,3 +128,5 @@ Dormant GELU units per policy-head module at 1,600M (ReDo score ≤ 0.1 over 4,0
 | `play_mode_head_net` | 14% | 0% |
 
 Only the heads without a LayerNorm die, and they read the sphere trunk's output at per-element RMS 1 where A8's trunk gives them 0.31–0.37: larger inputs push their pre-activations into GELU's dead region. The next attempt scales the trunk's output to RMS 0.35 (`--ladder-sphere-out-scale 0.35`, code A30); output scale 0.5 was tried only on the 4,096 minibatch, where the step size, since fixed by 16k, failed first.
+
+**The same heads die in A8 at its plateaus** (2026-10-26, dormant GELU units at ReDo score ≤ 0.1): the plateaued control at 10,000M -- per-country 15.6%, branch 10.2%, play-mode 0%, base head 0% -- and more under R48 at 12,120M -- per-country 35.9%, branch 31.2%, play-mode 12.5%, base head 2.0%. Only the heads without a LayerNorm die, in every network measured, so a LayerNorm in those heads is a candidate for both goals.
