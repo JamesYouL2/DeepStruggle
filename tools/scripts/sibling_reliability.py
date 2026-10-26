@@ -10,7 +10,9 @@ that every candidate finished, centred on the decision's mean. The two halves' c
 every (decision, candidate), is stepped up to the full W as 2r / (1 + r). The SEs are a bootstrap
 over decisions. Read on the whole slice, on entry decisions (card choices and headlines), and on
 D3's contested population: entry decisions whose mean result over all candidates and worlds lies in
-[--lo, --hi].
+[--lo, --hi]. Last, per slice, what a label is worth: its pick at W <= half the worlds, against the
+generator's own move (candidate 0), scored on disjoint worlds -- reliability can be high from
+clearly bad candidates while the pick barely beats the network.
 
     python tools/scripts/sibling_reliability.py --dir <labelled dir> --json rel.json > rel.md
 """
@@ -21,7 +23,7 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -82,6 +84,22 @@ def reliability(y: np.ndarray, ok: np.ndarray, worlds: int) -> Dict[str, float]:
             "decisions": int(keep.sum())}
 
 
+def pick_gain(y: np.ndarray, ok: np.ndarray, worlds: int) -> Tuple[Dict[str, float], np.ndarray]:
+    """What a label picked on `worlds` worlds is worth against the generator's own move (candidate 0,
+    its argmax), scored on disjoint worlds: picked on the first `worlds` even worlds and scored on all
+    the odd ones, and the reverse, averaged. Win-probability points x100; also each decision's gain."""
+    w = np.arange(y.shape[2])
+    gains, departs = [], []
+    for par in (0, 1):
+        a = half_means(y, ok, (w % 2 == par) & (w // 2 < worlds))
+        b = half_means(y, ok, w % 2 != par)
+        p = np.nan_to_num(a, nan=-np.inf).argmax(1)
+        gains.append(b[np.arange(len(p)), p] - b[:, 0])
+        departs.append(p != 0)
+    g = np.nanmean(np.stack(gains), 0)
+    return {"gain": float(100 * np.nanmean(g)), "departs": float(np.mean(departs))}, g
+
+
 def spearman_brown(rel: float, factor: float) -> float:
     return factor * rel / (1 + (factor - 1) * rel)
 
@@ -94,6 +112,11 @@ def read(y: np.ndarray, ok: np.ndarray, counts: List[int], boots: int, seed: int
         bs = [reliability(y[i], ok[i], wc)["reliability"]
               for i in (rng.integers(0, y.shape[0], y.shape[0]) for _ in range(boots))]
         point["se"] = float(np.nanstd(bs))
+        if 2 * wc <= y.shape[2]:
+            pg, g = pick_gain(y, ok, wc)
+            pg["gain_se"] = float(100 * np.std([np.nanmean(g[i]) for i in
+                                                (rng.integers(0, g.size, g.size) for _ in range(boots))]))
+            point.update(pg)
         out[str(wc)] = point
     return out
 
@@ -156,6 +179,15 @@ def main(argv: List[str]) -> int:
             print(f"| {wc} | {p['reliability']:.3f} | {p['se']:.3f} | {sb:.3f} | {np.sqrt(max(p['reliability'], 0)):.3f} | "
                   f"{p['pair_sign']:.3f} | {p['top_agree']:.3f} |")
         print()
+        gw = [wc for wc in counts if "gain" in r[str(wc)]]
+        if gw:
+            print(f"label's pick against the generator's move, scored on {have // 2} held-out worlds (x100):\n")
+            print("| pick on worlds | departs | gain | ± |")
+            print("|--:|--:|--:|--:|")
+            for wc in gw:
+                p = r[str(wc)]
+                print(f"| {wc} | {p['departs']:.2f} | {p['gain']:+.2f} | {p['gain_se']:.2f} |")
+            print()
     if a.json:
         pathlib.Path(a.json).write_text(json.dumps(res, indent=2) + "\n")
     return 0
