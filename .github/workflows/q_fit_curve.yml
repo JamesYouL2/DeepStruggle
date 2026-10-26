@@ -33,6 +33,12 @@ permissions:
   contents: read
   actions: read   # the source run's artifact
 
+# bash -eo pipefail: without a shell named a step runs as `bash -e`, so `python ... | tee` passes when
+# python fails.
+defaults:
+  run:
+    shell: bash
+
 env:
   GH_TOKEN: ${{ github.token }}
   PYTHONPATH: .:build/release
@@ -85,7 +91,8 @@ jobs:
           mkdir -p out
           # The lineage's own seed (S44) takes no suffix: the name grammar refuses one that restates it.
           SUFFIX=$([ "$SEED" = 44 ] || echo "-S$SEED")
-          tools/scripts/check_engine_fresh.sh && python tools/train.py --mode q-fit --device cpu \
+          tools/scripts/check_engine_fresh.sh
+          python tools/train.py --mode q-fit --device cpu \
             --warmup-checkpoint work/net.pt --q-dataset ds/targets.npz --q-target "$TARGET" \
             --q-train-fraction "$SHARE" --seed "$SEED" \
             --run-name "$PREFIX-A23-$RECIPE$SUFFIX" \
@@ -121,14 +128,20 @@ jobs:
               rows.append((m["config"]["train_fraction"], m["seed"], f["train_positions"], b, f, m["git_commit"]))
           rows.sort(key=lambda r: (r[0], r[1]))
           f0 = rows[0][4]
-          print(f"commit `{rows[0][5][:8]}`; judge root {100 * f0['gain_judge_xseed']:+.2f}, "
-                f"baseline root {100 * f0['gain_base']:+.2f} (gain x100 per decision)\n")
-          print("| share | seed | train pos | r_dis | within | gain@0.02 | gain@0.04 | gain@0.08 | depart@0.04 |")
-          print("|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
+          # A bar averages only the rows where the judge has its move: its coverage is printed beside it, and
+          # below 1 the Q root's gain on the baseline's own rows is the like-for-like reading.
+          print(f"commit `{rows[0][5][:8]}`; judge root {100 * f0['gain_judge_xseed']:+.2f} "
+                f"(coverage {f0.get('gain_judge_xseed_coverage', float('nan')):.3f}), baseline root "
+                f"{100 * f0.get('gain_base', float('nan')):+.2f} (coverage {f0.get('gain_base_coverage', float('nan')):.3f}) "
+                f"(gain x100 per decision)\n")
+          print("| share | seed | train pos | r_dis | within | gain@0.02 | gain@0.04 | gain@0.08 | depart@0.04 "
+                "| gain@0.04 on the baseline's rows |")
+          print("|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|")
           for share, seed, n, b, _, _ in rows:
               g = lambda t: f"{100 * b['gain_' + t]:+.2f} ± {100 * b['gain_se_' + t]:.2f}"
+              on_base = b.get("gain_0.04_on_base_rows", b["gain_0.04"])
               print(f"| {share:g} | {seed} | {n:,} | {b['r_dis']:.3f} | {b['r_within_dis']:.3f} | {g('0.02')} | "
-                    f"{g('0.04')} | {g('0.08')} | {b['depart_0.04']:.3f} |")
+                    f"{g('0.04')} | {g('0.08')} | {b['depart_0.04']:.3f} | {100 * on_base:+.2f} |")
           EOF
       - uses: actions/upload-artifact@v4
         with:

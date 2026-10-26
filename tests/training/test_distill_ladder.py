@@ -14,11 +14,14 @@ import pytest
 import torch
 
 from ai.models.ladder_net import create_ladder_net
-from ai.training.policy_fit import PolicyFitConfig, reinit_policy_heads, run_policy_fit
+from ai.training import policy_fit
+from ai.training.policy_fit import POLICY_MODULES, PolicyFitConfig, reinit_policy_heads, run_policy_fit
+from ai.training.value_fit import Codes
 from tests.training.test_ladder_tokens import SHALLOW
 from tests.training.test_policy_fit import _dataset
 from tools import distill_targets as dt
-from tools.distill_probe import agree_table, knn_readings, main as probe_main, track_rows
+from tools.distill_probe import agree_table, features, knn_readings, main as probe_main, neighbours, track_rows
+from tools.lib.engine_fingerprint import fingerprint
 
 
 def _ckpt(tmp: Path, seed: int = 0) -> str:
@@ -38,6 +41,28 @@ def test_a_teacher_spec_is_checked_and_a_root_spec_keeps_its_options() -> None:
     for bad in ("h4", "=root:4:16:4:z2", "h4=gumbel:256", "h4=root:4:16", "a b=net:x", "o=root:4:16:4:z2:oracle"):
         with pytest.raises(ValueError):
             dt.parse_teacher(bad)
+    # A rollout spec reads an unknown trailing field as its leaf checkpoint; a teacher has none, so a typo is
+    # refused rather than dropped (the root would run unaligned under the name h4).
+    for bad in ("h4=root:4:16:4:z2:earlier:own:keyed:alinged:box4", "h4=root:4:16:4:z2:earlier:own:keyed:/x/leaf.pt"):
+        with pytest.raises(ValueError, match="not a field of a root teacher"):
+            dt.parse_teacher(bad)
+
+
+def test_a_merge_refuses_shards_that_disagree() -> None:
+    """Shards searched with another network or seed, or one teacher's name under two specs, would pool rows of
+    different teachers under one key."""
+    spec = "root:4:16:4:z2:earlier:own:keyed:aligned:box4"
+    ok = {"checkpoint": "net.pt", "seed": 3637, "teachers": {"h4": spec}}
+    assert dt.merged_specs({"teachers": {}}, [("s1", ok), ("s2", ok)], "net.pt", 3637) == {"h4": spec}
+    with pytest.raises(SystemExit, match="checkpoint"):
+        dt.merged_specs({}, [("s1", ok), ("s2", ok | {"checkpoint": "other.pt"})], "net.pt", 3637)
+    with pytest.raises(SystemExit, match="seed"):
+        dt.merged_specs({}, [("s1", ok | {"seed": 1})], "net.pt", 3637)
+    with pytest.raises(SystemExit, match="'h4' is"):
+        dt.merged_specs({}, [("s1", ok), ("s2", ok | {"teachers": {"h4": spec.replace(":16:", ":32:")}})],
+                        "net.pt", 3637)
+    with pytest.raises(SystemExit, match="the position set"):
+        dt.merged_specs({"teachers": {"h4": "root:4:16:4:z2"}}, [("s1", ok)], "net.pt", 3637)
 
 
 def test_the_record_teachers_keep_their_seeds() -> None:
@@ -83,8 +108,10 @@ def test_the_split_search_merges_into_the_whole(tmp_path: Path) -> None:
     assert dt.main(["--checkpoint", ck, "--states", pos, "--merge", *shards, "--output", merged]) == 0
     with np.load(whole) as w, np.load(merged) as m:
         n = w["states"].shape[0]
-        for key in ("acts_soup", "probs_soup", "pick_soup", "acts2_soup", "pick2_soup"):
+        for key in ("acts_soup", "pick_soup", "acts2_soup", "pick2_soup"):
             assert np.array_equal(w[key], m[key]), key
+        # A shard runs the network on other batches than the whole, and CPU matmuls round by batch shape.
+        assert np.allclose(w["probs_soup"], m["probs_soup"], rtol=0, atol=1e-6)
         assert (m["pick_h0"] >= 0).all() and m["acts_h0"].shape == (n, dt.WIDTH)
         held = m["heldout"].astype(bool)
         assert (m["pick2_h0"][held] >= 0).all() and (m["pick2_h0"][~held] == -1).all()
@@ -94,15 +121,48 @@ def test_the_split_search_merges_into_the_whole(tmp_path: Path) -> None:
     assert set(meta["teachers"]) == {"soup", "h0"}
 
 
-def test_reinit_heads_resets_the_policy_heads_and_keeps_the_trunk() -> None:
+def test_reinit_heads_restores_a_fresh_network_s_heads_and_keeps_the_trunk() -> None:
+    """The heads become a newly built network's -- the layers LadderNet starts at zero zeroed again, region
+    attention included -- and nothing else moves."""
     torch.manual_seed(0)
-    m = create_ladder_net("cpu", **SHALLOW)
+    m = create_ladder_net("cpu", **SHALLOW, region_attn_dim=16)
+    with torch.no_grad():                       # a trained network: no weight at its initial value
+        for p in m.parameters():
+            p.add_(torch.randn_like(p))
     before = {k: v.clone() for k, v in m.state_dict().items()}
-    assert reinit_policy_heads(m) > 0
-    after = m.state_dict()
-    moved = {k for k in before if not torch.equal(before[k], after[k])}
-    assert moved and all(k.startswith(("policy_head", "pe_")) for k in moved), sorted(moved)
-    assert not any(k.startswith("val_") for k in moved)
+    fresh = create_ladder_net("cpu", **SHALLOW, region_attn_dim=16)
+    assert reinit_policy_heads(m, fresh) > 0
+    after, want = m.state_dict(), fresh.state_dict()
+    policy = {k for k in after if k.startswith(tuple(name + "." for name in POLICY_MODULES))}
+    assert any(k.startswith("region_attn.") for k in policy)
+    assert all(torch.equal(after[k], want[k]) for k in policy)
+    assert all(torch.equal(after[k], before[k]) for k in after if k not in policy)
+    assert not after["pe_country.2.weight"].any() and not after["region_attn.out.weight"].any()
+
+
+def test_the_kl_anchor_is_the_policy_before_its_heads_are_reset(tmp_path: Path,
+                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    """With --policy-reinit-heads and --policy-kl-anchor the student is held near the trained network's policy,
+    not near the random one its fresh heads start from."""
+    events = []
+    real_reset, real_copy = policy_fit.reinit_policy_heads, policy_fit.copy.deepcopy
+
+    def reset(model: Any, fresh: Any) -> int:
+        events.append("reset")
+        return real_reset(model, fresh)
+
+    def deepcopy(x: Any, *a: Any, **k: Any) -> Any:
+        if isinstance(x, torch.nn.Module):
+            events.append("anchor")
+        return real_copy(x, *a, **k)
+
+    monkeypatch.setattr(policy_fit, "reinit_policy_heads", reset)
+    monkeypatch.setattr(policy_fit.copy, "deepcopy", deepcopy)
+    run_policy_fit(PolicyFitConfig(dataset=_dataset(tmp_path), worlds=16, init=_ckpt(tmp_path), batch=64,
+                                   max_epochs=1, eval_every=10, fit_sample=100, device="cpu", bf16=False,
+                                   reinit_heads=True, kl_anchor=0.1),
+                   run_name="E7-A1-R1-S44", description="t", output_dir=str(tmp_path / "E7-A1-R1-S44_k"))
+    assert events[:2] == ["anchor", "reset"], events
 
 
 def test_a_fit_reads_a_named_teacher_and_refuses_a_missing_one(tmp_path: Path) -> None:
@@ -173,5 +233,35 @@ def test_agree_runs_from_the_command_line(tmp_path: Path) -> None:
     path = str(tmp_path / "set.npz")
     np.savez(path, **_probe_set())
     out = str(tmp_path / "r.json")
+    with pytest.raises(SystemExit, match="nothing records which engine build"):
+        probe_main(["agree", "--dataset", path, "--json", out])
+    with open(path + ".meta.json", "w") as f:
+        json.dump({"engine_fingerprint": fingerprint()}, f)
     assert probe_main(["agree", "--dataset", path, "--json", out]) == 0
     assert "on departures of" in json.load(open(out))["table"]
+
+
+def test_the_in_place_features_and_masked_neighbours_match_the_plain_computation(tmp_path: Path) -> None:
+    """knn's features are standardised in place and its neighbours scored without copying the pool; both
+    give what the whole-array version gives."""
+    with np.load(_dataset(tmp_path)) as z:
+        states = z["states"]
+    torch.manual_seed(0)
+    model = create_ladder_net("cpu", **SHALLOW).eval()
+    masks = policy_fit.masks_of(states)
+    dev = torch.device("cpu")
+    for space in ("trunk", "obs"):
+        f = features(model, states, masks, space, dev)
+        codes = Codes(0, dev)
+        with torch.no_grad():
+            obs = codes.decode(torch.from_numpy(codes.encode(states)))
+            raw = (getattr(model, "_encode")(obs)[0] if space == "trunk" else obs).double().numpy()
+        want = (raw - raw.mean(0)) / (raw.std(0) + 1e-6)
+        want /= np.linalg.norm(want, axis=1, keepdims=True) + 1e-9
+        assert np.allclose(f, want, atol=1e-4), space
+    query, pool = np.arange(0, f.shape[0], 3), np.setdiff1d(np.arange(f.shape[0]), np.arange(0, f.shape[0], 3))
+    got = neighbours(f, query, pool, 4, dev)
+    sims = f[query] @ f[pool].T
+    assert set(got.reshape(-1).tolist()) <= set(pool.tolist())
+    for r in range(query.size):
+        assert np.allclose(np.sort(f[query[r]] @ f[got[r]].T), np.sort(sims[r])[-4:], atol=1e-5)

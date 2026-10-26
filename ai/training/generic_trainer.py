@@ -2973,7 +2973,6 @@ def train_pipeline(
         # so the first visible symptom was kl_div reaching 30 with the policy already gone.
         active_aux_losses.append("search_ce")
         active_aux_losses.append("search_ce_grad_frac")
-        active_aux_losses.append("search_saturated_frac")
         # Target/mask alignment, which search_ce only reports by accident: mass on a masked
         # action shows up as an absurd CE because the mask fill is -1e9, while the same
         # misalignment on a legal action is silent. These two measure it directly.
@@ -2989,11 +2988,15 @@ def train_pipeline(
         active_aux_losses.append("search_target_entropy")
         active_aux_losses.append("search_target_illegal_mass_max")
         active_aux_losses.append("search_target_illegal_row_frac")
-        # What the real mask rejected from the searcher's answer before it became a target. A
-        # small nonzero rate is correct -- determinization makes some illegal actions look legal;
-        # zero would mean the filter is not running.
-        active_aux_losses.append("search_dropped_visit_frac")
-        active_aux_losses.append("search_dropped_row_frac")
+        # Written only by the queued searcher (`_flush_search_targets`); an active-search run has none, and
+        # would log them as the flat zero line this guard exists to keep off the plots.
+        if getattr(trainer, "_searcher", None) is not None:
+            active_aux_losses.append("search_saturated_frac")
+            # What the real mask rejected from the searcher's answer before it became a target. A
+            # small nonzero rate is correct -- determinization makes some illegal actions look legal;
+            # zero would mean the filter is not running.
+            active_aux_losses.append("search_dropped_visit_frac")
+            active_aux_losses.append("search_dropped_row_frac")
 
     # Seeded from the trainer, not from the loop variable, which does not exist yet -- and from
     # the clock as it stands, not from zero: a resumed run's elapsed already includes the previous

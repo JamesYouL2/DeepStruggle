@@ -65,9 +65,9 @@ if _ROOT not in sys.path:
 
 import ts_engine as ts  # noqa: E402
 from ai.search.pimcts import acting_player  # noqa: E402
-from ai.search.rollout_root import RolloutConfig, RolloutTeacher, rollout_spec_config  # noqa: E402
+from ai.search.rollout_root import RolloutConfig, RolloutTeacher, rollout_spec_config, rollout_spec_leaf  # noqa: E402
 from bindings.ts_env import model_obs_features  # noqa: E402
-from tools.lib.engine_fingerprint import fingerprint  # noqa: E402
+from tools.lib.engine_fingerprint import check_raw_states, fingerprint  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
 
 WIDTH = 16
@@ -204,7 +204,13 @@ def root_config(spec: str) -> RolloutConfig:
     parts = spec.split(":")
     if len(parts) < 5:
         raise ValueError(f"{spec!r}: root:k:worlds:horizon:rule[:stop][:own][:keyed][:aligned][:box4]")
-    _, cfg, _ = rollout_spec_config(":".join(["rollout", "-"] + parts[1:]))
+    rspec = ":".join(["rollout", "-"] + parts[1:])
+    _, cfg, _ = rollout_spec_config(rspec)
+    leaf = rollout_spec_leaf(rspec)
+    if leaf:
+        # A rollout spec reads any trailing field it does not know as the leaf checkpoint; a teacher's leaves are
+        # read by --checkpoint, so that field is a typo (or a leaf this tool would silently not use).
+        raise ValueError(f"{spec!r}: {leaf!r} is not a field of a root teacher (the leaves are read by --checkpoint)")
     if cfg.belief or cfg.oracle:
         raise ValueError(f"{spec!r}: belief and oracle roots need the game's history or the opponent's hand")
     return cfg
@@ -279,12 +285,21 @@ def merge(base: Dict[str, np.ndarray], shards: Sequence[Dict[str, np.ndarray]]) 
     return out
 
 
-def _engine_check(meta_path: str) -> None:
-    if os.path.exists(meta_path):
-        written = json.load(open(meta_path, encoding="utf-8")).get("engine_fingerprint")
-        if written != fingerprint():
-            raise SystemExit(f"{meta_path}: its raw states were written by engine {str(written)[:8]}, this build is "
-                             f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
+def merged_specs(prev: Dict[str, Any], shard_metas: Sequence[Tuple[str, Dict[str, Any]]], checkpoint: str,
+                 seed: int) -> Dict[str, str]:
+    """The teachers of a merge; refuses shards searched with another network or seed, or one teacher's name
+    given two specs (by two shards, or by a shard and the position set) -- their rows would pool silently."""
+    specs: Dict[str, str] = dict(prev.get("teachers", {}))
+    origin = {n: "the position set" for n in specs}
+    for path, meta in shard_metas:
+        for key, want in (("checkpoint", checkpoint), ("seed", seed)):
+            if meta.get(key) != want:
+                raise SystemExit(f"{path}: searched with {key} {meta.get(key)!r}, this merge has {want!r}")
+        for n, sp in meta.get("teachers", {}).items():
+            if specs.setdefault(n, sp) != sp:
+                raise SystemExit(f"teacher {n!r} is {specs[n]!r} in {origin[n]} but {sp!r} in {path}")
+            origin.setdefault(n, path)
+    return specs
 
 
 def _write(path: str, out: Dict[str, np.ndarray], meta: Dict[str, Any]) -> None:
@@ -344,14 +359,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     meta_base: Dict[str, Any] = {"checkpoint": a.checkpoint, "seed": a.seed}
 
     if a.merge:
-        _engine_check(a.states + ".meta.json")
+        for p in [a.states] + list(a.merge):
+            check_raw_states(p)
+        prev: Dict[str, Any] = _meta(a.states)
+        specs = merged_specs(prev, [(p, _meta(p)) for p in a.merge], a.checkpoint, a.seed)
         base = _load(a.states)
         shards = [_load(p) for p in a.merge]
         out = merge(base, shards)
-        prev: Dict[str, Any] = _meta(a.states)
-        specs = dict(prev.get("teachers", {}))
-        for p in a.merge:
-            specs.update(json.load(open(p + ".meta.json", encoding="utf-8")).get("teachers", {}))
         _write(a.output, out, prev | {"teachers": specs, "merged_from": list(a.merge)})
         print(f"merged {len(shards)} shards: {sorted(specs)} -> {a.output}")
         return 0
@@ -360,7 +374,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
     t0 = time.time()
     if a.states:
-        _engine_check(a.states + ".meta.json")
+        check_raw_states(a.states)
         base = _load(a.states)
         prev = _meta(a.states)
         raw = base["states"]
@@ -383,7 +397,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     rows = shard_rows(raw.shape[0], a.shard) if a.shard else np.arange(raw.shape[0])
     shard_no = int(a.shard.partition("/")[0]) if a.shard else 0
-    states = [ts.state_from_raw_bytes(raw[i].tobytes()) for i in rows]
+    states = [ts.state_from_raw_bytes(raw[int(i)].tobytes()) for i in rows]
     out: Dict[str, np.ndarray] = {"rows": rows} if a.shard else dict(base)
     for name, spec in teachers:
         t1 = time.time()

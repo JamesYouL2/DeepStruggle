@@ -22,6 +22,7 @@ The hash is defined here and used from both sides -- the shell script shells out
 from __future__ import annotations
 
 import hashlib
+import json
 import pathlib
 import sys
 from typing import List, Optional
@@ -126,6 +127,23 @@ def staleness_reason(module_file: str, root: Optional[pathlib.Path] = None) -> O
             f"not comparable."
         )
     return None
+
+
+def check_raw_states(path: str) -> None:
+    """Refuse a file of raw GameState bytes that this build did not write.
+
+    Raw state bytes are read only by the engine build that wrote them, and a stale read decodes
+    garbage without an error. The writer (`tools/distill_targets.py`) records its fingerprint in the
+    sidecar `<path>.meta.json`; a file without the sidecar cannot be vouched for and is refused too.
+    """
+    meta = pathlib.Path(path + ".meta.json")
+    if not meta.is_file():
+        raise SystemExit(f"{path}: no {meta.name} beside it, so nothing records which engine build wrote its raw "
+                         f"states -- raw state bytes are read only by the build that wrote them")
+    written = json.loads(meta.read_text(encoding="utf-8")).get("engine_fingerprint")
+    if written != fingerprint():
+        raise SystemExit(f"{path}: its raw states were written by engine {str(written)[:8]}, this build is "
+                         f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

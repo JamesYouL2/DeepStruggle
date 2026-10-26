@@ -46,6 +46,12 @@ permissions:
   contents: read
   actions: read   # states_from reads another run's artifacts
 
+# bash -eo pipefail: without a shell named a step runs as `bash -e`, so `python ... | tee` passes when
+# python fails.
+defaults:
+  run:
+    shell: bash
+
 env:
   GH_TOKEN: ${{ github.token }}
   PYTHONPATH: .:build/release
@@ -85,7 +91,8 @@ jobs:
           else
             curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
             sha256sum work/net.pt
-            tools/scripts/check_engine_fresh.sh && python tools/distill_targets.py --checkpoint work/net.pt \
+            tools/scripts/check_engine_fresh.sh
+            python tools/distill_targets.py --checkpoint work/net.pt \
               --games "$GAMES" --positions "$POSITIONS" --collect-only --device cpu --output pos/pos.npz
           fi
       - uses: actions/upload-artifact@v4
@@ -119,7 +126,8 @@ jobs:
         run: |
           mkdir -p out
           args=(); for t in $TEACHERS; do args+=(--teacher "$t"); done
-          tools/scripts/check_engine_fresh.sh && OMP_NUM_THREADS=4 python tools/distill_targets.py \
+          tools/scripts/check_engine_fresh.sh
+          OMP_NUM_THREADS=4 python tools/distill_targets.py \
             --checkpoint work/net.pt --states pos/pos.npz --shard "${{ matrix.part }}/$RUNNERS" --device cpu \
             "${args[@]}" --output "out/shard-${{ matrix.part }}.npz" | tee "out/shard-${{ matrix.part }}.log"
       - uses: actions/upload-artifact@v4
@@ -149,7 +157,9 @@ jobs:
         run: |
           mkdir -p work res
           curl -sSfL --retry 3 -o work/net.pt "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
-          tools/scripts/check_engine_fresh.sh && python tools/distill_targets.py --checkpoint work/net.pt \
+          # One command per line: under `set -e` a failure on the left of && does not stop the step.
+          tools/scripts/check_engine_fresh.sh
+          python tools/distill_targets.py --checkpoint work/net.pt \
             --states pos/pos.npz --merge shards/shard-*.npz --output res/targets.npz
           python tools/distill_probe.py agree --dataset res/targets.npz --json res/agree.json | tee res/agree.md
           for t in $KNN_TEACHERS; do

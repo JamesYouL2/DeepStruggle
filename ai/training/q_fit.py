@@ -35,7 +35,10 @@ Readings on the held-out games, whose rows were searched twice (two seeds, indep
 * `gain_*` -- the judge's two-seed mean lead of the move the Q root plays, over every held-out row: what
   it is worth per decision over the network, unbiased since the head never saw those seeds. The bars are
   in `fixed`: `gain_judge_xseed` (the judge's root, one seed's pick valued by the other) and `gain_base`
-  (the baseline teacher's pick).
+  (the baseline teacher's pick). A bar averages only the rows where the judge searched the move it plays
+  (`*_coverage`; h0 at k 16 often plays a move outside h4's four candidates), so where a bar's coverage is
+  below 1 the Q root's gain is also read on exactly that bar's rows (`gain_<theta>_on_base_rows`,
+  `gain_<theta>_on_judge_xseed_rows`): the like-for-like comparison.
   `gain_se_*` is its standard error over rows (a game's rows are not independent: a lower bound).
 * The **Q root's** move: the candidate with the largest predicted lead when it clears `theta`, else the
   network's. Against the teacher's z2 pick where both seeds agree: `take_*` (it plays the teacher's move
@@ -52,7 +55,7 @@ import os
 import pathlib
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -62,7 +65,7 @@ from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dic
 from ai.training.generic_trainer import _resolve_run_dir
 from ai.training.policy_fit import ACTIONS, POLICY_MODULES, masks_of
 from ai.training.value_fit import Codes, _git
-from tools.lib.engine_fingerprint import fingerprint
+from tools.lib.engine_fingerprint import check_raw_states
 
 VALUE_PREFIXES = ("val_win_head", "val_vp_head", "val_logits_head")
 
@@ -152,10 +155,7 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
 
     t0 = time.time()
     meta_path = pathlib.Path(cfg.dataset + ".meta.json")
-    written_by = json.loads(meta_path.read_text()).get("engine_fingerprint") if meta_path.exists() else None
-    if written_by != fingerprint():
-        raise SystemExit(f"{cfg.dataset}: its raw states were written by engine {str(written_by)[:8]}, this build is "
-                         f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
+    check_raw_states(cfg.dataset)
     with np.load(cfg.dataset) as z:
         d = {k: z[k] for k in z.files}
     t = cfg.target
@@ -351,16 +351,21 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
             gain = np.where(lead_best > th, mean12[np.arange(best.size), best], 0.0)
             out[f"gain_{th:g}"] = float(gain.mean())
             out[f"gain_se_{th:g}"] = float(gain.std() / math.sqrt(max(1, gain.size)))
+            for bar, rows in bar_rows.items():
+                out[f"gain_{th:g}_on_{bar}_rows"] = float(gain[rows].mean()) if rows.any() else float("nan")
         return out
 
-    def gain_of(moves: np.ndarray, cands: List[str], leads_: List[str]) -> Dict[str, float]:
-        """The judge's lead (averaged over the seeds named) of each held-out row's `moves`, the network's move 0."""
+    def gain_of(moves: np.ndarray, cands: List[str], leads_: List[str]) -> Tuple[Dict[str, float], np.ndarray]:
+        """The judge's lead (averaged over the seeds named) of each held-out row's `moves`, the network's move 0,
+        over the rows where the judge has the move; and those rows."""
         vals = [_match(moves[:, None], d[f"{c}_{jt}"][ho].astype(np.int64), d[f"{k}_{jt}"][ho].astype(np.float32))[:, 0]
                 for c, k in zip(cands, leads_)]
-        v = np.nanmean(np.stack(vals), 0) if len(vals) > 1 else vals[0]
+        stack = np.stack(vals)
+        seen = np.isfinite(stack).sum(0)
+        v = np.where(seen > 0, np.nansum(stack, 0) / np.maximum(seen, 1), np.nan)   # a mean over the seeds that have it
         v = np.where(moves == net[ho], 0.0, v)
         have = np.isfinite(v)
-        return {"gain": float(v[have].mean()) if have.any() else float("nan"), "coverage": float(have.mean())}
+        return {"gain": float(v[have].mean()) if have.any() else float("nan"), "coverage": float(have.mean())}, have
 
     lg_ho = base_logits(ho)
     fixed: Dict[str, float] = {"reliability_single": r12, "reliability_mean": rel, "reliability_within": rel_within,
@@ -368,12 +373,18 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
                                "train_positions": int(tr.size)}
     # The bars for `gain_*`: the judge's own root, each seed's pick valued by the other seed (no winner's curse),
     # and the baseline teacher's pick valued by both of the judge's seeds (independent searches).
-    xs1, xs2 = gain_of(pick[ho], ["cand2"], ["lead2"]), gain_of(pick2[ho], ["cand"], ["lead"])
+    # A bar's rows: where it has a value. With coverage below 1 the Q root is also read on those rows alone.
+    bar_rows: Dict[str, np.ndarray] = {}
+    (xs1, have1), (xs2, have2) = gain_of(pick[ho], ["cand2"], ["lead2"]), gain_of(pick2[ho], ["cand"], ["lead"])
     fixed["gain_judge_xseed"] = 0.5 * (xs1["gain"] + xs2["gain"])
     fixed["gain_judge_xseed_coverage"] = 0.5 * (xs1["coverage"] + xs2["coverage"])
+    if not (have1 & have2).all():
+        bar_rows["judge_xseed"] = have1 & have2
     if cfg.baseline and f"pick_{cfg.baseline}" in d:
-        gb = gain_of(d[f"pick_{cfg.baseline}"][ho].astype(np.int64), ["cand", "cand2"], ["lead", "lead2"])
+        gb, have_b = gain_of(d[f"pick_{cfg.baseline}"][ho].astype(np.int64), ["cand", "cand2"], ["lead", "lead2"])
         fixed["gain_base"], fixed["gain_base_coverage"] = gb["gain"], gb["coverage"]
+        if not have_b.all():
+            bar_rows["base"] = have_b
     fixed.update(readings(lg_ho - lg_ho[:, :1], "_logits"))
     if base_lead is not None:
         bl = base_lead[ho]

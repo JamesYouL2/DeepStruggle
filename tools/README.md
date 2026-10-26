@@ -652,7 +652,8 @@ policies on the network's own entry decisions, held out by game, and searches th
 a second time (other seeds) for the teacher's self-agreement. A teacher is `--teacher name=spec`:
 * `root:k:worlds:horizon:rule[:stop][:own|decider][:keyed][:aligned][:box4]` -- the rollout root.
   Horizon 0 is the critic read at the mover's next decision, so a ladder from `h0` to `h4`
-  separates what the critic knows from what the playouts add.
+  separates what the critic knows from what the playouts add. Any other trailing field is refused
+  (a rollout spec would read it as a leaf checkpoint; a teacher's leaves are `--checkpoint`'s).
 * `net:<checkpoint>` -- another network's raw policy, a positive control: a target a network of
   the same shape demonstrably represents.
 
@@ -664,12 +665,16 @@ action-value head, which a pick or an improved policy throws away.
 `--worlds 16 64 128` (with no `--teacher`) rebuilds P36c's set with its seeds. The search splits
 across machines: `--collect-only` writes the positions once; then `--states pos.npz --shard i/n`
 searches one part per runner; then `--states pos.npz --merge s1.npz ... --output targets.npz`
-joins them, refusing any row that is not covered exactly once. The raw states are readable only by
-the engine build that wrote them, and every step checks this.
+joins them, refusing any row that is not covered exactly once, a shard searched with another
+`--checkpoint` or `--seed`, and one teacher name under two specs. The raw states are readable only by
+the engine build that wrote them, and every reader checks the fingerprint in the set's `.meta.json`
+(`tools.lib.engine_fingerprint.check_raw_states`), refusing a set without one.
 
 `tools/train.py --mode policy-fit --policy-target <name>` fits a student to any named teacher.
-`--policy-reinit-heads` re-initialises only the policy heads, keeping the trunk: a plasticity test
-between the fine-tune and `--policy-reinit`. `ai/eval/departure_probe.py --target <name>` asks
+`--policy-reinit-heads` re-initialises only the policy heads (and the region attention that feeds
+the per-country head) to a newly built network's, keeping the trunk: a plasticity test between the
+fine-tune and `--policy-reinit`. With `--policy-kl-anchor` the anchor is the trained policy, taken
+before the reset. `ai/eval/departure_probe.py --target <name>` asks
 whether the departures can be read from the trunk.
 
 `tools/train.py --mode q-fit --q-dataset <npz> --q-target <name> --warmup-checkpoint <pt>` fits
@@ -684,7 +689,10 @@ rates of the Q root at each threshold against the teacher's stable picks. The nu
 the Q root's **realised gain** (`gain_<θ>`, with its standard error): the judge's two-seed mean lead
 of the move the Q root plays, per decision (the network's move scores 0), unbiased because the head
 never saw those seeds. Its bars are `gain_judge_xseed` (the teacher's pick on one seed, valued by the
-other) and `gain_base` (the baseline's own pick). `--q-judge <name>` judges with another teacher than
+other) and `gain_base` (the baseline's own pick). A bar averages only the rows where the judge
+searched the move it plays (`*_coverage`); below full coverage the Q root's gain is also read on that
+bar's rows alone (`gain_<θ>_on_base_rows`, `gain_<θ>_on_judge_xseed_rows`), the like-for-like
+comparison. `--q-judge <name>` judges with another teacher than
 the one fitted (fit 32 worlds, judge by 128); `--q-train-fraction f` keeps the first share of the
 training games, whole, for a data-scaling curve with the held-out rows unchanged
 (`.github/workflows/q_fit_curve.yml` runs one on CPU). Records in `q_fit_metrics.jsonl` and

@@ -135,3 +135,24 @@ def test_a_teacher_without_statistics_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="no candidate statistics"):
         run_q_fit(QFitConfig(dataset=data, target="h4w128", init=init, device="cpu", bf16=False),
                   run_name=None, description="test", output_dir=str(tmp_path / "run"))
+
+
+def test_a_bar_with_uncovered_rows_is_matched_on_its_own_rows(tmp_path: Path) -> None:
+    """The baseline's pick is valued only where the judge searched it: a bar with coverage below 1 averages fewer
+    rows than `gain_*`, so the Q root is read on that bar's rows too, the like-for-like comparison."""
+    data, init = _dataset(tmp_path), _init(tmp_path)
+    with np.load(data) as z:
+        d = {k: z[k] for k in z.files}
+    cand = d["cand_hq"].astype(np.int64)
+    outside = np.asarray([next(a for a in range(220) if a not in set(row.tolist())) for row in cand])
+    d["pick_h0"] = np.where(np.arange(cand.shape[0]) % 2 == 0, cand[:, 0], outside).astype(np.int16)
+    np.savez(data, **d)
+    run = run_q_fit(QFitConfig(dataset=data, target="hq", init=init, batch=64, max_epochs=1, eval_every=50,
+                               warmup_steps=10, device="cpu", bf16=False),
+                    run_name=None, description="test", output_dir=str(tmp_path / "run"))
+    meta = json.loads((Path(run) / "metadata.json").read_text())
+    fixed, best = meta["fixed"], meta["best"]
+    assert 0.3 < fixed["gain_base_coverage"] < 0.7
+    assert fixed["gain_base"] == 0.0                        # every covered row is the network's own move
+    assert np.isfinite(best["gain_0.04_on_base_rows"])
+    assert "gain_0.04_on_judge_xseed_rows" not in best      # the judge's own picks are always its candidates

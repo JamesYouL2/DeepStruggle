@@ -27,6 +27,7 @@ import torch.nn.functional as F
 from ai.eval.belief_probe import _auc
 from ai.training.policy_fit import masks_of
 from ai.training.value_fit import Codes
+from tools.lib.engine_fingerprint import check_raw_states
 from tools.lib.player_agent import NeuralAgent
 
 
@@ -65,11 +66,12 @@ def main() -> int:
     a = ap.parse_args()
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    check_raw_states(a.dataset)
     z = np.load(a.dataset)
     held = z["heldout"].astype(bool)
     name = a.target or str(a.worlds)
     dep = (z[f"acts_{name}"][:, 0].astype(np.int64) != z["net_argmax"].astype(np.int64)).astype(np.float32)
-    codes = Codes(0, dev)
+    codes = Codes(int(getattr(model, "obs_feature_bits", 0)), dev)   # the network's own observation
     x_codes = codes.encode(z["states"])
     masks = masks_of(z["states"])
     feats: Dict[str, np.ndarray] = {}

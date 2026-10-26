@@ -44,17 +44,12 @@ if _ROOT not in sys.path:
 
 from ai.training.policy_fit import masks_of  # noqa: E402
 from ai.training.value_fit import Codes  # noqa: E402
-from tools.lib.engine_fingerprint import fingerprint  # noqa: E402
+from tools.lib.engine_fingerprint import check_raw_states  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
 
 
 def load(path: str) -> Dict[str, np.ndarray]:
-    meta = path + ".meta.json"
-    if os.path.exists(meta):
-        written = json.load(open(meta, encoding="utf-8")).get("engine_fingerprint")
-        if written != fingerprint():
-            raise SystemExit(f"{path}: its raw states were written by engine {str(written)[:8]}, this build is "
-                             f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
+    check_raw_states(path)
     with np.load(path) as z:
         return {k: z[k] for k in z.files}
 
@@ -98,28 +93,53 @@ def agree_table(d: Dict[str, np.ndarray], names: Sequence[str]) -> str:
 
 
 def features(model: Any, states: np.ndarray, masks: np.ndarray, space: str, dev: torch.device) -> np.ndarray:
-    """Each position's trunk features (`trunk`) or observation (`obs`), standardised and L2-normalised."""
+    """Each position's trunk features (`trunk`) or observation (`obs`), standardised and L2-normalised.
+
+    Built in place in one preallocated array: the observation space is n x 3,824 floats (3 GB at 200,000
+    positions), so a concatenate and whole-array temporaries would hold several copies at once."""
     codes = Codes(int(getattr(model, "obs_feature_bits", 0)), dev)
     x = codes.encode(states)
-    out: List[np.ndarray] = []
-    for lo in range(0, x.shape[0], 8192):
-        obs = codes.decode(torch.from_numpy(x[lo:lo + 8192]).to(dev))
+    n, step = x.shape[0], 8192
+    f: Optional[np.ndarray] = None
+    for lo in range(0, n, step):
+        obs = codes.decode(torch.from_numpy(x[lo:lo + step]).to(dev))
         with torch.no_grad():
-            f = getattr(model, "_encode")(obs)[0].float() if space == "trunk" else obs.float()
-        out.append(f.cpu().numpy())
-    f = np.concatenate(out) if out else np.zeros((0, 1), np.float32)
-    f = (f - f.mean(0)) / (f.std(0) + 1e-6)
-    return (f / (np.linalg.norm(f, axis=1, keepdims=True) + 1e-9)).astype(np.float32)
+            part = getattr(model, "_encode")(obs)[0].float() if space == "trunk" else obs.float()
+        if f is None:
+            f = np.empty((n, part.shape[1]), dtype=np.float32)
+        f[lo:lo + step] = part.cpu().numpy()
+    if f is None:
+        return np.zeros((0, 1), np.float32)
+    total, sq = np.zeros(f.shape[1]), np.zeros(f.shape[1])
+    for lo in range(0, n, step):
+        c = f[lo:lo + step].astype(np.float64)
+        total += c.sum(0)
+        sq += (c * c).sum(0)
+    mu = total / n
+    sd = np.sqrt(np.maximum(sq / n - mu * mu, 0.0))
+    mu32, inv32 = mu.astype(np.float32), (1.0 / (sd + 1e-6)).astype(np.float32)
+    for lo in range(0, n, step):
+        c = f[lo:lo + step]
+        c -= mu32
+        c *= inv32
+        c /= np.linalg.norm(c, axis=1, keepdims=True) + 1e-9
+    return f
 
 
 def neighbours(f: np.ndarray, query: np.ndarray, pool: np.ndarray, k: int, dev: torch.device) -> np.ndarray:
-    """(len(query), k) indices into `pool` of each query row's nearest pool rows by cosine."""
-    fp = torch.from_numpy(f[pool]).to(dev)
+    """(len(query), k) indices into `pool` of each query row's nearest pool rows by cosine.
+
+    Scored against every row with the rows outside the pool masked, so `f` is never copied (f[pool] would be a
+    second n x width array)."""
+    fa = torch.from_numpy(f).to(dev)
+    outside = torch.ones(f.shape[0], dtype=torch.bool, device=dev)
+    outside[torch.from_numpy(pool).to(dev)] = False
     out: List[np.ndarray] = []
     for lo in range(0, query.size, 1024):
-        q = torch.from_numpy(f[query[lo:lo + 1024]]).to(dev)
-        out.append(torch.topk(q @ fp.T, min(k, pool.size), dim=1).indices.cpu().numpy())
-    return pool[np.concatenate(out)] if out else np.zeros((0, k), np.int64)
+        q = fa[torch.from_numpy(query[lo:lo + 1024]).to(dev)]
+        s = (q @ fa.T).masked_fill(outside, float("-inf"))
+        out.append(torch.topk(s, min(k, pool.size), dim=1).indices.cpu().numpy())
+    return np.concatenate(out) if out else np.zeros((0, k), np.int64)
 
 
 def knn_readings(top: np.ndarray, net: np.ndarray, masks: np.ndarray, query: np.ndarray, nb: np.ndarray) -> Dict[str, float]:

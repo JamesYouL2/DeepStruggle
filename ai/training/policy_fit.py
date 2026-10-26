@@ -40,7 +40,7 @@ import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
 from ai.training.generic_trainer import _resolve_run_dir
 from ai.training.value_fit import Codes, _git
-from tools.lib.engine_fingerprint import fingerprint
+from tools.lib.engine_fingerprint import check_raw_states
 
 ACTIONS = 220
 
@@ -91,22 +91,25 @@ def dense_targets(acts: np.ndarray, probs: np.ndarray) -> np.ndarray:
     return out
 
 
-#: The modules that turn the trunk's features into logits (whichever of them a LadderNet has).
-POLICY_MODULES = ("policy_head", "pe_trunk", "pe_card", "pe_country", "play_mode_head_net", "branch_head_net")
+#: The modules that turn the trunk's features into logits (whichever of them a LadderNet has); `region_attn`
+#: feeds only the per-country head.
+POLICY_MODULES = ("policy_head", "pe_trunk", "pe_card", "pe_country", "play_mode_head_net", "branch_head_net",
+                  "region_attn")
 
 
-def reinit_policy_heads(model: nn.Module) -> int:
-    """Fresh weights for every policy-head layer (the trunk and the value heads kept); returns the parameters reset."""
+def reinit_policy_heads(model: nn.Module, fresh: nn.Module) -> int:
+    """The policy modules' weights replaced by those of `fresh`, a newly built network of the same shape (the
+    trunk and the value heads kept): a true fresh start, the layers LadderNet starts at zero zeroed again
+    (`reset_parameters` would randomise them, and a centred head's final bias, which gets no gradient, would
+    keep its random value). Returns the parameters reset."""
     n = 0
     for name in POLICY_MODULES:
-        mod = getattr(model, name, None)
+        mod, new = getattr(model, name, None), getattr(fresh, name, None)
         if not isinstance(mod, nn.Module):
             continue
-        for sub in mod.modules():
-            reset = getattr(sub, "reset_parameters", None)
-            if callable(reset) and any(True for _ in sub.parameters(recurse=False)):
-                reset()
-                n += sum(p.numel() for p in sub.parameters(recurse=False))
+        assert isinstance(new, nn.Module), f"the fresh network has no {name}"
+        mod.load_state_dict(new.state_dict(), strict=True)
+        n += sum(p.numel() for p in mod.parameters())
     if n == 0:
         raise SystemExit("--policy-reinit-heads: this network has none of the policy modules " + ", ".join(POLICY_MODULES))
     return n
@@ -140,18 +143,20 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     model = create_ladder_net(dev, **lcfg)
     if not cfg.reinit:
         model.load_state_dict(sd, strict=True)
-    if cfg.reinit_heads:
-        if cfg.reinit or cfg.head_only:
-            raise SystemExit("--policy-reinit-heads keeps the trained trunk: not with --policy-reinit or --policy-head-only")
-        print(f"policy heads re-initialised: {reinit_policy_heads(model) / 1e6:.2f}M parameters", flush=True)
-    # The value path frozen: the student is read and trained on its policy only.
-    for name, p in model.named_parameters():
-        if name.startswith(("val_win_head", "val_vp_head", "val_logits_head")):
-            p.requires_grad_(False)
+    # The anchor is the initial network's policy, so it is copied before any head is re-initialised.
     anchor = None
     if cfg.kl_anchor > 0:
         anchor = copy.deepcopy(model).eval()
         for p in anchor.parameters():
+            p.requires_grad_(False)
+    if cfg.reinit_heads:
+        if cfg.reinit or cfg.head_only:
+            raise SystemExit("--policy-reinit-heads keeps the trained trunk: not with --policy-reinit or --policy-head-only")
+        n_reset = reinit_policy_heads(model, create_ladder_net(dev, **lcfg))
+        print(f"policy heads re-initialised: {n_reset / 1e6:.2f}M parameters", flush=True)
+    # The value path frozen: the student is read and trained on its policy only.
+    for name, p in model.named_parameters():
+        if name.startswith(("val_win_head", "val_vp_head", "val_logits_head")):
             p.requires_grad_(False)
     head: Optional[nn.Module] = None
     if cfg.head_only:
@@ -171,11 +176,7 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
     n_params = sum(p.numel() for p in model.parameters()) + (sum(p.numel() for p in head.parameters()) if head is not None else 0)
 
     t0 = time.time()
-    meta_path = pathlib.Path(cfg.dataset + ".meta.json")
-    written_by = json.loads(meta_path.read_text()).get("engine_fingerprint") if meta_path.exists() else None
-    if written_by != fingerprint():
-        raise SystemExit(f"{cfg.dataset}: its raw states were written by engine {str(written_by)[:8]}, this build is "
-                         f"{fingerprint()[:8]} -- raw state bytes are read only by the build that wrote them")
+    check_raw_states(cfg.dataset)
     with np.load(cfg.dataset) as z:
         d = {k: z[k] for k in z.files}
     w = cfg.target or str(cfg.worlds)

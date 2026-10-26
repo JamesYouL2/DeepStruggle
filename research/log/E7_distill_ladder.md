@@ -78,6 +78,12 @@ runners and the fits on one rented 4090.
     those seeds.
   * **The bars** are `gain_judge_xseed` (the root's pick on one seed, valued by the other seed) and
     `gain_base` (h0's own pick).
+    * *Caveat, added after the runs:* a bar averages only the rows where the judge searched the move
+      it plays. h0 at k 16 often picks a move outside h4w128's four candidates, so `gain_base`'s −0.27
+      is a mean over fewer rows than the Q root's gain, not a like-for-like bar. q-fit now also reads
+      the Q root on the bar's own rows (`gain_<θ>_on_base_rows`). The verdict rests on the head's gain
+      against 0 and against `gain_judge_xseed`; that bar's coverage is recorded beside it in each
+      fit's `metadata.json`.
 
 ## 1. The teacher ladder: every teacher's corrections are local
 

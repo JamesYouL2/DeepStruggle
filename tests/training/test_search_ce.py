@@ -176,6 +176,11 @@ def test_the_ce_metrics_are_registered_for_logging() -> None:
     # --active-search-ce-coef with --search-ce-coef at 0, and P36's active-search runs logged no CE.
     assert "if search_ce_coef > 0.0" not in block, (
         "the registration reads the --search-ce-coef argument, which an active-search run leaves at 0")
+    # Only the queued searcher writes these; an active-search run (no `_searcher`) would log a constant 0.
+    queued = block[block.index('if getattr(trainer, "_searcher", None) is not None:'):]
+    for key in ("search_saturated_frac", "search_dropped_visit_frac", "search_dropped_row_frac"):
+        assert block.count(f'"{key}"') == 1 and f'"{key}"' in queued, (
+            f"{key} is written only by the queued searcher: register it only when the trainer has one")
 
 
 def test_the_ppo_ratio_cannot_overflow_to_nan() -> None:
