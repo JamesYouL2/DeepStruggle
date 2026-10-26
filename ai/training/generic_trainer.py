@@ -35,7 +35,7 @@ from bindings.ts_env import (OBS_LAYOUT_NAME, TsVectorizedEnv, check_obs_width,
 from ai.training.active_search import ActiveSearch, gate_metrics
 from ai.training.rollout_buffer import RolloutBuffer
 from ai.training.run_name import is_run_name
-from ai.training.schedule import WeightEMA, scheduled_lr
+from ai.training.schedule import WeightEMA, scheduled_lr, warmup_factor
 from ai.training.nash_pg import DEFAULT_ROLLOUT_TEMPS, NashPGTrainer
 from ai.training.start_pool import DEFAULT_TURN_MIX, StartPositionPool
 from ai.eval.agreement import evaluate_dataset
@@ -1852,6 +1852,7 @@ def train_pipeline(
     lr_schedule_values: Sequence[float] = (1e-4, 3e-5),
     lr_schedule_span: int = 200_000_000,
     lr_min: float = 3e-5,
+    lr_warmup_steps: int = 0,
     ema_weights: float = 0.0,
 ) -> None:
     if setup_script_frac > 0.0 and not setup_script_openings:
@@ -2203,6 +2204,7 @@ def train_pipeline(
         "lr_schedule_every": int(lr_schedule_every),
         "lr_schedule_values": [float(v) for v in lr_schedule_values],
         "lr_schedule_span": int(lr_schedule_span),
+        "lr_warmup_steps": int(lr_warmup_steps),
         "lr_min": float(lr_min),
         "ema_weights": float(ema_weights),
         # The optimisation settings, under their CLI names so tools/scripts/launch_flags.py can
@@ -2923,13 +2925,16 @@ def train_pipeline(
     def _lr_now(steps: int) -> float:
         return scheduled_lr(steps, lr, lr_schedule, start=_lr_start, every=int(lr_schedule_every),
                             values=tuple(float(v) for v in lr_schedule_values),
-                            span=int(lr_schedule_span), lr_min=float(lr_min))
+                            span=int(lr_schedule_span), lr_min=float(lr_min)) * warmup_factor(steps, int(lr_warmup_steps))
 
     if lr_schedule != "constant":
         _plan = (f"x {list(lr_schedule_values)} every {int(lr_schedule_every):,} steps"
                  if lr_schedule == "step" else
                  f"cosine to {lr_min:g} over {int(lr_schedule_span):,} steps")
         print(f"[lr schedule] {lr_schedule}: {lr:g} from {_lr_start:,} steps, then {_plan}; "
+              f"now {_lr_now(int(trainer.total_env_steps)):g}", flush=True)
+    if lr_warmup_steps > 0:
+        print(f"[lr warmup] linear from 0 to the scheduled rate over the first {int(lr_warmup_steps):,} steps; "
               f"now {_lr_now(int(trainer.total_env_steps)):g}", flush=True)
     # The rated model: the weight average under --ema-weights, the live weights otherwise. It is
     # what snapshots, pool members and evaluations see; the live weights keep training.
@@ -3072,7 +3077,7 @@ def train_pipeline(
 
         it += 1
         _cur_lr = _lr_now(int(trainer.total_env_steps))
-        if lr_schedule != "constant":
+        if lr_schedule != "constant" or lr_warmup_steps > 0:
             for _g in trainer.optimizer.param_groups:
                 _g["lr"] = _cur_lr
         _steps_before = int(trainer.total_env_steps)

@@ -8,7 +8,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from ai.training.schedule import WeightEMA, scheduled_lr
+from ai.training.schedule import WeightEMA, scheduled_lr, warmup_factor
 
 
 def test_constant_is_the_base_rate_everywhere() -> None:
@@ -32,6 +32,16 @@ def test_cosine_runs_from_the_base_rate_to_the_floor_over_its_span() -> None:
     assert math.isclose(scheduled_lr(100, 3e-4, **kw), (3e-4 + 3e-5) / 2)
     assert math.isclose(scheduled_lr(200, 3e-4, **kw), 3e-5)
     assert math.isclose(scheduled_lr(10_000, 3e-4, **kw), 3e-5)
+
+
+def test_warmup_ramps_linearly_from_zero_over_its_steps_then_holds() -> None:
+    assert warmup_factor(0, 50_000_000) == 0.0
+    assert warmup_factor(25_000_000, 50_000_000) == pytest.approx(0.5)
+    assert warmup_factor(50_000_000, 50_000_000) == 1.0
+    assert warmup_factor(12_400_000_000, 50_000_000) == 1.0      # a branch from a trained state: untouched
+    assert warmup_factor(0, 0) == 1.0 and warmup_factor(10, 0) == 1.0   # 0 is no warmup
+    with pytest.raises(ValueError):
+        warmup_factor(0, -1)
 
 
 def test_an_unknown_schedule_is_refused() -> None:

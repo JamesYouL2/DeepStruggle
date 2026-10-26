@@ -23,6 +23,17 @@ import torch.nn as nn
 LR_SCHEDULES = ("constant", "step", "cosine")
 
 
+def warmup_factor(steps: int, warmup_steps: int) -> float:
+    """P39 arm 1: the share of the scheduled rate at `steps` under a linear warmup over the run's first
+    `warmup_steps` env steps, counted from step 0 so a resume mid-ramp continues it and a branch from a
+    trained state (past the ramp) is untouched. 0 steps is no warmup."""
+    if warmup_steps < 0:
+        raise ValueError(f"--lr-warmup-steps must be non-negative, got {warmup_steps}")
+    if warmup_steps == 0 or steps >= warmup_steps:
+        return 1.0
+    return max(steps, 0) / warmup_steps
+
+
 def scheduled_lr(steps: int, base_lr: float, kind: str = "constant", start: int = 0,
                  every: int = 60_000_000, values: Sequence[float] = (1e-4, 3e-5),
                  span: int = 200_000_000, lr_min: float = 3e-5) -> float:

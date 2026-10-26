@@ -891,6 +891,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr-schedule-span", type=int, default=200_000_000,
                         help="cosine schedule: steps from --lr to --lr-min.")
     parser.add_argument("--lr-min", type=float, default=3e-5, help="cosine schedule: the floor.")
+    parser.add_argument("--lr-warmup-steps", type=int, default=0,
+                        help="P39 arm 1: ramp the learning rate linearly from 0 to its scheduled value over "
+                             "the first N env steps (counted from step 0, so a resume mid-ramp continues it). "
+                             "0, the default, is no warmup.")
     # P29 bet 2 (research/log/P29_bet2_ownership_probes.md): auxiliary targets from each game's end.
     parser.add_argument("--aux-ownership", type=float, default=0.0,
                         help="Weight of an auxiliary head predicting who controls each of the 84 "
@@ -1386,6 +1390,7 @@ def main():
             lr_schedule_values=args.lr_schedule_values,
             lr_schedule_span=args.lr_schedule_span,
             lr_min=args.lr_min,
+            lr_warmup_steps=args.lr_warmup_steps,
             ema_weights=args.ema_weights,
             compile_update=args.compile_update,
             z_loss_coef=args.z_loss_coef,

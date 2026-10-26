@@ -132,6 +132,8 @@ _BEFORE_RECORDED = {
     "lr_schedule_values": lambda meta: [1e-4, 3e-5],
     "lr_schedule_span": lambda meta: 200_000_000,
     "lr_min": lambda meta: 3e-5,
+    # P39 arm 1 (2026-10-26): no learning-rate warmup before it existed.
+    "lr_warmup_steps": lambda meta: 0,
     "ema_weights": lambda meta: 0.0,
     # P29 bet 2 (2026-09-30): no aux targets before they existed.
     "aux_ownership": lambda meta: 0.0,
