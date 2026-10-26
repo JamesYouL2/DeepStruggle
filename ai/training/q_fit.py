@@ -70,6 +70,9 @@ class QFitConfig:
     #: Added in quadrature to every lead's standard error: no pair weighs more than 1 / se_floor^2.
     se_floor: float = 0.01
     baseline: Optional[str] = "h0"  # a second teacher's leads read as the bar (absent from the file: skipped)
+    #: The teacher whose two seeds judge the held-out rows (default the target): a fit to 32-world leads
+    #: judged by the 128-world ones asks whether the regression recovers what four times the search sees.
+    judge: Optional[str] = None
     batch: int = 1024               # positions (each with its candidates)
     lr: float = 3e-4
     weight_decay: float = 0.01
@@ -155,14 +158,18 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
     val_mask = ~heldout & (game % cfg.val_every == cfg.val_every // 2)
     tr = np.flatnonzero(~heldout & ~val_mask & searched)
     va = np.flatnonzero(val_mask & searched)
-    ho = np.flatnonzero(heldout & searched & (d[f"worlds2_{t}"] > 0))
+    jt = cfg.judge or t
+    if f"lead2_{jt}" not in d:
+        raise SystemExit(f"{cfg.dataset} has no second-seed statistics for the judge {jt!r}")
+    ho = np.flatnonzero(heldout & searched & (d[f"worlds2_{jt}"] > 0))
     P = _Pairs(d[f"cand_{t}"], d[f"lead_{t}"], d[f"lead_se_{t}"], cfg)
-    cand2 = d[f"cand2_{t}"].astype(np.int64)
-    if not np.array_equal(cand2[ho], P.cand[ho]):
-        raise SystemExit(f"{t}: the second seed's candidates differ from the first's on held-out rows")
-    lead2 = d[f"lead2_{t}"].astype(np.float32)
+
+    def judged(cand_key: str, key: str) -> np.ndarray:
+        """The judge's `key` for each of the target's candidates on the held-out rows (NaN where it has none)."""
+        return _match(P.cand[ho], d[f"{cand_key}_{jt}"][ho].astype(np.int64), d[f"{key}_{jt}"][ho].astype(np.float32))
+
     net = d["net_argmax"].astype(np.int64)
-    pick, pick2 = d[f"pick_{t}"].astype(np.int64), d[f"pick2_{t}"].astype(np.int64)
+    pick, pick2 = d[f"pick_{jt}"].astype(np.int64), d[f"pick2_{jt}"].astype(np.int64)
     base_lead: Optional[np.ndarray] = None
     if cfg.baseline and f"lead_{cfg.baseline}" in d:
         base_lead = _match(P.cand, d[f"cand_{cfg.baseline}"].astype(np.int64), d[f"lead_{cfg.baseline}"].astype(np.float32))
@@ -280,12 +287,12 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
         set_train(True)
         return num / max(den, 1e-9)
 
-    # The held-out judge: the two seeds' mean lead and its reliability, computed once.
-    ok_ho = P.ok[ho]
-    l1, l2 = P.lead[ho], np.nan_to_num(lead2[ho], nan=0.0)
+    # The held-out judge: its two seeds' mean lead and that mean's reliability, computed once.
+    l1, l2 = judged("cand", "lead"), judged("cand2", "lead2")
+    se1, se2 = judged("cand", "lead_se"), judged("cand2", "lead_se2")
+    ok_ho = P.ok[ho] & np.isfinite(l1) & np.isfinite(l2) & np.isfinite(se1) & np.isfinite(se2)
+    l1, l2, se1, se2 = (np.nan_to_num(x, nan=0.0) for x in (l1, l2, se1, se2))
     mean12 = 0.5 * (l1 + l2)
-    se1 = np.nan_to_num(d[f"lead_se_{t}"][ho].astype(np.float32), nan=np.inf)
-    se2 = np.nan_to_num(d[f"lead_se2_{t}"][ho].astype(np.float32), nan=np.inf)
     se12 = 0.5 * np.sqrt(se1 ** 2 + se2 ** 2)
     r12 = _corr(l1[ok_ho], l2[ok_ho])
     rel = 2 * r12 / (1 + r12) if r12 == r12 and r12 > 0 else float("nan")
@@ -325,7 +332,7 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
             fixed["baseline_coverage"] = float(have.sum() / max(1, ok_ho.sum()))
             fixed.update(readings(np.nan_to_num(bl), "_base", have))
             fixed.update({f"base_{k}": v for k, v in q_root(np.where(have, np.nan_to_num(bl), -np.inf)).items()})
-    print(f"Q fit to {t}: {tr.size:,} train / {va.size:,} validation / {ho.size:,} held-out positions; "
+    print(f"Q fit to {t}, judged by {jt}: {tr.size:,} train / {va.size:,} validation / {ho.size:,} held-out positions; "
           f"held-out lead reliability {r12:.3f} single seed, {rel:.3f} two-seed mean; logits r_dis "
           f"{fixed.get('r_dis_logits', float('nan')):.3f}, {cfg.baseline} r_dis {fixed.get('r_dis_base', float('nan')):.3f}; "
           f"{n_train / 1e6:.2f}M trained parameters; loaded in {time.time() - t0:.0f}s", flush=True)
@@ -340,6 +347,7 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
     run_dir = _resolve_run_dir(output_dir, run_name, "qfit", time.strftime("%Y%m%d_%H%M%S"))
     os.makedirs(run_dir, exist_ok=True)
     meta: Dict[str, Any] = dict(cli or {})
+    meta["resumed_from"] = cfg.init          # a copy of the network: the run branches from it
     meta |= {"run_name": run_name, "mode": "q-fit", "description": description, "seed": cfg.seed,
              "git_commit": _git("rev-parse", "HEAD"),
              "git_dirty": bool(_git("status", "--porcelain", "--", "ai", "tools", "bindings", "engine")),

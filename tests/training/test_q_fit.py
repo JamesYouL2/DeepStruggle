@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, Dict
 
 import numpy as np
 import pytest
@@ -22,7 +23,7 @@ def _dataset(tmp: Path) -> str:
     """Card choices of random games. Candidates: the network's move (the highest legal card) first, then up
     to three more legal cards; each move has one fixed value, so a candidate leads by its value less the
     network's move's, read by each seed with its own noise of SE 0.02. A baseline teacher `h0` reads the
-    same leads with SE 0.08."""
+    same leads with SE 0.08, and a cheaper teacher `lo` with SE 0.06 and no second seed."""
     runner = ts.VectorizedBatchRunner(24, 5)
     rng = np.random.default_rng(0)
     states, games = [], []
@@ -63,7 +64,7 @@ def _dataset(tmp: Path) -> str:
 
     l1, l2, lb = noisy(0.02), noisy(0.02), noisy(0.08)
     se = np.where(have, 0.02, np.nan).astype(np.float32)
-    out = {"states": np.stack(states), "game": game, "heldout": held, "net_argmax": cand[:, 0].copy(),
+    out: Dict[str, Any] = {"states": np.stack(states), "game": game, "heldout": held, "net_argmax": cand[:, 0].copy(),
            "cand_hq": cand, "lead_hq": l1, "lead_se_hq": se, "worlds_hq": np.full(n, 64, np.int16),
            "pick_hq": pick_of(l1),
            "cand2_hq": np.where(held[:, None], cand, -1).astype(np.int16),
@@ -72,7 +73,9 @@ def _dataset(tmp: Path) -> str:
            "worlds2_hq": np.where(held, 64, 0).astype(np.int16),
            "pick2_hq": np.where(held, pick_of(l2), -1).astype(np.int16),
            "cand_h0": cand, "lead_h0": lb, "lead_se_h0": np.where(have, 0.08, np.nan).astype(np.float32),
-           "worlds_h0": np.full(n, 16, np.int16)}
+           "worlds_h0": np.full(n, 16, np.int16),
+           "cand_lo": cand, "lead_lo": noisy(0.06), "lead_se_lo": np.where(have, 0.06, np.nan).astype(np.float32),
+           "worlds_lo": np.full(n, 8, np.int16)}
     path = str(tmp / "targets.npz")
     np.savez(path, **out)
     with open(path + ".meta.json", "w") as f:
@@ -101,6 +104,16 @@ def test_the_q_head_learns_the_leads_and_takes_the_stable_departures(tmp_path: P
     assert best["take_0.04"] > 0.7 and best["leave_0.04"] < 0.2  # the teacher departs past 0.04
     after = torch.load(Path(run) / "q_fit_best.pt", weights_only=True)["model"]
     assert all(torch.equal(before[k], after[k]) for k in before if k != "keep_idx")
+
+
+def test_a_fit_to_noisy_leads_is_judged_by_the_better_teacher(tmp_path: Path) -> None:
+    data, init = _dataset(tmp_path), _init(tmp_path)
+    run = run_q_fit(QFitConfig(dataset=data, target="lo", judge="hq", init=init, batch=64, lr=3e-3, max_epochs=60,
+                               eval_every=50, patience=6, warmup_steps=10, device="cpu", bf16=False),
+                    run_name=None, description="test", output_dir=str(tmp_path / "run"))
+    meta = json.loads((Path(run) / "metadata.json").read_text())
+    assert meta["fixed"]["reliability_mean"] > 0.9          # the judge's seeds, not the target's single one
+    assert meta["best"]["r_dis"] > 0.7                      # pooling over positions averages the noise out
 
 
 def test_a_teacher_without_statistics_is_refused(tmp_path: Path) -> None:

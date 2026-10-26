@@ -336,6 +336,8 @@ def build_parser() -> argparse.ArgumentParser:
     qf.add_argument("--q-se-floor", type=float, default=0.01,
                     help="Added in quadrature to every lead's SE: no pair weighs more than 1 / floor^2.")
     qf.add_argument("--q-baseline", type=str, default="h0", help="A second teacher's leads read as the bar.")
+    qf.add_argument("--q-judge", type=str, default=None,
+                    help="The teacher whose two seeds judge the held-out rows (default --q-target).")
     qf.add_argument("--q-epochs", type=float, default=40.0)
     qf.add_argument("--q-lr", type=float, default=3e-4)
     qf.add_argument("--q-batch", type=int, default=1024)
@@ -1412,7 +1414,7 @@ def main():
         run_q_fit(
             QFitConfig(dataset=args.q_dataset, target=args.q_target, init=args.warmup_checkpoint, head=args.q_head,
                        train_trunk=args.q_train_trunk, weighting=args.q_weighting, se_floor=args.q_se_floor,
-                       baseline=args.q_baseline or None, batch=args.q_batch, lr=args.q_lr, max_epochs=args.q_epochs,
+                       baseline=args.q_baseline or None, judge=args.q_judge, batch=args.q_batch, lr=args.q_lr, max_epochs=args.q_epochs,
                        eval_every=args.q_eval_every, patience=args.q_patience,
                        seed=args.seed if args.seed is not None else 44, device=args.device),
             run_name=args.run_name, description=args.description, output_dir=args.output_dir,
