@@ -29,6 +29,13 @@ Readings on the held-out games, whose rows were searched twice (two seeds, indep
   (`r_dis_base`, `baseline`: h0, the critic one step on) -- the bar.
 * `sign_acc` -- the share of well-determined pairs (the seeds' mean lead beyond 2 SE) whose sign the head
   gets right; the same for the baselines.
+* `r_within_dis` -- the same with each position's leads centred on their mean (the network's move
+  included): only the part that ranks one position's moves, which is all a root acts on; disattenuated by
+  the centred leads' own split-half reliability.
+* `gain_*` -- the judge's two-seed mean lead of the move the Q root plays, over every held-out row: what
+  it is worth per decision over the network, unbiased since the head never saw those seeds. The bars are
+  in `fixed`: `gain_judge_xseed` (the judge's root, one seed's pick valued by the other) and `gain_base`
+  (the baseline teacher's pick).
 * The **Q root's** move: the candidate with the largest predicted lead when it clears `theta`, else the
   network's. Against the teacher's z2 pick where both seeds agree: `take_*` (it plays the teacher's move
   on the stable departures), `leave_*` (it leaves the network's move where both seeds keep it -- damage),
@@ -301,11 +308,26 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
     stable_dep = stable & (pick[ho] != net[ho])
     stable_keep = stable & (pick[ho] == net[ho])
 
+    def centred(x: np.ndarray, m: np.ndarray) -> np.ndarray:
+        """`x` less its row's mean over `m` and the network's move (slot 0, lead 0): what ranks one position's moves."""
+        mm = m.copy()
+        mm[:, 0] = m.any(1)
+        return x - (x * mm).sum(1, keepdims=True) / np.maximum(mm.sum(1, keepdims=True), 1)
+
+    within_ok = ok_ho.copy()
+    within_ok[:, 0] = ok_ho.any(1)
+    r12_within = _corr(centred(l1, ok_ho)[within_ok], centred(l2, ok_ho)[within_ok])
+    rel_within = 2 * r12_within / (1 + r12_within) if r12_within == r12_within and r12_within > 0 else float("nan")
+
     def readings(pred: np.ndarray, prefix: str, sel: Optional[np.ndarray] = None) -> Dict[str, float]:
         pairs = ok_ho if sel is None else ok_ho & sel
         well = sure & pairs
         r = _corr(pred[pairs], mean12[pairs])
+        wp = pairs.copy()
+        wp[:, 0] = pairs.any(1)
+        rw = _corr(centred(pred, pairs)[wp], centred(mean12, pairs)[wp])
         return {f"r{prefix}": r, f"r_dis{prefix}": r / math.sqrt(rel) if rel == rel else float("nan"),
+                f"r_within_dis{prefix}": rw / math.sqrt(rel_within) if rel_within == rel_within else float("nan"),
                 f"sign_acc{prefix}": float((np.sign(pred[well]) == np.sign(mean12[well])).mean()) if well.any()
                 else float("nan")}
 
@@ -319,11 +341,30 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
             out[f"depart_{th:g}"] = float((move != net[ho]).mean())
             out[f"take_{th:g}"] = float((move[stable_dep] == pick[ho][stable_dep]).mean()) if stable_dep.any() else float("nan")
             out[f"leave_{th:g}"] = float((move[stable_keep] != net[ho][stable_keep]).mean()) if stable_keep.any() else float("nan")
+            gain = np.where(lead_best > th, mean12[np.arange(best.size), best], 0.0)
+            out[f"gain_{th:g}"] = float(gain.mean())
         return out
 
+    def gain_of(moves: np.ndarray, cands: List[str], leads_: List[str]) -> Dict[str, float]:
+        """The judge's lead (averaged over the seeds named) of each held-out row's `moves`, the network's move 0."""
+        vals = [_match(moves[:, None], d[f"{c}_{jt}"][ho].astype(np.int64), d[f"{k}_{jt}"][ho].astype(np.float32))[:, 0]
+                for c, k in zip(cands, leads_)]
+        v = np.nanmean(np.stack(vals), 0) if len(vals) > 1 else vals[0]
+        v = np.where(moves == net[ho], 0.0, v)
+        have = np.isfinite(v)
+        return {"gain": float(v[have].mean()) if have.any() else float("nan"), "coverage": float(have.mean())}
+
     lg_ho = base_logits(ho)
-    fixed: Dict[str, float] = {"reliability_single": r12, "reliability_mean": rel,
+    fixed: Dict[str, float] = {"reliability_single": r12, "reliability_mean": rel, "reliability_within": rel_within,
                                "stable_departures": int(stable_dep.sum()), "sure_pairs": int(sure.sum())}
+    # The bars for `gain_*`: the judge's own root, each seed's pick valued by the other seed (no winner's curse),
+    # and the baseline teacher's pick valued by both of the judge's seeds (independent searches).
+    xs1, xs2 = gain_of(pick[ho], ["cand2"], ["lead2"]), gain_of(pick2[ho], ["cand"], ["lead"])
+    fixed["gain_judge_xseed"] = 0.5 * (xs1["gain"] + xs2["gain"])
+    fixed["gain_judge_xseed_coverage"] = 0.5 * (xs1["coverage"] + xs2["coverage"])
+    if cfg.baseline and f"pick_{cfg.baseline}" in d:
+        gb = gain_of(d[f"pick_{cfg.baseline}"][ho].astype(np.int64), ["cand", "cand2"], ["lead", "lead2"])
+        fixed["gain_base"], fixed["gain_base_coverage"] = gb["gain"], gb["coverage"]
     fixed.update(readings(lg_ho - lg_ho[:, :1], "_logits"))
     if base_lead is not None:
         bl = base_lead[ho]
@@ -406,7 +447,9 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
             last = ev
             print(f"  step {step} epoch {ev['epoch']}: val {ev['val_loss']:.5f}  r_dis {ev['r_dis']:.3f} (logits "
                   f"{fixed.get('r_dis_logits', float('nan')):.3f}, {cfg.baseline} {fixed.get('r_dis_base', float('nan')):.3f})  "
-                  f"sign {ev['sign_acc']:.3f}  take/leave@0 {ev['take_0']:.3f}/{ev['leave_0']:.3f}", flush=True)
+                  f"sign {ev['sign_acc']:.3f}  within {ev['r_within_dis']:.3f}  take/leave@0 {ev['take_0']:.3f}/"
+                  f"{ev['leave_0']:.3f}  gain@0.02 {ev['gain_0.02']:+.4f} (root {fixed.get('gain_judge_xseed', float('nan')):+.4f})",
+                  flush=True)
             if ev["val_loss"] < best_val:
                 best_val, best, bad = ev["val_loss"], ev, 0
                 save("q_fit_best.pt")
