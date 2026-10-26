@@ -99,7 +99,7 @@ UNCHECKED_BY_DESIGN = frozenset({
     "policy_kl_anchor", "policy_target", "policy_reinit_heads",
     # --mode q-fit's inputs: ai/training/q_fit.py records them in its own metadata.json
     "q_dataset", "q_target", "q_head", "q_train_trunk", "q_weighting", "q_se_floor", "q_baseline", "q_judge",
-    "q_epochs", "q_lr", "q_batch", "q_eval_every", "q_patience",
+    "q_epochs", "q_lr", "q_batch", "q_eval_every", "q_patience", "q_train_fraction",
 })
 
 
