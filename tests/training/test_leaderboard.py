@@ -608,6 +608,15 @@ def test_the_aligned_horizon_is_spelled_in_the_id_and_the_agent_string() -> None
     agent = load_spec(spec, "m.pt")
     assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned:box4"
     assert rollout_spec_config(agent)[1].box4
+    withr = one[:-1] + ",aligned=true,box4=true,race=8)"
+    net, spec = parse_player_id(withr)
+    assert isinstance(spec, Rollout) and spec.race == 8 and player_id(net, spec) == withr
+    assert spec_from_dict(spec_to_dict(spec)) == spec
+    agent = load_spec(spec, "m.pt")
+    assert agent == "rollout:m.pt:4:16:4:z2:earlier:own:keyed:aligned:box4:race8"
+    assert rollout_spec_config(agent)[1].race == 8
+    with pytest.raises(PlayerSpecError):
+        parse_player_id(one[:-1] + ",race=16)")
 
 
 def test_the_workbench_plays_a_player_as_its_search_spelled_out() -> None:
@@ -620,6 +629,7 @@ def test_the_workbench_plays_a_player_as_its_search_spelled_out() -> None:
     assert workbench_search(Rollout(worlds=32, stop="earlier", leaf="own", chance="keyed", aligned=True,
                                     box4=True)) == "rollout:4:32:4:z2:earlier:own:keyed:aligned:box4"
     assert workbench_search(Rollout(belief=512, rule="kl1.5")) == "rollout:4:16:4:kl1.5:boundaries:mover:belief512"
+    assert workbench_search(Rollout(worlds=32, race=16)) == "rollout:4:32:4:z2:boundaries:mover:race16"
     assert workbench_search(Rollout(leaf_net="E7-A1-R1-S44@1M")) is None
     assert workbench_search(Gumbel()) is None and workbench_search(Search()) is None and workbench_search(Bot()) is None
 

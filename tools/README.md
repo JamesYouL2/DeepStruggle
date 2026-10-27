@@ -607,6 +607,11 @@ shards it over runners.
   network calls is C++ (`ts.RolloutBatch`, `ts.rollout_candidates`, `ts.rollout_decide`;
   `bindings/rollout_batch.hpp`), shared with the browser's `search=rollout`. On the leaderboard:
   `<network>~rollout(k=4,worlds=16,horizon=4,rule=z2)`.
+  A trailing `:race<n>` (0 < n < worlds; player id `race=<n>`) races the worlds: every candidate
+  plays the first `n`, a challenger trailing the network's move there leaves, and the rest are
+  played by the network's move and the challengers left (`RolloutBatch.race`;
+  `research/log/E7_rollout_race.md`). `4:64:4:z2:earlier:own:race16` plays as `4:64` for ~1.5x the
+  cost of `4:32`.
 * `name:<label>:<spec>` names an entrant in reports.
 
 **`tools/search_reliability.py`** -- `search` (searchers on the search bank, `--seeds` streams),

@@ -84,6 +84,10 @@ class Rollout:
     #: Space Race box 4 (Config::box4): the opponent's headline, chosen first and revealed to the side holding
     #: Man in Space alone, kept in every world; false = forgotten, as every rollout id before it meant.
     box4: bool = False
+    #: Race the worlds (RolloutBatch.race): every candidate on the first `race`, the rest of `worlds` only
+    #: for the network's move and the challengers not trailing it; 0 = every candidate on every world, as
+    #: every rollout id before it meant.
+    race: int = 0
 
 
 @dataclass(frozen=True)
@@ -123,7 +127,7 @@ _LEAVES: Final = ("mover", "decider", "own")
 #: written into an id or a stored spec only when they differ from it.
 LATE_FIELDS: Final[Dict[str, Dict[str, Union[str, int]]]] = {
     "rollout": {"stop": "boundaries", "leaf": "mover", "leaf_net": "", "chance": "shared", "belief": 0,
-                "aligned": False, "box4": False}}
+                "aligned": False, "box4": False, "race": 0}}
 _CHANCES: Final = ("shared", "keyed", "keyed2")
 #: Characters a leaf_net name may not hold: the id grammar's own separators.
 _LEAF_NET_BAD: Final = frozenset("(),~:= ")
@@ -171,6 +175,8 @@ def _check(spec: Inference) -> None:
             raise PlayerSpecError(f"chance must be one of {_CHANCES}, got {spec.chance!r}")
         if spec.belief < 0:
             raise PlayerSpecError(f"belief must be >= 0 hands, got {spec.belief}")
+        if spec.race and not 0 < spec.race < spec.worlds:
+            raise PlayerSpecError(f"race must be between 0 and worlds ({spec.worlds}), got {spec.race}")
         if set(spec.leaf_net) & _LEAF_NET_BAD:
             raise PlayerSpecError(f"leaf_net may not contain any of {''.join(sorted(_LEAF_NET_BAD))!r} "
                                   f"(register the evaluator under a plain name): {spec.leaf_net!r}")
@@ -274,7 +280,8 @@ def workbench_search(spec: Inference) -> Optional[str]:
         return None
     return (f"rollout:{spec.k}:{spec.worlds}:{spec.horizon}:{spec.rule}:{spec.stop}:{spec.leaf}"
             + (f":{spec.chance}" if spec.chance != "shared" else "") + (":aligned" if spec.aligned else "")
-            + (":box4" if spec.box4 else "") + (f":belief{spec.belief}" if spec.belief else ""))
+            + (":box4" if spec.box4 else "") + (f":belief{spec.belief}" if spec.belief else "")
+            + (f":race{spec.race}" if spec.race else ""))
 
 
 def parse_player_id(pid: str) -> Tuple[Optional[str], Inference]:
@@ -329,6 +336,7 @@ def load_spec(spec: Inference, checkpoint: Optional[str], leaf_checkpoint: Optio
         tail += ":aligned" if spec.aligned else ""
         tail += ":box4" if spec.box4 else ""
         tail += f":belief{spec.belief}" if spec.belief else ""
+        tail += f":race{spec.race}" if spec.race else ""
         if spec.leaf_net:
             if not leaf_checkpoint:
                 raise PlayerSpecError(f"leaf_net={spec.leaf_net} needs its checkpoint file")

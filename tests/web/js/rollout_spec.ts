@@ -11,4 +11,11 @@ const keyed = parseRolloutParam("rollout:4:32:4:z2:earlier:own:keyed")!;
 assert.ok(keyed.keyed && !keyed.keyed2 && !specEqual(keyed, alone));
 assert.equal(rolloutParam(keyed), "rollout:4:32:4:z2:earlier:own:keyed");
 
+// race<n> races the worlds from the first n; it must be below the worlds, and a spec without it is unraced.
+const raced = parseRolloutParam("rollout:4:32:4:z2:earlier:own:keyed:aligned:box4:belief2048:race16")!;
+assert.equal(raced.race, 16);
+assert.equal(rolloutParam(raced), "rollout:4:32:4:z2:earlier:own:keyed:aligned:box4:belief2048:race16");
+assert.ok(!specEqual(raced, { ...raced, race: 0 }) && keyed.race === 0);
+assert.equal(parseRolloutParam("rollout:4:32:4:z2:earlier:own:race32"), null);
+
 console.log(JSON.stringify({ canonical: true }));

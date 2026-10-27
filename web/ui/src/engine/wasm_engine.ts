@@ -204,12 +204,13 @@ export class WasmEngine {
   }
 
   /** The position held as one decision of the batch, its worlds' opposing hands resampled from the
-   *  prepared belief; rows added. */
-  rolloutAddBelief(candidates: number[], worlds: number): number {
+   *  prepared belief; rows added. `deal` hands are dealt at once (a race's), the first `worlds` played
+   *  and the rest kept for rolloutRace. */
+  rolloutAddBelief(candidates: number[], worlds: number, deal = worlds): number {
     const p = this.M._malloc(4 * Math.max(1, candidates.length));
     try {
       this.M.HEAP32.set(candidates, p >> 2);
-      const n = this.M._ts_rollout_add_belief(p, candidates.length, worlds);
+      const n = this.M._ts_rollout_add_belief(p, candidates.length, worlds, deal);
       if (n === 0 && candidates.length >= 2) throw new Error(this.lastError() || "no rows");
       return n;
     } finally {
@@ -296,6 +297,17 @@ export class WasmEngine {
       this.M._free(p);
     }
   }
+
+  /** Race `position` once its rows are valued (rollout::RolloutBatch::race): the challengers trailing the
+   *  network's move leave, the rest play `worlds` more worlds, from the belief's kept hands with `belief`.
+   *  Rows added; 0 when no challenger is left. */
+  rolloutRace(position: number, worlds: number, belief = false): number {
+    const n = this.M._ts_rollout_race(position, worlds, belief ? 1 : 0);
+    if (n < 0) throw new Error(this.lastError());
+    return n;
+  }
+  /** Whether candidate `c` of `position` is still in the race (every candidate of an unraced one). */
+  rolloutInRace(position: number, c: number): boolean { return this.M._ts_rollout_in_race(position, c) !== 0; }
 
   rolloutAllDone(): boolean { return this.M._ts_rollout_all_done() !== 0; }
   rolloutLive(): number { return this.M._ts_rollout_live(); }

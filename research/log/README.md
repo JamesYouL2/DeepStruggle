@@ -178,6 +178,7 @@ per-seat control ratings, setup placement and temperature self-play.
 | [`E7_leak_by_kind_R34.md`](E7_leak_by_kind_R34.md) | where the R34 soup loses, by decision kind: placement 46% |
 | [`E7_leak_by_kind_R39.md`](E7_leak_by_kind_R39.md) | R39: the leak halves; placement is 61% of it |
 | [`E7_rollout_root_tuning_R39.md`](E7_rollout_root_tuning_R39.md) | the rollout root recovers the placement leak; 32 worlds and z2 (`4:32:4:z2`) |
+| [`E7_rollout_race.md`](E7_rollout_race.md) | racing the worlds (16 for every candidate, then the challengers not trailing): 32 worlds' picks at 83% of the playouts; race 16 → 64 plays as 4:64 (+12 Elo over 4:32 on A13+R48) at ~1.5× 4:32's time |
 | [`E7_searched_leak_R39.md`](E7_searched_leak_R39.md) | where R39 under the rollout root still loses |
 | [`E7_searched_leak_A13_R48.md`](E7_searched_leak_A13_R48.md) | the same census on A13+R48 at 12,000M |
 | [`E7_determinization_audit.md`](E7_determinization_audit.md) | determinization leaks nothing; a few deductions unused |

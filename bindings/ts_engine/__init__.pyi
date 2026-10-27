@@ -1022,6 +1022,16 @@ class RolloutBatch:
         One decision: `base` with the mover's flat `candidates` (all legal there), in `worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept. `hands` (uint8, worlds x 110), when given, is each world's opposing unknown hand (a belief's worlds, ai/search/belief.py) instead of a random redeal.
         """
 
+    def race(self, position: int, worlds: int, hands: Annotated[NDArray[numpy.uint8], dict(shape=(None, None), order='C', device='cpu', writable=False)] | None = None) -> int:
+        """
+        The second stage of a raced decision, once its rows are valued: every challenger whose paired lead over candidate 0 is below 0 leaves the race, and `worlds` fresh worlds are added for candidate 0 and the challengers left (none when none is). Returns the rows added; `hands` as add's.
+        """
+
+    def in_race(self, position: int, candidate: int) -> bool:
+        """
+        Whether candidate `candidate` (an index into the position's list) is still in the race.
+        """
+
     def positions(self) -> int: ...
 
     def mover(self, position: int) -> Player: ...

@@ -130,7 +130,15 @@ are cited from elsewhere; keep them.
   `fill_live` → logits → `step` until `all_done`, then `fill_leaves` → critic → `set_leaf_values`,
   then reads `values`. The root's choice is here too: `top_candidates` (the k most probable legal
   moves), `parse_rule` (argmax / z<x> / kl<t>) and `decide` (each candidate's mean value, its paired
-  lead over the network's own move with its standard error, the pick). `step`, `fill_live` and
+  lead over the network's own move with its standard error, the pick). `race(position, worlds[, hands])`
+  races a position once its rows are valued: a challenger whose paired lead over candidate 0 is below
+  0 leaves the race, and `worlds` more worlds (continuing the batch's stream, or from `hands`) are
+  played by candidate 0 and the challengers left; `decide` then picks among those over every world
+  (a dropped one keeps its statistics on its own worlds and is never picked; `in_race(position, c)`).
+  Python's root takes it as `RolloutConfig.race` (spec `:race<n>`, player id `race=<n>`; off by
+  default, so every measured player is unchanged), the page as `ts_rollout_race(position, worlds,
+  belief)` / `ts_rollout_in_race`; with every challenger kept, a raced batch is the unraced one at the
+  full world count, row for row. `step`, `fill_live` and
   `fill_leaves` run across the OpenMP team (`gomp_parallel_for`) from 32 rows up, rows listed
   serially first, so results are bit-identical at any thread count
   (`test_a_batch_plays_the_same_rows_on_one_thread_and_on_many`); the WebAssembly build stays

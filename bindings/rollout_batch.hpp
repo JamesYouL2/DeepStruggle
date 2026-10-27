@@ -18,6 +18,10 @@
 // at its horizon is a leaf, whose observation from the mover's side the caller values with the
 // critic. Several decisions can share one batch, so a tournament's hundred positions make one
 // network call per ply.
+//
+// Racing (`race`): a decision can be played in two stages -- every candidate on the first worlds, then,
+// once those are valued, more worlds for the network's own move and only the challengers that do not
+// trail it. `decide` reads the candidates still in the race over the worlds they were all valued in.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -160,6 +164,19 @@ public:
     size_t add(const GameState& base, const uint16_t* candidates, size_t k, size_t worlds,
                const uint8_t* hands = nullptr);
 
+    // Race one decision's second stage, once its rows are valued (after the first stage's playouts and
+    // leaves): every challenger whose paired lead over candidate 0 -- over the worlds every candidate
+    // was valued in, as `decide` reads it -- is below 0 leaves the race, and `worlds` fresh worlds
+    // (drawn on from the batch's stream, `hands` as `add`'s) are added for candidate 0 and the
+    // challengers left. Nothing is added when none is left. Returns the rows added; 0 with
+    // `last_error()` for an unknown position, one already raced, or a row not yet valued.
+    size_t race(size_t position, size_t worlds, const uint8_t* hands = nullptr);
+    // Whether candidate `c` of `position` is still in the race (every candidate is, until `race`).
+    bool in_race(size_t position, size_t c) const noexcept {
+        return position < in_race_.size() && c < in_race_[position].size() && in_race_[position][c];
+    }
+    bool raced(size_t position) const noexcept { return position < raced_.size() && raced_[position]; }
+
     size_t positions() const noexcept { return movers_.size(); }
     Player mover(size_t position) const noexcept { return movers_[position]; }
     size_t worlds_used(size_t position) const noexcept { return worlds_used_[position]; }
@@ -198,10 +215,17 @@ private:
     std::vector<Row> rows_;
     std::vector<Player> movers_;
     std::vector<size_t> worlds_used_;
+    std::vector<GameState> bases_;                  // each decision's position, for race's worlds
+    std::vector<std::vector<uint16_t>> cands_;      // and its candidates
+    std::vector<std::vector<uint8_t>> in_race_;     // and which are still in the race
+    std::vector<uint8_t> raced_;
     std::vector<uint32_t> live_order_;
     std::vector<uint32_t> leaf_order_;
     const char* error_ = "";
 
+    // `worlds` worlds of decision `position` for the candidates in_race_ marks, rows carrying each
+    // candidate's index in the decision's list; a world in which one of them is illegal is dropped.
+    size_t add_worlds(uint32_t position, size_t worlds, const uint8_t* hands);
     void settle_and_mark(Row& r) noexcept;
     // Auto-advance; under a pre-deal stop it halts at the turn-end park and marks the row parked.
     void advance(Row& r) const noexcept;
@@ -230,7 +254,7 @@ size_t top_candidates(const float* logits, const uint8_t* mask, size_t k, uint16
 
 struct Decision {
     uint16_t pick = 0;          // the flat action to play
-    size_t worlds = 0;          // worlds every candidate was valued in
+    size_t worlds = 0;          // worlds every candidate still in the race was valued in
     std::vector<float> q;       // each candidate's mean value, from the mover's side
     std::vector<float> lead;    // each candidate's paired lead over candidate 0 (0 for itself)
     std::vector<float> lead_se; // its standard error (0 with fewer than two worlds)
@@ -238,7 +262,10 @@ struct Decision {
 
 // One position's decision from a batch whose rows are all valued: the candidates as added (the
 // network's own move first), the root's `logits` under `mask` (for the KL rule), the rule. A
-// position with no valued world picks candidate 0.
+// position with no valued world picks candidate 0. The rule chooses among the candidates still in
+// the race (RolloutBatch::race), their statistics over the worlds they were all valued in; a
+// candidate out of the race keeps its statistics over those of the worlds it was valued in too
+// (the first stage's), and is never picked. A batch that was not raced reads every candidate.
 Decision decide(const RolloutBatch& batch, size_t position, const uint16_t* candidates, size_t k,
                 const float* logits, const uint8_t* mask, const Rule& rule);
 
