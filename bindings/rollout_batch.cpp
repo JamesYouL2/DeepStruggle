@@ -212,9 +212,21 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
         }
     }
     const uint32_t position = static_cast<uint32_t>(movers_.size());
-    const Player mover = acting_player(base);
-    movers_.push_back(mover);
+    movers_.push_back(acting_player(base));
     worlds_used_.push_back(0);
+    bases_.push_back(base);
+    cands_.emplace_back(candidates, candidates + k);
+    in_race_.emplace_back(k, uint8_t{1});
+    raced_.push_back(0);
+    return add_worlds(position, worlds, hands);
+}
+
+size_t RolloutBatch::add_worlds(uint32_t position, size_t worlds, const uint8_t* hands) {
+    const GameState& base = bases_[position];
+    const std::vector<uint16_t>& candidates = cands_[position];
+    const std::vector<uint8_t>& in = in_race_[position];
+    const size_t k = candidates.size();
+    const Player mover = movers_[position];
     size_t added = 0;
     for (size_t w = 0; w < worlds; ++w) {
         GameState world = base;
@@ -229,10 +241,11 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
         uint8_t wm[A];
         ActionMask::generate_flat_mask_212(world, wm);
         bool all_legal = true;
-        for (size_t c = 0; c < k; ++c) all_legal = all_legal && wm[candidates[c]];
+        for (size_t c = 0; c < k; ++c) all_legal = all_legal && (!in[c] || wm[candidates[c]]);
         if (!all_legal) continue;
         const uint16_t world_index = static_cast<uint16_t>(worlds_used_[position]++);
         for (size_t c = 0; c < k; ++c) {
+            if (!in[c]) continue;
             Row r{};
             r.state = world;
             if (!cfg_.shared_dice && !cfg_.keyed) r.state.rng_state = Prng::next_u64(rng_);
@@ -280,6 +293,79 @@ size_t RolloutBatch::add(const GameState& base, const uint16_t* candidates, size
         }
     }
     return added;
+}
+
+namespace {
+// One decision's values, candidate x world, NaN where a row has no value.
+std::vector<float> value_table(const RolloutBatch& batch, size_t position, size_t k, size_t worlds) {
+    std::vector<float> table(k * worlds, std::numeric_limits<float>::quiet_NaN());
+    for (size_t r = 0; r < batch.rows(); ++r) {
+        const Row& row = batch.row(r);
+        if (row.position != position || row.candidate >= k || row.world >= worlds) continue;
+        if (row.terminal || row.leaf_valued) table[row.candidate * worlds + row.world] = row.value;
+    }
+    return table;
+}
+
+// Candidate c's mean value over worlds `ok` of `table`, and its paired lead over candidate 0 with
+// the lead's standard error (0 with fewer than two worlds).
+void paired_lead(const std::vector<float>& table, size_t worlds, size_t c, const std::vector<size_t>& ok,
+                 float& q, float& lead, float& lead_se) {
+    double sum = 0.0;
+    for (size_t w : ok) sum += table[c * worlds + w];
+    q = static_cast<float>(sum / static_cast<double>(ok.size()));
+    double dsum = 0.0;
+    for (size_t w : ok) dsum += table[c * worlds + w] - table[w];
+    const double mean = dsum / static_cast<double>(ok.size());
+    double var = 0.0;
+    for (size_t w : ok) {
+        const double x = (table[c * worlds + w] - table[w]) - mean;
+        var += x * x;
+    }
+    lead = static_cast<float>(mean);
+    lead_se = ok.size() > 1
+        ? static_cast<float>(std::sqrt(var / static_cast<double>(ok.size() - 1) / static_cast<double>(ok.size())))
+        : 0.0f;
+}
+
+// The worlds in which every candidate `in` marks has a value.
+std::vector<size_t> valued_worlds(const std::vector<float>& table, size_t worlds, const std::vector<uint8_t>& in) {
+    std::vector<size_t> ok;
+    for (size_t w = 0; w < worlds; ++w) {
+        bool all = true;
+        for (size_t c = 0; c < in.size(); ++c) all = all && (!in[c] || !std::isnan(table[c * worlds + w]));
+        if (all) ok.push_back(w);
+    }
+    return ok;
+}
+}  // namespace
+
+size_t RolloutBatch::race(size_t position, size_t worlds, const uint8_t* hands) {
+    error_ = "";
+    if (position >= positions()) { error_ = "no such position in the rollout batch"; return 0; }
+    if (raced_[position]) { error_ = "the position was raced already"; return 0; }
+    for (const Row& r : rows_) {
+        if (r.position == position && !(r.terminal || r.leaf_valued || r.refused)) {
+            error_ = "race a position once its rows are valued";
+            return 0;
+        }
+    }
+    raced_[position] = 1;
+    const size_t k = cands_[position].size();
+    const size_t used = worlds_used_[position];
+    const std::vector<float> table = value_table(*this, position, k, used);
+    const std::vector<size_t> ok = valued_worlds(table, used, in_race_[position]);
+    size_t left = 0;
+    for (size_t c = 1; c < k; ++c) {
+        float q, lead, se;
+        if (!ok.empty()) {
+            paired_lead(table, used, c, ok, q, lead, se);
+            if (lead < 0.0f) in_race_[position][c] = 0;
+        }
+        left += in_race_[position][c];
+    }
+    if (left == 0) return 0;
+    return add_worlds(static_cast<uint32_t>(position), worlds, hands);
 }
 
 // Rows are independent (each its own GameState), so the per-row work below runs across the OpenMP
@@ -466,41 +552,26 @@ Decision decide(const RolloutBatch& batch, size_t position, const uint16_t* cand
     d.pick = k ? candidates[0] : 0;
     if (k == 0) return d;
     const size_t worlds = position < batch.positions() ? batch.worlds_used(position) : 0;
-    // The table: candidate x world, NaN where a row has no value.
-    std::vector<float> table(k * worlds, std::numeric_limits<float>::quiet_NaN());
-    for (size_t r = 0; r < batch.rows(); ++r) {
-        const Row& row = batch.row(r);
-        if (row.position != position || row.candidate >= k || row.world >= worlds) continue;
-        if (row.terminal || row.leaf_valued) table[row.candidate * worlds + row.world] = row.value;
-    }
-    // Worlds every candidate was valued in.
-    std::vector<size_t> ok;
-    for (size_t w = 0; w < worlds; ++w) {
-        bool all = true;
-        for (size_t c = 0; c < k; ++c) all = all && !std::isnan(table[c * worlds + w]);
-        if (all) ok.push_back(w);
-    }
+    const std::vector<float> table = value_table(batch, position, k, worlds);
+    std::vector<uint8_t> in(k);
+    const bool raced = batch.raced(position);
+    for (size_t c = 0; c < k; ++c) in[c] = c == 0 || !raced || batch.in_race(position, c);
+    // Worlds every candidate still in the race was valued in.
+    const std::vector<size_t> ok = valued_worlds(table, worlds, in);
     d.worlds = ok.size();
     if (ok.empty()) return d;
     for (size_t c = 0; c < k; ++c) {
-        double sum = 0.0;
-        for (size_t w : ok) sum += table[c * worlds + w];
-        d.q[c] = static_cast<float>(sum / static_cast<double>(ok.size()));
-        double dsum = 0.0;
-        for (size_t w : ok) dsum += table[c * worlds + w] - table[w];
-        const double mean = dsum / static_cast<double>(ok.size());
-        double var = 0.0;
-        for (size_t w : ok) {
-            const double x = (table[c * worlds + w] - table[w]) - mean;
-            var += x * x;
+        if (in[c]) {
+            paired_lead(table, worlds, c, ok, d.q[c], d.lead[c], d.lead_se[c]);
+            continue;
         }
-        d.lead[c] = static_cast<float>(mean);
-        d.lead_se[c] = ok.size() > 1
-            ? static_cast<float>(std::sqrt(var / static_cast<double>(ok.size() - 1) / static_cast<double>(ok.size())))
-            : 0.0f;
+        // Out of the race: over those of the worlds it was valued in too.
+        std::vector<size_t> own;
+        for (size_t w : ok) if (!std::isnan(table[c * worlds + w])) own.push_back(w);
+        if (!own.empty()) paired_lead(table, worlds, c, own, d.q[c], d.lead[c], d.lead_se[c]);
     }
     size_t best = 0;
-    for (size_t c = 1; c < k; ++c) if (d.q[c] > d.q[best]) best = c;
+    for (size_t c = 1; c < k; ++c) if (in[c] && d.q[c] > d.q[best]) best = c;
     switch (rule.kind) {
         case Rule::ARGMAX:
             d.pick = candidates[best];
@@ -521,6 +592,7 @@ Decision decide(const RolloutBatch& batch, size_t position, const uint16_t* cand
             size_t arg = 0;
             double score = -std::numeric_limits<double>::infinity();
             for (size_t c = 0; c < k; ++c) {
+                if (!in[c]) continue;
                 const double logp = static_cast<double>(logits[candidates[c]] - mx) - lz;
                 const double s = logp + static_cast<double>(d.q[c]) / rule.param;
                 if (s > score) { score = s; arg = c; }

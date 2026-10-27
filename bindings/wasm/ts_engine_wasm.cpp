@@ -321,6 +321,7 @@ namespace {
 std::unique_ptr<ts::rollout::RolloutBatch> g_rollout;
 std::unique_ptr<ts::belief::Tracker> g_belief;
 std::vector<uint8_t> g_belief_hands;    // the worlds' hands ts_rollout_add_belief dealt
+size_t g_belief_added = 0;              // of them, the ones ts_rollout_add_belief played (the rest: the race's)
 std::vector<uint8_t> g_belief_held;     // a chunk's hands for ts_belief_rows
 std::vector<float> g_ro_obs;
 std::vector<uint8_t> g_ro_masks;
@@ -477,12 +478,16 @@ TS_API const uint8_t* ts_belief_worlds(int n) {
 }
 
 // ts_rollout_add with the worlds' opposing hands resampled from the prepared belief. Rows added; 0 with
-// ts_last_error() when the position has no belief (the caller then uses ts_rollout_add).
-TS_API int ts_rollout_add_belief(const int32_t* candidates, int k, int worlds) {
+// ts_last_error() when the position has no belief (the caller then uses ts_rollout_add). `deal` hands are
+// dealt in one draw, as Python's root deals a race's (ai/search/rollout_root.py), and the first `worlds`
+// played; ts_rollout_race(..., belief) plays the rest. deal <= worlds deals only those.
+TS_API int ts_rollout_add_belief(const int32_t* candidates, int k, int worlds, int deal) {
     if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
     if (!g_belief || worlds <= 0) { g_error = "no belief"; return 0; }
-    g_belief_hands.assign(static_cast<size_t>(worlds) * 110, 0);
-    if (!g_belief->worlds(0, static_cast<size_t>(worlds), g_belief_hands.data())) { g_error = "no belief here"; return 0; }
+    const size_t dealt = static_cast<size_t>(std::max(worlds, deal));
+    g_belief_hands.assign(dealt * 110, 0);
+    if (!g_belief->worlds(0, dealt, g_belief_hands.data())) { g_error = "no belief here"; return 0; }
+    g_belief_added = static_cast<size_t>(worlds);
     g_ro_cands.clear();
     for (int i = 0; i < k; ++i) {
         if (candidates[i] < 0 || candidates[i] >= static_cast<int32_t>(ts::FLAT_ACTION_SPACE_SIZE)) {
@@ -495,6 +500,28 @@ TS_API int ts_rollout_add_belief(const int32_t* candidates, int k, int worlds) {
                                     g_belief_hands.data());
     if (n == 0 && g_rollout->last_error()[0]) g_error = g_rollout->last_error();
     return static_cast<int>(n);
+}
+
+// RolloutBatch::race at `position` once its rows are valued: the challengers trailing the network's move
+// leave, the rest play `worlds` more worlds -- with `belief`, the hands ts_rollout_add_belief dealt past
+// the ones it played. Rows added (0 with no challenger left); -1 with ts_last_error() on a refusal.
+TS_API int ts_rollout_race(int position, int worlds, int belief) {
+    if (!g_rollout) { g_error = "ts_rollout_reset first"; return -1; }
+    if (position < 0 || worlds <= 0) { g_error = "race a position by its index, for at least one world"; return -1; }
+    const uint8_t* hands = nullptr;
+    if (belief) {
+        if (g_belief_hands.size() < (g_belief_added + static_cast<size_t>(worlds)) * 110) {
+            g_error = "ts_rollout_add_belief dealt no hands for the race";
+            return -1;
+        }
+        hands = g_belief_hands.data() + g_belief_added * 110;
+    }
+    const size_t n = g_rollout->race(static_cast<size_t>(position), static_cast<size_t>(worlds), hands);
+    if (n == 0 && g_rollout->last_error()[0]) { g_error = g_rollout->last_error(); return -1; }
+    return static_cast<int>(n);
+}
+TS_API int ts_rollout_in_race(int position, int c) {
+    return g_rollout && position >= 0 && c >= 0 && g_rollout->in_race(static_cast<size_t>(position), static_cast<size_t>(c)) ? 1 : 0;
 }
 
 TS_API int ts_rollout_rows() { return g_rollout ? static_cast<int>(g_rollout->rows()) : 0; }

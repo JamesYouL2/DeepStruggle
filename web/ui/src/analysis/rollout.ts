@@ -6,11 +6,13 @@
  * the leaves, and the decision with its statistics. This file is the loop that feeds
  * onnxruntime's logits and values in -- the same loop the Python searcher runs with torch.
  *
- * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed|keyed2][:aligned][:box4][:belief[N]]`
+ * The spec is the leaderboard's: `rollout:k:worlds:horizon:rule[:stop][:leaf][:keyed|keyed2][:aligned][:box4][:belief[N]][:race<n>]`
  * (`rollout` alone is the best 32-world player there, 4:32:4:z2:earlier:own:keyed:aligned:box4). `keyed` ties
  * every draw to its situation (the leaderboard's chance=keyed); `belief` deals the worlds from the
  * policy-likelihood belief over the opponent's hand (bindings/belief.hpp, N hands, 2,048 by default --
- * the leaderboard's belief=N), the same C++ as Python's. The playouts are honest -- the candidates come
+ * the leaderboard's belief=N), the same C++ as Python's; `race<n>` plays every candidate on the first n worlds,
+ * then the rest only for the network's move and the challengers whose paired lead over it is not below 0
+ * (rollout::RolloutBatch::race). The playouts are honest -- the candidates come
  * from the real position, the values from sampled worlds -- so the search never reads the other side's
  * hand; the belief reads only the moves both players saw.
  */
@@ -34,11 +36,33 @@ export interface SearchResult {
   q: number[];
   lead: number[];
   lead_se: number[];
+  /** Racing: the candidates that left the race (never picked). */
+  dropped?: number[];
   /** Network rows spent, the root included, and the wall time. */
   rows: number;
   ms: number;
   /** With a belief: the temperature weights it settled on for this opponent (bindings/belief.hpp). */
   temperature_weights?: number[];
+}
+
+/** Play the batch's live rows to their horizons and value its leaves; the network rows spent. */
+async function playOut(engine: WasmEngine, model: Model): Promise<number> {
+  let rows = 0;
+  for (let ply = 0; !engine.rolloutAllDone(); ply++) {
+    if (ply > 400) throw new Error(`${engine.rolloutLive()} playouts still running after 400 plies`);
+    const live = engine.rolloutFillLive();
+    const out = await model.run(live.obs, live.masks, live.rows);
+    rows += live.rows;
+    engine.rolloutStep(out.logits, live.rows);
+  }
+  if (engine.rolloutRefused()) throw new Error(`the engine refused a playout action in ${engine.rolloutRefused()} rows`);
+  const leaves = engine.rolloutFillLeaves();
+  if (leaves.rows > 0) {
+    const out = await model.run(leaves.obs, leaves.masks, leaves.rows);
+    rows += leaves.rows;
+    engine.rolloutSetLeafValues(out.vWin.slice(0, leaves.rows));
+  }
+  return rows;
 }
 
 /** Hands evaluated per network call while the belief weighs them. */
@@ -111,31 +135,27 @@ export async function rolloutRoot(engine: WasmEngine, model: Model, spec: Rollou
     throw new Error(`the batch writes ${width} observation floats for this feature set; the model reads ${model.meta.obsSize}`);
   }
   let temperatureWeights: number[] | undefined;
+  // Racing: the first `race` worlds for every candidate, the rest after the trailing ones leave.
+  const first = spec.race || spec.worlds;
+  let belief = false;
   if (spec.belief > 0 && engine.beliefParticles() === spec.belief && engine.beliefPrepare()) {
     rows += await weighBelief(engine, model, width);
     temperatureWeights = engine.beliefTemperatureWeights();
-    engine.rolloutAddBelief(candidates, spec.worlds);
+    engine.rolloutAddBelief(candidates, first, spec.worlds);
+    belief = true;
   } else {
     if (spec.belief > 0 && engine.beliefParticles() !== spec.belief) {
       throw new Error(`the belief tracker holds ${engine.beliefParticles()} hands; the spec asks for ${spec.belief}`);
     }
-    engine.rolloutAdd(candidates, spec.worlds);
+    engine.rolloutAdd(candidates, first);
   }
-  for (let ply = 0; !engine.rolloutAllDone(); ply++) {
-    if (ply > 400) throw new Error(`${engine.rolloutLive()} playouts still running after 400 plies`);
-    const live = engine.rolloutFillLive();
-    const out = await model.run(live.obs, live.masks, live.rows);
-    rows += live.rows;
-    engine.rolloutStep(out.logits, live.rows);
-  }
-  if (engine.rolloutRefused()) throw new Error(`the engine refused a playout action in ${engine.rolloutRefused()} rows`);
-  const leaves = engine.rolloutFillLeaves();
-  if (leaves.rows > 0) {
-    const out = await model.run(leaves.obs, leaves.masks, leaves.rows);
-    rows += leaves.rows;
-    engine.rolloutSetLeafValues(out.vWin.slice(0, leaves.rows));
+  rows += await playOut(engine, model);
+  if (spec.race) {
+    engine.rolloutRace(0, spec.worlds - first, belief);
+    rows += await playOut(engine, model);
   }
   const d = engine.rolloutDecide(0, candidates, logits, mask, spec.rule);
+  const dropped = spec.race ? candidates.filter((_, c) => !engine.rolloutInRace(0, c)) : undefined;
   return { kind: "rollout", spec, candidates, pick: d.pick, worlds: d.worlds, q: d.q, lead: d.lead, lead_se: d.lead_se,
-           rows, ms: Math.round(performance.now() - t0), temperature_weights: temperatureWeights };
+           dropped, rows, ms: Math.round(performance.now() - t0), temperature_weights: temperatureWeights };
 }

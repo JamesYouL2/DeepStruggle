@@ -17,7 +17,7 @@ import os
 import random
 import shutil
 import subprocess
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pytest
@@ -124,22 +124,24 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
-@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed,aligned", [
-    (21, 70, 2, "boundaries", "mover", False, False), (35, 150, 1, "boundaries", "mover", False, False),
-    (47, 40, 0, "boundaries", "mover", False, False), (59, 90, 4, "turn", "mover", False, False),
-    (63, 120, 2, "later", "mover", False, False), (71, 130, 3, "earlier", "mover", False, False),
-    (59, 90, 4, "turn", "decider", False, False), (77, 110, 2, "boundaries", "decider", False, False),
-    (59, 90, 4, "turn", "own", False, False), (84, 100, 3, "earlier", "own", False, False),
-    (59, 90, 4, "predeal", "mover", False, False), (93, 80, 3, "earlier_predeal", "own", False, False),
-    (84, 100, 3, "earlier", "own", 1, False), (35, 150, 1, "boundaries", "mover", 1, False),
-    (84, 100, 3, "earlier", "own", 1, True), (21, 70, 2, "boundaries", "mover", 0, True),
-    (84, 100, 3, "earlier", "own", 2, True), (35, 150, 1, "boundaries", "mover", 2, False)])
+@pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed,aligned,race", [
+    (21, 70, 2, "boundaries", "mover", False, False, 0), (35, 150, 1, "boundaries", "mover", False, False, 0),
+    (47, 40, 0, "boundaries", "mover", False, False, 0), (59, 90, 4, "turn", "mover", False, False, 0),
+    (63, 120, 2, "later", "mover", False, False, 0), (71, 130, 3, "earlier", "mover", False, False, 0),
+    (59, 90, 4, "turn", "decider", False, False, 0), (77, 110, 2, "boundaries", "decider", False, False, 0),
+    (59, 90, 4, "turn", "own", False, False, 0), (84, 100, 3, "earlier", "own", False, False, 0),
+    (59, 90, 4, "predeal", "mover", False, False, 0), (93, 80, 3, "earlier_predeal", "own", False, False, 0),
+    (84, 100, 3, "earlier", "own", 1, False, 0), (35, 150, 1, "boundaries", "mover", 1, False, 0),
+    (84, 100, 3, "earlier", "own", 1, True, 0), (21, 70, 2, "boundaries", "mover", 0, True, 0),
+    (84, 100, 3, "earlier", "own", 2, True, 0), (35, 150, 1, "boundaries", "mover", 2, False, 0),
+    (84, 100, 3, "earlier", "own", 1, True, 4), (35, 150, 1, "boundaries", "mover", 0, False, 3)])
 def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies: int, horizon: int, stop: str,
                                                                  leaf: str, keyed: int, aligned: bool,
-                                                                 tmp_path) -> None:
+                                                                 race: int, tmp_path) -> None:
     """The rollout root's playouts (bindings/rollout_batch.hpp) under a fixed synthetic policy and
     critic: the same rows, the same worlds, the same observations ply by ply, the same values. `keyed`
-    is the page's code: 0 off, 1 keyed, 2 keyed2."""
+    is the page's code: 0 off, 1 keyed, 2 keyed2; `race` > 0 races the position for that many more
+    worlds once the first are valued (RolloutBatch.race)."""
     state = ts.GameState()
     ts.Engine.init_game(state, seed)
     drain_chance(state)
@@ -162,24 +164,35 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
                             box4=aligned)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
-    plies_run = 0
+    plies_run = leaves = 0
     a_idx = np.arange(act, dtype=np.int64)
-    while not batch.all_done():
-        obs, masks = batch.fill_live()
-        h.update(np.ascontiguousarray(obs, dtype=np.float32).tobytes())
-        h.update(np.ascontiguousarray(masks, dtype=np.uint8).tobytes())
-        row = (((a_idx * 2654435761) % 4294967296 + plies_run * 40503 + 7) % 1000) / 1000.0
-        lg = np.ascontiguousarray(np.tile(row.astype(np.float32), (obs.shape[0], 1)))
-        batch.step(lg)
-        plies_run += 1
-        assert plies_run < 2000
-    lobs, _lm = batch.fill_leaves()
-    h.update(np.ascontiguousarray(lobs, dtype=np.float32).tobytes())
-    leaves = int(lobs.shape[0])
-    batch.set_leaf_values(np.asarray([((j * 31) % 17) / 17 - 0.5 for j in range(leaves)], dtype=np.float32))
+
+    def play_out() -> None:
+        nonlocal plies_run, leaves
+        while not batch.all_done():
+            obs, masks = batch.fill_live()
+            h.update(np.ascontiguousarray(obs, dtype=np.float32).tobytes())
+            h.update(np.ascontiguousarray(masks, dtype=np.uint8).tobytes())
+            row = (((a_idx * 2654435761) % 4294967296 + plies_run * 40503 + 7) % 1000) / 1000.0
+            lg = np.ascontiguousarray(np.tile(row.astype(np.float32), (obs.shape[0], 1)))
+            batch.step(lg)
+            plies_run += 1
+            assert plies_run < 2000
+        lobs, _lm = batch.fill_leaves()
+        h.update(np.ascontiguousarray(lobs, dtype=np.float32).tobytes())
+        n = int(lobs.shape[0])
+        batch.set_leaf_values(np.asarray([((j * 31) % 17) / 17 - 0.5 for j in range(n)], dtype=np.float32))
+        leaves += n
+
+    play_out()
+    in_race: Optional[List[int]] = None
+    if race:
+        rows += batch.race(0, race)
+        play_out()
+        in_race = [int(batch.in_race(0, c)) for c in range(len(cands))]
     native = {
         "candidates": cands, "rows": rows, "worlds_used": batch.worlds_used(0), "plies": plies_run,
-        "leaves": leaves, "refused": batch.refused(), "digest": h.hexdigest(),
+        "leaves": leaves, "refused": batch.refused(), "digest": h.hexdigest(), "in_race": in_race,
         "values": [float(v) for v in np.asarray(batch.values(), dtype=np.float32)],
         "table": [[p, w, c, int(d), int(t)] for p, w, c, d, t in zip(
             batch.row_position(), batch.row_world(), batch.row_candidate(), batch.row_done(), batch.row_terminal())],
@@ -187,7 +200,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
     path = tmp_path / "rollout.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "k": k, "worlds": worlds,
                                 "horizon": horizon, "batch_seed": batch_seed, "stop": stop, "leaf": leaf,
-                                "keyed": keyed, "aligned": aligned, "box4": aligned}))
+                                "keyed": keyed, "aligned": aligned, "box4": aligned, "race": race}))
     # The root's choice from synthetic root logits, under each rule, and the top-3 pick from them.
     root = np.asarray([((a * 7919) % 97) / 97 for a in range(act)], dtype=np.float32)
     top = ts.rollout_candidates(root, np.ascontiguousarray(mask, dtype=np.uint8), 3)
@@ -198,7 +211,7 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
                            "lead": [float(x) for x in d["lead"]], "lead_se": [float(x) for x in d["lead_se"]]}
     wasm = _node("rollout", str(path))
     assert "error" not in wasm, wasm.get("error")
-    for key in ("candidates", "rows", "worlds_used", "plies", "leaves", "refused", "table"):
+    for key in ("candidates", "rows", "worlds_used", "plies", "leaves", "refused", "table", "in_race"):
         assert wasm[key] == native[key], key
     assert wasm["top"] == top
     assert wasm["digest"] == native["digest"], "the two builds' playouts diverged"

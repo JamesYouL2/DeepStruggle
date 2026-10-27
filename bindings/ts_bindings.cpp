@@ -1212,6 +1212,22 @@ NB_MODULE(ts_engine, m) {
                  "`worlds` worlds. Returns the rows added -- len(candidates) times the worlds kept. "
                  "`hands` (uint8, worlds x 110), when given, is each world's opposing unknown hand "
                  "(a belief's worlds, ai/search/belief.py) instead of a random redeal.")
+            .def("race", [](RB& self, size_t position, size_t worlds, std::optional<Hands> hands) {
+                     if (hands && (hands->shape(0) != worlds || hands->shape(1) != 110))
+                         throw std::invalid_argument("hands must be worlds x 110");
+                     const size_t n = self.race(position, worlds, hands ? hands->data() : nullptr);
+                     if (n == 0 && self.last_error()[0]) throw std::invalid_argument(self.last_error());
+                     return n;
+                 }, nb::arg("position"), nb::arg("worlds"), nb::arg("hands") = nb::none(),
+                 "The second stage of a raced decision, once its rows are valued: every challenger "
+                 "whose paired lead over candidate 0 is below 0 leaves the race, and `worlds` fresh "
+                 "worlds are added for candidate 0 and the challengers left (none when none is). "
+                 "Returns the rows added; `hands` as add's.")
+            .def("in_race", [](const RB& self, size_t p, size_t c) {
+                     if (p >= self.positions()) throw std::out_of_range("position");
+                     return self.in_race(p, c);
+                 }, nb::arg("position"), nb::arg("candidate"),
+                 "Whether candidate `candidate` (an index into the position's list) is still in the race.")
             .def("positions", &RB::positions)
             .def("mover", [](const RB& self, size_t p) {
                      if (p >= self.positions()) throw std::out_of_range("position");

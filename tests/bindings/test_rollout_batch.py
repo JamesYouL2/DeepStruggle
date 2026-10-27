@@ -2,8 +2,9 @@
 every seen card, the batch builds k x worlds rows and drops a world whole, a horizon of 0 is all
 leaves, a row stops exactly at its horizon, shared dice give a world's candidates one stream, the
 leaves are read from the mover's side, an illegal candidate is refused, and the turn-end and later
-stops end every row at the right place, and a batch played across threads gives exactly the rows it
-gives on one."""
+stops end every row at the right place, a batch played across threads gives exactly the rows it
+gives on one, and a raced decision drops its trailing challengers, plays the rest on the batch's next
+worlds and decides among the candidates left."""
 from __future__ import annotations
 
 import os
@@ -641,3 +642,116 @@ def test_box4_belief_hands_all_hold_the_revealed_headline() -> None:
             assert hands[:, card - 1].all()
         else:
             assert not hands[:, card - 1].all()
+
+
+def _value_leaves(b: ts.RolloutBatch, by_candidate: Dict[int, float]) -> None:
+    """Value every unvalued leaf (horizon 0) by its candidate, plus 0.01 x its world."""
+    cand, world = b.row_candidate(), b.row_world()
+    leaves: List[int] = []
+    unvalued = np.isnan(b.values())
+    terminal = b.row_terminal()
+    for r in range(b.rows()):
+        if unvalued[r] and not terminal[r]:
+            leaves.append(r)
+    obs, _ = b.fill_leaves()
+    assert obs.shape[0] == len(leaves)
+    b.set_leaf_values(np.asarray([by_candidate[cand[r]] + 0.01 * world[r] for r in leaves], dtype=np.float32))
+
+
+def test_race_drops_the_trailing_challengers_and_plays_the_rest_on_fresh_worlds() -> None:
+    st = _position()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=0, seed=5)
+    b.add(st, cands, 4)
+    first = b.worlds_used(0)
+    with pytest.raises(ValueError, match="valued"):
+        b.race(0, 4)                                     # the first stage is not valued yet
+    _value_leaves(b, {0: 0.1, 1: -0.3, 2: 0.3})          # candidate 1 trails, 2 leads
+    added = b.race(0, 4)
+    assert [b.in_race(0, c) for c in range(3)] == [True, False, True]
+    second = b.worlds_used(0) - first
+    assert added == 2 * second and second > 0           # only the network's move and candidate 2
+    assert set(b.row_candidate()[-added:]) == {0, 2}
+    assert set(b.row_world()[-added:]) == set(range(first, first + second))
+    with pytest.raises(ValueError, match="already"):
+        b.race(0, 4)
+    _value_leaves(b, {0: 0.1, 2: 0.3})
+    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    d = ts.rollout_decide(b, 0, cands, logits, mask, "z2")
+    assert d["worlds"] == first + second                 # the raced candidates over both stages
+    assert np.allclose(d["lead"], [0.0, -0.4, 0.2], atol=1e-6)
+    # the dropped candidate keeps its first-stage mean, and is never picked -- not even by argmax
+    assert d["q"][1] == pytest.approx(-0.3 + 0.01 * np.mean(range(first)), abs=1e-6)
+    assert d["pick"] == cands[2]
+    assert ts.rollout_decide(b, 0, cands, logits, mask, "argmax")["pick"] == cands[2]
+
+
+def test_a_dropped_candidate_is_never_picked() -> None:
+    """A dropped challenger's mean is over the first stage alone; when the second stage goes badly for
+    the candidates left, it can read best of all -- and still is not picked."""
+    st = _position()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=0, seed=5)
+    b.add(st, cands, 4)
+    _value_leaves(b, {0: 0.1, 1: -0.05, 2: 0.3})
+    b.race(0, 4)
+    _value_leaves(b, {0: -0.9, 2: -0.99})
+    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    d = ts.rollout_decide(b, 0, cands, logits, mask, "argmax")
+    assert d["q"][1] > max(d["q"][0], d["q"][2])
+    assert d["pick"] == cands[2]
+    assert ts.rollout_decide(b, 0, cands, logits, mask, "kl0.001")["pick"] == cands[2]
+
+
+def test_a_race_with_no_challenger_left_adds_nothing() -> None:
+    st = _position()
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=0, seed=5)
+    b.add(st, cands, 4)
+    _value_leaves(b, {0: 0.5, 1: 0.0, 2: -0.1})
+    rows = b.rows()
+    assert b.race(0, 8) == 0 and b.rows() == rows
+    assert [b.in_race(0, c) for c in range(3)] == [True, False, False]
+
+
+@pytest.mark.parametrize("shared", [True, False])
+def test_a_race_that_keeps_every_candidate_is_the_unraced_batch(shared: bool) -> None:
+    """The second stage's worlds continue the batch's stream: with no challenger dropped (a lead of 0
+    is kept), a raced batch builds exactly the rows -- and decides exactly as -- a batch that played
+    every candidate on every world."""
+    st = _position()
+    mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    cands = _legal(st)[:3]
+    values = {0: 0.0, 1: 0.05, 2: 0.0}
+    whole = ts.RolloutBatch(horizon=0, shared_dice=shared, seed=11)
+    whole.add(st, cands, 8)
+    _value_leaves(whole, values)
+    raced = ts.RolloutBatch(horizon=0, shared_dice=shared, seed=11)
+    raced.add(st, cands, 3)
+    _value_leaves(raced, values)
+    raced.race(0, 5)
+    _value_leaves(raced, values)
+    assert all(raced.in_race(0, c) for c in range(3))
+    assert raced.rows() == whole.rows() and raced.worlds_used(0) == whole.worlds_used(0)
+    assert [bytes(raced.row_state(r).raw_bytes()) for r in range(raced.rows())] == \
+        [bytes(whole.row_state(r).raw_bytes()) for r in range(whole.rows())]
+    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    for rule in ("z2", "argmax", "kl0.05"):
+        assert ts.rollout_decide(raced, 0, cands, logits, mask, rule) == \
+            ts.rollout_decide(whole, 0, cands, logits, mask, rule)
+
+
+def test_an_unraced_decision_is_untouched_by_the_race_bookkeeping() -> None:
+    st = _position()
+    cands = _legal(st)[:3]
+    b = ts.RolloutBatch(horizon=0, seed=5)
+    b.add(st, cands, 4)
+    assert all(b.in_race(0, c) for c in range(3)) and not b.in_race(0, 3)
+    with pytest.raises(ValueError, match="no such position"):
+        b.race(1, 4)
+    hands = np.zeros((3, 110), dtype=np.uint8)
+    _value_leaves(b, {0: 0.0, 1: 0.0, 2: 0.0})
+    with pytest.raises(ValueError, match="worlds x 110"):
+        b.race(0, 4, hands=hands)

@@ -1,7 +1,7 @@
 """ai/search/rollout_root.py: legal and reproducible picks, the network's own move with one
 candidate, rollouts that spend rows only with a horizon, the measured player as the defaults, a
-model read in its own observation feature set, a stuck rollout refused, the spec, and a leaf network
-(P33a) that reads the leaves in place of the root's own critic."""
+model read in its own observation feature set, a stuck rollout refused, the spec, a leaf network
+(P33a) that reads the leaves in place of the root's own critic, and racing."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -202,3 +202,33 @@ def test_cuda_graphs_agree_with_the_eager_root() -> None:
     root = RolloutRoot(model, RolloutConfig(k=3, worlds=4, horizon=2, rule="z2", seed=8, cuda_graphs=True), device=dev)
     assert root._graphed
     assert root.choose(states) == eager
+
+
+def test_racing_spends_fewer_rows_and_picks_only_candidates_left_in_the_race() -> None:
+    states = _states(24)
+    whole = RolloutRoot(_model(), RolloutConfig(k=4, worlds=8, horizon=1, rule="argmax", seed=5))
+    whole.choose(states)
+    raced = RolloutRoot(_model(), RolloutConfig(k=4, worlds=8, horizon=1, rule="argmax", seed=5, race=4))
+    picks = raced.choose(states)
+    assert raced.rows < whole.rows
+    dropped = 0
+    for st, pick, s in zip(states, picks, raced.last_stats):
+        assert np.asarray(ActionEncoder.get_legal_mask(st))[pick]
+        if s["worlds"] == 0:
+            continue
+        assert pick not in s["dropped"] and s["candidates"][0] not in s["dropped"]
+        dropped += len(s["dropped"])
+    assert dropped > 0
+    assert RolloutRoot(_model(), RolloutConfig(k=4, worlds=8, horizon=1, rule="argmax", seed=5, race=4)).choose(states) == picks
+    with pytest.raises(ValueError, match="race"):
+        RolloutRoot(_model(), RolloutConfig(worlds=8, race=8))
+
+
+def test_racing_in_the_spec() -> None:
+    _, cfg, label = rollout_spec_config("rollout:m.pt:4:32:4:z2:earlier:own:keyed:aligned:box4:race16")
+    assert (cfg.worlds, cfg.race, cfg.keyed, cfg.box4) == (32, 16, True, True)
+    assert label == "rollout-k4-w32-h4-untilturnend-ownleaf-keyed-aligned-box4-race16-z2"
+    assert rollout_spec_leaf("rollout:m.pt:4:32:4:z2:earlier:race16") is None
+    assert rollout_spec_config("rollout:m.pt:4:32")[1].race == 0
+    with pytest.raises(ValueError, match="race"):
+        rollout_spec_config("rollout:m.pt:4:16:4:z2:race16")

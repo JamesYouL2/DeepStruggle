@@ -25,6 +25,13 @@ The defaults are the measured player, `rollout:<ckpt>:4:16:4:z2`
 sampled worlds. A world where a candidate is illegal (The Cambridge Five can change the legal set)
 is dropped for every candidate of that position.
 
+Racing (`race`, off by default): every candidate is played on the first `race` worlds; a challenger
+whose paired lead over the network's move is then below 0 leaves the race, and the other
+`worlds - race` worlds are played only by the network's move and the challengers left. The choice reads
+those over all the worlds. Offline, racing 16 of 32 made the same picks as every candidate on all 32
+(-0.002 +- 0.002 x100 a decision) at ~83% of the playouts; in games, `4:64:...:race16` plays as 4:64
+for ~1.5x the time of 4:32 (research/log/E7_rollout_race.md).
+
 Everything but the network calls is C++ shared with the browser (bindings/rollout_batch.hpp):
 `ts.rollout_candidates` picks step 1 from the root's logits, `ts.RolloutBatch` is steps 2 and 3,
 and `ts.rollout_decide` is step 4 with the statistics it reports. This file is the loop that feeds
@@ -104,6 +111,10 @@ class RolloutConfig:
     #: in Space alone, the opponent's headline -- chosen first and revealed -- stays in every world (and
     #: in every belief hand). Off: the world forgets it and asks it again.
     box4: bool = False
+    #: Race the worlds: every candidate on the first `race`, then the rest for the network's move and the
+    #: challengers whose paired lead over it is not below 0 (RolloutBatch.race). 0: every candidate on
+    #: every world, as every rollout player measured before it.
+    race: int = 0
 
 
 @dataclass(frozen=True)
@@ -208,6 +219,8 @@ class RolloutRoot:
             raise ValueError(f"stop must be one of {STOPS}, got {config.stop!r}")
         if config.leaf_side not in LEAF_SIDES:
             raise ValueError(f"leaf_side must be one of {LEAF_SIDES}, got {config.leaf_side!r}")
+        if config.race and not 0 < config.race < config.worlds:
+            raise ValueError(f"race must be above 0 and below the worlds ({config.worlds}), got {config.race}")
         self.features = model_obs_features(model)
         use_graphs = bool(config.cuda_graphs) and self.device.type == "cuda"
         self._graphed: Dict[int, _GraphedForward] = {}
@@ -285,15 +298,24 @@ class RolloutRoot:
         batch = ts.RolloutBatch(horizon=self.cfg.horizon, shared_dice=True, guard=True,
                                 features=self.features, seed=self._rng.getrandbits(64), **_stop_kw(self.cfg))
         position_of: Dict[int, int] = {}
+        first = self.cfg.race or self.cfg.worlds
         for i, st in enumerate(states):
             if len(cands[i]) >= 2 and not ts.Engine.is_terminal(st):
                 position_of[i] = batch.positions()
                 h = None if hands is None else hands[i]
                 if h is not None:
-                    batch.add(st, cands[i], self.cfg.worlds, hands=h)
+                    batch.add(st, cands[i], first, hands=np.ascontiguousarray(h[:first]))
                 else:
-                    batch.add(st, cands[i], self.cfg.worlds)
+                    batch.add(st, cands[i], first)
         if batch.rows():
+            self._playouts(batch)
+        if self.cfg.race and position_of:
+            for i, p in position_of.items():
+                h = None if hands is None else hands[i]
+                if h is not None:
+                    batch.race(p, self.cfg.worlds - first, hands=np.ascontiguousarray(h[first:]))
+                else:
+                    batch.race(p, self.cfg.worlds - first)
             self._playouts(batch)
         picks: List[int] = []
         self.last_stats = []
@@ -310,11 +332,14 @@ class RolloutRoot:
                 self.last_stats.append({"candidates": cands[i], "worlds": 0})
                 continue
             picks.append(int(d["pick"]))
-            self.last_stats.append({
+            stats: Dict[str, Any] = {
                 "candidates": cands[i], "worlds": int(d["worlds"]),
                 "q": {a: float(q) for a, q in zip(cands[i], d["q"])},
                 "lead": {a: [float(m), float(se)] for a, m, se in zip(cands[i], d["lead"], d["lead_se"])},
-            })
+            }
+            if self.cfg.race:
+                stats["dropped"] = [a for c, a in enumerate(cands[i]) if not batch.in_race(p, c)]
+            self.last_stats.append(stats)
         return picks
 
 
@@ -574,7 +599,7 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             continue                                   # rollout_spec_config reads the leaf side
         elif p == "graphs":
             graphs = True
-        elif p in ("keyed", "keyed2", "oracle", "aligned", "box4") or re.fullmatch(r"belief\d*", p):
+        elif p in ("keyed", "keyed2", "oracle", "aligned", "box4") or re.fullmatch(r"belief\d*|race\d+", p):
             continue                                   # rollout_spec_config reads them
         else:
             leaf = p
@@ -590,6 +615,15 @@ def _belief_particles(tail: Sequence[str]) -> int:
     return 0
 
 
+def _race_worlds(tail: Sequence[str]) -> int:
+    """`race<n>` in a rollout spec's tail -> n (RolloutConfig.race), else 0."""
+    for p in tail:
+        m = re.fullmatch(r"race(\d+)", p)
+        if m:
+            return int(m.group(1))
+    return 0
+
+
 def rollout_spec_leaf(spec: str) -> Optional[str]:
     """The leaf checkpoint of rollout:<checkpoint>:k:worlds:horizon:rule[:stop]:<leaf checkpoint> (P33a),
     or None: the root's own network reads its leaves."""
@@ -597,13 +631,14 @@ def rollout_spec_leaf(spec: str) -> Optional[str]:
 
 
 def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
-    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed|keyed2][:aligned][:box4][:oracle][:graphs][:leaf checkpoint]]]]] ->
+    """rollout:<checkpoint>[:k[:worlds[:horizon[:rule[:stop][:decider|own][:keyed|keyed2][:aligned][:box4][:oracle][:race<n>][:graphs][:leaf checkpoint]]]]] ->
     (checkpoint, config, label); an omitted field is the measured player's (4, 16, 4, z2, boundaries,
     the mover's side), the stop one of STOPS, `decider` reads each leaf from its decider's side, `own`
     plays on to the mover's next decision, `keyed` ties each draw to its situation (`keyed2` with the
     player fields narrowed, RolloutConfig.keyed2), `aligned` counts every candidate's horizon from the end of the mover's
     own action round (the headline one boundary), `box4` keeps the opponent's headline revealed by Space Race box 4,
-    `oracle` keeps the opponent's true hand in every world, and the
+    `oracle` keeps the opponent's true hand in every world, `race<n>` races the worlds from the first n
+    (RolloutConfig.race), and the
     leaf checkpoint is `rollout_spec_leaf`'s."""
     parts = spec.split(":")
     if parts[0].lower() != "rollout" or len(parts) < 2:
@@ -620,14 +655,16 @@ def rollout_spec_config(spec: str) -> Tuple[str, RolloutConfig, str]:
                         leaf_side=side, keyed="keyed" in parts[6:], keyed2="keyed2" in parts[6:],
                         oracle="oracle" in parts[6:],
                         aligned="aligned" in parts[6:], box4="box4" in parts[6:],
-                        belief=_belief_particles(parts[6:]))
+                        belief=_belief_particles(parts[6:]), race=_race_worlds(parts[6:]))
     if cfg.horizon < 0:
         raise ValueError(f"horizon must be >= 0 in {spec!r}")
+    if cfg.race and not 0 < cfg.race < cfg.worlds:
+        raise ValueError(f"race must be above 0 and below the worlds ({cfg.worlds}) in {spec!r}")
     parse_rule(cfg.rule)
     stop_label = {"boundaries": "", "turn": "-turnend", "later": "-orturnend", "earlier": "-untilturnend",
                   "predeal": "-predeal", "earlier_predeal": "-untilpredeal"}[cfg.stop]
     horizon = "" if cfg.stop in ("turn", "predeal") else f"-h{cfg.horizon}"
     side_label = {"mover": "", "decider": "-dleaf", "own": "-ownleaf"}[cfg.leaf_side]
     keyed = ("-keyed2" if cfg.keyed2 else "-keyed" if cfg.keyed else "") + ("-aligned" if cfg.aligned else "") + ("-box4" if cfg.box4 else "") + ("-oracle" if cfg.oracle else "") + (
-        f"-belief{cfg.belief}" if cfg.belief else "")
+        f"-belief{cfg.belief}" if cfg.belief else "") + (f"-race{cfg.race}" if cfg.race else "")
     return parts[1], cfg, f"rollout-k{cfg.k}-w{cfg.worlds}{horizon}{stop_label}{side_label}{keyed}-{cfg.rule}"
