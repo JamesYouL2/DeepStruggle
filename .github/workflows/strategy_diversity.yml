@@ -1,0 +1,125 @@
+# P35b(a), the strategy-diversity read (tools/scripts/strategy_diversity.py): a network's greedy
+# self-play (whole games) and a leaderboard player's -- the network under its search -- through
+# turn 3, as per-game records. The human corpus does not run on GitHub (tests.yml), so its records
+# and the report are made locally:
+#
+#   gh workflow run strategy_diversity.yml --ref <branch>
+#   gh run download <run-id> -D data/reports/strategy_diversity/<run-id>
+#   python tools/scripts/strategy_diversity.py humans --out .../humans.jsonl
+#   python tools/scripts/strategy_diversity.py report 'greedy=.../greedy-*/*.jsonl' \
+#       'searched=.../searched-*/*.jsonl' humans=.../humans.jsonl --output-md .../diversity.md
+#
+# The push trigger only registers the workflow from a branch; every job skips on it.
+name: strategy-diversity
+
+on:
+  push:
+    paths: [.github/workflows/strategy_diversity.yml]
+  workflow_dispatch:
+    inputs:
+      player:
+        description: "Leaderboard player id: its registered network, under its search"
+        default: "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)"
+      hf_repo:
+        default: "mihaild/deepstruggle"
+      greedy_games:
+        default: "16384"
+      greedy_runners:
+        default: "4"
+      searched_games:
+        default: "2048"
+      searched_batch:
+        description: "Games a searcher decides together (a rollout root's cost hardly grows with them)"
+        default: "64"
+      searched_runners:
+        default: "16"
+      max_turn:
+        description: "The searched player's games are recorded through this turn"
+        default: "3"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHONPATH: .:build/release
+  TS_PYTHON: python
+  PLAYER: ${{ inputs.player }}
+  HF_REPO: ${{ inputs.hf_repo }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      greedy: ${{ steps.p.outputs.greedy }}
+      searched: ${{ steps.p.outputs.searched }}
+    steps:
+      - id: p
+        env:
+          G: ${{ inputs.greedy_runners }}
+          S: ${{ inputs.searched_runners }}
+        run: |
+          echo "greedy=$(python3 -c "import json,os; print(json.dumps(list(range(int(os.environ['G'])))))")" >> "$GITHUB_OUTPUT"
+          echo "searched=$(python3 -c "import json,os; print(json.dumps(list(range(int(os.environ['S'])))))")" >> "$GITHUB_OUTPUT"
+
+  greedy:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.greedy) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Network
+        run: python tools/scripts/strategy_diversity.py fetch --player "$PLAYER" --hf-repo "$HF_REPO"
+      - name: Greedy self-play, part ${{ matrix.part }}
+        env:
+          GAMES: ${{ inputs.greedy_games }}
+          RUNNERS: ${{ inputs.greedy_runners }}
+        run: |
+          tools/scripts/check_engine_fresh.sh
+          OMP_NUM_THREADS=4 python tools/scripts/strategy_diversity.py play --player "$PLAYER" --greedy \
+            --games "$GAMES" --shard "${{ matrix.part }}/$RUNNERS" --out "out/greedy-${{ matrix.part }}.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greedy-${{ matrix.part }}
+          path: out/
+          retention-days: 90
+
+  searched:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.searched) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Network
+        run: python tools/scripts/strategy_diversity.py fetch --player "$PLAYER" --hf-repo "$HF_REPO"
+      - name: Searched self-play, part ${{ matrix.part }}
+        env:
+          GAMES: ${{ inputs.searched_games }}
+          BATCH: ${{ inputs.searched_batch }}
+          RUNNERS: ${{ inputs.searched_runners }}
+          MAX_TURN: ${{ inputs.max_turn }}
+        run: |
+          tools/scripts/check_engine_fresh.sh
+          OMP_NUM_THREADS=4 python tools/scripts/strategy_diversity.py play --player "$PLAYER" \
+            --games "$GAMES" --batch "$BATCH" --max-turn "$MAX_TURN" --shard "${{ matrix.part }}/$RUNNERS" \
+            --out "out/searched-${{ matrix.part }}.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: searched-${{ matrix.part }}
+          path: out/
+          retention-days: 90
