@@ -1378,6 +1378,11 @@ def locate_pool_members(saved_pool: Dict[str, Any],
     return steps, paths
 
 
+def _env_game_rng_state(trainer: Any) -> Optional[Dict[str, Any]]:
+    env = getattr(trainer, "env", None)
+    return env.game_rng_state() if isinstance(env, TsVectorizedEnv) else None
+
+
 def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
                       total_env_steps: int, elapsed_seconds: float,
                       seed: Optional[int] = None, ema: Any = None) -> None:
@@ -1399,6 +1404,9 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
         "elapsed_seconds": float(elapsed_seconds),
         "torch_rng_state": torch.get_rng_state(),
         "numpy_rng_state": np.random.get_state(),
+        # The env's game-seed generator (--seed-env drives every game's seed), so a continuation keeps drawing new
+        # deals instead of replaying its first leg's. None for an env without one.
+        "env_game_rng_state": _env_game_rng_state(trainer),
         # Recorded so a later resume can tell "continue this run" from "branch it": restoring the
         # RNG is right for the first and wrong for the second.
         "seed": None if seed is None else int(seed),
@@ -1620,6 +1628,8 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         "ema_state_dict": blob.get("ema_state_dict"),
         # None for a state written without --active-search-spec.
         "active_search": blob.get("active_search"),
+        # None for a state written before the env had its own game-seed generator, or a branch under another seed.
+        "env_game_rng_state": None if reseed else blob.get("env_game_rng_state"),
     }
 
 
@@ -1922,6 +1932,9 @@ def train_pipeline(
     if _seed_init is not None:
         torch.manual_seed(int(_seed_init))
         np.random.seed(int(_seed_init) & 0xFFFFFFFF)
+    # --seed-env seeds each env's first game and, through the env's own generator (`game_seed`), every game after it;
+    # the generator is saved with the resume state. Before 2026-10-27 the later games came from the global numpy RNG,
+    # which --seed-init seeds, so --seed-env alone changed only the first game of each env.
     env_base_seed = 12345 if _seed_env is None else int(_seed_env)
 
     # The run's short name goes in the directory name, not only in metadata. A free-form
@@ -2339,7 +2352,7 @@ def train_pipeline(
         def _opening_provider(env_idx: int) -> Optional[Any]:
             return play_scripted_setup(_opening_env[0].runner.get_state(env_idx), str(forced_opening))
 
-        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed,
+        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed, game_seed=env_base_seed,
                               reward_calculator=reward_calc,
                               start_provider=_opening_provider,
                               window_provoked_defcon=window_provoked_defcon)
@@ -2359,12 +2372,12 @@ def train_pipeline(
                 return None
             return start_pool.sample(turn)
 
-        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed,
+        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed, game_seed=env_base_seed,
                               reward_calculator=reward_calc,
                               start_provider=_start_provider,
                               window_provoked_defcon=window_provoked_defcon)
     else:
-        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed,
+        env = TsVectorizedEnv(num_envs=num_envs, base_seed=env_base_seed, game_seed=env_base_seed,
                               reward_calculator=reward_calc,
                               window_provoked_defcon=window_provoked_defcon)
 
@@ -2893,6 +2906,14 @@ def train_pipeline(
         state = load_resume_state(src, model, trainer, seed=seed, widen=resume_widen,
                                   grow_tokens=resume_grow_tokens, reset_head=resume_reset_policy_head)
         _ema_state = state.get("ema_state_dict")
+        # --seed-env drives the game seeds: restore the generator a continuation saved; a state without one (written
+        # before it existed, or a branch under another seed) keys a fresh one by the seed and the step, so two resume
+        # points never replay each other's deals.
+        if isinstance(env, TsVectorizedEnv):
+            if state.get("env_game_rng_state") is not None:
+                env.set_game_rng_state(state["env_game_rng_state"])
+            else:
+                env.reseed_games([int(env_base_seed), int(state["total_env_steps"])])
         it = state["iteration"]
         resumed_elapsed = state["elapsed_seconds"]
         # Rewind the clock so elapsed keeps counting from where the run stopped rather than from

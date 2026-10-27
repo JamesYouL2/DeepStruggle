@@ -25,6 +25,10 @@ are cited from elsewhere; keep them.
     `set_merged_influence_env(i, us, ussr)`) because a tournament can seat an E4 and an E4.1 agent in
     one game; its cached mask is built for whoever decides next. Off everywhere by default (exactly
     E4); `TsVectorizedEnv` keeps the flags across `reset_all(base_seed)`.
+  - **Game seeds** (`TsVectorizedEnv`): `base_seed` seeds each env's first game; every later game's seed comes
+    from `next_game_seed()` -- the env's own generator when it was built with `game_seed` (training passes
+    `--seed-env`; `game_rng_state` / `set_game_rng_state` carry it through a resume), else the global numpy RNG,
+    as every evaluation tool still uses.
   - **Observation feature blocks** ([`engine/AGENTS.md`](../engine/AGENTS.md) §6a):
     `extract_observation_features(state, perspective, features)` — the base plus the requested
     `OBS_FEATURE_*` blocks; `features` has no default and unknown bits raise. `obs_size_for(features)`

@@ -1,6 +1,6 @@
 """TsVectorizedEnv: High-performance vectorized wrapper for ts::VectorizedBatchRunner."""
 
-from typing import Tuple, Dict, Any, List, Optional, Callable
+from typing import Tuple, Dict, Any, List, Optional, Callable, Sequence
 import numpy as np
 import ts_engine as ts
 from bindings.settle import SettleMode
@@ -228,9 +228,15 @@ class TsVectorizedEnv:
         reward_calculator: Optional[RewardCalculator] = None,
         window_provoked_defcon: bool = False,
         settle: SettleMode = SettleMode.FORCED,
+        game_seed: Optional[int] = None,
     ):
         self.num_envs = num_envs
         self.base_seed = base_seed
+        # The seed of every game after each env's first. None (the default, every evaluation tool) draws it from the
+        # global numpy RNG as before; a trainer passes its --seed-env, so the deals and dice follow that seed alone
+        # rather than whatever else consumes the global stream, and saves the generator with its resume state.
+        self._game_rng: Optional[np.random.Generator] = (
+            None if game_seed is None else np.random.default_rng(int(game_seed)))
         self.auto_reset = auto_reset
         # Off unless a trainer wants the ownership target (P29 bet 2); see step().
         self.record_final_control = False
@@ -363,9 +369,28 @@ class TsVectorizedEnv:
         self.env_start_turn[env_idx] = 1 if int(state.turn) <= 1 else int(state.turn) + 1
         return True
 
+    def next_game_seed(self) -> int:
+        """The seed of the next game: from the env's own generator when it has one, else the global numpy RNG."""
+        if self._game_rng is not None:
+            return int(self._game_rng.integers(1, 1_000_000_000))
+        return int(np.random.randint(1, 1_000_000_000))
+
+    def game_rng_state(self) -> Optional[Dict[str, Any]]:
+        """The game-seed generator's state, for a resume file; None without one."""
+        return None if self._game_rng is None else dict(self._game_rng.bit_generator.state)
+
+    def set_game_rng_state(self, state: Dict[str, Any]) -> None:
+        if self._game_rng is None:
+            raise ValueError("this env draws game seeds from the global numpy RNG; it has no generator to restore")
+        self._game_rng.bit_generator.state = state
+
+    def reseed_games(self, seed: Sequence[int] | int) -> None:
+        """A fresh game-seed generator (a resume without a saved one keys it by the seed and the step)."""
+        self._game_rng = np.random.default_rng(seed)
+
     def reset_env(self, env_idx: int, seed: Optional[int] = None) -> None:
         """Reset a single environment by index."""
-        s = seed if seed is not None else int(np.random.randint(1, 1_000_000_000))
+        s = seed if seed is not None else self.next_game_seed()
         self.runner.reset_game(env_idx, s)
         if self._apply_start_position(env_idx):
             self.runner.refresh_all()
@@ -533,7 +558,7 @@ class TsVectorizedEnv:
                     })
                     if i in final_control:
                         completed_episodes[-1]["final_control"] = final_control[i]
-                    new_seed = int(np.random.randint(1, 1_000_000_000))
+                    new_seed = self.next_game_seed()
                     self.runner.reset_game(i, new_seed)
                     # Inject before on_env_reset so the reward calculator sees the position
                     # the episode actually begins from, not the discarded fresh deal.
