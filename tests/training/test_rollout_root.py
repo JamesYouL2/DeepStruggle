@@ -15,7 +15,7 @@ import ts_engine as ts
 import ai.search.rollout_root as rollout_root
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.models.ladder_net import create_ladder_net
-from ai.search.rollout_root import (RolloutConfig, RolloutRoot, RolloutRootAgent, parse_rule,
+from ai.search.rollout_root import (RolloutConfig, RolloutRoot, RolloutRootAgent, RolloutTeacher, parse_rule,
                                    rollout_spec_config, rollout_spec_leaf)
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import load_agent
@@ -222,6 +222,9 @@ def test_racing_spends_fewer_rows_and_picks_only_candidates_left_in_the_race() -
     assert RolloutRoot(_model(), RolloutConfig(k=4, worlds=8, horizon=1, rule="argmax", seed=5, race=4)).choose(states) == picks
     with pytest.raises(ValueError, match="race"):
         RolloutRoot(_model(), RolloutConfig(worlds=8, race=8))
+    # A teacher's targets read every candidate over every world, which a race does not give.
+    with pytest.raises(ValueError, match="not raced"):
+        RolloutTeacher(_model(), RolloutConfig(worlds=8, race=4))
 
 
 def test_racing_in_the_spec() -> None:

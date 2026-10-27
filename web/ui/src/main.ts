@@ -528,7 +528,7 @@ export class TSApp {
       document.getElementById(id)?.addEventListener("change", () => this.searchChoiceChanged());
     }
     for (const id of ["ss-k", "ss-worlds", "ss-horizon", "ss-rule", "ss-stop", "ss-leaf", "ss-chance", "ss-aligned",
-                      "ss-box4", "ss-belief"]) {
+                      "ss-box4", "ss-belief", "ss-race"]) {
       document.getElementById(id)?.addEventListener("change", () => this.searchSettingsChanged());
     }
     document.getElementById("ss-default")?.addEventListener("click", (ev) => {
@@ -555,15 +555,17 @@ export class TSApp {
     const val = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value ?? "";
     const on = (id: string) => !!(document.getElementById(id) as HTMLInputElement | null)?.checked;
     const belief = Number(val("ss-belief") || "0");
+    const race = Number(val("ss-race") || "0");
     const chance = val("ss-chance");
     const text = `rollout:${val("ss-k")}:${val("ss-worlds")}:${val("ss-horizon")}:${val("ss-rule").trim()}:${val("ss-stop")}`
       + `:${val("ss-leaf")}${chance === "keyed" || chance === "keyed2" ? `:${chance}` : ""}${on("ss-aligned") ? ":aligned" : ""}${on("ss-box4") ? ":box4" : ""}`
-      + (belief ? `:belief${belief}` : "");
-    const spec = Number.isInteger(belief) && belief >= 0 ? parseRolloutParam(text) : null;
+      + (belief ? `:belief${belief}` : "") + (race ? `:race${race}` : "");
+    const whole = (v: number) => Number.isInteger(v) && v >= 0;
+    const spec = whole(belief) && whole(race) ? parseRolloutParam(text) : null;
     const error = document.getElementById("ss-error");
     if (!spec) {
       if (error) error.textContent = "Not a search: k and worlds whole numbers of at least 1, the horizon and belief "
-        + "hands of at least 0, the rule argmax, z<x> or kl<t>.";
+        + "hands of at least 0, the race worlds 0 (off) or below the worlds, the rule argmax, z<x> or kl<t>.";
       return;
     }
     if (error) error.textContent = "";
@@ -607,6 +609,7 @@ export class TSApp {
     tick("ss-aligned", spec.aligned);
     tick("ss-box4", spec.box4);
     set("ss-belief", String(spec.belief));
+    set("ss-race", String(spec.race));
     const code = document.getElementById("search-settings-code");
     if (code) code.textContent = rolloutParam(spec);
     const deflt = document.getElementById("ss-default") as HTMLButtonElement | null;

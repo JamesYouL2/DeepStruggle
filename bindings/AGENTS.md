@@ -137,8 +137,10 @@ are cited from elsewhere; keep them.
   (a dropped one keeps its statistics on its own worlds and is never picked; `in_race(position, c)`).
   Python's root takes it as `RolloutConfig.race` (spec `:race<n>`, player id `race=<n>`; off by
   default, so every measured player is unchanged), the page as `ts_rollout_race(position, worlds,
-  belief)` / `ts_rollout_in_race`; with every challenger kept, a raced batch is the unraced one at the
-  full world count, row for row. `step`, `fill_live` and
+  belief)` / `ts_rollout_in_race`; with every challenger kept, a raced batch of one position is the
+  unraced one at the full world count, row for row (in a batch of several, a race's worlds are drawn
+  after every position's first ones, so they are other worlds). A survivor's statistics include the
+  worlds that kept it in the race (its lead reads a little high), so `RolloutTeacher` refuses a race. `step`, `fill_live` and
   `fill_leaves` run across the OpenMP team (`gomp_parallel_for`) from 32 rows up, rows listed
   serially first, so results are bit-identical at any thread count
   (`test_a_batch_plays_the_same_rows_on_one_thread_and_on_many`); the WebAssembly build stays

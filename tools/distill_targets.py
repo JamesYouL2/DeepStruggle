@@ -213,6 +213,9 @@ def root_config(spec: str) -> RolloutConfig:
         raise ValueError(f"{spec!r}: {leaf!r} is not a field of a root teacher (the leaves are read by --checkpoint)")
     if cfg.belief or cfg.oracle:
         raise ValueError(f"{spec!r}: belief and oracle roots need the game's history or the opponent's hand")
+    if cfg.race:
+        raise ValueError(f"{spec!r}: a raced root's statistics are not every candidate's over every world "
+                         "(RolloutTeacher)")
     return cfg
 
 

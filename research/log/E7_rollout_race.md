@@ -5,8 +5,10 @@ four candidates in every one of its 32 worlds. Most challengers are clearly behi
 move long before 32 worlds, and z2 almost never picks a challenger that trails it halfway. Can the root
 stop playing those challengers early without changing what it picks?
 
-**Answer.** Yes. Two stages make the same picks as the deployed root to within −0.002 ± 0.002 points
-×100 a decision, for 106 playouts a decision instead of 128 (−17%):
+**Answer.** Yes. Two stages gain as much over the network's move as the deployed root, to within
+−0.002 ± 0.002 points ×100 a decision on held-out worlds and departing from it as often (4.8%), for 106
+playouts a decision instead of 128 (−17%). That is the gain, not a count of identical picks, which the
+reliability rows were not scored for:
 
 1. Every candidate plays the first 16 worlds.
 2. A challenger whose paired lead over candidate 0 is below 0 leaves the race.
@@ -90,8 +92,10 @@ The race 16 → 32 score of 49.0% is 1.2 SE below even. Offline, its picks match
   * If no challenger is left, it adds nothing.
 * **`decide`.** It picks among the in-race candidates, over every world they were all valued in.
   * A dropped candidate keeps its statistics on its own worlds and is never picked.
-  * If no candidate is dropped, a raced batch is the unraced batch at the full world count, row for
-    row and decision for decision (`tests/bindings/test_rollout_batch.py`).
+  * If no candidate is dropped, a raced batch of one position is the unraced batch at the full world
+    count, row for row and decision for decision (`tests/bindings/test_rollout_batch.py`). In a batch of
+    several positions the race's worlds are drawn after every position's first ones, so they are other
+    worlds, and the two batches agree only in distribution.
 * **Python.** `RolloutConfig.race`, the spec token `:race<n>`, the player id `race=<n>`
   (`tools/lib/player_spec.py`), and `last_stats["dropped"]`.
 * **Web page.**
@@ -101,6 +105,14 @@ The race 16 → 32 score of 49.0% is 1.2 SE below even. Offline, its picks match
   * `tests/web/test_wasm_engine.py` holds a raced batch bit-identical across the two builds.
 
 ## Caveats
+
+* **A survivor's statistics are read on the worlds that selected it.** A challenger stays in the race
+  because its lead on the first worlds was not below 0, and `decide` then reads its lead over every
+  world, those first ones included, so a survivor's lead and z read a little high. The offline scoring
+  selects on one parity of worlds and scores on the other, so the gains above already pay for it; but
+  `last_stats["lead"]` of a raced root is not an unbiased estimate, and a dropped candidate's statistics
+  cover only the first worlds. `RolloutTeacher`, whose targets read every candidate's Q over every
+  world, refuses a raced config (as `distill_targets.py`'s `root:` teachers do).
 
 * **The saving was planned in candidate-worlds.** A playout's network rows depend on how long it runs,
   and the root forward and the leaves are unchanged. The tournaments' wall times track the playout

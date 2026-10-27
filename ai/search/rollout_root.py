@@ -28,9 +28,11 @@ is dropped for every candidate of that position.
 Racing (`race`, off by default): every candidate is played on the first `race` worlds; a challenger
 whose paired lead over the network's move is then below 0 leaves the race, and the other
 `worlds - race` worlds are played only by the network's move and the challengers left. The choice reads
-those over all the worlds. Offline, racing 16 of 32 made the same picks as every candidate on all 32
-(-0.002 +- 0.002 x100 a decision) at ~83% of the playouts; in games, `4:64:...:race16` plays as 4:64
-for ~1.5x the time of 4:32 (research/log/E7_rollout_race.md).
+those over all the worlds. Offline, racing 16 of 32 gained as much over the network's move as every
+candidate on all 32 (-0.002 +- 0.002 x100 a decision on held-out worlds, departing as often) at ~83%
+of the playouts; in games, `4:64:...:race16` plays as 4:64 for ~1.5x the time of 4:32
+(research/log/E7_rollout_race.md). A survivor's statistics include the worlds that kept it in the race,
+so its lead reads a little high; a rollout teacher, whose targets read them, is never raced.
 
 Everything but the network calls is C++ shared with the browser (bindings/rollout_batch.hpp):
 `ts.rollout_candidates` picks step 1 from the root's logits, `ts.RolloutBatch` is steps 2 and 3,
@@ -410,12 +412,19 @@ class RolloutTeacher:
     is softmax(logit + sigma(completed Q)) -- the formula R32's Gumbel targets used
     (`ai.search.gumbel_root.sigma_completed`) -- with Q each candidate's mean rollout value, n its
     worlds, and the unsearched moves at the mixed value. The same interface as `BatchedMCTS`
-    (`should_search`, `improved_policies`), so the trainer's search-CE path takes either."""
+    (`should_search`, `improved_policies`), so the trainer's search-CE path takes either.
+
+    Not raced (RolloutConfig.race): a race leaves a dropped candidate's Q on the first worlds only and
+    a survivor's on the worlds that selected it, and the targets read every candidate's Q over every
+    world."""
 
     def __init__(self, model: Any, config: RolloutConfig, device: Any = "cpu", subsample: float = 1.0,
                  node_filter: str = "all", seed: int = 86420) -> None:
         if node_filter not in ("all", "card_playmode"):
             raise ValueError(f"unknown node_filter {node_filter!r}")
+        if config.race:
+            raise ValueError(f"a rollout teacher is not raced (race={config.race}): its targets read every "
+                             "candidate over every world")
         self.root = RolloutRoot(model, config, device=device)
         self.subsample = float(subsample)
         self.node_filter = node_filter

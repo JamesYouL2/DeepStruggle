@@ -46,6 +46,9 @@ def test_a_teacher_spec_is_checked_and_a_root_spec_keeps_its_options() -> None:
     for bad in ("h4=root:4:16:4:z2:earlier:own:keyed:alinged:box4", "h4=root:4:16:4:z2:earlier:own:keyed:/x/leaf.pt"):
         with pytest.raises(ValueError, match="not a field of a root teacher"):
             dt.parse_teacher(bad)
+    # A raced root's statistics are not every candidate's over every world (RolloutTeacher).
+    with pytest.raises(ValueError, match="raced"):
+        dt.parse_teacher("r=root:4:32:4:z2:earlier:own:keyed:race16")
 
 
 def test_a_merge_refuses_shards_that_disagree() -> None:

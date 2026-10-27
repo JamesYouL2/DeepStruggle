@@ -857,6 +857,32 @@ def test_the_search_settings_set_the_search(browser: Any, static_site: str) -> N
     page.close()
 
 
+def test_the_search_settings_keep_a_raced_search(browser: Any, static_site: str) -> None:
+    """A link's `:race<n>` is a field of the settings: editing another field keeps it, a race that is
+    not below the worlds is refused with a note, and 0 turns it off."""
+    raced = BUILTIN_SEARCH + ":race16"
+    page = _open(browser, static_site + f"/?model=off&view=us&search={quote(raced)}")
+    _open_model_chooser(page)
+    page.click("#search-settings summary")
+    assert page.input_value("#ss-race") == "16"
+    assert page.inner_text("#search-settings-code") == raced
+    page.fill("#ss-horizon", "2")
+    page.dispatch_event("#ss-horizon", "change")
+    two = raced.replace(":32:4:", ":32:2:")
+    page.wait_for_function(f"new URLSearchParams(location.search).get('search') === '{two}'")
+    page.fill("#ss-race", "32")
+    page.dispatch_event("#ss-race", "change")
+    assert page.inner_text("#ss-error")
+    assert parse_qs(page.url.split("?", 1)[1])["search"] == [two], "a race of every world changes nothing"
+    page.fill("#ss-race", "0")
+    page.dispatch_event("#ss-race", "change")
+    page.wait_for_function(f"new URLSearchParams(location.search).get('search') === '{two[:-len(':race16')]}'")
+    assert page.inner_text("#ss-error") == ""
+    _close_model_chooser(page)
+    assert not page.errors
+    page.close()
+
+
 def test_a_downloaded_model_is_kept_for_the_next_visit(browser: Any, static_site: str, onnx_bytes: bytes) -> None:
     """Reopening the page loads the same file from the browser, not Hugging Face -- but a file
     the repo has since replaced (another sha256 under the same name) is downloaded again."""

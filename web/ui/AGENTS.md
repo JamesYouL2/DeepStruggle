@@ -367,7 +367,8 @@ web/ui/
      from the policy-likelihood belief over the opponent's hand, `bindings/belief.hpp`, the same C++
      as Python's) and `:race<n>` (race=n: every candidate on the first n worlds, the rest only for the
      network's move and the challengers not trailing it, `RolloutBatch::race`; with a belief, the
-     hands for all the worlds are dealt in one draw, as Python's). For the belief the session records every move (`GameSession.moves`, undone with
+     hands for all the worlds are dealt in one draw, as Python's; the settings' Race worlds field, 0 = off,
+     `test_the_search_settings_keep_a_raced_search`). For the belief the session records every move (`GameSession.moves`, undone with
      undo) and `rollout_runner.ts` brings the searching engine's tracker up to them before each
      search -- new moves only, or reset and replayed after an undo, a loaded position or a new worker
      (the evidence about the opponent's style then restarts). The page builds each hypothesis row in
