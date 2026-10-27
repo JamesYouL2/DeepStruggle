@@ -720,6 +720,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "entropy coefficient moves by -0.01 x (rollout entropy - ceiling) per "
                              "iteration, clipped to [-0.02, --entropy-coef], from 5M steps; below the "
                              "ceiling it is the fixed bonus. 0 is off.")
+    parser.add_argument("--clip-eps", type=float, default=0.2,
+                        help="P39 arm 3: PPO's clipping epsilon (the ratio is clipped to 1 +- this).")
+    parser.add_argument("--ppo-epochs", type=int, default=4,
+                        help="P39 arm 3: optimisation epochs over each iteration's rollout.")
     parser.add_argument("--target-kl", type=float, default=0.0,
                         help="P25 3l: per-seat early stopping of the PPO epochs. Once a seat's "
                              "approximate KL from the rollout policy on a minibatch exceeds this, its "
@@ -1324,6 +1328,8 @@ def main():
             adv_norm_floor=args.adv_norm_floor,
             entropy_ceiling=args.entropy_ceiling,
             target_kl=args.target_kl,
+            clip_eps=args.clip_eps,
+            ppo_epochs=args.ppo_epochs,
             entropy_normalize=args.entropy_normalize,
             setup_entropy_floor=args.setup_entropy_floor,
             setup_entropy_lr=args.setup_entropy_lr,

@@ -134,6 +134,9 @@ _BEFORE_RECORDED = {
     "lr_min": lambda meta: 3e-5,
     # P39 arm 1 (2026-10-26): no learning-rate warmup before it existed.
     "lr_warmup_steps": lambda meta: 0,
+    # P39 arm 3 (2026-10-27): PPO's clip and epochs were fixed at 0.2 and 4 before they were flags.
+    "clip_eps": lambda meta: 0.2,
+    "ppo_epochs": lambda meta: 4,
     "ema_weights": lambda meta: 0.0,
     # P29 bet 2 (2026-09-30): no aux targets before they existed.
     "aux_ownership": lambda meta: 0.0,
