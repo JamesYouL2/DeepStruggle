@@ -117,6 +117,9 @@ verdict describes -- not as a branch from a plateau.
   strategy entropy of self-play (setups, the regions invested by turn 3, coup and space usage by
   side) against the searched player's and the human corpus's distributions, and the exploit
   margin of a fresh seat-locked exploiter against the current line.
+  Part (a) read 2026-10-27 ([`E7_strategy_diversity_P35b`](../log/E7_strategy_diversity_P35b.md)):
+  only the setup is collapsed; the rest is 70-100% of the humans' breadth, and the searched player
+  stays inside the network's distribution. Part (b) is GPU training and still open.
 * **The build, if `P35b` says diversity is the missing piece.** AlphaStar's z: a strategy summary
   sampled per game (from self-play's own distribution plus designed openings), given to the policy
   as an appended observation block (~20–30 floats) with a pseudo-reward for following it. An
@@ -338,3 +341,5 @@ seat balance (unusually strong as USSR, weak as US against itself), not the arms
 **Pair 2, item 1 (A18): level.** Raw 50.0 / 49.5 / 48.6 / 49.0 / 49.0% over the five windows, level per seat against each window's own control self-play, and 50.1% under the keyed root. A level grown read does not cancel the from-scratch run (above).
 
 **Pair 2, item 1, the schedule.** Item 1's grown token layers (A18) need the whole GPU (~9× A8's compute; 4.7k steps/s beside R57, which fell from 69k to 10–20k), so A18 runs alone after R57 instead of beside it.
+
+**`P35b` (a), strategy diversity (2026-10-27): no cost found, (b) open.** A13+R48's SWA, greedy (16,384 whole games) and under the rollout root `4:32:4:z2` keyed (2,048 games, turns 1-3), against 265 human games, entropy rarefied to the human sample ([`E7_strategy_diversity_P35b`](../log/E7_strategy_diversity_P35b.md); CI `40567064117`). The setup is one placement per side (humans 4.2 / 3.1 effective), and the setup pricing on R34 found the network's own setups best or tied. AR1 is 70-75% of the humans' effective choices (US 9.2 / 12.5, USSR 3.3 / 5.4), turn 1-3 coup targets 77-83%, and region investment by turn 3 as broad as the humans'. The searched player is within a TVD of 0.02-0.07 of greedy except the US setup (0.26). By the decision rule, part (a) alone sends nothing to the owner; part (b), the seat-locked exploiter, is GPU training and has not run.

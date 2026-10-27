@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """P35b(a): how diverse is the policy's strategy, next to its searched player's and the humans'?
 
+Log entry: research/log/E7_strategy_diversity_P35b.md.
+
 One record per game, per side, from three sources fed through one tracker
 (`tools.lib.corpus_driver`): the network's greedy self-play, a leaderboard player's self-play (a
 network under its search) and the ts-replayer human corpus.
