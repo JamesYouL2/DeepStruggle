@@ -43,7 +43,7 @@ import os
 import sys
 import time
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import torch
@@ -339,21 +339,22 @@ def _top2_regions(rec: Dict[str, Any], side: str) -> Optional[str]:
     return " + ".join(REGIONS[r] for r in sorted(order)) or "none"
 
 
-def _opening_coups(rec: Dict[str, Any], side: str) -> Optional[str]:
-    """The ordered countries the side coups in turns 1-3 ("none": it does not)."""
+def _opening_coups(rec: Dict[str, Any], side: str) -> Optional[List[str]]:
+    """Every country the side coups in turns 1-3, one token per coup -- the sequence itself is
+    mostly the deal (over a thousand distinct ones in 4,096 games)."""
     if not rec["opening_complete"]:
         return None
-    cs = [COUNTRY_NAME[c] for t, s, c in rec["coups"] if s == side and t <= OPENING_TURNS]
-    return " > ".join(cs) or "none"
+    return [COUNTRY_NAME[c] for t, s, c in rec["coups"] if s == side and t <= OPENING_TURNS]
 
 
-#: name -> (side-free title, token of one game for one side)
-CATEGORICAL: Dict[str, Callable[[Dict[str, Any], str], Optional[str]]] = {
+Token = Union[None, str, List[str]]
+#: name -> the token of one game for one side: one choice, or a list (one per coup, pooled)
+CATEGORICAL: Dict[str, Callable[[Dict[str, Any], str], Token]] = {
     "setup": _setup_token,
     "AR1": lambda r, s: r["ar1"][s],
     "main region, T1-3": _top_region,
     "top two regions (as a set), T1-3": _top2_regions,
-    "coup sequence, T1-3": _opening_coups,
+    "coup targets, T1-3 (each coup)": _opening_coups,
 }
 
 
@@ -388,8 +389,8 @@ def entropy(counts: Sequence[int]) -> float:
 
 
 def rarefied_entropy(tokens: Sequence[str], n: int, reps: int = 200, seed: int = 0) -> float:
-    """Mean plug-in entropy of `n` games drawn without replacement -- what a sample the size of
-    the reference's would show."""
+    """Mean plug-in entropy of `n` tokens (games, or coups when pooled) drawn without replacement --
+    what a sample the size of the reference's would show."""
     if len(tokens) <= n:
         return entropy(list(collections.Counter(tokens).values()))
     rng = np.random.default_rng(seed)
@@ -411,9 +412,15 @@ def load_records(path: str) -> List[Dict[str, Any]]:
     return list(read_jsonl(sorted(glob.glob(path)) or [path]))
 
 
-def _tokens(recs: Sequence[Dict[str, Any]], fn: Callable[[Dict[str, Any], str], Optional[str]],
-            side: str) -> List[str]:
-    return [t for t in (fn(r, side) for r in recs) if t is not None]
+def _tokens(recs: Sequence[Dict[str, Any]], fn: Callable[[Dict[str, Any], str], Token], side: str) -> List[str]:
+    out: List[str] = []
+    for r in recs:
+        t = fn(r, side)
+        if isinstance(t, list):
+            out += t
+        elif t is not None:
+            out.append(t)
+    return out
 
 
 def report(sources: Dict[str, List[Dict[str, Any]]], reference: str, top: int = 8) -> str:
@@ -446,8 +453,9 @@ def report(sources: Dict[str, List[Dict[str, Any]]], reference: str, top: int = 
                 h = entropy(list(collections.Counter(toks).values()))
                 hr = rarefied_entropy(toks, len(ref_tokens)) if ref_tokens else float("nan")
                 unplayed = sum(p for k, p in ref_d.items() if d.get(k, 0.0) < RARE)
+                miss = "--" if name == reference else f"{unplayed:.1%}"
                 lines.append(f"| {name} | {len(toks):,} | {len(d):,} | {h:.2f} | {2 ** h:.1f} | {hr:.2f} | "
-                             f"{2 ** hr:.1f} | {max(d.values()):.1%} | {tvd(d, ref_d):.2f} | {unplayed:.1%} |")
+                             f"{2 ** hr:.1f} | {max(d.values()):.1%} | {tvd(d, ref_d):.2f} | {miss} |")
             union: Dict[str, float] = {}
             for d in dists.values():
                 for k, p in d.items():
