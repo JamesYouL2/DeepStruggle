@@ -1977,6 +1977,16 @@
     "lr": 0.0002,
     "batch_size": 16384
    }
+  },
+  "R93": {
+   "description": "R1 with PPO's clip at 0.1 instead of 0.2 (--clip-eps 0.1): the A8-width control at the clip that bounded the deep trunk's step (P39 arm 3a, R90)",
+   "first": "E8-A8-R93-S44_20261027_084717",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "clip_eps": 0.1,
+    "block_lambda": "off"
+   }
   }
  },
  "overrides": {
@@ -2211,7 +2221,8 @@
   "E8-A8-R1-S44@10010M+R48@13200M+R88_20261027_015418": "E8-A8-R1-S44@10010M+R48@13200M+R88",
   "E8-A30-R90-S44_20261027_045701": "E8-A30-R90-S44",
   "E8-A30-R91-S44_20261027_073213": "E8-A30-R91-S44",
-  "E8-A30-R92-S44_20261027_081156": "E8-A30-R92-S44"
+  "E8-A30-R92-S44_20261027_081156": "E8-A30-R92-S44",
+  "E8-A8-R93-S44_20261027_084717": "E8-A8-R93-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",

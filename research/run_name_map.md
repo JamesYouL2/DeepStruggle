@@ -228,3 +228,4 @@ the new names. Soups and line SWAs kept outside run directories are linked as
 | `E8-A30-R90-S44_20261027_045701` | `E8-A30-R90-S44` | 0 → 2,000M |
 | `E8-A30-R91-S44_20261027_073213` | `E8-A30-R91-S44` | 0 → 2,000M |
 | `E8-A30-R92-S44_20261027_081156` | `E8-A30-R92-S44` | 0 → 2,000M |
+| `E8-A8-R93-S44_20261027_084717` | `E8-A8-R93-S44` | 0 → 4,000M |
