@@ -369,7 +369,8 @@ class LeaderboardPage {
     };
     box.innerHTML = `
       <p class="lb-note">A player's name says how it was trained: <code>E7-A8-R1-S44</code> is engine E7,
-        architecture A8, recipe R1, seed 44, and each <code>@&lt;step&gt;M+&lt;change&gt;</code> a branch point
+        architecture A8, recipe R1, seed 44 (the engine it was trained on; its games here are played under the
+        rules of the epoch shown, whatever engine trained it), and each <code>@&lt;step&gt;M+&lt;change&gt;</code> a branch point
         and what changed there (a new recipe or architecture, a seed, or a soup in parentheses). A code is a set of
         <code>tools/train.py</code> flags -- an architecture the network's shape, a recipe every other training
         setting -- assigned by <code>tools/scripts/run_codes.py</code> and listed here from

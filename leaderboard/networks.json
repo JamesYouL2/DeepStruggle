@@ -133,5 +133,13 @@
     "old_names": [],
     "hf": "E7-A8-R1-S44_20261007_162257/snapshot_6800015360steps.pt",
     "report": "research/log/per_checkpoint/E7-A8-R1-S44_6800M.md"
+  },
+  "E8-A8-R1-S44@10010M+R48@12720..12800M": {
+    "file": "checkpoints/E8-A8-R1-S44@10010M+R48_20261026_010224/swa_12720-12800M.pt",
+    "sha256": "c1085da3d20d4c071ff54886ab97c139df4a9d47f91d6bbf158184874423a9aa",
+    "description": "SWA (weight average) of E8-A8-R1-S44@10010M+R48's 12,720-12,800M snapshots: the E8 A8 control (trained on E8, ENG-5's alternating deal included, reading HEADLINE_REVEAL) branched at its 10,010M state with E7's plateau recipe R48.",
+    "old_names": [],
+    "hf": null,
+    "report": null
   }
 }

@@ -38,18 +38,19 @@
     ]
   },
   "E8": {
-    "description": "The E8 engine (ENG-4, 2026-10-20: a draw that runs the deck out reshuffles there, inside Our Man in Tehran and Ask Not too). E7 networks play on it unchanged. The main set starts as E7's anchor alone, until main-vs-main games on E8 let the owner choose the rest; greedy unless a player's id says otherwise.",
+    "description": "The E8 engine: ENG-4 (2026-10-20: a draw that runs the deck out reshuffles there, inside Our Man in Tehran and Ask Not too) and ENG-5 (2026-10-22: the deal alternates, one card at a time, USSR first), the rules every E8 training run since ENG-5 plays. A player's name gives the engine its network was trained on; its games here are played under E8's rules, so E7 networks play on it unchanged. The anchor is E7's best player, the R34 soup under the corrected keyed root at 32 worlds, at 1600; the main set adds the A13 heads SWA. Greedy unless a player's id says otherwise.",
     "behaviour": {
-      "version": 1,
-      "runner": "93863b48bb49aca29054aa46a24ab9fb58e087e0a80b8cfcd965d135a2005bb2",
-      "state": "55987dca90cfa3d6c96bb201e95850370f03a2141b768dcee75ddb28fb84d613",
-      "rollout": "e70d33bbc05d4c1b81f1eae242123873077e5d53eac7334a700e872f813def75",
-      "mcts": "f46b75f3ec449eab5429839272de0939ef56ecf2f5d7d126c400e4052dd58c9e"
+      "version": 3,
+      "runner": "bd732bf803146793d1741245c31ef14f3d7b3696c04ef75ed3273ed57bace220",
+      "state": "6bafaed944ad82285d51177af2e7c57437a5ee9b03dec19130d42ad9ce9b1996",
+      "rollout": "6fceae903be453ca27b32550272f27f4a7ea645fb35333f7daecb755378fa8b7",
+      "mcts": "156879ec0bd11af706306b27eea804cdb857813eae60ca7e69f4187ff1f8b00b"
     },
-    "anchor": "E7-A4-R1-S44@4800M",
-    "anchor_elo": 1500.0,
+    "anchor": "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)",
+    "anchor_elo": 1600.0,
     "main": [
-      "E7-A4-R1-S44@4800M"
+      "E7-A8-R1-S44@6400M+(R34,R34-S45,R34-S46)@7120..7200M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)",
+      "E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13@11920..12000M"
     ]
   }
 }

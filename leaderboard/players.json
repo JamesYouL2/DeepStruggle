@@ -429,5 +429,49 @@
     },
     "description": "Greedy policy.",
     "report": null
+  },
+  "E8-A8-R1-S44@10010M+R48@12720..12800M": {
+    "network": "E8-A8-R1-S44@10010M+R48@12720..12800M",
+    "inference": {
+      "kind": "policy",
+      "temperature": 0.0
+    },
+    "description": "The R48 branch of the E8 A8 control, SWA over 12,720-12,800M, greedy.",
+    "report": null
+  },
+  "E8-A8-R1-S44@10010M+R48@12720..12800M~rollout(k=4,worlds=32,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true)": {
+    "network": "E8-A8-R1-S44@10010M+R48@12720..12800M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 32,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own",
+      "chance": "keyed",
+      "aligned": true,
+      "box4": true
+    },
+    "description": "The R48 branch of the E8 A8 control (SWA 12,720-12,800M) under the corrected keyed root at 32 worlds, the search of E8's anchor.",
+    "report": null
+  },
+  "E8-A8-R1-S44@10010M+R48@12720..12800M~rollout(k=4,worlds=64,horizon=4,rule=z2,stop=earlier,leaf=own,chance=keyed,aligned=true,box4=true,race=16)": {
+    "network": "E8-A8-R1-S44@10010M+R48@12720..12800M",
+    "inference": {
+      "kind": "rollout",
+      "k": 4,
+      "worlds": 64,
+      "horizon": 4,
+      "rule": "z2",
+      "stop": "earlier",
+      "leaf": "own",
+      "chance": "keyed",
+      "aligned": true,
+      "box4": true,
+      "race": 16
+    },
+    "description": "The R48 branch of the E8 A8 control (SWA 12,720-12,800M) under the corrected keyed root at 64 worlds, raced: every candidate on the first 16 worlds, the rest of the 64 only for the network's move and the challengers not trailing it.",
+    "report": null
   }
 }

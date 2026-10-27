@@ -176,6 +176,28 @@ def test_a_main_player_cut_off_from_the_anchor_is_an_error(tmp_path: pathlib.Pat
         lb.fit_epoch(board, "T")
 
 
+def test_a_networks_training_engine_need_not_be_the_epochs(tmp_path: pathlib.Path) -> None:
+    """A name's E<n> is the engine its network was trained on; the epoch is the engine whose rules its
+    games are played under. An E7 network anchors E8 beside one trained on E8 (owner, 2026-10-27)."""
+    old, new = "E7-A8-R1-S44@7200M", "E8-A8-R1-S44@12800M"
+    anchor = player_id(old, Rollout(worlds=32))
+    networks = {n: {"file": f"{n}.pt", "sha256": "0" * 64, "description": "", "old_names": [], "hf": None,
+                    "report": None} for n in (old, new)}
+    players = {pid: {"network": net, "inference": spec_to_dict(spec), "description": "", "report": None}
+               for pid, net, spec in ((anchor, old, Rollout(worlds=32)), (old, old, Policy()), (new, new, Policy()))}
+    epochs = {"E8": {"description": "", "behaviour": dict(BEHAVIOUR), "anchor": anchor, "anchor_elo": 1600.0,
+                     "main": [anchor, old]}}
+    (tmp_path / "matches").mkdir()
+    board = lb.Board(networks, players, epochs, {"E8": []}, tmp_path)  # type: ignore[arg-type]
+    seats: lb.Seat = {"w": 6, "l": 4, "d": 0}
+    for n, (a, b) in enumerate(((anchor, old), (new, anchor), (new, old))):
+        lb.append_record(board, "E8", lb.make_record(a, b, seats, seats, n, ENGINE, BEHAVIOUR_ID, "c", "d"))
+    assert lb.validate(board) == []
+    fit = lb.fit_epoch(board, "E8")
+    assert {r.player for r in fit.ratings} == {anchor, old, new}
+    assert next(r for r in fit.ratings if r.player == anchor).elo == 1600.0
+
+
 def test_views_filter_one_fit(tmp_path: pathlib.Path) -> None:
     truth = {"A": 1500.0, "B": 1600.0, "D": 1550.0, "E": 1700.0}
     board = _board(tmp_path, ["A", "B"], ["D", "E"])

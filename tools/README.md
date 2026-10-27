@@ -276,6 +276,11 @@ the evaluator is a registered network like any other (its file and sha256 are ch
 it; `chance=keyed` keeps the original packing, so every keyed player recorded before it is unchanged
 (`bindings/AGENTS.md`, keyed_chance.hpp).
 
+**A network's engine and an epoch's engine are two things.** The `E<n>` in a network's name is the
+engine it was trained on; the epoch is the engine whose rules its games on the leaderboard are played
+under. Nothing ties them: E8's anchor is an E7 network, played on E8's rules beside networks trained on
+E8.
+
 **The fit** is Bradley-Terry with a US-seat term, draws half a win, in two stages: the main players
 among themselves (anchor pinned), then everyone else against them held fixed. Games without a main
 player never move a main rating.
