@@ -1941,6 +1941,18 @@
     "lr": 0.0002,
     "batch_size": 16384
    }
+  },
+  "R90": {
+   "description": "R86 (lr 2e-4, 16k) with PPO's clip at 0.1 instead of 0.2 (--clip-eps 0.1): P39 arm 3a, against the deep trunk's larger per-update step",
+   "first": "E8-A30-R90-S44_20261027_045701",
+   "flags": {
+    "opponent_frac": 0.3,
+    "opponent_self_pool": true,
+    "clip_eps": 0.1,
+    "block_lambda": "off",
+    "lr": 0.0002,
+    "batch_size": 16384
+   }
   }
  },
  "overrides": {
@@ -2172,7 +2184,8 @@
   "E8-A8-R1-S44@10010M+R48@12400M+A31_20261026_175945": "E8-A8-R1-S44@10010M+R48@12400M+A31",
   "E8-A32-R86-S44_20261026_180241": "E8-A32-R86-S44",
   "E8-A30-R89-S44_20261027_014647": "E8-A30-R89-S44",
-  "E8-A8-R1-S44@10010M+R48@13200M+R88_20261027_015418": "E8-A8-R1-S44@10010M+R48@13200M+R88"
+  "E8-A8-R1-S44@10010M+R48@13200M+R88_20261027_015418": "E8-A8-R1-S44@10010M+R48@13200M+R88",
+  "E8-A30-R90-S44_20261027_045701": "E8-A30-R90-S44"
  },
  "models": {
   "_swa_line/E7line_swa_0-80M.pt": "E7-A4-R1-S44@0..80M",
