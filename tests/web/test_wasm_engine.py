@@ -124,6 +124,34 @@ def test_the_page_sees_exactly_what_python_sees(seed: int, tmp_path) -> None:
         assert wasm["ending"] == ts.game_ending_reason(state)
 
 
+class _PlayOuts:
+    """The batch's live rows played to their horizons under a fixed synthetic policy, then their leaves
+    valued by a fixed synthetic critic, every observation and mask into `h` -- as wasm_parity.mjs's
+    playOuts does. `plies` and `leaves` count across runs (a raced position plays out twice), and the
+    policy reads the running ply."""
+
+    def __init__(self, batch: Any, h: Any, act: int) -> None:
+        self.batch, self.h = batch, h
+        self.a_idx = np.arange(act, dtype=np.int64)
+        self.plies = self.leaves = 0
+
+    def run(self) -> None:
+        batch, h = self.batch, self.h
+        while not batch.all_done():
+            obs, masks = batch.fill_live()
+            h.update(np.ascontiguousarray(obs, dtype=np.float32).tobytes())
+            h.update(np.ascontiguousarray(masks, dtype=np.uint8).tobytes())
+            row = (((self.a_idx * 2654435761) % 4294967296 + self.plies * 40503 + 7) % 1000) / 1000.0
+            batch.step(np.ascontiguousarray(np.tile(row.astype(np.float32), (obs.shape[0], 1))))
+            self.plies += 1
+            assert self.plies < 2000
+        lobs, _lm = batch.fill_leaves()
+        h.update(np.ascontiguousarray(lobs, dtype=np.float32).tobytes())
+        n = int(lobs.shape[0])
+        batch.set_leaf_values(np.asarray([((j * 31) % 17) / 17 - 0.5 for j in range(n)], dtype=np.float32))
+        self.leaves += n
+
+
 @pytest.mark.parametrize("seed,plies,horizon,stop,leaf,keyed,aligned,race", [
     (21, 70, 2, "boundaries", "mover", False, False, 0), (35, 150, 1, "boundaries", "mover", False, False, 0),
     (47, 40, 0, "boundaries", "mover", False, False, 0), (59, 90, 4, "turn", "mover", False, False, 0),
@@ -164,35 +192,16 @@ def test_the_rollout_batch_plays_the_same_worlds_in_both_builds(seed: int, plies
                             box4=aligned)
     rows = batch.add(state, cands, worlds)
     h = hashlib.sha256()
-    plies_run = leaves = 0
-    a_idx = np.arange(act, dtype=np.int64)
-
-    def play_out() -> None:
-        nonlocal plies_run, leaves
-        while not batch.all_done():
-            obs, masks = batch.fill_live()
-            h.update(np.ascontiguousarray(obs, dtype=np.float32).tobytes())
-            h.update(np.ascontiguousarray(masks, dtype=np.uint8).tobytes())
-            row = (((a_idx * 2654435761) % 4294967296 + plies_run * 40503 + 7) % 1000) / 1000.0
-            lg = np.ascontiguousarray(np.tile(row.astype(np.float32), (obs.shape[0], 1)))
-            batch.step(lg)
-            plies_run += 1
-            assert plies_run < 2000
-        lobs, _lm = batch.fill_leaves()
-        h.update(np.ascontiguousarray(lobs, dtype=np.float32).tobytes())
-        n = int(lobs.shape[0])
-        batch.set_leaf_values(np.asarray([((j * 31) % 17) / 17 - 0.5 for j in range(n)], dtype=np.float32))
-        leaves += n
-
-    play_out()
+    play = _PlayOuts(batch, h, act)
+    play.run()
     in_race: Optional[List[int]] = None
     if race:
         rows += batch.race(0, race)
-        play_out()
+        play.run()
         in_race = [int(batch.in_race(0, c)) for c in range(len(cands))]
     native = {
-        "candidates": cands, "rows": rows, "worlds_used": batch.worlds_used(0), "plies": plies_run,
-        "leaves": leaves, "refused": batch.refused(), "digest": h.hexdigest(), "in_race": in_race,
+        "candidates": cands, "rows": rows, "worlds_used": batch.worlds_used(0), "plies": play.plies,
+        "leaves": play.leaves, "refused": batch.refused(), "digest": h.hexdigest(), "in_race": in_race,
         "values": [float(v) for v in np.asarray(batch.values(), dtype=np.float32)],
         "table": [[p, w, c, int(d), int(t)] for p, w, c, d, t in zip(
             batch.row_position(), batch.row_world(), batch.row_candidate(), batch.row_done(), batch.row_terminal())],
@@ -231,8 +240,10 @@ def test_the_belief_tracker_is_the_same_in_both_builds(seed: int, plies: int, tm
     as clicks and finds their flat actions, Python observes the flat actions; at the last position the
     same recorded decisions, the same hypothesis rows (the page builds them whole, Python on its device
     from rows_patch), and under the same synthetic log-likelihoods the same temperature weights and
-    the same dealt hands."""
-    particles, tracker_seed, n_worlds = 16, 4242, 8
+    the same dealt hands. Then the page's raced belief search: one draw of every world's hands, the
+    first `race` of them for every candidate, the rest for the candidates left (ts_rollout_add_belief
+    and ts_rollout_race against RolloutBatch.add and .race with the same slices)."""
+    particles, tracker_seed, n_worlds, race, n_cands, horizon, batch_seed = 16, 4242, 8, 3, 3, 2, 13579
     tracker = ts.BeliefTracker(particles, True, tracker_seed)
     state = ts.GameState()
     ts.Engine.init_game(state, seed)
@@ -273,9 +284,25 @@ def test_the_belief_tracker_is_the_same_in_both_builds(seed: int, plies: int, tm
         weights = [float(x) for x in tracker.temperature_weights(0)]
         w = tracker.worlds(0, n_worlds)
         worlds = None if w is None else [int(x) for x in np.asarray(w).reshape(-1)]
+    raced: Optional[Dict[str, Any]] = None
+    if worlds is not None:
+        hands = np.asarray(tracker.worlds(0, n_worlds), dtype=np.uint8).reshape(n_worlds, 110)
+        mask = np.asarray(ts.get_flat_action_mask(state, False))
+        cands = [int(a) for a in np.flatnonzero(mask)[:n_cands]]
+        batch = ts.RolloutBatch(horizon=horizon, shared_dice=True, guard=True, features=0, seed=batch_seed)
+        rows = batch.add(state, cands, race, hands=np.ascontiguousarray(hands[:race]))
+        rh = hashlib.sha256()
+        play = _PlayOuts(batch, rh, int(mask.shape[0]))
+        play.run()
+        rows += batch.race(0, n_worlds - race, hands=np.ascontiguousarray(hands[race:]))
+        play.run()
+        raced = {"candidates": cands, "rows": rows, "worlds_used": batch.worlds_used(0), "plies": play.plies,
+                 "leaves": play.leaves, "digest": rh.hexdigest(),
+                 "in_race": [int(batch.in_race(0, c)) for c in range(len(cands))]}
     path = tmp_path / "belief.json"
     path.write_text(json.dumps({"seed": seed, "actions": actions, "particles": particles,
-                                "tracker_seed": tracker_seed, "worlds": n_worlds}))
+                                "tracker_seed": tracker_seed, "worlds": n_worlds, "race": race, "k": n_cands,
+                                "horizon": horizon, "batch_seed": batch_seed}))
     wasm = _node("belief", str(path))
     assert "error" not in wasm, wasm.get("error")
     assert wasm["observed"] == len(actions), "the page found a flat action for every click"
@@ -284,3 +311,4 @@ def test_the_belief_tracker_is_the_same_in_both_builds(seed: int, plies: int, tm
     assert wasm["digest"] == h.hexdigest(), "the two builds' hypothesis rows differ"
     assert np.allclose(np.asarray(wasm["weights"], dtype=np.float32), np.asarray(weights, dtype=np.float32), atol=1e-6)
     assert wasm["worlds"] == worlds
+    assert wasm["raced"] == raced, "the two builds' raced belief searches differ"

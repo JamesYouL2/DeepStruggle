@@ -716,31 +716,101 @@ def test_a_race_with_no_challenger_left_adds_nothing() -> None:
     assert [b.in_race(0, c) for c in range(3)] == [True, False, False]
 
 
-@pytest.mark.parametrize("shared", [True, False])
-def test_a_race_that_keeps_every_candidate_is_the_unraced_batch(shared: bool) -> None:
-    """The second stage's worlds continue the batch's stream: with no challenger dropped (a lead of 0
-    is kept), a raced batch builds exactly the rows -- and decides exactly as -- a batch that played
-    every candidate on every world."""
-    st = _position()
+def _dealt_hands(st: ts.GameState, n: int, seed: int) -> np.ndarray:
+    """`n` opposing hands for the decider of `st`, each as many cards as the opponent's unseen hand,
+    dealt from its unseen hand and the draw deck."""
+    me = decider(st)
+    opp_unknown = ts.CardLocation.HAND_USSR_UNKNOWN if me == ts.Player.US else ts.CardLocation.HAND_US_UNKNOWN
+    locs = _locations(st)
+    held = sum(loc == opp_unknown for loc in locs)
+    pool = [c for c, loc in enumerate(locs) if loc in (opp_unknown, ts.CardLocation.DRAW_DECK)]
+    rng = np.random.default_rng(seed)
+    hands = np.zeros((n, 110), dtype=np.uint8)
+    for w in range(n):
+        hands[w, rng.choice(pool, size=held, replace=False)] = 1
+    return hands
+
+
+def _assert_same_batch(a: ts.RolloutBatch, b: ts.RolloutBatch, st: ts.GameState, cands: List[int]) -> None:
+    """The same rows, state for state, and the same decision at position 0 under every rule."""
     mask = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+    assert a.rows() == b.rows() and a.worlds_used(0) == b.worlds_used(0)
+    assert [bytes(a.row_state(r).raw_bytes()) for r in range(a.rows())] == \
+        [bytes(b.row_state(r).raw_bytes()) for r in range(b.rows())]
+    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    for rule in ("z2", "argmax", "kl0.05"):
+        assert ts.rollout_decide(a, 0, cands, logits, mask, rule) == ts.rollout_decide(b, 0, cands, logits, mask, rule)
+
+
+@pytest.mark.parametrize("shared,keyed,keyed2", [(True, False, False), (False, False, False), (True, True, False),
+                                                  (True, False, True)])
+def test_a_race_that_keeps_every_candidate_is_the_unraced_batch(shared: bool, keyed: bool, keyed2: bool) -> None:
+    """The second stage's worlds continue the batch's stream (or its keys): with no challenger dropped
+    (a lead of 0 is kept), a raced batch builds exactly the rows -- and decides exactly as -- a batch
+    that played every candidate on every world."""
+    st = _position()
     cands = _legal(st)[:3]
     values = {0: 0.0, 1: 0.05, 2: 0.0}
-    whole = ts.RolloutBatch(horizon=0, shared_dice=shared, seed=11)
+    whole = ts.RolloutBatch(horizon=0, shared_dice=shared, seed=11, keyed=keyed, keyed2=keyed2)
     whole.add(st, cands, 8)
     _value_leaves(whole, values)
-    raced = ts.RolloutBatch(horizon=0, shared_dice=shared, seed=11)
+    raced = ts.RolloutBatch(horizon=0, shared_dice=shared, seed=11, keyed=keyed, keyed2=keyed2)
     raced.add(st, cands, 3)
     _value_leaves(raced, values)
     raced.race(0, 5)
     _value_leaves(raced, values)
     assert all(raced.in_race(0, c) for c in range(3))
-    assert raced.rows() == whole.rows() and raced.worlds_used(0) == whole.worlds_used(0)
-    assert [bytes(raced.row_state(r).raw_bytes()) for r in range(raced.rows())] == \
-        [bytes(whole.row_state(r).raw_bytes()) for r in range(whole.rows())]
-    logits = np.zeros(mask.shape[0], dtype=np.float32)
+    _assert_same_batch(raced, whole, st, cands)
+
+
+def test_a_race_plays_its_second_stage_on_the_hands_it_is_given() -> None:
+    """A belief's race: the root deals every world's hands at once, plays the first stage on the first
+    slice and the race on the rest -- the same rows as one unraced add of all of them."""
+    st = _position()
+    cands = _legal(st)[:3]
+    hands = _dealt_hands(st, 8, seed=3)
+    values = {0: 0.0, 1: 0.05, 2: 0.0}
+    whole = ts.RolloutBatch(horizon=0, seed=11, keyed=True)
+    whole.add(st, cands, 8, hands=hands)
+    _value_leaves(whole, values)
+    raced = ts.RolloutBatch(horizon=0, seed=11, keyed=True)
+    raced.add(st, cands, 3, hands=np.ascontiguousarray(hands[:3]))
+    _value_leaves(raced, values)
+    raced.race(0, 5, hands=np.ascontiguousarray(hands[3:]))
+    _value_leaves(raced, values)
+    _assert_same_batch(raced, whole, st, cands)
+    other = ts.RolloutBatch(horizon=0, seed=11, keyed=True)
+    other.add(st, cands, 3, hands=np.ascontiguousarray(hands[:3]))
+    _value_leaves(other, values)
+    other.race(0, 5, hands=np.ascontiguousarray(hands[[3, 4, 5, 7, 6]]))
+    assert [bytes(other.row_state(r).raw_bytes()) for r in range(other.rows())] != \
+        [bytes(raced.row_state(r).raw_bytes()) for r in range(raced.rows())]
+
+
+def test_racing_one_position_leaves_the_others_decision_alone() -> None:
+    """In a batch over several positions (a tournament's), the race appends rows for its own position
+    only: another position's rows and its decision are those of the same batch unraced."""
+    st0, st1 = _position(), _position(plies=80, seed=9)
+    c0, c1 = _legal(st0)[:3], _legal(st1)[:3]
+    mask1 = np.asarray(ActionEncoder.get_legal_mask(st1), dtype=np.uint8)
+    logits = np.zeros(mask1.shape[0], dtype=np.float32)
+    values = {0: 0.1, 1: -0.3, 2: 0.3}
+    plain = ts.RolloutBatch(horizon=0, seed=5)
+    raced = ts.RolloutBatch(horizon=0, seed=5)
+    for b in (plain, raced):
+        b.add(st0, c0, 4)
+        b.add(st1, c1, 4)
+        _value_leaves(b, values)
+    added = raced.race(0, 4)
+    assert added > 0 and not raced.in_race(0, 1)
+    _value_leaves(raced, {0: 0.1, 2: 0.3})
+    assert set(raced.row_position()[-added:]) == {0}
+    assert all(raced.in_race(1, c) for c in range(3)) and raced.worlds_used(1) == plain.worlds_used(1)
+    assert [bytes(raced.row_state(r).raw_bytes()) for r in range(plain.rows())] == \
+        [bytes(plain.row_state(r).raw_bytes()) for r in range(plain.rows())]
     for rule in ("z2", "argmax", "kl0.05"):
-        assert ts.rollout_decide(raced, 0, cands, logits, mask, rule) == \
-            ts.rollout_decide(whole, 0, cands, logits, mask, rule)
+        assert ts.rollout_decide(raced, 1, c1, logits, mask1, rule) == \
+            ts.rollout_decide(plain, 1, c1, logits, mask1, rule)
 
 
 def test_an_unraced_decision_is_untouched_by_the_race_bookkeeping() -> None:

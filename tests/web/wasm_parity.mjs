@@ -17,6 +17,40 @@ if (mode === "selftest") {
   process.exit(0);
 }
 
+// The batch's live rows played to their horizons under a fixed synthetic policy, then their leaves
+// valued by a fixed synthetic critic, every observation and mask into `hash`; `plies` and `leaves` count
+// across calls (a raced position plays out twice), and the policy reads the running ply.
+const playOuts = (hash, ACT) => {
+  const W = M._ts_rollout_obs_width();
+  const out = { plies: 0, leaves: 0 };
+  out.run = () => {
+    // The synthetic policy: logit[a] = ((a * 2654435761 + ply * 40503 + 7) mod 1000) / 1000.
+    while (!M._ts_rollout_all_done()) {
+      const n = M._ts_rollout_fill_live();
+      hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_obs(), n * W * 4).slice());
+      hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_masks(), n * ACT).slice());
+      const lgPtr = M._malloc(4 * n * ACT);
+      const lg = new Float32Array(M.HEAPF32.buffer, lgPtr, n * ACT);
+      for (let j = 0; j < n; j++) {
+        for (let a = 0; a < ACT; a++) lg[j * ACT + a] = (((a * 2654435761) % 4294967296 + out.plies * 40503 + 7) % 1000) / 1000;
+      }
+      M._ts_rollout_step(lgPtr);
+      M._free(lgPtr);
+      out.plies += 1;
+      if (out.plies > 2000) break;
+    }
+    const n = M._ts_rollout_fill_leaves();
+    hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_obs(), n * W * 4).slice());
+    const vPtr = M._malloc(4 * Math.max(1, n));
+    const lv = new Float32Array(M.HEAPF32.buffer, vPtr, Math.max(1, n));
+    for (let j = 0; j < n; j++) lv[j] = ((j * 31) % 17) / 17 - 0.5;
+    M._ts_rollout_set_leaf_values(vPtr);
+    M._free(vPtr);
+    out.leaves += n;
+  };
+  return out;
+};
+
 // rollout: {seed, actions, k, worlds, horizon, batch_seed[, race]} -- walk to the position, then the
 // rollout batch (bindings/rollout_batch.hpp) on its first k legal moves under a fixed synthetic
 // policy and critic, so the Python module's batch can be compared row for row; with `race`, the
@@ -44,36 +78,9 @@ if (mode === "rollout") {
     process.exit(0);
   }
   let rows = M._ts_rollout_add(candPtr, cands.length, spec.worlds);
-  const W = M._ts_rollout_obs_width();
   const hash = createHash("sha256");
-  let plies = 0, leaves = 0;
-  // The live rows to their horizons, then their leaves valued.
-  const playOut = () => {
-    // The synthetic policy: logit[a] = ((a * 2654435761 + ply * 40503 + 7) mod 1000) / 1000.
-    while (!M._ts_rollout_all_done()) {
-      const n = M._ts_rollout_fill_live();
-      hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_obs(), n * W * 4).slice());
-      hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_masks(), n * ACT).slice());
-      const lgPtr = M._malloc(4 * n * ACT);
-      const lg = new Float32Array(M.HEAPF32.buffer, lgPtr, n * ACT);
-      for (let j = 0; j < n; j++) {
-        for (let a = 0; a < ACT; a++) lg[j * ACT + a] = (((a * 2654435761) % 4294967296 + plies * 40503 + 7) % 1000) / 1000;
-      }
-      M._ts_rollout_step(lgPtr);
-      M._free(lgPtr);
-      plies += 1;
-      if (plies > 2000) break;
-    }
-    const n = M._ts_rollout_fill_leaves();
-    hash.update(new Uint8Array(M.HEAPU8.buffer, M._ts_rollout_buf_obs(), n * W * 4).slice());
-    const vPtr = M._malloc(4 * Math.max(1, n));
-    const lv = new Float32Array(M.HEAPF32.buffer, vPtr, Math.max(1, n));
-    for (let j = 0; j < n; j++) lv[j] = ((j * 31) % 17) / 17 - 0.5;
-    M._ts_rollout_set_leaf_values(vPtr);
-    M._free(vPtr);
-    leaves += n;
-  };
-  playOut();
+  const play = playOuts(hash, ACT);
+  play.run();
   let inRace = null;
   if (spec.race) {
     const added = M._ts_rollout_race(0, spec.race, 0);
@@ -82,7 +89,7 @@ if (mode === "rollout") {
       process.exit(0);
     }
     rows += added;
-    playOut();
+    play.run();
     inRace = cands.map((_, c) => M._ts_rollout_in_race(0, c));
   }
   const values = Array.from(new Float32Array(M.HEAPF32.buffer, M._ts_rollout_values(), rows));
@@ -105,16 +112,17 @@ if (mode === "rollout") {
     decisions[rule] = JSON.parse(M.UTF8ToString(M._ts_rollout_decide(0, candPtr, cands.length, rootPtr, maskPtr, rulePtr)));
     M._free(rulePtr);
   }
-  console.log(JSON.stringify({ candidates: cands, rows, worlds_used: M._ts_rollout_worlds_used(0), plies, leaves,
+  console.log(JSON.stringify({ candidates: cands, rows, worlds_used: M._ts_rollout_worlds_used(0), plies: play.plies,
+                               leaves: play.leaves,
                                refused: M._ts_rollout_refused(), digest: hash.digest("hex"), values, table,
                                top, decisions, in_race: inRace }));
   process.exit(0);
 }
 
-// belief: {seed, actions, particles, tracker_seed, worlds} -- the game's moves through the belief tracker
-// (bindings/belief.hpp), each observed before it is applied, then at the last position: the recorded
-// decisions' moves, a digest of every hypothesis row, the weights under synthetic log-likelihoods, and
-// the worlds' hands.
+// belief: {seed, actions, particles, tracker_seed, worlds[, race, k, horizon, batch_seed]} -- the game's
+// moves through the belief tracker (bindings/belief.hpp), each observed before it is applied, then at the
+// last position: the recorded decisions' moves, a digest of every hypothesis row, the weights under
+// synthetic log-likelihoods, the worlds' hands, and with `race` a raced rollout dealt from the belief.
 if (mode === "belief") {
   const spec = JSON.parse(readFileSync(arg, "utf8"));
   M._ts_new_game(spec.seed >>> 0, 0);
@@ -161,7 +169,33 @@ if (mode === "belief") {
     const h = M._ts_belief_worlds(spec.worlds);
     worlds = h ? Array.from(new Uint8Array(M.HEAPU8.buffer, h, spec.worlds * 110)) : null;
   }
-  console.log(JSON.stringify({ observed, has, decisions: D, actions, digest: hash.digest("hex"), weights, worlds }));
+  // With `race` and a belief here: the page's raced belief search on the first k legal moves -- every
+  // candidate on the first `race` of the belief's worlds, then the rest of them for the ones left.
+  let raced = null;
+  if (spec.race && worlds) {
+    const mask = new Uint8Array(M.HEAPU8.buffer, M._ts_mask(0), ACT).slice();
+    const cands = [];
+    for (let a = 0; a < ACT && cands.length < spec.k; a++) if (mask[a]) cands.push(a);
+    const candPtr = M._malloc(4 * cands.length);
+    M.HEAP32.set(cands, candPtr >> 2);
+    M._ts_rollout_reset(spec.horizon, 1, 1, 0, spec.batch_seed >>> 0, 0, 0, 0, 0, 0, 0);
+    let rows = M._ts_rollout_add_belief(candPtr, cands.length, spec.race, spec.worlds);
+    const rhash = createHash("sha256");
+    const play = playOuts(rhash, ACT);
+    play.run();
+    const added = M._ts_rollout_race(0, spec.worlds - spec.race, 1);
+    if (added < 0) {
+      console.log(JSON.stringify({ error: `race: ${M.UTF8ToString(M._ts_last_error())}` }));
+      process.exit(0);
+    }
+    rows += added;
+    play.run();
+    raced = { candidates: cands, rows, worlds_used: M._ts_rollout_worlds_used(0), plies: play.plies,
+              leaves: play.leaves, digest: rhash.digest("hex"),
+              in_race: cands.map((_, c) => M._ts_rollout_in_race(0, c)) };
+  }
+  console.log(JSON.stringify({ observed, has, decisions: D, actions, digest: hash.digest("hex"), weights, worlds,
+                               raced }));
   process.exit(0);
 }
 
