@@ -33,6 +33,7 @@ import ts_engine as ts
 from onnx import numpy_helper
 
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import legal_mask, model_obs_features, observe
 from tools.lib.player_agent import NeuralAgent
 
 
@@ -100,12 +101,20 @@ def verify(sd: Dict[str, torch.Tensor], onnx_path: str, n: int, tol: float) -> T
         net = NeuralAgent.from_checkpoint(tmp, device="cpu").model.eval()
     finally:
         os.remove(tmp)
+    sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    # In the network's own view, as the export was verified: its observation feature set (which
+    # must be the one the export says it reads) and its action view.
+    meta: Dict[str, str] = dict(sess.get_modelmeta().custom_metadata_map)
+    features = model_obs_features(net)
+    if int(meta.get("ts.obs_features", "0")) != features:
+        raise SystemExit(f"the rebuilt network reads observation features {features:#x}, the export "
+                         f"{int(meta.get('ts.obs_features', '0')):#x}: the template is not this network's")
+    merged = meta.get("ts.merged_influence") == "true"
     states = _positions(n, 7)
     mover = [s.ctx().decision_player if s.ctx().decision_player != ts.Player.NONE else s.phasing_player
              for s in states]
-    obs = np.stack([np.asarray(ts.extract_observation(s, m), dtype=np.float32) for s, m in zip(states, mover)])
-    masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
-    sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    obs = np.stack([observe(s, m, features) for s, m in zip(states, mover)])
+    masks = np.stack([legal_mask(s, merged) for s in states])
     lo, vw, vv = (np.asarray(x, dtype=np.float64) for x in
                   sess.run(["logits", "v_win", "v_vp"], {"obs": obs, "mask": masks}))
     with torch.no_grad():

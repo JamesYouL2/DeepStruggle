@@ -36,11 +36,13 @@ import tempfile
 from typing import Dict, List, Tuple
 
 import numpy as np
+import onnx
+import onnxruntime as ort
 import torch
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
-from bindings.ts_env import model_obs_features
+from bindings.ts_env import legal_mask, observe
 from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.game_step import drain_chance
 from tools.lib.player_agent import NeuralAgent
@@ -54,8 +56,10 @@ class ExportRefused(RuntimeError):
     """The export would not be the checkpoint."""
 
 
-def _positions(n: int, merged: bool, seed: int = 20260925) -> Tuple[np.ndarray, np.ndarray]:
-    """Real decision nodes from random games, with masks in the network's own action view."""
+def _positions(n: int, merged: bool, features: int,
+               seed: int = 20260925) -> Tuple[np.ndarray, np.ndarray]:
+    """Real decision nodes from random games, in the network's own view: observations in its
+    feature set, masks in its action view."""
     rng = random.Random(seed)
     obs: List[np.ndarray] = []
     masks: List[np.ndarray] = []
@@ -67,8 +71,8 @@ def _positions(n: int, merged: bool, seed: int = 20260925) -> Tuple[np.ndarray, 
         while not ts.Engine.is_terminal(s) and len(obs) < n:
             p = s.ctx().decision_player
             if p != ts.Player.NONE and rng.random() < 0.25:
-                obs.append(np.asarray(ts.extract_observation(s, p), dtype=np.float32))
-                masks.append(np.asarray(ActionEncoder.get_legal_mask(s, merged), dtype=np.uint8))
+                obs.append(observe(s, p, features))
+                masks.append(legal_mask(s, merged))
             ts.Engine.step_flat(s, rng.choice(ActionEncoder.get_legal_indices(s)))
             drain_chance(s)
         game += 1
@@ -85,12 +89,9 @@ def _sha256(path: str) -> str:
 
 def export(checkpoint: str, out: str, *, positions: int = 128) -> Dict[str, str]:
     """Write `checkpoint` as ONNX to `out`, verified. Returns the metadata written."""
-    import onnx
-    import onnxruntime as ort
-
     agent = NeuralAgent.from_checkpoint(checkpoint, device="cpu")
     model = agent.model.eval()
-    obs, masks = _positions(positions, agent.merged_influence)
+    obs, masks = _positions(positions, agent.merged_influence, agent.obs_features)
     obs_t, masks_t = torch.from_numpy(obs), torch.from_numpy(masks)
 
     with torch.no_grad():
@@ -105,12 +106,12 @@ def export(checkpoint: str, out: str, *, positions: int = 128) -> Dict[str, str]
 
     meta = {
         "ts.format": FORMAT,
-        "ts.obs_size": str(int(ts.OBS_SIZE)),
+        "ts.obs_size": str(int(ts.obs_size_for(agent.obs_features))),
         "ts.action_size": str(int(ActionEncoder.FLAT_ACTION_SIZE)),
         "ts.merged_influence": "true" if agent.merged_influence else "false",
         # The obs_features bits the network reads (0: the base layout): the page's rollout root
         # hands them to the engine's batch so its rows are the width this network expects.
-        "ts.obs_features": str(int(model_obs_features(agent.model))),
+        "ts.obs_features": str(int(agent.obs_features)),
         "ts.label": agent.name,
         "ts.checkpoint": os.path.join(os.path.basename(os.path.dirname(os.path.abspath(checkpoint))),
                                       os.path.basename(checkpoint)),
