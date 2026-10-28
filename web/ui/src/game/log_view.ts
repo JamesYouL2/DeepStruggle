@@ -19,8 +19,13 @@ import { CARDS_METADATA } from "../metadata";
 import { EFFECT_INFO_MAP } from "../cards_view";
 import { WasmEngine } from "../engine/wasm_engine";
 import { describeDeltas, describeEventTracks, describeRoll, vpStr } from "./describe";
+import { namesByValue } from "../engine/layout";
 
-const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE: 5 };
+/** An Ops spend in words, by the engine's OpMode names and the Resolution names that spend Ops. */
+const OPS_WORDS: Record<string, string> = {
+  INFLUENCE: "Influence", COUP: "Coup", REALIGN: "Realignment",
+  OPS_INFLUENCE: "Influence", OPS_COUP: "Coup", OPS_REALIGN: "Realignment",
+};
 const SIDE = new Map(CARDS_METADATA.map(c => [c.id, c.side]));
 
 /** What a click is, for grouping: set on each click's log entry by the session. */
@@ -58,6 +63,8 @@ function classify(engine: WasmEngine, before: GameState | undefined,
   const d = action.decision_type;
   const card = action.primary_id;
   const name = (c: number) => `${engine.cardName(c)} (#${c})`;
+  const L = engine.layout;
+  const DT = L.decision_types;
   if (phase === "SETUP") return { kind: "setup", title: `${p} places its setup Influence` };
   if (d === DT.SELECT_CARD && resolving === 0 && phase === "HEADLINE") {
     const theirs = (p === "US" ? before?.headline_ussr_card : before?.headline_us_card) ?? 0;
@@ -72,15 +79,16 @@ function classify(engine: WasmEngine, before: GameState | undefined,
   }
   const confirm = (action.flags & 0x80) !== 0 || card === 255;
   if ((d === DT.SELECT_PLAY_MODE || d === DT.SELECT_OP_MODE) && resolving === 0 && !confirm) {
-    const ops = ["Influence", "Coup", "Realignment"];
-    if (d === DT.SELECT_OP_MODE) return { kind: "mode", mode: `Ops: ${ops[card] ?? card}` };
+    if (d === DT.SELECT_OP_MODE) {
+      return { kind: "mode", mode: `Ops: ${OPS_WORDS[namesByValue(L.op_modes)[card] ?? ""] ?? card}` };
+    }
     // An opponent's card played for Operations still has its Event, before or after the Ops.
     const side = SIDE.get(ctx?.pending_op_card ?? 0);
     const theirs = side === other(p).toLowerCase();
     const opp = other(p);
-    if (card === 0) return { kind: "mode", mode: theirs ? `${opp} Event first, then Ops` : "Event" };
-    if (card === 1) return { kind: "mode", mode: "Space Race" };
-    const mode = `Ops: ${ops[card - 2] ?? card}`;
+    if (card === L.resolutions.EVENT) return { kind: "mode", mode: theirs ? `${opp} Event first, then Ops` : "Event" };
+    if (card === L.resolutions.SPACE) return { kind: "mode", mode: "Space Race" };
+    const mode = `Ops: ${OPS_WORDS[namesByValue(L.resolutions)[card] ?? ""] ?? card}`;
     return { kind: "mode", mode: theirs ? `${mode}, then the ${opp} Event` : mode };
   }
   if (d === DT.POINT_NODE) return { kind: "point" };
@@ -400,7 +408,7 @@ export function replayItems(engine: WasmEngine, steps: ReplayStep[]): ActionLogI
     if (before && after) {
       details.push(...describeEventTracks(before, after, step.event_tracks ?? after.event_tracks));
       details.push(...describeDeltas(engine, before, { ...after, die_roll: undefined }, player,
-                                     action.decision_type === DT.SELECT_CARD ? action.primary_id : 0));
+                                     action.decision_type === engine.layout.decision_types.SELECT_CARD ? action.primary_id : 0));
     }
     return {
       step_index: i + 1, turn: step.turn, ar: step.ar, phase: step.phase, player,

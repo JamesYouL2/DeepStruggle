@@ -7,19 +7,11 @@
  * the two builds bit for bit. Everything returned is a copy: the module's memory can move when it
  * grows, and a view into it would silently change under the caller.
  */
-import { DieRollState, EventTrackState, GameState, MicroAction } from "../types";
+import { DieRollState, EventTrackState, GameState, MicroAction, RegionScores } from "../types";
+import { ActionLayout, setEngineLayout } from "./layout";
 
-/** The flat action space's layout, from the engine itself (never a hand-kept copy). */
-export interface ActionLayout {
-  size: number;
-  offsets: {
-    card: number; play_mode: number; op_mode: number; roll_die: number;
-    node: number; branch: number; defcon_value: number; region: number;
-  };
-  confirm_done_index: number;
-  ops_influence_index: number;
-  decision_types: Record<string, number>;
-}
+/** The flat action space's layout and the engine's enums, from the engine itself (engine/layout.ts). */
+export type { ActionLayout } from "./layout";
 
 export const PLAYER_US = 1;
 export const PLAYER_USSR = -1;
@@ -40,6 +32,7 @@ export class WasmEngine {
     this.actionSize = M._ts_action_size();
     this.layout = JSON.parse(this.str(M._ts_action_layout_json()));
     this.stateSize = M._ts_state_size();
+    setEngineLayout(this.layout);
   }
 
   /**
@@ -148,8 +141,11 @@ export class WasmEngine {
     return this.M.HEAPU8.slice(p, p + this.actionSize);
   }
 
+  /** Throws for an index outside the flat action space. */
   decodeFlat(idx: number): Required<MicroAction> {
-    const p = this.M._ts_decode_flat(idx) >> 2;
+    const ptr = this.M._ts_decode_flat(idx);
+    if (!ptr) throw new Error(this.lastError());
+    const p = ptr >> 2;
     const h = this.M.HEAP32;
     return { decision_type: h[p], primary_id: h[p + 1], secondary_id: h[p + 2], flags: h[p + 3] };
   }
@@ -183,11 +179,6 @@ export class WasmEngine {
   // One batch at a time, over the position held. The caller runs the network: rolloutFillLive ->
   // logits -> rolloutStep until rolloutAllDone, then rolloutFillLeaves -> critic ->
   // rolloutSetLeafValues, then rolloutDecide. Arrays are copies out of the module's memory.
-
-  /** Redeal the cards `player` cannot see in the position held (the determinizer). */
-  determinize(player: number, seed: number): void {
-    this.M._ts_determinize(player, seed >>> 0, Math.floor(seed / 4294967296) >>> 0);
-  }
 
   /** Start a batch: a horizon in action-round boundaries, the model's obs_features bits, a seed, and
    *  where the playouts stop (0 after the boundaries, 1 at the turn's end, 2 the later of the two, 3 the earlier, 4 the turn-end park before
@@ -279,6 +270,7 @@ export class WasmEngine {
       this.M.HEAPF32.set(logits, lg >> 2);
       this.M.HEAPU8.set(mask, mk);
       const n = this.M._ts_rollout_candidates(lg, mk, k, out);
+      if (n < 0) throw new Error(this.lastError());
       return Array.from(this.M.HEAP32.subarray(out >> 2, (out >> 2) + n));
     } finally {
       this.M._free(lg); this.M._free(mk); this.M._free(out);
@@ -311,7 +303,6 @@ export class WasmEngine {
 
   rolloutAllDone(): boolean { return this.M._ts_rollout_all_done() !== 0; }
   rolloutLive(): number { return this.M._ts_rollout_live(); }
-  rolloutRows(): number { return this.M._ts_rollout_rows(); }
   rolloutRefused(): number { return this.M._ts_rollout_refused(); }
   rolloutObsWidth(): number { return this.M._ts_rollout_obs_width(); }
 
@@ -371,6 +362,24 @@ export class WasmEngine {
     const o = this.M._ts_rollout_buf_obs() >> 2;
     const m = this.M._ts_rollout_buf_masks();
     return { obs: this.M.HEAPF32.slice(o, o + rows * w), masks: this.M.HEAPU8.slice(m, m + rows * this.actionSize) };
+  }
+
+  // ---- what the scoring cards would score -----------------------------------------------------
+
+  /**
+   * What each scoring card would score in `state` -- any display state the page draws: the live
+   * game, a replay's snapshot, a player's view -- by the engine's own scoring
+   * (Scoring::evaluate_region, score_southeast_asia). Throws for a state the engine cannot read.
+   */
+  regionScores(state: Pick<GameState, "countries" | "flags">): RegionScores {
+    const ptr = this.M.stringToNewUTF8(JSON.stringify({ countries: state.countries ?? {}, flags: state.flags ?? [] }));
+    try {
+      const text = this.str(this.M._ts_region_scores_json(ptr));
+      if (!text) throw new Error(this.lastError());
+      return JSON.parse(text);
+    } finally {
+      this.M._free(ptr);
+    }
   }
 
   // ---- names and debug ------------------------------------------------------------------------

@@ -1,36 +1,52 @@
-import { GameState, LastTurnCountry, MapMetadata, RecentRoll } from "./types";
+import { GameState, LastTurnCountry, MapMetadata, RecentRoll, RegionSideScore } from "./types";
 import { renderRollTray } from "./roll_tray";
 import { NetSide, regionNet, regionSummaryHtml, STANDING_SHORT } from "./region_summary";
-import { MAP_METADATA } from "./metadata";
+import { CARDS_METADATA, MAP_METADATA } from "./metadata";
+import { engineLayout, namesByValue, titleCase } from "./engine/layout";
+import { escapeHtml } from "./html";
 
+/** A scoring card's badge and summary: the engine's scoring (RegionScore) with names and colours. */
 export interface RegionScoreAudit {
+  /** The Region (Europe 0 .. South America 5), or 6 for Southeast Asia. */
   regionId: number;
   regionName: string;
   badgePos: [number, number]; // [x, y]
   color: string;
   scoringCardName: string;
+  /** The card's terms, as rules/cards.json prints them. */
+  scoringCardText: string;
   /** Where the region's scoring card is, which says whether it can still score this cycle. */
   scoringCard: ScoringCardWhereabouts;
+  southeastAsia: boolean;
   totalBattlegrounds: number;
-  usCountries: number;
-  ussrCountries: number;
-  usBattlegrounds: number;
-  ussrBattlegrounds: number;
-  usSuperpowerAdjacent: number;
-  ussrSuperpowerAdjacent: number;
-  usStatus: "NONE" | "PRESENCE" | "DOMINATION" | "CONTROL";
-  ussrStatus: "NONE" | "PRESENCE" | "DOMINATION" | "CONTROL";
-  usBaseVp: number;
-  ussrBaseVp: number;
-  usTotalVp: number;
-  ussrTotalVp: number;
+  us: RegionSideScore;
+  ussr: RegionSideScore;
   netVpUs: number;
-  isInstantWinUs?: boolean;
-  isInstantWinUssr?: boolean;
-  /** The countries each side controls there, a battleground starred. */
+  /** The side this scoring would hand the game (Control of Europe). */
+  wins: "US" | "USSR" | null;
+  /** The countries each side controls there, a battleground (in Southeast Asia, Thailand) starred. */
   usControlled: string[];
   ussrControlled: string[];
+  /** The USSR country this scoring leaves out of the count, by name. */
+  ussrUncounted: string | null;
+  shuttleDiplomacy: boolean;
 }
+
+/** The engine's slot for Southeast Asia Scoring, after the six regions (ScoringTap::kSoutheastAsia). */
+const SOUTHEAST_ASIA_SLOT = 6;
+
+/** Where each scoring badge sits, by the region's engine name ("SE_ASIA": Southeast Asia's card). */
+const REGION_LOOK: Record<string, { pos: [number, number] }> = {
+  EUROPE: { pos: [288, 29] },
+  ASIA: { pos: [830, 179] },
+  MIDDLE_EAST: { pos: [640, 221] },
+  AFRICA: { pos: [424, 535] },
+  CENTRAL_AMERICA: { pos: [130, 263] },
+  SOUTH_AMERICA: { pos: [270, 441] },
+  SE_ASIA: { pos: [894, 433] },
+};
+
+const CARD_META = new Map(CARDS_METADATA.map(c => [c.id, c]));
 
 /**
  * A scoring card is `live` while it can still be played before the next reshuffle -- in the draw
@@ -128,17 +144,6 @@ const NET_COLOR: Record<NetSide, string> = { us: "#60A5FA", ussr: "#F87171", eve
 
 const REGION_BADGE_W = 104;
 const REGION_BADGE_H = 34;
-
-/** `calculateRegionalScoring`'s region ids, as map.json names the regions. */
-const REGION_KEY: Record<number, string> = {
-  0: "Europe", 1: "Asia", 2: "Middle East", 3: "Africa", 4: "Central America", 5: "South America",
-};
-
-/** The regions DEFCON closes to coups and realignments: Europe at 4, Asia at 3, the Middle East at 2. */
-export function coupBlockedAt(region: string, defcon: number): boolean {
-  return (region === "Europe" && defcon <= 4) || (region === "Asia" && defcon <= 3)
-    || (region === "Middle East" && defcon <= 2);
-}
 
 /**
  * What it takes `side` to control a country (or break the other side's control), in influence and
@@ -404,219 +409,47 @@ export class MapView {
     }, { passive: false });
   }
 
+  /**
+   * Each scoring card's badge and summary, from what the engine says it would score
+   * (`state.region_scores`, WasmEngine.regionScores): the page adds names, colours and where the
+   * card is, and no arithmetic. Empty until the engine has scored the state.
+   */
   public calculateRegionalScoring(state: GameState): RegionScoreAudit[] {
-    if (!this.mapData) return [];
-
-    const countries = this.mapData.countries || [];
-    const flags = new Set(state.flags || []);
-
-    const formosanActive = flags.has("FORMOSAN_RESOLUTION_ACTIVE");
-    const shuttleActive = flags.has("SHUTTLE_DIPLOMACY_ACTIVE");
-
-    const regionConfigs: Array<{
-      id: number;
-      name: string;
-      cardName: string;
-      cardId: number;
-      color: string;
-      pos: [number, number];
-      baseVps: { PRESENCE: number; DOMINATION: number; CONTROL: number };
-    }> = [
-      { id: 0, name: "EUROPE", cardName: "Europe Scoring (#2)", cardId: 2, color: REGION_STYLE["Europe"].accent, pos: [288, 29], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 0 } },
-      { id: 1, name: "ASIA", cardName: "Asia Scoring (#1)", cardId: 1, color: REGION_STYLE["Asia"].accent, pos: [830, 179], baseVps: { PRESENCE: 3, DOMINATION: 7, CONTROL: 9 } },
-      { id: 2, name: "MIDDLE EAST", cardName: "Middle East Scoring (#3)", cardId: 3, color: REGION_STYLE["Middle East"].accent, pos: [640, 221], baseVps: { PRESENCE: 3, DOMINATION: 5, CONTROL: 7 } },
-      { id: 3, name: "AFRICA", cardName: "Africa Scoring (#79)", cardId: 79, color: REGION_STYLE["Africa"].accent, pos: [424, 535], baseVps: { PRESENCE: 1, DOMINATION: 4, CONTROL: 6 } },
-      { id: 4, name: "CENTRAL AMERICA", cardName: "Central America Scoring (#37)", cardId: 37, color: REGION_STYLE["Central America"].accent, pos: [130, 263], baseVps: { PRESENCE: 1, DOMINATION: 3, CONTROL: 5 } },
-      { id: 5, name: "SOUTH AMERICA", cardName: "South America Scoring (#81)", cardId: 81, color: REGION_STYLE["South America"].accent, pos: [270, 441], baseVps: { PRESENCE: 2, DOMINATION: 5, CONTROL: 6 } },
-    ];
-
-    const audits: RegionScoreAudit[] = [];
-
-    // 1. Standard 6 Regions
-    regionConfigs.forEach(cfg => {
-      const regCountries = countries.filter(c => {
-        const cRegionName = c.region.toUpperCase();
-        return cRegionName === cfg.name || (cfg.id === 0 && cRegionName === "EUROPE") || (cfg.id === 1 && cRegionName === "ASIA") || (cfg.id === 2 && cRegionName.includes("MIDDLE")) || (cfg.id === 3 && cRegionName === "AFRICA") || (cfg.id === 4 && cRegionName.includes("CENTRAL")) || (cfg.id === 5 && cRegionName.includes("SOUTH"));
+    const scores = state.region_scores;
+    const layout = engineLayout();
+    if (!scores || !layout || !this.mapData) return [];
+    const names = new Map((this.mapData.countries || []).map(c => [c.id, c.name]));
+    const regionNames = namesByValue(layout.regions);
+    return scores.regions.map(r => {
+      const se = r.slot === SOUTHEAST_ASIA_SLOT;
+      const key = se ? "SE_ASIA" : regionNames[r.slot];
+      const look = REGION_LOOK[key];
+      const cardId = layout.card_ids[`${key}_SCORING`] ?? 0;
+      const card = CARD_META.get(cardId);
+      const listed = (s: RegionSideScore) => s.controlled.map(c => {
+        const star = se ? (c.vp ?? 0) > 1 : !!c.battleground;
+        return `${names.get(c.id) ?? `#${c.id}`}${star ? " ★" : ""}`;
       });
-
-      let taiwanIsBg = false;
-      if (cfg.id === 1 && formosanActive) {
-        const twState = state.countries ? state.countries["Taiwan"] : null;
-        if (twState && twState.controlled_by === "US") {
-          taiwanIsBg = true;
-        }
-      }
-
-      let totalBg = regCountries.filter(c => c.battleground).length + (taiwanIsBg ? 1 : 0);
-
-      let usCountries = 0;
-      let ussrCountries = 0;
-      let usBg = 0;
-      let ussrBg = 0;
-      let usSpAdj = 0;
-      let ussrSpAdj = 0;
-
-      const usControlledList: string[] = [];
-      const ussrControlledList: string[] = [];
-
-      regCountries.forEach(c => {
-        const cState = state.countries ? state.countries[c.name] : null;
-        const ctrl = cState ? cState.controlled_by : "NONE";
-        const isBg = c.battleground || (c.name === "Taiwan" && taiwanIsBg);
-
-        if (ctrl === "US") {
-          usCountries++;
-          if (isBg) usBg++;
-          if (c.superpower_adjacent === "USSR") usSpAdj++;
-          usControlledList.push(`${c.name}${isBg ? " ★" : ""}`);
-        } else if (ctrl === "USSR") {
-          ussrCountries++;
-          if (isBg) ussrBg++;
-          if (c.superpower_adjacent === "USA") ussrSpAdj++;
-          ussrControlledList.push(`${c.name}${isBg ? " ★" : ""}`);
-        }
-      });
-
-      let effectiveUssrBg = ussrBg;
-      if (shuttleActive && (cfg.id === 1 || cfg.id === 2) && effectiveUssrBg > 0) {
-        effectiveUssrBg--;
-      }
-
-      const usNonBg = Math.max(0, usCountries - usBg);
-      const ussrNonBg = Math.max(0, ussrCountries - effectiveUssrBg);
-
-      // Evaluate US Status
-      let usStatus: "NONE" | "PRESENCE" | "DOMINATION" | "CONTROL" = "NONE";
-      if (usCountries > ussrCountries && usBg === totalBg) {
-        usStatus = "CONTROL";
-      } else if (usCountries > ussrCountries && usBg > effectiveUssrBg && usBg >= 1 && usNonBg >= 1) {
-        usStatus = "DOMINATION";
-      } else if (usCountries >= 1) {
-        usStatus = "PRESENCE";
-      }
-
-      // Evaluate USSR Status
-      let ussrStatus: "NONE" | "PRESENCE" | "DOMINATION" | "CONTROL" = "NONE";
-      if (ussrCountries > usCountries && effectiveUssrBg === totalBg) {
-        ussrStatus = "CONTROL";
-      } else if (ussrCountries > usCountries && effectiveUssrBg > usBg && effectiveUssrBg >= 1 && ussrNonBg >= 1) {
-        ussrStatus = "DOMINATION";
-      } else if (ussrCountries >= 1) {
-        ussrStatus = "PRESENCE";
-      }
-
-      const usBase = usStatus !== "NONE" ? cfg.baseVps[usStatus] : 0;
-      const ussrBase = ussrStatus !== "NONE" ? cfg.baseVps[ussrStatus] : 0;
-
-      let isInstantWinUs = false;
-      let isInstantWinUssr = false;
-      let usTotal = 0;
-      let ussrTotal = 0;
-      let netVp = 0;
-
-      if (cfg.id === 0) { // Europe
-        if (usStatus === "CONTROL") {
-          isInstantWinUs = true;
-          usTotal = 20;
-          netVp = 20;
-        } else if (ussrStatus === "CONTROL") {
-          isInstantWinUssr = true;
-          ussrTotal = 20;
-          netVp = -20;
-        } else {
-          usTotal = usBase + usBg + usSpAdj;
-          ussrTotal = ussrBase + ussrBg + ussrSpAdj;
-          netVp = usTotal - ussrTotal;
-        }
-      } else {
-        usTotal = usBase + usBg + usSpAdj;
-        ussrTotal = ussrBase + (shuttleActive && (cfg.id === 1 || cfg.id === 2) ? effectiveUssrBg : ussrBg) + ussrSpAdj;
-        netVp = usTotal - ussrTotal;
-      }
-
-
-      audits.push({
-        regionId: cfg.id,
-        regionName: cfg.name,
-        badgePos: cfg.pos,
-        color: cfg.color,
-        scoringCardName: cfg.cardName,
-        scoringCard: scoringCardWhereabouts(state, cfg.cardId),
-        totalBattlegrounds: totalBg,
-        usCountries,
-        ussrCountries,
-        usBattlegrounds: usBg,
-        ussrBattlegrounds: ussrBg,
-        usSuperpowerAdjacent: usSpAdj,
-        ussrSuperpowerAdjacent: ussrSpAdj,
-        usStatus,
-        ussrStatus,
-        usBaseVp: usBase,
-        ussrBaseVp: ussrBase,
-        usTotalVp: usTotal,
-        ussrTotalVp: ussrTotal,
-        netVpUs: netVp,
-        isInstantWinUs,
-        isInstantWinUssr,
-        usControlled: usControlledList,
-        ussrControlled: ussrControlledList,
-      });
+      return {
+        regionId: r.slot,
+        regionName: se ? "SOUTHEAST ASIA" : titleCase(key).toUpperCase(),
+        badgePos: look?.pos ?? [0, 0],
+        color: (se ? REGION_STYLE["Southeast Asia"] : REGION_STYLE[titleCase(key)] ?? REGION_STYLE["Europe"]).accent,
+        scoringCardName: card ? `${card.name} (#${cardId})` : `Card #${cardId}`,
+        scoringCardText: (card?.description ?? "").replace(/;?\s*MAY NOT BE HELD!?\s*$/i, ""),
+        scoringCard: scoringCardWhereabouts(state, cardId),
+        southeastAsia: se,
+        totalBattlegrounds: r.battlegrounds,
+        us: r.us,
+        ussr: r.ussr,
+        netVpUs: r.net,
+        wins: r.wins,
+        usControlled: listed(r.us),
+        ussrControlled: listed(r.ussr),
+        ussrUncounted: r.ussr.uncounted != null ? names.get(r.ussr.uncounted) ?? `#${r.ussr.uncounted}` : null,
+        shuttleDiplomacy: (state.flags || []).includes("SHUTTLE_DIPLOMACY_ACTIVE"),
+      };
     });
-
-    // 2. Southeast Asia Scoring (Card #38)
-    const seCountryNames = ["Burma", "Laos/Cambodia", "Vietnam", "Malaysia", "Indonesia", "Philippines"];
-    let seUsVp = 0;
-    let seUssrVp = 0;
-    const seUsList: string[] = [];
-    const seUssrList: string[] = [];
-
-    seCountryNames.forEach(cName => {
-      const cState = state.countries ? state.countries[cName] : null;
-      if (cState?.controlled_by === "US") {
-        seUsVp += 1;
-        seUsList.push(cName);
-      } else if (cState?.controlled_by === "USSR") {
-        seUssrVp += 1;
-        seUssrList.push(cName);
-      }
-    });
-
-    const thaiState = state.countries ? state.countries["Thailand"] : null;
-    if (thaiState?.controlled_by === "US") {
-      seUsVp += 2;
-      seUsList.push("Thailand ★");
-    } else if (thaiState?.controlled_by === "USSR") {
-      seUssrVp += 2;
-      seUssrList.push("Thailand ★");
-    }
-
-    const seNetVp = seUsVp - seUssrVp;
-    audits.push({
-      regionId: 6,
-      regionName: "SOUTHEAST ASIA",
-      badgePos: [894, 433],
-      color: REGION_STYLE["Southeast Asia"].accent,
-      scoringCardName: "Southeast Asia Scoring (#38)",
-      scoringCard: scoringCardWhereabouts(state, 38),
-      totalBattlegrounds: 1,
-      usCountries: seUsList.length,
-      ussrCountries: seUssrList.length,
-      usBattlegrounds: thaiState?.controlled_by === "US" ? 1 : 0,
-      ussrBattlegrounds: thaiState?.controlled_by === "USSR" ? 1 : 0,
-      usSuperpowerAdjacent: 0,
-      ussrSuperpowerAdjacent: 0,
-      usStatus: seUsVp > 0 ? "PRESENCE" : "NONE",
-      ussrStatus: seUssrVp > 0 ? "PRESENCE" : "NONE",
-      usBaseVp: seUsVp,
-      ussrBaseVp: seUssrVp,
-      usTotalVp: seUsVp,
-      ussrTotalVp: seUssrVp,
-      netVpUs: seNetVp,
-      usControlled: seUsList,
-      ussrControlled: seUssrList,
-    });
-
-    return audits;
   }
 
   public render(state: GameState) {
@@ -736,7 +569,7 @@ export class MapView {
 
     // 4. Country Nodes
     const legalNodes = new Set(
-      state.legal_actions && state.legal_actions.decision_type === 5
+      state.legal_actions && state.legal_actions.decision_type === engineLayout()?.decision_types.POINT_NODE
         ? (state.legal_actions.valid_ids || []).filter((id: number) => id < 84)
         : []
     );
@@ -925,22 +758,24 @@ export class MapView {
                              sc: { us_influence: number; ussr_influence: number; controlled_by: string } | null,
                              state: GameState, lc: LastTurnCountry | undefined) {
     if (!this.tooltipEl) return;
-    const us = sc?.us_influence ?? 0, ussr = sc?.ussr_influence ?? 0;
+    // Numbers, as a replay's snapshot may say anything.
+    const us = Number(sc?.us_influence ?? 0), ussr = Number(sc?.ussr_influence ?? 0);
     const ctrl = sc?.controlled_by ?? "NONE";
     const lines = [controlLine("US", us, ussr, c.stability, ctrl), controlLine("USSR", ussr, us, c.stability, ctrl)];
-    const blocked = coupBlockedAt(c.region, state.defcon);
     const adjacent = [...(c.neighbours || [])];
     if (c.superpower_adjacent) adjacent.push(c.superpower_adjacent === "USA" ? "the US" : "the USSR");
     const standing = ctrl === "US" ? `<b class="ct-us">US controls</b>` : ctrl === "USSR" ? `<b class="ct-ussr">USSR controls</b>` : "Uncontrolled";
+    // Whether a coup or realignment is allowed here is the engine's to say (the legal targets lit on
+    // the map); the card gives only the board's numbers.
     this.tooltipEl.innerHTML = `
-      <div class="ct-head"><span class="ct-name">${c.name}</span>${c.battleground ? `<span class="ct-bg">Battleground</span>` : ""}</div>
-      <div class="ct-sub">${[c.region, ...(c.subregions || [])].join(" \u00b7 ")} \u00b7 stability ${c.stability}</div>
+      <div class="ct-head"><span class="ct-name">${escapeHtml(c.name)}</span>${c.battleground ? `<span class="ct-bg">Battleground</span>` : ""}</div>
+      <div class="ct-sub">${escapeHtml([c.region, ...(c.subregions || [])].join(" \u00b7 "))} \u00b7 stability ${c.stability}</div>
       <div class="ct-inf"><span class="ct-us">US ${us}</span><span class="ct-ussr">USSR ${ussr}</span><span>${standing}</span></div>
       <div class="ct-rows">${lines.map(l => `<div>${l}</div>`).join("")}
-        <div>Coup: die + Ops must beat <b>${2 * c.stability}</b>${blocked ? ` <span class="ct-warn">\u2014 none at DEFCON ${state.defcon}</span>` : ""}</div>
-        ${lc && state.last_turn ? `<div class="ct-last">${state.last_turn.player}'s last turn: ${describeLastTurnCountry(lc)}</div>` : ""}
+        <div>Coup: die + Ops must beat <b>${2 * c.stability}</b></div>
+        ${lc && state.last_turn ? `<div class="ct-last">${escapeHtml(state.last_turn.player)}'s last turn: ${escapeHtml(describeLastTurnCountry(lc))}</div>` : ""}
       </div>
-      <div class="ct-adj">Adjacent: ${adjacent.join(", ") || "none"}</div>`;
+      <div class="ct-adj">Adjacent: ${escapeHtml(adjacent.join(", ") || "none")}</div>`;
     this.tooltipEl.classList.remove("hidden");
     this.placeTooltip(e);
   }
@@ -973,8 +808,9 @@ export class MapView {
 
   /**
    * One badge per scoring region, in the region's colour: what the scoring card would give now
-   * (net VP and each side's standing), whether the card can still come this cycle, and whether
-   * DEFCON has closed the region to coups and realignments.
+   * (net VP and each side's standing, as the engine scores it) and whether the card can still come
+   * this cycle. Which countries can be couped or realigned is the engine's legal mask, shown as the
+   * lit targets of an open decision -- never a rule of the page's.
    */
   private renderRegionalScoringBadges(state: GameState) {
     const audits = this.calculateRegionalScoring(state);
@@ -1015,9 +851,10 @@ export class MapView {
       }));
 
       // Row 2: each side's standing and its total (Southeast Asia has no standings, only VP).
-      const se = audit.regionId === 6;
-      const usLine = se ? `US ${audit.usTotalVp} VP` : `US ${STANDING_SHORT[audit.usStatus]} ${audit.usTotalVp}`;
-      const ussrLine = se ? `USSR ${audit.ussrTotalVp} VP` : `USSR ${STANDING_SHORT[audit.ussrStatus]} ${audit.ussrTotalVp}`;
+      const line = (side: string, s: RegionSideScore) =>
+        s.status === null ? `${side} ${s.vp} VP` : `${side} ${STANDING_SHORT[s.status]} ${s.vp}`;
+      const usLine = line("US", audit.us);
+      const ussrLine = line("USSR", audit.ussr);
       g.appendChild(svgText(usLine, {
         class: "region-badge-us", x: left + 6, y: top + 18.6, fill: "#93C5FD", "font-size": 4.9, "font-weight": 700,
       }));
@@ -1048,23 +885,6 @@ export class MapView {
         "font-size": 4.2, "font-weight": 800, "letter-spacing": 0.3,
       }));
       g.appendChild(tagG);
-
-      // DEFCON: a region closed to coups and realignments says so (Southeast Asia is in Asia).
-      const region = audit.regionId === 6 ? "Asia" : REGION_KEY[audit.regionId];
-      if (region && coupBlockedAt(region, state.defcon)) {
-        const text = "NO COUPS";
-        const w = text.length * 2.9 + 4.4;
-        const chip = svgEl("g", { class: "svg-region-defcon", "data-defcon": state.defcon });
-        chip.appendChild(svgEl("rect", {
-          x: right - 3.5 - w, y: tagY, width: w, height: tagH, rx: 1.6,
-          fill: "rgba(127, 29, 29, 0.9)", stroke: "#F87171", "stroke-width": 0.6,
-        }));
-        chip.appendChild(svgText(text, {
-          x: right - 3.5 - w / 2, y: tagY + tagH / 2 + 1.5, "text-anchor": "middle", fill: "#FECACA",
-          "font-size": 4.2, "font-weight": 800, "letter-spacing": 0.3,
-        }));
-        g.appendChild(chip);
-      }
 
       g.addEventListener("mouseenter", (e) => { if (this.lastPointer === "mouse") this.showRegionTooltip(e, audit); });
       g.addEventListener("mouseleave", () => { if (this.lastPointer === "mouse") this.hideRegionTooltip(); });

@@ -1,6 +1,8 @@
 import { GameState, MicroAction } from "./types";
 import { CARDS_METADATA } from "./metadata";
 import { branchMeta } from "./game/branches";
+import { ActionLayout, engineLayout, namesByValue } from "./engine/layout";
+import { escapeHtml, num } from "./html";
 
 const CARD_META = new Map(CARDS_METADATA.map(c => [c.id, c]));
 
@@ -16,10 +18,6 @@ function whereLabel(loc: string | undefined): string {
   return loc;
 }
 
-function escAttr(s: string): string {
-  return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
-}
-
 /**
  * One button per card an event lets the player choose. The cards are often in no hand the
  * player can see -- Our Man in Tehran's five drawn cards, the discard pile for Star Wars and SALT
@@ -32,16 +30,68 @@ function cardChoiceButtons(state: GameState, ids: number[]): string {
     const name = meta?.name ?? `Card #${id}`;
     const side = meta?.side ?? "neutral";
     const where = whereLabel(locs[String(id)]);
-    const text = meta?.description ? escAttr(meta.description) : "";
+    const text = meta?.description ? escapeHtml(meta.description) : "";
     return `
-      <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card card-choice side-${side}" data-primary="${id}" title="${text}" style="margin-bottom: 6px; text-align: left; padding: 7px 10px;">
+      <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card card-choice side-${escapeHtml(side)}" data-primary="${id}" title="${text}" style="margin-bottom: 6px; text-align: left; padding: 7px 10px;">
         <div style="display: flex; justify-content: space-between; gap: 8px; align-items: baseline;">
-          <span style="font-weight: bold;">#${id} ${escAttr(name)}</span>
-          <span style="font-size: 11px; opacity: 0.8; white-space: nowrap;">${meta ? `${meta.ops} Ops · ${side.toUpperCase()}` : ""}</span>
+          <span style="font-weight: bold;">#${id} ${escapeHtml(name)}</span>
+          <span style="font-size: 11px; opacity: 0.8; white-space: nowrap;">${meta ? `${meta.ops} Ops · ${escapeHtml(side.toUpperCase())}` : ""}</span>
         </div>
-        ${where ? `<div style="font-size: 10px; opacity: 0.7; margin-top: 2px;">${where}</div>` : ""}
+        ${where ? `<div style="font-size: 10px; opacity: 0.7; margin-top: 2px;">${escapeHtml(where)}</div>` : ""}
       </button>`;
   }).join("");
+}
+
+/**
+ * What an event's card choice asks for, by the card resolving (its ts::card_ids name). `who` is the
+ * deciding side, already HTML.
+ */
+const CARD_CHOICE_PROMPTS: Record<string, (who: string) => string> = {
+  BLOCKADE: who => `<strong>${who}:</strong> <em>Blockade</em> is resolving! Select and discard a card with <strong>Operations ≥ 3</strong> from hand to maintain US influence in West Germany (or confirm/pass to forfeit influence):`,
+  SALT_NEGOTIATIONS: who => `<strong>${who}:</strong> <em>SALT Negotiations</em>: Select a non-scoring card from the Discard Pile to return to hand:`,
+  OUR_MAN_IN_TEHRAN: who => `<strong>${who}:</strong> <em>Our Man in Tehran</em>: these are the cards drawn from the deck. Discard any of them, one at a time; <em>Done</em> returns the rest to the deck:`,
+  STAR_WARS: who => `<strong>${who}:</strong> <em>Star Wars</em>: Select a non-scoring card from the Discard Pile -- its Event is played immediately:`,
+  FIVE_YEAR_PLAN: who => `<strong>${who}:</strong> <em>Five Year Plan</em>: Select a card from hand to discard:`,
+  MISSILE_ENVY: who => `<strong>${who}:</strong> <em>Missile Envy</em>: Select your highest Ops card to transfer to opponent:`,
+  ALDRICH_AMES: who => `<strong>${who}:</strong> <em>Aldrich Ames</em>: Select a card from US hand to discard:`,
+  GRAIN_SALES_TO_SOVIETS: who => `<strong>${who}:</strong> <em>Grain Sales</em>: Select a card from USSR hand:`,
+  ASK_NOT_WHAT_YOUR_COUNTRY_CAN_DO_FOR_YOU: who => `<strong>${who}:</strong> <em>Ask Not What Your Country Can Do For You</em>: Select cards from hand to discard:`,
+  TERRORISM: who => `<strong>${who}:</strong> <em>Terrorism</em>: Select a card from hand to discard:`,
+  SPACE_WALK_DISCARD: who => `<strong>${who}:</strong> <em>Eagle / Bear Has Landed (Space Race Box 6)</em>: You may discard 1 card from hand at turn end (or click Pass to retain full hand):`,
+};
+
+/** What a CHOOSE_BRANCH event asks, by its card's ts::card_ids name; anything else "choose an option". */
+const BRANCH_ASKS: Record<string, string> = {
+  CHERNOBYL: "designate a region: the USSR may not place influence there with Ops for the rest of the turn",
+  SUMMIT: "set DEFCON (the Summit winner may move it by 1, or leave it)",
+  HOW_I_LEARNED_TO_STOP_WORRYING: "set DEFCON to any level",
+};
+
+/**
+ * The play modes, by the engine's Resolution names (WasmEngine.layout.resolutions). P17 merged
+ * PlayMode -> CHOOSE_TIMING_BRANCH -> SELECT_OP_MODE into this one decision; on an opponent's card
+ * EVENT is the event-first branch.
+ */
+const MODE_LABELS: Record<string, (ops: string) => { title: string; desc: string; class: string }> = {
+  EVENT: () => ({ title: "Resolve the Event", desc: "Trigger the printed event. On an opponent's card this is the event-first branch — you choose how to spend the Ops afterwards.", class: "btn-primary" }),
+  SPACE: ops => ({ title: "Space Race Attempt", desc: `Discard the card to attempt an advance on the Space Race track (${ops}).`, class: "btn-secondary" }),
+  OPS_INFLUENCE: ops => ({ title: "Operations: Place Influence", desc: `Spend ${ops} placing influence.`, class: "btn-success" }),
+  OPS_COUP: ops => ({ title: "Operations: Coup Attempt", desc: `Spend ${ops} on a coup — rolls a die.`, class: "btn-danger" }),
+  OPS_REALIGN: ops => ({ title: "Operations: Realignment", desc: `Spend ${ops} on realignment rolls — opposed dice.`, class: "btn-warning" }),
+};
+
+/** The deferred Ops choice, by the engine's OpMode names (WasmEngine.layout.op_modes). */
+const OP_MODE_LABELS: Record<string, { text: string; desc: string; class: string }> = {
+  INFLUENCE: { text: "Place Influence", desc: "Place influence markers in adjacent countries", class: "btn-primary" },
+  COUP: { text: "Conduct Coup Attempt", desc: "Roll die to remove enemy influence and add own", class: "btn-danger" },
+  REALIGN: { text: "Conduct Realignment", desc: "Opposed die rolls to remove enemy influence", class: "btn-secondary" },
+};
+
+/** The ts::card_ids name of `id`, among those the engine exports; "" for any other card. */
+function cardKey(L: ActionLayout, id: number): string {
+  if (!id) return "";
+  for (const [name, v] of Object.entries(L.card_ids)) if (v === id) return name;
+  return "";
 }
 
 export class ActionHud {
@@ -56,32 +106,41 @@ export class ActionHud {
     this.onAction = onAction;
   }
 
+  /**
+   * The open decision's options -- exactly the engine's legal actions (`legal_actions`, the engine's
+   * mask), worded. The HUD says nothing the engine did not: no odds, no rule of its own.
+   *
+   * In a replay the state is the file's snapshot, so every string from it is escaped.
+   */
   public render(state: GameState) {
     const ctx = state.decision_context;
     const legal = state.legal_actions;
     const badgeEl = document.getElementById("decision-type-badge");
+    const L = engineLayout();
 
-    if (!ctx || !legal || state.is_terminal) {
+    if (!ctx || !legal || state.is_terminal || !L) {
       if (badgeEl) badgeEl.textContent = state.is_terminal ? "TERMINAL" : "WAITING";
-      this.container.innerHTML = `<div style="color: var(--text-dim); text-align: center; padding: 20px;">No active decision required.</div>`;
+      this.container.innerHTML = `<div style="color: var(--text-dim); text-align: center; padding: 20px;">${L ? "No active decision required." : "Loading the engine…"}</div>`;
       return;
     }
 
-    const dType = ctx.decision_type;
-    const dTypeName = this.getDecisionTypeName(dType);
-    const player = ctx.decision_player || "NONE";
-    const phaseName = state.current_phase_name || state.phase_name || "ACTION";
+    const dType = num(ctx.decision_type);
+    const dTypeName = ctx.decision_type_name || namesByValue(L.decision_types)[dType] || `TYPE_${dType}`;
+    const playerRaw = String(ctx.decision_player || "NONE");
+    const player = escapeHtml(playerRaw);
+    const phaseName = String(state.current_phase_name || state.phase_name || "ACTION");
+    const card = (name: string) => L.card_ids[name] ?? -1;
 
     if (badgeEl) {
       badgeEl.textContent = dTypeName;
-      badgeEl.className = `badge badge-${player.toLowerCase()}`;
+      badgeEl.className = `badge badge-${playerRaw.toLowerCase().replace(/[^a-z]/g, "")}`;
     }
 
     // A player's view while the other side decides (game/view.ts): its options are its own.
     if (state.view_hidden_decision) {
       this.container.innerHTML = `<div class="hud-waiting">
-        <div><strong>${player}</strong> to move — ${phaseName.toLowerCase().replace("_", " ")}.</div>
-        <div class="hud-waiting-note">Its options are hidden in the ${state.view} view; the model plays this side (auto-play).</div>
+        <div><strong>${player}</strong> to move — ${escapeHtml(phaseName.toLowerCase().replace("_", " "))}.</div>
+        <div class="hud-waiting-note">Its options are hidden in the ${escapeHtml(state.view)} view; the model plays this side (auto-play).</div>
       </div>`;
       return;
     }
@@ -90,305 +149,216 @@ export class ActionHud {
     let buttonsHtml = "";
     let showDieSelector = false;
 
-    const validIds = legal.valid_ids || [];
+    const validIds = (legal.valid_ids || []).map(num);
     const allowEarlyStop = legal.allow_early_stop || ctx.allow_early_stop;
+    const DT = L.decision_types;
 
-    switch (dType) {
-      case 0: // NONE
-        promptText = `Simulation idle or transitioning.`;
-        break;
-
-      case 1: // SELECT_CARD
-        const resolvingCard = ctx.resolving_card || 0;
-        if (resolvingCard === 10) { // Blockade
-          promptText = `<strong>${player}:</strong> <em>Blockade</em> is resolving! Select and discard a card with <strong>Operations ≥ 3</strong> from hand to maintain US influence in West Germany (or confirm/pass to forfeit influence):`;
-        } else if (resolvingCard === 43) { // SALT Negotiations
-          promptText = `<strong>${player}:</strong> <em>SALT Negotiations</em>: Select a non-scoring card from the Discard Pile to return to hand:`;
-        } else if (resolvingCard === 108) { // Our Man in Tehran
-          promptText = `<strong>${player}:</strong> <em>Our Man in Tehran</em>: these are the cards drawn from the deck. Discard any of them, one at a time; <em>Done</em> returns the rest to the deck:`;
-        } else if (resolvingCard === 85) { // Star Wars
-          promptText = `<strong>${player}:</strong> <em>Star Wars</em>: Select a non-scoring card from the Discard Pile -- its Event is played immediately:`;
-        } else if (resolvingCard === 5) { // Five Year Plan
-          promptText = `<strong>${player}:</strong> <em>Five Year Plan</em>: Select a card from hand to discard:`;
-        } else if (resolvingCard === 49) { // Missile Envy
-          promptText = `<strong>${player}:</strong> <em>Missile Envy</em>: Select your highest Ops card to transfer to opponent:`;
-        } else if (resolvingCard === 98) { // Aldrich Ames
-          promptText = `<strong>${player}:</strong> <em>Aldrich Ames</em>: Select a card from US hand to discard:`;
-        } else if (resolvingCard === 67) { // Grain Sales
-          promptText = `<strong>${player}:</strong> <em>Grain Sales</em>: Select a card from USSR hand:`;
-        } else if (resolvingCard === 77) { // Ask Not
-          promptText = `<strong>${player}:</strong> <em>Ask Not What Your Country Can Do For You</em>: Select cards from hand to discard:`;
-        } else if (resolvingCard === 92) { // Terrorism
-          promptText = `<strong>${player}:</strong> <em>Terrorism</em>: Select a card from hand to discard:`;
-        } else if (resolvingCard === 250) { // Eagle / Bear Has Landed (Box 6)
-          promptText = `<strong>${player}:</strong> <em>Eagle / Bear Has Landed (Space Race Box 6)</em>: You may discard 1 card from hand at turn end (or click Pass to retain full hand):`;
-        } else if (resolvingCard > 0) {
-          promptText = `<strong>${player}:</strong> Resolving Event (Card #${resolvingCard}): Select a card:`;
-        } else if (phaseName === "HEADLINE") {
-          let oppHeadlineBanner = "";
-          if (player === "US" && state.headline_ussr_card) {
-            oppHeadlineBanner = `<div class="headline-reveal-box" style="background: rgba(220,53,69,0.15); border: 1px solid rgba(220,53,69,0.4); padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 13px;">📡 <strong>Space Race Privilege (Box 4):</strong> USSR revealed Headline: Card #${state.headline_ussr_card}</div>`;
-          } else if (player === "USSR" && state.headline_us_card) {
-            oppHeadlineBanner = `<div class="headline-reveal-box" style="background: rgba(13,110,253,0.15); border: 1px solid rgba(13,110,253,0.4); padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 13px;">📡 <strong>Space Race Privilege (Box 4):</strong> US revealed Headline: Card #${state.headline_us_card}</div>`;
-          }
-          promptText = `${oppHeadlineBanner}<strong>${player} Headline Phase:</strong> Select a card from your hand to play as your Headline:`;
-        } else {
-          promptText = `<strong>${player} Action Round ${state.action_round}:</strong> Select a card from your hand to play:`;
+    if (dType === DT.SELECT_CARD) {
+      const resolvingCard = num(ctx.resolving_card || 0);
+      const prompt = CARD_CHOICE_PROMPTS[cardKey(L, resolvingCard)];
+      if (prompt) {
+        promptText = prompt(player);
+      } else if (resolvingCard > 0) {
+        promptText = `<strong>${player}:</strong> Resolving Event (Card #${resolvingCard}): Select a card:`;
+      } else if (phaseName === "HEADLINE") {
+        let oppHeadlineBanner = "";
+        if (playerRaw === "US" && state.headline_ussr_card) {
+          oppHeadlineBanner = `<div class="headline-reveal-box" style="background: rgba(220,53,69,0.15); border: 1px solid rgba(220,53,69,0.4); padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 13px;">📡 <strong>Space Race Privilege (Box 4):</strong> USSR revealed Headline: Card #${num(state.headline_ussr_card)}</div>`;
+        } else if (playerRaw === "USSR" && state.headline_us_card) {
+          oppHeadlineBanner = `<div class="headline-reveal-box" style="background: rgba(13,110,253,0.15); border: 1px solid rgba(13,110,253,0.4); padding: 6px 10px; border-radius: 4px; margin-bottom: 8px; font-size: 13px;">📡 <strong>Space Race Privilege (Box 4):</strong> US revealed Headline: Card #${num(state.headline_us_card)}</div>`;
         }
+        promptText = `${oppHeadlineBanner}<strong>${player} Headline Phase:</strong> Select a card from your hand to play as your Headline:`;
+      } else {
+        promptText = `<strong>${player} Action Round ${num(state.action_round)}:</strong> Select a card from your hand to play:`;
+      }
 
-        // An event's card choice lists its cards here: they are often in no hand on screen.
-        if (resolvingCard > 0) {
-          buttonsHtml += cardChoiceButtons(state, validIds);
-        }
-        // Offered whenever the engine offers it (id 0 in valid_ids), not only when the context
-        // allows an early stop: a choice with no legal card at all -- Star Wars facing a discard
-        // pile of events the US cannot trigger -- is left by passing, and without this button the
-        // page had nothing to click.
-        if (allowEarlyStop || validIds.includes(0)) {
-          const passLabel = resolvingCard === 108 ? "✓ Done — return the rest to the deck"
-            : resolvingCard === 43 ? "✓ Take no card"
-            : !validIds.some(id => id >= 1 && id <= 110) ? "✓ No card can be chosen — continue"
-            : "✓ Pass / Confirm (Do not discard)";
-          buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">${passLabel}</button>`;
-        }
-        break;
-
-      case 2: // SELECT_PLAY_MODE
-        const cardName = ctx.pending_op_card_name || `Card #${ctx.pending_op_card}`;
-        // Grain Sales to Soviets resolves the card it drew on this node: play it, or hand it back to
-        // the USSR and conduct Grain Sales' own 2 Ops. The engine offers the return as CONFIRM_DONE
-        // (allow_early_stop), outside the play modes in valid_ids -- so without the button below the
-        // page could only play the drawn card.
-        const grainSales = (ctx.resolving_card || 0) === 67;
-        promptText = grainSales
-          ? `<strong>${player}:</strong> <em>Grain Sales to Soviets</em> drew <em>${cardName}</em> from the USSR hand. Play it, or return it and conduct Grain Sales' 2 Ops:`
-          : `<strong>${player}:</strong> Choose how to play <em>${cardName}</em>:`;
-        // Resolution, NOT the retired PlayMode. Source of truth: `enum class Resolution` in
-        // engine/include/ts/types.hpp, mirrored by `mode_names` in bindings/action_encoder.py.
-        // P17 merged PlayMode -> CHOOSE_TIMING_BRANCH -> SELECT_OP_MODE into this one decision,
-        // and these labels were left on the old enum: 1/2/3 named the wrong action entirely and
-        // 4 had no label, so an opponent card rendered as
-        // "Event / Space Race / Pass-Discard / Mode 4" for EVENT / INFLUENCE / COUP / REALIGN.
-        // The Ops are known only once granted; at Grain Sales' node the drawn card has none yet.
-        const ops = ctx.pending_ops_value > 0 ? `${ctx.pending_ops_value} Ops` : "the card's Ops";
-        const modeLabels: Record<number, { title: string; desc: string; class: string }> = {
-          0: { title: "Resolve the Event", desc: "Trigger the printed event. On an opponent's card this is the event-first branch — you choose how to spend the Ops afterwards.", class: "btn-primary" },
-          1: { title: "Space Race Attempt", desc: `Discard the card to attempt an advance on the Space Race track (${ops}).`, class: "btn-secondary" },
-          2: { title: "Operations: Place Influence", desc: `Spend ${ops} placing influence.`, class: "btn-success" },
-          3: { title: "Operations: Coup Attempt", desc: `Spend ${ops} on a coup — rolls a die.`, class: "btn-danger" },
-          4: { title: "Operations: Realignment", desc: `Spend ${ops} on realignment rolls — opposed dice.`, class: "btn-warning" }
+      // An event's card choice lists its cards here: they are often in no hand on screen.
+      if (resolvingCard > 0) {
+        buttonsHtml += cardChoiceButtons(state, validIds);
+      }
+      // Offered whenever the engine offers it (id 0 in valid_ids), not only when the context
+      // allows an early stop: a choice with no legal card at all -- Star Wars facing a discard
+      // pile of events the US cannot trigger -- is left by passing, and without this button the
+      // page had nothing to click.
+      if (allowEarlyStop || validIds.includes(0)) {
+        const passLabel = resolvingCard === card("OUR_MAN_IN_TEHRAN") ? "✓ Done — return the rest to the deck"
+          : resolvingCard === card("SALT_NEGOTIATIONS") ? "✓ Take no card"
+          : !validIds.some(id => id >= 1 && id <= 110) ? "✓ No card can be chosen — continue"
+          : "✓ Pass / Confirm (Do not discard)";
+        buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">${passLabel}</button>`;
+      }
+    } else if (dType === DT.SELECT_PLAY_MODE) {
+      const cardName = escapeHtml(ctx.pending_op_card_name || `Card #${num(ctx.pending_op_card)}`);
+      // Grain Sales to Soviets resolves the card it drew on this node: play it, or hand it back to
+      // the USSR and conduct Grain Sales' own 2 Ops. The engine offers the return as CONFIRM_DONE
+      // (allow_early_stop), outside the play modes in valid_ids -- so without the button below the
+      // page could only play the drawn card.
+      const grainSales = num(ctx.resolving_card || 0) === card("GRAIN_SALES_TO_SOVIETS");
+      promptText = grainSales
+        ? `<strong>${player}:</strong> <em>Grain Sales to Soviets</em> drew <em>${cardName}</em> from the USSR hand. Play it, or return it and conduct Grain Sales' 2 Ops:`
+        : `<strong>${player}:</strong> Choose how to play <em>${cardName}</em>:`;
+      // The Ops are known only once granted; at Grain Sales' node the drawn card has none yet.
+      const opsValue = num(ctx.pending_ops_value);
+      const ops = opsValue > 0 ? `${opsValue} Ops` : "the card's Ops";
+      const modeNames = namesByValue(L.resolutions);
+      validIds.forEach(m => {
+        // Loud, not bland: a mode the engine has and this table has not means the Resolution enum
+        // grew. The engine's own name for it is still shown.
+        const label = MODE_LABELS[modeNames[m] ?? ""];
+        const cfg = label ? label(ops) : {
+          title: `⚠ Unlabelled resolution mode ${m} (${escapeHtml(modeNames[m] ?? "unknown")})`,
+          desc: "The viewer has no label for this mode — the engine's Resolution enum has changed and web/ui/src/action_hud.ts was not updated.",
+          class: "btn-warning",
         };
-        validIds.forEach(m => {
-          // Loud, not bland. A silent `Mode ${m}` is what let this drift sit unnoticed; anything
-          // outside Resolution::COUNT means the enum grew and this table did not.
-          const cfg = modeLabels[m] || {
-            title: `⚠ Unlabelled resolution mode ${m}`,
-            desc: "The viewer has no label for this mode — the engine's Resolution enum has changed and web/ui/src/action_hud.ts was not updated.",
-            class: "btn-warning"
-          };
-          buttonsHtml += `
-            <button class="btn ${cfg.class} btn-block btn-hud-action btn-choice-card" data-primary="${m}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
-              <div style="font-weight: bold; font-size: 13px;">${cfg.title}</div>
-              <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${cfg.desc}</div>
-            </button>
-          `;
-        });
-        // A die is rolled by SPACE(1), OPS_COUP(3) and OPS_REALIGN(4). OPS_INFLUENCE(2) rolls
-        // nothing. This read `validIds.includes(2)`, which was SPACE under the retired PlayMode
-        // enum, so the manual die input appeared for influence and was missing for coups.
-        if ([9, 11].includes(ctx.pending_op_card) || validIds.some(m => m === 1 || m === 3 || m === 4)) {
-          showDieSelector = true;
-        }
-        if (grainSales && allowEarlyStop) {
-          // The engine's own decoding of this node's CONFIRM_DONE: primary 255, the done flag.
-          buttonsHtml += `
-            <button class="btn btn-warning btn-block btn-hud-action" data-primary="255" data-flags="128" style="margin-top: 4px; text-align: left; padding: 8px 12px;">
-              <div style="font-weight: bold; font-size: 13px;">↩ Return ${cardName} to the USSR</div>
-              <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Hand the card back (the USSR knows you saw it) and conduct Grain Sales' 2 Ops instead.</div>
-            </button>
-          `;
-        }
-        break;
-
+        buttonsHtml += `
+          <button class="btn ${cfg.class} btn-block btn-hud-action btn-choice-card" data-primary="${m}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
+            <div style="font-weight: bold; font-size: 13px;">${cfg.title}</div>
+            <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${cfg.desc}</div>
+          </button>
+        `;
+      });
+      // Any of these can roll a die -- a Space Race attempt, a coup, a realignment, an event that
+      // rolls -- and a forced die is used only if one is rolled.
+      showDieSelector = true;
+      if (grainSales && allowEarlyStop) {
+        // The engine's own decoding of this node's CONFIRM_DONE: primary 255, the done flag.
+        buttonsHtml += `
+          <button class="btn btn-warning btn-block btn-hud-action" data-primary="255" data-flags="128" style="margin-top: 4px; text-align: left; padding: 8px 12px;">
+            <div style="font-weight: bold; font-size: 13px;">↩ Return ${cardName} to the USSR</div>
+            <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Hand the card back (the USSR knows you saw it) and conduct Grain Sales' 2 Ops instead.</div>
+          </button>
+        `;
+      }
+    } else if (dType === DT.CHOOSE_TIMING_BRANCH) {
       // RETIRED by P17 and unreachable: on an opponent card, Resolution::EVENT *is* the
       // event-first branch, so no separate timing decision is ever emitted. Kept because
       // a replay recorded before P17 can still contain one.
-      case 3: // CHOOSE_TIMING_BRANCH
-        const oppCardName = ctx.pending_op_card_name || `Card #${ctx.pending_op_card}`;
-        promptText = `<strong>${player}:</strong> Opponent card <em>${oppCardName}</em> played for Ops. Choose execution order:`;
-        if (validIds.includes(0)) {
-          buttonsHtml += `
-            <button class="btn btn-primary btn-block btn-hud-action btn-choice-card" data-primary="0" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
-              <div style="font-weight: bold; font-size: 13px;">Branch 0: Operations First</div>
-              <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Conduct Operations now. Opponent event triggers afterwards.</div>
-            </button>
-          `;
-        }
-        if (validIds.includes(1)) {
-          buttonsHtml += `
-            <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card" data-primary="1" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
-              <div style="font-weight: bold; font-size: 13px;">Branch 1: Opponent Event First</div>
-              <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Trigger opponent event first. Conduct your Operations afterwards.</div>
-            </button>
-          `;
-        }
-        break;
+      const oppCardName = escapeHtml(ctx.pending_op_card_name || `Card #${num(ctx.pending_op_card)}`);
+      promptText = `<strong>${player}:</strong> Opponent card <em>${oppCardName}</em> played for Ops. Choose execution order:`;
+      if (validIds.includes(0)) {
+        buttonsHtml += `
+          <button class="btn btn-primary btn-block btn-hud-action btn-choice-card" data-primary="0" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
+            <div style="font-weight: bold; font-size: 13px;">Branch 0: Operations First</div>
+            <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Conduct Operations now. Opponent event triggers afterwards.</div>
+          </button>
+        `;
+      }
+      if (validIds.includes(1)) {
+        buttonsHtml += `
+          <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card" data-primary="1" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
+            <div style="font-weight: bold; font-size: 13px;">Branch 1: Opponent Event First</div>
+            <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">Trigger opponent event first. Conduct your Operations afterwards.</div>
+          </button>
+        `;
+      }
+    } else if (dType === DT.SELECT_OP_MODE) {
+      promptText = `<strong>${player}:</strong> Select Operations action with <strong>${num(ctx.pending_ops_value)} Ops</strong> available:`;
+      const opNames = namesByValue(L.op_modes);
+      validIds.forEach(m => {
+        const cfg = OP_MODE_LABELS[opNames[m] ?? ""] || { text: `Op Mode ${m}`, desc: "", class: "btn-secondary" };
+        buttonsHtml += `
+          <button class="btn ${cfg.class} btn-block btn-hud-action btn-choice-card" data-primary="${m}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
+            <div style="font-weight: bold;">${cfg.text}</div>
+            <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${cfg.desc}</div>
+          </button>
+        `;
+      });
+    } else if (dType === DT.POINT_NODE) {
+      const opMode = ctx.op_mode;
+      const isCoup = opMode === L.op_modes.COUP;
+      const isRealign = opMode === L.op_modes.REALIGN;
+      const resolving = num(ctx.resolving_card || 0);
+      const remaining = num(ctx.remaining_steps);
 
-      case 4: // SELECT_OP_MODE
-        promptText = `<strong>${player}:</strong> Select Operations action with <strong>${ctx.pending_ops_value} Ops</strong> available:`;
-        const opLabels: Record<number, { text: string; desc: string; class: string }> = {
-          0: { text: "Place Influence", desc: "Place influence markers in adjacent countries", class: "btn-primary" },
-          1: { text: "Conduct Coup Attempt", desc: "Roll die to remove enemy influence and add own", class: "btn-danger" },
-          2: { text: "Conduct Realignment", desc: "Opposed die rolls to remove enemy influence", class: "btn-secondary" }
-        };
-        validIds.forEach(m => {
-          const cfg = opLabels[m] || { text: `Op Mode ${m}`, desc: "", class: "btn-secondary" };
-          buttonsHtml += `
-            <button class="btn ${cfg.class} btn-block btn-hud-action btn-choice-card" data-primary="${m}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
-              <div style="font-weight: bold;">${cfg.text}</div>
-              <div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${cfg.desc}</div>
-            </button>
-          `;
-        });
-        break;
+      if (phaseName === "SETUP") {
+        const region = playerRaw === "USSR" ? "Eastern Europe" : "Western Europe";
+        promptText = `<strong>${player} Setup Phase:</strong> Click highlighted countries in ${region} to place influence (<strong>${remaining} remaining</strong>):`;
+      } else if (resolving > 0) {
+        const resCard = escapeHtml(ctx.resolving_card_name || `Card #${resolving}`);
+        promptText = `<strong>${player}:</strong> Resolving event <em>${resCard}</em>. Select target country (<strong>${remaining} remaining</strong>):`;
+        // An event's target may be rolled for (a war, a coup the event grants).
+        showDieSelector = true;
+      } else if (isCoup) {
+        promptText = `<strong>${player}:</strong> Select target country to <strong>COUP</strong> with <strong>${num(ctx.pending_ops_value)} Ops</strong> (or click on map):`;
+        showDieSelector = true;
+      } else if (isRealign) {
+        promptText = `<strong>${player}:</strong> Select target country for <strong>REALIGNMENT</strong> (or click on map):`;
+        showDieSelector = true;
+      } else {
+        const left = remaining > 0 ? ` (${remaining} Ops remaining)` : "";
+        promptText = `<strong>${player}:</strong> Select a target country${left}:`;
+      }
 
-      case 5: // POINT_NODE
-        const isWarEvent = [9, 11, 23, 36, 84, 18, 70, 72, 97, 106].includes(ctx.resolving_card);
-        const isCoup = (legal as any).op_mode === 1 || (ctx as any).op_mode === 1;
-        const isRealign = (legal as any).op_mode === 2 || (ctx as any).op_mode === 2;
-        const isCoupOrRealign = isCoup || isRealign;
-
-        if (phaseName === "SETUP") {
-          const region = player === "USSR" ? "Eastern Europe" : "Western Europe";
-          promptText = `<strong>${player} Setup Phase:</strong> Click highlighted countries in ${region} to place influence (<strong>${ctx.remaining_steps} remaining</strong>):`;
-        } else if (ctx.resolving_card > 0) {
-          const resCard = ctx.resolving_card_name || `Card #${ctx.resolving_card}`;
-          promptText = `<strong>${player}:</strong> Resolving event <em>${resCard}</em>. Select target country (<strong>${ctx.remaining_steps} remaining</strong>):`;
-          if (isWarEvent) showDieSelector = true;
-        } else if (isCoup) {
-          promptText = `<strong>${player}:</strong> Select target country to <strong>COUP</strong> with <strong>${ctx.pending_ops_value} Ops</strong> (or click on map):`;
-          showDieSelector = true;
-        } else if (isRealign) {
-          promptText = `<strong>${player}:</strong> Select target country for <strong>REALIGNMENT</strong> (or click on map):`;
-          showDieSelector = true;
-        } else {
-          const remaining = ctx.remaining_steps > 0 ? ` (${ctx.remaining_steps} Ops remaining)` : "";
-          promptText = `<strong>${player}:</strong> Select a target country${remaining}:`;
-        }
-
-        // Render Candidate Targets List
-        if (validIds.length > 0 && (isCoupOrRealign || isWarEvent || validIds.length <= 12)) {
-          let targetsHtml = "";
-          validIds.filter(id => id < 84).forEach(cid => {
-            const country = Object.values(state.countries || {}).find(c => c.id === cid) || (state.countries ? (state.countries as any)[cid] : null);
-            const cName = country?.name || `Country #${cid}`;
-            const cStab = country?.stability || 1;
-            const isBg = country?.battleground || false;
-            const usInf = country?.us_influence || 0;
-            const ussrInf = country?.ussr_influence || 0;
-
-            let badgeHtml = "";
-            let calculusHtml = "";
-
-            if (isCoup) {
-              const ops = ctx.pending_ops_value;
-              const def = cStab * 2;
-              const minRoll = Math.max(1, def - ops + 1);
-              const prob = minRoll <= 1 ? 100 : (minRoll > 6 ? 0 : Math.round(((7 - minRoll) / 6) * 100));
-
-              if (isBg) {
-                if (state.defcon === 2) {
-                  badgeHtml = `<span class="badge" style="background: #DC2626; color: #FFF; font-weight: bold; font-size: 10px; margin-left: 6px;">🚨 DEFCON 1 SUICIDE</span>`;
-                } else {
-                  badgeHtml = `<span class="badge" style="background: #EF4444; color: #FFF; font-size: 10px; margin-left: 6px;">DEFCON ${state.defcon}→${state.defcon - 1}</span>`;
-                }
-              }
-
-              if (this.selectedDieRoll > 0) {
-                const total = ops + this.selectedDieRoll;
-                const net = Math.max(0, total - def);
-                calculusHtml = net > 0 
-                  ? `<span style="color: #34D399; font-weight: bold;">🎲 Roll ${this.selectedDieRoll}: Ops ${ops} + ${this.selectedDieRoll} vs ${def} Def -> Net +${net} Inf (Success)</span>`
-                  : `<span style="color: #F87171;">🎲 Roll ${this.selectedDieRoll}: Ops ${ops} + ${this.selectedDieRoll} vs ${def} Def -> 0 Net (Fails)</span>`;
-              } else {
-                calculusHtml = `<span>🎲 Auto: Roll ≥ ${minRoll} needed (${prob}% chance) • Def: ${def} (2×${cStab})</span>`;
-              }
-            } else if (isRealign) {
-              calculusHtml = `<span>🎲 Opposed Die Rolls • US:${usInf} vs USSR:${ussrInf} (Stab ${cStab})</span>`;
-            } else if (isWarEvent) {
-              calculusHtml = `<span>🎲 War Event: Roll vs Target Threshold</span>`;
-            } else {
-              calculusHtml = `<span>Stab ${cStab} • US:${usInf} / USSR:${ussrInf}</span>`;
-            }
-
-            targetsHtml += `
-              <button class="btn btn-secondary btn-block btn-hud-action btn-target-card" data-primary="${cid}" data-secondary="${this.selectedDieRoll}" style="margin-bottom: 6px; text-align: left; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.12);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="font-weight: bold; font-size: 13px;">${isBg ? '★ ' : ''}${cName} (Stab ${cStab}) ${badgeHtml}</span>
-                  <span style="font-size: 11px; opacity: 0.85;">US:<strong>${usInf}</strong> / USSR:<strong>${ussrInf}</strong></span>
-                </div>
-                <div style="font-size: 11px; color: var(--text-dim); margin-top: 3px;">${calculusHtml}</div>
-              </button>
-            `;
-          });
-
-          if (targetsHtml) {
-            buttonsHtml += `
-              <div class="hud-target-list-header" style="font-size: 11px; font-weight: 700; color: var(--text-dim); margin: 8px 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;">
-                Available Target Actions (${validIds.length}):
+      // The targets the engine offers (its legal mask): the board's numbers for each, no more.
+      if (validIds.length > 0 && (isCoup || isRealign || resolving > 0 || validIds.length <= 12)) {
+        const byId = new Map(Object.values(state.countries || {}).map(c => [num(c.id), c]));
+        let targetsHtml = "";
+        validIds.filter(id => id < 84).forEach(cid => {
+          const country = byId.get(cid);
+          const cName = escapeHtml(country?.name || `Country #${cid}`);
+          const cStab = num(country?.stability ?? 0);
+          const isBg = !!country?.battleground;
+          const usInf = num(country?.us_influence ?? 0);
+          const ussrInf = num(country?.ussr_influence ?? 0);
+          targetsHtml += `
+            <button class="btn btn-secondary btn-block btn-hud-action btn-target-card" data-primary="${cid}" data-secondary="${this.selectedDieRoll}" style="margin-bottom: 6px; text-align: left; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.12);">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: bold; font-size: 13px;">${isBg ? '★ ' : ''}${cName} (Stab ${cStab})</span>
+                <span style="font-size: 11px; opacity: 0.85;">US:<strong>${usInf}</strong> / USSR:<strong>${ussrInf}</strong></span>
               </div>
-              <div class="hud-targets-scroll-list" style="max-height: 200px; overflow-y: auto; padding-right: 2px;">
-                ${targetsHtml}
-              </div>
-            `;
-          }
-        }
-
-        if (allowEarlyStop) {
-          buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Done / Pass Remaining</button>`;
-        } else if (legal.can_confirm_done) {
-          // No eligible target is left for what remains (the engine's flat mask offers only
-          // CONFIRM_DONE): without this the panel was empty and the game could not go on.
-          promptText += ` <em>No eligible target is left.</em>`;
-          buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Done — no eligible target left</button>`;
-        }
-        break;
-
-      case 6: // CHOOSE_BRANCH
-        const resolvingCardId = ctx.resolving_card || ctx.pending_op_card;
-        const resolvingCardName = ctx.resolving_card_name || (resolvingCardId ? `Card #${resolvingCardId}` : "Event");
-        // What each branch means comes from game/branches.ts (a region for Chernobyl, the DEFCON level
-        // for Summit and How I Learned...), the same text the action log uses -- never a bare number.
-        const ask: Record<number, string> = {
-          94: `designate a region: the USSR may not place influence there with Ops for the rest of the turn`,
-          45: `set DEFCON (the Summit winner may move it by 1, or leave it)`,
-          46: `set DEFCON to any level`,
-        };
-        promptText = `<strong>${player}:</strong> <em>${resolvingCardName}</em>: ${ask[resolvingCardId] ?? "choose an option"}:`;
-        const actionLabels = legal.valid_action_labels || {};
-
-        validIds.forEach(b => {
-          const meta = branchMeta(resolvingCardId, b, state);
-          // An event this page has no words for still shows the engine's own label, never just "Option N".
-          const branchTitle = meta ? meta.title : `${actionLabels[b.toString()] || "Option"} ${b}`;
-          const branchDesc = meta ? meta.desc : "";
-
-          buttonsHtml += `
-            <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card" data-primary="${b}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
-              <div style="font-weight: bold; font-size: 13px;">${branchTitle}</div>
-              ${branchDesc ? `<div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${branchDesc}</div>` : ""}
             </button>
           `;
         });
 
-        if (allowEarlyStop) {
-          buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Confirm / Pass</button>`;
+        if (targetsHtml) {
+          buttonsHtml += `
+            <div class="hud-target-list-header" style="font-size: 11px; font-weight: 700; color: var(--text-dim); margin: 8px 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px;">
+              Available Target Actions (${validIds.length}):
+            </div>
+            <div class="hud-targets-scroll-list" style="max-height: 200px; overflow-y: auto; padding-right: 2px;">
+              ${targetsHtml}
+            </div>
+          `;
         }
-        break;
+      }
 
-      default:
-        promptText = `Waiting for decision...`;
-        break;
+      if (allowEarlyStop) {
+        buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Done / Pass Remaining</button>`;
+      } else if (legal.can_confirm_done) {
+        // No eligible target is left for what remains (the engine's flat mask offers only
+        // CONFIRM_DONE): without this the panel was empty and the game could not go on.
+        promptText += ` <em>No eligible target is left.</em>`;
+        buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Done — no eligible target left</button>`;
+      }
+    } else if (dType === DT.CHOOSE_BRANCH) {
+      const resolvingCardId = num(ctx.resolving_card || ctx.pending_op_card);
+      const resolvingCardName = escapeHtml(ctx.resolving_card_name || (resolvingCardId ? `Card #${resolvingCardId}` : "Event"));
+      // What each branch means comes from game/branches.ts (a region for Chernobyl, the DEFCON level
+      // for Summit and How I Learned...), the same text the action log uses -- never a bare number.
+      promptText = `<strong>${player}:</strong> <em>${resolvingCardName}</em>: ${BRANCH_ASKS[cardKey(L, resolvingCardId)] ?? "choose an option"}:`;
+      const actionLabels = legal.valid_action_labels || {};
+
+      validIds.forEach(b => {
+        const meta = branchMeta(resolvingCardId, b, state);
+        // An event this page has no words for still shows the engine's own label, never just "Option N".
+        const branchTitle = escapeHtml(meta ? meta.title : `${actionLabels[b.toString()] || "Option"} ${b}`);
+        const branchDesc = escapeHtml(meta ? meta.desc : "");
+
+        buttonsHtml += `
+          <button class="btn btn-secondary btn-block btn-hud-action btn-choice-card" data-primary="${b}" style="margin-bottom: 8px; text-align: left; padding: 8px 12px;">
+            <div style="font-weight: bold; font-size: 13px;">${branchTitle}</div>
+            ${branchDesc ? `<div style="font-size: 11px; opacity: 0.85; margin-top: 2px;">${branchDesc}</div>` : ""}
+          </button>
+        `;
+      });
+
+      if (allowEarlyStop) {
+        buttonsHtml += `<button class="btn btn-warning btn-block btn-hud-action" data-flags="128" data-primary="0" style="margin-top: 8px;">✓ Confirm / Pass</button>`;
+      }
+    } else if (dType === DT.NONE) {
+      promptText = `Simulation idle or transitioning.`;
+    } else {
+      promptText = `Waiting for decision...`;
     }
 
     let dieSelectorHtml = "";
@@ -447,18 +417,5 @@ export class ActionHud {
         });
       });
     });
-  }
-
-  private getDecisionTypeName(dType: number): string {
-    const typeNames: Record<number, string> = {
-      0: "NONE",
-      1: "SELECT_CARD",
-      2: "SELECT_PLAY_MODE",
-      3: "CHOOSE_TIMING_BRANCH",
-      4: "SELECT_OP_MODE",
-      5: "POINT_NODE",
-      6: "CHOOSE_BRANCH"
-    };
-    return typeNames[dType] || `TYPE_${dType}`;
   }
 }

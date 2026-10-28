@@ -6,6 +6,8 @@
  * cards: A, B, C"). Lines are the redacted log (game/view.ts), so nothing named here is hidden.
  */
 
+import { escapeHtml } from "../html";
+
 const REF = /Card #(\d{1,3}) \([^)]*\)|\(#(\d{1,3})(?:, [^)]*)?\)/g;
 const DRAWS = /^(\s*• (?:US|USSR) draws \d+ cards?: )(.+)$/;
 
@@ -16,17 +18,21 @@ export interface CardNames {
   idOf(name: string): number | undefined;
 }
 
+/** `inner` is text, escaped here. */
 function span(id: number, inner: string): string {
-  return `<span class="log-card" data-card-id="${id}">${inner}</span>`;
+  return `<span class="log-card" data-card-id="${id}">${escapeHtml(inner)}</span>`;
 }
 
-/** `text` with every card it names wrapped for hovering; anything else unchanged. */
+/**
+ * `text` as HTML: every card it names wrapped for hovering, and all of it escaped -- a log line can
+ * come from a replay file (its descriptions), which is anyone's text.
+ */
 export function linkCardRefs(text: string, cards: CardNames): string {
   const deal = DRAWS.exec(text);
   if (deal) {
-    return deal[1] + deal[2].split(", ").map(n => {
+    return escapeHtml(deal[1]) + deal[2].split(", ").map(n => {
       const id = cards.idOf(n);
-      return id === undefined ? n : span(id, n);
+      return id === undefined ? escapeHtml(n) : span(id, n);
     }).join(", ");
   }
   let out = "";
@@ -44,8 +50,8 @@ export function linkCardRefs(text: string, cards: CardNames): string {
       if (form) start = at - form.length;
     }
     const end = at + m[0].length;
-    out += text.slice(last, start) + span(id, text.slice(start, end));
+    out += escapeHtml(text.slice(last, start)) + span(id, text.slice(start, end));
     last = end;
   }
-  return out + text.slice(last);
+  return out + escapeHtml(text.slice(last));
 }

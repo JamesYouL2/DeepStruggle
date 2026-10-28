@@ -14,6 +14,7 @@
  * carries the sum of all of them -- the probability the model puts on choosing influence at all.
  */
 import { GameState } from "./types";
+import { engineLayout } from "./engine/layout";
 import {
   BadgeMark, clearDecorations, fmtP, htmlBadge, probColor, svgBadge, valueSidesHtml,
 } from "./trace_view";
@@ -81,8 +82,7 @@ interface ModelList {
 }
 
 const FLAG_CONFIRM_DONE = 0x80;
-const DT_SELECT_CARD = 1;
-const DT_POINT_NODE = 5;
+
 const LOOSE_GROUP = "(loose checkpoints)";
 const TOP_LISTED = 8;
 
@@ -636,6 +636,8 @@ export class AnalysisPanel {
     const dType = state.decision_context?.decision_type;
     if (dType === undefined || a.decision_type !== dType) return;
     const favIdx = this.favourite() ?? a.policy.argmax_idx;
+    const DT = engineLayout()?.decision_types;
+    if (!DT) return;
 
     type Cell = { p: number; fav: boolean; note?: string };
     const add = (m: Map<string | number, Cell>, k: string | number, p: number, fav: boolean, note?: string) => {
@@ -656,8 +658,8 @@ export class AnalysisPanel {
         continue;
       }
       add(buttons, key, c.p, fav);
-      if (dType === DT_SELECT_CARD && !(c.flags! & FLAG_CONFIRM_DONE)) cards.set(c.primary_id!, { p: c.p, fav });
-      if (dType === DT_POINT_NODE && !(c.flags! & FLAG_CONFIRM_DONE)) countries.set(c.primary_id!, { p: c.p, fav });
+      if (dType === DT.SELECT_CARD && !(c.flags! & FLAG_CONFIRM_DONE)) cards.set(c.primary_id!, { p: c.p, fav });
+      if (dType === DT.POINT_NODE && !(c.flags! & FLAG_CONFIRM_DONE)) countries.set(c.primary_id!, { p: c.p, fav });
     }
     const mark = (cell: Cell): BadgeMark => (cell.fav ? "favourite" : null);
 

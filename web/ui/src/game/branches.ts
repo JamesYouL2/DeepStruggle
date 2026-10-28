@@ -7,6 +7,7 @@
  * side -- choosing the current one leaves DEFCON alone). The page used to show "Option 3" for those.
  */
 import { GameState } from "../types";
+import { engineLayout, namesByValue, titleCase } from "../engine/layout";
 
 export interface BranchMeta {
   /** The button's title. */
@@ -17,21 +18,24 @@ export interface BranchMeta {
   verb: string;
 }
 
-/** The engine's `Region` order, which is Chernobyl's branch. */
-export const REGIONS = ["Europe", "Asia", "Middle East", "Africa", "Central America", "South America"];
+/** A region by the engine's `Region` value (Chernobyl's branch, the region head), in words. */
+export function regionName(region: number): string | undefined {
+  const L = engineLayout();
+  const name = L ? namesByValue(L.regions)[region] : undefined;
+  return name === undefined ? undefined : titleCase(name);
+}
 
-const WARSAW_PACT = 16, OLYMPIC_GAMES = 20, SUMMIT = 45, HOW_I_LEARNED = 46, CHERNOBYL = 94, WARGAMES = 100;
-
-const FIXED: Record<number, Record<number, BranchMeta>> = {
-  [WARSAW_PACT]: {
+/** By the event's ts::card_ids name. */
+const FIXED: Record<string, Record<number, BranchMeta>> = {
+  WARSAW_PACT_FORMED: {
     0: { title: "Remove US influence", desc: "Remove all US influence from up to 4 countries in Eastern Europe.", verb: "removes US influence from Eastern Europe" },
     1: { title: "Add USSR influence", desc: "Add 5 USSR influence in Eastern Europe (at most 2 per country).", verb: "adds USSR influence in Eastern Europe" },
   },
-  [OLYMPIC_GAMES]: {
+  OLYMPIC_GAMES: {
     0: { title: "Participate", desc: "Both roll a die, the sponsor +2; the higher roll gains 2 VP.", verb: "participates in the Olympic Games" },
     1: { title: "Boycott", desc: "DEFCON degrades by 1 and the sponsor conducts 4 Ops.", verb: "boycotts the Olympic Games" },
   },
-  [WARGAMES]: {
+  WARGAMES: {
     0: { title: "End the game", desc: "Give the opponent 6 VP, then the game ends and is scored as it stands.", verb: "ends the game, giving the opponent 6 VP" },
     1: { title: "Continue", desc: "Do not end the game.", verb: "declines to end the game" },
   },
@@ -47,11 +51,14 @@ function defconLevel(level: number, current: number): BranchMeta {
 
 /** The meaning of branch `branch` of `card`'s event in `state`, or null for an event it does not know. */
 export function branchMeta(card: number, branch: number, state: GameState): BranchMeta | null {
-  if (card === CHERNOBYL) {
-    const region = REGIONS[branch] ?? `region ${branch}`;
+  const L = engineLayout();
+  if (!L || !card) return null;
+  const key = Object.keys(L.card_ids).find(k => L.card_ids[k] === card);
+  if (key === "CHERNOBYL") {
+    const region = regionName(branch) ?? `region ${branch}`;
     return { title: region, desc: `The USSR may not place influence in ${region} with Ops for the rest of the turn.`,
              verb: `designates ${region}` };
   }
-  if (card === SUMMIT || card === HOW_I_LEARNED) return defconLevel(branch, state.defcon);
-  return FIXED[card]?.[branch] ?? null;
+  if (key === "SUMMIT" || key === "HOW_I_LEARNED_TO_STOP_WORRYING") return defconLevel(branch, state.defcon);
+  return (key && FIXED[key]?.[branch]) || null;
 }

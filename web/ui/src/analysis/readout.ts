@@ -36,6 +36,30 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
   }
   obs.set(engine.observation(PLAYER_US, features), obsSize);
   obs.set(engine.observation(PLAYER_USSR, features), 2 * obsSize);
+
+  // Everything the readout needs from the engine is read now, before the forward: the engine is the
+  // board's, and a click (or auto-play) during the await moves it on -- the names would then be read
+  // from another position than the one the network saw.
+  const legal: number[] = [];
+  if (legalMask) for (let i = 0; i < act; i++) if (legalMask[i]) legal.push(i);
+  const decisionType = engine.decisionType();
+  const L = engine.layout;
+  // An event's branch is named by what it means, which needs the position (game/branches.ts).
+  const branchy = legal.some(i => i >= L.offsets.branch && i !== L.confirm_done_index);
+  const shown: GameState | undefined = branchy ? engine.display() : undefined;
+  const actions = new Map(legal.map(idx => {
+    if (merged && engine.isMergedInfluenceAction(idx)) {
+      // A composed E4.1 action: "Ops for influence" plus its first placement -- one action for
+      // the model, two clicks for a person. Its MicroAction fields name the commit half.
+      const commit = engine.decodeFlat(L.ops_influence_index);
+      const name = idx !== L.ops_influence_index
+        ? `Ops → Influence, first point in ${engine.countryName(idx - L.offsets.node)}`
+        : "Ops → Influence, place nothing";
+      return [idx, { composed: true, ma: commit, name }];
+    }
+    return [idx, { composed: false, ma: engine.decodeFlat(idx), name: actionName(engine, idx, shown) }];
+  }));
+
   const out = await model.run(obs, masks, 3);
 
   const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
@@ -51,8 +75,6 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
   if (decider === 0 || !legalMask) return analysis;
 
   // Softmax over the legal actions only, at temperature 1.
-  const legal: number[] = [];
-  for (let i = 0; i < act; i++) if (legalMask[i]) legal.push(i);
   let maxLogit = -Infinity;
   for (const i of legal) maxLogit = Math.max(maxLogit, out.logits[i]);
   let z = 0;
@@ -67,11 +89,6 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
     if (q > p.get(argmax)!) argmax = i;
   }
 
-  // An event's branch is named by what it means, which needs the position (game/branches.ts); read
-  // it only for such a choice.
-  let shown: GameState | undefined;
-  const branchState = () => (shown ??= engine.display());
-
   const policy: PolicyTrace = {
     source: "analysis", temperature: 1, n_legal: legal.length, chosen_idx: argmax,
     p_chosen: r6(p.get(argmax)!), p_chosen_sampled: 1, argmax_idx: argmax, p_max: r6(p.get(argmax)!),
@@ -79,33 +96,21 @@ export async function analyze(engine: WasmEngine, model: Model, modelKey: string
   };
   analysis.policy = policy;
   analysis.decision_player = decider > 0 ? "US" : "USSR";
-  analysis.decision_type = engine.decisionType();
+  analysis.decision_type = decisionType;
 
-  const L = engine.layout;
   const choices: AnalysisChoice[] = legal.map(idx => {
     const entry: AnalysisChoice = { idx, p: r6(p.get(idx)!) };
-    if (merged && engine.isMergedInfluenceAction(idx)) {
-      // A composed E4.1 action: "Ops for influence" plus its first placement -- one action for
-      // the model, two clicks for a person. Its MicroAction fields name the commit half.
-      const commit = engine.decodeFlat(L.ops_influence_index);
+    const a = actions.get(idx)!;
+    entry.decision_type = a.ma.decision_type;
+    entry.primary_id = a.ma.primary_id;
+    entry.name = a.name;
+    if (a.composed) {
       entry.composed = true;
-      entry.decision_type = commit.decision_type;
-      entry.primary_id = commit.primary_id;
       entry.flags = 0;
-      if (idx !== L.ops_influence_index) {
-        const cid = idx - L.offsets.node;
-        entry.country_id = cid;
-        entry.name = `Ops → Influence, first point in ${engine.countryName(cid)}`;
-      } else {
-        entry.name = "Ops → Influence, place nothing";
-      }
-      return entry;
+      if (idx !== L.ops_influence_index) entry.country_id = idx - L.offsets.node;
+    } else {
+      entry.flags = a.ma.flags;
     }
-    const ma = engine.decodeFlat(idx);
-    entry.decision_type = ma.decision_type;
-    entry.primary_id = ma.primary_id;
-    entry.flags = ma.flags;
-    entry.name = actionName(engine, idx, branchState());
     return entry;
   });
   choices.sort((a, b) => b.p - a.p);

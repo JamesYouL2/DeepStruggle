@@ -1680,7 +1680,6 @@ body.player-view .view-select {
 .card-tooltip .ct-us { color: #60A5FA; font-weight: 700; }
 .card-tooltip .ct-ussr { color: #F87171; font-weight: 700; }
 .card-tooltip .ct-rows { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #CBD5E1; line-height: 1.35; }
-.card-tooltip .ct-warn { color: #FBBF24; }
 .card-tooltip .ct-last { color: #67E8F9; }
 .card-tooltip .ct-adj { margin-top: 6px; font-size: 10.5px; color: var(--text-dim); line-height: 1.35; }
 

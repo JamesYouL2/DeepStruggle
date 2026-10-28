@@ -35,7 +35,9 @@ export interface RolloutSpec {
   race: number;
 }
 
-/** The engine's codes, in the order of ai/search/rollout_root.py's STOPS and LEAF_SIDES. */
+/** The grammar's names for the stop rules and leaf sides (ai/search/rollout_root.py's STOPS and
+ *  LEAF_SIDES). Only names: the engine's ordinal for each is its own export
+ *  (WasmEngine.layout.rollout_stops / rollout_leaves), looked up by name where a search runs. */
 export const STOPS = ["boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal"] as const;
 export const LEAVES = ["mover", "decider", "own"] as const;
 

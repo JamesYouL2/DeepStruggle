@@ -1,4 +1,6 @@
 import { GameState } from './types';
+import { engineLayout } from './engine/layout';
+import { escapeHtml, num } from './html';
 
 export interface SpaceBoxMetadata {
   box: number;
@@ -11,22 +13,41 @@ export interface SpaceBoxMetadata {
   abilityShort: string;
 }
 
-/** As the engine has them (engine/src/space_race.cpp): rolls alternate 1-3 / 1-4 up to box 7. */
-export const SPACE_RACE_BOXES: SpaceBoxMetadata[] = [
-  { box: 0, name: "Start / Launchpad", minOps: 0, maxRoll: 0, vpFirst: 0, vpSecond: 0, ability: "None", abilityShort: "None" },
-  { box: 1, name: "Earth Satellite", minOps: 2, maxRoll: 3, vpFirst: 2, vpSecond: 1, ability: "None", abilityShort: "None" },
-  { box: 2, name: "Animal in Space", minOps: 2, maxRoll: 4, vpFirst: 0, vpSecond: 0, ability: "May attempt Space Race twice per turn", abilityShort: "2 Attempts / Turn" },
-  { box: 3, name: "Man in Space", minOps: 2, maxRoll: 3, vpFirst: 2, vpSecond: 0, ability: "None", abilityShort: "None" },
-  { box: 4, name: "Man in Earth Orbit", minOps: 2, maxRoll: 4, vpFirst: 0, vpSecond: 0, ability: "Opponent must select & reveal headline first", abilityShort: "Opponent Reveals Headline 1st" },
-  { box: 5, name: "Lunar Orbit", minOps: 3, maxRoll: 3, vpFirst: 3, vpSecond: 1, ability: "None", abilityShort: "None" },
-  { box: 6, name: "Eagle / Bear Has Landed", minOps: 3, maxRoll: 4, vpFirst: 0, vpSecond: 0, ability: "May discard 1 held card at end of turn", abilityShort: "Discard Held Card at Turn End" },
-  { box: 7, name: "Space Shuttle", minOps: 3, maxRoll: 3, vpFirst: 4, vpSecond: 2, ability: "None", abilityShort: "None" },
-  { box: 8, name: "Space Station", minOps: 4, maxRoll: 2, vpFirst: 2, vpSecond: 0, ability: "May play 8 Action Rounds per turn", abilityShort: "8th Action Round" }
+/** The boxes' names and privileges, in words; what each box asks and pays is the engine's. */
+const SPACE_RACE_TEXT: Array<Pick<SpaceBoxMetadata, "name" | "ability" | "abilityShort">> = [
+  { name: "Start / Launchpad", ability: "None", abilityShort: "None" },
+  { name: "Earth Satellite", ability: "None", abilityShort: "None" },
+  { name: "Animal in Space", ability: "May attempt Space Race twice per turn", abilityShort: "2 Attempts / Turn" },
+  { name: "Man in Space", ability: "None", abilityShort: "None" },
+  { name: "Man in Earth Orbit", ability: "Opponent must select & reveal headline first", abilityShort: "Opponent Reveals Headline 1st" },
+  { name: "Lunar Orbit", ability: "None", abilityShort: "None" },
+  { name: "Eagle / Bear Has Landed", ability: "May discard 1 held card at end of turn", abilityShort: "Discard Held Card at Turn End" },
+  { name: "Space Shuttle", ability: "None", abilityShort: "None" },
+  { name: "Space Station", ability: "May play 8 Action Rounds per turn", abilityShort: "8th Action Round" },
 ];
+
+/**
+ * The track: each box's Ops, roll and VP as the engine plays them (SpaceRace::get_box_info, exported
+ * as WasmEngine.layout.space_boxes), with its name and privilege. Empty until the engine has loaded.
+ */
+export function spaceRaceBoxes(): SpaceBoxMetadata[] {
+  const boxes = engineLayout()?.space_boxes ?? [];
+  return boxes.map((b, box) => ({
+    box, minOps: b.min_ops, maxRoll: b.max_roll, vpFirst: b.vp_first, vpSecond: b.vp_second,
+    ...(SPACE_RACE_TEXT[box] ?? { name: `Box ${box}`, ability: "None", abilityShort: "None" }),
+  }));
+}
+
+/** A box's name, safe for any number a replay's state holds. */
+function boxName(box: number): string {
+  return escapeHtml(SPACE_RACE_TEXT[box]?.name ?? `Box ${box}`);
+}
 
 /** What the next box asks, as the app's "NEXT PROJECT: 2 OPS: Roll 1-3": a card of N Ops, a roll. */
 function nextProject(at: number): string {
-  const next = SPACE_RACE_BOXES[at + 1];
+  const boxes = spaceRaceBoxes();
+  if (!boxes.length) return "";
+  const next = boxes[at + 1];
   if (!next) return `<span class="pill-next" title="The last box, the Space Station: the space race is over">done</span>`;
   return `<span class="pill-next" title="Box ${next.box}, ${next.name}: a card of ${next.minOps}+ Ops, then a roll of 1-${next.maxRoll}">`
     + `next ${next.minOps} Ops · 1–${next.maxRoll}</span>`;
@@ -42,20 +63,21 @@ export class TracksView {
 
   public render(state: GameState) {
     this.currentState = state;
-    const vp = state.victory_points;
-    const defcon = state.defcon;
-    const turn = state.turn;
-    const ar = state.action_round;
-    const phase = state.current_phase;
-    const phasing = state.phasing_player;
+    // Numbers and names, as a replay snapshot may hold anything.
+    const vp = num(state.victory_points);
+    const defcon = num(state.defcon);
+    const turn = num(state.turn);
+    const ar = num(state.action_round);
+    const phase = num(state.current_phase);
+    const phasing = escapeHtml(state.phasing_player);
 
-    const usMilOps = state.mil_ops?.US ?? 0;
-    const ussrMilOps = state.mil_ops?.USSR ?? 0;
-    const usSpace = state.space?.US ?? 0;
-    const ussrSpace = state.space?.USSR ?? 0;
+    const usMilOps = num(state.mil_ops?.US ?? 0);
+    const ussrMilOps = num(state.mil_ops?.USSR ?? 0);
+    const usSpace = num(state.space?.US ?? 0);
+    const ussrSpace = num(state.space?.USSR ?? 0);
 
-    const usTurnsUsed = state.space_turns_used?.US ?? 0;
-    const ussrTurnsUsed = state.space_turns_used?.USSR ?? 0;
+    const usTurnsUsed = num(state.space_turns_used?.US ?? 0);
+    const ussrTurnsUsed = num(state.space_turns_used?.USSR ?? 0);
     const maxUsAttempts = (usSpace >= 2 && ussrSpace < 2) ? 2 : 1;
     const maxUssrAttempts = (ussrSpace >= 2 && usSpace < 2) ? 2 : 1;
 
@@ -139,7 +161,7 @@ export class TracksView {
         <span class="track-label">SPACE RACE</span>
         <div class="space-race-header-widget" id="space-race-widget" role="button" tabindex="0" title="Space Race: USSR at Box #${ussrSpace}, US at Box #${usSpace}. Click to open full Deluxe Space Track & Perks.">
           <!-- USSR Pill -->
-          <div class="space-pill ussr" title="USSR Space: Box #${ussrSpace} (${SPACE_RACE_BOXES[ussrSpace].name}) | Attempts Used: ${ussrTurnsUsed}/${maxUssrAttempts}">
+          <div class="space-pill ussr" title="USSR Space: Box #${ussrSpace} (${boxName(ussrSpace)}) | Attempts Used: ${ussrTurnsUsed}/${maxUssrAttempts}">
             <span class="pill-dot ussr"></span>
             <span class="pill-side">USSR:</span>
             <span class="pill-box-num">#${ussrSpace}</span>
@@ -158,7 +180,7 @@ export class TracksView {
               else if (hasUssr) occ = 'ussr';
 
               return `
-                <div class="mini-box ${occ ? 'active ' + occ : ''}" data-step="${step}" title="Box ${step}: ${SPACE_RACE_BOXES[step].name}">
+                <div class="mini-box ${occ ? 'active ' + occ : ''}" data-step="${step}" title="Box ${step}: ${boxName(step)}">
                   <span class="mini-box-num">${step}</span>
                   <div class="mini-box-tokens">
                     ${hasUssr ? '<div class="mini-token ussr" title="USSR at Box ' + step + '"></div>' : ''}
@@ -170,7 +192,7 @@ export class TracksView {
           </div>
 
           <!-- US Pill -->
-          <div class="space-pill us" title="US Space: Box #${usSpace} (${SPACE_RACE_BOXES[usSpace].name}) | Attempts Used: ${usTurnsUsed}/${maxUsAttempts}">
+          <div class="space-pill us" title="US Space: Box #${usSpace} (${boxName(usSpace)}) | Attempts Used: ${usTurnsUsed}/${maxUsAttempts}">
             <span class="pill-dot us"></span>
             <span class="pill-side">US:</span>
             <span class="pill-box-num">#${usSpace}</span>
@@ -223,10 +245,10 @@ export class TracksView {
     modalTitle.innerHTML = `🚀 <span>DELUXE SPACE RACE TRACK & PERKS</span>`;
     modalContent?.classList.add('modal-lg');
 
-    const usSpace = state.space?.US ?? 0;
-    const ussrSpace = state.space?.USSR ?? 0;
-    const usTurnsUsed = state.space_turns_used?.US ?? 0;
-    const ussrTurnsUsed = state.space_turns_used?.USSR ?? 0;
+    const usSpace = num(state.space?.US ?? 0);
+    const ussrSpace = num(state.space?.USSR ?? 0);
+    const usTurnsUsed = num(state.space_turns_used?.US ?? 0);
+    const ussrTurnsUsed = num(state.space_turns_used?.USSR ?? 0);
 
     const maxUsAttempts = (usSpace >= 2 && ussrSpace < 2) ? 2 : 1;
     const maxUssrAttempts = (ussrSpace >= 2 && usSpace < 2) ? 2 : 1;
@@ -255,7 +277,7 @@ export class TracksView {
             </div>
             <div class="summary-stat-row">
               <span>Position:</span>
-              <strong>Box #${ussrSpace} — ${SPACE_RACE_BOXES[ussrSpace].name}</strong>
+              <strong>Box #${ussrSpace} — ${boxName(ussrSpace)}</strong>
             </div>
             <div class="summary-stat-row">
               <span>Attempts this Turn:</span>
@@ -283,7 +305,7 @@ export class TracksView {
             </div>
             <div class="summary-stat-row">
               <span>Position:</span>
-              <strong>Box #${usSpace} — ${SPACE_RACE_BOXES[usSpace].name}</strong>
+              <strong>Box #${usSpace} — ${boxName(usSpace)}</strong>
             </div>
             <div class="summary-stat-row">
               <span>Attempts this Turn:</span>
@@ -298,7 +320,7 @@ export class TracksView {
 
         <!-- 9 Milestone Boxes Grid -->
         <div class="space-ladder-grid">
-          ${SPACE_RACE_BOXES.map(box => {
+          ${spaceRaceBoxes().map(box => {
             const isUsHere = usSpace === box.box;
             const isUssrHere = ussrSpace === box.box;
             let occupancyClass = "";

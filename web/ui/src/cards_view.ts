@@ -1,6 +1,8 @@
 import { GameState, CardMetadata } from "./types";
 import { CARDS_METADATA } from "./metadata";
 import { UNSEEN } from "./game/view";
+import { engineLayout } from "./engine/layout";
+import { escapeHtml, num } from "./html";
 
 export interface EffectInfo {
   name: string;
@@ -460,7 +462,7 @@ export class CardsView {
 
     const china = state.china_card || { holder: "USSR", playable: true };
     const holdsChina = china.holder === player;
-    const isCurrentDecision = state.decision_context?.decision_player === player && state.decision_context?.decision_type === 1;
+    const isCurrentDecision = state.decision_context?.decision_player === player && state.decision_context?.decision_type === engineLayout()?.decision_types.SELECT_CARD;
     const legalCards = new Set(state.legal_actions?.valid_ids || []);
 
     // 1. Render China Card at top of hand if held by this player (Single-line)
@@ -539,8 +541,8 @@ export class CardsView {
   /** A card's metadata, or a stand-in for an id the rules do not list. */
   private metaOf(id: number): CardMetadata {
     return this.cardsMeta.get(id) || {
-      id,
-      name: `Card #${id}`,
+      id: num(id),
+      name: `Card #${num(id)}`,
       ops: 0,
       side: "neutral",
       age: "early war",
@@ -602,8 +604,8 @@ export class CardsView {
     let matchedCount = 0;
     for (let id = 1; id <= 110; id++) {
       const meta = this.cardsMeta.get(id) || {
-        id,
-        name: `Card #${id}`,
+        id: num(id),
+        name: `Card #${num(id)}`,
         ops: 0,
         side: "neutral",
         age: "early war",
@@ -689,7 +691,7 @@ export class CardsView {
       case "ONGOING_EVENT": return "Ongoing";
       case "UNAVAILABLE": return "Future Era";
       case "PEEKED_TEMP": return "Drawn (being chosen)";
-      default: return loc;
+      default: return escapeHtml(loc);
     }
   }
 
@@ -705,7 +707,7 @@ export class CardsView {
       <div class="china-card-box ${isPlayable ? "face-up" : "face-down"}">
         <div>
           <div style="font-weight: 800; font-size: 13px;">#6 THE CHINA CARD (4 Ops)</div>
-          <div style="font-size: 11px; opacity: 0.9;">Holder: <strong>${holder}</strong> (${isPlayable ? "Face Up / Playable" : "Face Down"})</div>
+          <div style="font-size: 11px; opacity: 0.9;">Holder: <strong>${escapeHtml(holder)}</strong> (${isPlayable ? "Face Up / Playable" : "Face Down"})</div>
         </div>
         <div style="font-weight: bold; font-size: 11px; background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 4px;">
           +1 Op in Asia
@@ -734,10 +736,10 @@ export class CardsView {
         });
       } else {
         effectCards.push({
-          title: f.replace(/_ACTIVE|_PLAYED/, ""),
+          title: escapeHtml(f.replace(/_ACTIVE|_PLAYED/, "")),
           side: "NEUTRAL",
           badge: "Active",
-          desc: `Continuous effect for ${f}`
+          desc: `Continuous effect for ${escapeHtml(f)}`
         });
       }
     });
@@ -807,11 +809,11 @@ export class CardsView {
     if (!ctx) return;
 
     stackContainer.innerHTML = `
-      <div><strong>Reentrancy Depth:</strong> ${ctx.stack_depth || 0} / 2</div>
-      <div><strong>Decision:</strong> ${ctx.decision_type_name || ctx.decision_type} (${ctx.decision_player})</div>
-      ${ctx.pending_op_card ? `<div><strong>Pending Card:</strong> #${ctx.pending_op_card} (Ops: ${ctx.pending_ops_value})</div>` : ""}
-      ${ctx.resolving_card ? `<div><strong>Resolving Card:</strong> #${ctx.resolving_card} (${ctx.resolving_card_name || ""})</div>` : ""}
-      ${ctx.remaining_steps ? `<div><strong>Remaining Steps:</strong> ${ctx.remaining_steps}</div>` : ""}
+      <div><strong>Reentrancy Depth:</strong> ${num(ctx.stack_depth || 0)} / 2</div>
+      <div><strong>Decision:</strong> ${escapeHtml(ctx.decision_type_name || ctx.decision_type)} (${escapeHtml(ctx.decision_player)})</div>
+      ${ctx.pending_op_card ? `<div><strong>Pending Card:</strong> #${num(ctx.pending_op_card)} (Ops: ${num(ctx.pending_ops_value)})</div>` : ""}
+      ${ctx.resolving_card ? `<div><strong>Resolving Card:</strong> #${num(ctx.resolving_card)} (${escapeHtml(ctx.resolving_card_name || "")})</div>` : ""}
+      ${ctx.remaining_steps ? `<div><strong>Remaining Steps:</strong> ${num(ctx.remaining_steps)}</div>` : ""}
     `;
   }
 

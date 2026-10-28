@@ -18,7 +18,7 @@
  */
 import { WasmEngine } from "../engine/wasm_engine";
 import { Model } from "./model";
-import { LEAVES, RolloutSpec, STOPS } from "./rollout_spec";
+import { RolloutSpec } from "./rollout_spec";
 
 export type { RolloutSpec } from "./rollout_spec";
 export {
@@ -127,8 +127,13 @@ export async function rolloutRoot(engine: WasmEngine, model: Model, spec: Rollou
   const candidates = engine.rolloutCandidates(logits, mask, spec.k);
   if (candidates.length < 2) return null;
 
-  engine.rolloutReset(spec.horizon, model.obsFeatures, seed, true, true,
-                      STOPS.indexOf(spec.stop as typeof STOPS[number]), LEAVES.indexOf(spec.leaf as typeof LEAVES[number]),
+  // The engine's enum ordinals, looked up by name in its own export: the spec's names are the
+  // search= grammar's, the ordinals the engine's.
+  const stop = engine.layout.rollout_stops.indexOf(spec.stop);
+  const leaf = engine.layout.rollout_leaves.indexOf(spec.leaf);
+  if (stop < 0) throw new Error(`this engine has no rollout stop rule "${spec.stop}"`);
+  if (leaf < 0) throw new Error(`this engine has no rollout leaf side "${spec.leaf}"`);
+  engine.rolloutReset(spec.horizon, model.obsFeatures, seed, true, true, stop, leaf,
                       spec.keyed2 ? 2 : spec.keyed ? 1 : 0, spec.aligned, spec.box4);
   const width = engine.rolloutObsWidth();
   if (width !== model.meta.obsSize) {

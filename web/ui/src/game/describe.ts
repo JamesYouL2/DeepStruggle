@@ -13,14 +13,33 @@ import { DieRollState, EventTrackState, GameState, MicroAction } from "../types"
 import { CARDS_METADATA } from "../metadata";
 import { branchMeta } from "./branches";
 import { WasmEngine } from "../engine/wasm_engine";
+import { cardId, namesByValue } from "../engine/layout";
 
-const DT = { SELECT_CARD: 1, SELECT_PLAY_MODE: 2, SELECT_OP_MODE: 4, POINT_NODE: 5, CHOOSE_BRANCH: 6 };
-/** Grain Sales to Soviets: its node offers the drawn card back (a CONFIRM_DONE) for its own 2 Ops. */
-const GRAIN_SALES = 67;
-/** The cards whose card choices the log words by name (see eventCardChoice), and Space Walk's id. */
-const STAR_WARS = 85, SALT = 43, UN_INTERVENTION = 32, MISSILE_ENVY = 49, FIVE_YEAR_PLAN = 5, SPACE_WALK = 250;
-const TERRORISM = 92;
 const SIDE = new Map(CARDS_METADATA.map(c => [c.id, c.side]));
+
+/**
+ * The cards the log words by name, by the engine's ids (WasmEngine.layout.card_ids): Grain Sales
+ * to Soviets (its node offers the drawn card back, a CONFIRM_DONE, for its own 2 Ops), the cards
+ * whose card choices eventCardChoice words, the random discards, and Space Walk's pseudo-card.
+ */
+function cardIds(engine: WasmEngine) {
+  const L = engine.layout;
+  return {
+    GRAIN_SALES: cardId(L, "GRAIN_SALES_TO_SOVIETS"), STAR_WARS: cardId(L, "STAR_WARS"),
+    SALT: cardId(L, "SALT_NEGOTIATIONS"), UN_INTERVENTION: cardId(L, "UN_INTERVENTION"),
+    MISSILE_ENVY: cardId(L, "MISSILE_ENVY"), FIVE_YEAR_PLAN: cardId(L, "FIVE_YEAR_PLAN"),
+    SPACE_WALK: cardId(L, "SPACE_WALK_DISCARD"), TERRORISM: cardId(L, "TERRORISM"),
+  };
+}
+
+/** How the log says each play mode, by the engine's Resolution names. On an opponent card EVENT reads
+ *  as event-first and any OPS_* as ops-first, which is what the retired CHOOSE_TIMING_BRANCH said. */
+const MODE_WORDS: Record<string, string> = {
+  EVENT: "EVENT", SPACE: "SPACE RACE", OPS_INFLUENCE: "OPERATIONS - INFLUENCE PLACEMENT",
+  OPS_COUP: "OPERATIONS - COUP ATTEMPT", OPS_REALIGN: "OPERATIONS - REALIGNMENT",
+};
+/** The same for the deferred Ops choice, by the engine's OpMode names. */
+const OP_MODE_WORDS: Record<string, string> = { INFLUENCE: "INFLUENCE PLACEMENT", COUP: "COUP ATTEMPT", REALIGN: "REALIGNMENT" };
 
 function isConfirmDone(a: Required<MicroAction>): boolean {
   return (a.flags & 0x80) !== 0 || a.primary_id === 255;
@@ -41,7 +60,7 @@ function countriesById(s: GameState) {
 export function describeActionAndDeltas(
   engine: WasmEngine, before: GameState, after: GameState, action: Required<MicroAction>,
 ): string[] {
-  const chosen = action.decision_type === DT.SELECT_CARD ? action.primary_id : 0;
+  const chosen = action.decision_type === engine.layout.decision_types.SELECT_CARD ? action.primary_id : 0;
   const p = before.decision_context?.decision_player ?? "NONE";
   return [...describeAction(engine, before, after, action), ...describeDeltas(engine, before, after, p, chosen)];
 }
@@ -61,15 +80,18 @@ export function describeAction(
   const ctx = before.decision_context;
   const p = ctx?.decision_player ?? "NONE";
   const logs: string[] = [];
+  const L = engine.layout;
+  const DT = L.decision_types;
+  const C = cardIds(engine);
 
   // 1. What was done
   if (d === DT.SELECT_CARD) {
     const resolving = ctx?.resolving_card ?? 0;
     const cardName = primary >= 1 && primary <= 110 ? engine.cardName(primary) : `#${primary}`;
     const phase = before.current_phase_name ?? "";
-    if (resolving !== 0 && resolving !== SPACE_WALK) {
+    if (resolving !== 0 && resolving !== C.SPACE_WALK) {
       logs.push(eventCardChoice(engine, before, after, action, p, resolving));
-    } else if (resolving === SPACE_WALK) {
+    } else if (resolving === C.SPACE_WALK) {
       if (isConfirmDone(action) || primary === 0) {
         logs.push(`${p} passes Eagle / Bear Has Landed (Box 6) turn-end discard opportunity.`);
       } else {
@@ -87,12 +109,14 @@ export function describeAction(
         const ussrName = engine.cardName(ussrCard);
         const usOps = engine.cardOps(usCard);
         const ussrOps = engine.cardOps(ussrCard);
-        const firstP = usOps >= ussrOps ? "US" : "USSR";
+        // The order is the engine's: the card it resolves first (headline_first_card), set by the
+        // commit that revealed both.
+        const firstP = after.headline_first_card === ussrCard ? "USSR" : "US";
         const secondP = firstP === "US" ? "USSR" : "US";
         const firstName = firstP === "US" ? usName : ussrName;
         const secondName = firstP === "US" ? ussrName : usName;
         logs.push(`  ★ Headlines Simultaneously Revealed: US plays '${usName}' (#${usCard}, ${usOps} Ops) vs USSR plays '${ussrName}' (#${ussrCard}, ${ussrOps} Ops)`);
-        logs.push(`  ★ Resolution Order: 1st ${firstP} '${firstName}' (${Math.max(usOps, ussrOps)} Ops) -> 2nd ${secondP} '${secondName}' (${Math.min(usOps, ussrOps)} Ops)`);
+        logs.push(`  ★ Resolution Order: 1st ${firstP} '${firstName}' (${firstP === "US" ? usOps : ussrOps} Ops) -> 2nd ${secondP} '${secondName}' (${firstP === "US" ? ussrOps : usOps} Ops)`);
       }
     } else {
       logs.push(`${p} plays Card: ${cardName} (#${primary})`);
@@ -109,32 +133,26 @@ export function describeAction(
       } else if (resolving > 0) {
         logs.push(`${p} targets ${cName} for Event: ${engine.cardName(resolving)} (#${resolving})`);
       } else {
-        const opMode = (ctx as { op_mode?: number } | undefined)?.op_mode ?? 0;
-        if (opMode === 1) logs.push(`${p} attempts Coup in ${cName}`);
-        else if (opMode === 2) logs.push(`${p} conducts Realignment in ${cName}`);
+        const opMode = ctx?.op_mode ?? L.op_modes.INFLUENCE;
+        if (opMode === L.op_modes.COUP) logs.push(`${p} attempts Coup in ${cName}`);
+        else if (opMode === L.op_modes.REALIGN) logs.push(`${p} conducts Realignment in ${cName}`);
         else logs.push(`${p} places Influence in ${cName}`);
       }
     }
   } else if (d === DT.SELECT_PLAY_MODE) {
-    // P17: one resolution node. On an opponent card EVENT reads as event-first and any OPS_* as
-    // ops-first, which is what the retired CHOOSE_TIMING_BRANCH used to say.
-    const modes: Record<number, string> = {
-      0: "EVENT", 1: "SPACE RACE", 2: "OPERATIONS - INFLUENCE PLACEMENT",
-      3: "OPERATIONS - COUP ATTEMPT", 4: "OPERATIONS - REALIGNMENT",
-    };
-    if (isConfirmDone(action) && (ctx?.resolving_card ?? 0) === GRAIN_SALES) {
+    // P17: one resolution node (MODE_WORDS).
+    if (isConfirmDone(action) && (ctx?.resolving_card ?? 0) === C.GRAIN_SALES) {
       // The decline at Grain Sales' node: the drawn card goes back, Grain Sales' own Ops are taken.
       const drawn = ctx?.pending_op_card ?? 0;
       logs.push(`${p} returns ${engine.cardName(drawn)} (#${drawn}) to the USSR hand and conducts Grain Sales' 2 Ops`);
-    } else if (primary === 1) {
+    } else if (primary === L.resolutions.SPACE) {
       const rollInfo = secondary > 0 ? ` (Input Roll: ${secondary})` : "";
       logs.push(`${p} attempts Space Race with pending card${rollInfo}`);
     } else {
-      logs.push(`${p} selects play mode: ${modes[primary] ?? String(primary)}`);
+      logs.push(`${p} selects play mode: ${MODE_WORDS[namesByValue(L.resolutions)[primary] ?? ""] ?? String(primary)}`);
     }
   } else if (d === DT.SELECT_OP_MODE) {
-    const opModes: Record<number, string> = { 0: "INFLUENCE PLACEMENT", 1: "COUP ATTEMPT", 2: "REALIGNMENT" };
-    logs.push(`${p} chooses Op mode: ${opModes[primary] ?? String(primary)}`);
+    logs.push(`${p} chooses Op mode: ${OP_MODE_WORDS[namesByValue(L.op_modes)[primary] ?? ""] ?? String(primary)}`);
   } else if (d === DT.CHOOSE_BRANCH) {
     const card = ctx?.resolving_card ?? 0;
     const meta = isConfirmDone(action) ? null : branchMeta(card, primary, before);
@@ -321,6 +339,7 @@ function from(loc: string | undefined): string {
  */
 function eventCardChoice(engine: WasmEngine, before: GameState, after: GameState, action: Required<MicroAction>,
                          p: string, resolving: number): string {
+  const C = cardIds(engine);
   const event = engine.cardName(resolving);
   const id = action.primary_id;
   if (isConfirmDone(action) || id === 0) return `${p} chooses no (further) card (${event})`;
@@ -328,11 +347,11 @@ function eventCardChoice(engine: WasmEngine, before: GameState, after: GameState
   const opp = p === "US" ? "USSR" : "US";
   const src = before.card_locations?.[String(id)];
   const dst = after.card_locations?.[String(id)];
-  if (resolving === STAR_WARS) return `${p} takes ${card} from the discard pile and plays its event (${event})`;
-  if (resolving === SALT) return `${p} takes ${card} back into hand from the discard pile (${event})`;
-  if (resolving === UN_INTERVENTION) return `${p} plays ${card} with ${event}: its event is cancelled, ${p} uses its Ops`;
-  if (resolving === MISSILE_ENVY) return `${p} gives ${card} to the ${opp} (${event})`;
-  if (resolving === GRAIN_SALES && id === UN_INTERVENTION) {
+  if (resolving === C.STAR_WARS) return `${p} takes ${card} from the discard pile and plays its event (${event})`;
+  if (resolving === C.SALT) return `${p} takes ${card} back into hand from the discard pile (${event})`;
+  if (resolving === C.UN_INTERVENTION) return `${p} plays ${card} with ${event}: its event is cancelled, ${p} uses its Ops`;
+  if (resolving === C.MISSILE_ENVY) return `${p} gives ${card} to the ${opp} (${event})`;
+  if (resolving === C.GRAIN_SALES && id === C.UN_INTERVENTION) {
     return `${p} plays UN Intervention on the card ${event} drew: its event is cancelled, ${p} uses its Ops`;
   }
   const verb = dst === "DISCARD_PILE" ? "discards" : dst === "REMOVED_FROM_GAME" ? "removes"
@@ -351,11 +370,12 @@ function eventCardChoice(engine: WasmEngine, before: GameState, after: GameState
  * a hand too and are not the event's discards.
  */
 function randomDiscards(engine: WasmEngine, before: GameState, after: GameState, chosen: number): string[] {
+  const C = cardIds(engine);
   const lines: string[] = [];
   const c = before.decision_context;
   const ownPlay = [chosen, c?.pending_op_card, before.headline_us_card, before.headline_ussr_card,
                    after.headline_us_card, after.headline_ussr_card];
-  const events: Array<[number, string[]]> = [[FIVE_YEAR_PLAN, ["USSR"]], [TERRORISM, ["US", "USSR"]]];
+  const events: Array<[number, string[]]> = [[C.FIVE_YEAR_PLAN, ["USSR"]], [C.TERRORISM, ["US", "USSR"]]];
   for (const [event, victims] of events) {
     const played = c?.decision_type_name === "SELECT_PLAY_MODE" && c.pending_op_card === event;
     const leaves = before.card_locations?.[String(event)] !== after.card_locations?.[String(event)];
@@ -366,7 +386,7 @@ function randomDiscards(engine: WasmEngine, before: GameState, after: GameState,
       const n = after.card_locations?.[String(cid)] ?? "";
       const side = victims.find(v => o.startsWith(`HAND_${v}_`));
       if (!side || (n !== "DISCARD_PILE" && n !== "REMOVED_FROM_GAME")) continue;
-      const fires = event === FIVE_YEAR_PLAN && SIDE.get(cid) === "us" ? " — a US event, so its event fires" : "";
+      const fires = event === C.FIVE_YEAR_PLAN && SIDE.get(cid) === "us" ? " — a US event, so its event fires" : "";
       lines.push(`  ✂ ${side} discards ${engine.cardName(cid)} (#${cid}) at random (${engine.cardName(event)})${fires}`);
     }
   }
@@ -383,14 +403,15 @@ function randomDiscards(engine: WasmEngine, before: GameState, after: GameState,
  * `forced_card_player`) -- not merely Missile Envy reaching a hand, which a deal does too.
  */
 function missileEnvyExchange(engine: WasmEngine, before: GameState, after: GameState): string[] {
-  const forced = after.forced_card_id === MISSILE_ENVY && after.forced_card_player !== "NONE";
-  const already = before.forced_card_id === MISSILE_ENVY && before.forced_card_player === after.forced_card_player;
+  const C = cardIds(engine);
+  const forced = after.forced_card_id === C.MISSILE_ENVY && after.forced_card_player !== "NONE";
+  const already = before.forced_card_id === C.MISSILE_ENVY && before.forced_card_player === after.forced_card_player;
   if (!forced || already) return [];
   const giver = after.forced_card_player, taker = giver === "US" ? "USSR" : "US";
   const headlines = [before.headline_us_card, before.headline_ussr_card, after.headline_us_card, after.headline_ussr_card];
   const lines: string[] = [];
   for (let cid = 1; cid <= 110; cid++) {
-    if (cid === MISSILE_ENVY || headlines.includes(cid)) continue;
+    if (cid === C.MISSILE_ENVY || headlines.includes(cid)) continue;
     const was = before.card_locations?.[String(cid)] ?? "";
     const now = after.card_locations?.[String(cid)] ?? "";
     if (!was.startsWith(`HAND_${giver}_`) || now.startsWith(`HAND_${giver}_`)) continue;

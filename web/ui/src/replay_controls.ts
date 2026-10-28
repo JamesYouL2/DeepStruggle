@@ -112,14 +112,21 @@ export class ReplayControls {
         this.serverSelect.classList.add("hidden");
         return;
       }
-      const replays: Array<{ filename: string; game_id: string; total_steps: number; result: any }> = await res.json();
-      
+      // A file the server could not read comes with its `error` instead (web/server/replay.py).
+      const replays: Array<{ filename: string; game_id?: string; total_steps?: number; result?: { winner?: string } | null;
+                             error?: string }> = await res.json();
+
       this.serverSelect.innerHTML = "<option value=\"\">Local replays...</option>";
       replays.forEach(r => {
         const opt = document.createElement("option");
         opt.value = r.filename;
-        const winner = r.result?.winner ? ` [Winner: ${r.result.winner}]` : "";
-        opt.textContent = `${r.game_id} (${r.total_steps} steps)${winner}`;
+        if (r.error !== undefined) {
+          opt.disabled = true;
+          opt.textContent = `${r.filename} (unreadable: ${r.error})`;
+        } else {
+          const winner = r.result?.winner ? ` [Winner: ${r.result.winner}]` : "";
+          opt.textContent = `${r.game_id} (${r.total_steps} steps)${winner}`;
+        }
         this.serverSelect?.appendChild(opt);
       });
 

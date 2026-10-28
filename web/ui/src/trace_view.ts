@@ -23,24 +23,19 @@
  */
 import { ReplayStep, PolicyTrace, CriticTrace } from "./replay_controls";
 import { GameState } from "./types";
-import { ActionLayout } from "./engine/wasm_engine";
-
-let actionSpace: ActionLayout | null = null;
-
-/**
- * The flat action space's layout, from the engine running in the page (WasmEngine.layout).
- *
- * A second copy maintained here would eventually disagree with the engine, and every probability
- * would then be painted on the wrong card or country while still looking entirely plausible.
- */
-export function setActionSpace(layout: ActionLayout): void {
-  actionSpace = layout;
-}
+import { engineLayout } from "./engine/layout";
+import { escapeHtml, num } from "./html";
 
 const FLAG_CONFIRM_DONE = 0x80;
 
-/** The flat action index for a decision + primary id, or null when it does not map to one. */
+/**
+ * The flat action index for a decision + primary id, or null when it does not map to one. The
+ * layout is the engine's own (engine/layout.ts): a second copy maintained here would eventually
+ * disagree with the engine, and every probability would then be painted on the wrong card or
+ * country while still looking entirely plausible.
+ */
 function flatIndex(decisionType: number, primaryId: number, flags: number): number | null {
+  const actionSpace = engineLayout();
   if (!actionSpace) return null;
   const dt = actionSpace.decision_types;
   const off = actionSpace.offsets;
@@ -159,9 +154,9 @@ export function calibratedSeries(steps: ReplayStep[]): Array<CalibratedValue | n
 /** How a finished game came out, from the terminal display state. */
 export function resultText(state: GameState | null | undefined): string {
   if (!state) return "Game over.";
-  const u = state.terminal_utility;
+  const u = num(state.terminal_utility);
   const who = u > 0 ? "US won" : u < 0 ? "USSR won" : "drawn";
-  const vp = state.victory_points;
+  const vp = state.victory_points === undefined ? undefined : num(state.victory_points);
   return `Game over — ${who}${vp !== undefined ? ` (VP ${vp > 0 ? "+" : ""}${vp})` : ""}.`;
 }
 
@@ -201,10 +196,10 @@ export function policyChipHtml(steps: ReplayStep[], idx: number): string {
   if (pol && pol.source === "forced") {
     parts.push(`<span class="trace-chip trace-chip-forced" title="One legal action -- played by the loop, not chosen">forced</span>`);
   } else if (pol && pol.p_chosen !== undefined) {
-    const p = pol.p_chosen;
+    const p = num(pol.p_chosen);
     const offMode = pol.argmax_idx !== undefined && pol.argmax_idx !== pol.chosen_idx;
     const title = `policy probability of the move it played (T=1)`
-      + (pol.p_max !== undefined ? `; best was ${pol.p_max.toFixed(3)}` : "")
+      + (pol.p_max !== undefined ? `; best was ${num(pol.p_max).toFixed(3)}` : "")
       + (offMode ? " -- not the mode" : "");
     parts.push(
       `<span class="trace-chip" style="border-color:${probColor(p)};color:${probColor(p)}" title="${title}">`
@@ -398,6 +393,7 @@ export function svgBadge(g: Element, p: number, played: boolean, note?: string):
 export function decorateChoices(policy: PolicyTrace | undefined, state: GameState | null): void {
   clearDecorations();
   const entries = policy?.top;
+  const actionSpace = engineLayout();
   if (!entries || entries.length === 0 || !state || !actionSpace) return;
 
   const dType = state.decision_context?.decision_type;
@@ -460,18 +456,21 @@ function nextDecisionHtml(pol: PolicyTrace | undefined, index: number): string {
   if (pol.source === "scripted") {
     return `<div class="trace-empty">Next step is a scripted opening — the policy was overruled.</div>`;
   }
+  // A replay's trace is the file's: every field is checked or escaped on its way into the HTML.
   const offMode = pol.argmax_idx !== undefined && pol.argmax_idx !== pol.chosen_idx;
   const played = (pol.top || []).find(e => e.idx === pol.chosen_idx);
+  const pChosen = num(pol.p_chosen ?? 0);
+  const nLegal = pol.n_legal !== undefined ? num(pol.n_legal) : undefined;
   return `
     <div class="trace-head">
-      <span class="trace-head-item" title="probability the policy put on the move it went on to play, at temperature 1">plays <b style="color:${probColor(pol.p_chosen ?? 0)}">${(pol.p_chosen ?? 0).toFixed(5)}</b></span>
-      <span class="trace-head-item" title="probability of its most likely move">best ${(pol.p_max ?? 0).toFixed(5)}</span>
-      ${pol.entropy !== undefined ? `<span class="trace-head-item" title="entropy of the distribution, in nats">H ${pol.entropy.toFixed(3)}</span>` : ""}
-      ${pol.n_legal !== undefined ? `<span class="trace-head-item">${pol.n_legal} legal</span>` : ""}
+      <span class="trace-head-item" title="probability the policy put on the move it went on to play, at temperature 1">plays <b style="color:${probColor(pChosen)}">${pChosen.toFixed(5)}</b></span>
+      <span class="trace-head-item" title="probability of its most likely move">best ${num(pol.p_max ?? 0).toFixed(5)}</span>
+      ${pol.entropy !== undefined ? `<span class="trace-head-item" title="entropy of the distribution, in nats">H ${num(pol.entropy).toFixed(3)}</span>` : ""}
+      ${nLegal !== undefined ? `<span class="trace-head-item">${nLegal} legal</span>` : ""}
       ${offMode ? `<span class="trace-head-item trace-offmode" title="the sampler did not take the policy's own best move">off-mode</span>` : ""}
     </div>
-    <div class="trace-note">step ${index + 2}: ${played?.name ?? `#${pol.chosen_idx}`}</div>
-    <div class="trace-note trace-hint">probabilities for all ${pol.n_legal ?? "legal"} options are on the cards, buttons and map</div>`;
+    <div class="trace-note">step ${index + 2}: ${escapeHtml(played?.name ?? `#${num(pol.chosen_idx)}`)}</div>
+    <div class="trace-note trace-hint">probabilities for all ${nLegal ?? "legal"} options are on the cards, buttons and map</div>`;
 }
 
 /**

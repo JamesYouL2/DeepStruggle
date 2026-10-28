@@ -20,6 +20,9 @@ web/ui/
 ├── src/
 │   ├── main.ts                 # TSApp coordinator: boot, refresh(), links, auto-play, Action Stream
 │   ├── engine/wasm_engine.ts   # the WebAssembly engine (public/engine/, built by build_web.sh)
+│   ├── engine/layout.ts        # the engine's own enums, card ids, rollout stop/leaf names and Space
+│   │                           # Race track (ts_action_layout_json), set by every engine that loads
+│   ├── html.ts                 # escapeHtml / num: untrusted text (replays, traces, logs) into innerHTML
 │   ├── game/                   # session.ts (stepping, undo, log, export), describe.ts (log text),
 │   │                           # names.ts (flat action names), position.ts (link tokens),
 │   │                           # branches.ts (what an event's branch choice means: HUD and log),
@@ -91,23 +94,34 @@ web/ui/
    - **Hovering a country** dims the rest of the map, lights its neighbours and the lines to them,
      and opens a card (`showCountryTooltip`): region, subregions, stability, influence, what each
      side needs (`controlLine`: control with +n at n Ops; against the other side's control, break
-     with +b at 2b Ops, then control with +c at 2b+(c-b)), the coup target (2x stability) and
-     whether DEFCON closes the region (`coupBlockedAt`), the last turn's change and the
-     neighbours. Influence that changed since the last render flashes once (`.inf-changed`; not
-     on the first render, nor when more than 12 countries changed -- a new position, not a move).
+     with +b at 2b Ops, then control with +c at 2b+(c-b)), the coup target (2x stability), the
+     last turn's change and the neighbours. Influence that changed since the last render flashes
+     once (`.inf-changed`; not on the first render, nor when more than 12 countries changed -- a
+     new position, not a move).
+   - **The page restates no rule.** Which countries can be targeted -- couped, realigned, placed
+     in -- is the engine's legal mask (`legal_actions.valid_ids`), lit on the map and listed in the
+     HUD while a `POINT_NODE` decision is open; there is no "DEFCON closes this region" hint (the
+     `coupBlockedAt` hint and the badges' `NO COUPS` chip are gone: they restated the DEFCON rule
+     and were wrong under Tear Down This Wall's free coups and the US/Japan Pact and NATO).
    - Highlights valid country targets with dynamic glowing borders when a `POINT_NODE` decision is active.
    - Each region's **scoring badge** (104x34 map units, in the region's accent colour, placed
      clear of every country box and of the turn-effects strip) gives the net VP the scoring card
      would award now, each side's standing (Pres / Dom / Ctrl and its VP; Southeast Asia has VP
-     only), a `NO COUPS` chip when DEFCON closes the region (`.svg-region-defcon`; Southeast Asia
-     closes with Asia), and a **scoring-card row** (`scoringCardWhereabouts`, from
+     only) and a **scoring-card row** (`scoringCardWhereabouts`, from
      `state.card_locations`): `LIVE` while the card is in the draw deck or a hand (or headlined,
      or peeked), `OUT` once discarded or removed, `NOT YET` for a Mid War card before Mid War.
+     Every number is the engine's: `main.ts` attaches `state.region_scores`
+     (`WasmEngine.regionScores`, the wasm `ts_region_scores_json`: `Scoring::evaluate_region` and
+     `score_southeast_asia` on the state shown -- live, a replay snapshot or a player's view) and
+     `calculateRegionalScoring` only adds names, colours and positions; no badges until the engine
+     has loaded. (The TypeScript scoring it replaced had drifted: under Shuttle Diplomacy it took
+     only the battleground off the USSR, not its country nor, in Asia, Japan's adjacency.)
      Hovering a badge shows, and clicking or tapping it opens in the modal, the region's
      **scoring summary** (`region_summary.ts`, after the Playdek app's scoring screen): the US on
      the left, the USSR on the right, rows for standing, battlegrounds, other countries, countries
-     next to the enemy superpower and the total, who controls what, the card's terms and where the
-     card is.
+     next to the enemy superpower and the total (the counts the scoring counted), who controls
+     what, the country a scoring leaves out (Shuttle Diplomacy), the card's terms (its
+     `rules/cards.json` text) and where the card is.
    - A model's probability for a country (`trace_view.ts` `svgBadge`) is a small badge right of
      the rightmost influence marker, so it never covers a number; its font is sized to fit (not
      `textLength`, which leaves the measured box at the natural width). The HTML badge's CSS
@@ -205,8 +219,9 @@ web/ui/
 5. **Deluxe Space Race Track & Modal Inspector (`tracks_view.ts`)**:
    - Renders the 9-step ladder (0..8) in the top status bar with US and USSR marker tokens and turn attempt counters (`Attempts: used/max`).
      Each side's pill says what its next attempt needs (`.pill-next`, "next 2 Ops · 1–3", the
-     Playdek app's *NEXT PROJECT*). `SPACE_RACE_BOXES` follows `engine/src/space_race.cpp`: the
-     rolls alternate 1–3 / 1–4 up to box 7 (Man in Space is box 3, Man in Earth Orbit box 4).
+     Playdek app's *NEXT PROJECT*). `spaceRaceBoxes()` takes each box's Ops, roll and VP from the
+     engine (`WasmEngine.layout.space_boxes`, `SpaceRace::get_box_info`); only the boxes' names and
+     privileges are the page's words (Man in Space is box 3, Man in Earth Orbit box 4).
    - Clicking the widget opens the full modal: all 9 boxes, required Ops, success rolls, 1st/2nd VP awards, and special ongoing privileges.
 6. **Interactive Action Stream & Replay Timeline (`replay_controls.ts`, `main.ts`)**:
    - Timeline scrubber with play/pause, step forward/backward, and server replay loading.
@@ -463,7 +478,11 @@ web/ui/
      noted by `TSApp.noteSettings()` just before each move. Settings travel per step, not as a
      timeline, because undo would make a timeline name the wrong setting for steps played again.
      `events` keeps take-backs, debug overrides, a loaded position and reloads. Nothing is
-     refused for being recorded; the reader filters.
+     refused for being recorded; the reader filters. A debug override changes the position
+     outside the rules, so its event carries the exact change (`override`, `record.ts`
+     `DebugOverride`; `undone` once taken back): a reload (`replayRecord`) applies it again before
+     the step it preceded, and a game with any is never `clean`. `tools/lib/game_stats.py verify`
+     re-drives the steps only, so such a game reads as a mismatch there until it applies them too.
    - **The log** (`encodeLog`): seed, then 7 bytes a step (MicroAction, forced die, tags), zlib +
      base64url -- about 2 KB a game where the replay is megabytes. `tools/lib/game_stats.py`
      decodes the same bytes, re-drives the game in the Python engine (`init_game` + `drain_chance`

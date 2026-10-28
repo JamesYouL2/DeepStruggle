@@ -7,14 +7,14 @@
  * the local one (web/server/main.py) only lists this machine's checkpoints and replays, and the
  * same page works from GitHub Pages with models from Hugging Face or a dropped file.
  */
-import { GameState, MicroAction } from "./types";
+import { GameState, MicroAction, RegionScores } from "./types";
 import { MapView } from "./map_view";
 import { TracksView } from "./tracks_view";
 import { CardsView } from "./cards_view";
 import { ActionHud } from "./action_hud";
 import { ReplayControls, ReplayStep } from "./replay_controls";
 import { DebugPanel } from "./debug_panel";
-import { decorateChoices, policyChipHtml, renderTracePanel, renderValueRibbon, setActionSpace } from "./trace_view";
+import { decorateChoices, policyChipHtml, renderTracePanel, renderValueRibbon } from "./trace_view";
 import { AnalysisPanel, AutoSide, LiveAnalysis, ModelPick } from "./analysis_view";
 import { WasmEngine } from "./engine/wasm_engine";
 import { GameSession } from "./game/session";
@@ -36,6 +36,7 @@ import { loadStoredGame, storeGame } from "./game/saved_game";
 import { ResultDialog } from "./result_dialog";
 import { BUILD_COMMIT, BUILD_DIRTY } from "./build_info";
 import { CARDS_METADATA } from "./metadata";
+import { escapeHtml, num } from "./html";
 
 /** Pause before an auto-played move, long enough to see each one land. */
 const AUTO_PLAY_DELAY_MS = 350;
@@ -195,7 +196,6 @@ export class TSApp {
       window.alert(String(e));
       return;
     }
-    setActionSpace(this.engine.layout);
     this.runner = new RolloutRunner();
     this.session = new GameSession(this.engine);
     if (!this.urlPosition || !(await this.resumeStoredGame(this.urlPosition))) {
@@ -210,9 +210,9 @@ export class TSApp {
     }
     this.checkEngineFreshness();
     this.refresh();
-    // A replay that arrived before the engine was shown without its log, which needs the engine's
-    // names; refresh() leaves a replay alone.
-    if (this.isReplayMode) this.renderLogStream();
+    // A replay that arrived before the engine was shown without its log, its decision panel and its
+    // region scores, which need the engine; refresh() leaves a replay alone.
+    if (this.isReplayMode) this.renderState();
     const src = this.urlModel && this.urlModel !== "off" ? sourceFromParam(this.urlModel) : null;
     if (this.urlModel === "off") {
       this.analysisOff = true;
@@ -713,7 +713,7 @@ export class TSApp {
     const current = () => version === this.version && key === this.modelKey && run === this.searchRuns
       && a === this.liveAnalysis && spec === this.searchSpec;
     try {
-      const result = await this.runner.search(this.engine.snapshot(), model, key, spec, this.seedFor(version),
+      const result = await this.runner.search(this.engine.snapshot(), model, key, spec, this.seedFor(),
                                               this.session?.moves ?? []);
       if (!current()) return;
       a.search_pending = false;
@@ -731,7 +731,7 @@ export class TSApp {
   }
 
   /** The search's seed for a position: from the game's step, so a reopened link searches alike. */
-  private seedFor(_version: number): number {
+  private seedFor(): number {
     const step = this.liveState?.step_index ?? 0;
     return ((step + 1) * 1_000_003) >>> 0;
   }
@@ -977,6 +977,8 @@ export class TSApp {
     // The dice of the latest action round, while recent (the engine keeps only the last step's).
     if (this.isReplayMode) shown.recent_rolls = recentRolls(null, this.replaySteps, this.replayCurrentStep + 1, shown);
     else if (this.session) shown.recent_rolls = recentRolls(this.session.start, this.session.steps, this.session.steps.length, shown);
+    // What each scoring card would score here: the engine's scoring of the state shown.
+    shown.region_scores = this.regionScores(shown);
     this.shown = shown;
     this.tracksView.render(shown);
     this.mapView.render(shown);
@@ -986,6 +988,22 @@ export class TSApp {
     if (!this.isReplayMode) {
       this.analysisPanel.render(this.liveAnalysis, shown);
       this.analysisPanel.decorate(shown);
+    }
+  }
+
+  /** The engine's scoring of `state` for the map's region badges; null before the engine loads or
+   *  for a state it cannot read (the badges are then left out, never computed by the page). */
+  private regionScores(state: GameState): RegionScores | null {
+    if (!this.engine) return null;
+    try {
+      const scores = this.engine.regionScores(state);
+      if (scores.ignored_flags.length) {
+        console.warn("Scoring ignored effects this engine does not know:", scores.ignored_flags.join(", "));
+      }
+      return scores;
+    } catch (e) {
+      console.warn("The engine could not score this position:", e);
+      return null;
     }
   }
 
@@ -1143,15 +1161,15 @@ export class TSApp {
       let vpDeltaBadge = "";
       if (e.vp_delta !== 0) {
         const deltaClass = e.vp_delta > 0 ? "us" : "ussr";
-        vpDeltaBadge = `<span class="vp-delta-pill ${deltaClass}">${e.vp_delta > 0 ? `+${e.vp_delta}` : e.vp_delta} VP</span>`;
+        vpDeltaBadge = `<span class="vp-delta-pill ${deltaClass}">${num(e.vp_delta) > 0 ? `+${num(e.vp_delta)}` : num(e.vp_delta)} VP</span>`;
       }
 
       item.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 6px;">
           <div>
-            ${e.step === null ? "" : `<span class="log-index" style="font-size: 10px; color: var(--text-dim);">#${e.step}</span>`}
-            <span class="log-step">[T${e.turn} AR${e.ar}]</span>
-            <span class="log-player ${e.player}">${e.player}:</span>
+            ${e.step === null ? "" : `<span class="log-index" style="font-size: 10px; color: var(--text-dim);">#${num(e.step)}</span>`}
+            <span class="log-step">[T${num(e.turn)} AR${num(e.ar)}]</span>
+            <span class="log-player ${escapeHtml(e.player)}">${escapeHtml(e.player)}:</span>
             <span class="log-main-text">${linkCardRefs(e.title, cardNames)}</span>
             ${chips}
           </div>
@@ -1184,12 +1202,13 @@ export class TSApp {
     if (this.isReplayMode || this.hiddenSideToMove()) return;
     if (!this.state || !this.state.legal_actions) return;
 
-    // If active decision is POINT_NODE (5), send action
-    if (this.state.decision_context.decision_type === 5) {
+    // A country is chosen on a POINT_NODE decision, when the engine offers it.
+    const POINT_NODE = this.engine?.layout.decision_types.POINT_NODE;
+    if (POINT_NODE !== undefined && this.state.decision_context.decision_type === POINT_NODE) {
       if (this.state.legal_actions.valid_ids.includes(countryId)) {
         const roll = this.actionHud ? this.actionHud.selectedDieRoll : 0;
         this.sendAction({
-          decision_type: 5,
+          decision_type: POINT_NODE,
           primary_id: countryId,
           secondary_id: roll,
           flags: 0
@@ -1202,10 +1221,11 @@ export class TSApp {
     if (this.isReplayMode || this.hiddenSideToMove()) return;
     if (!this.state || !this.state.legal_actions) return;
 
-    if (this.state.decision_context.decision_type === 1) {
+    const SELECT_CARD = this.engine?.layout.decision_types.SELECT_CARD;
+    if (SELECT_CARD !== undefined && this.state.decision_context.decision_type === SELECT_CARD) {
       if (this.state.legal_actions.valid_ids.includes(cardId) || this.state.legal_actions.valid_ids.length === 0) {
         this.sendAction({
-          decision_type: 1,
+          decision_type: SELECT_CARD,
           primary_id: cardId,
           secondary_id: 0,
           flags: 0

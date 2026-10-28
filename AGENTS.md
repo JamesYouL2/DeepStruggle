@@ -234,7 +234,10 @@ the model's policy and critic per step when traced), playing either side to test
 dice, debug overrides, undo, export), analysing positions with a model (local checkpoint exported
 to ONNX, a Hugging Face repo, or a dropped `.onnx`; policy argmax or the rollout root), and playing
 one side against the model with the other side's private information hidden. The address bar is
-the share link. Details: [`web/ui/AGENTS.md`](web/ui/AGENTS.md). Deployment: GitHub Pages with no
+the share link. **The page restates no rule:** legal targets are the engine's mask, region scores
+are the engine's scoring (`ts_region_scores_json`), and every enum, card id and table it names
+comes from the engine's layout export (`web/ui/src/engine/layout.ts`). Details:
+[`web/ui/AGENTS.md`](web/ui/AGENTS.md). Deployment: GitHub Pages with no
 server (`.github/workflows/pages.yml`), or `deploy/web/Dockerfile` (`deploy/web/README.md`).
 
 A finished game can be submitted to the **stats database** with the player's Playdek login and

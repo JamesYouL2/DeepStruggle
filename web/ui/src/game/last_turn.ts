@@ -14,8 +14,8 @@
  */
 import { GameState, LastTurn, LastTurnCountry } from "../types";
 import { ReplayStep } from "../replay_controls";
+import { engineLayout } from "../engine/layout";
 
-const POINT_NODE = 5;
 const N_COUNTRIES = 84;
 
 interface Owned {
@@ -57,6 +57,7 @@ export function lastTurnOf(start: GameState | null, steps: ReplayStep[], side: "
   const was = before(first).countries || {};
   const now = steps[end].state_snapshot.countries || {};
   const targeted = new Set<number>();
+  const POINT_NODE = engineLayout()?.decision_types.POINT_NODE;
   for (let k = first; k <= end; k++) {
     const a = steps[k].action || {};
     if (a.decision_type === POINT_NODE && a.primary_id < N_COUNTRIES) targeted.add(a.primary_id);

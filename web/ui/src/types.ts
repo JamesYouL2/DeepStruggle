@@ -1,3 +1,7 @@
+/**
+ * The display state (bindings/state_json.cpp `display_state`, what Python's `GameState.to_dict()`
+ * returns and web/server/replay_types.py `GameStateDict` types), plus the fields the page attaches.
+ */
 export interface CountryNode {
   id: number;
   name: string;
@@ -11,8 +15,12 @@ export interface CountryNode {
 
 export interface DecisionContext {
   decision_player: 'US' | 'USSR' | 'NONE';
-  decision_type: number; // 0..6
+  /** The engine's DecisionType (its names: WasmEngine.layout.decision_types). */
+  decision_type: number;
   decision_type_name?: string;
+  /** OpMode of an operation in progress (WasmEngine.layout.op_modes), and its name. */
+  op_mode?: number;
+  op_mode_name?: string;
   pending_op_card: number;
   pending_op_card_name?: string;
   pending_ops_value: number;
@@ -108,6 +116,11 @@ export interface GameState {
   phase_name?: string;
   headline_us_card: number;
   headline_ussr_card: number;
+  /** Once both headlines are in: the card that resolves first and the one second (0 before). */
+  headline_first_card?: number;
+  headline_second_card?: number;
+  /** 0 while choosing, 1 resolving the first headline, 2 the second. */
+  headline_stage?: number;
   forced_card_player: 'US' | 'USSR' | 'NONE';
   forced_card_id: number;
   space_turns_used: { US: number; USSR: number };
@@ -154,6 +167,47 @@ export interface GameState {
   last_turn?: LastTurn | null;
   /** The latest action round's die rolls while still recent (game/rolls.ts, set by main.ts). */
   recent_rolls?: RecentRoll[];
+  /** What each scoring card would score here, by the engine (WasmEngine.regionScores, set by main.ts). */
+  region_scores?: RegionScores | null;
+}
+
+export type RegionalStatus = "NONE" | "PRESENCE" | "DOMINATION" | "CONTROL";
+
+/** One side of a region's scoring, as the engine scores it (ts_region_scores_json). */
+export interface RegionSideScore {
+  /** The side's standing; null for Southeast Asia, which has none. */
+  status: RegionalStatus | null;
+  /** The countries, battlegrounds and countries next to the enemy superpower the scoring counted. */
+  countries: number;
+  battlegrounds: number;
+  adjacent: number;
+  /** What the standing alone is worth; null where it has none (Southeast Asia). */
+  base_vp: number | null;
+  vp: number;
+  /** The countries the side controls there: `battleground` as this scoring counts it, and in
+   *  Southeast Asia the `vp` each is worth. */
+  controlled: Array<{ id: number; battleground?: boolean; vp?: number }>;
+  /** USSR only: the country a scoring left out of the count (Shuttle Diplomacy), else null. */
+  uncounted?: number | null;
+}
+
+export interface RegionScore {
+  /** The Region (Europe 0 .. South America 5), or 6 for Southeast Asia. */
+  slot: number;
+  /** The battlegrounds in the region, those a scoring counts besides the map's (Taiwan) included. */
+  battlegrounds: number;
+  /** US VP minus USSR VP. */
+  net: number;
+  /** The side the scoring would hand the game (Control of Europe), else null. */
+  wins: "US" | "USSR" | null;
+  us: RegionSideScore;
+  ussr: RegionSideScore;
+}
+
+export interface RegionScores {
+  regions: RegionScore[];
+  /** Flags in the state this engine build does not know (an older or newer replay). */
+  ignored_flags: string[];
 }
 
 /** A die roll and when it was made ("T3 AR4", "T2 Headline"). */
