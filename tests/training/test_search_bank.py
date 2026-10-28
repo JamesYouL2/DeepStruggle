@@ -329,9 +329,9 @@ def test_a_state_selector_plays_the_continuation_and_reproduces_the_policy_it_wr
         seen.append(len(states))
         return [legal_actions(s)[0] for s in states]
 
-    plain = play_safe(starts, movers, keys, first, 5)
+    plain = play_safe(starts, movers, keys, first, 5, features=0)
     # `act` is only the fallback for a choice outside a narrowed mask, so the selector decides
-    assert play_safe(starts, movers, keys, last, 5, select=select_first) == plain
+    assert play_safe(starts, movers, keys, last, 5, select=select_first, features=0) == plain
     assert seen
 
 

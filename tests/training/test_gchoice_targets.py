@@ -95,7 +95,7 @@ def test_arms_share_the_positions_and_the_own_arm_carries_no_departure(targets: 
         assert meta["searched"] == n_searched
         assert all("gchoice" not in a for a in _records(out))
         rows[form] = [a["search_pi"] for a in _records(out) if "search_pi" in a]
-        loaded = list(WarmupDataset(out).stream_policy_transitions())
+        loaded = list(WarmupDataset(out).stream_policy_transitions(features=0))
         assert len(loaded) == n_searched
         for _obs, mask, pi, _dt in loaded:
             assert np.all(pi[mask == 0] == 0)

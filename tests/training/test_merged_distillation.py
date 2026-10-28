@@ -74,14 +74,14 @@ def test_a_merged_dataset_replays_in_the_merged_view_and_not_in_e4() -> None:
         with gzip.open(path, "rt", encoding="utf-8") as f:
             games = [json.loads(line) for line in f]
         recorded = sum(1 for g in games for a in g["actions"] if a.get("search_pi"))
-        replayed = list(WarmupDataset(path).stream_policy_transitions(merged=True))
+        replayed = list(WarmupDataset(path).stream_policy_transitions(features=0, merged=True))
         assert len(replayed) == recorded, "the merged replay lost sync with the recorded games"
         for _obs, mask, target, _dt in replayed:
             assert target.sum() == pytest.approx(1.0, abs=1e-5)
             assert np.all(target[mask == 0] == 0)
         composed = sum(1 for _o, _m, t, dt in replayed if t[NODE].sum() > 0 and dt in (2, 4))
         assert composed > 0, "no composed op-choice target was recorded"
-        e4 = list(WarmupDataset(path).stream_policy_transitions(merged=False))
+        e4 = list(WarmupDataset(path).stream_policy_transitions(features=0, merged=False))
         assert len(e4) < recorded, "replaying a merged dataset in E4 should desynchronise"
 
 

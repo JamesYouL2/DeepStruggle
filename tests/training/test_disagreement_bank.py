@@ -87,7 +87,7 @@ def test_a_playout_that_has_not_ended_is_not_scored() -> None:
         return masks.argmax(axis=1)
 
     with pytest.raises(RuntimeError, match="had not ended"):
-        play_safe([st], [decider(st)], [ar_key(st)], first_legal, 0, max_steps=3)
+        play_safe([st], [decider(st)], [ar_key(st)], first_legal, 0, max_steps=3, features=0)
 
 
 def test_a_position_is_seeded_by_its_id_and_the_run_seed_alone() -> None:

@@ -73,7 +73,7 @@ def dataset_path() -> Iterator[str]:
 def test_replay_never_yields_an_illegal_demonstrated_action(dataset_path: str) -> None:
     """Every yielded transition must have a non-empty mask that permits the stored action."""
     total = 0
-    for _obs, mask, act, _win, _vp in WarmupDataset(dataset_path).stream_transitions():
+    for _obs, mask, act, _win, _vp in WarmupDataset(dataset_path).stream_transitions(features=0):
         total += 1
         assert mask.sum() > 0, "replay reached a state with no legal action (desynchronised)"
         assert 0 <= act < mask.shape[0], f"stored action {act} out of range"
@@ -85,7 +85,7 @@ def test_replay_reaches_the_end_of_each_recorded_trace(dataset_path: str) -> Non
     """A correct replay consumes whole traces; a desynchronised one is cut short."""
     with gzip.open(dataset_path, "rt", encoding="utf-8") as f:
         recorded = sum(len(json.loads(line)["actions"]) for line in f)
-    replayed = sum(1 for _ in WarmupDataset(dataset_path).stream_transitions())
+    replayed = sum(1 for _ in WarmupDataset(dataset_path).stream_transitions(features=0))
     assert replayed == recorded, (
         f"replayed {replayed} of {recorded} recorded transitions - "
         "the trace desynchronised and was truncated"
@@ -94,6 +94,6 @@ def test_replay_reaches_the_end_of_each_recorded_trace(dataset_path: str) -> Non
 
 def test_targets_stay_within_the_value_head_range(dataset_path: str) -> None:
     """win/vp targets feed Tanh and linear value heads; both must stay in [-1, 1]."""
-    for _obs, _mask, _act, win_ret, vp_ret in WarmupDataset(dataset_path).stream_transitions():
+    for _obs, _mask, _act, win_ret, vp_ret in WarmupDataset(dataset_path).stream_transitions(features=0):
         assert -1.0 <= win_ret <= 1.0
         assert -1.0 <= vp_ret <= 1.0

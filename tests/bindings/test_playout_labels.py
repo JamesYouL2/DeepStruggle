@@ -155,7 +155,7 @@ def test_the_score_agrees_with_play_safe_itself() -> None:
     starts = [pl.world(positions[p], p, w) for p in range(len(positions)) for w in range(2)]
     movers = [decider(positions[p]) for p in range(len(positions)) for _ in range(2)]
     keys = [ar_key(positions[p]) for p in range(len(positions)) for _ in range(2)]
-    scores = play_safe(starts, movers, keys, _act, seed=0)
+    scores = play_safe(starts, movers, keys, _act, seed=0, features=0)
     for p in range(len(positions)):
         assert by_id[p] == pytest.approx(scores[2 * p] + scores[2 * p + 1])
 
