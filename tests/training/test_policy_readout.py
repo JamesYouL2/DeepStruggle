@@ -16,6 +16,8 @@ import ts_engine as ts
 from ai.eval.policy_readout import TRACE_TOP_K, read_policy, unasked_readout
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from bindings.action_encoder import ActionEncoder
+from tools.lib.player_agent import NeuralAgent
+from tools.play_match import _NetworkBot
 
 
 @pytest.fixture(scope="module")
@@ -153,21 +155,25 @@ def test_a_forced_step_is_certain_and_a_scripted_one_is_not(model) -> None:
     assert "p_chosen" not in scripted and "top" not in scripted
 
 
-def test_a_bot_that_answers_without_the_network_reports_no_readout() -> None:
+def test_a_bot_that_answers_without_the_trace_reports_no_readout(model) -> None:
     """A stale readout attached to the next node would describe a different decision.
 
-    `NeuralBot.select_action` short-circuits when there is nothing to choose between, so the
-    field has to be cleared on entry rather than only on the path that fills it.
+    The match loop's network bot (`tools.play_match._NetworkBot`, which replaced NeuralBot) fills
+    `last_readout` only when tracing, so the field has to be cleared on entry rather than only
+    on the path that fills it.
     """
-    from bot.neural_bot import NeuralBot
+    state, _obs, _mask = _node()
+    bot = _NetworkBot("US", "n", NeuralAgent(model, name="n", device="cpu"), temperature=0.3)
+    bot.last_readout = {"source": "policy", "chosen_idx": 99}   # type: ignore[typeddict-item]
 
-    bot = NeuralBot("US", model_path=None, trace=True)
-    bot.last_readout = {"source": "policy", "chosen_idx": 99}   # left over from an earlier node
+    action = bot.select_from_state(state)
 
-    action = bot.select_action({}, {"valid_ids": [], "decision_type": 5})
-
-    assert action is not None and action["flags"] == 0x80      # the CONFIRM_DONE fallback
+    assert action is not None
     assert bot.last_readout is None
+
+    bot.trace = True
+    bot.select_from_state(state)
+    assert bot.last_readout is not None and bot.last_readout["source"] == "policy"
 
 
 def test_a_batch_is_refused(model) -> None:

@@ -18,7 +18,7 @@ from ai.game_length import (
     plies_in_turn,
     ply,
 )
-from tools.lib.tournament_evaluator import _drain_chance_nodes
+from bindings.settle import SettleMode, settle
 
 
 def test_numeration_matches_the_stated_scheme() -> None:
@@ -93,7 +93,7 @@ def test_ply_never_runs_backwards_across_a_real_game(seed: int) -> None:
     rng = random.Random(seed)
     state = ts_engine.GameState()
     ts_engine.Engine.init_game(state, seed)
-    _drain_chance_nodes(state)
+    settle(state, SettleMode.FORCED)
 
     previous = 0
     previous_slot = (0, 0)
@@ -123,7 +123,7 @@ def test_ply_never_runs_backwards_across_a_real_game(seed: int) -> None:
         if not legal:
             break
         ts_engine.Engine.step_flat(state, rng.choice(legal))
-        _drain_chance_nodes(state)
+        settle(state, SettleMode.FORCED)
         steps += 1
 
     # Pin that the walk actually moved, so this cannot quietly go vacuous again.

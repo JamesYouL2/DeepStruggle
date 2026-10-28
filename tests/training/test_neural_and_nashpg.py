@@ -5,12 +5,11 @@ import numpy as np
 import torch
 
 import ts_engine as ts
-from bindings import ActionEncoder, TsSingleEnv, TsVectorizedEnv
+from bindings import ActionEncoder, TsVectorizedEnv
 from ai.models import ColdWarNet, create_coldwar_net, ColdWarNetV2, create_coldwar_net_v2
 from ai.training import RolloutBuffer, BehavioralCloningTrainer, NashPGTrainer
 from tools.lib.player_agent import NeuralAgent, RandomAgent
-from tools.lib.tournament_evaluator import TournamentEvaluator
-from bot.neural_bot import NeuralBot
+from tools.lib.batch_tournament import BatchMatchRunner
 from bindings.action_encoder import ActionEncoder
 
 
@@ -272,39 +271,31 @@ class TestTrainingPipelines:
         assert "val_loss" in history[0]
 
 
-class TestNeuralBotAndArena:
-    def test_neural_bot_selection(self):
-        # The bot plays from the engine's own observation and nothing else: the Python
-        # reconstruction it used to fall back on reproduced a retired layout, and never
-        # reproduced even that exactly.
-        import base64
+class TestNeuralAgentAndArena:
+    def test_neural_agent_selection(self) -> None:
+        """A network plays from the engine's own observation, at whichever node it is asked.
+
+        This was the dict-driven NeuralBot's test; the bot is gone and networks play through
+        NeuralAgent, which reads the observation from the state itself."""
         st = ts.GameState()
         ts.Engine.init_game(st, 4242)
-        engine_obs = np.asarray(ts.extract_observation(st, ts.Player.USSR), dtype=np.float32)
-        state_dict = {
-            "turn": 1,
-            "action_round": 0,
-            "current_phase": 0,
-            "defcon": 5,
-            "victory_points": 0,
-            "countries": [{"id": 14, "us_influence": 0, "ussr_influence": 3}],
-            "observation_b64": base64.b64encode(engine_obs.tobytes()).decode("ascii"),
-        }
-        legal_actions = {
-            "decision_type": int(ts.DecisionType.POINT_NODE),
-            "valid_ids": [14, 15, 12],
-            "allow_early_stop": False,
-        }
+        agent = NeuralAgent(create_coldwar_net_v2("cpu"), name="TestNeural", device="cpu")
+        for _ in range(60):
+            if ts.Engine.is_terminal(st):
+                break
+            p = st.ctx().decision_player
+            if p == ts.Player.NONE:
+                ts.Engine.auto_advance_step(st)
+                continue
+            mask = ActionEncoder.get_legal_mask(st)
+            a = agent.select_action(st, p, temperature=1.0)
+            assert mask[a], f"illegal action {a} at {st.ctx().decision_type}"
+            assert ts.Engine.try_step_flat(st, a)
 
-        bot = NeuralBot(role="USSR", device="cpu")
-        action = bot.select_action(state_dict, legal_actions)
-        assert action is not None
-        assert action["decision_type"] == int(ts.DecisionType.POINT_NODE)
-        assert action["primary_id"] in [14, 15, 12]
-
-    def test_tournament_evaluator_matchup(self):
+    def test_batched_matchup(self) -> None:
         model = create_coldwar_net("cpu")
-        res = TournamentEvaluator.play_matchup(NeuralAgent(model, name="TestNeural"), RandomAgent(), games_per_side=2)
+        res = BatchMatchRunner.play_parallel_matchup(NeuralAgent(model, name="TestNeural"), RandomAgent(),
+                                                     games_per_side=2, device="cpu")
         assert res["total_games"] == 4
         assert res["a_wins"] + res["b_wins"] + res["draws"] == 4
 

@@ -232,7 +232,7 @@ def test_full_game_invariant_audit(seed: int):
 
 def test_canonical_game_ending_reasons():
     """Validates that classify_game_ending_reason cleanly distinguishes 20 VP from DEFCON 1 and outputs only canonical categories."""
-    from tools.lib.tournament_evaluator import classify_game_ending_reason
+    from tools.lib.game_ending import classify_game_ending_reason
 
     st = ts_engine.GameState()
     ts_engine.Engine.init_game(st, 42)

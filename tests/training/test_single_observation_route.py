@@ -8,7 +8,7 @@ while the same checkpoint played to turn 10 through the engine extractor.
 The network client is gone with the server-side workbench -- the browser workbench runs the
 WebAssembly build of the engine and reads Observation::extract itself (tests/web/
 test_wasm_engine.py holds it to the native one bit for bit). What remains to pin is that the
-dict-driven NeuralBot still refuses to play without the engine's observation.
+network bot of the match loop refuses to play without the engine's own state.
 """
 
 import numpy as np
@@ -16,7 +16,9 @@ import pytest
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
-from bot.neural_bot import NeuralBot
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
+from tools.lib.player_agent import NeuralAgent
+from tools.play_match import _NetworkBot, _action_dict
 
 
 def _mid_game_state(seed: int = 4242, plies: int = 40) -> ts.GameState:
@@ -38,19 +40,22 @@ def _decider(st: ts.GameState) -> ts.Player:
 
 
 
-def test_the_neural_bot_refuses_to_play_without_the_engines_observation() -> None:
+def test_the_network_bot_refuses_to_play_without_the_engines_state() -> None:
     """The Python reconstruction is gone, and its absence has to be loud.
 
     It duplicated Observation::extract across ~4300 fields, never reproduced it exactly -- games
     played through it ended on turn 1 where the same checkpoint reached turn 10 through the
-    engine extractor -- and reproduced a layout no model reads any more. A duplicate encoder that
-    can only be wrong is worse than no encoder, so the bot now says so instead of playing badly.
+    engine extractor -- and reproduced a layout no model reads any more. NeuralBot, which held
+    it, is deleted; the match loop's network bot plays from the engine GameState only and says
+    so when handed the JSON view instead.
     """
     st = _mid_game_state()
     decider = _decider(st)
     role = "US" if decider == ts.Player.US else "USSR"
 
-    bot = NeuralBot(role, model_path=None, device="cpu")
+    bot = _NetworkBot(role, "n", NeuralAgent(create_coldwar_net_v2("cpu"), name="n", device="cpu"),
+                      temperature=0.1)
+    assert bot.wants_game_state
     mask = ActionEncoder.get_legal_mask(st)
     legal_actions = {
         "valid_ids": [int(i) for i in np.flatnonzero(mask)],
@@ -58,5 +63,8 @@ def test_the_neural_bot_refuses_to_play_without_the_engines_observation() -> Non
         "allow_early_stop": False,
         "decision_player": role,
     }
-    with pytest.raises(ValueError, match="observation_b64"):
+    with pytest.raises(NotImplementedError, match="GameState"):
         bot.select_action({"countries": {}}, legal_actions)
+    # and from the state it plays a legal move
+    chosen = bot.select_from_state(st)
+    assert any(chosen == _action_dict(st, int(i)) for i in np.flatnonzero(mask)), chosen

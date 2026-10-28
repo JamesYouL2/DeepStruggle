@@ -1,7 +1,8 @@
 """The batched evaluation path must agree with the sequential one, and only be faster.
 
 The trainer used to evaluate snapshots with TournamentEvaluator.play_matchup, one game and
-one decision at a time. That was 30x slower than the vectorized path the tournament CLI
+one decision at a time (deleted since; `_play_sequentially` below is that loop, kept as the
+reference the batched runner is held to). That was 30x slower than the vectorized path the tournament CLI
 uses, and evaluation cost grows with the opponent list, so a 3-hour run spent 37-61% of its
 wall clock evaluating and one A/B arm was starved down to 473 iterations against 1024.
 
@@ -11,22 +12,64 @@ The batched runner resolves chance nodes inside the engine. Before the fix the t
 disagreed by more than 25 points on the same deterministic matchup.
 """
 
-from typing import Mapping
+from typing import Dict, List, Mapping
 
 import numpy as np
 import pytest
+import torch
 import ts_engine as ts
 
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
+from bindings.settle import SettleMode, settle
 from tools.lib.batch_tournament import BatchMatchRunner
-from tools.lib.player_agent import HeuristicAgent, NeuralAgent
-from tools.lib.tournament_evaluator import TournamentEvaluator, _drain_chance_nodes
+from tools.lib.player_agent import HeuristicAgent, NeuralAgent, PlayerAgent
+
+
+def _drain_chance_nodes(state: ts.GameState) -> None:
+    """Settle what nobody decides -- chance nodes and forced moves -- as the batch runner does."""
+    settle(state, SettleMode.FORCED)
 
 
 def _agent(seed: int) -> NeuralAgent:
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-    import torch
     torch.manual_seed(seed)
     return NeuralAgent(model=create_coldwar_net_v2("cpu"), name=f"n{seed}", device="cpu")
+
+
+def _play_sequentially(agent_a: PlayerAgent, agent_b: PlayerAgent, games_per_side: int,
+                       base_seed: int = 10000, max_steps: int = 2000) -> Dict[str, int]:
+    """One game and one decision at a time, greedy: the deleted TournamentEvaluator's loop.
+
+    Games k and k + games_per_side share a deal with the sides swapped, A as the USSR in the
+    first half -- the pairing BatchMatchRunner uses (one chunk: seed = base_seed + k).
+    """
+    out = {"a_wins": 0, "b_wins": 0, "draws": 0, "a_wins_as_us": 0, "a_losses_as_us": 0,
+           "a_wins_as_ussr": 0, "a_losses_as_ussr": 0}
+    for g in range(2 * games_per_side):
+        a_is_ussr = g < games_per_side
+        st = ts.GameState()
+        ts.Engine.init_game(st, base_seed + g % games_per_side)
+        _drain_chance_nodes(st)
+        for _ in range(max_steps):
+            if ts.Engine.is_terminal(st):
+                break
+            p = st.ctx().decision_player
+            assert p != ts.Player.NONE, "a chance node reached an agent"
+            agent = agent_a if (p == ts.Player.USSR) == a_is_ussr else agent_b
+            assert ts.Engine.try_step_flat(st, agent.select_action(st, p, temperature=0.0))
+            _drain_chance_nodes(st)
+        assert ts.Engine.is_terminal(st), f"game {g} did not finish in {max_steps} steps"
+        u = float(ts.Engine.get_terminal_utility(st))
+        side = "ussr" if a_is_ussr else "us"
+        a_won = (u > 0) != a_is_ussr and u != 0
+        if u == 0:
+            out["draws"] += 1
+        elif a_won:
+            out["a_wins"] += 1
+            out[f"a_wins_as_{side}"] += 1
+        else:
+            out["b_wins"] += 1
+            out[f"a_losses_as_{side}"] += 1
+    return out
 
 
 def test_sequential_path_never_asks_a_policy_to_roll_dice() -> None:
@@ -52,16 +95,16 @@ def test_sequential_path_never_asks_a_policy_to_roll_dice() -> None:
 
 
 @pytest.mark.parametrize("opponent_is_neural", [True, False])
-def test_batched_and_sequential_agree_exactly_when_deterministic(opponent_is_neural) -> None:
+def test_batched_and_sequential_agree_exactly_when_deterministic(opponent_is_neural: bool) -> None:
     """Same seeds, same greedy policy: the two paths must produce identical results."""
     a = _agent(1)
     b = _agent(2) if opponent_is_neural else HeuristicAgent()
 
-    seq = TournamentEvaluator.play_matchup(a, b, games_per_side=6, temperature=0.0)
+    seq = _play_sequentially(a, b, games_per_side=6)
     bat: Mapping[str, object] = BatchMatchRunner.play_parallel_matchup(
         a, b, games_per_side=6, device="cpu", temperature=0.0)
 
-    for field in ["a_wins", "b_wins", "draws", "win_rate_a",
+    for field in ["a_wins", "b_wins", "draws",
                   "a_wins_as_us", "a_losses_as_us",
                   "a_wins_as_ussr", "a_losses_as_ussr"]:
         assert seq[field] == pytest.approx(bat[field]), (
@@ -94,12 +137,9 @@ def test_matchup_can_resume_from_supplied_positions() -> None:
     Each supplied position is played twice with the sides swapped, from one pre-deal state,
     so both copies draw the same cards and deal luck cancels between the halves.
     """
-    import ts_engine as ts
-    from tools.lib.batch_tournament import BatchMatchRunner
-
     a, b = _agent(11), _agent(12)
 
-    positions = []
+    positions: List[ts.GameState] = []
     for seed in range(5):
         st = ts.GameState()
         ts.Engine.init_game(st, 7000 + seed)
@@ -120,10 +160,6 @@ def test_matchup_can_resume_from_supplied_positions() -> None:
 
 def test_supplied_positions_actually_change_the_games() -> None:
     """A mid-game start must not silently fall back to dealing fresh openings."""
-    import numpy as np
-    import ts_engine as ts
-    from tools.lib.batch_tournament import BatchMatchRunner
-
     a, b = _agent(13), _agent(14)
 
     # Advance a few games well past the opening, then resume from the start of the last turn each

@@ -18,7 +18,7 @@ import ts_engine as ts
 from ai.eval.positions import PLAY_MODE_ACTION, PositionBuilder
 from ai.eval.safety import classify_legal_actions
 from bindings.action_encoder import ActionEncoder
-from tools.lib.tournament_evaluator import classify_game_ending_reason
+from tools.lib.game_ending import classify_game_ending_reason
 
 WEST_GERMANY, TURKEY, CUBA = 7, 12, 71
 MARSHALL_PLAN = 23

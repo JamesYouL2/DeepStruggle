@@ -10,7 +10,7 @@ without the flag that share was being counted as ordinary 20 VP wins.
 import pytest
 import ts_engine
 
-from tools.lib.tournament_evaluator import classify_game_ending_reason
+from tools.lib.game_ending import classify_game_ending_reason
 
 EUROPE_COUNTRIES = [
     cid for cid in range(84)
