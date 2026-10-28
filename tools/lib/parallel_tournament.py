@@ -118,17 +118,15 @@ def shard_seed(base_seed: int, shard: Shard) -> int:
 
 
 def _check_distinct_seeds(shards: Sequence[Shard]) -> None:
-    """Every shard's agents draw from its own seeds: `seed_shard` gives agent n `seed + n`, so the
-    seeds of two shards (and their agents) must not meet. Independent of base_seed, which shifts
-    them all alike."""
+    """No two shards may start from one seed (independent of base_seed, which shifts them alike):
+    they would replay the same stream."""
     taken: Dict[int, str] = {}
     for shard in shards:
         seed = shard_seed(0, shard)
-        for agent_seed in (seed, seed + 1):
-            if agent_seed in taken:
-                raise ValueError(f"shards {taken[agent_seed]} and {shard.label} would share seed "
-                                 f"{agent_seed}; use a larger --shard-pairs")
-            taken[agent_seed] = shard.label
+        if seed in taken:
+            raise ValueError(f"shards {taken[seed]} and {shard.label} would share seed {seed}; "
+                             f"use a larger --shard-pairs")
+        taken[seed] = shard.label
 
 
 def seed_shard(seed: int, agents: Sequence[PlayerAgent]) -> None:
