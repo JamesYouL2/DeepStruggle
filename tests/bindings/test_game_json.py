@@ -65,8 +65,8 @@ def test_a_forced_die_survives_the_round_trip() -> None:
         if not len(legal):
             break
         ts.Engine.step_flat(s, int(legal[0]))
-    if s.ctx().decision_type != ts.DecisionType.ROLL_DIE:
-        pytest.skip("no die roll reached with the scripted opening")
+    assert s.ctx().decision_type == ts.DecisionType.ROLL_DIE, (
+        "the scripted opening (seed 4242, lowest legal action) no longer reaches a die roll")
 
     recorded = {"decision_type": int(ts.DecisionType.ROLL_DIE), "primary_id": 3,
                 "secondary_id": 0, "flags": 0}

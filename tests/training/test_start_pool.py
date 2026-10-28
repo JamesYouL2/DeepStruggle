@@ -11,11 +11,13 @@ untouched from turn 8 on. Two properties have to hold or the idea backfires:
 
 import collections
 
-import pytest
+import torch
 import ts_engine as ts
 
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.training.start_pool import (DEFAULT_TURN_MIX, PooledPosition,
                                     StartPositionPool)
+from bindings.ts_env import TsVectorizedEnv
 
 
 def _position(turn: int, generation: int = 1) -> PooledPosition:
@@ -88,9 +90,6 @@ def test_harvest_stores_pre_deal_positions() -> None:
     Capturing after the deal would fix the hand, and every rollout from that position
     would replay the same draw.
     """
-    torch = pytest.importorskip("torch")
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-
     pool = StartPositionPool(turns=(2, 3), capacity_per_turn=32, seed=5)
     stats = pool.harvest(create_coldwar_net_v2("cpu"), num_envs=16, num_episodes=12)
 
@@ -106,8 +105,6 @@ def test_harvest_stores_pre_deal_positions() -> None:
 
 def test_env_starts_from_an_injected_position() -> None:
     """The start_provider hook must actually place the env in the pooled position."""
-    from bindings.ts_env import TsVectorizedEnv
-
     pool = StartPositionPool(turns=(6,), seed=9)
     pool._admit(_position(6))
 

@@ -9,11 +9,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
+import ts_engine as ts
 
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
+from ai.training.critic_tracker import CriticTracker
+from ai.training.nash_pg import NashPGTrainer
 from ai.training.opponent_pool import OpponentPool
 from ai.training.rollout_buffer import RolloutBuffer
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import TsVectorizedEnv
 
 
 def _buf(**kw) -> RolloutBuffer:
@@ -114,9 +119,6 @@ def test_rejects_empty_pool_and_bad_fraction() -> None:
 
 
 def _trainer(num_envs: int = 16, pool=None):
-    from ai.training.nash_pg import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
-
     env = TsVectorizedEnv(num_envs=num_envs, base_seed=1234)
     tr = NashPGTrainer(active_net=create_coldwar_net_v2(), env=env, num_envs=num_envs,
                        buffer_size=8, device="cpu")
@@ -143,11 +145,6 @@ def test_rollout_with_a_pool_marks_only_the_learner_side() -> None:
 
 def test_opponent_actions_come_from_the_opponent_network() -> None:
     """Route-checking by construction: an opponent that can only pick one action must show up."""
-    import ts_engine as ts
-
-    from bindings.ts_env import TsVectorizedEnv
-    from ai.training.nash_pg import NashPGTrainer
-
     class OnlyFirstLegal(torch.nn.Module):
         """Stands in for a frozen policy: always the lowest-indexed legal action."""
 
@@ -173,8 +170,9 @@ def test_opponent_actions_come_from_the_opponent_network() -> None:
     learner = tr.buffer.learner.bool()
     opp_actions = tr.buffer.actions[~learner]
     opp_masks = tr.buffer.masks.reshape(-1, ActionEncoder.FLAT_ACTION_SIZE)[(~learner).reshape(-1)]
-    if opp_actions.numel() == 0:
-        pytest.skip("no opponent transitions in this rollout")
+    assert opp_actions.numel() > 0, (
+        "the rollout (seeded, every env pooled, learner locked to one side) recorded no "
+        "opponent transitions, so there is nothing to check the route on")
     expected = torch.argmax(opp_masks.float(), dim=-1)
     assert torch.equal(opp_actions.reshape(-1), expected), (
         "opponent transitions did not come from the opponent network")
@@ -182,8 +180,6 @@ def test_opponent_actions_come_from_the_opponent_network() -> None:
 
 def test_masked_policy_loss_ignores_opponent_transitions() -> None:
     """The gradient must be identical to training on the learner's subset alone."""
-    import torch.nn.functional as F
-
     torch.manual_seed(0)
     net = torch.nn.Linear(6, 5)
     obs = torch.randn(20, 6)
@@ -218,8 +214,6 @@ def test_env_mask_array_is_a_reused_buffer() -> None:
     this never bites; on CPU it is a no-op, and the buffer then stores the post-step observation
     against the pre-step action.
     """
-    from bindings.ts_env import TsVectorizedEnv
-
     env = TsVectorizedEnv(num_envs=4, base_seed=7)
     _, masks, _ = env.reset_all()
     acts = np.array([int(np.flatnonzero(np.asarray(masks)[i])[0]) for i in range(4)],
@@ -337,8 +331,6 @@ def test_episode_stats_exclude_pool_games() -> None:
 def test_critic_tracker_only_resolves_selfplay_envs() -> None:
     """Otherwise critic/base_rate reports the pool's difficulty rather than the policy's own
     balance, and AUC is measured against the wrong baseline."""
-    from ai.training.critic_tracker import CriticTracker
-
     tr = _trainer(num_envs=8)
     tr.opponent_pool = OpponentPool([create_coldwar_net_v2()], num_envs=8, frac=0.5, seed=3)
     seen = []

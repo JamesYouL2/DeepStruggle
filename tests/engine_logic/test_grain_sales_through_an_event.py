@@ -13,7 +13,6 @@ card", and there was no drawn card -- so the 2 Influence became a play mode for 
 """
 from typing import List, Optional, Tuple
 
-import pytest
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 
@@ -85,7 +84,8 @@ def _grain_sales_through_five_year_plan(ussr_extra: List[int]) -> ts.GameState:
             state.rng_state = probe.rng_state
             break
     else:
-        pytest.skip("no seed made Five Year Plan discard Grain Sales")
+        raise AssertionError("no seed of 4000 made Five Year Plan discard Grain Sales, so the "
+                             "position under test was never built")
     ts.Engine.step_flat(state, PLAY_EVENT)
     return state
 

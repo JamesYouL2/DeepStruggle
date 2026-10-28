@@ -84,8 +84,7 @@ def test_highest_roll_that_advances(box: int, min_ops: int, max_roll: int,
 @pytest.mark.parametrize("box,min_ops,max_roll,vp_first,vp_second", TRACK)
 def test_lowest_roll_that_fails(box: int, min_ops: int, max_roll: int,
                                 vp_first: int, vp_second: int) -> None:
-    if max_roll + 1 > 6:
-        pytest.skip("box 8 succeeds on 1-2, and 3 through 6 all fail the same way")
+    assert max_roll + 1 <= 6, "every box of the table has a roll that fails"
     state = _at_box(box - 1, 0, _card_with_ops(min_ops))
     _race(state, _card_with_ops(min_ops), max_roll + 1)
     assert int(state.us_space_track) == box - 1, (
@@ -107,9 +106,8 @@ def test_second_player_award(box: int, min_ops: int, max_roll: int,
 @pytest.mark.parametrize("box,min_ops,max_roll,vp_first,vp_second", TRACK)
 def test_ops_requirement(box: int, min_ops: int, max_roll: int,
                          vp_first: int, vp_second: int) -> None:
-    """One Ops short of the requirement, the Space Race is not on offer at all."""
-    if min_ops <= 2:
-        pytest.skip("no legal card has fewer than 2 Ops")
+    """One Ops short of the requirement, the Space Race is not on offer at all -- below box 4
+    that is a 1 Ops card, which can never be spaced."""
     short = _card_with_ops(min_ops - 1)
     state = _at_box(box - 1, 0, short)
     ts.Engine.step(state, ts.MicroAction(ts.DecisionType.SELECT_CARD, short, 0, 0))

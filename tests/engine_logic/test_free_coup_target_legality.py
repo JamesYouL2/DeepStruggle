@@ -28,7 +28,6 @@ from __future__ import annotations
 from typing import List
 
 import numpy as np
-import pytest
 
 import ts_engine as ts
 
@@ -120,8 +119,9 @@ def test_che_free_coup_cannot_target_a_country_the_opponent_is_absent_from() -> 
     assert not _can_coup(state, ts.Player.USSR, cid)
 
     ts.CardHandlers.trigger_event(state, CHE, ts.Player.USSR)
-    if state.ctx().decision_type != ts.DecisionType.POINT_NODE:
-        pytest.skip("Che did not open a target node in this configuration")
+    assert state.ctx().decision_type == ts.DecisionType.POINT_NODE, (
+        f"Che opened no target node (decision {state.ctx().decision_type}), so the filter is "
+        f"not exercised")
 
     offered = _offered_country_targets(state)
     assert cid not in offered, (

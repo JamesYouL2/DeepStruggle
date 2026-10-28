@@ -16,6 +16,7 @@ import pytest
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
+from bot.neural_bot import NeuralBot
 
 
 def _mid_game_state(seed: int = 4242, plies: int = 40) -> ts.GameState:
@@ -45,9 +46,6 @@ def test_the_neural_bot_refuses_to_play_without_the_engines_observation() -> Non
     engine extractor -- and reproduced a layout no model reads any more. A duplicate encoder that
     can only be wrong is worse than no encoder, so the bot now says so instead of playing badly.
     """
-    pytest.importorskip("torch")
-    from bot.neural_bot import NeuralBot
-
     st = _mid_game_state()
     decider = _decider(st)
     role = "US" if decider == ts.Player.US else "USSR"

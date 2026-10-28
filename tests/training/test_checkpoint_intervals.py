@@ -10,6 +10,8 @@ from typing import List, Optional
 
 import pytest
 
+from ai.training.train import build_parser
+
 
 def tagged_resume_steps(snapshot_steps: List[int], resume_every: int,
                         enabled: bool = True) -> List[int]:
@@ -65,14 +67,5 @@ def test_spacing_holds_for_any_interval(every: int) -> None:
 
 def test_the_cli_default_is_the_coarse_one() -> None:
     """Guards against the default silently reverting to 'every snapshot'."""
-    import ai.training.train as train_mod
-
-    parser = None
-    for name in ("build_parser", "make_parser", "get_parser"):
-        if hasattr(train_mod, name):
-            parser = getattr(train_mod, name)()
-            break
-    if parser is None:
-        pytest.skip("train.py does not expose its parser as a function")
-    defaults = {a.dest: a.default for a in parser._actions}
+    defaults = {a.dest: a.default for a in build_parser()._actions}
     assert defaults.get("resume_every_steps") == 40_000_000

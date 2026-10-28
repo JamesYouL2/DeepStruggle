@@ -6,21 +6,22 @@ assumed -- both here and at every call site, via `verify()`.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
+from typing import Any, Dict
 
 import pytest
 import ts_engine as ts
 
 from ai.eval.replay_critic import control, load_actions, replay_to, verify
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from tools.lib.self_play import generate_self_play_replay
 
 
 @pytest.fixture(scope="module")
-def replay_path(tmp_path_factory) -> str:
+def replay_path(tmp_path_factory: pytest.TempPathFactory) -> str:
     """A real replay, generated here -- data/replays is git-ignored and may hold nothing."""
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-
     model = create_coldwar_net_v2()
     out = str(tmp_path_factory.mktemp("replays") / "critic_probe.tslog.json")
     generate_self_play_replay(model=model, seed=4321, temperature=1.0,
@@ -59,13 +60,29 @@ def test_replay_to_is_the_state_after_that_step(replay_path: str) -> None:
 
 
 def test_verify_catches_a_wrong_state(replay_path: str) -> None:
-    """A checker that never fails is not a checker."""
+    """A checker that never fails is not a checker.
+
+    Each field it compares is perturbed by one in an otherwise matching record, so every check
+    is exercised whatever game the untrained generator happened to play. (It used to compare
+    the first state against the last and skip when the two agreed.)
+    """
     seed, steps = load_actions(replay_path)
-    late = steps[-1]
-    early_state = replay_to(seed, steps, steps[0]["step_index"])
-    if verify(early_state, late) is None:
-        pytest.skip("this game's first and last states are indistinguishable on these fields")
-    assert verify(early_state, late) is not None
+    first = steps[0]
+    state = replay_to(seed, steps, first["step_index"])
+    assert verify(state, first) is None, "precondition: the matching record verifies"
+
+    def perturbed(field: str) -> Dict[str, Any]:
+        rec = copy.deepcopy(first)
+        rec["snapshot"][field] = int(rec["snapshot"][field]) + 1
+        return rec
+
+    for field in ("victory_points", "turn", "defcon"):
+        assert verify(state, perturbed(field)) is not None, f"a wrong {field} went unnoticed"
+
+    rec = copy.deepcopy(first)
+    name, country = next(iter(rec["snapshot"]["countries"].items()))
+    country["us_influence"] = int(country.get("us_influence", 0)) + 1
+    assert verify(state, rec) is not None, f"wrong influence in {name} went unnoticed"
 
 
 def test_control_reads_the_stability_threshold() -> None:

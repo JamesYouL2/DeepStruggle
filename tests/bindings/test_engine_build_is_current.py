@@ -59,8 +59,9 @@ def test_extension_is_not_older_than_its_sources() -> None:
     """A binary older than the sources means someone forgot to rebuild, or it is a stray."""
     so_path = pathlib.Path(ts.__file__)
     newest, newest_mtime = _newest_source()
-    if newest is None:
-        pytest.skip("no engine sources found next to the tests")
+    assert newest is not None, (
+        f"no engine sources under {REPO} ({', '.join(SOURCE_DIRS)}), so there is nothing to "
+        f"compare the extension against -- the test has lost track of the source tree")
 
     so_mtime = so_path.stat().st_mtime
     assert so_mtime >= newest_mtime, (

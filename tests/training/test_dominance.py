@@ -6,7 +6,6 @@ dominance argument genuinely fails for it, and a future edit that quietly drops 
 turn a defensible metric into a misleading one.
 """
 
-import pytest
 import ts_engine as ts
 
 from ai.eval.dominance import (CHINA_CARD, FIVE_YEAR_PLAN, discard_dominance_pairs,
@@ -74,8 +73,7 @@ def test_one_time_events_are_excluded_from_the_dominant_side() -> None:
     st = _state()
     starred = _find("USSR", 2, one_time=True)
     own = _find("US", 2)
-    if starred is None or own is None:
-        pytest.skip("no 2-ops starred USSR card in this deck")
+    assert starred is not None and own is not None, "the deck has 2 Ops starred USSR and US cards"
     pairs = discard_dominance_pairs(st, ts.Player.US, {10: starred, 20: own})
     assert not any(p[0] == 10 for p in pairs)
 
@@ -83,8 +81,7 @@ def test_one_time_events_are_excluded_from_the_dominant_side() -> None:
 def test_china_card_is_never_in_a_pair() -> None:
     st = _state()
     other = _find("USSR", int(_card(CHINA_CARD)["ops"]))
-    if other is None:
-        pytest.skip("no USSR card at the China Card's ops value")
+    assert other is not None, "the deck has a USSR card at the China Card's 4 Ops"
     pairs = discard_dominance_pairs(st, ts.Player.US, {10: other, 20: CHINA_CARD})
     assert all(CHINA_CARD not in (p[0], p[1]) for p in pairs)
 

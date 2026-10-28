@@ -9,19 +9,21 @@ another, and searching the same position alone or in a crowd gives the same resu
 
 from __future__ import annotations
 
+from typing import List
+
 import numpy as np
 import pytest
 import torch
-
 import ts_engine as ts
+
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from ai.search.pimcts import acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
 
-pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
 
-def _states(n: int, plies: int = 40, seed0: int = 5150):
+def _states(n: int, plies: int = 40, seed0: int = 5150) -> List[ts.GameState]:
     out = []
     for i in range(n):
         s = ts.GameState()
@@ -42,16 +44,23 @@ def _states(n: int, plies: int = 40, seed0: int = 5150):
     return out
 
 
-@pytest.fixture(scope="module")
-def model():
-    """A freshly initialised network, NOT a checkpoint.
+@pytest.fixture(scope="module", params=[
+    "cpu",
+    pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")),
+])
+def model(request: pytest.FixtureRequest) -> torch.nn.Module:
+    """A freshly initialised network, NOT a checkpoint, on each device.
 
     `data/` is git-ignored, so no test may assume it holds anything -- and picking an arbitrary
     checkpoint from it also picks up retired observation layouts, which the width guard correctly
     refuses. These tests are about search mechanics, which random weights exercise just as well.
+
+    The search runs on either device (only `cuda_graphs` is CUDA-specific, and no test here sets
+    it), so the whole file runs on the CPU too; it used to sit behind a module-level GPU skip,
+    which on a machine without one checked nothing at all -- including the engine-only test at
+    the end, which needs no model.
     """
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-    return create_coldwar_net_v2(device="cuda", graph_layers=0).eval()
+    return create_coldwar_net_v2(device=request.param, graph_layers=0).eval()
 
 
 def test_returns_a_legal_action_for_every_position(model):
@@ -118,8 +127,8 @@ def test_terminal_positions_are_handled_without_evaluation(model):
         if not legal:
             break
         ts.Engine.step_flat(s, int(legal[0]))
-    if not ts.Engine.is_terminal(s):
-        pytest.skip("could not reach a terminal state with the scripted opening")
+    assert ts.Engine.is_terminal(s), (
+        "the scripted walk (seed 777, lowest legal action) no longer reaches the end of the game")
     actions, visits = BatchedMCTS(model, config=BatchedMCTSConfig(simulations=4)).run([s])[0]
     assert actions == [] and visits.size == 0
 

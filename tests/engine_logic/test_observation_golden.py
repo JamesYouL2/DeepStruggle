@@ -24,7 +24,6 @@ import os
 from typing import List, Tuple
 
 import numpy as np
-import pytest
 
 import ts_engine as ts
 
@@ -79,8 +78,6 @@ def _write_golden() -> None:
           f"{len(actions)} decisions over {_GAMES} games")
 
 
-@pytest.mark.skipif(not os.path.exists(GOLDEN),
-                    reason="golden not yet generated; run this file as a script")
 def test_observation_is_unchanged() -> None:
     """Every legacy observation must match the golden file exactly."""
     golden = np.load(GOLDEN)
@@ -105,7 +102,6 @@ def test_observation_is_unchanged() -> None:
             f"Legacy observations must be bit-identical.")
 
 
-@pytest.mark.skipif(not os.path.exists(GOLDEN), reason="golden not yet generated")
 def test_golden_covers_both_perspectives_and_real_hands() -> None:
     """A golden of empty positions would pass any change; check it has content to protect."""
     golden = np.load(GOLDEN)

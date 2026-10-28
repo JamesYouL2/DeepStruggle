@@ -13,14 +13,15 @@ CMC_SUICIDE_LOSS records it at the point of resolution, which is the only place 
 """
 
 import numpy as np
-import pytest
 import ts_engine as ts
 
+from ai.eval.positions import PLAY_MODE_ACTION, PositionBuilder
 from ai.eval.safety import classify_legal_actions
 from bindings.action_encoder import ActionEncoder
 from tools.lib.tournament_evaluator import classify_game_ending_reason
 
-WEST_GERMANY, TURKEY, CUBA = 13, 17, 71
+WEST_GERMANY, TURKEY, CUBA = 7, 12, 71
+MARSHALL_PLAN = 23
 
 
 def _us_to_move_under_ussr_cmc() -> ts.GameState:
@@ -40,43 +41,34 @@ def _us_to_move_under_ussr_cmc() -> ts.GameState:
 
 
 def test_cmc_coup_ends_the_game_without_touching_defcon() -> None:
-    """Drive a real coup through the engine while CMC is active against the US."""
-    from ai.eval.positions import PositionBuilder, PLAY_MODE_ACTION
+    """Drive a real coup through the engine while CMC is active against the US.
 
+    The walk is spelled out step by step. It used to be a loop taking the lowest legal action
+    with a preference for COUP, written before P17 moved the Ops modes onto the play-mode node:
+    "ops" then meant Influence, no coup was ever offered, and the test skipped every time.
+    """
     st = PositionBuilder(
-        hand=[23, 34], side=ts.Player.US, turn=6, defcon=4,
+        hand=[MARSHALL_PLAN, 34], side=ts.Player.US, turn=6, defcon=4,
         flags=(ts.EffectBits.CMC_ACTIVE_USSR,),
         clear_influence=((WEST_GERMANY, ts.Player.US), (TURKEY, ts.Player.US)),
         influence=((CUBA, ts.Player.USSR, 3),),
     ).build()
+    assert int(st.get_country(WEST_GERMANY).us_influence) == 0
+    assert int(st.get_country(TURKEY).us_influence) == 0, "nothing to cancel the crisis with"
 
-    ts.Engine.step_flat(st, 23 - 1)                       # select Marshall Plan
-    ts.Engine.step_flat(st, PLAY_MODE_ACTION["ops"])      # play it for Operations
+    ts.Engine.step_flat(st, MARSHALL_PLAN - 1)                # select Marshall Plan
+    ts.Engine.step_flat(st, PLAY_MODE_ACTION["ops_coup"])     # play it to coup
+    assert st.ctx().decision_type == ts.DecisionType.POINT_NODE
+    assert st.ctx().decision_player == ts.Player.US
+    target = ActionEncoder.NODE_OFFSET + CUBA
+    assert ActionEncoder.get_legal_mask(st)[target], "Cuba holds USSR influence, so it is a target"
+    ts.Engine.step_flat(st, target)
+    while (not ts.Engine.is_terminal(st)
+           and st.ctx().decision_player == ts.Player.NONE
+           and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
+        ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
 
-    # Walk to the coup: choose COUP at the op-mode node, then a battleground target.
-    for _ in range(8):
-        if ts.Engine.is_terminal(st):
-            break
-        ctx = st.ctx()
-        legal = np.flatnonzero(ActionEncoder.get_legal_mask(st))
-        if not len(legal):
-            break
-        pick = int(legal[0])
-        if ctx.decision_type == ts.DecisionType.SELECT_OP_MODE:
-            coup = 112 + int(ts.OpMode.COUP)
-            if coup in legal.tolist():
-                pick = coup
-        elif ctx.decision_type == ts.DecisionType.POINT_NODE and (ActionEncoder.NODE_OFFSET + CUBA) in legal.tolist():
-            pick = ActionEncoder.NODE_OFFSET + CUBA
-        ts.Engine.step_flat(st, pick)
-        while (not ts.Engine.is_terminal(st)
-               and st.ctx().decision_player == ts.Player.NONE
-               and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-            ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
-
-    if not st.has_flag(ts.EffectBits.CMC_SUICIDE_LOSS):
-        pytest.skip("this line did not reach a CMC coup; covered by the synthetic cases below")
-
+    assert st.has_flag(ts.EffectBits.CMC_SUICIDE_LOSS), "the coup under CMC was not recorded"
     assert ts.Engine.is_terminal(st)
     assert int(st.victory_points) == -20, "US coup under CMC must hand the USSR the game"
     assert int(st.defcon) > 1, "a CMC loss must not masquerade as a DEFCON-1 ending"

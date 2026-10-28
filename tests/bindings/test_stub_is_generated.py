@@ -28,12 +28,14 @@ PATTERN = REPO / "bindings" / "ts_engine.pyi.pattern"
 
 def _generate(into: pathlib.Path) -> dict[str, str]:
     module_dir = pathlib.Path(ts_engine.__file__).resolve().parent
-    subprocess.run(
+    run = subprocess.run(
         [sys.executable, "-m", "nanobind.stubgen",
          "-m", "ts_engine", "-i", str(module_dir),
          "-r", "-O", str(into), "-p", str(PATTERN), "-q"],
-        check=True, capture_output=True, text=True, cwd=str(REPO),
+        capture_output=True, text=True, cwd=str(REPO),
     )
+    # nanobind is a requirement (requirements.txt): without it this fails, it does not skip.
+    assert run.returncode == 0, f"nanobind.stubgen failed:\n{run.stderr}"
     generated = into / "ts_engine"
     return {f.name: f.read_text() for f in sorted(generated.glob("*.pyi"))}
 
@@ -58,7 +60,6 @@ def test_the_stub_package_is_committed() -> None:
 
 
 def test_the_committed_stubs_match_the_built_module(tmp_path: pathlib.Path) -> None:
-    pytest.importorskip("nanobind")
     generated, committed = _generate(tmp_path), _committed()
 
     assert set(generated) == set(committed), (

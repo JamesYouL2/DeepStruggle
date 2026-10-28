@@ -8,11 +8,16 @@ truncated games, which understated the avoidable-loss avoid rate badly (74.6% ag
 true 92.9%).
 """
 
+import random
+
 import numpy as np
-import pytest
+import torch
 import ts_engine as ts
 
-from ai.eval.decisive_probe import measure_decisive
+from ai.eval.decisive_probe import measure_decisive, measure_decisive_batched
+from ai.eval.safety import classify_legal_actions
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
+from ai.search.pimcts import acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
 
 
@@ -52,10 +57,6 @@ def test_probe_never_hands_a_chance_node_to_the_policy() -> None:
 
 def test_batched_probe_agrees_with_the_single_state_one() -> None:
     """Batching is an efficiency change; it must not move the measurement."""
-    torch = pytest.importorskip("torch")
-    from ai.eval.decisive_probe import measure_decisive_batched
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-
     net = create_coldwar_net_v2("cpu")
     batched = measure_decisive_batched(net, num_envs=8, base_seed=51000)
 
@@ -79,9 +80,6 @@ def test_probe_measures_every_env_exactly_once() -> None:
     instant-win take rate at 89.5%, while measuring one episode per env puts it at 76.6%.
     Nearly a quarter of forced wins are missed, not a tenth.
     """
-    from ai.eval.decisive_probe import measure_decisive_batched
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-
     num_envs = 12
     stats = measure_decisive_batched(create_coldwar_net_v2("cpu"), num_envs=num_envs,
                                      base_seed=52_000, max_iters=20_000)
@@ -102,13 +100,6 @@ def test_a_die_dependent_win_is_not_labelled_forced() -> None:
     labels were die-dependent that way, at 9/16 to 14/16 win rates. Roll-independent lines
     are unaffected: a coup at DEFCON 2 degrades DEFCON whatever the roll.
     """
-    import random
-
-    import numpy as np
-    import ts_engine as ts
-    from ai.eval.safety import classify_legal_actions
-    from ai.search.pimcts import acting_player, drain_chance_nodes
-
     rng = random.Random(11)
     checked = 0
 
