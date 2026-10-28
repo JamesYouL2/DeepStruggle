@@ -29,7 +29,7 @@ not carry it -- a representation problem.
 from __future__ import annotations
 
 import argparse
-import gzip
+import copy
 import hashlib
 import json
 import math
@@ -38,46 +38,28 @@ import random
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
+import torch.nn as nn
 
-
-def _read(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
-    for p in paths:
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            for line in f:
-                yield json.loads(line)
-
-
-def _write(path: str, rows: Sequence[Dict[str, Any]]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with gzip.open(path, "wt", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def position_seed(rid: str, seed: int) -> int:
-    """As tools/scripts/bank_playouts.position_seed."""
-    return (int(rid, 16) ^ (seed * 0x9E3779B97F4A7C15)) & 0x7FFF_FFFF_FFFF_FFFF
+import ts_engine as ts
+from ai.eval.paired_playouts import apply_move, compare, decider, pair_start, paired_diff
+from ai.search.pimcts import acting_player
+from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import model_obs_features
+from tools.lib.corpus_driver import load_policy, position_token, selfplay, state_from_token
+from tools.lib.engine_fingerprint import require_fresh
+from tools.lib.jsonl import read_jsonl, sha256_file, write_jsonl
+from tools.lib.player_agent import NeuralAgent
+from tools.lib.position_bank import position_seed
 
 
 # --- label --------------------------------------------------------------------------------------
 
 def label(model: str, games: int, rate: float, k: int, pairs: int, part: str, seed: int,
           temperature: float, out: str) -> int:
-    import ts_engine as ts
-    from ai.eval.paired_playouts import compare, paired_diff
-    from bindings.action_encoder import ActionEncoder
-    from tools.lib.corpus_driver import load_policy, position_token, selfplay
 
     pk, pn = (int(x) for x in part.split("/"))
     logits_fn, feats = load_policy(model)
@@ -103,9 +85,7 @@ def label(model: str, games: int, rate: float, k: int, pairs: int, part: str, se
     sampled = [p for t in trackers for p in t.positions]
     print(f"{len(sampled)} positions from {games} games in {time.time() - t0:.0f}s", file=sys.stderr)
 
-    from tools.lib.corpus_driver import state_from_token
     states = [state_from_token(tok) for tok, _ in sampled]
-    from ai.search.pimcts import acting_player
     obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), feats), dtype=np.float32)
                     for s in states])
     masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
@@ -127,9 +107,9 @@ def label(model: str, games: int, rate: float, k: int, pairs: int, part: str, se
         r["score"] = {str(a): round(sum(v) / len(v), 5) for a, v in sc.items()}
         r["diff_vs_raw"] = {str(a): [round(x, 5) for x in paired_diff(v, sc[r["raw"]])]
                             for a, v in sc.items() if a != r["raw"]}
-    _write(out, rows)
+    write_jsonl(out, rows)
     with open(out + ".meta.json", "w", encoding="utf-8") as f:
-        json.dump({"stage": "label", "model": os.path.basename(model), "model_sha256": _sha256(model),
+        json.dump({"stage": "label", "model": os.path.basename(model), "model_sha256": sha256_file(model),
                    "games": games, "rate": rate, "k": k, "pairs": pairs, "part": part, "seed": seed,
                    "temperature": temperature, "game_seed_base": base, "positions": len(rows),
                    "selfplay_s": round(t1 - t0, 1), "playout_s": round(time.time() - t1, 1)}, f, indent=1)
@@ -146,11 +126,6 @@ def child_features(model: Any, feats: int, pos: str, moves: Sequence[int], world
     value for the observing player into one for the mover. `perspective` "acting" observes the child
     as the player to act there (what a search's leaf reads: after a headline choice that is the
     opponent, who cannot see it), "mover" as the player who chose (who can)."""
-    import torch
-    import ts_engine as ts
-    from ai.eval.paired_playouts import apply_move, decider, pair_start
-    from ai.search.pimcts import acting_player
-    from tools.lib.corpus_driver import state_from_token
 
     st = state_from_token(pos)
     mover = decider(st)
@@ -207,7 +182,6 @@ def _groups(net: Any, feats: int, rows: Sequence[Dict[str, Any]], worlds: int, s
     """Per (position, world): the children of the position's moves (the network's own move first),
     as features H (G x K x d), signs S and the mover-value labels L (G x K), a mask M, and each
     group's position index. A child that ends the game is left out (masked)."""
-    import torch
     K = max(len(r["moves"]) for r in rows)
     width = 0
     Hs, Ss, Ls, Ms, P = [], [], [], [], []
@@ -268,18 +242,13 @@ def _ranking(pred: np.ndarray, rows: Sequence[Dict[str, Any]], P: List[int]) -> 
 def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, worlds: int,
         test_worlds: int, epochs: int, out: str, seed: int = 0, test_limit: int = 0,
         perspective: str = "acting", holdout: float = 0.2, pair_weight: float = 10.0) -> int:
-    import copy
-    import torch
-    import torch.nn as nn
-    from tools.lib.player_agent import NeuralAgent
-    from bindings.ts_env import model_obs_features
 
     torch.manual_seed(seed)
     net = NeuralAgent.from_checkpoint(model_path, device="cpu").model.eval()
     feats = int(model_obs_features(net))
     head = getattr(net, "val_win_head")
 
-    lab = [r for r in _read(labels) if len(r["moves"]) >= 2]
+    lab = [r for r in read_jsonl(labels) if len(r["moves"]) >= 2]
     rng = random.Random(seed)
     rng.shuffle(lab)
     n_test = int(len(lab) * holdout)
@@ -303,11 +272,11 @@ def fit(model_path: str, labels: Sequence[str], bank: str, bank_playouts: str, w
 
     # The bank: adversarial for any critic-like judge (its positions are where critic-driven search
     # disagreed with the network), reported second.
-    bank_rows = {str(r["id"]): r for r in _read([bank])}
+    bank_rows = {str(r["id"]): r for r in read_jsonl([bank])}
     truth: Dict[str, Dict[int, Tuple[float, float]]] = {}
     test_moves: Dict[str, List[int]] = {}
     raw: Dict[str, int] = {}
-    for p in _read([bank_playouts]):
+    for p in read_jsonl([bank_playouts]):
         pid = str(p["id"])
         if pid not in bank_rows:
             continue
@@ -419,15 +388,11 @@ def tune(model_path: str, labels: Sequence[str], worlds: int, epochs: int, pair_
     form `fit` validated on held-out positions), written as a full checkpoint: the base network with
     only `val_win_head` replaced, so its policy is untouched and a search over it differs only in
     the values it reads."""
-    import copy
-    import torch
-    from tools.lib.player_agent import NeuralAgent
-    from bindings.ts_env import model_obs_features
 
     torch.manual_seed(seed)
     net = NeuralAgent.from_checkpoint(model_path, device="cpu").model.eval()
     feats = int(model_obs_features(net))
-    rows = [r for r in _read(labels) if len(r["moves"]) >= 2]
+    rows = [r for r in read_jsonl(labels) if len(r["moves"]) >= 2]
     with torch.no_grad():
         grp = _groups(net, feats, rows, worlds, 11, "acting")
     H, S, L, M = grp.features, grp.signs, grp.labels, grp.mask
@@ -458,7 +423,7 @@ def tune(model_path: str, labels: Sequence[str], worlds: int, epochs: int, pair_
         sd[f"val_win_head.{k}"] = v.detach().clone()
     torch.save(sd, out)
     with open(out + ".meta.json", "w", encoding="utf-8") as f:
-        json.dump({"base": os.path.basename(model_path), "base_sha256": _sha256(model_path),
+        json.dump({"base": os.path.basename(model_path), "base_sha256": sha256_file(model_path),
                    "positions": len(rows), "groups": len(H), "worlds": worlds, "epochs": epochs,
                    "pair_weight": pair_weight, "replaced": "val_win_head"}, f, indent=1)
     print(f"wrote {out} ({len(rows)} positions, {len(H)} groups)", file=sys.stderr)
@@ -500,6 +465,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     tu.add_argument("--pair-weight", type=float, default=10.0)
     tu.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    require_fresh()
     if a.cmd == "tune":
         return tune(a.model, a.labels, a.worlds, a.epochs, a.pair_weight, a.out)
     if a.cmd == "label":
