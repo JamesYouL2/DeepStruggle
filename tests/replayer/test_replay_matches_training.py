@@ -21,13 +21,7 @@ import ts_engine as ts
 from ai.models.coldwar_net import create_coldwar_net
 from bindings.action_encoder import ActionEncoder
 from tools.lib.self_play import generate_self_play_replay
-
-
-def _drain(state: ts.GameState) -> None:
-    while (not ts.Engine.is_terminal(state)
-           and state.ctx().decision_player == ts.Player.NONE
-           and state.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-        ts.Engine.step(state, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+from tests.engine_helpers import resolve_rolls
 
 
 def test_flat_action_at_a_chance_node_now_matches_resolving_it() -> None:
@@ -86,7 +80,7 @@ def test_draining_chance_nodes_lengthens_games() -> None:
                 break
             ts.Engine.step_flat(st, int(legal[0]))
             if drain:
-                _drain(st)
+                resolve_rolls(st)
         return int(st.turn)
 
     seeds = range(3000, 3030)

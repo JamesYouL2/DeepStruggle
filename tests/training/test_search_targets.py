@@ -17,21 +17,16 @@ from typing import Any, Dict, List
 
 import numpy as np
 import pytest
+import torch
 import ts_engine as ts
 
 from ai.training.warmup_dataset_loader import WarmupDataset
 from bindings.action_encoder import ActionEncoder
+from tests.engine_helpers import resolve_rolls
 
 
 def _legal(st: ts.GameState) -> List[int]:
     return np.flatnonzero(np.asarray(ts.get_flat_action_mask(st))).tolist()
-
-
-def _drain(st: ts.GameState) -> None:
-    while (not ts.Engine.is_terminal(st)
-           and st.ctx().decision_player == ts.Player.NONE
-           and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-        ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
 
 
 def _make_game(seed: int, n_actions: int = 40, every: int = 3) -> Dict[str, Any]:
@@ -57,7 +52,7 @@ def _make_game(seed: int, n_actions: int = 40, every: int = 3) -> Dict[str, Any]
             rec["search_pi"] = {"a": legal[:3], "v": [1.0, 2.0, 7.0][:len(legal[:3])]}
         actions.append(rec)
         ts.Engine.step(st, ts.decode_flat_action(st, played))
-        _drain(st)
+        resolve_rolls(st)
     return {"seed": seed, "actions": actions, "winner": "DRAW", "final_vp": 0}
 
 
@@ -123,7 +118,6 @@ def test_the_target_is_the_searcher_not_the_played_action(tmp_path) -> None:
 
 def test_batches_are_shaped_and_normalised(tmp_path) -> None:
     path = _write(tmp_path, [_make_game(s) for s in range(200, 216)])
-    import torch
 
     seen = 0
     for b_obs, b_mask, b_pi, b_dt in WarmupDataset(path).stream_policy_batches(

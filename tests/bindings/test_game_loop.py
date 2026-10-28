@@ -18,6 +18,7 @@ from bindings.action_encoder import ActionEncoder
 from tools.lib.game_loop import (ActionSource, GameLoop, SettlePolicy, StepRecord,
                                  acting_player)
 from tools.lib.game_step import IllegalActionError
+from tests.engine_helpers import resolve_rolls
 
 
 class FirstLegal:
@@ -63,14 +64,6 @@ def test_it_plays_a_whole_game() -> None:
     assert res.utility in (-1.0, 0.0, 1.0)
 
 
-def _drain(state: ts.GameState) -> None:
-    """What every reader of the format does: resolve the chance nodes, which are never recorded."""
-    while (not ts.Engine.is_terminal(state)
-           and state.ctx().decision_player == ts.Player.NONE
-           and state.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-        ts.Engine.step(state, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
-
-
 def test_record_forced_records_every_step_so_a_replay_re_drives() -> None:
     """The property that makes a replay portable, stated as its readers implement it.
 
@@ -87,10 +80,10 @@ def test_record_forced_records_every_step_so_a_replay_re_drives() -> None:
 
     replay = _fresh()
     for rec in seen:
-        _drain(replay)
+        resolve_rolls(replay)
         assert ts.Engine.try_step(replay, rec.action), (
             f"recorded action at step {rec.index} was refused on replay")
-    _drain(replay)
+    resolve_rolls(replay)
     assert ts.Engine.is_terminal(replay) == res.terminal
     assert float(ts.Engine.get_terminal_utility(replay)) == res.utility
 
@@ -139,9 +132,9 @@ def test_the_snapshot_is_the_state_after_the_action() -> None:
     assert seen
     replay = _fresh()
     for rec in seen:
-        _drain(replay)
+        resolve_rolls(replay)
         ts.Engine.step(replay, rec.action)
-        _drain(replay)
+        resolve_rolls(replay)
         assert rec.state_after is not None
         assert rec.state_after["vp"] == int(replay.victory_points), (
             f"step {rec.index}: snapshot is not the post-action state")

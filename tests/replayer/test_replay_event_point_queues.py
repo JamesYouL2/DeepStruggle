@@ -15,28 +15,19 @@ which the log has it never touching, and West Germany finished an Influence shor
 import pytest
 
 from tools.lib.ts_replayer_convert import card_id, event_point_queues, event_queue
-from tools.lib.ts_replayer_parse import parse_entry
 from tests.replay_corpus import ReplayCorpus
 
 EAST_GERMANY, POLAND, YUGOSLAVIA, WEST_GERMANY = 14, 15, 18, 7
 
 
-def _headline(corpus: ReplayCorpus, replay_id: int, turn: int):
-    for raw in corpus.game(replay_id)["all_turns"]:
-        e = parse_entry(raw)
-        if e.turn == turn and e.phase == "Headline":
-            return e
-    raise AssertionError(f"replay {replay_id} has no headline on turn {turn}")
-
-
 def test_the_log_writes_each_events_influence_under_its_own_header(corpus: ReplayCorpus) -> None:
-    e = _headline(corpus, 150, 8)
+    e = corpus.entry(150, 8, "Headline")
     assert e.headlines == {"USSR": "The Reformer*", "US": "East European Unrest"}
     assert set(e.influence_by_event) == {"The Reformer*", "East European Unrest"}
 
 
 def test_each_event_gets_only_its_own_points(corpus: ReplayCorpus) -> None:
-    queues = event_point_queues(_headline(corpus, 150, 8))
+    queues = event_point_queues(corpus.entry(150, 8, "Headline"))
     unrest_id, reformer_id = card_id("East European Unrest"), card_id("The Reformer*")
     assert unrest_id is not None and reformer_id is not None
     unrest = queues[unrest_id]
@@ -49,7 +40,7 @@ def test_each_event_gets_only_its_own_points(corpus: ReplayCorpus) -> None:
 
 def test_the_shared_queue_holds_the_same_points_between_them(corpus: ReplayCorpus) -> None:
     """Which is why spending one in an event's own queue has to spend it there too."""
-    e = _headline(corpus, 150, 8)
+    e = corpus.entry(150, 8, "Headline")
     shared = sorted(event_queue(e))
     per_event = sorted(c for q in event_point_queues(e).values() for c in q)
     assert shared == per_event

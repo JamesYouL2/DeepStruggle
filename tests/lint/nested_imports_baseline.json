@@ -96,7 +96,6 @@
  "tests/training/test_replay_trace.py": 4,
  "tests/training/test_run_dir_naming.py": 2,
  "tests/training/test_same_perspective_bootstrap.py": 1,
- "tests/training/test_search_targets.py": 1,
  "tests/training/test_search_tiebreak.py": 2,
  "tests/training/test_setup_arms.py": 8,
  "tests/training/test_setup_entropy_floor.py": 2,

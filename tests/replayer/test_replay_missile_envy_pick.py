@@ -15,16 +15,8 @@ from tools.lib.ts_replayer_parse import parse_entry
 from tests.replay_corpus import ReplayCorpus
 
 
-def _headline(corpus: ReplayCorpus, replay_id: int, turn: int):
-    for raw in corpus.game(replay_id)["all_turns"]:
-        e = parse_entry(raw)
-        if e.turn == turn and e.phase == "Headline":
-            return e
-    raise AssertionError(f"replay {replay_id} has no headline on turn {turn}")
-
-
 def test_the_entry_prints_two_reveals_and_only_one_is_missile_envys(corpus: ReplayCorpus) -> None:
-    e = _headline(corpus, 14, 4)
+    e = corpus.entry(14, 4, "Headline")
     names = [nm for _side, nm in e.revealed]
     assert names.count("Marshall Plan*") == 2, "Grain Sales' reveal, printed twice"
     assert "Muslim Revolution" in names

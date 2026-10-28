@@ -28,13 +28,7 @@ import ts_engine as ts
 
 from ai.models.coldwar_net import create_coldwar_net
 from tools.lib.self_play import generate_self_play_replay
-
-
-def _drain(state: ts.GameState) -> None:
-    while (not ts.Engine.is_terminal(state)
-           and state.ctx().decision_player == ts.Player.NONE
-           and state.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-        ts.Engine.step(state, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
+from tests.engine_helpers import resolve_rolls
 
 
 def _hand(cards: List[Any]) -> List[int]:
@@ -62,7 +56,7 @@ def _assert_reproduces(log: Any, label: str) -> None:
     ts.Engine.init_game(state, log["metadata"]["seed"])
 
     for step in steps:
-        _drain(state)
+        resolve_rolls(state)
         assert not ts.Engine.is_terminal(state), (
             f"{label}: game ended at step {step['step_index']} but the log continues"
         )
@@ -71,7 +65,7 @@ def _assert_reproduces(log: Any, label: str) -> None:
             f"{label}: engine rejected logged action {idx} ({step['description']}) "
             f"at step {step['step_index']}"
         )
-        _drain(state)
+        resolve_rolls(state)
 
         got, want = _digest(ts.state_to_dict(state)), _digest(step["state_snapshot"])
         assert got == want, (

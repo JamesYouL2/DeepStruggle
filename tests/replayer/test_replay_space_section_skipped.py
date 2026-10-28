@@ -14,23 +14,14 @@ log records never happened.
 """
 import pytest
 
-from tools.lib.ts_replayer_parse import parse_entry
 from tests.replay_corpus import ReplayCorpus
 
 PANAMA = 70
 CHILE = 81
 
 
-def _headline(corpus: ReplayCorpus, replay_id: int, turn: int):
-    for raw in corpus.game(replay_id)["all_turns"]:
-        e = parse_entry(raw)
-        if e.turn == turn and e.phase == "Headline":
-            return e
-    raise AssertionError(f"replay {replay_id} has no headline on turn {turn}")
-
-
 def test_the_entry_holds_a_space_section_ahead_of_the_coup(corpus: ReplayCorpus) -> None:
-    e = _headline(corpus, 156, 6)
+    e = corpus.entry(156, 6, "Headline")
     assert e.headlines == {"USSR": "Junta", "US": "Grain Sales To Soviets"}
     modes = [s.mode for s in e.sections]
     assert modes == ["space", "coup"], (
@@ -40,7 +31,7 @@ def test_the_entry_holds_a_space_section_ahead_of_the_coup(corpus: ReplayCorpus)
 
 def test_the_free_action_is_the_coup_the_log_records(corpus: ReplayCorpus) -> None:
     """Junta places 2 in Chile, then coups Panama."""
-    e = _headline(corpus, 156, 6)
+    e = corpus.entry(156, 6, "Headline")
     placed = [(row.country, row.delta) for row in e.influence if row.country == CHILE]
     assert placed == [(CHILE, 2)]
     assert e.event_mode == "coup"
