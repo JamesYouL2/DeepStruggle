@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 import numpy as np
 import ts_engine as ts
 
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 from ai.eval.safety import WinDecision, classify_legal_actions, fold_win_opportunities
 from ai.stats import wilson_interval
 
@@ -203,21 +204,13 @@ def measure_decisive_batched(
     cluster near the end of a game, and the games that run long are exactly the ones still
     in flight when the budget expires. The position profiler had the identical defect.
     """
-    import numpy as np
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
-
-    device = next(model.parameters()).device
+    sampler = Sampler(model, temperature, base_seed)
     was_training = model.training
     model.eval()
 
-    check_obs_width(model)
-    env = TsVectorizedEnv(num_envs=num_envs, base_seed=base_seed)
-    env.set_obs_features(model_obs_features(model), model_obs_features(model))  # the model's own view
+    # The model's own view on both sides, set before the reset builds the first masks.
+    env = make_env(num_envs, base_seed, model_view(model, merged_influence))
     obs, masks, _ = env.reset_all()
-    if merged_influence:
-        env.set_merged_influence(True, True)
 
     out = DecisiveStats()
     pending: List[List[tuple]] = [[] for _ in range(num_envs)]
@@ -246,12 +239,7 @@ def measure_decisive_batched(
             if all(counted):
                 break
 
-            obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-            with torch.no_grad():
-                actions_t, _, _, _, _ = model.sample_action(
-                    obs_t, mask_t, temperature=temperature)
-            actions = actions_t.cpu().numpy()
+            actions = sampler(obs, masks)
 
             for i in range(num_envs):
                 if counted[i]:
@@ -276,6 +264,7 @@ def measure_decisive_batched(
                 if done and not counted[i]:
                     flush(i)
                     counted[i] = True
+        check_finished(counted, max_iters, "measure_decisive_batched")
     finally:
         if was_training:
             model.train()

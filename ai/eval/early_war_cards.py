@@ -29,9 +29,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 
 import ts_engine as ts
+from bindings.ts_env import legal_mask
 
+from ai.eval.battleground_value import REGION_NAMES, region_of, value_of
 from ai.eval.card_probe import (DECOLONIZATION, DE_STALINIZATION, MODE_NAMES, Node, _drain,
-                                capture_nodes, card_action, card_name, give_card, hand, policy)
+                                capture_nodes, card_fate, card_name, give_card, hand, policy)
+from ai.eval.positions import select_card_action
+from tools.lib.corpus_paths import corpus_path
 
 EVENT, OPS, SPACE = 0, 1, 2
 EARLY_WAR_TURNS = (1, 2, 3)
@@ -79,7 +83,7 @@ class Survey:
 
 def _mode_node(state: ts.GameState, card: int) -> Optional[ts.GameState]:
     """The position right after this card is selected, where the mode is chosen."""
-    action = card_action(state, card)
+    action = select_card_action(state, card)
     if action is None:
         return None
     probe = state.clone()
@@ -95,7 +99,7 @@ def _mode_node(state: ts.GameState, card: int) -> Optional[ts.GameState]:
 def _mode_actions(state: ts.GameState) -> Dict[int, int]:
     """Legal play modes at a SELECT_PLAY_MODE node, as {mode: flat action}."""
     out: Dict[int, int] = {}
-    for a in np.flatnonzero(np.asarray(ts.get_flat_action_mask(state))):
+    for a in np.flatnonzero(legal_mask(state, False)):
         ma = ts.decode_flat_action(state, int(a))
         if ma.decision_type != ts.DecisionType.SELECT_PLAY_MODE:
             continue
@@ -151,8 +155,6 @@ def survey(model: Any, nodes: Sequence[Node], card: int, side: ts.Player, device
            swap_in: bool = False, record_placements: bool = False,
            fates: bool = False) -> Survey:
     """Mode choice for `card` in `side`'s hand, over every position in `nodes`."""
-    from ai.eval.card_probe import card_fate
-
     out = Survey(card=card, side=side)
     for node in nodes:
         state = (give_card(node.state, side, card) if swap_in
@@ -197,13 +199,11 @@ def collect(games: Iterable[Dict], cards: Sequence[int],
     ussr: Dict[int, List[Node]] = {c: [] for c in cards}
     us: Dict[int, List[Node]] = {c: [] for c in cards}
     for game in games:
-        try:
-            # One conversion per game, not one per turn: converting is the expensive part.
-            nodes = capture_nodes(game, turn=turns)
-        except Exception:
-            # A game that will not convert is not evidence about card play; §12 and §13 both run
-            # on the games that do. The corpus-wide conversion test is what guards this.
-            continue
+        # One conversion per game, not one per turn: converting is the expensive part. A game the
+        # log does not let the converter follow is reported by it (Conversion.failure), not raised;
+        # anything that does raise here is a defect and must stop the survey rather than quietly
+        # shrink it.
+        nodes = capture_nodes(game, turn=turns)
         for node in nodes:
             for card in cards:
                 if card not in hand(node.state, node.mover):
@@ -213,20 +213,16 @@ def collect(games: Iterable[Dict], cards: Sequence[int],
 
 
 def load_games(replay_ids: Iterable[int]) -> List[Dict]:
-    from tools.lib.corpus_paths import corpus_path
-
     out = []
     for rid in replay_ids:
-        try:
-            out.append(json.load(gzip.open(corpus_path(int(rid)), "rt")))
-        except Exception:
-            continue
+        # A missing or unreadable game raises: a survey silently over fewer games than asked for
+        # reports numbers about a sample nobody chose.
+        with gzip.open(corpus_path(int(rid)), "rt") as fh:
+            out.append(json.load(fh))
     return out
 
 
 def region_name(cid: int) -> str:
-    from ai.eval.battleground_value import REGION_NAMES, region_of
-
     return REGION_NAMES.get(region_of(cid), "?")
 
 
@@ -318,8 +314,6 @@ def value_split(model: Any, nodes: Sequence[Node], card: int, side: ts.Player, d
     the policy is wrong. If it scores the model's line higher, the error is in both heads and no
     amount of policy imitation will hold.
     """
-    from ai.eval.battleground_value import value_of
-
     out = ValueSplit(name=name or card_name(card), human_mode=human_mode, model_mode=-1)
     for node in nodes:
         state = give_card(node.state, side, card) if swap_in else node.state

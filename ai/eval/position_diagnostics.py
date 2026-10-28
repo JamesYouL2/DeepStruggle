@@ -25,6 +25,7 @@ import statistics
 from typing import Any, Callable, Dict, List, Optional
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 from bindings.settle import SettleMode, settle
 
 REGIONS = (
@@ -270,25 +271,14 @@ def profile_self_play_batched(
     salvageability at turn 6 -- was pinned near zero by construction, because the games
     that get that far are exactly the ones still in flight when the budget ran out.
     """
-    import numpy as np
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
-
-    device = next(model.parameters()).device
+    sampler = Sampler(model, temperature, base_seed)
     was_training = model.training
     model.eval()
 
-    # There is one layout now, so this probe cannot be handed the wrong one -- which is what
-    # every number it reported before that was true. What is still checked is the model's own
-    # width, because a mismatch means a checkpoint from a retired layout.
-    check_obs_width(model)
-    env = TsVectorizedEnv(num_envs=num_envs, base_seed=base_seed)
-    env.set_obs_features(model_obs_features(model), model_obs_features(model))  # the model's own view
+    # The model's own view on both sides (its observation feature set and action view, P23), set
+    # before the reset builds the first observations and masks.
+    env = make_env(num_envs, base_seed, model_view(model, merged_influence))
     obs, masks, _ = env.reset_all()
-    if merged_influence:
-        # The model plays in its own action view (P23); the board it reads is the same.
-        env.set_merged_influence(True, True)
 
     reach: collections.Counter = collections.Counter()
     salvageable: collections.Counter = collections.Counter()
@@ -348,21 +338,18 @@ def profile_self_play_batched(
                 us, ussr = region_score_sums(state)
                 pending[i].append((turn, is_salvageable(state), empty, us, ussr, len(unctrl)))
 
-            obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-            with torch.no_grad():
-                actions, _, _, _, _ = model.sample_action(obs_t, mask_t, temperature=temperature)
-            obs, masks, _, dones, _ = env.step(actions.cpu().numpy())
+            obs, masks, _, dones, _ = env.step(sampler(obs, masks))
             for i, done in enumerate(dones):
                 if done and not counted[i]:
                     flush(i)
                     counted[i] = True
+        # An env whose first episode is still running is not dropped: that would make the sample
+        # length-selected again, and a game that outlives the budget is a stuck policy.
+        check_finished(counted, max_iters, "profile_self_play_batched")
     finally:
         if was_training:
             model.train()
 
-    # Envs whose first episode never finished inside max_iters are dropped rather than
-    # counted half-played. That is a bounded, symmetric loss, not a length filter.
     return _assemble(episodes, final_turns, reach, salvageable, empty_bgs, unctrl_bgs,
                      us_scores, ussr_scores, nets, per_bg_empty, late_samples)
 

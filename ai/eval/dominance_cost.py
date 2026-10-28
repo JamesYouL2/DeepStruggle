@@ -25,15 +25,18 @@ chose goes on to win. The difference is what the error costs, in the only curren
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional
 
 import numpy as np
+import torch
 
 import ts_engine as ts
 from bindings.settle import SettleMode, settle
+from bindings.ts_env import legal_mask, model_obs_features, observe
 
 from ai.eval.dominance import space_dominance_alternatives
-from bindings.action_encoder import ActionEncoder
+from ai.eval.playout import make_runner, model_view, play_out
+from ai.eval.positions import select_card_action
 
 SPACE_MODE = 2
 
@@ -73,10 +76,8 @@ class CostResult:
 
 
 def _greedy(model: Any, state: ts.GameState, mover: ts.Player, device: Any) -> int:
-    import torch
-
-    obs = np.asarray(ts.extract_observation(state, mover), dtype=np.float32)[None, :]
-    mask = np.asarray(ActionEncoder.get_legal_mask(state), dtype=np.uint8)[None, :]
+    obs = observe(state, mover, model_obs_features(model))[None, :]
+    mask = legal_mask(state, False)[None, :]
     with torch.no_grad():
         logits = model(torch.from_numpy(obs).to(device),
                        torch.from_numpy(mask).to(device))[0]
@@ -88,21 +89,12 @@ def _drain(state: ts.GameState) -> None:
 
 
 def _space_action(state: ts.GameState) -> Optional[int]:
-    mask = np.asarray(ActionEncoder.get_legal_mask(state))
+    mask = legal_mask(state, False)
     for a in np.flatnonzero(mask):
         ma = ts.decode_flat_action(state, int(a))
         if ma.decision_type != ts.DecisionType.SELECT_PLAY_MODE:
             continue
         if int(ma.secondary_id) == SPACE_MODE or int(ma.primary_id) == SPACE_MODE:
-            return int(a)
-    return None
-
-
-def _card_action(state: ts.GameState, card: int) -> Optional[int]:
-    mask = np.asarray(ActionEncoder.get_legal_mask(state))
-    for a in np.flatnonzero(mask):
-        ma = ts.decode_flat_action(state, int(a))
-        if ma.decision_type == ts.DecisionType.SELECT_CARD and int(ma.primary_id) == card:
             return int(a)
     return None
 
@@ -134,7 +126,7 @@ def _fork(model: Any, state: ts.GameState, mover: ts.Player, device: Any) -> Opt
 
     # The dominant branch: the opponent's card to the track instead.
     dominant = state.clone()
-    alt_action = _card_action(dominant, alternative)
+    alt_action = select_card_action(dominant, alternative)
     if alt_action is None:
         return None
     ts.Engine.step_flat(dominant, alt_action)
@@ -154,10 +146,9 @@ def _fork(model: Any, state: ts.GameState, mover: ts.Player, device: Any) -> Opt
 
 def find_branches(model: Any, device: Any, num_envs: int = 128, base_seed: int = 990000,
                   max_iters: int = 3000, limit: int = 120) -> List[Branch]:
-    """Play self-play and fork every position where the agent spaces a dominated card."""
-    import torch
-
-    runner = ts.VectorizedBatchRunner(num_envs, base_seed)
+    """Play self-play and fork every position where the agent spaces a dominated card. E4 view (the
+    probe's forks name E4 actions): load the model with `load_for_eval(..., merged_ok=False)`."""
+    runner = make_runner(num_envs, base_seed, model_view(model, False))
     out: List[Branch] = []
     model.eval()
 
@@ -194,50 +185,6 @@ def find_branches(model: Any, device: Any, num_envs: int = 128, base_seed: int =
     return out
 
 
-def play_out(model: Any, states: Sequence[ts.GameState], movers: Sequence[ts.Player],
-             device: Any, seeds: int = 8, max_iters: int = 4000,
-             temperature: float = 0.1) -> Tuple[int, int]:
-    """Continue each position `seeds` times and count wins for the player who chose.
-
-    Several die streams per position because one is a coin flip: the branch differs by a single
-    card, and a single rollout would report the dice rather than the decision.
-    """
-    import torch
-
-    wins = games = 0
-    for seed in range(seeds):
-        n = len(states)
-        runner = ts.VectorizedBatchRunner(n, 700000 + seed * 9173)
-        for i, st in enumerate(states):
-            runner.set_state(i, st)
-
-        for _ in range(max_iters):
-            terminals = runner.get_terminals()
-            if all(terminals):
-                break
-            obs = np.asarray(runner.get_observations(), dtype=np.float32)
-            masks = np.asarray(runner.get_action_masks())
-            with torch.no_grad():
-                logits = model(torch.from_numpy(obs).to(device),
-                               torch.from_numpy(masks).to(device))[0]
-                if temperature > 0.0:
-                    probs = torch.softmax(logits / temperature, dim=-1)
-                    picks = torch.multinomial(probs, 1).squeeze(-1).cpu().numpy()
-                else:
-                    picks = logits.argmax(dim=-1).cpu().numpy()
-            runner.step_flat_all([int(a) for a in picks], auto_advance=True)
-
-        utils = runner.get_terminal_utilities()
-        for i, mover in enumerate(movers):
-            u = float(utils[i])
-            if u == 0.0:
-                continue                      # a draw counts for neither side
-            games += 1
-            if (u > 0) == (mover == ts.Player.US):
-                wins += 1
-    return wins, games
-
-
 def measure(model: Any, device: Any, limit: int = 120, seeds: int = 8) -> CostResult:
     """The whole gate: find the positions, play both branches, compare."""
     branches = find_branches(model, device, limit=limit)
@@ -246,9 +193,13 @@ def measure(model: Any, device: Any, limit: int = 120, seeds: int = 8) -> CostRe
         out.notes.append("no dominated space plays found")
         return out
 
+    # Both branches of each fork on the same dice (one base seed): the pair differs by the card.
     movers = [b.mover for b in branches]
-    out.dominated_wins, out.dominated_games = play_out(
-        model, [b.dominated for b in branches], movers, device, seeds=seeds)
-    out.dominant_wins, out.dominant_games = play_out(
-        model, [b.dominant for b in branches], movers, device, seeds=seeds)
+    view = model_view(model, False)
+    w, g = play_out(model, [b.dominated for b in branches], movers, view, seeds=seeds,
+                    base_seed=700_000)
+    out.dominated_wins, out.dominated_games = int(w.sum()), int(g.sum())
+    w, g = play_out(model, [b.dominant for b in branches], movers, view, seeds=seeds,
+                    base_seed=700_000)
+    out.dominant_wins, out.dominant_games = int(w.sum()), int(g.sum())
     return out

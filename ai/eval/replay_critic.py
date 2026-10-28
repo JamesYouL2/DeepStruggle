@@ -1,6 +1,6 @@
 """Ask a checkpoint's critic what it thinks of positions taken from a recorded game.
 
-The critic is perspective-aligned: `extract_observation(state, p)` produces the board as `p` sees
+The critic is perspective-aligned: `observe(state, p, features)` produces the board as `p` sees
 it, and the value heads answer for `p`. Evaluating the *same* state from both perspectives is
 therefore a consistency check with a known answer -- a zero-sum critic must satisfy
 `v(US) = -v(USSR)`, and the residual `v(US) + v(USSR)` is pure model error. Anything systematic
@@ -19,7 +19,10 @@ import json
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
+
 import ts_engine as ts
+from bindings.ts_env import model_obs_features, observe
 
 
 def load_actions(path: str) -> Tuple[int, List[Dict[str, Any]]]:
@@ -95,13 +98,13 @@ def verify(state: ts.GameState, rec: Dict[str, Any]) -> Optional[str]:
 
 
 def evaluate(model: Any, state: ts.GameState) -> Dict[str, float]:
-    """Both value heads, from both perspectives, plus the zero-sum residuals."""
-    import torch
-
+    """Both value heads, from both perspectives, plus the zero-sum residuals -- each observation in
+    the model's own feature set (a featured model fed the base layout misreads silently)."""
     device = next(model.parameters()).device
+    feats = model_obs_features(model)
     out: Dict[str, float] = {}
     for tag, p in (("us", ts.Player.US), ("ussr", ts.Player.USSR)):
-        obs = np.asarray(ts.extract_observation(state, p), dtype=np.float32).reshape(1, -1)
+        obs = observe(state, p, feats).reshape(1, -1)
         with torch.no_grad():
             _, v_win, v_vp = model(torch.from_numpy(obs).to(device), None)
         out[f"v_win_{tag}"] = float(v_win.item())

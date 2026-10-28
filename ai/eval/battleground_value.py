@@ -30,8 +30,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import make_runner, model_view
+from bindings.ts_env import legal_mask, model_obs_features, observe
 
 EUROPE, ASIA, MIDDLE_EAST, AFRICA, CENTRAL_AMERICA, SOUTH_AMERICA = range(6)
 
@@ -81,11 +84,10 @@ class Perturbation:
 
 
 def value_of(model: Any, state: ts.GameState, mover: ts.Player, device: Any) -> float:
-    """`v_win` from the mover's point of view."""
-    import torch
-
-    obs = np.asarray(ts.extract_observation(state, mover), dtype=np.float32)[None, :]
-    mask = np.asarray(ts.get_flat_action_mask(state), dtype=np.uint8)[None, :]
+    """`v_win` from the mover's point of view, read in the model's own observation feature set
+    (the value heads ignore the mask; the E4 one is passed)."""
+    obs = observe(state, mover, model_obs_features(model))[None, :]
+    mask = legal_mask(state, False)[None, :]
     with torch.no_grad():
         _logits, v_win, _v_vp = model(torch.from_numpy(obs).to(device),
                                       torch.from_numpy(mask).to(device))
@@ -138,10 +140,9 @@ def collect_positions(model: Any, device: Any, num_envs: int = 128, base_seed: i
                       max_iters: int = 3000, per_turn: int = 40,
                       turns: Sequence[int] = (2, 3, 5, 8),
                       ) -> Dict[int, List[Tuple[ts.GameState, ts.Player]]]:
-    """Self-play positions, bucketed by turn, so early and late can be told apart."""
-    import torch
-
-    runner = ts.VectorizedBatchRunner(num_envs, base_seed)
+    """Self-play positions, bucketed by turn, so early and late can be told apart. The greedy
+    self-play is in the model's observation feature set and the E4 action view."""
+    runner = make_runner(num_envs, base_seed, model_view(model, False))
     out: Dict[int, List[Tuple[ts.GameState, ts.Player]]] = defaultdict(list)
     wanted = set(int(t) for t in turns)
     model.eval()

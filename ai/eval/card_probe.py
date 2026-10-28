@@ -18,9 +18,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.positions import select_card_action
 from bindings.settle import SettleMode, settle
+from bindings.ts_env import legal_mask, model_obs_features, observe
 
 DE_STALINIZATION = 33
 DECOLONIZATION = 30
@@ -106,10 +109,10 @@ def give_card(state: ts.GameState, player: ts.Player, card: int,
 
 
 def policy(model: Any, state: ts.GameState, mover: ts.Player, device: Any) -> np.ndarray:
-    import torch
-
-    obs = np.asarray(ts.extract_observation(state, mover), dtype=np.float32)[None, :]
-    mask = np.asarray(ts.get_flat_action_mask(state), dtype=np.uint8)[None, :]
+    """The policy's masked distribution at `state` for `mover`: the observation in the model's own
+    feature set, the mask in the E4 view (human-corpus nodes; load with merged_ok=False)."""
+    obs = observe(state, mover, model_obs_features(model))[None, :]
+    mask = legal_mask(state, False)[None, :]
     with torch.no_grad():
         logits = model(torch.from_numpy(obs).to(device), torch.from_numpy(mask).to(device))[0]
         probs = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
@@ -138,15 +141,6 @@ def top_actions(model: Any, state: ts.GameState, mover: ts.Player, device: Any,
     return [(float(probs[a]), int(a), describe(state, int(a))) for a in order if probs[a] > 0]
 
 
-def card_action(state: ts.GameState, card: int) -> Optional[int]:
-    mask = np.asarray(ts.get_flat_action_mask(state))
-    for a in np.flatnonzero(mask):
-        ma = ts.decode_flat_action(state, int(a))
-        if ma.decision_type == ts.DecisionType.SELECT_CARD and int(ma.primary_id) == card:
-            return int(a)
-    return None
-
-
 def _drain(state: ts.GameState) -> None:
     settle(state, SettleMode.FORCED)
 
@@ -159,7 +153,7 @@ def mode_preference(model: Any, state: ts.GameState, mover: ts.Player, device: A
     decisions: what the top-level distribution says about *whether* to play a card says nothing
     about whether the event would be fired for the opponent.
     """
-    action = card_action(state, card)
+    action = select_card_action(state, card)
     if action is None:
         return None
     probe = state.clone()
@@ -197,11 +191,11 @@ def probe(model: Any, node: Node, card: int, device: Any, mover: Optional[ts.Pla
     out.modes = mode_preference(model, state, who, device, card)
 
     probs = policy(model, state, who, device)
-    action = card_action(state, card)
+    action = select_card_action(state, card)
     if action is not None:
         out.card_prob = float(probs[action])
         # Rank among the cards it could play, not among all 212 actions.
-        cards = [a for a in np.flatnonzero(np.asarray(ts.get_flat_action_mask(state)))
+        cards = [a for a in np.flatnonzero(legal_mask(state, False))
                  if ts.decode_flat_action(state, int(a)).decision_type
                  == ts.DecisionType.SELECT_CARD]
         out.playable = len(cards)
@@ -220,8 +214,6 @@ def card_fate(model: Any, state: ts.GameState, who: ts.Player, card: int, device
 
     Returns one of: `held`, `event`, `ops`, `space`, `pass`, `discarded`, or `terminal`.
     """
-    import torch
-
     probe = state.clone()
     turn = int(probe.turn)
     watching = False

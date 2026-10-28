@@ -25,6 +25,7 @@ import torch
 import torch.nn.functional as F
 import ts_engine as ts
 
+from bindings.ts_env import model_obs_features, observe
 from ai.eval.positions import PLAY_MODE_ACTION, PositionBuilder, card_action, legal_mask, step_to_play_mode
 
 
@@ -188,11 +189,15 @@ PolicyFn = Callable[[ts.GameState, np.ndarray, np.ndarray], np.ndarray]
 
 
 def torch_policy(net: torch.nn.Module, device: str = "cpu") -> PolicyFn:
-    """Wraps a ColdWarNet so the suite only depends on obs+mask -> probability vector."""
+    """Wraps a network as a PolicyFn. The observation is rebuilt from the state in the network's
+    own feature set: the suite's `obs` is the base layout, which a featured network (every E8
+    HEADLINE_REVEAL checkpoint) misreads at the same width. The mask is the suite's E4 mask, so a
+    merged-view network must not be wrapped here."""
+    feats = model_obs_features(net)
 
     def fn(state: ts.GameState, obs: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        del state  # a network conditions only on the observation
-        o = torch.from_numpy(obs).float().unsqueeze(0).to(device)
+        del obs
+        o = torch.from_numpy(observe(state, state.ctx().decision_player, feats)).unsqueeze(0).to(device)
         m = torch.from_numpy(mask).unsqueeze(0).to(device)
         with torch.no_grad():
             logits, _, _ = net(o, m)
@@ -214,7 +219,9 @@ def run_suite(policy: PolicyFn, tests: Sequence[BehavioralTest]) -> SuiteResult:
                 raise ValueError(
                     f"claim requires actions {missing} to be legal, but they are masked out"
                 )
-            obs = np.array(ts.extract_observation(state, state.ctx().decision_player), copy=True)
+            # The base layout, for PolicyFns that read it; a network reads its own feature set
+            # from the state (torch_policy, tools/behavioral_test.network_policy).
+            obs = observe(state, state.ctx().decision_player, 0)
             probs = policy(state, obs, mask)
             outcome = t.assertion.check(probs)
             out.results.append(

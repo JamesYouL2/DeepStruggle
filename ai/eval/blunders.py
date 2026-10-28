@@ -37,6 +37,7 @@ import ts_engine as ts
 from bindings.settle import SettleMode, settle
 
 from ai.eval import dominance
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 from ai.stats import wilson_interval
 
 # --- card ids, from engine/include/ts/constants.hpp -------------------------------------------
@@ -514,21 +515,13 @@ def measure_blunders_batched(
     hand at that moment -- so the loop still walks the environments that are at a SELECT_PLAY_MODE
     node. That inspection is cheap; it was the forward pass that was not.
     """
-    import numpy as np
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
+    sampler = Sampler(model, temperature, base_seed)
     was_training = model.training
     model.eval()
 
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=base_seed)
-    env.set_obs_features(model_obs_features(model), model_obs_features(model))  # the model's own view
+    # The model's own view on both sides, set before the reset builds the first masks.
+    env = make_env(num_games, base_seed, model_view(model, merged_influence))
     obs, masks, _ = env.reset_all()
-    if merged_influence:
-        env.set_merged_influence(True, True)
 
     counts = BlunderCounts()
     last_card: List[Dict[str, int]] = [{} for _ in range(num_games)]
@@ -538,11 +531,7 @@ def measure_blunders_batched(
         for _ in range(max_iters):
             if all(done):
                 break
-            obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-            with torch.no_grad():
-                actions, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
-            acts = actions.cpu().numpy().astype(np.int64)
+            acts = sampler(obs, masks)
 
             for i in range(num_games):
                 if done[i]:
@@ -574,6 +563,7 @@ def measure_blunders_batched(
             for i, d in enumerate(dones):
                 if d:
                     done[i] = True
+        check_finished(done, max_iters, "measure_blunders_batched")
     finally:
         if was_training:
             model.train()
