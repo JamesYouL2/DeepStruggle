@@ -263,7 +263,6 @@ class RolloutBuffer:
         self,
         last_v_win: torch.Tensor,
         last_v_vp: torch.Tensor,
-        last_dones: torch.Tensor,
         last_players: torch.Tensor,
         gamma: float = 1.0,
         gae_lambda: float = 0.98,

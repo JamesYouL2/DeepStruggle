@@ -18,7 +18,7 @@ import fcntl
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Any, Sequence, Tuple, cast
+from typing import Callable, Dict, List, Optional, Any, Sequence, Tuple, cast
 import numpy as np
 import torch
 import torch.nn as nn
@@ -1043,6 +1043,7 @@ class BaseNashPGTrainer:
         self.logit_gap_coef = float(logit_gap_coef)
         self.logit_gap = float(logit_gap)
         self._compiled_nets: Dict[int, nn.Module] = {}
+        self._compiled_methods: Dict[Tuple[int, str], Tuple[nn.Module, Callable[..., Any]]] = {}
         #: --wolf-seat-weight. Each seat's PPO surrogate is scaled by `wolf_seat_weights`, driven by
         #: an exponential average of the USSR's win share in pure self-play games (both seats the
         #: current policy). The entropy bonus, the KL to pi_ref and the value loss are left
@@ -1134,6 +1135,19 @@ class BaseNashPGTrainer:
             c = cast(nn.Module, torch.compile(net, mode=COMPILE_UPDATE_MODES[self.compile_update]))
             self._compiled_nets[id(net)] = c
         return c
+
+    def _update_method(self, net: nn.Module, name: str) -> Callable[..., Any]:
+        """`net.<name>` (forward_with_risk, forward_with_value_logits) as the update calls it: compiled
+        under --compile-update like `_update_net`'s forward, else the bound method itself. Compiling a
+        module compiles only its forward, so these get their own compile, keyed by identity and name."""
+        fn = cast(Callable[..., Any], getattr(net, name))
+        if self.compile_update == "off":
+            return fn
+        hit = self._compiled_methods.get((id(net), name))
+        if hit is None or hit[0] is not net:
+            hit = (net, cast(Callable[..., Any], torch.compile(fn, mode=COMPILE_UPDATE_MODES[self.compile_update])))
+            self._compiled_methods[(id(net), name)] = hit
+        return hit[1]
 
     def update_reference_policy(self) -> None:
         """Updates the frozen reference anchor: π_ref^(k+1) ← π_θ^(k)."""
@@ -1932,13 +1946,11 @@ class BaseNashPGTrainer:
         last_masks_t = torch.from_numpy(self._masks_np).to(self.device)
         with torch.no_grad():
             _, last_v_win, last_v_vp = self.active_net(last_obs_t, last_masks_t)
-            last_dones = torch.from_numpy(self._dones_np).to(self.device)
 
         last_players = torch.from_numpy(self.env._get_batch_info()["decision_players"]).to(self.device)
         self.buffer.compute_gae(
             last_v_win=last_v_win.squeeze(-1),
             last_v_vp=last_v_vp.squeeze(-1),
-            last_dones=last_dones,
             last_players=last_players,
             gamma=self.gamma,
             gae_lambda=self.gae_lambda,
@@ -2586,14 +2598,14 @@ class NashPGTrainer(BaseNashPGTrainer):
                 use_risk = self.defcon_coef > 0.0
                 cur_value_logits = None
                 if use_risk:
-                    forward_with_risk = getattr(self.active_net, "forward_with_risk")
+                    forward_with_risk = self._update_method(self.active_net, "forward_with_risk")
                     cur_logits, cur_v_win, cur_v_vp, cur_risk = forward_with_risk(b_obs, b_mask)
                     cur_risk = cur_risk.squeeze(-1)
                 elif getattr(self.active_net, "categorical_value", False):
                     # One backbone pass for the policy, both scalars and the value logits the
                     # cross-entropy needs; re-running the trunk for the logits would double the
                     # cost of every update.
-                    forward_with_value_logits = getattr(
+                    forward_with_value_logits = self._update_method(
                         self.active_net, "forward_with_value_logits")
                     cur_logits, cur_v_win, cur_v_vp, cur_value_logits = (
                         forward_with_value_logits(b_obs, b_mask))
