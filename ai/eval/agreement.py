@@ -38,14 +38,19 @@ country but not on how many points went there still loses the difference.
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.training.human_corpus_dataset import HumanCorpusDataset
+from ai.training.warmup_dataset_loader import WarmupDataset
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import model_obs_features
 
 MASK_BITS_ = ActionEncoder.FLAT_ACTION_SIZE
 
@@ -148,8 +153,6 @@ def score_groups(groups: Sequence[Sequence[int]],
 def model_argmax(model: Any, obs: np.ndarray, mask: np.ndarray,
                  device: Any, batch: int = 2048) -> np.ndarray:
     """The model's greedy choice at each position, teacher-forced along the human's trajectory."""
-    import torch
-
     out = np.empty(len(obs), dtype=np.int64)
     model.eval()
     with torch.no_grad():
@@ -185,12 +188,19 @@ def evaluate_dataset(model: Any, dataset_path: str, device: Any,
     Takes either dataset: a directory is the human corpus, which stores the play grouping as a
     column, and a file is the self-play set, whose loader recovers it while replaying. The pass
     is deliberately *not* shuffled -- a play's points have to stay together to be scored as one.
+
+    The self-play set is replayed, so its observations are built in the model's own feature set.
+    The human corpus stores observations, in the base layout, and is refused for a model that reads
+    any feature block: it would be scored on inputs it misreads (HEADLINE_REVEAL changes content
+    at the same width).
     """
-    import os
-
+    features = model_obs_features(model)
     if os.path.isdir(dataset_path):
-        from ai.training.human_corpus_dataset import HumanCorpusDataset
-
+        if features:
+            raise ValueError(
+                f"{dataset_path} is a human-corpus dataset, which stores base-layout observations; "
+                f"this model reads the feature set {features:#x}, so its agreement cannot be "
+                f"measured on it")
         ds = HumanCorpusDataset(dataset_path)
         n = len(ds) if max_samples is None else min(len(ds), max_samples)
         obs = np.asarray(ds._column("obs")[:n], dtype=np.float32)
@@ -198,11 +208,10 @@ def evaluate_dataset(model: Any, dataset_path: str, device: Any,
         action = np.asarray(ds._column("action")[:n], dtype=np.int64)
         groups = groups_from_play_ids([int(v) for v in ds._column("play")[:n]])
     else:
-        from ai.training.warmup_dataset_loader import WarmupDataset
-
         rows = []
         plays: List[int] = []
-        for obs_i, mask_i, act_i, _w, _v, play_i in WarmupDataset(dataset_path).stream_with_plays():
+        for obs_i, mask_i, act_i, _w, _v, play_i in WarmupDataset(dataset_path).stream_with_plays(
+                features=features, order_matters=order_matters):
             rows.append((obs_i, mask_i, act_i))
             plays.append(play_i)
             if max_samples is not None and len(rows) >= max_samples:
