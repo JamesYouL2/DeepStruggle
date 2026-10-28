@@ -115,6 +115,9 @@ graph TD
 │   ├── search/                 # rollout_root.py, gumbel_root.py, batched_mcts.py, dmcts.py,
 │   │                           # pimcts.py, heuristic_mcts.py
 │   └── eval/                   # probe suite: calibration, ablations, behaviour, human-corpus agreement, ...
+│                               # playout.py (the one batched self-play loop, in the model's own view:
+│                               # model_view/make_env/make_runner/Sampler/play_out) and loading.py
+│                               # (load_for_eval -> model, features, action view) are what probes build on
 │
 ├── bot/                        # BaseBot and baselines (bot/AGENTS.md)
 │
