@@ -65,8 +65,8 @@ export function regionSummaryHtml(a: RegionScoreAudit): string {
   }
   rows += row("Total", String(a.us.vp), String(a.ussr.vp), "rs-total");
   const list = (names: string[]): string => escapeHtml(names.length ? names.join(", ") : "none");
-  const uncounted = a.ussrUncounted
-    ? `<div class="rs-foot">${a.shuttleDiplomacy ? "Shuttle Diplomacy" : "An event"}: the USSR's ${escapeHtml(a.ussrUncounted)} is not counted in this scoring</div>`
+  const uncounted = a.shuttleDiplomacy
+    ? `<div class="rs-foot">Shuttle Diplomacy: one USSR battleground is not counted in this scoring</div>`
     : "";
   return `
     <div class="rs" style="--rs-accent: ${escapeHtml(a.color)}" data-region="${escapeHtml(a.regionName)}">

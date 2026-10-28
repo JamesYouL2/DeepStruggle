@@ -187,8 +187,8 @@ export interface RegionSideScore {
   /** The countries the side controls there: `battleground` as this scoring counts it, and in
    *  Southeast Asia the `vp` each is worth. */
   controlled: Array<{ id: number; battleground?: boolean; vp?: number }>;
-  /** USSR only: the country a scoring left out of the count (Shuttle Diplomacy), else null. */
-  uncounted?: number | null;
+  /** USSR only: whether Shuttle Diplomacy took one of its battlegrounds out of this count. */
+  shuttle_diplomacy?: boolean;
 }
 
 export interface RegionScore {

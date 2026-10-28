@@ -657,7 +657,11 @@ NB_MODULE(ts_engine, m) {
         .def_ro("ussr_superpower_adjacent", &ts::RegionScoreSummary::ussr_superpower_adjacent)
         .def_ro("us_score", &ts::RegionScoreSummary::us_score)
         .def_ro("ussr_score", &ts::RegionScoreSummary::ussr_score)
-        .def_ro("net_delta", &ts::RegionScoreSummary::net_delta);
+        .def_ro("net_delta", &ts::RegionScoreSummary::net_delta)
+        .def_ro("ussr_countries_scored", &ts::RegionScoreSummary::ussr_countries_scored)
+        .def_ro("ussr_battlegrounds_scored", &ts::RegionScoreSummary::ussr_battlegrounds_scored)
+        .def_ro("ussr_superpower_adjacent_scored", &ts::RegionScoreSummary::ussr_superpower_adjacent_scored)
+        .def_ro("shuttle_diplomacy_applied", &ts::RegionScoreSummary::shuttle_diplomacy_applied);
 
     // Operations helpers
     nb::class_<ts::Operations>(m, "Operations")

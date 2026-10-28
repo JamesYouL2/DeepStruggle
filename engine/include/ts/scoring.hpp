@@ -24,6 +24,13 @@ struct RegionScoreSummary {
     int16_t        us_score;
     int16_t        ussr_score;
     int16_t        net_delta; // us_score - ussr_score
+    // The USSR's counts as this scoring counted them: the board's above, less the battleground
+    // (its country, and in Asia the enemy-superpower adjacency) Shuttle Diplomacy takes away.
+    // Equal to the board's whenever the card does not apply.
+    uint8_t        ussr_countries_scored;
+    uint8_t        ussr_battlegrounds_scored;
+    uint8_t        ussr_superpower_adjacent_scored;
+    bool           shuttle_diplomacy_applied;
 };
 
 // Every regional scoring on a thread, reported as it happens, for P34's playout labeller

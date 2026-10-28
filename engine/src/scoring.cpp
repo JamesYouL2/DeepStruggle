@@ -133,7 +133,11 @@ RegionScoreSummary evaluate_region_impl(const GameState& state, Region r,
         effective_ussr_bg--;
         if (effective_ussr_countries > 0) effective_ussr_countries--;
         if (r == Region::ASIA && effective_ussr_adjacent > 0) effective_ussr_adjacent--;
+        summary.shuttle_diplomacy_applied = true;
     }
+    summary.ussr_countries_scored = effective_ussr_countries;
+    summary.ussr_battlegrounds_scored = effective_ussr_bg;
+    summary.ussr_superpower_adjacent_scored = effective_ussr_adjacent;
 
     uint8_t us_non_bg = (summary.us_countries >= summary.us_battlegrounds) ? (summary.us_countries - summary.us_battlegrounds) : 0;
     uint8_t ussr_non_bg = (effective_ussr_countries >= effective_ussr_bg) ? (effective_ussr_countries - effective_ussr_bg) : 0;

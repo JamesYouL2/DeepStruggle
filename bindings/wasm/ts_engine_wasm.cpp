@@ -373,15 +373,6 @@ void each_country(const std::array<uint64_t, 2>& mask, F&& f) {
     }
 }
 
-// Take `cid` out of either side's control without touching the other countries: equal influence
-// controls for nobody.
-void uncontrol(ts::GameState& s, uint8_t cid) { s.countries[cid].ussr_influence = s.countries[cid].us_influence; }
-
-bool same_scoring(const ts::RegionScoreSummary& a, const ts::RegionScoreSummary& b) {
-    return a.us_status == b.us_status && a.ussr_status == b.ussr_status && a.us_score == b.us_score &&
-           a.ussr_score == b.ussr_score;
-}
-
 sj::Value side_json(const char* status, int countries, int battlegrounds, int adjacent, int base_vp, bool base_known,
                     int vp, sj::Value controlled) {
     sj::Value v = sj::Value::object();
@@ -395,32 +386,12 @@ sj::Value side_json(const char* status, int countries, int battlegrounds, int ad
     return v;
 }
 
-// One of the six regions. The counts a scoring adds up are those it *scored*: Shuttle Diplomacy
-// leaves one USSR battleground (and its country, and in Asia Japan's adjacency) out, and the
-// summary reports the board's counts. They are found from the engine, never re-derived: the board,
-// or the board with one USSR country uncontrolled, scored without the mid-game-only adjustment
-// (is_final_scoring) -- whichever gives exactly the scoring evaluate_region gave.
+// One of the six regions. The counts shown are those the scoring *counted*: Shuttle Diplomacy leaves
+// one USSR battleground (its country, and in Asia the enemy-superpower adjacency) out, which the
+// engine's summary reports in its *_scored fields.
 sj::Value region_json(const ts::GameState& s, ts::Region r) {
     const ts::RegionScoreSummary sum = ts::Scoring::evaluate_region(s, r);
     const auto& mask = ts::MapData::get_region_mask(r);
-
-    ts::RegionScoreSummary scored = sum;
-    bool found = false;
-    int uncounted = -1;
-    std::vector<uint8_t> ussr_held;
-    each_country(mask, [&](uint8_t cid) {
-        if (ts::Scoring::get_country_control(s, cid) == ts::Player::USSR) ussr_held.push_back(cid);
-    });
-    {
-        const ts::RegionScoreSummary plain = ts::Scoring::evaluate_region(s, r, true);
-        if (same_scoring(plain, sum)) { scored = plain; found = true; }
-    }
-    for (size_t i = 0; !found && i < ussr_held.size(); ++i) {
-        ts::GameState probe = s;
-        uncontrol(probe, ussr_held[i]);
-        const ts::RegionScoreSummary p = ts::Scoring::evaluate_region(probe, r, true);
-        if (same_scoring(p, sum)) { scored = p; found = true; uncounted = ussr_held[i]; }
-    }
 
     // Who controls what, each country marked a battleground when this scoring counts it as one (Formosan
     // Resolution makes Taiwan one): the scoring of that country alone.
@@ -457,15 +428,15 @@ sj::Value region_json(const ts::GameState& s, ts::Region r) {
     v.set("battlegrounds", map_bgs + std::max(0, extra));
     v.set("net", static_cast<int>(sum.net_delta));
     v.set("wins", wins ? sj::Value(probe.victory_points > 0 ? "US" : "USSR") : sj::Value());
-    v.set("us", side_json(status_name(sum.us_status), scored.us_countries, scored.us_battlegrounds,
-                          scored.us_superpower_adjacent,
-                          scored.us_score - scored.us_battlegrounds - scored.us_superpower_adjacent, found,
+    v.set("us", side_json(status_name(sum.us_status), sum.us_countries, sum.us_battlegrounds,
+                          sum.us_superpower_adjacent,
+                          sum.us_score - sum.us_battlegrounds - sum.us_superpower_adjacent, true,
                           sum.us_score, std::move(us_list)));
-    sj::Value ussr = side_json(status_name(sum.ussr_status), scored.ussr_countries, scored.ussr_battlegrounds,
-                               scored.ussr_superpower_adjacent,
-                               scored.ussr_score - scored.ussr_battlegrounds - scored.ussr_superpower_adjacent,
-                               found, sum.ussr_score, std::move(ussr_list));
-    ussr.set("uncounted", uncounted >= 0 ? sj::Value(uncounted) : sj::Value());
+    sj::Value ussr = side_json(status_name(sum.ussr_status), sum.ussr_countries_scored,
+                               sum.ussr_battlegrounds_scored, sum.ussr_superpower_adjacent_scored,
+                               sum.ussr_score - sum.ussr_battlegrounds_scored - sum.ussr_superpower_adjacent_scored,
+                               true, sum.ussr_score, std::move(ussr_list));
+    ussr.set("shuttle_diplomacy", sum.shuttle_diplomacy_applied);
     v.set("ussr", std::move(ussr));
     return v;
 }
@@ -505,7 +476,7 @@ sj::Value southeast_asia_json(const ts::GameState& s) {
     v.set("wins", sj::Value());
     v.set("us", side_json(nullptr, counts[0], 0, 0, 0, false, us_vp, std::move(lists[0])));
     sj::Value ussr = side_json(nullptr, counts[1], 0, 0, 0, false, ussr_vp, std::move(lists[1]));
-    ussr.set("uncounted", sj::Value());
+    ussr.set("shuttle_diplomacy", false);
     v.set("ussr", std::move(ussr));
     return v;
 }
@@ -517,8 +488,8 @@ sj::Value southeast_asia_json(const ts::GameState& s) {
 // Region order, then Southeast Asia ("slot" 6, ScoringTap's). Per region: "battlegrounds" there,
 // "net" VP (US positive), "wins" (the side a scoring would hand the game, else null), and per side
 // "status", the scored "countries" / "battlegrounds" / "adjacent" (to the enemy superpower), the
-// standing's "base_vp", "vp", and "controlled" [{id, battleground | vp}]; the USSR's "uncounted" is
-// the country a scoring left out (Shuttle Diplomacy). A flag this build does not know is listed under
+// standing's "base_vp", "vp", and "controlled" [{id, battleground | vp}]; the USSR's
+// "shuttle_diplomacy" says whether that card took a battleground out of its count. A flag this build does not know is listed under
 // "ignored_flags". "" with ts_last_error() for a malformed state.
 TS_API const char* ts_region_scores_json(const char* state_json) {
     sj::Value in;
@@ -900,12 +871,7 @@ TS_API int ts_rollout_step(const float* logits) {
 // The rows at their horizon and not yet valued, from the mover's side, into the same buffers.
 TS_API int ts_rollout_fill_leaves() {
     if (!g_rollout) return 0;
-    // TODO(lead): use RolloutBatch::leaves_pending()
-    size_t n = 0;
-    for (size_t r = 0; r < g_rollout->rows(); ++r) {
-        const auto& row = g_rollout->row(r);
-        n += (row.done && !row.terminal && !row.refused && !row.leaf_valued) ? 1 : 0;
-    }
+    const size_t n = g_rollout->leaves_pending();
     g_ro_obs.assign(std::max<size_t>(1, n * g_rollout->obs_width()), 0.0f);
     g_ro_masks.assign(std::max<size_t>(1, n * ts::FLAT_ACTION_SPACE_SIZE), 0);
     return static_cast<int>(g_rollout->fill_leaves(g_ro_obs.data(), g_ro_masks.data()));

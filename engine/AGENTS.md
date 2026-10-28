@@ -473,6 +473,9 @@ Held by `CardEdgeCasesTest.Deal_AlternatesSoAShortDeckIsShared`, `Deal_USSRDraws
   `decode_flat_action_212` returns a `NONE` action for an index outside the space; both are refused
   by `StateMachine::step`, and `Engine::step_flat` checks the bound itself. A failed placement in
   Canada (id 0) is refused rather than read as "stop the Ops".
+* **`RegionScoreSummary` reports what a scoring counted**: `ussr_*_scored` and
+  `shuttle_diplomacy_applied` beside the board's counts, so the page shows Shuttle Diplomacy's
+  adjusted counts from the engine instead of re-scoring the board to find them.
 * **`anomalies_reported()`** (`include/ts/invariant.hpp`) counts this thread's `report_anomaly`
   calls, so a caller that must stop at one (the human-replay converter) can check it.
 * Shared instead of copied: the Ops-budget ladder (`withdraw_conditional_ops_bonus`),

@@ -27,8 +27,7 @@ export interface RegionScoreAudit {
   /** The countries each side controls there, a battleground (in Southeast Asia, Thailand) starred. */
   usControlled: string[];
   ussrControlled: string[];
-  /** The USSR country this scoring leaves out of the count, by name. */
-  ussrUncounted: string | null;
+  /** Whether Shuttle Diplomacy took one USSR battleground out of this scoring's count. */
   shuttleDiplomacy: boolean;
 }
 
@@ -446,8 +445,7 @@ export class MapView {
         wins: r.wins,
         usControlled: listed(r.us),
         ussrControlled: listed(r.ussr),
-        ussrUncounted: r.ussr.uncounted != null ? names.get(r.ussr.uncounted) ?? `#${r.ussr.uncounted}` : null,
-        shuttleDiplomacy: (state.flags || []).includes("SHUTTLE_DIPLOMACY_ACTIVE"),
+        shuttleDiplomacy: r.ussr.shuttle_diplomacy === true,
       };
     });
   }
