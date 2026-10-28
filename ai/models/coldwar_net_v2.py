@@ -1,7 +1,5 @@
 """ColdWarNetV2: Graph-Card Cross-Attention Neural Network for Twilight Struggle."""
 
-from typing import cast
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

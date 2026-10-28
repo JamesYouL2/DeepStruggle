@@ -1,7 +1,6 @@
 # High-Speed Vectorized Tournament Runner & Elo Calculator for Twilight Struggle AI.
 
 import os
-import sys
 import time
 import json
 from dataclasses import dataclass, field
@@ -18,8 +17,7 @@ from tools.lib.leaderboard import _Binomial, _newton
 from tools.lib.openings import ScriptedSetupOverride
 from tools.lib.scripted_rules import SCRIPTS
 from bindings.ts_env import agent_view
-from tools.lib.player_agent import (BatchActor, BatchSelector, HeuristicAgent, NeuralAgent,
-                                    PlayerAgent, RandomAgent, load_agent, resolve_device)
+from tools.lib.player_agent import BatchActor, BatchSelector, NeuralAgent, PlayerAgent, resolve_device
 from ai.game_length import ply as game_ply
 from ai.search.turn_pricing import Candidate, price, priceable
 from tools.lib.game_ending import classify_game_ending_reason

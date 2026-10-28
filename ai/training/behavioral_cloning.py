@@ -1,8 +1,7 @@
 """Phase 0: Behavioral Cloning pre-training pipeline for ColdWarNet."""
 
 import os
-import time
-from typing import List, Tuple, Dict, Any, Optional, Sequence
+from typing import List, Tuple, Dict, Optional, Sequence
 import numpy as np
 import torch
 import torch.nn as nn
@@ -10,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
 import ts_engine as ts
-from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
+from ai.models.coldwar_net import ColdWarNet
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features, observe
 from tools.lib.game_step import drain_chance
