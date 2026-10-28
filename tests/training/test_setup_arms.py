@@ -4,12 +4,21 @@ normal recursion elsewhere; off is bitwise the old update, and eager equals grap
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+import pathlib
+from typing import NamedTuple
 
 import pytest
 import torch
 
+from ai.models import create_coldwar_net
+from ai.models.ladder_net import create_ladder_net
+from ai.training import NashPGTrainer
+from ai.training.generic_trainer import _HumanInjector
+from ai.training.human_corpus_dataset import HumanCorpusWriter
 from ai.training.rollout_buffer import RolloutBuffer, setup_phase_slot
+from ai.training.train import build_parser
+from bindings.ts_env import TsVectorizedEnv
+from tests.replay_corpus import ReplayCorpus
 
 T, N = 24, 16
 
@@ -91,15 +100,27 @@ def test_per_player_gae_is_refused() -> None:
         b.compute_gae(*last, per_player_gae=True)
 
 
-def test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term(tmp_path: Any) -> None:
-    import os
-    from ai.models.ladder_net import create_ladder_net
-    from ai.training.generic_trainer import _HumanInjector
-    from tools.lib.data_root import data_path
-    ds = [data_path("datasets", "human_corpus_e4")]
-    if not os.path.isdir(ds[0]):
-        pytest.fail(f"the human corpus dataset is missing at {ds[0]}: "
-                    f"tools/build_human_dataset.py --out {ds[0]}")
+#: Games of the corpus that convert end to end (pinned by tests/replayer); enough of them that the
+#: injector's 80% training split holds more setup placements than one batch.
+_HUMAN_GAMES = (100, 105, 111, 114, 237, 78, 96)
+
+
+def _human_dataset(corpus: ReplayCorpus, directory: str) -> str:
+    """A human-corpus dataset of a few games, written the way tools/build_human_dataset.py
+    writes one. The test used to read the full dataset from the shared data tree, which is
+    built rather than committed, so it held only where someone had built it."""
+    writer = HumanCorpusWriter(directory)
+    for replay_id in _HUMAN_GAMES:
+        conv = corpus.converted(replay_id)
+        assert conv.failure is None and conv.samples, f"replay {replay_id}: {conv.failure}"
+        writer.add_game(conv.samples, us_utility=conv.us_utility, final_vp=conv.final_victory_points)
+    writer.write()
+    return directory
+
+
+def test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term(tmp_path: pathlib.Path,
+                                                                     corpus: ReplayCorpus) -> None:
+    ds = [_human_dataset(corpus, str(tmp_path / "human"))]
     net = create_ladder_net("cpu", input_mode="grouped", aggregation="flatten", entity_dim=16,
                             entity_proj_dim=64, card_self_attention=False, cross_attention=False,
                             per_entity_heads=16, head_context=True, head_static=True,
@@ -110,7 +131,7 @@ def test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term(tmp_path: 
     inj = _HumanInjector(ds[0], net, torch.device("cpu"), every=1, weight=1.0, batch_size=64,
                          setup_only=True)
     phase = inj._obs[inj.train_idx][:, setup_phase_slot()]
-    assert len(inj.train_idx) > 1000 and float(abs(phase).max()) == 0.0
+    assert len(inj.train_idx) >= 64 and float(abs(phase).max()) == 0.0
     assert inj.maybe_step(0) > 0.0
 
 
@@ -159,9 +180,6 @@ def test_same_side_chains_same_mover_with_unchanged_rng_only() -> None:
 
 
 def test_the_trainer_records_rng_states_only_for_same_side() -> None:
-    from ai.models import create_coldwar_net
-    from ai.training import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
     for mode, expect in (("off", False), ("same-side", True)):
         torch.manual_seed(0)
         env = TsVectorizedEnv(num_envs=8, base_seed=123)
@@ -193,7 +211,6 @@ def test_graphed_equals_eager_for_same_side() -> None:
 
 
 def test_off_is_the_default_and_the_block_modes_stay_reachable() -> None:
-    from ai.training.train import build_parser
     p = build_parser()
     a = p.parse_args([])
     assert a.block_lambda is None                       # resolved to off in main()
