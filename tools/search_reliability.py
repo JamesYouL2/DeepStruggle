@@ -199,7 +199,7 @@ def playouts(bank: str, search_paths: Sequence[str], model: str, pairs: int, see
         cur = picks.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "picks": {}})
         cur["picks"].update(r["picks"])
     rows = [r for r in _part(list(read_jsonl([bank])), part) if str(r["id"]) in picks]
-    logits_fn, _ = load_policy(model)
+    logits_fn, feats = load_policy(model)
 
     def act(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
         return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
@@ -212,7 +212,7 @@ def playouts(bank: str, search_paths: Sequence[str], model: str, pairs: int, see
         positions.append((state_from_token(r["pos"]), sorted(moves)))
         ids.append(str(r["id"]))
     t0 = time.time()
-    scores = compare(positions, act, pairs, [position_seed(i, seed) for i in ids])
+    scores = compare(positions, act, pairs, [position_seed(i, seed) for i in ids], features=feats)
     res = []
     for r, sc in zip(rows, scores):
         raw = int(r["raw"])

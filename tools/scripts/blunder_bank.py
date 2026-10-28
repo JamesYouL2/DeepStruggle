@@ -138,12 +138,13 @@ def select(validation: Sequence[str], min_gap: float, min_z: float, out: str) ->
     return 0
 
 
-def greedy_fn(model: str) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
-    logits_fn, _ = load_policy(model)
+def greedy_fn(model: str) -> Tuple[Callable[[np.ndarray, np.ndarray], np.ndarray], int]:
+    """`model`'s greedy policy over observations, and the observation feature set it reads."""
+    logits_fn, feats = load_policy(model)
 
     def act(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
         return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
-    return act
+    return act, feats
 
 
 def _move(x: Any) -> int:
@@ -159,7 +160,7 @@ def confirm(inputs: Sequence[str], model: str, pairs: int, seed: int, part: str,
     depend on its part. Takes shortlist rows or bank rows."""
     k, n = (int(x) for x in part.split("/"))
     rows = [r for i, r in enumerate(sorted(read_jsonl(inputs), key=lambda r: str(r["id"]))) if i % n == k - 1]
-    act = greedy_fn(model)
+    act, feats = greedy_fn(model)
     sha = sha256_file(model)
     cont: Any = None
     cont_label = "greedy"
@@ -174,7 +175,7 @@ def confirm(inputs: Sequence[str], model: str, pairs: int, seed: int, part: str,
         if cont is not None:
             cont.reseed(position_seed(str(chunk[0]["id"]), seed + 2_000_003) % (1 << 31))
         scores = compare(positions, act, pairs, [position_seed(str(r["id"]), seed) for r in chunk],
-                         select=cont.select_actions_batch if cont is not None else None)
+                         select=cont.select_actions_batch if cont is not None else None, features=feats)
         for r, sc in zip(chunk, scores):
             net = _move(r["network"])
             diffs = {a: paired_diff(sc[a], sc[net]) for a in sc if a != net}
@@ -299,7 +300,7 @@ class Picker:
 def score(bank_path: str, players: Sequence[str], judge: Optional[str], pairs: int, seed: int,
           out: str) -> int:
     bank = list(read_jsonl([bank_path]))
-    act = greedy_fn(judge) if judge and pairs > 0 else None
+    act, feats = greedy_fn(judge) if judge and pairs > 0 else (None, 0)
     judge_name = os.path.basename(judge) if judge else ""
     result: Dict[str, Any] = {"bank": bank_path, "rows": len(bank), "judge": judge, "pairs": pairs, "players": {}}
     lines = [f"# The blunder bank, scored: {len(bank)} positions", "",
@@ -328,7 +329,8 @@ def score(bank_path: str, players: Sequence[str], judge: Optional[str], pairs: i
                 chunk = others[lo:lo + BATCH]
                 positions = [(state_from_token(r["pos"]), sorted({p["pick"], r["network"]["action"]}))
                              for p, r in chunk]
-                sc = compare(positions, act, pairs, [position_seed(str(r["id"]), seed + 1) for _, r in chunk])
+                sc = compare(positions, act, pairs, [position_seed(str(r["id"]), seed + 1) for _, r in chunk],
+                             features=feats)
                 for (p, r), s_ in zip(chunk, sc):
                     m, se = paired_diff(s_[p["pick"]], s_[r["network"]["action"]])
                     p["vs_blunder"] = [round(m, 4), round(se, 4)]

@@ -76,7 +76,7 @@ def load_policy(path: str) -> Tuple[LogitsFn, int]:
     if path.endswith(".onnx"):
         agent = OnnxAgent(path)
         require_e4_view(path, agent)
-        return agent.logits, 0
+        return agent.logits, agent.obs_features
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     neural = NeuralAgent.from_checkpoint(path, device=str(dev))
     require_e4_view(path, neural)

@@ -107,7 +107,8 @@ def run(inp: Sequence[str], onnx: str, pairs: int, part: str, seed: int, out: st
 
     t0 = time.time()
     positions = [(state_from_token(r["pos"]), sorted(set(int(v) for v in r["a"].values()))) for r in rows]
-    scores = compare(positions, act, pairs, [position_seed(r["id"], seed) for r in rows])
+    scores = compare(positions, act, pairs, [position_seed(r["id"], seed) for r in rows],
+                     features=agent.obs_features)
     res: List[Dict[str, Any]] = []
     for r, sc in zip(rows, scores):
         a = {w: int(v) for w, v in r["a"].items()}
@@ -178,7 +179,7 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
     cont_label = "greedy"
     if continue_with:
         cont, cont_label = searched_continuation(model, continue_with)
-    logits_fn, _ = load_policy(model)
+    logits_fn, feats = load_policy(model)
 
     def act(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
         return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
@@ -211,7 +212,7 @@ def validate(inputs: Sequence[str], model: str, out: str, part: str, pairs: int,
             cont.reseed(cont_seed)
         sc = compare([(st, sorted(set(moves.values())))], act, pairs,
                      [position_seed(str(r["id"]), seed)],
-                     select=cont.select_actions_batch if cont is not None else None)[0]
+                     select=cont.select_actions_batch if cont is not None else None, features=feats)[0]
         greedy = moves["greedy"]
         alternatives = [a for a in sc if a != greedy]
         diffs = {a: paired_diff(sc[a], sc[greedy]) for a in alternatives}

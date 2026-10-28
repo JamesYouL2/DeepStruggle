@@ -477,7 +477,7 @@ def playouts(a: argparse.Namespace) -> int:
     # A row with one move to play has nothing to compare (confirm-select's rows the screen cleared).
     rows = [r for r in _my_rows(a) if len(r["pmoves"]) >= 2]
     # The raw network, greedy: the --onnx export when one is named, else the .pt itself.
-    logits_fn, _ = load_policy(a.onnx or a.model)
+    logits_fn, feats = load_policy(a.onnx or a.model)
 
     def act(obs: Any, masks: Any) -> Any:
         return np.asarray(logits_fn(obs, masks)).argmax(axis=1).astype(np.int32)
@@ -501,7 +501,8 @@ def playouts(a: argparse.Namespace) -> int:
                 searcher.reseed(a.seed + 100_003 * k + lo)
             # One seed per position, from its id: a row's pairs do not depend on its part or batch.
             scores = compare(positions, act, a.pairs, [position_seed(str(r["id"]), a.seed) for r in batch],
-                             select=searcher.select_actions_batch if searcher is not None else None)
+                             select=searcher.select_actions_batch if searcher is not None else None,
+                             features=feats)
             for r, sc in zip(batch, scores):
                 f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "pairs": a.pairs,
                                     "continue_with": a.continue_with or "raw",
@@ -640,7 +641,7 @@ def subs_stage(a: argparse.Namespace) -> int:
         for lo in range(0, len(rows), a.chunk):
             batch = rows[lo:lo + a.chunk]
             res = subs_branches([state_from_token(r["pos"]) for r in batch], [int(r["alt"]) for r in batch],
-                                act, a.pairs, a.seed + 100_003 * k + lo)
+                                act, a.pairs, a.seed + 100_003 * k + lo, features=agent.obs_features)
             for r, x in zip(batch, res):
                 f.write(json.dumps({"schema": SCHEMA, "id": r["id"], "pairs": a.pairs, "alt": r["alt"],
                                     "branches": x}, separators=(",", ":")) + "\n")

@@ -101,7 +101,7 @@ def label(model: str, games: int, rate: float, k: int, pairs: int, part: str, se
         return np.asarray(logits_fn(o, m)).argmax(axis=1).astype(np.int32)
 
     t1 = time.time()
-    scores = compare(positions, act, pairs, [position_seed(r["id"], seed) for r in rows])
+    scores = compare(positions, act, pairs, [position_seed(r["id"], seed) for r in rows], features=feats)
     for r, sc in zip(rows, scores):
         r["pairs"] = pairs
         r["score"] = {str(a): round(sum(v) / len(v), 5) for a, v in sc.items()}
