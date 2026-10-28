@@ -23,13 +23,14 @@ import json
 import os
 import re
 import sys
-from typing import Optional
+from typing import List, Optional, Tuple
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from ai.training.run_name import LEGACY_RUN_NAME_RE, is_run_name, parse_run_name  # noqa: E402
+from ai.training.train import build_parser  # noqa: E402
 
 #: metadata keys that describe the outcome rather than the request, so they are never flags.
 _NOT_FLAGS = {
@@ -39,8 +40,6 @@ _NOT_FLAGS = {
 
 
 def _defaults() -> dict:
-    from ai.training.train import build_parser
-
     parser = build_parser()
     return {a.dest: a.default for a in parser._actions if a.dest != "help"}
 
@@ -81,6 +80,14 @@ _LADDER = {
     "logit_cap_leak": "ladder_logit_cap_leak", "logit_cap_leak_up": "ladder_logit_cap_leak_up",
     "region_attn_dim": "ladder_region_attn_dim", "region_attn_heads": "ladder_region_attn_heads",
 }
+#: `ladder_config` keys that are not a `--ladder-*` flag, so they are not mapped: the network's
+#: fixed attention width, markers derived from other flags (the aux coefficients, --obs-features,
+#: each recorded at the top level), and copies of top-level flags of the same name. Any key in
+#: neither this set nor `_LADDER` is a setting the diff cannot see, and fails the command.
+_LADDER_NOT_FLAGS = frozenset({
+    "num_attn_heads", "aux_heads", "card_aux", "opp_legal_aux", "obs_features",
+    "per_entity_heads", "identity_dim", "drop_static", "categorical_value",
+})
 
 
 #: CLI dests that are not training settings of an RL run, so their absence from metadata is not a
@@ -244,6 +251,14 @@ def recorded(run_dir: str) -> dict:
     return out
 
 
+def unmapped_ladder_keys(run_dir: str) -> List[str]:
+    """`ladder_config` keys this file does not know, so `recorded` drops them unseen."""
+    lc = _metadata(run_dir).get("ladder_config")
+    if not isinstance(lc, dict):
+        return []
+    return sorted(k for k in lc if k not in _LADDER and k not in _LADDER_NOT_FLAGS)
+
+
 def unrecorded(run_dir: str) -> list:
     """CLI dests this run's metadata says nothing about, so a diff cannot check them."""
     rec, dflt = recorded(run_dir), _defaults()
@@ -284,6 +299,26 @@ def as_flags(settings: dict) -> list:
     return parts
 
 
+def _blind_spots(runs: List[Tuple[str, str]]) -> bool:
+    """Print what the runs' metadata does not let a diff check; True if a ladder key is unmapped.
+
+    A flag a run's metadata does not record cannot be diffed; say which, so "agree" is not read as
+    covering them. Older runs predate some keys (lr, batch and buffer size, gamma: 2026-09-24). An
+    unmapped `ladder_config` key is an architecture setting this file would drop, which is an error.
+    """
+    unmapped_any = False
+    for name, run in runs:
+        miss = [d for d in unrecorded(run) if d not in UNCHECKED_BY_DESIGN]
+        if miss:
+            print(f"# not recorded by {name}, so not checked: " + ", ".join(miss))
+        unmapped = unmapped_ladder_keys(run)
+        if unmapped:
+            unmapped_any = True
+            print(f"launch_flags: ERROR: ladder_config keys of {name} with no mapping here (add each to "
+                  f"_LADDER or _LADDER_NOT_FLAGS): " + ", ".join(unmapped), file=sys.stderr)
+    return unmapped_any
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -294,10 +329,11 @@ def main() -> int:
 
     a = non_default(args.run_dir)
     if not args.diff:
-        print(f"# non-default flags used by {os.path.basename(args.run_dir.rstrip('/'))}")
+        name = os.path.basename(args.run_dir.rstrip("/"))
+        print(f"# non-default flags used by {name}")
         for p in as_flags(a):
             print(f"  {p}")
-        return 0
+        return 2 if _blind_spots([(name, args.run_dir)]) else 0
 
     b = non_default(args.diff)
     keys = sorted(set(a) | set(b))
@@ -312,13 +348,8 @@ def main() -> int:
         print(f"{'flag':28s}{na:>30s}{nb:>30s}")
         for k, va, vb in rows:
             print(f"{'--' + k.replace('_', '-'):28s}{str(va):>30s}{str(vb):>30s}")
-    # A flag a run's metadata does not record cannot be diffed; say which, so "agree" is not read
-    # as covering them. Older runs predate some keys (lr, batch and buffer size, gamma: 2026-09-24).
-    _ignore = UNCHECKED_BY_DESIGN
-    for name, run in ((na, args.run_dir), (nb, args.diff)):
-        miss = [d for d in unrecorded(run) if d not in _ignore]
-        if miss:
-            print(f"# not recorded by {name}, so not checked: " + ", ".join(miss))
+    if _blind_spots([(na, args.run_dir), (nb, args.diff)]):
+        return 2
     return 1 if rows else 0
 
 
