@@ -53,9 +53,14 @@ import numpy as np
 import torch
 import ts_engine as ts
 
+from bindings.ts_env import observe
 from tools.lib.merged_targets import (after_influence_commit, factorised_policy, is_merged_op_choice,
                                       post_commit_policy)
 from tools.lib.player_agent import NeuralAgent
+
+#: Runner steps a batch may take; a game still running after it is a stuck teacher or an engine
+#: loop, and is refused rather than written as a draw.
+MAX_STEPS = 4000
 
 TOP_K = 12
 #: In the merged view an op-choice node has ~50 options and the translated policy can spread over
@@ -94,7 +99,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _dump_bad_rows(runner: Any, idx: List[int], bad: np.ndarray, mask_t: torch.Tensor,
-                   probs: torch.Tensor, output_path: str) -> None:
+                   probs: torch.Tensor, output_path: str, features: int) -> None:
     """Positions the teacher cannot sample at (an empty mask, or a non-finite policy): write them
     out with everything needed to reproduce them, and stop. Never skip or patch them -- a position
     with no legal action, or a network that outputs NaN, is a bug to find, not a row to drop."""
@@ -112,8 +117,7 @@ def _dump_bad_rows(runner: Any, idx: List[int], bad: np.ndarray, mask_t: torch.T
             "merged_mask_sum": int(np.asarray(ts.Engine.get_flat_action_mask(st, True)).sum()),
             "probs_finite": bool(torch.isfinite(probs[int(sub)]).all()),
             "is_terminal": bool(ts.Engine.is_terminal(st)),
-            "obs_finite": bool(np.isfinite(np.asarray(
-                ts.extract_observation(st, ctx.decision_player))).all()),
+            "obs_finite": bool(np.isfinite(observe(st, ctx.decision_player, features)).all()),
             "state": st.to_save_dict(),
         })
     path = output_path + ".bad_rows.json"
@@ -134,7 +138,7 @@ def _probs(model: Any, obs: torch.Tensor, mask: np.ndarray, dev: torch.device) -
     return torch.softmax(logits.float().masked_fill(m <= 0, float("-inf")), dim=-1).cpu().numpy()
 
 
-def _merged_targets(model: Any, runner: Any, idx: List[int], obs_t: torch.Tensor,
+def _merged_targets(model: Any, features: int, runner: Any, idx: List[int], obs_t: torch.Tensor,
                     merged_masks: np.ndarray, dev: torch.device) -> Tuple[np.ndarray, np.ndarray]:
     """The teacher's E4 policy at each position in `idx`, translated into the E4.1 view.
 
@@ -155,8 +159,7 @@ def _merged_targets(model: Any, runner: Any, idx: List[int], obs_t: torch.Tensor
 
         def _eval(ts_states: List[Any]) -> np.ndarray:
             obs = torch.from_numpy(np.stack([
-                np.asarray(ts.extract_observation(t, t.ctx().decision_player), np.float32)
-                for t in ts_states])).to(dev)
+                observe(t, t.ctx().decision_player, features) for t in ts_states])).to(dev)
             masks = np.stack([np.asarray(ts.Engine.get_flat_action_mask(t, False)) for t in ts_states])
             return _probs(model, obs, masks, dev)
 
@@ -170,12 +173,23 @@ def main() -> int:
     a = ap.parse_args()
 
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
-    teachers = {
-        1: NeuralAgent.from_checkpoint(a.us, device=dev).model,     # ts.Player.US
-        -1: NeuralAgent.from_checkpoint(a.ussr, device=dev).model,  # ts.Player.USSR
+    # Per seat: each teacher reads its own observation feature set and has its own action view.
+    agents = {
+        1: NeuralAgent.from_checkpoint(a.us, device=dev),     # ts.Player.US
+        -1: NeuralAgent.from_checkpoint(a.ussr, device=dev),  # ts.Player.USSR
     }
-    for m in teachers.values():
-        m.eval()
+    teachers = {side: ag.model.eval() for side, ag in agents.items()}
+    # How each seat's targets are made. The dataset is in one view (--merged-view or not), read
+    # back from the sidecar; a teacher in that same view is recorded as it is, an E4 teacher in a
+    # merged dataset is translated (the module docstring), and a merged-view teacher cannot teach
+    # an E4 dataset -- there is no exact translation that way.
+    translate: Dict[int, bool] = {}
+    for side, ag in agents.items():
+        if ag.merged_influence and not a.merged_view:
+            raise SystemExit(
+                f"{a.us if side == 1 else a.ussr} decides in the merged-influence (E4.1) view; an E4 "
+                f"dataset cannot hold its targets. Pass --merged-view.")
+        translate[side] = a.merged_view and not ag.merged_influence
 
     os.makedirs(os.path.dirname(os.path.abspath(a.output_path)), exist_ok=True)
     games_done = 0
@@ -189,13 +203,14 @@ def main() -> int:
             n = min(a.batch_size, a.total_games - games_done)
             base_seed = 500_000 + games_done * 10_007 + 1
             runner = ts.VectorizedBatchRunner(n, base_seed)
+            runner.set_obs_features([agents[1].obs_features] * n, [agents[-1].obs_features] * n)
             if a.merged_view:
                 runner.set_merged_influence([True] * n, [True] * n)
             hist: List[Dict[str, Any]] = [
                 {"seed": base_seed + i * 10007 + 1, "actions": []} for i in range(n)]
             done = [False] * n
 
-            for _ in range(4000):
+            for step in range(MAX_STEPS + 1):
                 terminals = runner.get_terminals()
                 utils = runner.get_terminal_utilities()
                 for i in range(n):
@@ -208,6 +223,12 @@ def main() -> int:
                         hist[i]["final_vp"] = int(st.victory_points)
                 if all(done):
                     break
+                if step == MAX_STEPS:
+                    stuck = [hist[i]["seed"] for i in range(n) if not done[i]]
+                    raise RuntimeError(
+                        f"{len(stuck)} of {n} games did not finish in {MAX_STEPS} steps (a stuck "
+                        f"teacher or an engine loop); seeds {stuck[:5]}. Nothing of this batch was "
+                        f"written.")
 
                 active = [i for i in range(n) if not done[i]]
                 obs_all = np.array(runner.get_observations(), copy=False)
@@ -221,10 +242,12 @@ def main() -> int:
                     idx = [i for i in active if int(players[i]) == side]
                     if not idx:
                         continue
-                    obs_t = torch.from_numpy(obs_all[idx]).float().to(dev)
-                    if a.merged_view:
-                        probs_np, merged_np = _merged_targets(teachers[side], runner, idx,
-                                                              obs_t, masks_all, dev)
+                    # Rows are zero-padded to the widest set in the batch; each teacher reads the
+                    # first obs_size floats of its own.
+                    obs_t = torch.from_numpy(obs_all[idx, :agents[side].obs_size]).float().to(dev)
+                    if translate[side]:
+                        probs_np, merged_np = _merged_targets(teachers[side], agents[side].obs_features,
+                                                              runner, idx, obs_t, masks_all, dev)
                         probs = torch.from_numpy(probs_np).to(dev)
                         mask_t = torch.from_numpy(merged_np).to(dev)
                         lg = torch.log(probs.clamp_min(1e-30)).masked_fill(mask_t <= 0, float("-inf"))
@@ -236,13 +259,14 @@ def main() -> int:
                         lg = logits.float()
                         lg = lg.masked_fill(mask_t <= 0, float("-inf"))
                         probs = torch.softmax(lg, dim=-1)
-                        k = TOP_K
+                        k = MERGED_TOP_K if a.merged_view else TOP_K
 
                     t = max(1e-3, a.temperature)
                     sharp = torch.softmax(lg / t, dim=-1)
                     bad = (~torch.isfinite(sharp).all(dim=-1)) | (mask_t.sum(dim=-1) == 0)
                     if bool(bad.any()):
-                        _dump_bad_rows(runner, idx, bad.cpu().numpy(), mask_t, probs, a.output_path)
+                        _dump_bad_rows(runner, idx, bad.cpu().numpy(), mask_t, probs, a.output_path,
+                                       agents[side].obs_features)
                     picks = torch.multinomial(sharp, 1).squeeze(1).cpu().numpy()
 
                     topv, topi = torch.topk(probs, k=min(k, probs.shape[-1]), dim=-1)
@@ -265,11 +289,14 @@ def main() -> int:
                         hist[i]["actions"].append(rec)
                         decisions += 1
 
-                runner.step_flat_all(actions)
+                results = runner.step_flat_all(actions)
+                refused = [i for i in active if not results[i]]
+                if refused:
+                    raise RuntimeError(
+                        f"the engine refused flat action {actions[refused[0]]} in game seed "
+                        f"{hist[refused[0]]['seed']} ({len(refused)} refusals this step)")
 
             for i in range(n):
-                hist[i].setdefault("winner", "DRAW")
-                hist[i].setdefault("final_vp", 0)
                 out.write(json.dumps(hist[i]) + "\n")
             games_done += n
             el = time.time() - t0
@@ -289,6 +316,10 @@ def main() -> int:
         "outcomes": outcomes,
         "commit": _commit(),
         "engine_obs_size": int(ts.OBS_SIZE),
+        "us_obs_features": agents[1].obs_features,
+        "ussr_obs_features": agents[-1].obs_features,
+        "us_teacher_merged_influence": agents[1].merged_influence,
+        "ussr_teacher_merged_influence": agents[-1].merged_influence,
         # Read by --mode distill: the dataset must be replayed in the view it was played in.
         "merged_influence": bool(a.merged_view),
     }
