@@ -33,16 +33,16 @@ import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import torch
+
+from ai.models.coldwar_net_v2 import create_coldwar_net_v2
+from ai.training.nash_pg import NashPGTrainer
+from bindings.ts_env import TsVectorizedEnv
+from tools.lib.engine_fingerprint import require_fresh
 
 
 def measure(num_envs: int, buffer_size: int, iterations: int, device: str,
             compile_mode: "Optional[str]" = None, warmup: int = 1) -> Dict[str, Any]:
-    import torch
-
-    from ai.models.coldwar_net_v2 import create_coldwar_net_v2
-    from ai.training.nash_pg import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
-
     net: Any = create_coldwar_net_v2()
     if compile_mode:
         # The rollout runs the full batch and the update runs minibatches, so there is more than
@@ -104,9 +104,9 @@ def main() -> int:
                     help="Iterations before timing starts. Raise under --compile: several input shapes mean several compilations.")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args()
+    require_fresh()
 
     try:
-        import torch
         name = (torch.cuda.get_device_name(0)
                 if args.device == "cuda" and torch.cuda.is_available() else "cpu")
     except Exception:

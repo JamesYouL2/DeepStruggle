@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import importlib
+import json
 import math
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -30,8 +32,8 @@ import torch
 import ts_engine as ts
 
 from ai.eval.decisive_probe import classify_in_view
-
-import importlib
+from bindings.ts_env import TsVectorizedEnv, model_obs_features
+from tools.lib.player_agent import NeuralAgent
 
 #: version 2 (main, PR #6) folds chances to win; version 1 has no fold and counts per decision.
 _fold: Any = getattr(importlib.import_module("ai.eval.safety"), "fold_win_opportunities", None)
@@ -49,7 +51,6 @@ def _opportunities(decisions: List[Tuple[int, int, int, bool]]) -> List[Tuple[in
 
 
 def play(model: Any, games: int, base_seed: int, temperature: float, batch: int) -> List[Dict[str, Any]]:
-    from bindings.ts_env import TsVectorizedEnv, model_obs_features
     device = next(model.parameters()).device
     model.eval()
     out: List[Dict[str, Any]] = []
@@ -139,7 +140,9 @@ def report(rows: Sequence[Dict[str, Any]], version: int = VERSION) -> str:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    from tools.lib.player_agent import NeuralAgent
+    # No require_fresh() here, unlike the other analysis scripts: this one runs another codebase's
+    # classifier (PYTHONPATH=<codebase>:build/release), whose tools.lib may predate the helper and
+    # whose sources are not the ones the built engine is stamped against.
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--games", type=int, default=1024)
@@ -150,7 +153,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--merge", nargs="+", default=None, help="report over these dumps instead of playing")
     a = ap.parse_args(argv)
     if a.merge:
-        import json
         rows: List[Dict[str, Any]] = []
         versions = set()
         for f in a.merge:
@@ -170,7 +172,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"checkpoint {a.checkpoint}, temperature {a.temperature}, {time.time() - t0:.0f}s")
     print(report(rows))
     if a.dump:
-        import json
         json.dump({"version": VERSION, "checkpoint": a.checkpoint, "seed": a.seed, "rows": rows}, open(a.dump, "w"))
     return 0
 

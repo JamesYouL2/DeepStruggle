@@ -33,6 +33,8 @@ from ai.eval.blunders import measure_blunders_batched  # noqa: E402
 from ai.eval.decisive_probe import measure_decisive_batched  # noqa: E402
 from ai.eval.position_diagnostics import profile_self_play_batched  # noqa: E402
 from tools.lib.checkpoint_id import checkpoint_label  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
+from tools.lib.player_agent import NeuralAgent, resolve_device  # noqa: E402
 
 #: The blunder rules, by the goal criterion each one measures.
 BLUNDER_RULES = {
@@ -53,8 +55,6 @@ def setup_row(m: setup_probe.SetupMeasurement) -> Dict[str, float]:
 
 def probe(path: str, device: str, setup_games: int, position_games: int, blunder_games: int,
           decisive_games: int) -> Dict[str, float]:
-    from tools.lib.player_agent import NeuralAgent
-
     agent = NeuralAgent.from_checkpoint(path, device=device)
     model = agent.model
     model.eval()
@@ -110,8 +110,7 @@ def main() -> None:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     args = ap.parse_args()
-
-    from tools.lib.player_agent import resolve_device
+    require_fresh()
 
     device = str(resolve_device(args.device))
     rows: Dict[str, Dict[str, float]] = {}

@@ -27,6 +27,11 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import torch
 
+from ai.training.nash_pg import NashPGTrainer
+from bindings.ts_env import TsVectorizedEnv
+from tools.lib.engine_fingerprint import require_fresh
+from tools.lib.player_agent import NeuralAgent
+
 #: (label, compute_gae kwargs). Add a row when adding an estimator.
 ESTIMATORS: Tuple[Tuple[str, Dict[str, Any]], ...] = (
     ("interleaved (default)", {}),
@@ -37,10 +42,6 @@ ESTIMATORS: Tuple[Tuple[str, Dict[str, Any]], ...] = (
 
 def probe(checkpoint: str, num_envs: int, steps: int, device: str,
           seed: int, gae_lambda: float) -> int:
-    from ai.training.nash_pg import NashPGTrainer
-    from bindings.ts_env import TsVectorizedEnv
-    from tools.lib.player_agent import NeuralAgent
-
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -55,7 +56,6 @@ def probe(checkpoint: str, num_envs: int, steps: int, device: str,
 
     last_players = buf.players[-1].to(torch.int8)
     zeros = torch.zeros(num_envs, device=buf.device)
-    no_done = torch.zeros(num_envs, dtype=torch.bool, device=buf.device)
 
     print(f"{checkpoint}\n{num_envs} envs x {steps} steps, lambda={gae_lambda}, seed={seed}\n")
 
@@ -63,10 +63,10 @@ def probe(checkpoint: str, num_envs: int, steps: int, device: str,
     skipped: List[str] = []
     for label, kwargs in ESTIMATORS:
         try:
-            buf.compute_gae(last_v_win=zeros, last_v_vp=zeros, last_dones=no_done,
+            buf.compute_gae(last_v_win=zeros, last_v_vp=zeros,
                             last_players=last_players, gamma=1.0,
                             gae_lambda=gae_lambda, **kwargs)
-        except (TypeError, ValueError) as exc:
+        except ValueError as exc:
             # Some estimators need data captured at collection time -- same_perspective_bootstrap
             # needs next_values_own, and refuses to fall back rather than measure nothing. Skip
             # it here rather than fake it; that guard is correct.
@@ -119,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     a = build_parser().parse_args()
+    require_fresh()
     return probe(a.checkpoint, a.envs, a.steps, a.device, a.seed, a.gae_lambda)
 
 
