@@ -129,6 +129,22 @@ def staleness_reason(module_file: str, root: Optional[pathlib.Path] = None) -> O
     return None
 
 
+def require_fresh() -> None:
+    """Exit non-zero with the reason when the imported `ts_engine` is stale or unstamped.
+
+    Called first in the `main()` of every CLI that produces numbers from the engine. It looks
+    the extension up in ``sys.modules`` rather than importing it, so this module stays
+    importable without a built engine (``check_engine_fresh.sh`` runs it before building); a
+    caller that never imported ``ts_engine`` is a bug and is refused as such.
+    """
+    module = sys.modules.get("ts_engine")
+    if module is None or not getattr(module, "__file__", None):
+        raise SystemExit("require_fresh(): ts_engine has not been imported, so there is no engine to check")
+    reason = staleness_reason(str(module.__file__))
+    if reason:
+        raise SystemExit(reason)
+
+
 def check_raw_states(path: str) -> None:
     """Refuse a file of raw GameState bytes that this build did not write.
 
