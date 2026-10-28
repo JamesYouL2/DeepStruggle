@@ -1,12 +1,12 @@
 """TsVectorizedEnv: High-performance vectorized wrapper for ts::VectorizedBatchRunner."""
 
-from typing import Tuple, Dict, Any, List, Optional, Callable, Sequence
+from typing import Tuple, Dict, Any, List, NamedTuple, Optional, Callable, Sequence
 import numpy as np
 import ts_engine as ts
 from bindings.settle import SettleMode
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
-from ai.rewards.reward_calculator import RewardCalculator, ZeroSumTerminalReward, BlunderAwareRewardCalculator
+from ai.rewards.reward_calculator import RewardCalculator, BlunderAwareRewardCalculator
 from ai.game_length import ply as _game_ply
 
 # Canonical short keys for the game-ending reasons reported per completed episode.
@@ -40,7 +40,10 @@ def _classify_ending(state: ts.GameState, held_scoring: bool) -> str:
     onnxruntime) and, through tools.lib.player_agent, this module.
     """
     reason = ts.game_ending_reason(state)
-    key = _ENDING_REASON_MAP.get(reason, "20vp")
+    if reason not in _ENDING_REASON_MAP:
+        raise ValueError(f"the engine reported an ending reason this table does not know: {reason!r}; "
+                         f"add it to _ENDING_REASON_MAP (and ENDING_REASON_KEYS)")
+    key = _ENDING_REASON_MAP[reason]
     # DEFCON 1 keeps absolute precedence (as in the classifier); otherwise an
     # unplayed scoring card is the more specific cause than the VP total it produced.
     if held_scoring and not key.startswith("defcon1"):
@@ -101,101 +104,64 @@ def model_obs_features(model: Any) -> int:
     """The observation feature set (ts.OBS_FEATURE_* bits) a model reads: 0 for the base layout.
 
     Recorded in the weights (LadderNet's `obs_features` buffer), so it travels with the checkpoint.
-    Every caller that builds observations for a model must ask for exactly this set --
-    `ts.extract_observation_features(state, player, model_obs_features(model))`, or
-    `TsVectorizedEnv.set_obs_features` for batches. The base functions (`extract_observation`,
-    a runner with no features set) are the set 0, and a model with features refuses them by width.
+    Every caller that builds observations for a model must ask for exactly this set -- `observe`
+    below (`ts.extract_observation_features(state, player, model_obs_features(model))`), or
+    `TsVectorizedEnv.set_obs_features` / `VectorizedBatchRunner.set_obs_features` for batches.
+
+    The base functions (`ts.extract_observation`, a runner with no features set) are the set 0,
+    and **nothing refuses them for a featured model**. A block that appends floats changes the
+    width, which `check_obs_width` catches; `HEADLINE_REVEAL` appends none -- it changes the
+    *content* of the base card rows (the box-4 holder sees the opponent's revealed headline), so
+    a model trained with it and fed the base observation loads, runs and silently misreads.
     """
     return int(getattr(model, "obs_feature_bits", 0) or 0)
 
 
-class TsEnv:
-    """Gymnasium-like single-game environment wrapper for ts::Engine."""
+class AgentView(NamedTuple):
+    """What an agent decides in: the observation it reads and the action view it masks in.
 
-    ACTION_SPACE_SIZE = ActionEncoder.FLAT_ACTION_SIZE
+    `features` is its ts.OBS_FEATURE_* set (0 = the base layout), `merged_influence` whether it
+    decides in the E4.1 merged-influence view (P23, tools/lib/action_view.py) rather than E4's.
+    """
+    features: int
+    merged_influence: bool
 
-    @property
-    def OBSERVATION_SIZE(self) -> int:
-        return obs_size()
 
-    def __init__(self, seed: Optional[int] = None, reward_calculator: Optional[RewardCalculator] = None):
-        self.state = ts.GameState()
-        self.seed = seed or 42
-        self.reward_calc: RewardCalculator = reward_calculator or BlunderAwareRewardCalculator()
-        self.reset(self.seed)
+def agent_view(agent: Any) -> AgentView:
+    """The view an agent (or a bare network) decides in.
 
-    def reset(self, seed: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
-        """Reset the environment to the initial game state."""
-        if seed is not None:
-            self.seed = seed
-        ts.Engine.init_game(self.state, self.seed)
-        p = self.current_player
-        obs = ts.extract_observation(self.state, p)
-        mask = ActionEncoder.get_legal_mask(self.state)
-        return obs, mask, self._get_info()
+    An agent that declares `obs_features` (NeuralAgent, OnnxAgent) is taken at its word; one that
+    carries a network in `.model` reads that network's set; a bare network (an `nn.Module`) its
+    own. `merged_influence` is the agent's attribute. An agent with neither a declared set nor a
+    model -- a rule-based bot -- acts on the state, never reads the observation, and decides in the
+    E4 view: (0, False).
 
-    @property
-    def current_player(self) -> ts.Player:
-        """Returns the decision player if one is required, otherwise phasing player."""
-        p = self.state.ctx().decision_player
-        if p != ts.Player.NONE:
-            return p
-        return self.state.phasing_player
+    A bare network cannot carry its action view (a snapshot file does not record it; the run
+    directory does), so it always reports E4. A harness handed a bare network for a merged-view
+    checkpoint must be told so by its caller (`tools.lib.action_view.checkpoint_merged_influence`).
+    """
+    declared = getattr(agent, "obs_features", None)
+    if declared is not None:
+        features = int(declared)
+    else:
+        model = getattr(agent, "model", None)
+        features = model_obs_features(model if model is not None else agent)
+    return AgentView(features, bool(getattr(agent, "merged_influence", False)))
 
-    @property
-    def is_done(self) -> bool:
-        return ts.Engine.is_terminal(self.state)
 
-    def step(self, action_idx: int) -> Tuple[np.ndarray, np.ndarray, float, bool, Dict[str, Any]]:
-        """Executes a single micro-action in the environment."""
-        if self.is_done:
-            p = self.current_player
-            obs = ts.extract_observation(self.state, p)
-            mask = np.zeros(self.ACTION_SPACE_SIZE, dtype=np.uint8)
-            reward = float(ts.Engine.get_terminal_utility(self.state))
-            return obs, mask, reward, True, self._get_info()
+def observe(state: "ts.GameState", player: "ts.Player", features: int) -> np.ndarray:
+    """The observation `player` has of `state` in the feature set `features`, as float32.
 
-        acting_player = int(self.current_player)
-        prev_vp = np.array([self.state.victory_points], dtype=np.int8)
+    The one entry point harnesses use for a single position: always pass the deciding model's set
+    (`model_obs_features(model)` / `agent_view(agent).features`), never the base layout by habit.
+    """
+    return np.asarray(ts.extract_observation_features(state, player, int(features)), dtype=np.float32)
 
-        ok = ts.Engine.try_step_flat(self.state, int(action_idx))
-        while not self.is_done and self.state.ctx().decision_player == ts.Player.NONE and self.state.ctx().decision_type == ts.DecisionType.ROLL_DIE:
-            ts.Engine.step(self.state, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
 
-        done = self.is_done
-        term_util = np.array([ts.Engine.get_terminal_utility(self.state) if done else 0.0], dtype=np.float32)
-        curr_vp = np.array([self.state.victory_points], dtype=np.int8)
-
-        rewards = self.reward_calc.compute_step_rewards(
-            acting_players=np.array([acting_player], dtype=np.int8),
-            dones=np.array([done], dtype=bool),
-            terminal_utilities=term_util,
-            prev_victory_points=prev_vp,
-            curr_victory_points=curr_vp,
-            states=[self.state],
-        )
-        reward = float(rewards[0])
-
-        p = self.current_player
-        obs = ts.extract_observation(self.state, p)
-        mask = ActionEncoder.get_legal_mask(self.state) if not done else np.zeros(self.ACTION_SPACE_SIZE, dtype=np.uint8)
-        info = self._get_info()
-        info["step_ok"] = ok
-        info["acting_player"] = acting_player
-        info["prev_player"] = acting_player
-        return obs, mask, reward, done, info
-
-    def _get_info(self) -> Dict[str, Any]:
-        return {
-            "turn": int(self.state.turn),
-            "action_round": int(self.state.action_round),
-            "phase": int(self.state.current_phase),
-            "defcon": int(self.state.defcon),
-            "victory_points": int(self.state.victory_points),
-            "current_player": int(self.current_player),
-            "terminal_utility": float(ts.Engine.get_terminal_utility(self.state)),
-            "is_terminal": self.is_done,
-        }
+def legal_mask(state: "ts.GameState", merged_influence: bool) -> np.ndarray:
+    """The flat legal mask (uint8) of `state` in the given action view. The view is a required
+    argument so that no harness builds an E4 mask for a merged-view network by default."""
+    return np.asarray(ts.Engine.get_flat_action_mask(state, bool(merged_influence)), dtype=np.uint8)
 
 
 def credits_defcon_blunder(state: "ts.GameState", window_provoked: bool) -> bool:
@@ -293,6 +259,15 @@ class TsVectorizedEnv:
         # flags -- a new runner on `reset_all(base_seed)` would otherwise drop them.
         self.obs_features_us = np.zeros(num_envs, dtype=np.uint32)
         self.obs_features_ussr = np.zeros(num_envs, dtype=np.uint32)
+        # Whether the runner records the turn-end park observations (`runner.get_predeal`), held
+        # for the same reason: `reset_all(base_seed)` builds a new runner.
+        self.capture_predeal = False
+
+    def set_capture_predeal(self, on: bool) -> None:
+        """Record every env's turn-end park from both sides (`runner.get_predeal`); survives a
+        `reset_all(base_seed)`, which a direct `runner.set_capture_predeal` call does not."""
+        self.capture_predeal = bool(on)
+        self.runner.set_capture_predeal(self.capture_predeal)
 
     def set_obs_features(self, us: np.ndarray | int, ussr: np.ndarray | int) -> None:
         """Every env's per-side observation feature set (an int applies to all envs). Each row of
@@ -333,6 +308,8 @@ class TsVectorizedEnv:
             if self.obs_features_us.any() or self.obs_features_ussr.any():
                 self.runner.set_obs_features([int(x) for x in self.obs_features_us],
                                              [int(x) for x in self.obs_features_ussr])
+            if self.capture_predeal:
+                self.runner.set_capture_predeal(True)
         else:
             self.runner.refresh_all()
         injected = False
@@ -606,13 +583,20 @@ class TsVectorizedEnv:
         since it is only needed where the mover changed. A batched C++ entry point taking a
         per-environment perspective is the version worth having if this proves out.
 
-        `players` uses the engine's coding: +1 for US, -1 for USSR.
+        `players` uses the engine's coding: +1 for US, -1 for USSR. Each row is built in the
+        observation feature set `set_obs_features` gave that env and side, and is
+        `observation_size` wide like the batched rows.
         """
-        out = np.empty((self.num_envs, int(ts.OBS_SIZE)), dtype=np.float32)
+        # Each row in the feature set of the side it is read for (the view spec), zero-padded to
+        # the runner's width exactly as `get_observations` pads: a featured model fed the base
+        # layout misreads without failing (HEADLINE_REVEAL changes content, not width).
+        out = np.zeros((self.num_envs, int(self.observation_size)), dtype=np.float32)
         for i in range(self.num_envs):
-            p = ts.Player.US if int(players[i]) > 0 else ts.Player.USSR
-            out[i] = np.asarray(ts.extract_observation(self.runner.get_state(i), p),
-                                dtype=np.float32)
+            us = int(players[i]) > 0
+            p = ts.Player.US if us else ts.Player.USSR
+            feats = int(self.obs_features_us[i] if us else self.obs_features_ussr[i])
+            row = observe(self.runner.get_state(i), p, feats)
+            out[i, :row.shape[0]] = row
         return out
 
     def _get_batch_info(self) -> Dict[str, Any]:
@@ -623,6 +607,3 @@ class TsVectorizedEnv:
             "terminals": np.array(self.runner.get_terminals(), dtype=bool),
             "terminal_utilities": np.array(self.runner.get_terminal_utilities(), dtype=np.float32),
         }
-
-# Backward compatibility alias
-TsSingleEnv = TsEnv

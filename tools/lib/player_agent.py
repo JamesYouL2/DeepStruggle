@@ -21,7 +21,7 @@ from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dic
 from ai.search.batched_mcts import BatchedMCTSAgent, BatchedMCTSConfig
 from ai.search.heuristic_mcts import HeuristicMCTSConfig, make_heuristic_mcts_agent
 from ai.search.rollout_root import RolloutRootAgent, SparseRolloutAgent, rollout_spec_config, rollout_spec_leaf
-from bindings.ts_env import check_obs_width, model_obs_features
+from bindings.ts_env import check_obs_width, legal_mask, model_obs_features, observe
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
 from tools.lib.openings import OPENINGS
@@ -153,7 +153,7 @@ class RandomAgent:
         mask = ActionEncoder.get_legal_mask(state)
         legal = np.where(mask > 0)[0]
         if len(legal) == 0:
-            return ActionEncoder.CONFIRM_DONE_INDEX
+            raise ValueError(f"{self.name}: no legal action at a decision node (an engine defect)")
         return int(np.random.choice(legal))
 
 
@@ -249,6 +249,9 @@ class NeuralAgent:
         # width is not the engine's is still worth catching here rather than at the first
         # forward pass, because it means a checkpoint from a retired layout.
         self.obs_size = check_obs_width(self.model)
+        #: The observation feature set the network reads (the view spec's observation half); every
+        #: harness building observations for it must use exactly this set (bindings.ts_env.observe).
+        self.obs_features = model_obs_features(self.model)
         self.model.eval()
         self.name = name
 
@@ -364,9 +367,9 @@ class NeuralAgent:
         player: ts.Player,
         temperature: float = 0.1,
     ) -> int:
-        # In the model's own view (the view spec): the base layout plus its appended blocks.
-        obs = ts.extract_observation_features(state, player, model_obs_features(self.model))
-        mask = ActionEncoder.get_legal_mask(state)
+        # In the model's own view (the view spec): its observation feature set and action view.
+        obs = observe(state, player, self.obs_features)
+        mask = legal_mask(state, self.merged_influence)
 
         obs_t = torch.from_numpy(obs).float().unsqueeze(0).to(self.device)
         mask_t = torch.from_numpy(mask).unsqueeze(0).to(self.device)
@@ -411,11 +414,17 @@ class OnnxAgent:
                 f"{path} is not a {self.FORMAT} export (ts.format={meta.get('ts.format')!r}); "
                 f"make one with tools/export_onnx.py")
         self.obs_size = int(meta["ts.obs_size"])
-        if self.obs_size != int(ts.OBS_SIZE):
+        #: The observation feature set the network reads. tools/export_onnx.py has written it since
+        #: 2026-10-11, before any featured network existed (OPS_BUDGET's width aside, HEADLINE_REVEAL
+        #: arrived 2026-10-20), so a file without it is a base-layout export -- the published
+        #: pre-feature models -- and "0" is a fact about it, not a guess.
+        self.obs_features = int(meta.get("ts.obs_features", "0"))
+        expected = int(ts.obs_size_for(self.obs_features))
+        if self.obs_size != expected:
             raise ValueError(
                 f"{path} reads an observation of width {self.obs_size}, but this engine emits "
-                f"{int(ts.OBS_SIZE)}: it was exported from a retired layout and would misread "
-                f"every slot")
+                f"{expected} for its feature set {self.obs_features:#x}: it was exported from a "
+                f"retired layout (or with a wrong ts.obs_size) and would misread every slot")
         action_size = int(meta.get("ts.action_size", ActionEncoder.FLAT_ACTION_SIZE))
         if action_size != ActionEncoder.FLAT_ACTION_SIZE:
             raise ValueError(f"{path} has {action_size} actions, this engine "
@@ -454,9 +463,8 @@ class OnnxAgent:
 
     def select_action(self, state: ts.GameState, player: ts.Player,
                       temperature: float = 0.1) -> int:
-        obs = np.asarray(ts.extract_observation(state, player), dtype=np.float32)[None, :]
-        mask = np.asarray(ActionEncoder.get_legal_mask(state, self.merged_influence),
-                          dtype=np.uint8)[None, :]
+        obs = observe(state, player, self.obs_features)[None, :]
+        mask = legal_mask(state, self.merged_influence)[None, :]
         return int(self.act_batch(obs, mask, temperature, temperature <= 0.05)[0])
 
 
@@ -539,6 +547,22 @@ def search_spec_config(spec: str) -> Tuple[str, BatchedMCTSConfig, str]:
     return path, cfg, f"search{sims}{'-det' if determinize else ''}{tag}"
 
 
+def _e4_network(agent: NeuralAgent, spec: str) -> NeuralAgent:
+    """`agent`, refused if it decides in the merged-influence view.
+
+    The searchers (`search:`, `gumbel:`, `rollout:`), the turn-end pricing (`priced:`) and the
+    legacy adapter take the bare network and build every mask in the E4 view; a merged-view
+    (E4.1, P23) checkpoint's composed actions are absent from those masks, so it would be searched
+    as a different policy than the one that trained, without any error.
+    """
+    if agent.merged_influence:
+        raise ValueError(
+            f"{spec!r}: {agent.name} decides in the merged-influence (E4.1) view, and this player "
+            f"builds its masks in the E4 view only. Play the network directly, or teach the "
+            f"searcher the merged view first.")
+    return agent
+
+
 def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAgent:
     """Factory function loading agents from string specifier (random, heuristic, or checkpoint path)."""
     s = spec.strip()
@@ -573,6 +597,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         agent = load_agent(rest, device=device)
         if not isinstance(agent, NeuralAgent):
             raise ValueError(f"priced: needs a network, not {rest!r}")
+        _e4_network(agent, s)
         setattr(agent, "pricing", (int(w_str), float(z_str)))
         stats = {"decisions": 0, "priced": 0, "switched": 0}
         setattr(agent, "pricing_stats", stats)
@@ -631,16 +656,16 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # an omitted field is the measured player's, 4:16:4:z2. A leaf checkpoint (P33a) reads the
         # leaves with that network's critic instead.
         path, rcfg, label = rollout_spec_config(s)
-        base = NeuralAgent.from_checkpoint(path, device=device)
+        base = _e4_network(NeuralAgent.from_checkpoint(path, device=device), s)
         leaf_path = rollout_spec_leaf(s)
-        leaf_agent = NeuralAgent.from_checkpoint(leaf_path, device=device) if leaf_path else None
+        leaf_agent = _e4_network(NeuralAgent.from_checkpoint(leaf_path, device=device), s) if leaf_path else None
         # Named by its network as well as its settings: two networks under one root must not clash.
         name = f"{base.name}~{label}" + (f"~leaf={leaf_agent.name}" if leaf_agent else "")
         return RolloutRootAgent(base.model, name, rcfg, device=resolve_device(device),
                                 leaf_model=leaf_agent.model if leaf_agent else None)
     if s.lower().startswith(("search:", "gumbel:")):
         path, cfg, label = search_spec_config(s)
-        base = NeuralAgent.from_checkpoint(path, device=device)
+        base = _e4_network(NeuralAgent.from_checkpoint(path, device=device), s)
         return BatchedMCTSAgent(base.model, name=label, device=device, config=cfg)
     if s.lower().startswith("legacy:"):
         # legacy:<checkpoint> -- play a PRE-P17 checkpoint on the post-P17 engine.
@@ -656,7 +681,7 @@ def load_agent(spec: str, device: Union[torch.device, str] = "cuda") -> PlayerAg
         # of an ad-hoc script.
         path = s.split(":", 1)[1]
 
-        base = NeuralAgent.from_checkpoint(path, device=device)
+        base = _e4_network(NeuralAgent.from_checkpoint(path, device=device), s)
         adapter = LegacyPolicyAdapter(base.model, device=str(device))
         setattr(adapter, "name", f"legacy-{base.name}")
         return adapter

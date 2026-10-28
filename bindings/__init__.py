@@ -13,6 +13,6 @@ for p in [os.path.join(_root_dir, "build", "release"), os.path.join(_root_dir, "
         sys.path.append(p)
 
 from .action_encoder import ActionEncoder
-from .ts_env import TsVectorizedEnv, TsSingleEnv
+from .ts_env import TsVectorizedEnv
 
-__all__ = ["ActionEncoder", "TsVectorizedEnv", "TsSingleEnv"]
+__all__ = ["ActionEncoder", "TsVectorizedEnv"]

@@ -16,7 +16,7 @@ from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
 from tools.lib.openings import ScriptedSetupOverride
 from tools.lib.scripted_rules import SCRIPTS
-from bindings.ts_env import model_obs_features
+from bindings.ts_env import agent_view
 from tools.lib.player_agent import (BatchActor, BatchSelector, HeuristicAgent, NeuralAgent,
                                     PlayerAgent, RandomAgent, load_agent, resolve_device)
 from ai.game_length import ply as game_ply
@@ -64,10 +64,10 @@ def _assert_width(agent: Union[NeuralAgent, BatchActor], obs: npt.NDArray[np.flo
 
 
 def _agent_features(agent: Any) -> int:
-    """The observation feature set a seated agent reads: its model's, or the base for anything
-    that is not a network (bots and searchers act on the state)."""
-    model = getattr(agent, "model", None)
-    return model_obs_features(model) if isinstance(agent, NeuralAgent) and model is not None else 0
+    """The observation feature set a seated agent reads (`bindings.ts_env.agent_view`): a
+    NeuralAgent's or OnnxAgent's declared set, a searcher's network's, the base for a bot (which
+    acts on the state and never reads the runner's rows)."""
+    return agent_view(agent).features
 
 
 def _opponent_cannot_pay_cmc(st: "ts.GameState") -> bool:
@@ -610,8 +610,8 @@ class BatchMatchRunner:
             # P23 / E4.1: each side decides in its own agent's action view. Envs < cur_half seat
             # A as USSR and B as US; the rest the reverse. Only neural agents trained in the
             # merged view use it -- bots and searchers act in E4 terms.
-            mv_a = bool(getattr(agent_a, "merged_influence", False))
-            mv_b = bool(getattr(agent_b, "merged_influence", False))
+            mv_a = agent_view(agent_a).merged_influence
+            mv_b = agent_view(agent_b).merged_influence
             if mv_a or mv_b:
                 first = np.arange(cur_games) < cur_half
                 runner.set_merged_influence([bool(x) for x in np.where(first, mv_b, mv_a)],
@@ -871,7 +871,7 @@ class BatchMatchRunner:
         ussr_agent = np.where(a_is_ussr, a_idx, b_idx)
         us_agent = np.where(a_is_ussr, b_idx, a_idx)
 
-        mv = np.array([bool(getattr(ag, "merged_influence", False)) for ag in agents])
+        mv = np.array([agent_view(ag).merged_influence for ag in agents])
         if mv.any():
             runner.set_merged_influence([bool(x) for x in mv[us_agent]],
                                         [bool(x) for x in mv[ussr_agent]])

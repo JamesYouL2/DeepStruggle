@@ -1,6 +1,6 @@
 """Backward-compatibility shim for environment wrappers and action encoders."""
 from bindings.action_encoder import ActionEncoder
-from bindings.ts_env import TsVectorizedEnv, TsSingleEnv
+from bindings.ts_env import TsVectorizedEnv
 from ai.rewards.reward_calculator import (
     RewardCalculator,
     ZeroSumTerminalReward,
@@ -12,7 +12,6 @@ from ai.rewards.reward_calculator import (
 __all__ = [
     "ActionEncoder",
     "TsVectorizedEnv",
-    "TsSingleEnv",
     "RewardCalculator",
     "ZeroSumTerminalReward",
     "BlunderAwareRewardCalculator",
