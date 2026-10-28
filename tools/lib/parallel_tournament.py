@@ -102,31 +102,33 @@ def plan_shards(matchups: Sequence[Pair], games_per_side: int, shard_pairs: int)
         for n, lo in enumerate(range(0, games_per_side, shard_pairs)):
             ks = tuple(range(lo, min(lo + shard_pairs, games_per_side)))
             shards.append(Shard(pair=pair, index=n, pairs=ks))
+    _check_distinct_seeds(shards)
     return shards
-
-
-#: Bounds of `shard_seed`'s mixed radix: entrant indices below 2**8, first game pairs below 2**14.
-_SEED_ENTRANTS = 1 << 8
-_SEED_PAIRS = 1 << 14
 
 
 def shard_seed(base_seed: int, shard: Shard) -> int:
     """The seed a shard's agents and samplers start from. A function of the shard alone.
 
-    Distinct shards of one tournament get distinct seeds, and so do their agents (`seed_shard`
-    gives agent n `seed + n`): the shard's (i, j, first pair) is written in a mixed radix whose
-    lowest digit is left for the agent, then shifted by `base_seed` modulo 2**31, a bijection on
-    the 2**31 values the radix spans. The previous `i * 65537 + j * 257 + pair` collided as soon
-    as a matchup had more than 257 shards -- at --shard-pairs 1 from 258 game pairs on, (j, k)
-    and (j + 1, k - 257) played one seed. Outside the radix's bounds it raises rather than wrap.
+    Kept exactly as every recorded tournament used it, so a re-run at the same --base-seed plays
+    the same games. It can collide only at shard sizes nobody uses (more than 257 shards of one
+    matchup, i.e. --shard-pairs 1); `plan_shards` refuses such a plan instead of changing the seeds.
     """
     i, j = shard.pair
-    k = shard.pairs[0]
-    if not (0 <= i < _SEED_ENTRANTS and 0 <= j < _SEED_ENTRANTS and 0 <= k < _SEED_PAIRS):
-        raise ValueError(f"shard {shard.label}: shard_seed supports entrant indices below {_SEED_ENTRANTS} "
-                         f"and first game pairs below {_SEED_PAIRS}")
-    code = ((i * _SEED_ENTRANTS + j) * _SEED_PAIRS + k) * 2
-    return (base_seed + code) % (1 << 31)
+    return (base_seed * 1_000_003 + i * 65_537 + j * 257 + shard.pairs[0]) % (2 ** 31 - 1)
+
+
+def _check_distinct_seeds(shards: Sequence[Shard]) -> None:
+    """Every shard's agents draw from its own seeds: `seed_shard` gives agent n `seed + n`, so the
+    seeds of two shards (and their agents) must not meet. Independent of base_seed, which shifts
+    them all alike."""
+    taken: Dict[int, str] = {}
+    for shard in shards:
+        seed = shard_seed(0, shard)
+        for agent_seed in (seed, seed + 1):
+            if agent_seed in taken:
+                raise ValueError(f"shards {taken[agent_seed]} and {shard.label} would share seed "
+                                 f"{agent_seed}; use a larger --shard-pairs")
+            taken[agent_seed] = shard.label
 
 
 def seed_shard(seed: int, agents: Sequence[PlayerAgent]) -> None:
