@@ -4,11 +4,12 @@ the wall clock may change."""
 
 from __future__ import annotations
 
+import fcntl
+import os
 import pathlib
-import threading
-import time
 
 import numpy as np
+import pytest
 import torch
 
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
@@ -16,22 +17,38 @@ from ai.training.nash_pg import NashPGTrainer, phase_lock
 from bindings.ts_env import TsVectorizedEnv
 
 
-def test_the_lock_excludes_a_second_holder(tmp_path: pathlib.Path) -> None:
-    path = str(tmp_path / "arms.update")
-    held = threading.Event()
-    waited: list[float] = []
+def _try_lock(path: str) -> bool:
+    """Whether a second open of `path` can take the lock right now -- non-blocking, so the answer
+    does not depend on how long anything waits. flock is per open file, so this second open in
+    the same process is exactly the second holder the lock has to exclude."""
+    fd = os.open(path, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return True
+    finally:
+        os.close(fd)
 
-    def second() -> None:
-        held.wait()
-        with phase_lock(path) as w:
-            waited.append(w)
-    t = threading.Thread(target=second)
-    t.start()
-    with phase_lock(path):
-        held.set()
-        time.sleep(0.3)
-    t.join()
-    assert waited and waited[0] >= 0.25
+
+def test_the_lock_excludes_a_second_holder(tmp_path: pathlib.Path) -> None:
+    """Probed directly rather than timed: this used to hold the lock for 0.3 s of sleep and check
+    that a second thread had waited at least 0.25 s, which a loaded machine can break either way."""
+    path = str(tmp_path / "arms.update")
+    with phase_lock(path) as waited:
+        assert waited >= 0.0
+        assert not _try_lock(path), "a second holder took the lock while the first held it"
+    assert _try_lock(path), "the lock was not released when the block ended"
+
+
+def test_the_lock_is_released_when_the_block_raises(tmp_path: pathlib.Path) -> None:
+    path = str(tmp_path / "arms.update")
+    with pytest.raises(RuntimeError):
+        with phase_lock(path):
+            raise RuntimeError("the update failed")
+    assert _try_lock(path)
 
 
 def _losses(lock: str | None) -> list[float]:

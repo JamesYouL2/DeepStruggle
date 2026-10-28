@@ -12,13 +12,14 @@ survives only as a fallback for runs started before the file existed.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
+import pathlib
 import subprocess
 import sys
-import time
 
-import pytest
+from ai.training import generic_trainer
 
 WATCHER = "tools/scripts/watch_run.py"
 
@@ -30,7 +31,7 @@ def _dead_pid() -> int:
     return proc.pid
 
 
-def _run_dir(tmp_path, steps: int, pid: int | None) -> str:
+def _run_dir(tmp_path: pathlib.Path, steps: int, pid: int | None) -> str:
     d = tmp_path / "E9-99-01_20260101_000000"
     d.mkdir()
     with open(d / "training_metrics.jsonl", "w", encoding="utf-8") as f:
@@ -59,7 +60,7 @@ def _watch(run_dir: str, extra: list[str] | None = None, seconds: int = 8) -> st
         return proc.communicate()[0]
 
 
-def test_a_dead_run_reports_crash_even_while_another_run_is_alive(tmp_path) -> None:
+def test_a_dead_run_reports_crash_even_while_another_run_is_alive(tmp_path: pathlib.Path) -> None:
     """The regression. A live sibling must not make a dead run look merely stalled."""
     run_dir = _run_dir(tmp_path, steps=43_515_904, pid=_dead_pid())
 
@@ -67,7 +68,12 @@ def test_a_dead_run_reports_crash_even_while_another_run_is_alive(tmp_path) -> N
     sibling = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)  # tools/train.py"])
     try:
-        time.sleep(0.5)
+        # Popen returns once the exec has happened, so the command line is already the one the
+        # watcher's fallback matches. Check that rather than sleep and hope: without a matching
+        # sibling the test would pass for the wrong reason.
+        found = subprocess.run(["pgrep", "-f", "tools/train.py"], capture_output=True, text=True)
+        assert str(sibling.pid) in found.stdout.split(), (
+            f"the stand-in sibling {sibling.pid} does not match the pattern: {found.stdout!r}")
         out = _watch(run_dir)
     finally:
         sibling.kill()
@@ -77,7 +83,7 @@ def test_a_dead_run_reports_crash_even_while_another_run_is_alive(tmp_path) -> N
     assert "STALL" not in out, f"a dead run was reported as merely stuck:\n{out}"
 
 
-def test_a_live_run_is_not_reported_as_crashed(tmp_path) -> None:
+def test_a_live_run_is_not_reported_as_crashed(tmp_path: pathlib.Path) -> None:
     """The other direction: the PID check must not kill a healthy watch."""
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     try:
@@ -91,7 +97,7 @@ def test_a_live_run_is_not_reported_as_crashed(tmp_path) -> None:
         proc.wait()
 
 
-def test_a_run_without_a_pid_file_still_falls_back(tmp_path) -> None:
+def test_a_run_without_a_pid_file_still_falls_back(tmp_path: pathlib.Path) -> None:
     """Runs launched before run.pid existed must keep working, pattern match and all."""
     run_dir = _run_dir(tmp_path, steps=1_000_000, pid=None)
     assert not os.path.exists(os.path.join(run_dir, "run.pid"))
@@ -99,11 +105,7 @@ def test_a_run_without_a_pid_file_still_falls_back(tmp_path) -> None:
     assert "CRASH" in out, f"with no pid file and no matching process this is a dead run:\n{out}"
 
 
-def test_the_trainer_records_its_pid(tmp_path) -> None:
+def test_the_trainer_records_its_pid() -> None:
     """The producer side: the file the watcher depends on is actually written."""
-    import inspect
-
-    from ai.training import generic_trainer
-
     src = inspect.getsource(generic_trainer.train_pipeline)
     assert '"run.pid"' in src, "train_pipeline no longer records its PID for the watcher"

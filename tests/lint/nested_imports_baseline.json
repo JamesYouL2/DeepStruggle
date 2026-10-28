@@ -106,7 +106,6 @@
  "tests/training/test_show_and_decide.py": 12,
  "tests/training/test_side_gradient_conflict.py": 1,
  "tests/training/test_training_metrics.py": 1,
- "tests/training/test_watch_run_liveness.py": 2,
  "tests/training/test_wolf_seat_weight.py": 1,
  "tests/training/test_z_loss.py": 2,
  "tests/web/test_e2e_replay_trace.py": 7,
