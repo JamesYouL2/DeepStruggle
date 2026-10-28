@@ -74,7 +74,7 @@ def load_states(runner: "ts.VectorizedBatchRunner", states: Sequence["ts.GameSta
     runner.refresh_all()
 
 
-def check_finished(terminals: Sequence[bool], max_iters: int, what: str) -> None:
+def check_finished(terminals: Sequence[bool] | np.ndarray, max_iters: int, what: str) -> None:
     """Raise `GamesUnfinished` if any game is still running after a probe's whole budget."""
     running = int(np.size(terminals) - np.count_nonzero(np.asarray(terminals, dtype=bool)))
     if running:
@@ -87,8 +87,10 @@ class Sampler:
     """The policy's move over a batch of observations and masks, from its own seeded generator.
 
     `temperature <= 0` is the argmax. Rows are truncated to the model's width (a batch may be wider
-    when another model's set is in it). A row with no legal action raises: a softmax over an all
-    -1e9 row samples uniformly, i.e. an illegal move the engine then refuses somewhere else.
+    when another model's set is in it). A row with no legal action raises -- a softmax over an all
+    -1e9 row samples uniformly, i.e. an illegal move the engine then refuses somewhere else --
+    unless the caller marks it `terminal` (a bare runner keeps finished games, with empty masks,
+    and ignores the action it is handed for them).
     """
 
     def __init__(self, model: Any, temperature: float, seed: int) -> None:
@@ -99,12 +101,16 @@ class Sampler:
         self.generator = torch.Generator(device=self.device)
         self.generator.manual_seed(int(seed) % (1 << 63))
 
-    def forward(self, obs: np.ndarray, masks: np.ndarray) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, obs: np.ndarray, masks: np.ndarray, terminal: Optional[Sequence[bool] | np.ndarray] = None
+                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """(masked logits, v_win, v_vp) of the batch."""
         o = np.ascontiguousarray(np.asarray(obs, dtype=np.float32)[:, :self.width])
         m = np.asarray(masks)
-        if not m.any(axis=1).all():
-            raise ValueError(f"{int((~m.any(axis=1)).sum())} rows have no legal action")
+        empty = ~m.any(axis=1)
+        if terminal is not None:
+            empty &= ~np.asarray(terminal, dtype=bool)
+        if empty.any():
+            raise ValueError(f"{int(empty.sum())} live rows have no legal action")
         with torch.no_grad():
             logits, v_win, v_vp = self.model(torch.from_numpy(o).to(self.device),
                                              torch.from_numpy(np.ascontiguousarray(m)).to(self.device))[:3]
@@ -118,8 +124,9 @@ class Sampler:
             probs = torch.softmax(logits / max(self.temperature, 1e-4), dim=-1)
             return torch.multinomial(probs, 1, generator=self.generator).squeeze(-1).cpu().numpy().astype(np.int64)
 
-    def __call__(self, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
-        return self.pick(self.forward(obs, masks)[0])
+    def __call__(self, obs: np.ndarray, masks: np.ndarray,
+                 terminal: Optional[Sequence[bool] | np.ndarray] = None) -> np.ndarray:
+        return self.pick(self.forward(obs, masks, terminal)[0])
 
 
 def play_out(model: Any, states: Sequence["ts.GameState"], movers: Sequence["ts.Player"],
@@ -149,7 +156,8 @@ def play_out(model: Any, states: Sequence["ts.GameState"], movers: Sequence["ts.
             terminals = np.asarray(runner.get_terminals(), dtype=bool)
             if terminals.all():
                 break
-            acts = sampler(np.asarray(runner.get_observations()), np.asarray(runner.get_action_masks()))
+            acts = sampler(np.asarray(runner.get_observations()), np.asarray(runner.get_action_masks()),
+                           terminals)
             runner.step_flat_all([int(a) for a in acts], auto_advance=True)
         check_finished(runner.get_terminals(), max_iters, "play_out")
         utils = np.asarray(runner.get_terminal_utilities(), dtype=np.float64)

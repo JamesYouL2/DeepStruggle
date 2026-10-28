@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 import numpy as np
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, check_finished, make_runner, model_view
 
 #: VP at which the game is won outright. A margin is normalised by this, so both quantities live
 #: on [-1, 1] and can be compared directly against `v_win`.
@@ -106,10 +107,10 @@ def classify_ending(state: ts.GameState) -> str:
 def measure(model: Any, device: Any, num_envs: int = 256, base_seed: int = 8181,
             max_iters: int = 6000, sample_every: int = 12,
             temperature: float = 0.1) -> Calibration:
-    """Play self-play games, remembering predictions, then score them against what happened."""
-    import torch
-
-    runner = ts.VectorizedBatchRunner(num_envs, base_seed)
+    """Play self-play games, remembering predictions, then score them against what happened. The
+    model reads its own observation feature set; E4 action view (load with merged_ok=False)."""
+    runner = make_runner(num_envs, base_seed, model_view(model, False))
+    sampler = Sampler(model, temperature, base_seed)
     out = Calibration()
     # Per env: the predictions it made, from the point of view of the side that was to move.
     pending: List[List[Tuple[float, int]]] = [[] for _ in range(num_envs)]
@@ -121,15 +122,9 @@ def measure(model: Any, device: Any, num_envs: int = 256, base_seed: int = 8181,
             break
         obs = np.asarray(runner.get_observations(), dtype=np.float32)
         masks = np.asarray(runner.get_action_masks())
-        with torch.no_grad():
-            logits, v_win, _v_vp = model(torch.from_numpy(obs).to(device),
-                                         torch.from_numpy(masks).to(device))
-            values = v_win.squeeze(-1).cpu().numpy()
-            if temperature > 0.0:
-                picks = torch.multinomial(
-                    torch.softmax(logits / temperature, dim=-1), 1).squeeze(-1).cpu().numpy()
-            else:
-                picks = logits.argmax(dim=-1).cpu().numpy()
+        logits, v_win, _v_vp = sampler.forward(obs, masks, terminals)
+        values = v_win.squeeze(-1).cpu().numpy()
+        picks = sampler.pick(logits)
 
         if step % sample_every == 0:
             players = runner.get_decision_players()
@@ -143,6 +138,8 @@ def measure(model: Any, device: Any, num_envs: int = 256, base_seed: int = 8181,
 
         runner.step_flat_all([int(a) for a in picks], auto_advance=True)
 
+    # A game still running would be scored against a utility of 0 -- a draw it never was.
+    check_finished(runner.get_terminals(), max_iters, "critic_calibration.measure")
     utilities = runner.get_terminal_utilities()
     for i in range(num_envs):
         if not pending[i]:

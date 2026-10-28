@@ -38,7 +38,9 @@ import numpy as np
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 
+from ai.eval.playout import Sampler
 from ai.stats import wilson_interval
+from bindings.ts_env import model_obs_features
 
 #: Flat action index of country `cid` at a POINT_NODE (`bindings/action_encoder.py`).
 NODE_OFFSET = ActionEncoder.NODE_OFFSET   # one source; see bindings/action_encoder.py
@@ -229,8 +231,11 @@ def measure(select_action: Any, num_games: int = 2000, base_seed: int = 20260911
 
     `select_action(obs, masks) -> array of flat action indices`, batched, matching what a model's
     `sample_action` gives. Kept as a callable so a bot or a fixed policy can be measured with the
-    same code as a network.
+    same code as a network. A policy that reads the observation declares the feature set it reads
+    as `obs_features` (`torch_policy` does); the runner then builds the rows in that set. One
+    without the attribute ignores the observation (a uniform or fixed policy) and gets the base.
     """
+    features = int(getattr(select_action, "obs_features", 0))
     us_rows: List[np.ndarray] = []
     ussr_rows: List[np.ndarray] = []
     us_has_es: List[bool] = []
@@ -243,6 +248,8 @@ def measure(select_action: Any, num_games: int = 2000, base_seed: int = 20260911
     while done < num_games:
         n = min(batch_size, num_games - done)
         runner = ts.VectorizedBatchRunner(n, base_seed + done * 7919)
+        if features:
+            runner.set_obs_features([features] * n, [features] * n)
 
         # The deal precedes setup, so who holds Europe Scoring is readable before a placement is
         # made -- which is what makes conditioning on it free.
@@ -291,25 +298,23 @@ def _influence_row(state: ts.GameState) -> np.ndarray:
     return out
 
 
-def torch_policy(model: Any, device: Any = "cpu", temperature: float = 0.1):
+class TorchSetupPolicy:
+    """`select_action` for a network: its own observation feature set (`obs_features`, which
+    `measure` builds the rows in), seeded sampling, argmax at temperature <= 0.05."""
+
+    def __init__(self, model: Any, device: Any, temperature: float, seed: int) -> None:
+        self.obs_features = model_obs_features(model)
+        model.eval()
+        self.sampler = Sampler(model, 0.0 if temperature <= 0.05 else temperature, seed)
+
+    def __call__(self, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
+        return self.sampler(obs, masks)
+
+
+def torch_policy(model: Any, device: Any = "cpu", temperature: float = 0.1,
+                 seed: int = 0) -> TorchSetupPolicy:
     """`select_action` for a ColdWar network. Checks the width before it can be misread."""
-    import torch
-
-    from bindings.ts_env import check_obs_width
-
-    check_obs_width(model)
-    model.eval()
-
-    def select(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
-        with torch.no_grad():
-            actions, *_ = model.sample_action(
-                torch.from_numpy(obs).to(device),
-                torch.from_numpy(masks).to(device),
-                temperature=temperature,
-                deterministic=(temperature <= 0.05))
-        return actions.reshape(-1).cpu().numpy()
-
-    return select
+    return TorchSetupPolicy(model, device, temperature, seed)
 
 
 def uniform_policy(seed: int = 0):

@@ -29,10 +29,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from ai.eval.positions import PLAY_MODE_ACTION, card_action, legal_mask
+from bindings.ts_env import model_obs_features, observe
 
 #: (card id, the side that holds it). All own-side, so playing for Ops does not fire the event
 #: and the two branches really are the same card.
@@ -129,16 +131,14 @@ def _to_point_node(state: ts.GameState, card: int, mode: str,
 
 def _distribution(model: Any, state: ts.GameState, temperature: float = 0.1
                   ) -> Optional[Tuple[np.ndarray, List[int]]]:
-    """The model's probability over the legal country targets at this node."""
-    import torch
-
+    """The model's probability over the legal country targets at this node (its own observation
+    feature set; the E4 mask the probe's positions are written in)."""
     mask = legal_mask(state)
     legal = [c for c in range(84) if mask[COUNTRY_OFFSET + c]]
     if len(legal) < 2:
         return None
     device = next(model.parameters()).device
-    obs = np.asarray(ts.extract_observation(state, state.ctx().decision_player),
-                     dtype=np.float32)
+    obs = observe(state, state.ctx().decision_player, model_obs_features(model))
     with torch.no_grad():
         logits, _v, _vp = model(torch.from_numpy(obs).unsqueeze(0).to(device),
                                 torch.from_numpy(mask).unsqueeze(0).to(device))

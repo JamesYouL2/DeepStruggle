@@ -20,13 +20,17 @@ phase, and decomposed into each side's bias against the realised result.
 
 from __future__ import annotations
 
+import argparse
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.loading import load_for_eval
+from ai.eval.playout import Sampler, check_finished, make_runner, model_view
 
 
 @dataclass
@@ -56,10 +60,10 @@ def _blunder_kind(state: ts.GameState) -> str:
 
 def play(model: Any, device: Any, num_envs: int = 512, base_seed: int = 4242, temperature: float = 1.0,
          max_iters: int = 4000) -> List[Game]:
-    """Self-play games with `model` on both sides, every decision's mover value recorded."""
-    import torch
-
-    runner = ts.VectorizedBatchRunner(num_envs, base_seed)
+    """Self-play games with `model` on both sides, every decision's mover value recorded. The model
+    reads its own observation feature set; E4 action view (load with merged_ok=False)."""
+    runner = make_runner(num_envs, base_seed, model_view(model, False))
+    sampler = Sampler(model, temperature, base_seed)
     games = [Game() for _ in range(num_envs)]
     done = np.zeros(num_envs, dtype=bool)
     model.eval()
@@ -75,11 +79,9 @@ def play(model: Any, device: Any, num_envs: int = 512, base_seed: int = 4242, te
         obs = np.asarray(runner.get_observations(), dtype=np.float32)
         masks = np.asarray(runner.get_action_masks())
         players = np.asarray(runner.get_decision_players())
-        with torch.no_grad():
-            logits, v_win, _ = model(torch.from_numpy(obs).to(device), torch.from_numpy(masks).to(device))
-            values = v_win.float().squeeze(-1).cpu().numpy()
-            probs = torch.softmax(logits.float() / max(temperature, 1e-6), dim=-1)
-            picks = (torch.multinomial(probs, 1).squeeze(-1) if temperature > 0 else logits.argmax(-1)).cpu().numpy()
+        logits, v_win, _ = sampler.forward(obs, masks, term)
+        values = v_win.float().squeeze(-1).cpu().numpy()
+        picks = sampler.pick(logits.float())
         for i in np.flatnonzero(~done):
             side = int(players[i])
             if side == 0:
@@ -88,10 +90,11 @@ def play(model: Any, device: Any, num_envs: int = 512, base_seed: int = 4242, te
             games[i].decisions.append(Decision(side, float(values[i]), int(st.turn), str(st.current_phase).split(".")[-1],
                                                int(st.defcon)))
         runner.step_flat_all([int(a) for a in picks], auto_advance=True)
+    check_finished(done, max_iters, "critic_boundary.play")
     utils = np.asarray(runner.get_terminal_utilities(), dtype=np.float64)
     for i in range(num_envs):
         games[i].us_util = float(utils[i])
-    return [g for i, g in enumerate(games) if done[i]]
+    return games
 
 
 def _clustered(values: Sequence[float], clusters: Sequence[int]) -> Tuple[float, float, int]:
@@ -330,9 +333,6 @@ def calibration_report(games: Sequence[Game], bins: int = 10) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    import argparse
-    import torch
-    from tools.lib.player_agent import NeuralAgent
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--envs", type=int, default=512)
@@ -343,7 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=4242)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model
+    model = load_for_eval(a.checkpoint, dev, merged_ok=False).model
     if a.temperatures:
         by_t: Dict[float, Sequence[Game]] = {}
         for t in a.temperatures:

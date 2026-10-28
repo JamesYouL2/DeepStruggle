@@ -30,8 +30,8 @@ import torch.nn.functional as F
 import ts_engine as ts
 
 from ai.models.coldwar_net_v2 import POLICY_HEAD_MODULES, create_like
-from bindings.action_encoder import ActionEncoder
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
+from bindings.ts_env import legal_mask, model_obs_features, observe
 
 PLATEAU = "/workspace/data/checkpoints/E7-A8-R1-S44@6400M+R34@7200M+R48@9170M+A13_20261014_105711/swa_12730-12800M.pt"
 DATASET = "/workspace/data/datasets/p36c/targets.npz"
@@ -47,25 +47,34 @@ A = 220
 
 
 def load(path: str) -> nn.Module:
-    return NeuralAgent.from_checkpoint(path, device="cpu").model.eval()
+    """A network for this probe: the positions' masks are E4, so a merged-view one is refused."""
+    return load_for_eval(path, "cpu", merged_ok=False).model
 
 
-def positions(n: int, seed: int) -> Dict[str, np.ndarray]:
+def observations(states: Sequence[Any], features: int) -> np.ndarray:
+    """Each state's observation for its decider, in the feature set `features`."""
+    return np.stack([observe(st, st.ctx().decision_player, features) for st in states])
+
+
+def positions(n: int, seed: int, features: int) -> Dict[str, Any]:
     """n positions from P36c's training games (not its held-out ones): observations, legal masks, the
     recorded argmax and the 128-world target, densified over the 220 actions."""
     z = np.load(DATASET)
     train = np.flatnonzero(~z["heldout"])
     idx = np.sort(np.random.default_rng(seed).choice(train, size=n, replace=False))
     states = z["states"][idx]
-    obs = np.zeros((n, ts.OBS_SIZE), dtype=np.float32)
     masks = np.zeros((n, A), dtype=np.uint8)
+    decoded: List[Any] = []
     for i in range(n):
         raw = states[i].tobytes()
         st = ts.state_from_raw_bytes(raw)
         if bytes(st.raw_bytes()) != raw:
             raise SystemExit(f"position {idx[i]}: raw bytes do not round-trip on this build")
-        obs[i] = np.asarray(ts.extract_observation_features(st, st.ctx().decision_player, 0), dtype=np.float32)
-        masks[i] = np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
+        decoded.append(st)
+        masks[i] = legal_mask(st, False)
+    # In the feature set of the network these are first fed to (the plateau, and its fresh copy
+    # and head); a network of another set reads `observations(d["states"], its set)` instead.
+    obs = observations(decoded, features)
     target = np.zeros((n, A), dtype=np.float32)
     acts, probs = z["acts_128"][idx], z["probs_128"][idx]
     for i in range(n):
@@ -74,14 +83,15 @@ def positions(n: int, seed: int) -> Dict[str, np.ndarray]:
                 target[i, a] += p
     target *= masks
     target /= np.maximum(target.sum(1, keepdims=True), 1e-9)
-    return {"obs": obs, "masks": masks, "net_argmax": z["net_argmax"][idx].astype(np.int64), "target": target}
+    return {"obs": obs, "masks": masks, "net_argmax": z["net_argmax"][idx].astype(np.int64), "target": target,
+            "states": decoded}
 
 
 def logits_of(model: nn.Module, obs: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
     return model(obs, masks)[0].float().masked_fill(~masks, -1e9)
 
 
-def check_decoding(model: nn.Module, d: Dict[str, np.ndarray]) -> float:
+def check_decoding(model: nn.Module, d: Dict[str, Any]) -> float:
     """The labelling network's argmax on the decoded positions against the one the dataset recorded."""
     agree = 0
     with torch.no_grad():
@@ -102,7 +112,7 @@ def with_head(trunk_model: nn.Module, head_source: nn.Module) -> nn.Module:
     return m
 
 
-def fit(model: nn.Module, d: Dict[str, np.ndarray], labels: np.ndarray, soft: bool, frozen: bool,
+def fit(model: nn.Module, d: Dict[str, Any], labels: np.ndarray, soft: bool, frozen: bool,
         epochs: int, lr: float, batch: int, seed: int) -> List[Dict[str, float]]:
     """Train the policy toward `labels` (hard: one action per row; soft: a distribution) and return per-epoch
     fit: accuracy (argmax = label or = target's top) and, for soft targets, the departures' switch rate."""
@@ -205,7 +215,7 @@ def main() -> int:
     torch.manual_seed(a.seed)
     fresh = create_like(plateau).eval()                 # same shape, fresh weights
     print(f"positions: {a.positions} from P36c's training games", flush=True)
-    d = positions(a.positions, a.seed)
+    d = positions(a.positions, a.seed, model_obs_features(plateau))
     agree = check_decoding(plateau, d)
     print(f"decoding check: the labelling network picks the recorded argmax at {100 * agree:.2f}%", flush=True)
     if agree < 0.99:
@@ -220,7 +230,9 @@ def main() -> int:
     report["dormant"]["fresh"] = dormant(fresh, probe_obs, probe_masks)
     report["dormant"]["plateau (A13+R48 SWA 12,730-12,800M)"] = dormant(plateau, probe_obs, probe_masks)
     for label, path in TREND.items():
-        report["dormant"][label] = dormant(load(path), probe_obs, probe_masks)
+        net = load(path)
+        own_obs = torch.from_numpy(observations(d["states"][:4096], model_obs_features(net)))
+        report["dormant"][label] = dormant(net, own_obs, probe_masks)
     for k, v in report["dormant"].items():
         print(f"dormant, {k}: " + ", ".join(f"{t} {100 * x:.1f}%" for t, x in v["all"].items()), flush=True)
 

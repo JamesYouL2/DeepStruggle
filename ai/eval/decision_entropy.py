@@ -30,7 +30,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import ts_engine as ts
 
-from bindings.ts_env import TsVectorizedEnv
+from ai.eval.loading import load_for_eval
+from ai.eval.playout import make_env, model_view
+from bindings.ts_env import check_obs_width
+from tools.lib.checkpoint_id import checkpoint_label
 
 #: (seat, phase, decision type): seat "US"/"USSR"; phase "opening" (turn 1, action round 0: the
 #: setup placement and the headline) or "play".
@@ -68,8 +71,9 @@ def probe(model: nn.Module, merged: bool, envs: int = 64, steps: int = 400, seed
     """Self-play `steps` batched decisions over `envs` games in the given view; aggregate by key."""
     dev = torch.device(device)
     model = model.to(dev).eval()
-    env = TsVectorizedEnv(num_envs=envs, base_seed=seed)
-    env.set_merged_influence(merged, merged)
+    width = check_obs_width(model)
+    # The model's own observation feature set and the given action view, set before the reset.
+    env = make_env(envs, seed, model_view(model, merged))
     obs, masks, info = env.reset_all()
     gen = torch.Generator(device=dev).manual_seed(seed)
     out: Dict[Key, Stats] = {}
@@ -86,7 +90,7 @@ def probe(model: nn.Module, merged: bool, envs: int = 64, steps: int = 400, seed
             seat = "US" if p == int(ts.Player.US) else "USSR"
             phase = "opening" if (int(st.turn) == 1 and int(st.action_round) == 0) else "play"
             keys.append((seat, phase, ts.DecisionType(int(ctx.decision_type)).name))
-        obs_t = torch.as_tensor(np.asarray(obs), dtype=torch.float32, device=dev)
+        obs_t = torch.as_tensor(np.asarray(obs)[:, :width], dtype=torch.float32, device=dev)
         mask_t = torch.as_tensor(np.asarray(masks), device=dev)
         with torch.no_grad():
             logits = model(obs_t, mask_t)[0].float()
@@ -126,13 +130,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--json", default=None, help="also write every table's rows here")
     a = ap.parse_args(argv)
 
-    from tools.lib.player_agent import NeuralAgent
     dump: Dict[str, List[Dict[str, object]]] = {}
     for path in a.checkpoints:
-        agent = NeuralAgent.from_checkpoint(path, device=a.device)
-        merged = bool(agent.merged_influence)
-        stats = probe(agent.model, merged, envs=a.envs, steps=a.steps, seed=a.seed, device=a.device)
-        name = f"{agent.name} ({'E4.1' if merged else 'E4'} view)"
+        loaded = load_for_eval(path, a.device, merged_ok=True)
+        merged = loaded.merged_influence
+        stats = probe(loaded.model, merged, envs=a.envs, steps=a.steps, seed=a.seed, device=a.device)
+        name = f"{checkpoint_label(path)} ({'E4.1' if merged else 'E4'} view)"
         print(table(name, stats), flush=True)
         print(flush=True)
         dump[name] = [{"seat": k[0], "phase": k[1], "decision": k[2], **v.row()} for k, v in stats.items()]

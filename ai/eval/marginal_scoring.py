@@ -29,8 +29,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, make_env, model_view
+from ai.eval.state_readout import _ridge, split_by_env
 
 #: `global_features[64..69]` carry the live net VP differential per region.
 REGION_VP_SLICE = (64, 70)
@@ -175,13 +178,10 @@ def invested_states(state: ts.GameState, player: ts.Player,
 def collect(model: Any, num_envs: int = 128, steps: int = 300, every: int = 6,
             temperature: float = 0.1) -> Dict[str, Any]:
     """Feature sets and the marginal-value answer key, from real decision positions."""
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
     device = next(model.parameters()).device
     model.eval()
+    # The model's own observation feature set; E4 action view (load with merged_ok=False).
+    sampler = Sampler(model, temperature, 717_000)
 
     taps: Dict[str, Any] = {}
 
@@ -195,7 +195,7 @@ def collect(model: Any, num_envs: int = 128, steps: int = 300, every: int = 6,
         raise TypeError(f"{type(model).__name__} has no board encoder to tap")
     handle = getattr(model, tap_names[0]).register_forward_hook(hook("token"))
 
-    env = TsVectorizedEnv(num_envs=num_envs, base_seed=717_000)
+    env = make_env(num_envs, 717_000, model_view(model, False))
     obs, masks, _ = env.reset_all()
     acc: Dict[str, List[np.ndarray]] = {k: [] for k in ("input", "token", "trunk", "target")}
     env_ids: List[int] = []
@@ -203,9 +203,8 @@ def collect(model: Any, num_envs: int = 128, steps: int = 300, every: int = 6,
     try:
         for step in range(steps):
             obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
+            acts = sampler(obs, masks)
             with torch.no_grad():
-                acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
                 trunk = model.extract_features(obs_t)
                 if isinstance(trunk, tuple):
                     trunk = trunk[0]
@@ -233,7 +232,7 @@ def collect(model: Any, num_envs: int = 128, steps: int = 300, every: int = 6,
                     acc["trunk"].append(tk[i])
                     acc["target"].append(marginal_placement_value(st, p))
                     env_ids.append(i)
-            obs, masks, *_ = env.step(acts.cpu().numpy().astype(np.int64))
+            obs, masks, *_ = env.step(acts)
     finally:
         handle.remove()
 
@@ -262,7 +261,6 @@ def probe(data: Dict[str, Any], stage: str) -> Dict[str, float]:
       all. This is the threshold question, and the one a copied magic number cannot answer.
     * ``r2`` -- how much of the magnitude is captured, over the countries where it is nonzero.
     """
-    from ai.eval.state_readout import _ridge, split_by_env
 
     y = data["target"]
     tr, te = split_by_env(data["env_id"])

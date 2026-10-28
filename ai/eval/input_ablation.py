@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, make_runner, model_view
 
 #: Slices of the observation, matching ColdWarNet's own offsets.
 SLICES: Dict[str, Tuple[int, int]] = {
@@ -57,10 +59,10 @@ class AblationResult:
 def collect_observations(model: Any, device: Any, num_envs: int = 256, base_seed: int = 5150,
                          max_iters: int = 4000, want: int = 6000,
                          temperature: float = 0.1) -> Tuple[np.ndarray, np.ndarray]:
-    """Observations and masks from self-play under the model's own policy."""
-    import torch
-
-    runner = ts.VectorizedBatchRunner(num_envs, base_seed)
+    """Observations and masks from self-play under the model's own policy, in its own
+    observation feature set; E4 action view (load with merged_ok=False)."""
+    runner = make_runner(num_envs, base_seed, model_view(model, False))
+    sampler = Sampler(model, temperature, base_seed)
     obs_out: List[np.ndarray] = []
     mask_out: List[np.ndarray] = []
     model.eval()
@@ -77,11 +79,7 @@ def collect_observations(model: Any, device: Any, num_envs: int = 256, base_seed
         if keep.any():
             obs_out.append(obs[keep].copy())
             mask_out.append(masks[keep].copy())
-        with torch.no_grad():
-            logits = model(torch.from_numpy(obs).to(device),
-                           torch.from_numpy(masks).to(device))[0]
-            picks = torch.multinomial(
-                torch.softmax(logits / temperature, dim=-1), 1).squeeze(-1).cpu().numpy()
+        picks = sampler(obs, masks, terminals)
         runner.step_flat_all([int(a) for a in picks], auto_advance=True)
 
     return (np.concatenate(obs_out)[:want], np.concatenate(mask_out)[:want])
@@ -90,8 +88,6 @@ def collect_observations(model: Any, device: Any, num_envs: int = 256, base_seed
 def ablate(model: Any, obs: np.ndarray, mask: np.ndarray, device: Any,
            lo: int, hi: int, name: str, batch: int = 512) -> AblationResult:
     """Zero `obs[:, lo:hi]` and measure how far the policy and value move."""
-    import torch
-
     out = AblationResult(name=name)
     for start in range(0, len(obs), batch):
         o = obs[start:start + batch]

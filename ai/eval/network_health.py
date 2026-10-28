@@ -33,10 +33,9 @@ import ts_engine as ts
 
 from ai.eval.plasticity_probe import POLICY_HEAD, dormant
 from ai.models.coldwar_net_v2 import create_like, policy_head_norms
-from bindings.action_encoder import ActionEncoder
-from bindings.ts_env import model_obs_features
+from ai.eval.loading import load_for_eval
+from bindings.ts_env import legal_mask, model_obs_features, observe
 from tools.lib.corpus_driver import selfplay
-from tools.lib.player_agent import NeuralAgent
 
 #: Training-log series read per window, and how each window is summarised.
 LOG_SERIES: Dict[str, str] = {"logit_lse_absmax": "max", "kl_div": "max", "entropy": "median",
@@ -156,18 +155,18 @@ def selfplay_positions(model: nn.Module, games: int, seed: int) -> List[Any]:
 
 
 def check_checkpoints(paths: Sequence[str], games: int, seed: int, max_positions: int) -> Dict[str, Any]:
-    models = [NeuralAgent.from_checkpoint(p, device="cpu").model.eval() for p in paths]
+    # The masks below are E4: a merged-view checkpoint is refused at load.
+    models = [load_for_eval(p, "cpu", merged_ok=False).model for p in paths]
     states = selfplay_positions(models[0], games, seed)
     rng = np.random.default_rng(seed)
     if len(states) > max_positions:
         states = [states[i] for i in sorted(rng.choice(len(states), size=max_positions, replace=False))]
     dtypes = [str(s.ctx().decision_type).split(".")[-1] for s in states]
-    masks = torch.tensor(np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=bool) for s in states]))
+    masks = torch.tensor(np.stack([legal_mask(s, False).astype(bool) for s in states]))
     report: Dict[str, Any] = {"positions": len(states), "games": games, "seed": seed, "networks": {}}
     for path, m in zip(paths, models):
         feats = model_obs_features(m)
-        obs = torch.tensor(np.stack([np.asarray(ts.extract_observation_features(s, s.ctx().decision_player, feats),
-                                                dtype=np.float32) for s in states]))
+        obs = torch.tensor(np.stack([observe(s, s.ctx().decision_player, feats) for s in states]))
         report["networks"][path] = measure(m, obs, masks, dtypes, seed)
     return report
 
