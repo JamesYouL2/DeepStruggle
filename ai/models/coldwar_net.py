@@ -3,61 +3,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import ts_engine as ts
+from ai.models.coldwar_net_v2 import GraphConvLayer, ResBlock, build_normalized_adjacency_matrix, mask_logits
 from bindings.action_encoder import ActionEncoder
-
-
-def build_normalized_adjacency_matrix() -> torch.Tensor:
-    """Builds the 84x84 normalized adjacency matrix with self-loops from MapData."""
-    adj = np.eye(84, dtype=np.float32)
-    for i in range(84):
-        info = ts.MapData.get_country_info(i)
-        for n in info["neighbors"]:
-            adj[i, n] = 1.0
-            adj[n, i] = 1.0
-
-    # Degree normalization: D^(-1/2) * A * D^(-1/2)
-    degrees = np.sum(adj, axis=1)
-    d_inv_sqrt = np.zeros_like(degrees, dtype=np.float32)
-    np.power(degrees, -0.5, where=degrees > 0, out=d_inv_sqrt)
-    d_mat = np.diag(d_inv_sqrt)
-    norm_adj = d_mat @ adj @ d_mat
-    return torch.from_numpy(norm_adj.astype(np.float32))
-
-
-class GraphConvLayer(nn.Module):
-    """Simple and fast batched Graph Convolution layer."""
-
-    def __init__(self, in_features: int, out_features: int):
-        super().__init__()
-        self.linear = nn.Linear(in_features, out_features, bias=False)
-        self.bias = nn.Parameter(torch.zeros(out_features))
-
-    def forward(self, x: torch.Tensor, norm_adj: torch.Tensor) -> torch.Tensor:
-        # x: (B, 84, in_features)
-        # norm_adj: (84, 84)
-        support = self.linear(x) # (B, 84, out_features)
-        out = torch.matmul(norm_adj, support) + self.bias
-        return F.gelu(out)
-
-
-class ResBlock(nn.Module):
-    """Pre-LN Residual MLP Block."""
-
-    def __init__(self, dim: int, dropout: float = 0.05):
-        super().__init__()
-        self.ln1 = nn.LayerNorm(dim)
-        self.fc1 = nn.Linear(dim, dim)
-        self.ln2 = nn.LayerNorm(dim)
-        self.fc2 = nn.Linear(dim, dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = F.gelu(self.fc1(self.ln1(x)))
-        h = self.dropout(h)
-        h = self.fc2(self.ln2(h))
-        return x + h
 
 
 class ColdWarNet(nn.Module):
@@ -201,7 +148,7 @@ class ColdWarNet(nn.Module):
         """Forward pass.
 
         Args:
-            obs: (B, 4293) float tensor.
+            obs: (B, TOTAL_OBS_SIZE) float tensor (the v2.3 observation).
             mask: (B, FLAT_ACTION_SIZE) uint8 / bool tensor of legal actions.
 
         Returns:
@@ -212,16 +159,7 @@ class ColdWarNet(nn.Module):
         h = self.extract_features(obs)
         raw_logits = self.policy_head(h)
 
-        if mask is not None:
-            # Mask illegal actions with -1e9
-            mask_bool = mask.bool() if mask.dtype != torch.bool else mask
-            # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
-            # that scalar is a blocking host-to-device copy, which stalled the CPU on the GPU
-            # at every forward pass -- 14.4 s of a 115 s profiled run
-            # (research/log/training_throughput_cpu.md). The values are identical.
-            masked_logits = raw_logits.masked_fill(~mask_bool, -1e9)
-        else:
-            masked_logits = raw_logits
+        masked_logits = mask_logits(raw_logits, mask)
 
         v_win = self.val_win_head(h)
         v_vp = self.val_vp_head(h)
@@ -237,15 +175,7 @@ class ColdWarNet(nn.Module):
         """
         h = self.extract_features(obs)
         raw_logits = self.policy_head(h)
-        if mask is not None:
-            mask_bool = mask.bool() if mask.dtype != torch.bool else mask
-            # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
-            # that scalar is a blocking host-to-device copy, which stalled the CPU on the GPU
-            # at every forward pass -- 14.4 s of a 115 s profiled run
-            # (research/log/training_throughput_cpu.md). The values are identical.
-            masked_logits = raw_logits.masked_fill(~mask_bool, -1e9)
-        else:
-            masked_logits = raw_logits
+        masked_logits = mask_logits(raw_logits, mask)
         return (masked_logits, self.val_win_head(h), self.val_vp_head(h),
                 self.defcon_risk_head(h))
 

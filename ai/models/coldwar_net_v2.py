@@ -18,6 +18,19 @@ VP_LIMIT: int = 20
 VALUE_ATOMS: int = 2 * VP_LIMIT + 1
 
 
+def mask_logits(logits: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+    """`logits` with every illegal action (mask 0/False) set to -1e9; unchanged without a mask.
+
+    masked_fill, not torch.where against torch.tensor(-1e9, device=...): building that scalar is a
+    blocking host-to-device copy, which stalled the CPU on the GPU at every forward pass -- 14.4 s
+    of a 115 s profiled run (research/log/training_throughput_cpu.md). The values are identical.
+    """
+    if mask is None:
+        return logits
+    mask_bool = mask if mask.dtype == torch.bool else mask.bool()
+    return logits.masked_fill(~mask_bool, -1e9)
+
+
 def build_normalized_adjacency_matrix() -> torch.Tensor:
     """Builds the 84x84 normalized adjacency matrix with self-loops from MapData."""
     adj = np.eye(84, dtype=np.float32)
@@ -459,15 +472,7 @@ class ColdWarNetV2(nn.Module):
         """
         h, _attn, tokens = self._encode(obs)
         raw_logits = self._cap_logits(self._policy_logits(h, tokens), mask)
-        if mask is not None:
-            mask_bool = mask.bool() if mask.dtype != torch.bool else mask
-            # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
-            # that scalar is a blocking host-to-device copy, which stalled the CPU on the GPU
-            # at every forward pass -- 14.4 s of a 115 s profiled run
-            # (research/log/training_throughput_cpu.md). The values are identical.
-            masked_logits = raw_logits.masked_fill(~mask_bool, -1e9)
-        else:
-            masked_logits = raw_logits
+        masked_logits = mask_logits(raw_logits, mask)
         v_win, v_vp = self._value_scalars(h)
         value_logits = None
         if self.categorical_value:
@@ -650,7 +655,7 @@ class ColdWarNetV2(nn.Module):
         """Forward pass.
 
         Args:
-            obs: (B, 4293) float tensor.
+            obs: (B, TOTAL_OBS_SIZE) float tensor (the v2.3 observation).
             mask: (B, FLAT_ACTION_SIZE) uint8 / bool tensor of legal actions.
 
         Returns:
@@ -661,15 +666,7 @@ class ColdWarNetV2(nn.Module):
         h, _attn, tokens = self._encode(obs)
         raw_logits = self._cap_logits(self._policy_logits(h, tokens), mask)
 
-        if mask is not None:
-            mask_bool = mask.bool() if mask.dtype != torch.bool else mask
-            # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
-            # that scalar is a blocking host-to-device copy, which stalled the CPU on the GPU
-            # at every forward pass -- 14.4 s of a 115 s profiled run
-            # (research/log/training_throughput_cpu.md). The values are identical.
-            masked_logits = raw_logits.masked_fill(~mask_bool, -1e9)
-        else:
-            masked_logits = raw_logits
+        masked_logits = mask_logits(raw_logits, mask)
 
         v_win, v_vp = self._value_scalars(h)
         return masked_logits, v_win, v_vp
@@ -684,15 +681,7 @@ class ColdWarNetV2(nn.Module):
         """
         h, _attn, tokens = self._encode(obs)
         raw_logits = self._cap_logits(self._policy_logits(h, tokens), mask)
-        if mask is not None:
-            mask_bool = mask.bool() if mask.dtype != torch.bool else mask
-            # masked_fill, not torch.where against torch.tensor(-1e9, device=...): building
-            # that scalar is a blocking host-to-device copy, which stalled the CPU on the GPU
-            # at every forward pass -- 14.4 s of a 115 s profiled run
-            # (research/log/training_throughput_cpu.md). The values are identical.
-            masked_logits = raw_logits.masked_fill(~mask_bool, -1e9)
-        else:
-            masked_logits = raw_logits
+        masked_logits = mask_logits(raw_logits, mask)
         v_win, v_vp = self._value_scalars(h)
         return masked_logits, v_win, v_vp, self.defcon_risk_head(h)
 
