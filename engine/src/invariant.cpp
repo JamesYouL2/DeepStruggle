@@ -18,13 +18,16 @@ uint64_t state_fingerprint(const GameState& state) noexcept {
     return h;
 }
 
+// Per thread: training runs several environments at once, and a shared counter would need
+// a lock on a path that must never become a bottleneck.
+thread_local uint64_t last_fingerprint = 0;
+thread_local uint64_t seen = 0;
+
 } // namespace
 
+uint64_t anomalies_reported() noexcept { return seen; }
+
 void report_anomaly(const char* what, const GameState& state) noexcept {
-    // Per thread: training runs several environments at once, and a shared counter would need
-    // a lock on a path that must never become a bottleneck.
-    static thread_local uint64_t last_fingerprint = 0;
-    static thread_local uint64_t seen = 0;
 
     const uint64_t fingerprint = state_fingerprint(state);
     if (fingerprint == last_fingerprint) return;   // same decision, mask asked again

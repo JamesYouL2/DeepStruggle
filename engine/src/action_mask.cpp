@@ -842,7 +842,9 @@ MicroAction ActionMask::decode_flat_action_212(const GameState& state, uint16_t 
                            0, action_flags::REGION};
     }
 
-    return MicroAction{ctx.decision_type, 255, 0, action_flags::CONFIRM_DONE};
+    // Outside the flat space. Not a pass: a decision type of NONE is a decision no state
+    // asks for, so StateMachine::step refuses it (encode_micro_action_212 maps it to -1).
+    return MicroAction{DecisionType::NONE, 0, 0, 0};
 }
 
 int16_t ActionMask::encode_micro_action_212(const GameState& state, const MicroAction& action) noexcept {
@@ -856,24 +858,20 @@ int16_t ActionMask::encode_micro_action_212(const GameState& state, const MicroA
             if (action.primary_id >= 1 && action.primary_id <= 110) {
                 return static_cast<int16_t>(action.primary_id - 1);
             }
-            return flat_slots::CONFIRM_DONE;
+            return -1;
 
         case DecisionType::SELECT_PLAY_MODE:
             if (action.primary_id < static_cast<uint8_t>(Resolution::COUNT)) {
                 return static_cast<int16_t>(flat_slots::RESOLUTION + action.primary_id);
             }
-            return flat_slots::CONFIRM_DONE;
-
-        case DecisionType::CHOOSE_TIMING_BRANCH:
-            // P17: retired. No slot encodes it; the merged node carries the timing.
-            return flat_slots::CONFIRM_DONE;
+            return -1;
 
         case DecisionType::SELECT_OP_MODE:
             // Shares the resolution node's OPS_* slots.
             if (action.primary_id < flat_slots::OP_MODE_COUNT) {
                 return static_cast<int16_t>(flat_slots::OP_MODE + action.primary_id);
             }
-            return flat_slots::CONFIRM_DONE;
+            return -1;
 
         case DecisionType::ROLL_DIE:
             return flat_slots::ROLL_DIE;
@@ -882,7 +880,7 @@ int16_t ActionMask::encode_micro_action_212(const GameState& state, const MicroA
             if (action.primary_id < flat_slots::NODE_COUNT) {
                 return static_cast<int16_t>(flat_slots::NODE + action.primary_id);
             }
-            return flat_slots::CONFIRM_DONE;
+            return -1;
 
         case DecisionType::CHOOSE_BRANCH: {
             // Three heads land on CHOOSE_BRANCH and the RESOLVING CARD says which, not a flag on
@@ -895,23 +893,25 @@ int16_t ActionMask::encode_micro_action_212(const GameState& state, const MicroA
                 if (action.primary_id >= 1 && action.primary_id <= flat_slots::DEFCON_COUNT) {
                     return static_cast<int16_t>(flat_slots::DEFCON_VALUE + action.primary_id - 1);
                 }
-                return flat_slots::CONFIRM_DONE;
+                return -1;
             }
             if (rc == card_ids::CHERNOBYL) {
                 if (action.primary_id < flat_slots::REGION_COUNT) {
                     return static_cast<int16_t>(flat_slots::REGION + action.primary_id);
                 }
-                return flat_slots::CONFIRM_DONE;
+                return -1;
             }
             if (action.primary_id < flat_slots::BRANCH_COUNT) {
                 return static_cast<int16_t>(flat_slots::BRANCH + action.primary_id);
             }
-            return flat_slots::CONFIRM_DONE;
+            return -1;
         }
 
+        // NONE, and CHOOSE_TIMING_BRANCH, which P17 retired (the merged resolution node carries
+        // the timing): no slot encodes them.
         case DecisionType::NONE:
         default:
-            return flat_slots::CONFIRM_DONE;
+            return -1;
     }
 }
 

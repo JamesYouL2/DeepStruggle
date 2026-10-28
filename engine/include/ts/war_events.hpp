@@ -7,17 +7,10 @@
 #include "prng.hpp"
 #include "micro_action.hpp"
 #include <algorithm>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 namespace war_helpers {
-
-[[nodiscard]] inline bool is_war_card(uint8_t card_id) noexcept {
-    return card_id == card_ids::KOREAN_WAR ||
-           card_id == card_ids::ARAB_ISRAELI_WAR ||
-           card_id == card_ids::INDO_PAKISTANI_WAR ||
-           card_id == card_ids::BRUSH_WAR ||
-           card_id == card_ids::IRAN_IRAQ_WAR;
-}
 
 inline bool has_fixed_target(uint8_t card_id, uint8_t& out_target) noexcept {
     if (card_id == card_ids::KOREAN_WAR) {
@@ -55,7 +48,7 @@ inline bool has_fixed_target(uint8_t card_id, uint8_t& out_target) noexcept {
     return false;
 }
 
-inline bool trigger_war(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll = 0) noexcept {
+inline bool trigger_war(GameState& state, uint8_t card_id, Player player) noexcept {
     if (card_id == card_ids::ARAB_ISRAELI_WAR && state.has_flag(effect_bits::CAMP_DAVID_PLAYED)) {
         return true;
     }
@@ -68,10 +61,8 @@ inline bool trigger_war(GameState& state, uint8_t card_id, Player player, uint8_
         state.ctx().pending_roll = RollType::WAR_EVENT;
         state.ctx().roll_target = fixed_target;
         state.ctx().roll_actor = player;
-        // `forced_roll` is not stored. A war with a fixed target rolls inside the event with
-        // nothing to choose, so the caller that wants a specific die passes it on the ROLL_DIE
-        // action; see the read below.
-        (void)forced_roll;
+        // A war with a fixed target rolls inside the event with nothing to choose, so a caller
+        // that wants a specific die passes it on the ROLL_DIE action; see the read below.
         return false;
     }
 
@@ -167,21 +158,17 @@ inline bool handle_war_step(GameState& state, uint8_t card_id, Player p, const M
         // 4. On Success: Award VPs and Switch Influence
         if (success) {
             int32_t vp_delta = (roller == Player::US) ? vp_award : -vp_award;
-            state.victory_points = static_cast<int8_t>(std::clamp(static_cast<int32_t>(state.victory_points) + vp_delta, -20, 20));
+            award_vp(state, vp_delta);
             uint8_t opp_inf = state.countries[target].get_influence(opp);
             state.countries[target].remove_influence(opp, opp_inf);
             state.countries[target].add_influence(roller, opp_inf);
-            if (state.victory_points >= 20 || state.victory_points <= -20) {
-                state.current_phase = Phase::GAME_OVER;
-            }
         }
 
-        // 5. Flower Power Penalty (If US played war event while Flower Power active)
+        // 5. Flower Power Penalty (If US played war event while Flower Power active). A war
+        // that has just won the game at 20 VP is not followed by it: award_vp leaves a finished
+        // game's score alone, so the win is not "un-won" to 18 under a GAME_OVER phase.
         if (roller == Player::US && state.has_flag(effect_bits::FLOWER_POWER_ACTIVE)) {
-            state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 2));
-            if (state.victory_points <= -20) {
-                state.current_phase = Phase::GAME_OVER;
-            }
+            award_vp(state, -2);
         }
 
         state.ctx().resolving_card = 0;

@@ -4,6 +4,7 @@
 #include "ts/constants.hpp"
 #include <algorithm>
 #include <bit>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -243,13 +244,7 @@ void Scoring::score_region(GameState& state, Region r) noexcept {
         state.card_locations[card_ids::SHUTTLE_DIPLOMACY] = CardLocation::DISCARD_PILE;
     }
 
-    int32_t new_vp = static_cast<int32_t>(state.victory_points) + summary.net_delta;
-    new_vp = std::clamp(new_vp, -20, 20);
-    state.victory_points = static_cast<int8_t>(new_vp);
-
-    if (state.victory_points >= 20 || state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
-    }
+    award_vp(state, summary.net_delta);
 }
 
 void Scoring::score_southeast_asia(GameState& state) noexcept {
@@ -273,13 +268,7 @@ void Scoring::score_southeast_asia(GameState& state) noexcept {
     else if (thai_ctrl == Player::USSR) ussr_pts += 2;
 
     if (scoring_tap) scoring_tap->report(ScoringTap::kSoutheastAsia, static_cast<int16_t>(us_pts - ussr_pts));
-    int32_t new_vp = static_cast<int32_t>(state.victory_points) + (us_pts - ussr_pts);
-    new_vp = std::clamp(new_vp, -20, 20);
-    state.victory_points = static_cast<int8_t>(new_vp);
-
-    if (state.victory_points >= 20 || state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
-    }
+    award_vp(state, us_pts - ussr_pts);
 }
 
 void Scoring::evaluate_military_ops(GameState& state) noexcept {
@@ -300,16 +289,10 @@ void Scoring::evaluate_military_ops(GameState& state) noexcept {
 
     // US gains VP if USSR has deficit; USSR gains VP (negative VP delta) if US has deficit
     int16_t delta = static_cast<int16_t>(ussr_def) - static_cast<int16_t>(us_def);
-    int32_t new_vp = static_cast<int32_t>(state.victory_points) + delta;
-    new_vp = std::clamp(new_vp, -20, 20);
-    state.victory_points = static_cast<int8_t>(new_vp);
+    award_vp(state, delta);
 
     state.us_mil_ops = 0;
     state.ussr_mil_ops = 0;
-
-    if (state.victory_points >= 20 || state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
-    }
 }
 
 void Scoring::execute_final_scoring(GameState& state) noexcept {

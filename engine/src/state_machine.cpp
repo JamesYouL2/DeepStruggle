@@ -10,6 +10,7 @@
 #include "ts/action_mask.hpp"
 #include <algorithm>
 #include <cstring>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -172,7 +173,7 @@ void StateMachine::init_new_game(GameState& state, uint64_t seed) noexcept {
     state.countries[countries::EAST_GERMANY].ussr_influence = 3;
     state.countries[countries::FINLAND].ussr_influence = 1;
 
-    // US: Iran(25)=1, Israel(23)=1, Japan(45)=1, Australia(41)=1, Philippines(40)=1, South Korea(44)=1, Panama(70)=1, South Africa(63)=1, United Kingdom(1)=5
+    // US: Iran(25)=1, Israel(23)=1, Japan(45)=1, Australia(41)=4, Philippines(40)=1, South Korea(44)=1, Panama(70)=1, South Africa(63)=1, United Kingdom(1)=5
     state.countries[countries::IRAN].us_influence = 1;
     state.countries[countries::ISRAEL].us_influence = 1;
     state.countries[countries::JAPAN].us_influence = 1;
@@ -493,6 +494,56 @@ void StateMachine::advance_after_ops(GameState& state) noexcept {
     advance_after_action_round(state);
 }
 
+// We Will Bury You: "unless UN Intervention is played as an Event on the US's next action
+// round, the USSR receives 3 VP". Called on that round, however it goes -- a card played, a
+// pass, an empty hand, a trapped discard -- with `un_event` saying whether it is UN
+// Intervention's Event that answers it. A no-op when nothing is owed. Returns true when the
+// 3 VP end the game.
+static bool settle_we_will_bury_you(GameState& state, bool un_event) noexcept {
+    if (!state.has_flag(effect_bits::WE_WILL_BURY_YOU_PENDING)) return false;
+    state.clear_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
+    return !un_event && award_vp(state, -3);
+}
+
+// Conditional Ops bonuses are granted up front and withdrawn the moment their region condition
+// breaks, after an Op is spent in `cid` (an influence placement or a realignment). Track the
+// *current* budget in pending_ops_value and derive what is left from what has been spent; a
+// version that rewrote remaining_steps against a recomputed base while leaving
+// pending_ops_value at the optimistic figure charged the next withdrawal a second time.
+//
+// The bonuses form a ladder. All Ops in Southeast Asia keeps both; stepping out to Asia
+// forfeits Vietnam Revolts; leaving Asia forfeits the China Card bonus as well, and doing it
+// in one step forfeits both.
+//
+// Only engaged when a conditional bonus is actually in play, and only when pending_ops_value
+// is being maintained. Event-driven placements set remaining_steps directly and leave
+// pending_ops_value at 0; recomputing from a zero budget there would wipe out the remaining Ops.
+static void withdraw_conditional_ops_bonus(GameState& state, Player p, uint8_t cid) noexcept {
+    const uint8_t op_card = state.ctx().pending_op_card;
+    const bool china_card = (op_card == card_ids::THE_CHINA_CARD);
+    const bool vietnam_bonus =
+        (p == Player::USSR && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE));
+    if (!(china_card || vietnam_bonus) || state.ctx().pending_ops_value == 0) return;
+
+    const auto& c_info = MapData::get_country(cid);
+    uint8_t budget = state.ctx().pending_ops_value;
+    const uint8_t spent = static_cast<uint8_t>(
+        (budget > state.ctx().remaining_steps) ? (budget - state.ctx().remaining_steps) : 0);
+
+    const uint8_t plain = Operations::plain_budget(state, op_card, p);
+    const uint8_t asia_ok = static_cast<uint8_t>(plain + (china_card ? 1 : 0));
+
+    if (vietnam_bonus && !c_info.in_southeast_asia) {
+        budget = std::min<uint8_t>(budget, asia_ok);
+    }
+    if (china_card && c_info.region != Region::ASIA) {
+        budget = std::min<uint8_t>(budget, plain);
+    }
+
+    state.ctx().pending_ops_value = budget;
+    state.ctx().remaining_steps = (spent >= budget) ? 0 : static_cast<uint8_t>(budget - spent);
+}
+
 void StateMachine::advance_after_action_round(GameState& state) noexcept {
     if (state.current_phase == Phase::GAME_OVER) return;
     // Check NORAD
@@ -569,7 +620,10 @@ void StateMachine::advance_after_action_round(GameState& state) noexcept {
     }
 
     if (count == 0 && !(state.china_card_holder == state.phasing_player && state.china_card_playable)) {
-        // Player has no cards -> automatically pass to next player
+        // Player has no cards -> automatically pass to next player. A US round started with an
+        // empty hand is still the US's next action round for We Will Bury You, and no UN
+        // Intervention can be played in it.
+        if (state.phasing_player == Player::US && settle_we_will_bury_you(state, false)) return;
         advance_after_action_round(state);
         return;
     }
@@ -1080,16 +1134,18 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                 // first, so the 3 VP waited for whichever round the US next played a card in.
                 if (p == Player::US && state.current_phase == Phase::ACTION_ROUND &&
                     state.has_flag(effect_bits::QUAGMIRE_ACTIVE) &&
-                    state.has_flag(effect_bits::WE_WILL_BURY_YOU_PENDING)) {
-                    state.clear_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
-                    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 3));
-                    if (state.victory_points <= -20) {
-                        state.current_phase = Phase::GAME_OVER;
-                        return true;
-                    }
+                    settle_we_will_bury_you(state, false)) {
+                    return true;
                 }
 
                 if (card == 0 || action.is_confirm_done()) {
+                    // A US round passed -- holding nothing but the China Card, or leaving an
+                    // eighth round -- is still the US's next action round, and no UN
+                    // Intervention was played in it.
+                    if (p == Player::US && state.current_phase == Phase::ACTION_ROUND &&
+                        settle_we_will_bury_you(state, false)) {
+                        return true;
+                    }
                     if (state.current_phase == Phase::HEADLINE) advance_headline_step(state);
                     else advance_after_action_round(state);
                     return true;
@@ -1126,16 +1182,11 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                     }
                 }
 
-                // We Will Bury You check on US Action Round
-                if (p == Player::US && state.current_phase == Phase::ACTION_ROUND && state.has_flag(effect_bits::WE_WILL_BURY_YOU_PENDING)) {
-                    if (card != card_ids::UN_INTERVENTION) {
-                        state.clear_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
-                        state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 3));
-                        if (state.victory_points <= -20) {
-                            state.current_phase = Phase::GAME_OVER;
-                            return true;
-                        }
-                    }
+                // We Will Bury You on a US action round. UN Intervention waits for its play
+                // mode below: only its Event answers the debt.
+                if (p == Player::US && state.current_phase == Phase::ACTION_ROUND &&
+                    card != card_ids::UN_INTERVENTION && settle_we_will_bury_you(state, false)) {
+                    return true;
                 }
 
                 // Scoring card auto-resolve
@@ -1178,16 +1229,10 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                     }
                 }
 
-                // We Will Bury You check on US Action Round when playing UN Intervention
-                if (p == Player::US && state.current_phase == Phase::ACTION_ROUND && state.has_flag(effect_bits::WE_WILL_BURY_YOU_PENDING)) {
-                    state.clear_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
-                    if (mode != Resolution::EVENT) {
-                        state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 3));
-                        if (state.victory_points <= -20) {
-                            state.current_phase = Phase::GAME_OVER;
-                            return true;
-                        }
-                    }
+                // We Will Bury You on the US action round UN Intervention is played in.
+                if (p == Player::US && state.current_phase == Phase::ACTION_ROUND &&
+                    settle_we_will_bury_you(state, mode == Resolution::EVENT)) {
+                    return true;
                 }
 
                 if (mode == Resolution::SPACE) {
@@ -1207,7 +1252,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                         return false; // Illegal event play
                     }
                     const bool fired = CardHandlers::event_has_effect(state, card, p);
-                    bool done = CardHandlers::trigger_event(state, card, p, action.secondary_id);
+                    bool done = CardHandlers::trigger_event(state, card, p);
                     CardHandlers::relocate_played_card(state, card, fired, CardHandlers::Handover::Respect);
                     if (done && state.current_phase != Phase::GAME_OVER) {
                         if (state.current_phase == Phase::HEADLINE) advance_headline_step(state);
@@ -1259,41 +1304,6 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                         : static_cast<uint8_t>(255);
                     Operations::grant_card_ops_to_ctx(state, card, p);
                     return begin_op_mode(state, p, to_op_mode(mode));
-                }
-                return false;
-            }
-
-            case DecisionType::CHOOSE_TIMING_BRANCH: {
-                uint8_t card = state.ctx().pending_op_card;
-                TimingBranch branch = static_cast<TimingBranch>(action.primary_id);
-                state.ctx().timing_branch = static_cast<uint8_t>(branch);
-
-                if (branch == TimingBranch::OPS_FIRST) {
-                    state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
-                    Operations::grant_card_ops_to_ctx(state, card, p);
-                    return true;
-                }
-
-                if (branch == TimingBranch::EVENT_FIRST) {
-                    state.ctx().timing_branch = static_cast<uint8_t>(TimingBranch::EVENT_FIRST);
-                    Operations::grant_card_ops_to_ctx(state, card, p);
-                    state.ctx().decision_type = DecisionType::SELECT_OP_MODE;
-                    state.ctx().decision_player = p;
-                    if (!state.push_context()) {
-                        invariant_failed("event chain too deep; card", static_cast<int>(card));
-                    }
-
-                    Player opp = get_opponent(p);
-                    state.ctx().decision_player = opp;
-                    state.ctx().resolving_card = card;
-
-                    const bool fired = CardHandlers::event_has_effect(state, card, opp);
-                    bool done = CardHandlers::trigger_event(state, card, opp);
-                    CardHandlers::relocate_played_card(state, card, fired, CardHandlers::Handover::Respect);
-                    if (done) {
-                        state.pop_context();
-                    }
-                    return true;
                 }
                 return false;
             }
@@ -1413,50 +1423,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                         Operations::place_influence(state, p, cid);
                         state.ctx().remaining_steps -= cost;
 
-                        uint8_t op_card = state.ctx().pending_op_card;
-                        const auto& c_info = MapData::get_country(cid);
-
-                        // Conditional Ops bonuses are granted up front and withdrawn the
-                        // moment their region condition breaks. Track the *current* budget in
-                        // pending_ops_value and derive what is left from what has been spent;
-                        // the previous version rewrote remaining_steps against a recomputed
-                        // base while leaving pending_ops_value at the optimistic figure, so
-                        // the next withdrawal charged the player a second time.
-                        //
-                        // The bonuses form a ladder. All Ops in Southeast Asia keeps both;
-                        // stepping out to Asia forfeits Vietnam Revolts; leaving Asia forfeits
-                        // the China Card bonus as well, and doing it in one step forfeits both.
-                        const bool china_card = (op_card == card_ids::THE_CHINA_CARD);
-                        const bool vietnam_bonus =
-                            (p == Player::USSR
-                             && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE));
-
-                        // Only engage when a conditional bonus is actually in play, and only
-                        // when pending_ops_value is being maintained. Event-driven placements
-                        // set remaining_steps directly and leave pending_ops_value at 0;
-                        // recomputing from a zero budget there would wipe out the remaining
-                        // Ops.
-                        if ((china_card || vietnam_bonus) && state.ctx().pending_ops_value > 0) {
-                            uint8_t budget = state.ctx().pending_ops_value;
-                            uint8_t spent = static_cast<uint8_t>(
-                                (budget > state.ctx().remaining_steps)
-                                    ? (budget - state.ctx().remaining_steps) : 0);
-
-                            uint8_t plain = Operations::plain_budget(state, op_card, p);
-                            uint8_t asia_ok = static_cast<uint8_t>(
-                                plain + (china_card ? 1 : 0));
-
-                            if (vietnam_bonus && !c_info.in_southeast_asia) {
-                                budget = std::min<uint8_t>(budget, asia_ok);
-                            }
-                            if (china_card && c_info.region != Region::ASIA) {
-                                budget = std::min<uint8_t>(budget, plain);
-                            }
-
-                            state.ctx().pending_ops_value = budget;
-                            state.ctx().remaining_steps = (spent >= budget)
-                                ? 0 : static_cast<uint8_t>(budget - spent);
-                        }
+                        withdraw_conditional_ops_bonus(state, p, cid);
 
                         if (state.ctx().remaining_steps == 0) {
                             advance_after_ops(state);
@@ -1465,7 +1432,10 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                     }
                 }
 
-                if (state.ctx().allow_early_stop || action.primary_id == 0 || action.primary_id >= 84) {
+                // Only the confirm-done (primary 255) ends the Ops here. A country the placement
+                // above refused is not a request to stop -- 0 is Canada -- and the mask never
+                // offers one, so it is refused rather than read as one.
+                if (action.primary_id >= 84) {
                     advance_after_ops(state);
                     return true;
                 }
@@ -1511,35 +1481,7 @@ bool StateMachine::step(GameState& state, const MicroAction& action, const uint8
                     Operations::execute_realign(state, realign_player, cid, forced_us, forced_ussr);
                     state.ctx().remaining_steps -= 1;
 
-                    uint8_t op_card = state.ctx().pending_op_card;
-                    const auto& c_info = MapData::get_country(cid);
-
-                    const bool china_card = (op_card == card_ids::THE_CHINA_CARD);
-                    const bool vietnam_bonus =
-                        (realign_player == Player::USSR
-                         && state.has_flag(effect_bits::VIETNAM_REVOLTS_ACTIVE));
-
-                    if ((china_card || vietnam_bonus) && state.ctx().pending_ops_value > 0) {
-                        uint8_t budget = state.ctx().pending_ops_value;
-                        uint8_t spent = static_cast<uint8_t>(
-                            (budget > state.ctx().remaining_steps)
-                                ? (budget - state.ctx().remaining_steps) : 0);
-
-                        uint8_t plain = Operations::plain_budget(state, op_card, realign_player);
-                        uint8_t asia_ok = static_cast<uint8_t>(
-                            plain + (china_card ? 1 : 0));
-
-                        if (vietnam_bonus && !c_info.in_southeast_asia) {
-                            budget = std::min<uint8_t>(budget, asia_ok);
-                        }
-                        if (china_card && c_info.region != Region::ASIA) {
-                            budget = std::min<uint8_t>(budget, plain);
-                        }
-
-                        state.ctx().pending_ops_value = budget;
-                        state.ctx().remaining_steps = (spent >= budget)
-                            ? 0 : static_cast<uint8_t>(budget - spent);
-                    }
+                    withdraw_conditional_ops_bonus(state, realign_player, cid);
 
                     if (state.ctx().remaining_steps == 0) {
                         advance_after_ops(state);

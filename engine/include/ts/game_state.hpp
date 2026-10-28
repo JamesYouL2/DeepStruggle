@@ -5,6 +5,7 @@
 #include <type_traits>
 #include "types.hpp"
 #include "constants.hpp"
+#include "invariant_failed.hpp"
 
 namespace ts {
 
@@ -346,7 +347,7 @@ struct alignas(64) GameState {
     std::array<CountryState, 84> countries;
 
     // -------------------------------------------------------------------------
-    // 8. Re-entrant Decision State Machine Stack (Max Depth 3)
+    // 8. Re-entrant Decision State Machine Stack (depth: the ctx_stack array below)
     // -------------------------------------------------------------------------
     // Events nest: Missile Envy takes a card whose Event fires, that Event is Five Year Plan
     // and makes its opponent discard a card whose Event fires in turn, and so on. Three frames
@@ -374,9 +375,10 @@ struct alignas(64) GameState {
         return true;
     }
     inline void pop_context() noexcept {
-        if (ctx_stack_depth > 0) {
-            ctx_stack_depth--;
-        }
+        // Popping an empty stack is a bug in whichever handler did it, never a no-op to
+        // continue from.
+        if (ctx_stack_depth == 0) invariant_failed("pop_context on an empty decision stack", 0);
+        ctx_stack_depth--;
     }
 
     // -------------------------------------------------------------------------

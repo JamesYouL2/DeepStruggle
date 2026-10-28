@@ -451,3 +451,37 @@ certain to reach it on turn 3, so the bots valued the USSR's turn-2 draws at alm
 
 Held by `CardEdgeCasesTest.Deal_AlternatesSoAShortDeckIsShared`, `Deal_USSRDrawsFirst` and
 `Deal_AFullHandSitsOut` (`tests/test_card_edge_cases.cpp`).
+
+---
+
+## 15. Review fixes (2026-10-28)
+
+* **One VP award** (`award_vp`, `include/ts/victory_points.hpp`): clamps to [-20, 20], ends the
+  game at either end, and leaves a finished game's score alone. Every event, scoring and space
+  award goes through it -- about 40 sites used to clamp by hand, and some forgot the game end.
+  Two rare bookkeeping changes follow: Flower Power's penalty on the war that just won the US the
+  game no longer leaves 18 VP under GAME_OVER, and Special Relationship's winning 2 VP no longer
+  opens a placement in a finished game.
+* **We Will Bury You settles on the US's next action round, however it goes**
+  (`settle_we_will_bury_you`, `src/state_machine.cpp`): a card played, a trapped discard, a pass
+  holding only the China Card, or a round started with an empty hand (which used to be skipped,
+  leaving the 3 VP for whenever the US next played a card). Only UN Intervention's Event answers
+  it (owner, 2026-10-28). Its DEFCON-1 loss goes through `resolve_defcon_one_loss`, so a US forced
+  into it off this card's Ops is recorded as provoked like every other forced DEFCON loss.
+* **Out of range is refused, never a confirm.** `encode_micro_action_212` returns -1 for anything
+  no slot encodes (an out-of-range id, `NONE`, the retired `CHOOSE_TIMING_BRANCH`), and
+  `decode_flat_action_212` returns a `NONE` action for an index outside the space; both are refused
+  by `StateMachine::step`, and `Engine::step_flat` checks the bound itself. A failed placement in
+  Canada (id 0) is refused rather than read as "stop the Ops".
+* **`anomalies_reported()`** (`include/ts/invariant.hpp`) counts this thread's `report_anomaly`
+  calls, so a caller that must stop at one (the human-replay converter) can check it.
+* Shared instead of copied: the Ops-budget ladder (`withdraw_conditional_ops_bonus`),
+  `SpaceRace::advance_to`, Muslim Revolution's targets (`MUSLIM_REVOLUTION_TARGETS`) and the
+  forced-removal auto-advance (`forced_event_target`). Dead: the `CHOOSE_TIMING_BRANCH` step handler
+  (the mask cases stay, empty), `war_helpers::is_war_card`, `CardInfo::requires_context_push` /
+  `switches_priority`, and the unused `forced_roll` of `CardHandlers::trigger_event`.
+  `GameState::pop_context` on an empty stack is an invariant failure.
+
+The behaviour digest is unchanged except for the We Will Bury You DEFCON-1 classification (its
+`runner` section hashes each game's ending reason); no decision or result moved. Tests:
+`tests/test_review_fixes.cpp`.

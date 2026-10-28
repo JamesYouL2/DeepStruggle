@@ -23,6 +23,11 @@ public:
     // Returns true if roll succeeded and track advanced
     static bool attempt_space(GameState& state, Player p, uint8_t card_id, uint8_t forced_roll = 0) noexcept;
 
+    // Moves `p`'s marker to `box` (1..8) and pays that box's VP: the first award when `p` is now
+    // ahead of the opponent, the second otherwise. The one implementation behind a successful
+    // attempt, Captured Nazi Scientist and One Small Step.
+    static void advance_to(GameState& state, Player p, uint8_t box) noexcept;
+
     // Ability checks
     static bool has_animal_in_space(const GameState& state, Player p) noexcept;  // 2 space attempts / turn
     static bool has_man_in_space(const GameState& state, Player p) noexcept;     // Opponent reveals headline first

@@ -3,6 +3,7 @@
 #include "ts/ops.hpp"
 #include "ts/prng.hpp"
 #include <algorithm>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -95,8 +96,7 @@ bool SpaceRace::can_attempt_space(const GameState& state, Player p, uint8_t card
 bool SpaceRace::attempt_space(GameState& state, Player p, uint8_t card_id, uint8_t forced_roll) noexcept {
     if (!can_attempt_space(state, p, card_id)) return false;
 
-    uint8_t& cur_track = (p == Player::US) ? state.us_space_track : state.ussr_space_track;
-    uint8_t opp_track = (p == Player::US) ? state.ussr_space_track : state.us_space_track;
+    const uint8_t cur_track = (p == Player::US) ? state.us_space_track : state.ussr_space_track;
 
     state.record_space_attempt(p);
 
@@ -133,24 +133,20 @@ bool SpaceRace::attempt_space(GameState& state, Player p, uint8_t card_id, uint8
     };
 
     if (success) {
-        // Advance track
-        cur_track = next_box_num;
-
-        // Check VP award: 1st if cur_track > opp_track, 2nd if cur_track <= opp_track
-        uint8_t vp_award = (cur_track > opp_track) ? next_box.vp_first : next_box.vp_second;
-        if (vp_award > 0) {
-            int32_t vp_delta = (p == Player::US) ? vp_award : -static_cast<int32_t>(vp_award);
-            int32_t new_vp = static_cast<int32_t>(state.victory_points) + vp_delta;
-            new_vp = std::clamp(new_vp, -20, 20);
-            state.victory_points = static_cast<int8_t>(new_vp);
-            if (state.victory_points >= 20 || state.victory_points <= -20) {
-                state.current_phase = Phase::GAME_OVER;
-            }
-        }
+        advance_to(state, p, next_box_num);
         return true;
     }
 
     return false;
+}
+
+void SpaceRace::advance_to(GameState& state, Player p, uint8_t box) noexcept {
+    uint8_t& track = (p == Player::US) ? state.us_space_track : state.ussr_space_track;
+    const uint8_t opp_track = (p == Player::US) ? state.ussr_space_track : state.us_space_track;
+    track = box;
+    const auto& info = get_box_info(box);
+    const uint8_t vp = (box > opp_track) ? info.vp_first : info.vp_second;
+    if (vp > 0) award_vp(state, (p == Player::US) ? vp : -static_cast<int>(vp));
 }
 
 } // namespace ts

@@ -9,6 +9,7 @@
 #include "ts/prng.hpp"
 #include "ts/defcon.hpp"
 #include <algorithm>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -26,8 +27,7 @@ bool trigger_duck_and_cover(GameState& state, Player p) noexcept {
     }
     int16_t vp_gain = 5 - state.defcon;
     if (vp_gain > 0) {
-        state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + vp_gain));
-        if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, vp_gain);
     }
     return true;
 }
@@ -134,8 +134,8 @@ bool trigger_blockade(GameState& state, Player p) noexcept {
     return false;
 }
 
-bool trigger_korean_war(GameState& state, Player p, uint8_t forced_roll) noexcept {
-    return war_helpers::trigger_war(state, card_ids::KOREAN_WAR, p, forced_roll);
+bool trigger_korean_war(GameState& state, Player p) noexcept {
+    return war_helpers::trigger_war(state, card_ids::KOREAN_WAR, p);
 }
 
 bool trigger_romanian_abdication(GameState& state, Player p) noexcept {
@@ -144,8 +144,8 @@ bool trigger_romanian_abdication(GameState& state, Player p) noexcept {
     return true;
 }
 
-bool trigger_arab_israeli_war(GameState& state, Player p, uint8_t forced_roll) noexcept {
-    return war_helpers::trigger_war(state, card_ids::ARAB_ISRAELI_WAR, p, forced_roll);
+bool trigger_arab_israeli_war(GameState& state, Player p) noexcept {
+    return war_helpers::trigger_war(state, card_ids::ARAB_ISRAELI_WAR, p);
 }
 
 bool trigger_comecon(GameState& state, Player p) noexcept {
@@ -184,22 +184,8 @@ bool trigger_de_gaulle(GameState& state, Player p) noexcept {
 }
 
 bool trigger_captured_nazi_scientist(GameState& state, Player p) noexcept {
-    uint8_t& cur_track = (p == Player::US) ? state.us_space_track : state.ussr_space_track;
-    uint8_t opp_track = (p == Player::US) ? state.ussr_space_track : state.us_space_track;
-    if (cur_track < 8) {
-        cur_track++;
-        const auto& box = SpaceRace::get_box_info(cur_track);
-        uint8_t vp = (cur_track > opp_track) ? box.vp_first : box.vp_second;
-        if (vp > 0) {
-            int32_t vp_delta = (p == Player::US) ? vp : -static_cast<int32_t>(vp);
-            int32_t new_vp = static_cast<int32_t>(state.victory_points) + vp_delta;
-            new_vp = std::clamp(new_vp, -20, 20);
-            state.victory_points = static_cast<int8_t>(new_vp);
-            if (state.victory_points >= 20 || state.victory_points <= -20) {
-                state.current_phase = Phase::GAME_OVER;
-            }
-        }
-    }
+    const uint8_t cur_track = (p == Player::US) ? state.us_space_track : state.ussr_space_track;
+    if (cur_track < 8) SpaceRace::advance_to(state, p, static_cast<uint8_t>(cur_track + 1));
     return true;
 }
 
@@ -355,12 +341,7 @@ bool trigger_de_stalinization(GameState& state, Player p) noexcept {
 bool trigger_nuclear_test_ban(GameState& state, Player p) noexcept {
     int16_t vp = state.defcon - 2;
     if (vp > 0) {
-        int32_t vp_delta = (p == Player::US) ? vp : -vp;
-        int32_t new_vp = static_cast<int32_t>(state.victory_points) + vp_delta;
-        state.victory_points = static_cast<int8_t>(std::clamp(new_vp, -20, 20));
-        if (state.victory_points >= 20 || state.victory_points <= -20) {
-            state.current_phase = Phase::GAME_OVER;
-        }
+        award_vp(state, (p == Player::US) ? vp : -vp);
     }
     state.defcon = static_cast<uint8_t>(std::min(5, static_cast<int>(state.defcon) + 2));
     return true;
@@ -396,8 +377,7 @@ bool trigger_defectors(GameState& state, Player p) noexcept {
     } else if (state.current_phase == Phase::ACTION_ROUND) {
         // If played by USSR during an Action Round, US gains 1 VP
         if (state.phasing_player == Player::USSR || (state.phasing_player == Player::NONE && p == Player::USSR)) {
-            state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 1));
-            if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+            award_vp(state, 1);
         }
     }
     return true;
@@ -446,9 +426,9 @@ bool trigger_special_relationship(GameState& state, Player p) noexcept {
         state.ctx().resolving_card = card_ids::SPECIAL_RELATIONSHIP;
         return false;
     } else {
-        // Add 2 US influence in one Western European country + 2 VP
-        state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 2));
-        if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+        // Add 2 US influence in one Western European country + 2 VP. When the 2 VP win the game
+        // there is no placement left to make: a finished game opens no decision.
+        if (award_vp(state, 2)) return true;
         state.ctx().decision_player = Player::US;
         state.ctx().decision_type = DecisionType::POINT_NODE;
         state.ctx().remaining_steps = 1;

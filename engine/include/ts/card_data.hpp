@@ -16,8 +16,6 @@ struct CardInfo {
     bool             one_time;
     bool             is_scoring;
     bool             is_war_card;
-    bool             requires_context_push;
-    bool             switches_priority;
 };
 
 class CardData {

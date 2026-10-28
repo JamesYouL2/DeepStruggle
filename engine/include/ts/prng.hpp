@@ -14,7 +14,7 @@ public:
     }
 
     static constexpr uint8_t roll_d6(uint64_t& state) noexcept {
-        // Fast unbiased or simple modulo for 1..6
+        // Plain modulo: the bias of 2^64 mod 6 is below 1e-18, far under anything measurable.
         uint64_t val = next_u64(state);
         return static_cast<uint8_t>(1 + (val % 6));
     }

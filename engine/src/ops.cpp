@@ -6,6 +6,7 @@
 #include "ts/defcon.hpp"
 #include "ts/constants.hpp"
 #include <algorithm>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -341,10 +342,7 @@ CoupResult Operations::execute_coup(GameState& state, Player p, uint8_t country_
 
     // 6. Yuri and Samantha (#109)
     if (p == Player::US && state.has_flag(effect_bits::YURI_AND_SAMANTHA_ACTIVE)) {
-        state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-        if (state.victory_points <= -20) {
-            state.current_phase = Phase::GAME_OVER;
-        }
+        award_vp(state, -1);
     }
 
     state.last_roll = DieRollRecord{

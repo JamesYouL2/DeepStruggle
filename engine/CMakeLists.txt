@@ -69,6 +69,7 @@ set(TEST_SOURCES
     tests/test_fuzz_influence_placement.cpp
     tests/test_rules_audit.cpp
     tests/test_cached_state.cpp
+    tests/test_review_fixes.cpp
 )
 
 add_executable(ts_tests ${TEST_SOURCES})

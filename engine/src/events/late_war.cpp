@@ -8,6 +8,7 @@
 #include "ts/prng.hpp"
 #include "ts/defcon.hpp"
 #include <algorithm>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -23,8 +24,7 @@ bool trigger_iranian_hostage_crisis(GameState& state, Player p) noexcept {
 bool trigger_iron_lady(GameState& state, Player p) noexcept {
     state.countries[countries::ARGENTINA].add_influence(Player::USSR, 1);
     state.countries[countries::UNITED_KINGDOM].ussr_influence = 0;
-    state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 1));
-    if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+    award_vp(state, 1);
     state.set_flag(effect_bits::IRON_LADY_PLAYED);
     return true;
 }
@@ -33,8 +33,7 @@ bool trigger_reagan_bombs_libya(GameState& state, Player p) noexcept {
     uint8_t ussr_inf = state.countries[countries::LIBYA].ussr_influence;
     uint8_t pts = ussr_inf / 2;
     if (pts > 0) {
-        state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + pts));
-        if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, pts);
     }
     return true;
 }
@@ -106,9 +105,7 @@ bool trigger_soviets_shoot_down_kal(GameState& state, Player p) noexcept {
         resolve_defcon_one_loss(state, p);
         return true;
     }
-    state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 2));
-    if (state.victory_points >= 20) {
-        state.current_phase = Phase::GAME_OVER;
+    if (award_vp(state, 2)) {
         return true;
     }
 
@@ -128,9 +125,7 @@ bool trigger_soviets_shoot_down_kal(GameState& state, Player p) noexcept {
 
 bool trigger_glasnost(GameState& state, Player p) noexcept {
     state.defcon = static_cast<uint8_t>(std::min(5, static_cast<int>(state.defcon) + 1));
-    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 2));
-    if (state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
+    if (award_vp(state, -2)) {
         return true;
     }
 
@@ -248,8 +243,7 @@ bool trigger_tear_down_this_wall(GameState& state, Player p) noexcept {
 }
 
 bool trigger_an_evil_empire(GameState& state, Player p) noexcept {
-    state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 1));
-    if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+    award_vp(state, 1);
     state.set_flag(effect_bits::EVIL_EMPIRE_PLAYED);
     state.clear_flag(effect_bits::FLOWER_POWER_ACTIVE);
     return true;
@@ -276,9 +270,7 @@ bool trigger_aldrich_ames(GameState& state, Player p) noexcept {
 }
 
 bool trigger_pershing_ii(GameState& state, Player p) noexcept {
-    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-    if (state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
+    if (award_vp(state, -1)) {
         return true;
     }
     state.ctx().decision_player = Player::USSR;

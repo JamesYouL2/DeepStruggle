@@ -1,4 +1,5 @@
 #include "ts/card_handlers.hpp"
+#include "ts/defcon.hpp"
 #include "ts/invariant.hpp"
 #include "ts/war_events.hpp"
 #include "ts/card_data.hpp"
@@ -9,6 +10,7 @@
 #include "ts/prng.hpp"
 #include "ts/state_machine.hpp"
 #include <algorithm>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -25,14 +27,12 @@ bool trigger_arms_race(GameState& state, Player p) noexcept {
     if (p == Player::US) {
         if (us_mo > ussr_mo) {
             int8_t vp = (us_mo >= state.defcon) ? 3 : 1;
-            state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + vp));
-            if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+            award_vp(state, vp);
         }
     } else if (p == Player::USSR) {
         if (ussr_mo > us_mo) {
             int8_t vp = (ussr_mo >= state.defcon) ? 3 : 1;
-            state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - vp));
-            if (state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
+            award_vp(state, -vp);
         }
     }
     return true;
@@ -130,8 +130,7 @@ bool trigger_kitchen_debates(GameState& state, Player p) noexcept {
     // Debates unconditionally, so a US play for Operations -- where no Event runs -- left it in
     // the US hand, playable again every action round.
     if (CardHandlers::event_has_effect(state, card_ids::KITCHEN_DEBATES, p)) {
-        state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 2));
-        if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, 2);
     }
     return true;
 }
@@ -218,9 +217,9 @@ bool trigger_we_will_bury_you(GameState& state, Player p) noexcept {
         if (state.defcon == 2) state.defcon_dropped_to_2 = 1;
     }
     if (state.defcon == 1) {
-        Player loser = state.phasing_player;
-        state.victory_points = (loser == Player::US) ? -20 : 20;
-        state.current_phase = Phase::GAME_OVER;
+        // The phasing player loses, as everywhere; resolve_defcon_one_loss also records a
+        // loss the US was forced into by playing this USSR card for its Ops.
+        resolve_defcon_one_loss(state, p);
         return true;
     }
     state.set_flag(effect_bits::WE_WILL_BURY_YOU_PENDING);
@@ -268,8 +267,7 @@ bool trigger_allende(GameState& state, Player p) noexcept {
 bool trigger_willy_brandt(GameState& state, Player p) noexcept {
     if (state.has_flag(effect_bits::TEAR_DOWN_THIS_WALL_PLAYED)) return true;
 
-    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-    if (state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
+    award_vp(state, -1);
 
     state.countries[countries::WEST_GERMANY].add_influence(Player::USSR, 1);
     state.set_flag(effect_bits::WILLY_BRANDT_PLAYED);
@@ -304,8 +302,7 @@ bool trigger_cultural_revolution(GameState& state, Player p) noexcept {
         state.china_card_holder = Player::USSR;
         state.china_card_playable = 1;
     } else {
-        state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-        if (state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, -1);
     }
     return true;
 }
@@ -318,8 +315,7 @@ bool trigger_flower_power(GameState& state, Player p) noexcept {
 }
 
 bool trigger_u2_incident(GameState& state, Player p) noexcept {
-    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-    if (state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
+    award_vp(state, -1);
     state.set_flag(effect_bits::U2_INCIDENT_ACTIVE);
     return true;
 }
@@ -340,8 +336,7 @@ bool trigger_opec(GameState& state, Player p) noexcept {
         }
     }
     if (pts > 0) {
-        state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - pts));
-        if (state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, -pts);
     }
     return true;
 }
@@ -377,8 +372,7 @@ bool trigger_panama_canal(GameState& state, Player p) noexcept {
 }
 
 bool trigger_camp_david(GameState& state, Player p) noexcept {
-    state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 1));
-    if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+    award_vp(state, 1);
     state.countries[countries::ISRAEL].add_influence(Player::US, 1);
     state.countries[countries::JORDAN].add_influence(Player::US, 1);
     state.countries[countries::EGYPT].add_influence(Player::US, 1);
@@ -515,8 +509,7 @@ bool trigger_nixon_china_card(GameState& state, Player p) noexcept {
         state.china_card_holder = Player::US;
         state.china_card_playable = 0; // Face down
     } else {
-        state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 2));
-        if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, 2);
     }
     return true;
 }
@@ -592,8 +585,7 @@ bool trigger_alliance_for_progress(GameState& state, Player p) noexcept {
         }
     }
     if (pts > 0) {
-        state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + pts));
-        if (state.victory_points >= 20) state.current_phase = Phase::GAME_OVER;
+        award_vp(state, pts);
     }
     return true;
 }
@@ -602,18 +594,8 @@ bool trigger_one_small_step(GameState& state, Player p) noexcept {
     uint8_t cur_track = (p == Player::US) ? state.us_space_track : state.ussr_space_track;
     uint8_t opp_track = (p == Player::US) ? state.ussr_space_track : state.us_space_track;
     if (cur_track < opp_track) {
-        uint8_t new_track = std::min(8, cur_track + 2);
-        if (p == Player::US) state.us_space_track = new_track;
-        else state.ussr_space_track = new_track;
-
-        // VP award from final space moved into
-        const auto& box = SpaceRace::get_box_info(new_track);
-        uint8_t vp = (new_track > opp_track) ? box.vp_first : box.vp_second;
-        if (vp > 0) {
-            int32_t vp_delta = (p == Player::US) ? vp : -static_cast<int32_t>(vp);
-            state.victory_points = static_cast<int8_t>(std::clamp(static_cast<int32_t>(state.victory_points) + vp_delta, -20, 20));
-            if (state.victory_points >= 20 || state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
-        }
+        // The VP is the final box's alone: the box skipped over pays nothing.
+        SpaceRace::advance_to(state, p, static_cast<uint8_t>(std::min(8, cur_track + 2)));
     }
     return true;
 }

@@ -326,8 +326,8 @@ TEST(CardEdgeCasesTest, KoreanWar_FailedRoll_AwardsMilOps_NoVPOrInfluence) {
     state.victory_points = 0;
     state.ussr_mil_ops = 0;
 
-    // Trigger with forced roll 2 (failure: 2 <= 3)
-    CardHandlers::trigger_event(state, card_ids::KOREAN_WAR, Player::USSR, 2);
+    // The war opens its ROLL_DIE; the forced die 2 (failure: 2 <= 3) rides on that action
+    CardHandlers::trigger_event(state, card_ids::KOREAN_WAR, Player::USSR);
     CardHandlers::handle_event_step(state, MicroAction(DecisionType::ROLL_DIE, 2, 0, 0));
     ASSERT_EQ(state.ussr_mil_ops, 2); // Mil Ops awarded
     ASSERT_EQ(state.victory_points, 0); // 0 VP
@@ -343,8 +343,8 @@ TEST(CardEdgeCasesTest, ArabIsraeliWar_FailedRoll_WithAdjacentModifiers) {
     state.victory_points = 0;
     state.ussr_mil_ops = 0;
 
-    // Total modifier is -3. Forced roll 5: 5 - 3 = 2 <= 3 (failure)
-    CardHandlers::trigger_event(state, card_ids::ARAB_ISRAELI_WAR, Player::USSR, 5);
+    // Total modifier is -3. Forced die 5 on the ROLL_DIE action: 5 - 3 = 2 <= 3 (failure)
+    CardHandlers::trigger_event(state, card_ids::ARAB_ISRAELI_WAR, Player::USSR);
     CardHandlers::handle_event_step(state, MicroAction(DecisionType::ROLL_DIE, 5, 0, 0));
     ASSERT_EQ(state.ussr_mil_ops, 2);
     ASSERT_EQ(state.victory_points, 0);

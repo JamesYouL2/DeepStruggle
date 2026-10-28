@@ -10,6 +10,8 @@
 #include "ts/defcon.hpp"
 #include "ts/state_machine.hpp"
 #include <algorithm>
+#include <iterator>
+#include "ts/victory_points.hpp"
 
 namespace ts {
 
@@ -20,9 +22,9 @@ namespace early_war {
     bool trigger_fidel(GameState& state, Player p) noexcept;
     bool trigger_vietnam_revolts(GameState& state, Player p) noexcept;
     bool trigger_blockade(GameState& state, Player p) noexcept;
-    bool trigger_korean_war(GameState& state, Player p, uint8_t forced_roll = 0) noexcept;
+    bool trigger_korean_war(GameState& state, Player p) noexcept;
     bool trigger_romanian_abdication(GameState& state, Player p) noexcept;
-    bool trigger_arab_israeli_war(GameState& state, Player p, uint8_t forced_roll = 0) noexcept;
+    bool trigger_arab_israeli_war(GameState& state, Player p) noexcept;
     bool trigger_comecon(GameState& state, Player p) noexcept;
     bool trigger_nasser(GameState& state, Player p) noexcept;
     bool trigger_warsaw_pact(GameState& state, Player p) noexcept;
@@ -304,9 +306,7 @@ bool CardHandlers::charge_flower_power_for_ops(GameState& state, Player p, uint8
         !can_trigger_event(state, card, p)) {
         return true;
     }
-    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 2));
-    if (state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
+    if (award_vp(state, -2)) {
         return false;
     }
     return true;
@@ -314,9 +314,7 @@ bool CardHandlers::charge_flower_power_for_ops(GameState& state, Player p, uint8
 
 bool CardHandlers::pay_u2_incident_rider(GameState& state) noexcept {
     if (!state.has_flag(effect_bits::U2_INCIDENT_ACTIVE)) return true;
-    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 1));
-    if (state.victory_points <= -20) {
-        state.current_phase = Phase::GAME_OVER;
+    if (award_vp(state, -1)) {
         return false;
     }
     return true;
@@ -350,8 +348,8 @@ bool recorded(GameState& state, uint8_t card, Run&& run) noexcept {
 
 } // namespace
 
-bool CardHandlers::trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept {
-    return recorded(state, card_id, [&] { return run_trigger_event(state, card_id, player, forced_roll); });
+bool CardHandlers::trigger_event(GameState& state, uint8_t card_id, Player player) noexcept {
+    return recorded(state, card_id, [&] { return run_trigger_event(state, card_id, player); });
 }
 
 bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action) noexcept {
@@ -359,7 +357,7 @@ bool CardHandlers::handle_event_step(GameState& state, const MicroAction& action
     return recorded(state, card, [&] { return run_event_step(state, action); });
 }
 
-bool CardHandlers::run_trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept {
+bool CardHandlers::run_trigger_event(GameState& state, uint8_t card_id, Player player) noexcept {
     if (!can_trigger_event(state, card_id, player)) {
         return true; // Unmet prerequisite: event does not occur
     }
@@ -388,9 +386,9 @@ bool CardHandlers::run_trigger_event(GameState& state, uint8_t card_id, Player p
         case card_ids::FIDEL: return early_war::trigger_fidel(state, player);
         case card_ids::VIETNAM_REVOLTS: return early_war::trigger_vietnam_revolts(state, player);
         case card_ids::BLOCKADE: return early_war::trigger_blockade(state, player);
-        case card_ids::KOREAN_WAR: return early_war::trigger_korean_war(state, player, forced_roll);
+        case card_ids::KOREAN_WAR: return early_war::trigger_korean_war(state, player);
         case card_ids::ROMANIAN_ABDICATION: return early_war::trigger_romanian_abdication(state, player);
-        case card_ids::ARAB_ISRAELI_WAR: return early_war::trigger_arab_israeli_war(state, player, forced_roll);
+        case card_ids::ARAB_ISRAELI_WAR: return early_war::trigger_arab_israeli_war(state, player);
         case card_ids::COMECON: return early_war::trigger_comecon(state, player);
         case card_ids::NASSER: return early_war::trigger_nasser(state, player);
         case card_ids::WARSAW_PACT: return early_war::trigger_warsaw_pact(state, player);
@@ -725,8 +723,7 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                     .net_delta = static_cast<int8_t>((winner == sponsor) ? 2 : -2)
                 };
                 int32_t vp_delta = (winner == Player::US) ? 2 : -2;
-                state.victory_points = static_cast<int8_t>(std::clamp(static_cast<int32_t>(state.victory_points) + vp_delta, -20, 20));
-                if (state.victory_points >= 20 || state.victory_points <= -20) state.current_phase = Phase::GAME_OVER;
+                award_vp(state, vp_delta);
                 state.ctx().resolving_card = 0;
                 return true;
             }
@@ -975,9 +972,7 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                 }
 
                 if (us_total > ussr_total) {
-                    state.victory_points = static_cast<int8_t>(std::min(20, state.victory_points + 2));
-                    if (state.victory_points >= 20) {
-                        state.current_phase = Phase::GAME_OVER;
+                    if (award_vp(state, 2)) {
                         state.ctx().resolving_card = 0;
                         return true;
                     }
@@ -988,9 +983,7 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                     state.ctx().allow_early_stop = 0;
                     return false;
                 } else {
-                    state.victory_points = static_cast<int8_t>(std::max(-20, state.victory_points - 2));
-                    if (state.victory_points <= -20) {
-                        state.current_phase = Phase::GAME_OVER;
+                    if (award_vp(state, -2)) {
                         state.ctx().resolving_card = 0;
                         return true;
                     }
@@ -1004,7 +997,9 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                 // offered -- {current-1, current, current+1} clipped to 1..5 -- so choosing the
                 // current level is how "may ... by 1" expresses leaving it alone, which the old
                 // pair of branches could not say at all.
-                const int target = std::clamp(static_cast<int>(action.primary_id), 1, 5);
+                // StateMachine::step has already refused anything else: a DEFCON value outside
+                // 1..5 encodes to no slot (encode_micro_action_212), so no clamp is needed here.
+                const int target = static_cast<int>(action.primary_id);
                 const int before = static_cast<int>(state.defcon);
                 state.defcon = static_cast<uint8_t>(target);
                 if (target < before && target == 2) state.defcon_dropped_to_2 = 1;
@@ -1019,7 +1014,8 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
             return true;
         }
         case card_ids::HOW_I_LEARNED_TO_STOP_WORRYING: {
-            uint8_t new_defcon = std::clamp(action.primary_id, static_cast<uint8_t>(1), static_cast<uint8_t>(5));
+            // 1..5 by construction -- see Summit above.
+            const uint8_t new_defcon = action.primary_id;
             // "Moved to 2" for NORAD: choosing 2 while DEFCON already stands at 2 moves nothing.
             if (new_defcon == 2 && state.defcon != 2) state.defcon_dropped_to_2 = 1;
             state.defcon = new_defcon;
@@ -1204,7 +1200,7 @@ bool CardHandlers::run_event_step(GameState& state, const MicroAction& action) n
                 // Give 6 VP to opponent and end game
                 Player opp = get_opponent(p);
                 int32_t vp_delta = (opp == Player::US) ? 6 : -6;
-                state.victory_points = static_cast<int8_t>(std::clamp(static_cast<int32_t>(state.victory_points) + vp_delta, -20, 20));
+                award_vp(state, vp_delta);
                 state.current_phase = Phase::GAME_OVER;
                 state.ctx().resolving_card = 0;
                 return true;
@@ -1947,9 +1943,10 @@ void CardHandlers::get_event_action_mask(const GameState& state, uint8_t* mask_o
                     }
                     break;
                 case card_ids::MUSLIM_REVOLUTION:
-                    if ((i == countries::SUDAN || i == countries::IRAN || i == countries::IRAQ ||
-                         i == countries::EGYPT || i == countries::LIBYA || i == countries::SAUDI_ARABIA ||
-                         i == countries::SYRIA || i == countries::JORDAN) && state.countries[i].us_influence > 0 && !state.ctx().is_visited(i)) {
+                    if (std::find(std::begin(MUSLIM_REVOLUTION_TARGETS),
+                                  std::end(MUSLIM_REVOLUTION_TARGETS), i) !=
+                            std::end(MUSLIM_REVOLUTION_TARGETS) &&
+                        state.countries[i].us_influence > 0 && !state.ctx().is_visited(i)) {
                         mask_out[i] = 1;
                     }
                     break;

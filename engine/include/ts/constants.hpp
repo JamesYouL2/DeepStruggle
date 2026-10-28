@@ -105,6 +105,14 @@ namespace countries {
     constexpr uint8_t SUPERPOWER_USSR = 254;
     constexpr uint8_t INVALID_COUNTRY = 255;
 }
+// Muslim Revolution's eight countries ("Remove all US Influence from 2 of: Sudan, Iran, Iraq,
+// Egypt, Libya, Saudi Arabia, Syria, Jordan"). One list for the event's mask and for the
+// auto-advance that takes the targets when there is no choice among them.
+inline constexpr uint8_t MUSLIM_REVOLUTION_TARGETS[] = {
+    countries::SUDAN, countries::IRAN, countries::IRAQ, countries::EGYPT,
+    countries::LIBYA, countries::SAUDI_ARABIA, countries::SYRIA, countries::JORDAN,
+};
+
 
 // All 110 Card IDs
 namespace card_ids {

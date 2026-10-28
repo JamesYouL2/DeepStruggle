@@ -11,7 +11,7 @@ public:
     // Initiates execution of an event.
     // Returns true if event is fully finished immediately (no sub-decisions),
     // or false if it transitioned into interactive sub-decisions in ctx().
-    static bool trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll = 0) noexcept;
+    static bool trigger_event(GameState& state, uint8_t card_id, Player player) noexcept;
 
     // Handles a sub-decision for an ongoing card event.
     // Returns true when the entire event finishes and pops from context stack.
@@ -80,7 +80,7 @@ public:
 private:
     // The two entry points above without the record: each public one runs its counterpart and
     // adds what it did to VP and DEFCON to state.last_event_tracks.
-    static bool run_trigger_event(GameState& state, uint8_t card_id, Player player, uint8_t forced_roll) noexcept;
+    static bool run_trigger_event(GameState& state, uint8_t card_id, Player player) noexcept;
     static bool run_event_step(GameState& state, const MicroAction& action) noexcept;
 };
 

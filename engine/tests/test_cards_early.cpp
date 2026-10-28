@@ -213,7 +213,7 @@ TEST(EarlyCardsTest, Card13_ArabIsraeliWar_Success) {
     state.victory_points = 0;
     state.ussr_mil_ops = 0;
     // Forced roll = 5, no US controlled neighbors -> success
-    ts::CardHandlers::trigger_event(state, ts::card_ids::ARAB_ISRAELI_WAR, ts::Player::USSR, 5);
+    ts::CardHandlers::trigger_event(state, ts::card_ids::ARAB_ISRAELI_WAR, ts::Player::USSR);
     ts::CardHandlers::handle_event_step(state, ts::MicroAction(ts::DecisionType::ROLL_DIE, 5, 0, 0));
     ASSERT_EQ(state.countries[ts::countries::ISRAEL].us_influence, 0);
     ASSERT_EQ(state.countries[ts::countries::ISRAEL].ussr_influence, 2);

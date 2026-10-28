@@ -51,7 +51,9 @@ public:
     // Decodes a flat action index [0..211] into a concrete MicroAction
     static MicroAction decode_flat_action_212(const GameState& state, uint16_t action_idx) noexcept;
 
-    // Encodes a MicroAction into its flat action index [0..211]
+    // Encodes a MicroAction into its flat action index [0, FLAT_ACTION_SPACE_SIZE), or -1 when no
+    // slot encodes it (an out-of-range id, a NONE or retired decision type) -- refused by
+    // StateMachine::step, never aliased to CONFIRM_DONE.
     static int16_t encode_micro_action_212(const GameState& state, const MicroAction& action) noexcept;
 
     // P23 / E4.1: the merged-influence view of the flat mask. Identical to generate_flat_mask_212

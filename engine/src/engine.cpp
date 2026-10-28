@@ -6,7 +6,75 @@
 #include "ts/constants.hpp"
 #include "ts/map_data.hpp"
 
+#include <array>
+
 namespace ts {
+
+namespace {
+
+constexpr int16_t kCloseEvent = 255;
+
+// The country the resolving event's next removal is forced onto, kCloseEvent when nothing is
+// left to remove, or -1 when the player has a real choice. Each of these events removes
+// influence from countries until its steps run out, so once every remaining target must be
+// taken anyway the order is not a decision.
+int16_t forced_event_target(const GameState& state) noexcept {
+    const auto& ctx = state.ctx();
+    const uint8_t rc = ctx.resolving_card;
+
+    if (rc == card_ids::SUEZ_CRISIS) {
+        // Up to 2 from each of the UK, France and Israel: a country's capacity is what it holds,
+        // up to what is left of its 2.
+        constexpr uint8_t kSuez[] = {countries::UNITED_KINGDOM, countries::FRANCE, countries::ISRAEL};
+        uint8_t sum_avail = 0;
+        int16_t first = -1;
+        for (uint8_t cid : kSuez) {
+            const uint8_t used = ctx.node_count(cid);
+            const uint8_t cap = (used < 2) ? static_cast<uint8_t>(2 - used) : 0;
+            const uint8_t held = state.countries[cid].us_influence;
+            const uint8_t avail = (held < cap) ? held : cap;
+            sum_avail = static_cast<uint8_t>(sum_avail + avail);
+            if (avail > 0 && first < 0) first = cid;
+        }
+        if (sum_avail > ctx.remaining_steps) return -1;
+        return (first >= 0) ? first : kCloseEvent;
+    }
+
+    // One removal per country, from those still holding the side's influence, the candidates
+    // taken in the order given.
+    auto once_each = [&](const auto& candidates, auto is_target) -> int16_t {
+        uint8_t valid = 0;
+        int16_t first = -1;
+        for (uint8_t cid : candidates) {
+            if (is_target(cid) && !ctx.is_visited(cid)) {
+                valid++;
+                if (first < 0) first = cid;
+            }
+        }
+        if (valid > ctx.remaining_steps) return -1;
+        return (first >= 0) ? first : kCloseEvent;
+    };
+
+    if (rc == card_ids::MUSLIM_REVOLUTION) {
+        return once_each(MUSLIM_REVOLUTION_TARGETS, [&](uint8_t cid) {
+            return state.countries[cid].us_influence > 0;
+        });
+    }
+    if (rc == card_ids::EAST_EUROPEAN_UNREST) {
+        static constexpr auto kAll = [] {
+            std::array<uint8_t, 84> ids{};
+            for (uint8_t i = 0; i < 84; ++i) ids[i] = i;
+            return ids;
+        }();
+        return once_each(kAll, [&](uint8_t cid) {
+            return MapData::get_country(cid).in_eastern_europe &&
+                   state.countries[cid].ussr_influence > 0;
+        });
+    }
+    return -1;
+}
+
+} // namespace
 
 void Engine::init_game(GameState& state, uint64_t seed) noexcept {
     StateMachine::init_new_game(state, seed);
@@ -29,6 +97,9 @@ bool Engine::step(GameState& state, const MicroAction& action, bool auto_advance
 }
 
 bool Engine::step_flat(GameState& state, uint16_t action_idx, bool auto_advance) noexcept {
+    // An index outside the flat space is refused, as the merged overload below refuses it --
+    // never decoded into some action that happens to be legal here.
+    if (action_idx >= FLAT_ACTION_SPACE_SIZE) return false;
     MicroAction action = ActionMask::decode_flat_action_212(state, action_idx);
     bool ok = StateMachine::step(state, action);
     if (ok && auto_advance) {
@@ -92,97 +163,16 @@ size_t Engine::auto_advance_step(GameState& state, size_t max_steps, uint8_t* fi
             continue;
         }
 
-        // 2. Specific multi-step event auto-resolutions
-        uint8_t rc = state.ctx().resolving_card;
-
-        // 2a. Suez Crisis (#28)
-        if (rc == card_ids::SUEZ_CRISIS) {
-            uint8_t uk = state.countries[countries::UNITED_KINGDOM].us_influence;
-            uint8_t fr = state.countries[countries::FRANCE].us_influence;
-            uint8_t isr = state.countries[countries::ISRAEL].us_influence;
-            uint8_t used_uk = state.ctx().node_count(countries::UNITED_KINGDOM);
-            uint8_t used_fr = state.ctx().node_count(countries::FRANCE);
-            uint8_t used_isr = state.ctx().node_count(countries::ISRAEL);
-            uint8_t cap_uk = (used_uk < 2) ? static_cast<uint8_t>(2 - used_uk) : 0;
-            uint8_t cap_fr = (used_fr < 2) ? static_cast<uint8_t>(2 - used_fr) : 0;
-            uint8_t cap_isr = (used_isr < 2) ? static_cast<uint8_t>(2 - used_isr) : 0;
-            uint8_t avail_uk = (uk < cap_uk) ? uk : cap_uk;
-            uint8_t avail_fr = (fr < cap_fr) ? fr : cap_fr;
-            uint8_t avail_isr = (isr < cap_isr) ? isr : cap_isr;
-            uint8_t sum_avail = static_cast<uint8_t>(avail_uk + avail_fr + avail_isr);
-
-            if (sum_avail <= state.ctx().remaining_steps) {
-                uint8_t chosen_cid = 255;
-                if (avail_uk > 0) chosen_cid = countries::UNITED_KINGDOM;
-                else if (avail_fr > 0) chosen_cid = countries::FRANCE;
-                else if (avail_isr > 0) chosen_cid = countries::ISRAEL;
-
-                if (chosen_cid != 255) {
-                    MicroAction ma{DecisionType::POINT_NODE, chosen_cid, 0, 0};
-                    if (!StateMachine::step(state, ma)) break;
-                    advanced++;
-                    continue;
-                } else {
-                    MicroAction ma{DecisionType::POINT_NODE, 0, 0, 0x80};
-                    if (!StateMachine::step(state, ma)) break;
-                    advanced++;
-                    continue;
-                }
-            }
-        }
-
-        // 2b. Muslim Revolution (#56)
-        if (rc == card_ids::MUSLIM_REVOLUTION) {
-            uint8_t mr_targets[] = { countries::SUDAN, countries::IRAN, countries::IRAQ,
-                                     countries::EGYPT, countries::LIBYA, countries::SAUDI_ARABIA,
-                                     countries::SYRIA, countries::JORDAN };
-            uint8_t valid_cnt = 0;
-            uint8_t first_cid = 255;
-            for (uint8_t cid : mr_targets) {
-                if (state.countries[cid].us_influence > 0 && !state.ctx().is_visited(cid)) {
-                    valid_cnt++;
-                    if (first_cid == 255) first_cid = cid;
-                }
-            }
-            if (valid_cnt <= state.ctx().remaining_steps) {
-                if (first_cid != 255) {
-                    MicroAction ma{DecisionType::POINT_NODE, first_cid, 0, 0};
-                    if (!StateMachine::step(state, ma)) break;
-                    advanced++;
-                    continue;
-                } else {
-                    MicroAction ma{DecisionType::POINT_NODE, 0, 0, 0x80};
-                    if (!StateMachine::step(state, ma)) break;
-                    advanced++;
-                    continue;
-                }
-            }
-        }
-
-        // 2c. East European Unrest (#29)
-        if (rc == card_ids::EAST_EUROPEAN_UNREST) {
-            uint8_t valid_cnt = 0;
-            uint8_t first_cid = 255;
-            for (uint8_t cid = 0; cid < 84; ++cid) {
-                if (MapData::get_country(cid).in_eastern_europe &&
-                    state.countries[cid].ussr_influence > 0 && !state.ctx().is_visited(cid)) {
-                    valid_cnt++;
-                    if (first_cid == 255) first_cid = cid;
-                }
-            }
-            if (valid_cnt <= state.ctx().remaining_steps) {
-                if (first_cid != 255) {
-                    MicroAction ma{DecisionType::POINT_NODE, first_cid, 0, 0};
-                    if (!StateMachine::step(state, ma)) break;
-                    advanced++;
-                    continue;
-                } else {
-                    MicroAction ma{DecisionType::POINT_NODE, 0, 0, 0x80};
-                    if (!StateMachine::step(state, ma)) break;
-                    advanced++;
-                    continue;
-                }
-            }
+        // 2. Multi-step events whose remaining targets must all be taken: no choice among them,
+        // so the first is taken (or the event closed when none is left).
+        const int16_t forced = forced_event_target(state);
+        if (forced >= 0) {
+            const MicroAction ma = (forced == kCloseEvent)
+                ? MicroAction{DecisionType::POINT_NODE, 0, 0, action_flags::CONFIRM_DONE}
+                : MicroAction{DecisionType::POINT_NODE, static_cast<uint8_t>(forced), 0, 0};
+            if (!StateMachine::step(state, ma)) break;
+            advanced++;
+            continue;
         }
 
         // 3. Generic single-choice auto-advance
