@@ -95,7 +95,18 @@ are cited from elsewhere; keep them.
   round-trips), stepping with the workbench's forced-die drain, masks in both action views, decode,
   observations (the base layout, and a model's view under its obs_features bits:
   `ts_observation_features`, `ts_obs_size_for`, which refuse an unknown bit), names, debug setters, the action layout, the engine fingerprint baked in at build,
-  and the rollout root's playouts (`ts_rollout_*`, `ts_determinize`). For the page's action log, a
+  and the rollout root's playouts (`ts_rollout_*`). **The page restates no rule and keeps no copy of
+  an engine enum or table**, so `ts_action_layout_json` carries, besides the flat offsets, the
+  DecisionType / Resolution / OpMode / Region names, the `ts::card_ids` the page words on its own,
+  the rollout root's stop rules and leaf sides in enum order (`ts_rollout_reset` takes the index),
+  and the Space Race track (`SpaceRace::get_box_info`); and `ts_region_scores_json` scores any
+  display state the page draws (its countries and flags; the flag names are read off the display
+  writer itself) with `Scoring::evaluate_region` / `score_southeast_asia`: per region each side's
+  status, the counts the scoring counted (Shuttle Diplomacy's left-out USSR country found by
+  re-scoring the board without it, never by restating the card), the standing's VP, VP, net and
+  whether the scoring ends the game. Numbers from the page (logits, leaf values, log-likelihoods)
+  are refused when NaN (-inf, a masked logit, passes), and `ts_decode_flat` refuses an index
+  outside the flat space. The export list is `TS_WASM_EXPORTS` in `bindings/CMakeLists.txt`. For the page's action log, a
   click also keeps what it did before the roll-less chance steps after it (`ts_settled_display_json`:
   the state after its action or its last die roll -- the turn's cleanup, resolved in the same click,
   clears the roll record) and every die it rolled, in order (`ts_click_rolls_json`), and what each

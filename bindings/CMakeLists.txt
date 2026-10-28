@@ -32,7 +32,7 @@ if(EMSCRIPTEN)
         _ts_is_terminal _ts_terminal_utility _ts_ending_reason _ts_decision_player _ts_decision_type
         _ts_step _ts_mask _ts_decode_flat _ts_is_merged_influence_action _ts_observation
         _ts_set_country _ts_set_defcon _ts_set_vp _ts_selftest
-        _ts_determinize
+        _ts_region_scores_json
         _ts_rollout_reset _ts_rollout_add _ts_rollout_rows _ts_rollout_live _ts_rollout_all_done
         _ts_rollout_obs_width _ts_rollout_refused _ts_rollout_fill_live _ts_rollout_buf_obs
         _ts_rollout_buf_masks _ts_rollout_step _ts_rollout_fill_leaves _ts_rollout_set_leaf_values

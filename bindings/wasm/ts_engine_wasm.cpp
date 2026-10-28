@@ -8,11 +8,15 @@
 //
 // Strings returned here live until the next call that returns one; the JS wrapper copies them.
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "belief.hpp"
@@ -21,11 +25,14 @@
 #include "state_json.hpp"
 #include "ts/action_mask.hpp"
 #include "ts/card_data.hpp"
+#include "ts/constants.hpp"
 #include "ts/engine.hpp"
 #include "ts/map_data.hpp"
 #include "ts/game_state.hpp"
 #include "ts/observation.hpp"
 #include "ts/prng.hpp"
+#include "ts/scoring.hpp"
+#include "ts/space_race.hpp"
 #include "ts/state_machine.hpp"
 
 #ifdef __EMSCRIPTEN__
@@ -131,6 +138,23 @@ ts::Player player_from_int(int p) {
     return p > 0 ? ts::Player::US : (p < 0 ? ts::Player::USSR : ts::Player::NONE);
 }
 
+// Numbers handed in by the page (a network's logits, the critic's values): a NaN fails every
+// comparison, so a masked argmax over it silently picks the lowest legal index. Refused instead;
+// -inf (a masked logit) is a number and passes.
+bool any_nan(const float* v, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        if (std::isnan(v[i])) return true;
+    }
+    return false;
+}
+
+// rollout::Stop and rollout::Leaf by name, in enum order: the names of the search= grammar
+// (web/ui/src/analysis/rollout_spec.ts) and of ai/search/rollout_root.py's STOPS / LEAF_SIDES.
+constexpr const char* kStopNames[] = {"boundaries", "turn", "later", "earlier", "predeal", "earlier_predeal"};
+static_assert(static_cast<size_t>(ts::rollout::Stop::kEarlierPredeal) + 1 == std::size(kStopNames));
+constexpr const char* kLeafNames[] = {"mover", "decider", "own"};
+static_assert(static_cast<size_t>(ts::rollout::Leaf::kOwn) + 1 == std::size(kLeafNames));
+
 }  // namespace
 
 // ---- identity ---------------------------------------------------------------------------------
@@ -166,7 +190,83 @@ TS_API const char* ts_action_layout_json() {
     dt.set("POINT_NODE", static_cast<int>(ts::DecisionType::POINT_NODE));
     dt.set("CHOOSE_BRANCH", static_cast<int>(ts::DecisionType::CHOOSE_BRANCH));
     dt.set("ROLL_DIE", static_cast<int>(ts::DecisionType::ROLL_DIE));
+    dt.set("NONE", static_cast<int>(ts::DecisionType::NONE));
     v.set("decision_types", std::move(dt));
+    // Resolution (how a card is played) and OpMode, by name.
+    sj::Value res = sj::Value::object();
+    res.set("EVENT", static_cast<int>(ts::Resolution::EVENT));
+    res.set("SPACE", static_cast<int>(ts::Resolution::SPACE));
+    res.set("OPS_INFLUENCE", static_cast<int>(ts::Resolution::OPS_INFLUENCE));
+    res.set("OPS_COUP", static_cast<int>(ts::Resolution::OPS_COUP));
+    res.set("OPS_REALIGN", static_cast<int>(ts::Resolution::OPS_REALIGN));
+    v.set("resolutions", std::move(res));
+    sj::Value om = sj::Value::object();
+    om.set("INFLUENCE", static_cast<int>(ts::OpMode::INFLUENCE));
+    om.set("COUP", static_cast<int>(ts::OpMode::COUP));
+    om.set("REALIGN", static_cast<int>(ts::OpMode::REALIGN));
+    v.set("op_modes", std::move(om));
+    // The Region enum: Chernobyl's branch and the region head's order.
+    sj::Value rg = sj::Value::object();
+    rg.set("EUROPE", static_cast<int>(ts::Region::EUROPE));
+    rg.set("ASIA", static_cast<int>(ts::Region::ASIA));
+    rg.set("MIDDLE_EAST", static_cast<int>(ts::Region::MIDDLE_EAST));
+    rg.set("AFRICA", static_cast<int>(ts::Region::AFRICA));
+    rg.set("CENTRAL_AMERICA", static_cast<int>(ts::Region::CENTRAL_AMERICA));
+    rg.set("SOUTH_AMERICA", static_cast<int>(ts::Region::SOUTH_AMERICA));
+    v.set("regions", std::move(rg));
+    // The cards the page words on its own (the HUD's prompts, the log's event choices, the scoring
+    // badges), by their ts::card_ids names -- never as literals of the page's.
+    sj::Value ids = sj::Value::object();
+#define TS_CARD_ID(n) ids.set(#n, static_cast<int>(ts::card_ids::n))
+    TS_CARD_ID(ASIA_SCORING);
+    TS_CARD_ID(EUROPE_SCORING);
+    TS_CARD_ID(MIDDLE_EAST_SCORING);
+    TS_CARD_ID(AFRICA_SCORING);
+    TS_CARD_ID(CENTRAL_AMERICA_SCORING);
+    TS_CARD_ID(SOUTH_AMERICA_SCORING);
+    TS_CARD_ID(SE_ASIA_SCORING);
+    TS_CARD_ID(FIVE_YEAR_PLAN);
+    TS_CARD_ID(BLOCKADE);
+    TS_CARD_ID(WARSAW_PACT_FORMED);
+    TS_CARD_ID(OLYMPIC_GAMES);
+    TS_CARD_ID(UN_INTERVENTION);
+    TS_CARD_ID(SALT_NEGOTIATIONS);
+    TS_CARD_ID(SUMMIT);
+    TS_CARD_ID(HOW_I_LEARNED_TO_STOP_WORRYING);
+    TS_CARD_ID(MISSILE_ENVY);
+    TS_CARD_ID(GRAIN_SALES_TO_SOVIETS);
+    TS_CARD_ID(SHUTTLE_DIPLOMACY);
+    TS_CARD_ID(ASK_NOT_WHAT_YOUR_COUNTRY_CAN_DO_FOR_YOU);
+    TS_CARD_ID(STAR_WARS);
+    TS_CARD_ID(TERRORISM);
+    TS_CARD_ID(CHERNOBYL);
+    TS_CARD_ID(ALDRICH_AMES);
+    TS_CARD_ID(WARGAMES);
+    TS_CARD_ID(OUR_MAN_IN_TEHRAN);
+    TS_CARD_ID(SPACE_WALK_DISCARD);
+#undef TS_CARD_ID
+    v.set("card_ids", std::move(ids));
+    // The rollout root's stop rules and leaf sides by name, in enum order: ts_rollout_reset takes
+    // the index.
+    sj::Value stops = sj::Value::array();
+    for (const char* n : kStopNames) stops.push(n);
+    v.set("rollout_stops", std::move(stops));
+    sj::Value leaves = sj::Value::array();
+    for (const char* n : kLeafNames) leaves.push(n);
+    v.set("rollout_leaves", std::move(leaves));
+    // The Space Race track as the engine plays it (SpaceRace::get_box_info): box 0, the start, to
+    // box 8, the Space Station.
+    sj::Value boxes = sj::Value::array();
+    for (uint8_t b = 0; b <= 8; ++b) {
+        const ts::SpaceBoxInfo& info = ts::SpaceRace::get_box_info(b);
+        sj::Value box = sj::Value::object();
+        box.set("min_ops", static_cast<int>(info.min_ops));
+        box.set("max_roll", static_cast<int>(info.max_roll));
+        box.set("vp_first", static_cast<int>(info.vp_first));
+        box.set("vp_second", static_cast<int>(info.vp_second));
+        boxes.push(std::move(box));
+    }
+    v.set("space_boxes", std::move(boxes));
     return keep(v.dump());
 }
 
@@ -226,6 +326,246 @@ TS_API int ts_load_save_json(const char* text) {
     return 1;
 }
 
+// ---- what each scoring card would score now ---------------------------------------------------
+//
+// The map's region badges and summaries show what Scoring::evaluate_region (and, for Southeast
+// Asia, score_southeast_asia) make of a position -- the engine's own scoring, never the page's
+// arithmetic, which had drifted (Shuttle Diplomacy). The position is any display state the page
+// draws: the live game, a replay's snapshot or a player's view, so it is read from that state's
+// countries and flags rather than from the game held. Scoring reads nothing else.
+
+namespace {
+
+// Effect flag name -> bit, read off the display writer itself (one display state per bit), so the
+// names are exactly the ones a display state carries.
+const std::vector<std::pair<std::string, uint64_t>>& flag_bits() {
+    static const std::vector<std::pair<std::string, uint64_t>> bits = [] {
+        std::vector<std::pair<std::string, uint64_t>> out;
+        ts::GameState s{};
+        ts::Engine::init_game(s, 1);
+        for (int b = 0; b < 64; ++b) {
+            s.persistent_effects = uint64_t{1} << b;
+            const sj::Value d = sj::display_state(s);   // held: find() points into it
+            if (const sj::Value* f = d.find("flags")) {
+                for (const sj::Value& n : f->items()) out.emplace_back(n.as_string(), s.persistent_effects);
+            }
+        }
+        return out;
+    }();
+    return bits;
+}
+
+const char* status_name(ts::RegionalStatus s) {
+    switch (s) {
+        case ts::RegionalStatus::PRESENCE: return "PRESENCE";
+        case ts::RegionalStatus::DOMINATION: return "DOMINATION";
+        case ts::RegionalStatus::CONTROL: return "CONTROL";
+        default: return "NONE";
+    }
+}
+
+template <typename F>
+void each_country(const std::array<uint64_t, 2>& mask, F&& f) {
+    for (size_t word = 0; word < 2; ++word) {
+        for (uint64_t bits = mask[word]; bits != 0; bits &= bits - 1) {
+            f(static_cast<uint8_t>(word * 64 + static_cast<size_t>(std::countr_zero(bits))));
+        }
+    }
+}
+
+// Take `cid` out of either side's control without touching the other countries: equal influence
+// controls for nobody.
+void uncontrol(ts::GameState& s, uint8_t cid) { s.countries[cid].ussr_influence = s.countries[cid].us_influence; }
+
+bool same_scoring(const ts::RegionScoreSummary& a, const ts::RegionScoreSummary& b) {
+    return a.us_status == b.us_status && a.ussr_status == b.ussr_status && a.us_score == b.us_score &&
+           a.ussr_score == b.ussr_score;
+}
+
+sj::Value side_json(const char* status, int countries, int battlegrounds, int adjacent, int base_vp, bool base_known,
+                    int vp, sj::Value controlled) {
+    sj::Value v = sj::Value::object();
+    v.set("status", status ? sj::Value(status) : sj::Value());
+    v.set("countries", countries);
+    v.set("battlegrounds", battlegrounds);
+    v.set("adjacent", adjacent);
+    v.set("base_vp", base_known ? sj::Value(base_vp) : sj::Value());
+    v.set("vp", vp);
+    v.set("controlled", std::move(controlled));
+    return v;
+}
+
+// One of the six regions. The counts a scoring adds up are those it *scored*: Shuttle Diplomacy
+// leaves one USSR battleground (and its country, and in Asia Japan's adjacency) out, and the
+// summary reports the board's counts. They are found from the engine, never re-derived: the board,
+// or the board with one USSR country uncontrolled, scored without the mid-game-only adjustment
+// (is_final_scoring) -- whichever gives exactly the scoring evaluate_region gave.
+sj::Value region_json(const ts::GameState& s, ts::Region r) {
+    const ts::RegionScoreSummary sum = ts::Scoring::evaluate_region(s, r);
+    const auto& mask = ts::MapData::get_region_mask(r);
+
+    ts::RegionScoreSummary scored = sum;
+    bool found = false;
+    int uncounted = -1;
+    std::vector<uint8_t> ussr_held;
+    each_country(mask, [&](uint8_t cid) {
+        if (ts::Scoring::get_country_control(s, cid) == ts::Player::USSR) ussr_held.push_back(cid);
+    });
+    {
+        const ts::RegionScoreSummary plain = ts::Scoring::evaluate_region(s, r, true);
+        if (same_scoring(plain, sum)) { scored = plain; found = true; }
+    }
+    for (size_t i = 0; !found && i < ussr_held.size(); ++i) {
+        ts::GameState probe = s;
+        uncontrol(probe, ussr_held[i]);
+        const ts::RegionScoreSummary p = ts::Scoring::evaluate_region(probe, r, true);
+        if (same_scoring(p, sum)) { scored = p; found = true; uncounted = ussr_held[i]; }
+    }
+
+    // Who controls what, each country marked a battleground when this scoring counts it as one (Formosan
+    // Resolution makes Taiwan one): the scoring of that country alone.
+    ts::Player control[84];
+    for (uint8_t cid = 0; cid < 84; ++cid) control[cid] = ts::Player::NONE;
+    sj::Value us_list = sj::Value::array(), ussr_list = sj::Value::array();
+    int map_bgs = 0, bgs_held_on_map = 0;
+    each_country(mask, [&](uint8_t cid) {
+        const bool map_bg = ts::MapData::get_country(cid).battleground;
+        map_bgs += map_bg ? 1 : 0;
+        const ts::Player who = ts::Scoring::get_country_control(s, cid);
+        if (who == ts::Player::NONE) return;
+        bgs_held_on_map += map_bg ? 1 : 0;
+        control[cid] = who;
+        const ts::RegionScoreSummary alone = ts::Scoring::evaluate_region_with_control(s, r, control);
+        control[cid] = ts::Player::NONE;
+        sj::Value c = sj::Value::object();
+        c.set("id", static_cast<int>(cid));
+        c.set("battleground", (who == ts::Player::US ? alone.us_battlegrounds : alone.ussr_battlegrounds) > 0);
+        (who == ts::Player::US ? us_list : ussr_list).push(std::move(c));
+    });
+    // The battlegrounds there are: the map's, and those a scoring counts besides (Taiwan).
+    const int extra = sum.us_battlegrounds + sum.ussr_battlegrounds - bgs_held_on_map;
+
+    // A scoring that ends the game (Control of Europe): what score_region does with it.
+    ts::GameState probe = s;
+    probe.victory_points = 0;
+    probe.clear_flag(ts::effect_bits::EUROPE_CONTROL_WIN);
+    ts::Scoring::score_region(probe, r);
+    const bool wins = probe.has_flag(ts::effect_bits::EUROPE_CONTROL_WIN);
+
+    sj::Value v = sj::Value::object();
+    v.set("slot", static_cast<int>(r));
+    v.set("battlegrounds", map_bgs + std::max(0, extra));
+    v.set("net", static_cast<int>(sum.net_delta));
+    v.set("wins", wins ? sj::Value(probe.victory_points > 0 ? "US" : "USSR") : sj::Value());
+    v.set("us", side_json(status_name(sum.us_status), scored.us_countries, scored.us_battlegrounds,
+                          scored.us_superpower_adjacent,
+                          scored.us_score - scored.us_battlegrounds - scored.us_superpower_adjacent, found,
+                          sum.us_score, std::move(us_list)));
+    sj::Value ussr = side_json(status_name(sum.ussr_status), scored.ussr_countries, scored.ussr_battlegrounds,
+                               scored.ussr_superpower_adjacent,
+                               scored.ussr_score - scored.ussr_battlegrounds - scored.ussr_superpower_adjacent,
+                               found, sum.ussr_score, std::move(ussr_list));
+    ussr.set("uncounted", uncounted >= 0 ? sj::Value(uncounted) : sj::Value());
+    v.set("ussr", std::move(ussr));
+    return v;
+}
+
+// Southeast Asia Scoring: score_southeast_asia gives only the net, so each side's points, and each
+// country's, are what it scores with everything else in Southeast Asia emptied.
+sj::Value southeast_asia_json(const ts::GameState& s) {
+    const auto& mask = ts::MapData::get_southeast_asia_mask();
+    auto points = [&](auto keep) {
+        ts::GameState probe = s;
+        probe.victory_points = 0;
+        each_country(mask, [&](uint8_t cid) {
+            if (!keep(cid)) probe.countries[cid].us_influence = probe.countries[cid].ussr_influence = 0;
+        });
+        ts::Scoring::score_southeast_asia(probe);
+        return static_cast<int>(probe.victory_points);
+    };
+    sj::Value lists[2] = {sj::Value::array(), sj::Value::array()};
+    int counts[2] = {0, 0};
+    each_country(mask, [&](uint8_t cid) {
+        const ts::Player who = ts::Scoring::get_country_control(s, cid);
+        if (who == ts::Player::NONE) return;
+        const int k = who == ts::Player::US ? 0 : 1;
+        sj::Value c = sj::Value::object();
+        c.set("id", static_cast<int>(cid));
+        c.set("vp", std::abs(points([&](uint8_t x) { return x == cid; })));
+        lists[k].push(std::move(c));
+        ++counts[k];
+    });
+    const int us_vp = points([&](uint8_t x) { return ts::Scoring::get_country_control(s, x) == ts::Player::US; });
+    const int ussr_vp = -points([&](uint8_t x) { return ts::Scoring::get_country_control(s, x) == ts::Player::USSR; });
+    const int net = points([](uint8_t) { return true; });
+    sj::Value v = sj::Value::object();
+    v.set("slot", static_cast<int>(ts::ScoringTap::kSoutheastAsia));
+    v.set("battlegrounds", 0);
+    v.set("net", net);
+    v.set("wins", sj::Value());
+    v.set("us", side_json(nullptr, counts[0], 0, 0, 0, false, us_vp, std::move(lists[0])));
+    sj::Value ussr = side_json(nullptr, counts[1], 0, 0, 0, false, ussr_vp, std::move(lists[1]));
+    ussr.set("uncounted", sj::Value());
+    v.set("ussr", std::move(ussr));
+    return v;
+}
+
+}  // namespace
+
+// What every scoring card would score in the position `state_json` describes -- {"countries":
+// display-state countries, "flags": display-state flags} -- as a JSON array: the six regions in
+// Region order, then Southeast Asia ("slot" 6, ScoringTap's). Per region: "battlegrounds" there,
+// "net" VP (US positive), "wins" (the side a scoring would hand the game, else null), and per side
+// "status", the scored "countries" / "battlegrounds" / "adjacent" (to the enemy superpower), the
+// standing's "base_vp", "vp", and "controlled" [{id, battleground | vp}]; the USSR's "uncounted" is
+// the country a scoring left out (Shuttle Diplomacy). A flag this build does not know is listed under
+// "ignored_flags". "" with ts_last_error() for a malformed state.
+TS_API const char* ts_region_scores_json(const char* state_json) {
+    sj::Value in;
+    std::string error;
+    if (!sj::Value::parse(state_json, in, &error)) { g_error = "not JSON: " + error; return ""; }
+    const sj::Value* countries = in.is_object() ? in.find("countries") : nullptr;
+    const sj::Value* flags = in.is_object() ? in.find("flags") : nullptr;
+    if (!countries || !countries->is_object() || !flags || !flags->is_array()) {
+        g_error = "a display state's countries and flags are needed";
+        return "";
+    }
+    ts::GameState s{};
+    for (const auto& [name, c] : countries->members()) {
+        const sj::Value* id = c.is_object() ? c.find("id") : nullptr;
+        const sj::Value* us = c.is_object() ? c.find("us_influence") : nullptr;
+        const sj::Value* ussr = c.is_object() ? c.find("ussr_influence") : nullptr;
+        int64_t cid = 0, a = 0, b = 0;
+        uint64_t unused = 0;
+        if (!id || !us || !ussr || !id->to_integral(0, 83, &cid, &unused) || !us->to_integral(0, 255, &a, &unused) ||
+            !ussr->to_integral(0, 255, &b, &unused)) {
+            g_error = "bad country " + name;
+            return "";
+        }
+        s.countries[cid].us_influence = static_cast<uint8_t>(a);
+        s.countries[cid].ussr_influence = static_cast<uint8_t>(b);
+    }
+    sj::Value ignored = sj::Value::array();
+    for (const sj::Value& f : flags->items()) {
+        if (f.kind() != sj::Value::Kind::String) { g_error = "a flag is not a name"; return ""; }
+        bool known = false;
+        for (const auto& [name, bit] : flag_bits()) {
+            if (name == f.as_string()) { s.set_flag(bit); known = true; }
+        }
+        if (!known) ignored.push(f.as_string());
+    }
+    sj::Value regions = sj::Value::array();
+    for (ts::Region r : {ts::Region::EUROPE, ts::Region::ASIA, ts::Region::MIDDLE_EAST, ts::Region::AFRICA,
+                         ts::Region::CENTRAL_AMERICA, ts::Region::SOUTH_AMERICA}) {
+        regions.push(region_json(s, r));
+    }
+    regions.push(southeast_asia_json(s));
+    sj::Value out = sj::Value::object();
+    out.set("regions", std::move(regions));
+    out.set("ignored_flags", std::move(ignored));
+    return keep(out.dump());
+}
+
 TS_API int ts_is_terminal() { return ts::Engine::is_terminal(g_state) ? 1 : 0; }
 TS_API float ts_terminal_utility() { return ts::Engine::get_terminal_utility(g_state); }
 TS_API const char* ts_ending_reason() { return sj::ending_reason(g_state); }
@@ -252,7 +592,12 @@ TS_API const uint8_t* ts_mask(int merged) {
 }
 
 // The MicroAction a flat index stands for at the open decision: [type, primary, secondary, flags].
+// Null, with ts_last_error(), for an index outside the flat action space.
 TS_API const int32_t* ts_decode_flat(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE)) {
+        g_error = "flat index outside the action space";
+        return nullptr;
+    }
     const ts::MicroAction a = ts::ActionMask::decode_flat_action_212(g_state, static_cast<uint16_t>(idx));
     g_decoded[0] = static_cast<int32_t>(a.decision_type);
     g_decoded[1] = a.primary_id;
@@ -263,6 +608,7 @@ TS_API const int32_t* ts_decode_flat(int idx) {
 
 // Whether a flat index is an E4.1 composed action here ("Ops for influence, first point at X").
 TS_API int ts_is_merged_influence_action(int idx) {
+    if (idx < 0 || idx >= static_cast<int>(ts::FLAT_ACTION_SPACE_SIZE)) return 0;
     return ts::ActionMask::is_merged_influence_action(g_state, static_cast<uint16_t>(idx)) ? 1 : 0;
 }
 
@@ -328,12 +674,6 @@ std::vector<uint8_t> g_ro_masks;
 std::vector<float> g_ro_values;
 std::vector<uint16_t> g_ro_cands;
 }  // namespace
-
-// Redeal the cards `player` cannot see in the position held, from SplitMix64 state `seed`.
-TS_API void ts_determinize(int player, uint32_t seed_lo, uint32_t seed_hi) {
-    uint64_t rng = (static_cast<uint64_t>(seed_hi) << 32) | seed_lo;
-    ts::rollout::determinize(g_state, player_from_int(player), rng);
-}
 
 // `stop`: 0 = after `horizon` boundaries, 1 = at the end of the decision's turn, 2 = the later of the two,
 // 3 = the earlier of the two, 4 = at the turn-end park before the deal, 5 = the earlier of the boundaries
@@ -460,6 +800,10 @@ TS_API int ts_belief_rows(int d, int lo, int n, uint32_t features) {
 // lp: temperatures x decisions x particles floats, the log-probability of each recorded decision's move.
 TS_API int ts_belief_set_log_likelihoods(const float* lp) {
     if (!g_belief || g_belief->jobs().empty()) { g_error = "ts_belief_prepare made no job"; return 0; }
+    if (any_nan(lp, ts::belief::kTemps * g_belief->jobs()[0].decisions.size() * g_belief->particles())) {
+        g_error = "a log-likelihood is NaN";
+        return 0;
+    }
     g_belief->set_log_likelihoods(lp, g_belief->jobs()[0].decisions.size());
     return 1;
 }
@@ -548,6 +892,7 @@ TS_API const uint8_t* ts_rollout_buf_masks() { return g_ro_masks.data(); }
 // `logits`: count x FLAT_ACTION_SPACE_SIZE floats for the rows the last fill_live listed.
 TS_API int ts_rollout_step(const float* logits) {
     if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
+    if (any_nan(logits, g_rollout->listed() * ts::FLAT_ACTION_SPACE_SIZE)) { g_error = "a logit is NaN"; return 0; }
     g_rollout->step(logits);
     return 1;
 }
@@ -555,6 +900,7 @@ TS_API int ts_rollout_step(const float* logits) {
 // The rows at their horizon and not yet valued, from the mover's side, into the same buffers.
 TS_API int ts_rollout_fill_leaves() {
     if (!g_rollout) return 0;
+    // TODO(lead): use RolloutBatch::leaves_pending()
     size_t n = 0;
     for (size_t r = 0; r < g_rollout->rows(); ++r) {
         const auto& row = g_rollout->row(r);
@@ -566,6 +912,7 @@ TS_API int ts_rollout_fill_leaves() {
 }
 TS_API int ts_rollout_set_leaf_values(const float* values) {
     if (!g_rollout) { g_error = "ts_rollout_reset first"; return 0; }
+    if (any_nan(values, g_rollout->leaves_listed())) { g_error = "a leaf value is NaN"; return 0; }
     g_rollout->set_leaf_values(values);
     return 1;
 }
@@ -593,8 +940,10 @@ TS_API int ts_rollout_row_terminal(int r) {
 }
 
 // The `k` most probable legal moves by the root's logits (FLAT_ACTION_SPACE_SIZE floats) under
-// `mask`, best first, into `out` (k int32s); returns how many.
+// `mask`, best first, into `out` (k int32s); returns how many, or -1 with ts_last_error() for a NaN
+// logit.
 TS_API int ts_rollout_candidates(const float* logits, const uint8_t* mask, int k, int32_t* out) {
+    if (any_nan(logits, ts::FLAT_ACTION_SPACE_SIZE)) { g_error = "a logit is NaN"; return -1; }
     if (k <= 0) return 0;
     std::vector<uint16_t> c(static_cast<size_t>(k));
     const size_t n = ts::rollout::top_candidates(logits, mask, static_cast<size_t>(k), c.data());
@@ -612,6 +961,7 @@ TS_API const char* ts_rollout_decide(int position, const int32_t* candidates, in
     }
     ts::rollout::Rule rule;
     if (!ts::rollout::parse_rule(rule_text, rule)) { g_error = "unknown rule: argmax, z<x> or kl<t>"; return ""; }
+    if (any_nan(logits, ts::FLAT_ACTION_SPACE_SIZE)) { g_error = "a logit is NaN"; return ""; }
     std::vector<uint16_t> c;
     for (int i = 0; i < k; ++i) {
         if (candidates[i] < 0 || candidates[i] >= static_cast<int32_t>(ts::FLAT_ACTION_SPACE_SIZE)) {
