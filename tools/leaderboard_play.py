@@ -25,18 +25,18 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
 import json
 import subprocess
 import sys
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-import ts_engine as ts
+import ts_engine  # noqa: F401 -- the build require_fresh() checks before a game is played
 
 from tools.lib.batch_tournament import MatchupResult
 from tools.lib.data_root import data_path
 from tools.lib.engine_behaviour import measure
-from tools.lib.engine_fingerprint import fingerprint, staleness_reason
+from tools.lib.engine_fingerprint import fingerprint, require_fresh
+from tools.lib.jsonl import sha256_file
 from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, append_record, behaviour_id, behaviour_mismatch,
                                    fit_epoch, load, make_record, markdown_table, player_spec, validate, view)
 from tools.lib.player_spec import PlayerSpecError, Rollout, load_spec
@@ -49,14 +49,6 @@ _CODE_PATHS = ("ai", "bot", "bindings", "engine", "tools")
 def _git(*args: str) -> str:
     return subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True,
                           text=True).stdout.strip()
-
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def plan_pairs(board: Board, epoch: str, players: Sequence[str], opponents: Optional[Sequence[str]],
@@ -148,9 +140,7 @@ def _run(a: argparse.Namespace) -> int:
     if a.dry_run:
         return 0
 
-    reason = staleness_reason(ts.__file__)
-    if reason:
-        raise LeaderboardError(reason)
+    require_fresh()     # after --dry-run, which plays nothing
     engine = fingerprint()
     want = board.epochs[a.epoch]["behaviour"]
     print(f"leaderboard_play: measuring the engine's behaviour (tools/lib/engine_behaviour.py) ...", flush=True)
@@ -173,7 +163,7 @@ def _run(a: argparse.Namespace) -> int:
     def network_file(net: str) -> str:
         entry = board.networks[net]
         path = data_path(entry["file"])
-        got = _sha256(path)
+        got = sha256_file(path)
         if got != entry["sha256"]:
             raise LeaderboardError(f"{path}: sha256 {got[:12]}… is not the registered "
                                    f"{entry['sha256'][:12]}… for {net}")
