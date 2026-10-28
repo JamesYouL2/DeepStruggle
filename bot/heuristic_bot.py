@@ -23,6 +23,7 @@ class HeuristicBot(BaseBot):
     def select_action(self, state: Dict[str, Any], legal_actions: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         valid_ids = legal_actions.get("valid_ids", [])
         d_type = legal_actions.get("decision_type", 0)
+        self.require_player_decision(d_type)
 
         if not valid_ids:
             # The engine guarantees CONFIRM_DONE is legal whenever no other action is (its own
@@ -123,7 +124,8 @@ class HeuristicBot(BaseBot):
             if best_node is not None:
                 return {"decision_type": d_type, "primary_id": best_node, "secondary_id": 0, "flags": 0}
 
-        # Fallback to random
+        # A known decision none of the rules above prefers anything at (CHOOSE_BRANCH, or a
+        # node whose preferred ids are absent): any legal id, uniformly.
         return {
             "decision_type": d_type,
             "primary_id": random.choice(valid_ids),

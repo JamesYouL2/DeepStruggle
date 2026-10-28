@@ -29,6 +29,7 @@ class ExploratoryBot(BaseBot):
         valid_ids = legal_actions.get("valid_ids", [])
         allow_early_stop = legal_actions.get("allow_early_stop", False)
         ctx = state.get("decision_context", {})
+        self.require_player_decision(d_type)
 
         if not valid_ids:
             # The engine guarantees CONFIRM_DONE is legal whenever no other action is
@@ -78,8 +79,8 @@ class ExploratoryBot(BaseBot):
                 else:
                     weights.append(10)
             chosen = self.rng.choices(valid_ids, weights=weights, k=1)[0]
-            sec_id = self.rng.randint(1, 6) if chosen == 1 else 0  # Space roll
-            return {"decision_type": d_type, "primary_id": chosen, "secondary_id": sec_id, "flags": 0}
+            # No dice in the action: the engine rolls the Space Race itself from its own RNG.
+            return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}
 
         # 4. SELECT_OP_MODE (4)
         elif d_type == 4:
@@ -95,7 +96,7 @@ class ExploratoryBot(BaseBot):
                     weights.append(20)
                 else:
                     weights.append(10)
-            chosen = self.rng.choices(valid_ids, weights=weights, k=1)[0] if valid_ids else 0
+            chosen = self.rng.choices(valid_ids, weights=weights, k=1)[0]
             return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}
 
         # 5. POINT_NODE (5)
@@ -105,12 +106,11 @@ class ExploratoryBot(BaseBot):
             if allow_early_stop and self.rng.random() < 0.05:
                 return {"decision_type": d_type, "primary_id": 0, "secondary_id": 0, "flags": 0x80}
 
+            # No dice in the action (this used to put two random "rolls" in secondary_id and
+            # flags): a coup or realignment is rolled by the engine from its own RNG.
             chosen_id = self.rng.choice(valid_ids)
-            roll1 = self.rng.randint(1, 6)
-            roll2 = self.rng.randint(1, 6)
-            return {"decision_type": d_type, "primary_id": chosen_id, "secondary_id": roll1, "flags": roll2}
+            return {"decision_type": d_type, "primary_id": chosen_id, "secondary_id": 0, "flags": 0}
 
-        # 6. CHOOSE_BRANCH (6) / Other
-        else:
-            chosen = self.rng.choice(valid_ids) if valid_ids else 0
-            return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}
+        # 6. CHOOSE_BRANCH (6), the one player decision left.
+        chosen = self.rng.choice(valid_ids)
+        return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}

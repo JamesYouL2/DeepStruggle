@@ -1,7 +1,7 @@
 """EventHeavyBot: Heuristic agent maximizing card event play and event-first timing."""
 
 import random
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple
 import os
 import sys
 
@@ -37,24 +37,26 @@ class EventHeavyBot(BaseBot):
         d_type = legal_actions.get("decision_type", 0)
         valid_ids = legal_actions.get("valid_ids", [])
         ctx = state_dict.get("decision_context", {})
-
-        turn = state_dict.get("turn", 1)
         phase = state_dict.get("phase", state_dict.get("current_phase", 0))
-        ar = state_dict.get("action_round", 0)
-        defcon = state_dict.get("defcon", 5)
-        vp = state_dict.get("victory_points", 0)
+        self.require_player_decision(d_type)
+
+        if not valid_ids:
+            # The engine guarantees CONFIRM_DONE is legal whenever no other action is (its own
+            # anti-deadlock fallback), regardless of allow_early_stop. This used to answer an
+            # empty SELECT_CARD with card 0 and no flag, an illegal action.
+            return self.confirm_done(d_type), "Confirm Done", "Passing."
 
         # 1. SELECT_CARD
         if d_type == 1:
             res_card = ctx.get("resolving_card", 0)
             if res_card > 0:
-                chosen = valid_ids[0] if valid_ids else 0
+                chosen = valid_ids[0]
                 return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Resolving #{res_card}", "Resolving event sub-decision."
 
             # Headline: prefer friendly high-impact events
             if phase == 1:
                 friendly = [cid for cid in valid_ids if 1 <= cid <= 110 and ts_engine.CardData.get_card_info(cid).get("side") == self.role]
-                chosen = friendly[0] if friendly else (valid_ids[0] if valid_ids else 0)
+                chosen = friendly[0] if friendly else valid_ids[0]
                 c_name = ts_engine.CardData.get_card_name(chosen) if 1 <= chosen <= 110 else f"#{chosen}"
                 return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Headline Event: '{c_name}'", f"Deploying headline event '{c_name}'."
 
@@ -66,7 +68,7 @@ class EventHeavyBot(BaseBot):
             elif friendly:
                 chosen = friendly[0]
             else:
-                chosen = valid_ids[0] if valid_ids else 0
+                chosen = valid_ids[0]
 
             c_name = ts_engine.CardData.get_card_name(chosen) if 1 <= chosen <= 110 else f"#{chosen}"
             return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Event-Heavy Selection: #{chosen} '{c_name}'", f"Playing '{c_name}'."
@@ -83,24 +85,20 @@ class EventHeavyBot(BaseBot):
             for res in (2, 3, 4):  # OPS_INFLUENCE, OPS_COUP, OPS_REALIGN
                 if res in valid_ids:
                     return {"decision_type": d_type, "primary_id": res, "secondary_id": 0, "flags": 0}, f"Play as Ops: '{c_name}'", f"Using '{c_name}' for operations."
-            chosen = valid_ids[0] if valid_ids else 0
+            chosen = valid_ids[0]
             return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Mode {chosen}", "Selecting mode."
 
         # 4. SELECT_OP_MODE: Prefer Influence (0)
         elif d_type == 4:
-            chosen = 0 if 0 in valid_ids else (valid_ids[0] if valid_ids else 0)
+            chosen = 0 if 0 in valid_ids else valid_ids[0]
             return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Op Mode {chosen}", "Conducting operations."
 
         # 5. POINT_NODE
         elif d_type == 5:
-            if not valid_ids:
-                # The engine guarantees CONFIRM_DONE is legal whenever no other action is
-                # (its own anti-deadlock fallback), regardless of allow_early_stop -- flags=0
-                # here would be a real (illegal) target country, not a pass.
-                return {"decision_type": d_type, "primary_id": 0, "secondary_id": 0, "flags": 128}, "Confirm Done", "Passing."
             chosen = self.rng.choice(valid_ids)
             c_name = ts_engine.MapData.get_country_name(chosen) if chosen < 84 else f"#{chosen}"
             return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Targeting {c_name}", f"Placing on {c_name}."
 
-        chosen = valid_ids[0] if valid_ids else 0
-        return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Action {chosen}", "Executing action."
+        # 6. CHOOSE_BRANCH, the one player decision left.
+        chosen = valid_ids[0]
+        return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Branch {chosen}", "Choosing branch."

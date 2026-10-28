@@ -51,7 +51,9 @@ class StrategicBot(BaseBot):
             return (0,
                     f"Influence Placement: Deploying {pending_ops} Influence.",
                     f"Strengthening political networks with {pending_ops} Influence.")
-        chosen = available[0] if available else 0
+        if not available:
+            raise ValueError("_pick_op_mode called with no Ops mode on offer")
+        chosen = available[0]
         return chosen, f"Mode {chosen}", "Executing mode."
 
     def select_action(self, state: Dict[str, Any], legal_actions: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -65,16 +67,20 @@ class StrategicBot(BaseBot):
         valid_ids = legal_actions.get("valid_ids", [])
         allow_early_stop = legal_actions.get("allow_early_stop", False)
         ctx = state_dict.get("decision_context", {})
+        self.require_player_decision(d_type)
 
-        turn = state_dict.get("turn", 1)
+        if not valid_ids:
+            # The engine guarantees CONFIRM_DONE is legal whenever no other action is (its own
+            # anti-deadlock fallback), regardless of allow_early_stop. This used to answer an
+            # empty SELECT_CARD with card 0 and no flag, an illegal action.
+            return self.confirm_done(d_type), "Confirm Done", "Passing."
+
         phase = state_dict.get("phase", state_dict.get("current_phase", 0))
         ar = state_dict.get("action_round", 0)
         defcon = state_dict.get("defcon", 5)
         vp = state_dict.get("victory_points", 0)
         mil_ops = state_dict.get("mil_ops", {}).get(self.role, 0)
-        space = state_dict.get("space", {}).get(self.role, 0)
         space_used = state_dict.get("space_turns_used", {}).get(self.role, 0)
-        countries = state_dict.get("countries", {})
 
         # 1. SELECT_CARD
         if d_type == 1:
@@ -116,12 +122,12 @@ class StrategicBot(BaseBot):
                         comm = "We cannot afford the operational sacrifice at this time."
                         return {"decision_type": d_type, "primary_id": 0, "secondary_id": 0, "flags": 128}, strat, comm
 
-                chosen = valid_ids[0] if valid_ids else 0
+                chosen = valid_ids[0]
                 return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Event Sub-selection #{chosen}", "Resolving event card requirements."
 
             # Setup phase
             if phase == 0:
-                chosen = valid_ids[0] if valid_ids else 0
+                chosen = valid_ids[0]
                 strat = f"Setup: Placing initial influence card #{chosen}."
                 comm = "Fortifying our historical ideological bastions."
                 return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, strat, comm
@@ -154,7 +160,7 @@ class StrategicBot(BaseBot):
                         for cid in valid_ids
                         if 1 <= cid <= 110 and ts_engine.CardData.get_card_info(cid).get("side") == self.role
                     ]
-                    chosen = friendly[0] if friendly else (valid_ids[0] if valid_ids else 0)
+                    chosen = friendly[0] if friendly else valid_ids[0]
                     c_name = ts_engine.CardData.get_card_name(chosen) if 1 <= chosen <= 110 else f"#{chosen}"
                     strat = f"Headline Card: Playing #{chosen} '{c_name}'."
                     comm = f"Opening the turn with '{c_name}'."
@@ -184,7 +190,7 @@ class StrategicBot(BaseBot):
                 comm = f"Executing regional scoring card '{c_name}'."
                 return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, strat, comm
 
-            best_card = pool[0] if pool else 0
+            best_card = pool[0]
             best_score = -999
             for cid in pool:
                 info = ts_engine.CardData.get_card_info(cid) if 1 <= cid <= 110 else {}
@@ -223,10 +229,10 @@ class StrategicBot(BaseBot):
 
             # Hostile card -> send to Space if available (P17: SPACE moved from 2 to 1)
             if card_side == self.opp_role and 1 in valid_ids:
-                roll = self.rng.randint(1, 6)
                 strat = f"Space Race Disposal: Discarding hostile card '{card_name}' to space track."
                 comm = f"Neutralizing enemy card '{card_name}' into our space program."
-                return {"decision_type": d_type, "primary_id": 1, "secondary_id": roll, "flags": 0}, strat, comm
+                # No die in the action: the engine rolls the Space Race from its own RNG.
+                return {"decision_type": d_type, "primary_id": 1, "secondary_id": 0, "flags": 0}, strat, comm
 
             # Friendly powerful permanent event
             if 0 in valid_ids and card_side == self.role and (card_info.get("one_time", False) or card_ops >= 3):
@@ -238,6 +244,11 @@ class StrategicBot(BaseBot):
             # ops-first play. Picking an OPS_* resolution on an opponent card is the ops-first
             # branch this bot used to choose at the retired CHOOSE_TIMING_BRANCH.
             ops_modes = [r - 2 for r in (2, 3, 4) if r in valid_ids]
+            if not ops_modes:
+                # No Ops resolution on offer (only the Event or the Space Race): the first legal one.
+                chosen = valid_ids[0]
+                return ({"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0},
+                        f"Play mode {chosen}", f"Resolving '{card_name}'.")
             mode, strat, comm = self._pick_op_mode(
                 ops_modes, card_ops, mil_ops, defcon, ar)
             return {"decision_type": d_type, "primary_id": 2 + mode, "secondary_id": 0, "flags": 0}, strat, comm
@@ -250,13 +261,6 @@ class StrategicBot(BaseBot):
 
         # 5. POINT_NODE
         elif d_type == 5:
-            res_card = ctx.get("resolving_card", 0)
-            if not valid_ids:
-                # The engine guarantees CONFIRM_DONE is legal whenever no other action is
-                # (its own anti-deadlock fallback), regardless of allow_early_stop -- flags=0
-                # here would be a real (illegal) target country, not a pass.
-                return {"decision_type": d_type, "primary_id": 0, "secondary_id": 0, "flags": 128}, "Confirm Done", "Passing."
-
             # Setup priorities
             if phase == 0:
                 if self.role == "USSR":
@@ -288,6 +292,6 @@ class StrategicBot(BaseBot):
             comm = f"Concentrating resources on {c_name}."
             return {"decision_type": d_type, "primary_id": best_id, "secondary_id": 0, "flags": 0}, strat, comm
 
-        # Fallback
-        chosen = valid_ids[0] if valid_ids else 0
-        return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Action {chosen}", "Executing action."
+        # 6. CHOOSE_BRANCH, the one player decision left.
+        chosen = valid_ids[0]
+        return {"decision_type": d_type, "primary_id": chosen, "secondary_id": 0, "flags": 0}, f"Branch {chosen}", "Choosing branch."

@@ -12,6 +12,7 @@ class RandomBot(BaseBot):
         valid_ids = legal_actions.get("valid_ids", [])
         d_type = legal_actions.get("decision_type", 0)
         allow_early_stop = legal_actions.get("allow_early_stop", False)
+        self.require_player_decision(d_type)
 
         if not valid_ids:
             # The engine guarantees CONFIRM_DONE is legal whenever no other action is
