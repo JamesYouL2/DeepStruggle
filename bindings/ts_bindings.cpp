@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <nanobind/ndarray.h>
@@ -25,6 +27,7 @@
 #include "ts/state_machine.hpp"
 #include "ts/serialization.hpp"
 #include "ts/engine.hpp"
+#include "ts/invariant.hpp"
 #include "state_json.hpp"
 #include "selftest.hpp"
 #include "batched_search.hpp"
@@ -158,6 +161,48 @@ ts::GameState game_state_from_save_json(const std::string& text) {
     return s;
 }
 
+// The flat legal mask as an owned numpy array. One implementation behind the three spellings
+// Python has for it (ts.get_flat_action_mask, Engine.get_flat_action_mask,
+// ActionMask.generate_flat_mask).
+nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>> flat_mask_array(const ts::GameState& state,
+                                                             bool merged_influence) {
+    size_t shape[1] = { ts::FLAT_ACTION_SPACE_SIZE };
+    uint8_t* data = new uint8_t[ts::FLAT_ACTION_SPACE_SIZE];
+    ts::Engine::get_flat_action_mask(state, data, merged_influence);
+    nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
+    return nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(data, 1, shape, owner);
+}
+
+// Python's decode/encode, refusing what the engine cannot represent instead of handing back a
+// NONE action or a -1 that a numpy index would read as the last slot.
+ts::MicroAction checked_decode(const ts::GameState& state, int64_t action_idx) {
+    if (action_idx < 0 || action_idx >= static_cast<int64_t>(ts::FLAT_ACTION_SPACE_SIZE)) {
+        throw nb::value_error(("flat action index out of range: " + std::to_string(action_idx)).c_str());
+    }
+    return ts::ActionMask::decode_flat_action_212(state, static_cast<uint16_t>(action_idx));
+}
+
+int checked_encode(const ts::GameState& state, const ts::MicroAction& action) {
+    const int16_t flat = ts::ActionMask::encode_micro_action_212(state, action);
+    if (flat < 0) {
+        throw nb::value_error(("no flat action encodes this MicroAction (decision type " +
+                               std::to_string(static_cast<int>(action.decision_type)) + ", primary " +
+                               std::to_string(static_cast<int>(action.primary_id)) + ")").c_str());
+    }
+    return flat;
+}
+
+// A NaN from the network has no order: the masked argmax would quietly take the lowest legal
+// index and the playouts would run on garbage. Refused where the floats come in. -inf is allowed
+// (a masked logit).
+void require_no_nan(const float* data, size_t n, const char* what) {
+    for (size_t i = 0; i < n; ++i) {
+        if (std::isnan(data[i])) {
+            throw nb::value_error((std::string(what) + ": NaN at index " + std::to_string(i)).c_str());
+        }
+    }
+}
+
 }  // namespace
 
 nb::dict game_state_to_dict(const ts::GameState& state) {
@@ -238,6 +283,10 @@ NB_MODULE(ts_engine, m) {
     // The legal-mask cache of the search tree and the batch runner (ts::CachedState): with checks
     // on, every read of a cached mask regenerates it and aborts the process if the two differ.
     // tests/conftest.py turns them on for the whole suite.
+    m.def("anomalies_reported", &ts::anomalies_reported,
+          "How many anomalies (ts::report_anomaly: a state that should not arise, logged to "
+          "stderr) this thread has reported. A caller that must not continue past one reads it "
+          "before and after a step.");
     m.def("set_mask_cache_checks", &ts::set_mask_cache_checks, nb::arg("on"),
           "Check every cached legal mask against a fresh one (aborting on a difference).");
     m.def("mask_cache_checks", &ts::mask_cache_checks);
@@ -297,7 +346,6 @@ NB_MODULE(ts_engine, m) {
     // Structs
     nb::class_<ts::MicroAction>(m, "MicroAction")
         .def(nb::init<>())
-        .def("clone", [](const ts::GameState& s) -> ts::GameState { return s; })
         .def(nb::init<ts::DecisionType, uint8_t, uint8_t, uint8_t>(),
              nb::arg("decision_type"), nb::arg("primary_id") = 0, nb::arg("secondary_id") = 0, nb::arg("flags") = 0)
         .def_rw("decision_type", &ts::MicroAction::decision_type)
@@ -485,9 +533,6 @@ NB_MODULE(ts_engine, m) {
            "(padding included) -- which is how P23 checks a composed step against the two E4 steps.");
 
     // Engine class
-        m.def("has_held_scoring_card", &ts::Engine::has_held_scoring_card);
-    m.def("is_held_scoring_game_over", &ts::Engine::is_held_scoring_game_over);
-    m.def("is_held_scoring_loss", &ts::Engine::is_held_scoring_loss);
 
     nb::class_<ts::StateMachine>(m, "StateMachine")
         .def_static("advance_headline_step", &ts::StateMachine::advance_headline_step)
@@ -534,13 +579,8 @@ NB_MODULE(ts_engine, m) {
             }
             return res;
         })
-        .def_static("get_flat_action_mask", [](const ts::GameState& state, bool merged_influence) {
-            size_t shape[1] = { ts::FLAT_ACTION_SPACE_SIZE };
-            uint8_t* data = new uint8_t[ts::FLAT_ACTION_SPACE_SIZE];
-            ts::Engine::get_flat_action_mask(state, data, merged_influence);
-            nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
-            return nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(data, 1, shape, owner);
-        }, nb::arg("state"), nb::arg("merged_influence") = false,
+        .def_static("get_flat_action_mask", &flat_mask_array,
+           nb::arg("state"), nb::arg("merged_influence") = false,
            "The flat legal mask. merged_influence=True is the E4.1 view (P23): at an op-choice "
            "node, NODE slot X means 'influence, first point in X'.")
         .def_static("try_step_flat", [](ts::GameState& state, uint16_t action_idx, bool auto_advance,
@@ -874,6 +914,7 @@ NB_MODULE(ts_engine, m) {
                      if (forced && forced->shape(0) < self.listed())
                          throw std::invalid_argument("step: one forced action (or -1) per listed row");
                      const float* lg = logits.data();
+                     require_no_nan(lg, self.listed() * ts::FLAT_ACTION_SPACE_SIZE, "step: logits");
                      const int32_t* fa = forced ? forced->data() : nullptr;
                      nb::gil_scoped_release release;
                      self.step(lg, fa);
@@ -1071,13 +1112,21 @@ NB_MODULE(ts_engine, m) {
                      size_t R = 0;
                      for (const auto& j : jobs) R += j.decisions.size();
                      const size_t PB = (ts::FLAT_ACTION_SPACE_SIZE + 7) / 8;
-                     float* bases = new float[std::max<size_t>(1, R * W)];
-                     uint8_t* pools = new uint8_t[std::max<size_t>(1, R * 110)];
-                     uint8_t* lefts = new uint8_t[std::max<size_t>(1, R * 110)];
-                     int64_t* job_of = new int64_t[std::max<size_t>(1, R)];
-                     int64_t* acts = new int64_t[std::max<size_t>(1, R)];
-                     uint8_t* hands = new uint8_t[std::max<size_t>(1, jobs.size() * N * 110)];
-                     uint8_t* packed = new uint8_t[std::max<size_t>(1, R * N * PB)];
+                     // Owned until the capsules take them at the end, so a throw on the way frees them.
+                     auto bases_p = std::make_unique<float[]>(std::max<size_t>(1, R * W));
+                     auto pools_p = std::make_unique<uint8_t[]>(std::max<size_t>(1, R * 110));
+                     auto lefts_p = std::make_unique<uint8_t[]>(std::max<size_t>(1, R * 110));
+                     auto job_of_p = std::make_unique<int64_t[]>(std::max<size_t>(1, R));
+                     auto acts_p = std::make_unique<int64_t[]>(std::max<size_t>(1, R));
+                     auto hands_p = std::make_unique<uint8_t[]>(std::max<size_t>(1, jobs.size() * N * 110));
+                     auto packed_p = std::make_unique<uint8_t[]>(std::max<size_t>(1, R * N * PB));
+                     float* bases = bases_p.get();
+                     uint8_t* pools = pools_p.get();
+                     uint8_t* lefts = lefts_p.get();
+                     int64_t* job_of = job_of_p.get();
+                     int64_t* acts = acts_p.get();
+                     uint8_t* hands = hands_p.get();
+                     uint8_t* packed = packed_p.get();
                      {
                          nb::gil_scoped_release release;
                          size_t r = 0;
@@ -1111,19 +1160,19 @@ NB_MODULE(ts_engine, m) {
                              }
                          }
                      }
-                     auto own_f = [](float* p) { return nb::capsule(p, [](void* q) noexcept { delete[] static_cast<float*>(q); }); };
-                     auto own_u = [](uint8_t* p) { return nb::capsule(p, [](void* q) noexcept { delete[] static_cast<uint8_t*>(q); }); };
-                     auto own_i = [](int64_t* p) { return nb::capsule(p, [](void* q) noexcept { delete[] static_cast<int64_t*>(q); }); };
+                     auto own_f = [](std::unique_ptr<float[]>& p) { return nb::capsule(p.release(), [](void* q) noexcept { delete[] static_cast<float*>(q); }); };
+                     auto own_u = [](std::unique_ptr<uint8_t[]>& p) { return nb::capsule(p.release(), [](void* q) noexcept { delete[] static_cast<uint8_t*>(q); }); };
+                     auto own_i = [](std::unique_ptr<int64_t[]>& p) { return nb::capsule(p.release(), [](void* q) noexcept { delete[] static_cast<int64_t*>(q); }); };
                      size_t s_b[2] = { R, W }, s_p[2] = { R, 110 }, s_r[1] = { R }, s_h[3] = { jobs.size(), N, 110 },
                             s_m[3] = { R, N, PB };
                      return nb::make_tuple(
-                         nb::ndarray<nb::numpy, float, nb::ndim<2>>(bases, 2, s_b, own_f(bases)),
-                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(pools, 2, s_p, own_u(pools)),
-                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(lefts, 2, s_p, own_u(lefts)),
-                         nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(job_of, 1, s_r, own_i(job_of)),
-                         nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(acts, 1, s_r, own_i(acts)),
-                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<3>>(hands, 3, s_h, own_u(hands)),
-                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<3>>(packed, 3, s_m, own_u(packed)));
+                         nb::ndarray<nb::numpy, float, nb::ndim<2>>(bases, 2, s_b, own_f(bases_p)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(pools, 2, s_p, own_u(pools_p)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<2>>(lefts, 2, s_p, own_u(lefts_p)),
+                         nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(job_of, 1, s_r, own_i(job_of_p)),
+                         nb::ndarray<nb::numpy, int64_t, nb::ndim<1>>(acts, 1, s_r, own_i(acts_p)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<3>>(hands, 3, s_h, own_u(hands_p)),
+                         nb::ndarray<nb::numpy, uint8_t, nb::ndim<3>>(packed, 3, s_m, own_u(packed_p)));
                  }, nb::arg("features") = 0u,
                  "(bases R x W, pools R x 110, lefts R x 110, job_of R, actions R, hands J x N x 110, packed masks "
                  "R x N x 28): every job's recorded decisions, for the caller to build the rows on its device.")
@@ -1250,16 +1299,12 @@ NB_MODULE(ts_engine, m) {
             .def("step", [](RB& self, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> logits) {
                      if (logits.shape(0) != self.listed() || logits.shape(1) != ts::FLAT_ACTION_SPACE_SIZE)
                          throw std::invalid_argument("step: logits must be (rows of the last fill_live, action space)");
+                     require_no_nan(logits.data(), logits.size(), "step: logits");
                      self.step(logits.data());
                  }, nb::arg("logits"),
                  "Advance the rows the last fill_live listed by the masked argmax of each logits row.")
             .def("fill_leaves", [arrays](RB& self) {
-                     size_t n = 0;
-                     for (size_t r = 0; r < self.rows(); ++r) {
-                         const auto& row = self.row(r);
-                         n += (row.done && !row.terminal && !row.refused && !row.leaf_valued) ? 1 : 0;
-                     }
-                     auto [obs, masks, o, mk] = arrays(n, self.obs_width());
+                     auto [obs, masks, o, mk] = arrays(self.leaves_pending(), self.obs_width());
                      self.fill_leaves(obs, masks);
                      return nb::make_tuple(o, mk);
                  }, "(observations, masks) of the rows at their horizon and not yet valued, each from "
@@ -1267,6 +1312,7 @@ NB_MODULE(ts_engine, m) {
             .def("set_leaf_values", [](RB& self, nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> v) {
                      if (v.shape(0) != self.leaves_listed())
                          throw std::invalid_argument("set_leaf_values: one value per row of the last fill_leaves");
+                     require_no_nan(v.data(), v.size(), "set_leaf_values");
                      self.set_leaf_values(v.data());
                  }, nb::arg("values"))
             .def("values", [](const RB& self) {
@@ -1304,6 +1350,7 @@ NB_MODULE(ts_engine, m) {
                  nb::ndarray<const uint8_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> mask, size_t k) {
                   if (logits.shape(0) != ts::FLAT_ACTION_SPACE_SIZE || mask.shape(0) != ts::FLAT_ACTION_SPACE_SIZE)
                       throw std::invalid_argument("rollout_candidates: logits and mask are over the flat action space");
+                  require_no_nan(logits.data(), logits.size(), "rollout_candidates: logits");
                   std::vector<uint16_t> out(k);
                   const size_t n = ts::rollout::top_candidates(logits.data(), mask.data(), k, out.data());
                   return std::vector<int>(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(n));
@@ -1316,6 +1363,7 @@ NB_MODULE(ts_engine, m) {
                         const std::string& rule) {
                   if (logits.shape(0) != ts::FLAT_ACTION_SPACE_SIZE || mask.shape(0) != ts::FLAT_ACTION_SPACE_SIZE)
                       throw std::invalid_argument("rollout_decide: logits and mask are over the flat action space");
+                  require_no_nan(logits.data(), logits.size(), "rollout_decide: logits");
                   if (position >= batch.positions()) throw std::out_of_range("position");
                   std::vector<uint16_t> c;
                   for (int a : candidates) {
@@ -1349,16 +1397,13 @@ NB_MODULE(ts_engine, m) {
 
 
     // Flat Action Mask & Codec exports
-    m.def("get_flat_action_mask", [](const ts::GameState& state, bool merged_influence) {
-        size_t shape[1] = { ts::FLAT_ACTION_SPACE_SIZE };
-        uint8_t* data = new uint8_t[ts::FLAT_ACTION_SPACE_SIZE];
-        ts::Engine::get_flat_action_mask(state, data, merged_influence);
-        nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
-        return nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(data, 1, shape, owner);
-    }, nb::arg("state"), nb::arg("merged_influence") = false);
+    m.def("get_flat_action_mask", &flat_mask_array,
+          nb::arg("state"), nb::arg("merged_influence") = false);
 
-    m.def("decode_flat_action", &ts::ActionMask::decode_flat_action_212);
-    m.def("encode_micro_action", &ts::ActionMask::encode_micro_action_212);
+    m.def("decode_flat_action", &checked_decode,
+          "The MicroAction a flat index stands for here. Raises ValueError outside the space.");
+    m.def("encode_micro_action", &checked_encode,
+          "The flat index of a MicroAction. Raises ValueError for one no slot encodes.");
 
     // One layout, v2.3, 3824 floats -- so there is no `layout` argument to default wrongly.
     //
@@ -1412,6 +1457,19 @@ NB_MODULE(ts_engine, m) {
     //: OBS_SIZE cannot be misread as choosing between several.
     m.attr("OBS_SIZE") = static_cast<int>(ts::OBS_SIZE_V23);
 
+    //: The flat action space's slots (ts::flat_slots), so Python reads them instead of keeping
+    //: a copy (bindings/action_encoder.py).
+    m.attr("FLAT_ACTION_SPACE_SIZE") = static_cast<int>(ts::flat_slots::SIZE);
+    m.attr("FLAT_CARD") = static_cast<int>(ts::flat_slots::CARD);
+    m.attr("FLAT_RESOLUTION") = static_cast<int>(ts::flat_slots::RESOLUTION);
+    m.attr("FLAT_OP_MODE") = static_cast<int>(ts::flat_slots::OP_MODE);
+    m.attr("FLAT_ROLL_DIE") = static_cast<int>(ts::flat_slots::ROLL_DIE);
+    m.attr("FLAT_NODE") = static_cast<int>(ts::flat_slots::NODE);
+    m.attr("FLAT_BRANCH") = static_cast<int>(ts::flat_slots::BRANCH);
+    m.attr("FLAT_CONFIRM_DONE") = static_cast<int>(ts::flat_slots::CONFIRM_DONE);
+    m.attr("FLAT_DEFCON_VALUE") = static_cast<int>(ts::flat_slots::DEFCON_VALUE);
+    m.attr("FLAT_REGION") = static_cast<int>(ts::flat_slots::REGION);
+
     //: Which compiler built this extension, e.g. "clang 21.1.8". The engine is built with clang
     //: (root CMakeLists.txt); tests/bindings/test_build_toolchain.py checks the module actually
     //: imported, which is the one a stale build directory can quietly get wrong.
@@ -1424,16 +1482,11 @@ NB_MODULE(ts_engine, m) {
 #endif
 
     nb::class_<ts::ActionMask>(m, "ActionMask")
-        .def_static("generate_flat_mask", [](const ts::GameState& state, bool merged_influence) {
-            size_t shape[1] = { ts::FLAT_ACTION_SPACE_SIZE };
-            uint8_t* data = new uint8_t[ts::FLAT_ACTION_SPACE_SIZE];
-            ts::Engine::get_flat_action_mask(state, data, merged_influence);
-            nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<uint8_t*>(p); });
-            return nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(data, 1, shape, owner);
-        }, nb::arg("state"), nb::arg("merged_influence") = false)
+        .def_static("generate_flat_mask", &flat_mask_array,
+                    nb::arg("state"), nb::arg("merged_influence") = false)
         .def_static("is_merged_influence_action", &ts::ActionMask::is_merged_influence_action)
-        .def_static("decode_flat_action", &ts::ActionMask::decode_flat_action_212)
-        .def_static("encode_micro_action", &ts::ActionMask::encode_micro_action_212);
+        .def_static("decode_flat_action", &checked_decode)
+        .def_static("encode_micro_action", &checked_encode);
 
     // Vectorized Batch Runner for fast parallel self-play rollouts
     struct VectorizedBatchRunner {
@@ -1570,22 +1623,25 @@ NB_MODULE(ts_engine, m) {
         }
 
         void reset_game(size_t idx, uint64_t seed) {
-            if (idx >= num_envs) return;
+            if (idx >= num_envs) throw std::out_of_range("reset_game: env index out of range");
             slots[idx].modify([&](ts::GameState& g) { ts::StateMachine::init_new_game(g, seed); });
             refresh_single(idx);
         }
 
-        void refresh_single(size_t idx) {
-            while (st(idx).current_phase != ts::Phase::GAME_OVER &&
-                   st(idx).victory_points < 20 && st(idx).victory_points > -20 &&
+        // Rolls every unattended die in front of env `idx`. Without the check a refused ROLL_DIE
+        // leaves the loop condition unchanged and this spins forever; breaking leaves the chance
+        // node in place, where the empty mask reports it loudly.
+        void drain_chance(size_t idx) {
+            while (!ts::Engine::is_terminal(st(idx)) &&
                    st(idx).ctx().decision_player == ts::Player::NONE &&
                    st(idx).ctx().decision_type == ts::DecisionType::ROLL_DIE) {
-                ts::MicroAction chance_ma{ts::DecisionType::ROLL_DIE, 0, 0, 0};
-                // Must match step_flat_all's copy of this drain: without the check a refused
-                // ROLL_DIE leaves the loop condition unchanged and this spins forever. Breaking
-                // leaves the chance node in place, where the empty mask reports it loudly.
+                const ts::MicroAction chance_ma{ts::DecisionType::ROLL_DIE, 0, 0, 0};
                 if (!slots[idx].step(chance_ma)) break;
             }
+        }
+
+        void refresh_single(size_t idx) {
+            drain_chance(idx);
             ts::Player p = (st(idx).ctx().decision_player != ts::Player::NONE)
                 ? st(idx).ctx().decision_player : st(idx).phasing_player;
             float* row = &obs_buffer[idx * obs_width];
@@ -1611,9 +1667,7 @@ NB_MODULE(ts_engine, m) {
             gomp_parallel_for(static_cast<int64_t>(num_envs), [&](int64_t i) {
                 if (capture_predeal) predeal_flag[i] = 0;
                 if (static_cast<size_t>(i) >= act_count) return;
-                if (st(i).current_phase == ts::Phase::GAME_OVER ||
-                    st(i).victory_points >= 20 ||
-                    st(i).victory_points <= -20) {
+                if (ts::Engine::is_terminal(st(i))) {
                     results[i] = 2; // Terminal
                     return;
                 }
@@ -1632,13 +1686,7 @@ NB_MODULE(ts_engine, m) {
                         }
                         slots[i].auto_advance();
                     } else {
-                        while (st(i).current_phase != ts::Phase::GAME_OVER &&
-                               st(i).victory_points < 20 && st(i).victory_points > -20 &&
-                               st(i).ctx().decision_player == ts::Player::NONE &&
-                               st(i).ctx().decision_type == ts::DecisionType::ROLL_DIE) {
-                            ts::MicroAction chance_ma{ts::DecisionType::ROLL_DIE, 0, 0, 0};
-                            if (!slots[i].step(chance_ma)) break;
-                        }
+                        drain_chance(static_cast<size_t>(i));
                     }
                 }
                 results[i] = ok ? 1 : 0;
@@ -1670,9 +1718,7 @@ NB_MODULE(ts_engine, m) {
         std::vector<bool> get_terminals() const {
             std::vector<bool> res(num_envs);
             for (size_t i = 0; i < num_envs; ++i) {
-                res[i] = (st(i).current_phase == ts::Phase::GAME_OVER ||
-                          st(i).victory_points >= 20 ||
-                          st(i).victory_points <= -20);
+                res[i] = ts::Engine::is_terminal(st(i));
             }
             return res;
         }
@@ -1680,10 +1726,7 @@ NB_MODULE(ts_engine, m) {
         std::vector<float> get_terminal_utilities() const {
             std::vector<float> res(num_envs, 0.0f);
             for (size_t i = 0; i < num_envs; ++i) {
-                if (st(i).victory_points >= 20) res[i] = 1.0f;
-                else if (st(i).victory_points <= -20) res[i] = -1.0f;
-                else if (st(i).victory_points > 0) res[i] = 1.0f;
-                else if (st(i).victory_points < 0) res[i] = -1.0f;
+                res[i] = ts::Engine::get_terminal_utility(st(i));
             }
             return res;
         }
@@ -1841,10 +1884,13 @@ NB_MODULE(ts_engine, m) {
                  if (!self.capture_predeal) throw std::runtime_error("get_predeal: capture is off (set_capture_predeal)");
                  size_t shape[2] = { self.num_envs, self.obs_width };
                  size_t fshape[1] = { self.num_envs };
+                 // The runner owns the buffers, so the views hold a reference to it: dropping the
+                 // runner while a view lives would otherwise leave it reading freed memory.
+                 nb::handle owner = nb::find(&self);
                  return nb::make_tuple(
-                     nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(self.predeal_flag.data(), 1, fshape, nb::handle()).cast(),
-                     nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.predeal_us.data(), 2, shape, nb::handle()).cast(),
-                     nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.predeal_ussr.data(), 2, shape, nb::handle()).cast());
+                     nb::ndarray<nb::numpy, uint8_t, nb::ndim<1>>(self.predeal_flag.data(), 1, fshape, owner).cast(),
+                     nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.predeal_us.data(), 2, shape, owner).cast(),
+                     nb::ndarray<nb::numpy, float, nb::ndim<2>>(self.predeal_ussr.data(), 2, shape, owner).cast());
              },
              "(flags, obs_us, obs_ussr) of the last step: per env, whether it passed its turn-end park, and "
              "that position's observation from each side. Views into the runner: copy before the next step.")

@@ -17,7 +17,19 @@ are cited from elsewhere; keep them.
     `auto_advance_step()`, `is_terminal()`, `get_terminal_utility()`, `get_legal_action_mask()`,
     `get_flat_action_mask()`, `get_legal_action_indices()`, and the held-scoring predicates.
   - RL: `extract_observation()`, `decode_flat_action()`, `encode_micro_action()`, `ActionMask`,
-    `VectorizedBatchRunner` (contiguous multi-game simulation).
+    `VectorizedBatchRunner` (contiguous multi-game simulation). `decode_flat_action` raises
+    `ValueError` outside the flat space and `encode_micro_action` for a MicroAction no slot encodes
+    (the engine returns NONE / -1 there; nothing is aliased to CONFIRM_DONE). The slots themselves
+    are exported as `ts.FLAT_*` (`FLAT_CARD`, `FLAT_RESOLUTION`, ..., `FLAT_ACTION_SPACE_SIZE`), and
+    `bindings/action_encoder.py` reads them rather than keeping a copy.
+  - **Fail loudly at the boundary** (2026-10-28): `ts.anomalies_reported()` counts this thread's
+    engine anomalies (a caller that must not continue past one checks it around a step);
+    `state_from_save_dict/json` refuse out-of-range enums, DEFCON, VP, turn, tracks and card
+    locations (a save that round-trips is not therefore a position); the rollout entry points
+    (`RolloutBatch.step/set_leaf_values`, the playout labeller's `step`, `rollout_candidates`,
+    `rollout_decide`) refuse NaN; `VectorizedBatchRunner.reset_game` raises on a bad index;
+    `get_predeal`'s views hold a reference to the runner. A `BatchedSearch` node expanded with an
+    empty mask is reported as an anomaly before being valued 0.
   - **The merged-influence view** (P23 / E4.1, [`engine/AGENTS.md`](../engine/AGENTS.md) §4):
     `merged_influence=False` on `get_flat_action_mask`, `ActionMask.generate_flat_mask`,
     `Engine.step_flat` / `try_step_flat`, plus `ActionMask.is_merged_influence_action(state, idx)`.

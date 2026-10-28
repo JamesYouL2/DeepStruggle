@@ -868,6 +868,51 @@ bool list_of(const Value& obj, const char* key, const Value** out, std::string* 
     return true;
 }
 
+// A save that parsed is not yet a position: every enum the engine switches on and every array it
+// indexes by a stored value must be in range, or the engine runs on undefined behaviour. A round
+// trip through save() does not catch this -- an out-of-range number writes back out unchanged.
+bool check_ranges(const GameState& s, std::string* error) {
+    auto fail = [&](const std::string& what) {
+        if (error) *error = what;
+        return false;
+    };
+    auto player_ok = [](Player p) {
+        return p == Player::US || p == Player::USSR || p == Player::NONE;
+    };
+    if (static_cast<int>(s.current_phase) > static_cast<int>(Phase::GAME_OVER)) return fail("current_phase out of range");
+    if (!player_ok(s.phasing_player)) return fail("phasing_player out of range");
+    if (!player_ok(s.forced_card_player)) return fail("forced_card_player out of range");
+    if (!player_ok(s.china_card_holder)) return fail("china_card_holder out of range");
+    if (!player_ok(s.headline_first_owner) || !player_ok(s.headline_second_owner)) {
+        return fail("headline owner out of range");
+    }
+    if (s.defcon < 1 || s.defcon > 5) return fail("defcon outside 1..5");
+    if (s.victory_points < -20 || s.victory_points > 20) return fail("victory_points outside -20..20");
+    if (s.turn > 11) return fail("turn outside 0..11");
+    if (s.action_round > 8) return fail("action_round outside 0..8");
+    if (s.us_space_track > 8 || s.ussr_space_track > 8) return fail("space track outside 0..8");
+    for (uint8_t card : {s.headline_us_card, s.headline_ussr_card, s.headline_first_card,
+                         s.headline_second_card, s.forced_card_id}) {
+        if (card > 110) return fail("a headline or forced card id outside 0..110");
+    }
+    if (static_cast<int>(s.last_roll.type) > static_cast<int>(RollType::TURN_CLEANUP)) return fail("last_roll.type out of range");
+    if (!player_ok(s.last_roll.roller)) return fail("last_roll.roller out of range");
+    for (size_t i = 0; i <= s.ctx_stack_depth; ++i) {
+        const DecisionContext& c = s.ctx_stack[i];
+        const std::string at = "ctx_stack[" + std::to_string(i) + "]";
+        if (!player_ok(c.decision_player) || !player_ok(c.roll_actor)) return fail(at + ": player out of range");
+        if (static_cast<int>(c.decision_type) > static_cast<int>(DecisionType::ROLL_DIE)) return fail(at + ": decision_type out of range");
+        if (static_cast<int>(c.op_mode) > static_cast<int>(OpMode::REALIGN)) return fail(at + ": op_mode out of range");
+        if (static_cast<int>(c.pending_roll) > static_cast<int>(RollType::TURN_CLEANUP)) return fail(at + ": pending_roll out of range");
+    }
+    for (size_t i = 0; i <= 110; ++i) {
+        if (static_cast<int>(s.card_locations[i]) > static_cast<int>(CardLocation::HEADLINE_COMMITTED)) {
+            return fail("card_locations[" + std::to_string(i) + "] out of range");
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 bool load_save(const Value& d, GameState& out, std::string* error) {
@@ -1031,6 +1076,7 @@ bool load_save(const Value& d, GameState& out, std::string* error) {
             }
         }
     }
+    if (!check_ranges(s, error)) return false;
     out = s;
     return true;
 }

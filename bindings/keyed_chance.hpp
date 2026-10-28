@@ -33,6 +33,7 @@
 #include "ts/engine.hpp"
 #include "ts/game_state.hpp"
 #include "ts/prng.hpp"
+#include "rollout_batch.hpp"
 
 namespace ts::keyed {
 
@@ -59,12 +60,6 @@ inline uint64_t situation(const GameState& s, uint64_t world_key, bool keyed2) n
     return h;
 }
 
-// The turn-end chance node, whose step deals the next turn's cards (rollout::at_turn_cleanup's test).
-inline bool at_turn_end(const GameState& s) noexcept {
-    return s.current_phase != Phase::GAME_OVER && s.victory_points < 20 && s.victory_points > -20 &&
-           s.ctx().decision_player == Player::NONE && s.ctx().decision_type == DecisionType::ROLL_DIE &&
-           s.ctx().pending_roll == RollType::TURN_CLEANUP;
-}
 
 // The next deal from one deck order per world: each card a fixed priority hash(world key, card), and
 // each player dealt the deck's cards in priority order (the USSR first, as the engine deals) through
@@ -117,7 +112,7 @@ inline void force_deal(GameState& s, uint64_t world_key) noexcept {
 // Key the stream for the step about to be taken from `s` (and, at the turn's end, the deal).
 inline void key(GameState& s, uint64_t world_key, bool keyed2) noexcept {
     s.rng_state = situation(s, world_key, keyed2);
-    if (at_turn_end(s)) force_deal(s, world_key);
+    if (rollout::at_turn_cleanup(s)) force_deal(s, world_key);   // the turn end deals next
 }
 
 // Engine::auto_advance_step, one micro-step at a time with the stream keyed before each: the

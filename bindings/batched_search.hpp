@@ -41,6 +41,7 @@
 #include "ts/cached_state.hpp"
 #include "ts/engine.hpp"
 #include "ts/game_state.hpp"
+#include "ts/invariant.hpp"
 #include "ts/micro_action.hpp"
 #include "ts/observation.hpp"
 #include "gomp_parallel.hpp"
@@ -495,6 +496,10 @@ private:
             }
         }
         if (k == 0) {
+            // A live position with nothing legal is an engine defect, not a draw: logged loudly,
+            // as the runner logs it, and then valued 0 so the search can finish.
+            ts::report_anomaly("search expanded a non-terminal node with an empty mask",
+                               nd.state.state());
             nd.terminal = true;
             nd.value_us = 0.0;
             nd.expanded = true;

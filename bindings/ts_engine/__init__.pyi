@@ -186,6 +186,11 @@ INFLUENCE: OpMode = OpMode.INFLUENCE
 
 REALIGN: OpMode = OpMode.REALIGN
 
+def anomalies_reported() -> int:
+    """
+    How many anomalies (ts::report_anomaly: a state that should not arise, logged to stderr) this thread has reported. A caller that must not continue past one reads it before and after a step.
+    """
+
 def set_mask_cache_checks(on: bool) -> None:
     """
     Check every cached legal mask against a fresh one (aborting on a difference).
@@ -317,8 +322,6 @@ class MicroAction:
 
     @overload
     def __init__(self, decision_type: DecisionType, primary_id: int = 0, secondary_id: int = 0, flags: int = 0) -> None: ...
-
-    def clone(self) -> GameState: ...
 
     @property
     def decision_type(self) -> DecisionType: ...
@@ -640,12 +643,6 @@ class GameState:
         """
         The GameState's memory, for exact equality tests. It is trivially copyable, so two states reached from copies of one origin by the same steps compare equal byte for byte (padding included) -- which is how P23 checks a composed step against the two E4 steps.
         """
-
-def has_held_scoring_card(arg0: GameState, arg1: Player, /) -> bool: ...
-
-def is_held_scoring_game_over(arg: GameState, /) -> bool: ...
-
-def is_held_scoring_loss(arg0: GameState, arg1: Player, /) -> bool: ...
 
 class StateMachine:
     @staticmethod
@@ -1110,9 +1107,15 @@ def state_from_save_json(text: str) -> GameState:
 
 def get_flat_action_mask(state: GameState, merged_influence: bool = False) -> Annotated[NDArray[numpy.uint8], dict(shape=(None,))]: ...
 
-def decode_flat_action(arg0: GameState, arg1: int, /) -> MicroAction: ...
+def decode_flat_action(arg0: GameState, arg1: int, /) -> MicroAction:
+    """
+    The MicroAction a flat index stands for here. Raises ValueError outside the space.
+    """
 
-def encode_micro_action(arg0: GameState, arg1: MicroAction, /) -> int: ...
+def encode_micro_action(arg0: GameState, arg1: MicroAction, /) -> int:
+    """
+    The flat index of a MicroAction. Raises ValueError for one no slot encodes.
+    """
 
 def extract_observation(state: GameState, perspective: Player) -> Annotated[NDArray[numpy.float32], dict(shape=(None,))]: ...
 
@@ -1137,6 +1140,26 @@ OBS_FLAG_STAGED_CARDS: int = 1
 OBS_SIZE_V23: int = 3824
 
 OBS_SIZE: int = 3824
+
+FLAT_ACTION_SPACE_SIZE: int = 220
+
+FLAT_CARD: int = 0
+
+FLAT_RESOLUTION: int = 110
+
+FLAT_OP_MODE: int = 112
+
+FLAT_ROLL_DIE: int = 115
+
+FLAT_NODE: int = 116
+
+FLAT_BRANCH: int = 200
+
+FLAT_CONFIRM_DONE: int = 208
+
+FLAT_DEFCON_VALUE: int = 209
+
+FLAT_REGION: int = 214
 
 BUILD_COMPILER: str
 

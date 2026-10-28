@@ -1,6 +1,6 @@
-"""Action Encoder for Twilight Struggle Flat 212-dimensional MicroAction Space."""
+"""Action encoder for the flat MicroAction space (220 wide since P17; "212" is a historical name)."""
 
-from typing import List, Optional
+from typing import List
 import numpy as np
 import ts_engine as ts
 
@@ -10,50 +10,50 @@ REGION_NAMES = ("Europe", "Asia", "Middle East", "Africa", "Central America", "S
 
 
 class ActionEncoder:
-    """Encodes and decodes between discrete flat action index [0..211] and ts.MicroAction.
+    """Encodes and decodes between a flat action index and ts.MicroAction.
 
-    Action Vocabulary Breakdown (N = 212):
-      [0..109]   (110): SELECT_CARD (Card IDs 1..110, index = card_id - 1)
-      [110..114] (5)  : SELECT_PLAY_MODE -- the merged resolution node
-                        (0: EVENT, 1: SPACE, 2: OPS_INFLUENCE, 3: OPS_COUP, 4: OPS_REALIGN)
-      [112..114]      : SELECT_OP_MODE (0: INFLUENCE, 1: COUP, 2: REALIGN) -- the *same* three
-                        slots, reused for the deferred Ops choice that follows an event-first
-                        event. "Spend Ops on X" means the same thing at either node, so they
-                        share an index and the decision type says which one is being asked.
-      [115]      (1)  : ROLL_DIE
-      [116..118] (3)  : unassigned after the P17 merge -- decoding one is refused
-      [119..202] (84) : POINT_NODE (Country IDs 0..83, index = 119 + country_id)
-      [203..210] (8)  : CHOOSE_BRANCH (Branches 0..7, index = 203 + branch_id)
-      [211]      (1)  : CONFIRM_DONE / PASS (0x80 / early stop)
+    The slots are the engine's (ts::flat_slots, read here from the ts.FLAT_* exports):
+      CARD_OFFSET          110 wide: SELECT_CARD, index = card_id - 1
+      PLAY_MODE_OFFSET       5 wide: SELECT_PLAY_MODE, the merged resolution node
+                                     (0 EVENT, 1 SPACE, 2 OPS_INFLUENCE, 3 OPS_COUP, 4 OPS_REALIGN)
+      OP_MODE_OFFSET         3 wide: SELECT_OP_MODE (0 INFLUENCE, 1 COUP, 2 REALIGN) -- the *same*
+                                     slots as the three OPS_* resolutions: "spend Ops on X" means the
+                                     same at either node, and the decision type says which is asked
+      ROLL_DIE_INDEX         1:      ROLL_DIE
+      NODE_OFFSET           84 wide: POINT_NODE, index = NODE_OFFSET + country_id
+      BRANCH_OFFSET          8 wide: CHOOSE_BRANCH, index = BRANCH_OFFSET + branch_id
+      CONFIRM_DONE_INDEX     1:      CONFIRM_DONE / PASS
+      DEFCON_VALUE_OFFSET    5 wide: "set DEFCON to V" (Summit, How I Learned)
+      REGION_OFFSET          6 wide: a region (Chernobyl)
 
     CHOOSE_TIMING_BRANCH is retired: on an opponent card EVENT is the event-first branch and
     any OPS_* is the ops-first branch, so the timing is carried by the resolution itself.
     """
 
-    FLAT_ACTION_SIZE = 220
+    FLAT_ACTION_SIZE: int = ts.FLAT_ACTION_SPACE_SIZE
 
-    CARD_OFFSET = 0
-    PLAY_MODE_OFFSET = 110
+    CARD_OFFSET: int = ts.FLAT_CARD
+    PLAY_MODE_OFFSET: int = ts.FLAT_RESOLUTION
     # The deferred Ops choice lands on the three OPS_* resolution slots, not on a block of its
     # own: OP_MODE_OFFSET + OpMode.INFLUENCE == PLAY_MODE_OFFSET + Resolution.OPS_INFLUENCE.
-    OP_MODE_OFFSET = 112
-    ROLL_DIE_INDEX = 115
-    NODE_OFFSET = 116
-    BRANCH_OFFSET = 200
-    CONFIRM_DONE_INDEX = 208
+    OP_MODE_OFFSET: int = ts.FLAT_OP_MODE
+    ROLL_DIE_INDEX: int = ts.FLAT_ROLL_DIE
+    NODE_OFFSET: int = ts.FLAT_NODE
+    BRANCH_OFFSET: int = ts.FLAT_BRANCH
+    CONFIRM_DONE_INDEX: int = ts.FLAT_CONFIRM_DONE
     #: P17 section 4. Two heads that name concepts the game already has, rather than generic
     #: branch slots: "set DEFCON to V" (Summit, How I Learned) and a region (Chernobyl).
-    DEFCON_VALUE_OFFSET = 209
-    REGION_OFFSET = 214
+    DEFCON_VALUE_OFFSET: int = ts.FLAT_DEFCON_VALUE
+    REGION_OFFSET: int = ts.FLAT_REGION
 
     @staticmethod
     def encode(state: ts.GameState, action: ts.MicroAction) -> int:
-        """Encode ts.MicroAction to flat index [0..211]."""
+        """The flat index of a MicroAction; ValueError for one no slot encodes."""
         return int(ts.encode_micro_action(state, action))
 
     @staticmethod
     def decode(state: ts.GameState, action_idx: int) -> ts.MicroAction:
-        """Decode flat index [0..211] to ts.MicroAction."""
+        """The MicroAction a flat index stands for; ValueError outside the space."""
         if action_idx < 0 or action_idx >= ActionEncoder.FLAT_ACTION_SIZE:
             raise ValueError(f"Action index {action_idx} out of range [0..{ActionEncoder.FLAT_ACTION_SIZE-1}]")
         return ts.decode_flat_action(state, action_idx)

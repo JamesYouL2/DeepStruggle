@@ -187,6 +187,12 @@ public:
     bool all_done() const noexcept { return live() == 0; }
     size_t listed() const noexcept { return live_order_.size(); }        // rows the last fill_live wrote
     size_t leaves_listed() const noexcept { return leaf_order_.size(); } // rows the last fill_leaves wrote
+    // Rows at their horizon still waiting for a leaf value: what the next fill_leaves writes.
+    size_t leaves_pending() const noexcept {
+        size_t n = 0;
+        for (const auto& r : rows_) n += (r.done && !r.terminal && !r.refused && !r.leaf_valued) ? 1 : 0;
+        return n;
+    }
     size_t refused() const noexcept;        // rows the engine refused a step on (an error)
     const char* last_error() const noexcept { return error_; }
 
