@@ -247,7 +247,10 @@ def spec_from_dict(d: Mapping[str, object]) -> Inference:
         default = getattr(cls(), n)
         if isinstance(default, bool) != isinstance(v, bool) or (
                 isinstance(default, (int, float)) and not isinstance(v, (int, float))) or (
-                isinstance(default, str) and not isinstance(v, str)):
+                isinstance(default, str) and not isinstance(v, str)) or (
+                # An integer field takes an integer only: 4.0 or 4.5 for `k` would be stored, run
+                # (or truncated) and named differently from the id that registered it.
+                isinstance(default, int) and not isinstance(default, bool) and not isinstance(v, int)):
             raise PlayerSpecError(f"{kind}.{n}: expected {type(default).__name__}, got {v!r}")
         if isinstance(v, bool) or isinstance(v, str):
             values[n] = v
