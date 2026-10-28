@@ -37,18 +37,32 @@ from __future__ import annotations
 import gzip
 import json
 import os
-from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, ContextManager, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import numpy as np
+import torch
 import ts_engine as ts
 
+from ai.eval.converter_tap import ConverterTap, tap_converter_observations
+from ai.eval.loading import load_for_eval
+from bindings.ts_env import observe
+from tools.lib.checkpoint_id import checkpoint_label
+from tools.lib.player_agent import resolve_device
 from ai.eval.safety import WinDecision, classify_legal_actions, fold_win_opportunities
 from tools.lib.ts_replayer_convert import Conversion, convert_game
 
 # Predicted win probability for a batch of (observation, mask) pairs, in the mover's frame.
 ValueFn = Callable[[np.ndarray, np.ndarray], np.ndarray]
+
+
+class Critic(NamedTuple):
+    """A batched `v_win` evaluator and the observation feature set its network reads. The samples
+    the converter emits carry the base layout; the critic is fed its own set, built from each
+    sample's position as the conversion passes it."""
+
+    fn: ValueFn
+    features: int
 
 US = 1
 USSR = -1
@@ -131,25 +145,16 @@ class _Observation:
     movers: List[int] = field(default_factory=list)
     win_actions: List[Set[int]] = field(default_factory=list)
     legal_counts: List[int] = field(default_factory=list)
+    # Each sample's observation in the critic's feature set, when a critic is measuring.
+    critic_obs: List[np.ndarray] = field(default_factory=list)
 
 
-@contextmanager
-def _observing_conversion(obs: _Observation) -> Iterator[None]:
-    """Wraps `ts.extract_observation` for the duration of one conversion.
+def _observing_conversion(obs: _Observation, features: Optional[int]) -> ContextManager[ConverterTap]:
+    """Records, at every sample the converter emits, what the human faced there
+    (`ai.eval.converter_tap`). Truncating this record to `len(conv.samples)` afterwards reproduces
+    the converter's own deletion of a trailing fragment turn exactly."""
 
-    The converter's single call site for it is the line that appends to `Conversion.samples`,
-    so one wrapper call corresponds to exactly one sample and the two lists stay aligned. The
-    conversion may later drop a trailing turn (`_rewind_to_turn_start` deletes a suffix of
-    `samples` when a turn's hand list turns out to be a fragment); truncating this record to
-    `len(conv.samples)` afterwards reproduces that deletion exactly.
-    """
-    original = ts.extract_observation
-
-    def observe(state: ts.GameState, perspective: ts.Player) -> Any:
-        # Named `perspective` to match the binding it replaces: a caller may pass it
-        # by keyword, and a wrapper with a different parameter name would break there
-        # and nowhere else.
-        mover = perspective
+    def on_sample(state: ts.GameState, mover: ts.Player) -> None:
         if not obs.state_ref:
             obs.state_ref.append(state)
         ctx = state.ctx()
@@ -172,13 +177,10 @@ def _observing_conversion(obs: _Observation) -> Iterator[None]:
         obs.turns.append(int(state.turn))
         obs.vps.append(int(state.victory_points))
         obs.movers.append(US if mover == ts.Player.US else USSR)
-        return original(state, mover)
+        if features is not None:
+            obs.critic_obs.append(observe(state, mover, features))
 
-    ts.extract_observation = observe
-    try:
-        yield
-    finally:
-        ts.extract_observation = original
+    return tap_converter_observations(on_sample)
 
 
 def _turn_boundaries(turns: Sequence[int], vps: Sequence[int],
@@ -205,7 +207,7 @@ def _turn_boundaries(turns: Sequence[int], vps: Sequence[int],
     return out
 
 
-def measure_game(game: Dict[str, Any], value_fn: Optional[ValueFn] = None) -> GameMeasurement:
+def measure_game(game: Dict[str, Any], critic: Optional[Critic] = None) -> GameMeasurement:
     """Converts one corpus game and records its arc, forced-win decisions and critic values."""
     replay_id = int(game.get("replay_id", -1))
     if not game.get("all_turns"):
@@ -214,8 +216,9 @@ def measure_game(game: Dict[str, Any], value_fn: Optional[ValueFn] = None) -> Ga
         # calling that a conversion failure would blame the converter for a missing download.
         return GameMeasurement(replay_id=replay_id, empty_log=True)
     obs = _Observation()
-    with _observing_conversion(obs):
+    with _observing_conversion(obs, critic.features if critic is not None else None) as tap:
         conv: Conversion = convert_game(game)
+    tap.verify(conv)
 
     out = GameMeasurement(replay_id=replay_id)
     if conv.skipped is not None:
@@ -248,10 +251,10 @@ def measure_game(game: Dict[str, Any], value_fn: Optional[ValueFn] = None) -> Ga
     out.vp_at_turn_end = _turn_boundaries(turns, vps, out.game_ended, final_vp, scored_turn)
 
     values: Optional[np.ndarray] = None
-    if value_fn is not None and n:
-        obs_batch = np.stack([np.asarray(s.obs, dtype=np.float32) for s in conv.samples])
+    if critic is not None and n:
+        obs_batch = np.stack(obs.critic_obs[:n])
         mask_batch = np.stack([np.asarray(s.mask) for s in conv.samples])
-        values = value_fn(obs_batch, mask_batch)
+        values = critic.fn(obs_batch, mask_batch)
 
     for i in range(n):
         kind = obs.node_kind[i]
@@ -283,7 +286,7 @@ def load_game(path: str) -> Dict[str, Any]:
     return dict(loaded)
 
 
-def measure_corpus(paths: Sequence[str], value_fn: Optional[ValueFn] = None,
+def measure_corpus(paths: Sequence[str], critic: Optional[Critic] = None,
                    progress: bool = True) -> CorpusMeasurement:
     """Measures every game given. A game that will not load or convert is counted, not skipped."""
     result = CorpusMeasurement()
@@ -294,7 +297,7 @@ def measure_corpus(paths: Sequence[str], value_fn: Optional[ValueFn] = None,
             result.load_errors.append((path, f"{type(exc).__name__}: {exc}"))
             continue
         try:
-            result.games.append(measure_game(game, value_fn))
+            result.games.append(measure_game(game, critic))
         except Exception as exc:
             result.games.append(GameMeasurement(
                 replay_id=int(game.get("replay_id", -1)),
@@ -476,16 +479,12 @@ def summarize_calibration(m: CorpusMeasurement,
 
 
 def make_value_fn(checkpoint: str, device: Optional[str] = None,
-                  batch_size: int = 512) -> Tuple[ValueFn, str]:
-    """Builds a batched `v_win` evaluator from a checkpoint, and returns it with its name."""
-    import torch
-
-    from tools.lib.player_agent import NeuralAgent, resolve_device
-
+                  batch_size: int = 512) -> Tuple[Critic, str]:
+    """Builds a batched `v_win` evaluator from a checkpoint, and returns it with its name. The value
+    heads ignore the mask, so the converter's E4 masks serve any view."""
     dev = resolve_device(device)
-    agent = NeuralAgent.from_checkpoint(checkpoint, device=dev)
-    model = agent.model
-    model.eval()
+    loaded = load_for_eval(checkpoint, dev, merged_ok=True)
+    model = loaded.model
 
     def value_fn(obs: np.ndarray, mask: np.ndarray) -> np.ndarray:
         out: List[np.ndarray] = []
@@ -497,7 +496,7 @@ def make_value_fn(checkpoint: str, device: Optional[str] = None,
                 out.append(v_win.squeeze(-1).float().cpu().numpy())
         return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
 
-    return value_fn, agent.name
+    return Critic(value_fn, loaded.features), checkpoint_label(checkpoint)
 
 
 def corpus_paths(directory: str) -> List[str]:
@@ -659,11 +658,11 @@ def main() -> None:
     paths = corpus_paths(args.corpus_dir)
     if args.limit:
         paths = paths[:args.limit]
-    value_fn: Optional[ValueFn] = None
+    critic: Optional[Critic] = None
     model_name: Optional[str] = None
     if args.checkpoint:
-        value_fn, model_name = make_value_fn(args.checkpoint, args.device)
-    m = measure_corpus(paths, value_fn)
+        critic, model_name = make_value_fn(args.checkpoint, args.device)
+    m = measure_corpus(paths, critic)
     report = render_report(m, args.checkpoint, model_name)
     if args.output:
         with open(args.output, "w") as fh:

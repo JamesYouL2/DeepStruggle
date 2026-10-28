@@ -16,18 +16,18 @@ in the same hand at the same Ops. That is the stricter half anyway: "chose a dom
 
 from __future__ import annotations
 
-import contextlib
 import gzip
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, ContextManager, Dict, List, Optional, Tuple
 
 import numpy as np
 
 import ts_engine as ts
 
-from ai.eval.dominance import (discard_dominance_pairs, legal_card_actions,
-                               space_dominance_alternatives, trapped_effect)
+from ai.eval.converter_tap import ConverterTap, tap_converter_observations
+from ai.eval.dominance import (_eligible_own_or_neutral, discard_dominance_pairs, hand_cards,
+                               legal_card_actions, space_dominance_alternatives, trapped_effect)
 from tools.lib.corpus_paths import corpus_files
 from tools.lib.ts_replayer_convert import Conversion, convert_game
 
@@ -62,31 +62,17 @@ class _Capture:
     movers: List[ts.Player] = field(default_factory=list)
 
 
-@contextlib.contextmanager
-def _capturing(cap: _Capture) -> Iterator[None]:
-    """Snapshot the position at every decision the converter emits.
+def _capturing(cap: _Capture) -> ContextManager[ConverterTap]:
+    """Snapshot the position at every decision the converter emits (`ai.eval.converter_tap`), in
+    step with `Conversion.samples`. `GameState.clone()` is required: the engine mutates one state
+    in place, so a stored reference would read back as the end of the game. Check the yielded
+    tap against the conversion (`tap.verify(conv)`) before using the lists."""
 
-    The converter calls `ts.extract_observation` exactly once per emitted sample, at the single
-    line that appends to `Conversion.samples`, so wrapping it keeps these lists in step with
-    `samples`. `GameState.clone()` is required: the engine mutates one state in place, so a
-    stored reference would read back as the end of the game.
-    """
-    original = ts.extract_observation
-
-    def observe(state: ts.GameState, perspective: ts.Player) -> Any:
-        # Named `perspective` to match the binding it replaces: a caller may pass it
-        # by keyword, and a wrapper with a different parameter name would break there
-        # and nowhere else.
-        mover = perspective
+    def on_sample(state: ts.GameState, mover: ts.Player) -> None:
         cap.states.append(state.clone())
         cap.movers.append(mover)
-        return original(state, mover)
 
-    ts.extract_observation = observe
-    try:
-        yield
-    finally:
-        ts.extract_observation = original
+    return tap_converter_observations(on_sample)
 
 
 def _decode(state: ts.GameState, action: int) -> Any:
@@ -95,10 +81,11 @@ def _decode(state: ts.GameState, action: int) -> Any:
 
 def measure_game(game: Dict[str, Any], tally: DominanceTally, replay_id: int) -> None:
     cap = _Capture()
-    with _capturing(cap):
+    with _capturing(cap) as tap:
         conv: Conversion = convert_game(game)
     if conv.skipped is not None or conv.failure is not None:
         return
+    tap.verify(conv)
 
     n = len(conv.samples)
     for i in range(min(n, len(cap.states))):
@@ -170,7 +157,6 @@ def _had_equal_ops_own_alternative(state: ts.GameState, mover: ts.Player, card: 
     Without one there was no choice to get right, and the decision does not belong in the
     denominator. This mirrors `space_dominance_alternatives` with the sides reversed.
     """
-    from ai.eval.dominance import _eligible_own_or_neutral, hand_cards
 
     opponent = "USSR" if mover == ts.Player.US else "US"
     ops = int(ts.CardData.get_card_info(card)["ops"])
