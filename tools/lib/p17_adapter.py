@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
+import torch
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
@@ -130,7 +131,6 @@ class LegacyPolicyAdapter:
     # -- asking the old policy ---------------------------------------------------------------
 
     def _draw(self, obs: npt.NDArray[np.float32], mask: npt.NDArray[np.uint8]) -> int:
-        import torch
         obs_t = torch.from_numpy(obs[None, :]).float().to(self.device)
         mask_t = torch.from_numpy(mask[None, :].astype(np.uint8)).to(self.device)
         with torch.no_grad():
@@ -142,7 +142,6 @@ class LegacyPolicyAdapter:
     def _draw_many(self, obs: npt.NDArray[np.float32],
                    masks: npt.NDArray[np.uint8]) -> List[int]:
         """One forward pass for a whole batch of (observation, mask) pairs."""
-        import torch
         if obs.shape[0] == 0:
             return []
         obs_t = torch.from_numpy(obs).float().to(self.device)

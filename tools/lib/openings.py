@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
+from bindings.settle import SettleMode, settle
 
 #: Flat action index of country `cid` at a POINT_NODE (`bindings/action_encoder.py`).
 NODE_OFFSET = ActionEncoder.NODE_OFFSET
@@ -148,8 +149,6 @@ def play_scripted_setup(state: ts.GameState, opening: str) -> ts.GameState:
     """A copy of `state`, a fresh game in SETUP, with the whole setup played by `opening`'s script
     for both sides. Raises if the script does not cover the setup or a placement is illegal, rather
     than returning a partly scripted opening."""
-    from bindings.settle import SettleMode, settle
-
     missing = {"US", "USSR"} - set(OPENINGS[opening])
     if missing:
         raise ValueError(f"the '{opening}' opening scripts only one side (no {sorted(missing)}); "
