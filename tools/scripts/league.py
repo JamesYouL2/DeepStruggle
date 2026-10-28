@@ -53,8 +53,8 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from ai.training.run_name import is_run_name  # noqa: E402  (ROOT must be importable first)
+from tools.lib.data_root import checkpoints_dir  # noqa: E402
 
-CHECKPOINTS = "/workspace/data/checkpoints"
 SNAP_RE = re.compile(r"^snapshot_(\d+)steps\.pt$")
 RESUME_RE = re.compile(r"^resume_(\d+)steps\.pt$")
 
@@ -102,7 +102,8 @@ def _run_dir(name: str, started: float, timeout: float = 600.0) -> str:
     but not the clock, and must not read as a launch that never produced a directory."""
     pat = re.compile(rf"^{re.escape(name)}_\d{{8}}_\d{{6}}$")
     for _ in range(int(timeout / 5)):
-        cands = [os.path.join(CHECKPOINTS, d) for d in os.listdir(CHECKPOINTS) if pat.match(d)]
+        root = checkpoints_dir()
+        cands = [os.path.join(root, d) for d in os.listdir(root) if pat.match(d)]
         cands = [d for d in cands if os.path.getmtime(d) >= started - 5]
         if cands:
             return max(cands, key=os.path.getmtime)
@@ -133,20 +134,58 @@ def _judge(exploiter: str, main_snap: str, games: int) -> Optional[Dict[str, flo
     return {"overall": score(*m.groups()), "as_us": score(*recs[0]), "as_ussr": score(*recs[1])}
 
 
-class _Adopted:
-    """A main agent this driver did not launch: a running process, known by its PID."""
+def _logged_steps(run_dir: str) -> Optional[int]:
+    """The last `total_steps` the run logged in its training_metrics.jsonl, or None."""
+    last: Optional[int] = None
+    try:
+        with open(os.path.join(run_dir, "training_metrics.jsonl"), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue                 # a partially written final line
+                if isinstance(row, dict) and isinstance(row.get("total_steps"), int):
+                    last = row["total_steps"]
+    except OSError:
+        return None
+    return last
 
-    def __init__(self, pid: int) -> None:
+
+class _Adopted:
+    """A main agent this driver did not launch: a running process, known by its PID.
+
+    Its exit status is not ours to read (it is not our child), so a gone process is judged by what
+    its run logged: at or past `target_steps` it finished (0); short of it, it crashed or was
+    killed (1), and `status` says the exit status itself is unknown rather than claiming one.
+    """
+
+    def __init__(self, pid: int, run_dir: str, target_steps: int) -> None:
         self.pid = pid
+        self.run_dir = run_dir
+        self.target_steps = target_steps
         self.returncode: Optional[int] = None
+        self.status = "running"
 
     def poll(self) -> Optional[int]:
         if self.returncode is None:
             try:
                 os.kill(self.pid, 0)
             except ProcessLookupError:
-                self.returncode = 0          # its exit status is not ours to read
+                steps = _logged_steps(self.run_dir)
+                if steps is not None and steps >= self.target_steps:
+                    self.returncode, self.status = 0, f"finished at {steps} steps"
+                else:
+                    self.returncode = 1
+                    self.status = (f"gone at {steps} of {self.target_steps} steps, exit status unknown "
+                                   f"(not this driver's child) -- treated as a crash")
         return self.returncode
+
+
+def _exit_status(proc: Any) -> str:
+    """How a main agent ended, for the events log: an adopted one's judgement, else its code."""
+    if isinstance(proc, _Adopted):
+        return proc.status
+    return "finished" if proc.returncode == 0 else f"crashed (exit {proc.returncode})"
 
 
 def _stop(proc: subprocess.Popen, grace: float = 120.0) -> None:
@@ -227,7 +266,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.adopt_main_dir:
         if a.adopt_main_pid is None:
             raise SystemExit("--adopt-main-dir needs --adopt-main-pid")
-        main_proc = _Adopted(a.adopt_main_pid)
+        main_proc = _Adopted(a.adopt_main_pid, a.adopt_main_dir, a.main_steps)
         main_dir = a.adopt_main_dir
         _event(a.league_dir, "main_adopted", run=a.main_name, dir=main_dir, pid=a.adopt_main_pid)
     else:
@@ -246,7 +285,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # The exploiter plays the main agent's newest snapshots, so it waits for the first one.
     while not _snapshots(main_dir):
         if main_proc.poll() is not None:
-            _event(a.league_dir, "main_exited_early", code=main_proc.returncode)
+            _event(a.league_dir, "main_exited_early", code=main_proc.returncode, status=_exit_status(main_proc))
             return int(main_proc.returncode or 1)
         time.sleep(a.poll)
 
@@ -257,7 +296,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # waits until the main agent is past the basics.
         while latest_resume(main_dir, a.exploiter_start_steps) is None:
             if main_proc.poll() is not None:
-                _event(a.league_dir, "main_exited_early", code=main_proc.returncode)
+                _event(a.league_dir, "main_exited_early", code=main_proc.returncode, status=_exit_status(main_proc))
                 return int(main_proc.returncode or 1)
             time.sleep(a.poll)
     elif re.search(r"(\d+)steps", os.path.basename(a.exploiter_reset)) is None:
@@ -301,7 +340,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     seen_snaps: set = set()
     while True:
         if main_proc.poll() is not None:
-            _event(a.league_dir, "main_exited", code=main_proc.returncode)
+            _event(a.league_dir, "main_exited", code=main_proc.returncode, status=_exit_status(main_proc))
             if expl is not None:
                 _stop(expl)
                 _event(a.league_dir, "exploiter_stopped", generation=gen, reason="main finished")
