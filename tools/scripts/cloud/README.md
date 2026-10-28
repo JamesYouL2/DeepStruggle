@@ -54,6 +54,9 @@ KEEP=<id,...> tools/scripts/cloud/leak_guard.sh [max-minutes]     # warns about 
 tools/scripts/cloud/bench_gpu.sh <offer-id> <label> [max-minutes] # rent, measure throughput, destroy
 ```
 
+`remote_launch.sh` sets `--run-name` and `--output-dir` itself and refuses either among the
+train.py flags; the run name must be a run name (letters, digits, `-` `.` `@` `+`, no `..`).
+
 Derive the launch flags from a healthy run (`tools/scripts/launch_flags.py`, CLAUDE.md
 invariant 15), not from an example. Then watch the *synced* local directory as for a local run:
 `tools/scripts/watch_run.py data/checkpoints/<run-dir> --target-steps <N>`.
