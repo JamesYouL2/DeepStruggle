@@ -251,8 +251,9 @@ metadata. Greedy, it plays its checkpoint's games; sampled, only in distribution
 parts belong together and cover each shard once, merges them, and writes the report. Every part
 needs the same entrants, `--games-per-side` and `--shard-pairs`. Each part records the engine build
 that played it (its source fingerprint), and `--pool-parts` refuses parts from different builds.
-Shard seeds are a collision-free mixed radix of the entrants and the shard's first pair, so
-tournaments sharded before 2026-10-28 played different games at the same `--base-seed`.
+Shard seeds are unchanged from every recorded tournament (the same `--base-seed` plays the same
+games); a plan in which two shards would share a seed (only possible past 257 shards of one
+matchup) is refused.
 
 ```bash
 tools/tournament.py --models heuristic_mcts <model.onnx> --games-per-side 200 --device cpu \
