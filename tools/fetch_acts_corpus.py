@@ -3,7 +3,8 @@
 
 Crawls and archives real, authentic human tournament game journals from
 the Automated Card Tracking System (ACTS - acts.warhorsesim.com) into
-raw storage (data/raw_acts_journals/) and SQLite (data/acts_games.sqlite).
+raw storage (data/raw_acts_journals/) and SQLite (data/acts_games.sqlite), in the shared
+data tree (tools/lib/data_root.py).
 """
 
 import argparse
@@ -21,8 +22,11 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-DEFAULT_ACTS_DIR = os.path.join(_root, "data", "raw_acts_journals")
-DEFAULT_ACTS_DB = os.path.join(_root, "data", "acts_games.sqlite")
+from tools.lib.data_root import data_path  # noqa: E402 -- after the sys.path entry above
+
+# In the shared data tree (the main checkout's data/, also from a worktree), not this checkout's.
+DEFAULT_ACTS_DIR = data_path("raw_acts_journals")
+DEFAULT_ACTS_DB = data_path("acts_games.sqlite")
 
 CREATE_ACTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS acts_journals (
