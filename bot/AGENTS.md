@@ -11,13 +11,24 @@ inherit from [`BaseBot`](base_bot.py).
   - `select_action(state_dict, legal_actions_dict) -> Optional[dict]`: dict-based selection for JSON-driven callers.
   - `select_flat_action(state, player) -> int`: a flat action index, for vectorized environments.
   - `reset()`: clears internal memory or search state between games.
+  - `require_player_decision(d_type)`: raises on a decision type no player is asked
+    (`PLAYER_DECISION_TYPES`: SELECT_CARD, SELECT_PLAY_MODE, SELECT_OP_MODE, POINT_NODE,
+    CHOOSE_BRANCH). Every dict bot calls it first, and answers an empty `valid_ids` with
+    `confirm_done(d_type)` (the engine keeps CONFIRM_DONE legal when nothing else is). A known
+    decision a bot's rules have no preference at gets any legal id; an unknown one raises rather
+    than being answered with a random or first id. Bots put no dice in an action: the engine
+    rolls from its own RNG.
 - [`random_bot.py`](random_bot.py): `RandomBot`, uniform over legal moves.
 - [`heuristic_bot.py`](heuristic_bot.py): the terminal match's `HeuristicBot`, a fixed rule list
   (battlegrounds, scoring-card timing, ops efficiency). Its JSON influence scoring reads countries
   by their display names. Tournament evaluation uses the separate native-state `HeuristicAgent`
   in `tools/lib/player_agent.py` as its default Elo anchor.
 - [`heuristic_mcts_bot.py`](heuristic_mcts_bot.py): `HeuristicMCTSBot` (`heuristic_mcts[:sims]` in `tools/play_match.py`), MCTS over the real engine with `ai.search.heuristic_eval` at the leaf and no checkpoint. 18/20 against HeuristicBot from 16 simulations on (`research/findings/training/heuristic_mcts_baseline.md`). **It searches the true state and sees the opponent's hand**: fine for a benchmark, never a claim about play under real information.
-- [`neural_bot.py`](neural_bot.py): `NeuralBot`, loaded through `tools.lib.player_agent.NeuralAgent.from_checkpoint`: the architecture (V1, V2 or LadderNet) is detected from the weights and a retired one is refused rather than partially loaded. It builds E4 masks and reads the base observation, so a checkpoint in the merged-influence view or with observation feature blocks is refused (`tests/training/test_neural_bot_checkpoint.py`).
+- Networks are not bots here. `NeuralBot` (a dict-driven client that rebuilt the flat mask from
+  `valid_ids` by hand and read the base observation, so it could play no featured checkpoint) was
+  removed; `tools/play_match.py` plays a checkpoint or ONNX export through
+  `tools.lib.player_agent.load_agent` on the engine state, in the network's own observation
+  features and action view.
 - [`exploratory_bot.py`](exploratory_bot.py): `ExploratoryBot`, explores diverse paths: Space Race, realignments, coups.
 - [`strategic_bot.py`](strategic_bot.py): `StrategicBot`, DEFCON-2 containment, coups, realignments and Space Race safety, with strategy commentary.
 - [`event_heavy_bot.py`](event_heavy_bot.py): `EventHeavyBot`, maximises event play and event-first timing.

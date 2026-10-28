@@ -8,12 +8,11 @@ and records standardized .tslog.json replays for the Web Workbench.
 """
 
 import argparse
-import base64
 import os
 import sys
 import time
 import random
-from typing import Optional, Dict, Any, Tuple, cast
+from typing import Optional, Dict, Any, Tuple, Union, cast
 from web.server.replay_types import ReplayLogDict
 
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -21,6 +20,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 import numpy as np
+import torch
 import ts_engine as ts
 from bot import (
     BaseBot,
@@ -31,16 +31,13 @@ from bot import (
     EventHeavyBot,
     HumanBot,
 )
-try:
-    from bot import NeuralBot
-except ImportError:
-    NeuralBot = None
-
-from web.server.replay import ReplayLogger, ReplayManager, replays_dir
+from web.server.replay import ReplayLogger, replays_dir
 from ai.search.batched_mcts import BatchedMCTS
 from bindings.action_encoder import ActionEncoder
 from bot.heuristic_mcts_bot import HeuristicMCTSBot
-from tools.lib.player_agent import NeuralAgent, search_spec_config
+from bindings.ts_env import legal_mask, observe
+from tools.lib.data_root import checkpoints_dir
+from tools.lib.player_agent import NeuralAgent, OnnxAgent, load_agent, search_spec_config
 from tools.lib.self_play import generate_self_play_replay
 from web.server.replay_types import (
     ReplayActionDict,
@@ -54,11 +51,11 @@ from ai.eval.policy_readout import (
     TRACE_TOP_K,
     name_actions,
     read_critic,
+    read_policy,
     unasked_readout,
 )
 from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint
 from tools.lib.game_ending import classify_game_ending_reason
-from tools.lib.scoring_formatter import format_regional_scoring_breakdown
 from tools.lib.checkpoint_utils import discover_checkpoints
 from tools.lib.game_loop import GameLoop, SettlePolicy, StepRecord
 from tools.lib.openings import OPENINGS, acting_side, scripted_setup_index
@@ -103,6 +100,68 @@ class _SearchBot(BaseBot):
         self.searcher.reset()
 
 
+def _action_dict(state: ts.GameState, flat: int) -> Dict[str, Any]:
+    ma = ts.decode_flat_action(state, int(flat))
+    return {
+        "decision_type": int(ma.decision_type),
+        "primary_id": int(ma.primary_id),
+        "secondary_id": int(ma.secondary_id),
+        "flags": int(ma.flags),
+    }
+
+
+class _NetworkBot(BaseBot):
+    """Bot-shaped adapter for a network (`NeuralAgent`, or an `OnnxAgent` export), played on the
+    engine state in its own view: the observation in the network's feature set
+    (`bindings.ts_env.observe`) and the mask in its action view.
+
+    This replaced `bot.neural_bot.NeuralBot`, which read the base observation from the JSON view
+    and rebuilt the flat mask from `valid_ids` by hand -- a second action encoding -- so it could
+    not play a featured network (every E8 checkpoint reads HEADLINE_REVEAL) at all.
+
+    The match loop steps one `MicroAction` per decision, and a composed merged-influence (E4.1)
+    action is two E4 steps, so a merged-view network is refused here rather than played in the
+    wrong view.
+    """
+
+    wants_game_state = True
+
+    def __init__(self, role: str, name: str, agent: Union[NeuralAgent, OnnxAgent],
+                 temperature: float) -> None:
+        super().__init__(role, name=name)
+        if agent.merged_influence:
+            raise ValueError(
+                f"{agent.name} decides in the merged-influence (E4.1) view; this match loop steps "
+                f"one E4 MicroAction per decision and cannot play it. Use tools/tournament.py.")
+        self.agent = agent
+        self.temperature = float(temperature)
+        #: The network, for the match's critic trace (only a torch network has one to read).
+        self.model: Optional[torch.nn.Module] = agent.model if isinstance(agent, NeuralAgent) else None
+        #: When set, `last_readout` carries what the policy believed at the node it just played.
+        self.trace = False
+        self.last_readout: Optional[ReplayPolicyDict] = None
+
+    def select_action(self, state: Dict[str, Any], legal_actions: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "a network needs the engine GameState; the match loop must route through "
+            "select_from_state (see wants_game_state)")
+
+    def select_from_state(self, state: ts.GameState) -> Dict[str, Any]:
+        self.last_readout = None
+        player = state.ctx().decision_player
+        if self.trace:
+            if self.model is None:
+                raise ValueError(f"{self.agent.name}: --trace needs a torch checkpoint, not an ONNX export")
+            dev = next(self.model.parameters()).device
+            obs_t = torch.from_numpy(observe(state, player, self.agent.obs_features)).unsqueeze(0).to(dev)
+            mask_t = torch.from_numpy(legal_mask(state, self.agent.merged_influence)).unsqueeze(0).to(dev)
+            flat, self.last_readout = read_policy(self.model, obs_t, mask_t,
+                                                  temperature=self.temperature, deterministic=False)
+        else:
+            flat = int(self.agent.select_action(state, player, temperature=self.temperature))
+        return _action_dict(state, flat)
+
+
 def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: str = "cpu") -> Tuple[BaseBot, str]:
     """Resolves an agent specification into a BaseBot instance and human-readable name.
 
@@ -113,8 +172,9 @@ def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: 
     - 'event_heavy' -> EventHeavyBot
     - 'exploratory' -> ExploratoryBot
     - 'human' -> HumanBot (interactive CLI terminal player)
-    - 'neural' -> NeuralBot (latest checkpoint)
-    - Path to a .pt file or 'neural:<path>' -> NeuralBot loaded with that checkpoint
+    - 'neural' -> the most recent checkpoint under the shared data tree's checkpoints/
+    - Path to a .pt or .onnx file, or 'neural:<path>' -> that network, in its own observation
+      feature set and action view (`_NetworkBot`)
     """
     clean_spec = agent_spec.strip()
 
@@ -153,32 +213,40 @@ def resolve_agent(agent_spec: str, role: str, temperature: float = 0.1, device: 
     if clean_spec.startswith(("search:", "gumbel:")):
         path, cfg, name = search_spec_config(clean_spec)
         base = NeuralAgent.from_checkpoint(path, device=device)
+        if base.merged_influence:
+            raise ValueError(f"{clean_spec!r}: {base.name} decides in the merged-influence (E4.1) "
+                             f"view, and the searcher builds its masks in the E4 view only")
         searcher = BatchedMCTS(base.model, device=device, config=cfg, featurise_capacity=1)
         return _SearchBot(role, name, searcher), f"{name} ({os.path.basename(path)})"
 
-    # Neural bot resolution
+    # A network: through load_agent, the one loader that detects the architecture from the
+    # weights and records the network's observation features and action view.
     model_path: Optional[str] = None
     if clean_spec.startswith("neural:"):
         model_path = clean_spec.split(":", 1)[1]
-    elif clean_spec.endswith(".pt") or os.path.exists(clean_spec):
+    elif clean_spec.endswith((".pt", ".onnx")) or os.path.exists(clean_spec):
         model_path = clean_spec
     elif clean_spec == "neural":
-        # Discover latest checkpoint
-        chkpt_dir = os.path.join(_root, "data", "checkpoints") if os.path.exists(os.path.join(_root, "data", "checkpoints")) else os.path.join(_root, "checkpoints")
+        chkpt_dir = checkpoints_dir()
         discovered = discover_checkpoints(chkpt_dir)
-        if discovered:
-            discovered.sort(key=lambda x: x["mtime"], reverse=True)
-            model_path = discovered[0]["path"]
+        if not discovered:
+            raise FileNotFoundError(f"'neural' plays the most recent checkpoint, and there is none under {chkpt_dir}")
+        discovered.sort(key=lambda x: x["mtime"], reverse=True)
+        model_path = str(discovered[0]["path"])
 
     if model_path is not None:
-        if NeuralBot is None:
-            raise ImportError("NeuralBot is not available. Please ensure PyTorch is installed.")
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"checkpoint not found: {model_path}")
+        agent = load_agent(model_path, device=device)
+        if not isinstance(agent, (NeuralAgent, OnnxAgent)):
+            raise ValueError(f"{model_path} did not load as a network (got {type(agent).__name__})")
         bot_name = f"Neural ({os.path.basename(model_path)})"
-        return NeuralBot(role, model_path=model_path, temperature=temperature, device=device), bot_name
+        return _NetworkBot(role, bot_name, agent, temperature), bot_name
 
     raise ValueError(
         f"Unknown agent specification '{agent_spec}'. "
-        f"Choose from: heuristic, random, strategic, event_heavy, exploratory, human, or a .pt checkpoint path."
+        f"Choose from: heuristic, random, strategic, event_heavy, exploratory, human, heuristic_mcts[:sims], "
+        f"search:/gumbel:<checkpoint>, neural[:<path>], or a .pt / .onnx path."
     )
 
 
@@ -266,13 +334,9 @@ class _BotSource:
         action_dict = (forced_setup_action(state, self.opening, self.cursor)
                        if self.opening else None)
 
+        # The JSON view: what the rule-based bots read. A network or a searcher works on the
+        # engine state itself (`wants_game_state`), so no observation travels in the view.
         d = cast(Dict[str, Any], state.to_dict())
-        # The engine's own observation, exactly as web/server/session.py hands it to a bot over
-        # the wire. A neural bot needs it and has no other source.
-        p_enum = state.ctx().decision_player
-        d["observation_b64"] = base64.b64encode(
-            np.asarray(ts.extract_observation(state, p_enum), dtype=np.float32).tobytes()
-        ).decode("ascii")
         self.last_view = d
 
         if action_dict is None:
@@ -470,14 +534,19 @@ def run_match(
     if verbose and outcome.hit_step_cap:
         print(f"⚠ Hit the {max_steps}-step cap without finishing -- this is not a completed game.")
 
-    # Classify outcome
-    reason = classify_game_ending_reason(state)
+    # Classify outcome. The winner is the engine's terminal utility: the sign of the VP track
+    # names the wrong side of every DEFCON-1 and held-scoring loss (the reason strings never held
+    # the "US Win" this used to search them for). A game that never finished -- a forfeit or the
+    # step cap -- names no winner and says why, rather than reading as a completed game.
     vp = state.victory_points
-    winner = "US" if vp > 0 else ("USSR" if vp < 0 else "DRAW")
-    if "US Win" in reason or "Europe Control (US)" in reason:
-        winner = "US"
-    elif "USSR Win" in reason or "Europe Control (USSR)" in reason:
-        winner = "USSR"
+    if ts.Engine.is_terminal(state):
+        reason = classify_game_ending_reason(state)
+        util = float(ts.Engine.get_terminal_utility(state))
+        winner = "US" if util > 0 else ("USSR" if util < 0 else "DRAW")
+    else:
+        winner = "NONE"
+        reason = (f"unfinished: forfeited by {outcome.forfeited_by}" if outcome.forfeited_by
+                  else f"unfinished: hit the {max_steps}-step cap")
 
     logger.set_result(winner=winner, margin=vp, end_turn=state.turn, reason=reason)
     replay_data = logger.to_dict()
@@ -546,8 +615,8 @@ def main():
 
     # Neural self-play goes through the canonical generator, which resolves chance nodes exactly
     # as the training env does and writes the replay through the one schema. The mixed path below
-    # (a network against a rule-based bot) drives NeuralBot instead, and hands it the engine's own
-    # observation rather than a reconstruction -- see the loop.
+    # (a network against a rule-based bot) plays the network through `_NetworkBot`, on the engine
+    # state in the network's own observation features and action view.
     if args.agent is not None and os.path.exists(args.agent):
         generate_self_play_replay(
             model=args.agent,

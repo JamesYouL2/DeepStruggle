@@ -9,16 +9,10 @@ from bot.event_heavy_bot import EventHeavyBot
 from bot.human_bot import HumanBot
 from bot.heuristic_mcts_bot import HeuristicMCTSBot
 
-try:
-    from bot.neural_bot import NeuralBot
-except ImportError:
-    NeuralBot = None
-
 __all__ = [
     "BaseBot",
     "RandomBot",
     "HeuristicBot",
-    "NeuralBot",
     "ExploratoryBot",
     "StrategicBot",
     "EventHeavyBot",

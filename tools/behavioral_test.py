@@ -13,45 +13,72 @@ import argparse
 import json
 import os
 import sys
-from typing import Dict, List, Optional
+from typing import Dict
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from ai.eval.behavioral_suite import PolicyFn, SuiteResult, run_suite, torch_policy  # noqa: E402
+import ts_engine as ts  # noqa: E402
+from ai.eval.behavioral_suite import PolicyFn, SuiteResult, run_suite  # noqa: E402
 from ai.eval.claims import build_claims  # noqa: E402
+from bindings.ts_env import observe  # noqa: E402
+from tools.lib.player_agent import NeuralAgent, PlayerAgent, load_agent  # noqa: E402
+
+BASELINES = ("random", "heuristic", "heuristic_v2")
+
+
+def bot_policy(agent: PlayerAgent) -> PolicyFn:
+    """A baseline bot's choice as a one-hot. A deterministic bot has no distribution, and a
+    one-hot keeps NeverArgmax and Prefer meaningful. A bot that raises is a bot defect: it
+    propagates (the suite records it against the claim) rather than being scored as a uniform
+    policy it never was."""
+
+    def fn(state: "ts.GameState", obs: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        del obs
+        idx = int(agent.select_action(state, state.ctx().decision_player, temperature=0.0))
+        if not (0 <= idx < mask.shape[0]) or not mask[idx]:
+            raise ValueError(f"{agent.name} chose flat action {idx}, not legal here")
+        probs = np.zeros(mask.shape[0], dtype=np.float64)
+        probs[idx] = 1.0
+        return probs
+
+    return fn
+
+
+def network_policy(agent: NeuralAgent) -> PolicyFn:
+    """A network's masked distribution, read in its own observation feature set.
+
+    The observation is rebuilt from the state with `bindings.ts_env.observe` in the network's
+    set rather than taken from the suite, whose row is the base layout: a HEADLINE_REVEAL network
+    (every E8 checkpoint) reads different card rows at a box-4 headline, at the same width. The
+    claims are written in the E4 action view, so a merged-view network is refused at load."""
+    device = next(agent.model.parameters()).device
+
+    def fn(state: "ts.GameState", obs: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        del obs
+        o = torch.from_numpy(observe(state, state.ctx().decision_player, agent.obs_features))
+        m = torch.from_numpy(np.asarray(mask, dtype=np.uint8))
+        with torch.no_grad():
+            logits, _, _ = agent.model(o.unsqueeze(0).to(device), m.unsqueeze(0).to(device))
+            return F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+
+    return fn
 
 
 def load_policy(spec: str, device: str) -> PolicyFn:
     """Loads a checkpoint, or a baseline bot, as a (state, obs, mask) -> probabilities fn."""
-    import ts_engine as ts
-    from tools.lib.player_agent import NeuralAgent, load_agent
-
-    if spec in ("random", "heuristic", "heuristic_v2"):
-        agent = load_agent(spec, device=device)
-
-        def bot_policy(state: "ts.GameState", obs: np.ndarray, mask: np.ndarray) -> np.ndarray:
-            # A deterministic bot has no distribution, so represent its choice as a
-            # one-hot. That keeps NeverArgmax and Prefer meaningful rather than scoring
-            # the baseline against a uniform stand-in.
-            del obs
-            probs = np.zeros_like(mask, dtype=np.float64)
-            try:
-                idx = int(agent.select_action(state, state.ctx().decision_player, temperature=0.0))
-            except Exception:
-                legal = np.flatnonzero(mask)
-                return (mask.astype(np.float64) / len(legal)) if len(legal) else probs
-            if 0 <= idx < probs.shape[0]:
-                probs[idx] = 1.0
-            return probs
-
-        return bot_policy
-
-    net = NeuralAgent.from_checkpoint(spec, device=device).model
-    return torch_policy(net, device=device)
+    if spec in BASELINES:
+        return bot_policy(load_agent(spec, device=device))
+    agent = NeuralAgent.from_checkpoint(spec, device=device)
+    if agent.merged_influence:
+        raise ValueError(f"{spec} decides in the merged-influence (E4.1) view; the claims are "
+                         f"written in E4 action slots and cannot score it")
+    return network_policy(agent)
 
 
 def main() -> None:
@@ -68,11 +95,9 @@ def main() -> None:
     for spec in args.models:
         name = os.path.basename(spec).replace(".pt", "") if spec.endswith(".pt") else spec
         print(f"\n=== {name} ({len(tests)} claims) ===")
-        try:
-            policy = load_policy(spec, args.device)
-        except Exception as exc:
-            print(f"  could not load: {exc}")
-            continue
+        # A model that does not load stops the run with its error (and a non-zero exit) rather
+        # than leaving a summary that silently lacks it.
+        policy = load_policy(spec, args.device)
         res = run_suite(policy, tests)
         all_results[name] = res
         print(res.format_report() if not args.quiet else

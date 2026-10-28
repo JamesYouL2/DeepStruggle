@@ -431,6 +431,14 @@ PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --agent <ckpt.pt
 PYTHONPATH=.:build/release .venv/bin/python tools/play_match.py --us <ckpt.pt> --ussr heuristic --trace
 ```
 
+A network (`<ckpt.pt>`, `<export.onnx>`, `neural:<path>`, or `neural` for the most recent
+checkpoint under the shared data tree's `checkpoints/`) is loaded through `load_agent` and plays on
+the engine state in its own observation feature set (`bindings.ts_env.observe`) and action view; a
+merged-influence (E4.1) network is refused, since the loop steps one E4 `MicroAction` per decision
+(play it with `tools/tournament.py`). Rule-based bots read the JSON view. The result's winner is the
+engine's terminal utility; a forfeited or step-capped game is written with winner `NONE` and an
+`unfinished: ...` reason.
+
 **`--opening`** replaces the setup with a named opening from `tools/lib/openings.py`, then hands
 control back. An illegal scripted placement raises. The same registry backs
 `ai/eval/forced_setup.py` and `ai/eval/setup_critic.py`.
