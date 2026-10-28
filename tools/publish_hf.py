@@ -43,18 +43,21 @@ from __future__ import annotations
 import argparse
 import datetime
 import fnmatch
-import hashlib
 import json
 import os
 import re
 import sys
 from typing import Dict, List, Optional, Sequence, Set, Tuple, TypedDict
 
+import onnx
 from huggingface_hub import CommitOperationAdd, HfApi
 from huggingface_hub.hf_api import RepoFile
 
+import ts_engine  # noqa: F401 -- the build require_fresh() checks before anything is exported
 from tools.export_onnx import ExportRefused, export
 from tools.lib.data_root import data_path
+from tools.lib.engine_fingerprint import fingerprint, require_fresh
+from tools.lib.jsonl import sha256_file
 from tools.lib.leaderboard import HF_REPO, LeaderboardError, load, save_registry, validate
 from tools.lib.player_spec import spec_from_dict, workbench_search
 
@@ -132,12 +135,35 @@ def onnx_selection(files: Sequence[str], registered: Set[str]) -> List[str]:
     return sorted(chosen)
 
 
+def onnx_staleness(pt: str, out: str) -> Optional[str]:
+    """Why the .onnx at `out` is not an export of `pt` by this engine, or None when it is.
+
+    Read from the export's own metadata (tools/export_onnx.py embeds both): the checkpoint's
+    sha256 and the engine fingerprint. Modification times decided this before, and a checkpoint
+    copied or re-saved over with different weights but an older mtime kept its stale export.
+    """
+    if not os.path.exists(out):
+        return "no export yet"
+    props = {e.key: e.value for e in onnx.load(out).metadata_props}
+    sha = sha256_file(os.path.realpath(pt))
+    if props.get("ts.checkpoint_sha256") != sha:
+        return f"exported from checkpoint sha256 {str(props.get('ts.checkpoint_sha256'))[:12]}, the .pt is {sha[:12]}"
+    engine = fingerprint()
+    if props.get("ts.engine_fingerprint") != engine:
+        return (f"exported next to engine {str(props.get('ts.engine_fingerprint'))[:12]}, "
+                f"this engine is {engine[:12]}")
+    return None
+
+
 def ensure_onnx(pt: str, dry_run: bool) -> str:
-    """The .onnx beside `pt`, exported (and verified) unless an up-to-date one is there."""
+    """The .onnx beside `pt`, exported (and verified) unless an export of these weights by this
+    engine is there (`onnx_staleness`)."""
     out = _onnx_of(pt)
-    if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(os.path.realpath(pt)):
+    why = onnx_staleness(pt, out)
+    if why is None:
         return out
-    print(f" export {os.path.basename(pt)} -> {os.path.basename(out)}{' (dry run)' if dry_run else ''}", flush=True)
+    print(f" export {os.path.basename(pt)} -> {os.path.basename(out)} ({why})"
+          f"{' (dry run)' if dry_run else ''}", flush=True)
     if not dry_run:
         export(pt, out)
     return out
@@ -181,21 +207,13 @@ def _api(dry_run: bool) -> Optional[HfApi]:
     return api
 
 
-def _sha256_file(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def _hf_date(d: datetime.datetime) -> str:
     """The date format the Hugging Face API writes, so the page orders both kinds as strings."""
     return d.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def manifest_entry(repo_file: str, local: str, date: datetime.datetime) -> ManifestEntry:
-    return {"path": repo_file, "date": _hf_date(date), "sha256": _sha256_file(os.path.realpath(local)),
+    return {"path": repo_file, "date": _hf_date(date), "sha256": sha256_file(os.path.realpath(local)),
             "size": os.path.getsize(os.path.realpath(local))}
 
 
@@ -307,12 +325,12 @@ def cmd_files(a: argparse.Namespace) -> int:
         if not pt.endswith(".pt") or not os.path.isfile(pt):
             raise LeaderboardError(f"{pt}: not a .pt file")
         rel = repo_path(pt)
-        onnx = ensure_onnx(pt, a.dry_run)
+        onnx_path = ensure_onnx(pt, a.dry_run)
         print(f" {rel} (+ .onnx)")
         if api is not None:
             ops += [CommitOperationAdd(path_in_repo=dest, path_or_fileobj=os.path.realpath(local))
-                    for local, dest in ((pt, rel), (onnx, _onnx_of(rel)))]
-            added.append(manifest_entry(_onnx_of(rel), onnx, now))
+                    for local, dest in ((pt, rel), (onnx_path, _onnx_of(rel)))]
+            added.append(manifest_entry(_onnx_of(rel), onnx_path, now))
         published.append(rel)
     if api is not None:
         ops.append(manifest_op(build_manifest(api, a.repo, added)))
@@ -378,6 +396,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     a = build_parser().parse_args(argv)
+    if a.cmd in ("run", "files"):
+        require_fresh()     # these export ONNX, verified against torch on engine positions
     try:
         return int(a.fn(a))
     except (LeaderboardError, ExportRefused) as e:
