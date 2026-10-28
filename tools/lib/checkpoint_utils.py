@@ -1,52 +1,50 @@
-"""Checkpoint inspection and discovery utilities for Twilight Struggle neural models."""
+"""Checkpoint discovery: every .pt file under a directory, with its size and modification time.
+
+Discovery does not load anything. A run directory also holds `resume_*.pt` files, which are not
+policies, so a loader here had to swallow their errors -- and swallowed every other load error
+with them. The architecture of a checkpoint is read by `tools/inspect_checkpoints.py`, through the
+same loader every evaluation uses (`tools.lib.player_agent.NeuralAgent`).
+"""
+
+from __future__ import annotations
 
 import os
 import time
-from typing import Dict, Any, List, Optional
-import torch
+from typing import List, TypedDict
 
 
-def inspect_checkpoint(path: str) -> Dict[str, Any]:
-    """Inspects a PyTorch checkpoint file and detects its network architecture."""
+class CheckpointEntry(TypedDict):
+    path: str
+    filename: str
+    dir: str
+    size_mb: float
+    mtime: str
+
+
+def checkpoint_entry(path: str) -> CheckpointEntry:
+    """A checkpoint file's location, size and modification time."""
     stat = os.stat(path)
-    size_mb = stat.st_size / (1024 * 1024)
-    mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime))
-
-    arch = "Unknown"
-    try:
-        sd = torch.load(path, map_location="cpu", weights_only=True)
-        if any("belief_head" in k or "card_transformer" in k for k in sd.keys()):
-            arch = "retired (V4: card transformer + belief head)"
-        elif any("node_pointer_proj" in k or "cross_b2c" in k for k in sd.keys()):
-            arch = "retired (V3: dual pointer co-attention)"
-        elif any("cross_attn" in k or "cross_card_proj" in k for k in sd.keys()):
-            arch = "ColdWarNetV2 (Cross-Attention)"
-        elif any("fusion_in" in k for k in sd.keys()):
-            arch = "ColdWarNet (V1)"
-    except Exception:
-        pass
-
     return {
         "path": path,
         "filename": os.path.basename(path),
         "dir": os.path.dirname(path),
-        "size_mb": size_mb,
-        "mtime": mtime,
-        "arch": arch,
+        "size_mb": stat.st_size / (1024 * 1024),
+        "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
     }
 
 
-def discover_checkpoints(directory: str) -> List[Dict[str, Any]]:
-    """Recursively discovers and inspects all .pt checkpoints under a directory."""
-    checkpoints: List[Dict[str, Any]] = []
-    if not os.path.exists(directory):
-        return checkpoints
+def discover_checkpoints(directory: str) -> List[CheckpointEntry]:
+    """Every .pt file under `directory` (recursively), sorted by path.
 
+    Raises FileNotFoundError for a directory that does not exist, which is a wrong path rather
+    than a directory with no checkpoints in it.
+    """
+    if not os.path.isdir(directory):
+        raise FileNotFoundError(f"checkpoint directory not found: {directory}")
+    checkpoints: List[CheckpointEntry] = []
     for root, _, files in os.walk(directory):
         for f in files:
             if f.endswith(".pt"):
-                full_path = os.path.join(root, f)
-                checkpoints.append(inspect_checkpoint(full_path))
-
+                checkpoints.append(checkpoint_entry(os.path.join(root, f)))
     checkpoints.sort(key=lambda x: x["path"])
     return checkpoints
