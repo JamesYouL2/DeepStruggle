@@ -2,14 +2,11 @@
 
 import hashlib
 import os
-import sys
-import time
 from typing import Optional, Union, List, Sequence, Tuple, Any, Dict, cast
 import numpy as np
 import torch
 
 import ts_engine as ts
-from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from bindings.action_encoder import ActionEncoder
 from ai.eval.blunders import BlunderCounts, _play_mode, check_play
 from ai.eval.policy_readout import (
@@ -19,7 +16,7 @@ from ai.eval.policy_readout import (
     read_policy,
     unasked_readout,
 )
-from bindings.ts_env import check_obs_width
+from bindings.ts_env import check_obs_width, legal_mask, model_obs_features, observe
 from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint
 from web.server.replay import ReplayLogger, replays_dir
 from web.server.replay_types import (
@@ -32,6 +29,11 @@ from web.server.replay_types import (
 from tools.lib.game_ending import classify_game_ending_reason
 from tools.lib.game_loop import GameLoop, SettlePolicy, StepRecord
 from tools.lib.openings import acting_side, scripted_setup_index
+from tools.lib.player_agent import NeuralAgent, load_agent
+
+#: The E4 slot of "Ops for Influence" at an op-choice node -- the first of the two E4 steps a
+#: merged-view (E4.1) composed action names (engine/include/ts/action_mask.hpp).
+_OPS_INFLUENCE = ActionEncoder.PLAY_MODE_OFFSET + 2
 
 
 def checkpoint_digest(path: str) -> str:
@@ -62,6 +64,7 @@ def generate_self_play_replay(
     trace_critic_every: str = "step",
     prefix: Optional[Sequence[int]] = None,
     stop_after_turn: Optional[int] = None,
+    merged_influence: Optional[bool] = None,
 ) -> Tuple[ReplayLogDict, str]:
     """Simulates a complete self-play game between neural policies and saves standardized .tslog.json replay.
 
@@ -84,6 +87,15 @@ def generate_self_play_replay(
     `trace_top_k=0` lists **every** legal action's probability, which is the default: the
     workbench labels each card, mode button and country with its own number, so a truncated
     distribution would leave most of the board unlabelled.
+
+    The policy decides in its own view: observations in the network's feature set
+    (`model_obs_features`), masks in its action view. A checkpoint path or a NeuralAgent carries
+    the view (the run directory records it); a bare network cannot, so `merged_influence` says it
+    for one -- None means E4 for a bare network and "as the checkpoint says" otherwise, and a value
+    contradicting the checkpoint raises. The replay itself stays in E4 steps, which every reader
+    re-applies: a merged-view composed action is recorded as the two E4 steps it is defined as
+    (Ops for Influence, then the first placement or Done); the policy block of the first carries
+    the merged-view distribution the move was drawn from, the second is marked `composed`.
     """
     if trace_critic_every not in ("step", "decision", "off"):
         raise ValueError(
@@ -91,21 +103,34 @@ def generate_self_play_replay(
     dev: torch.device = torch.device(device if torch.cuda.is_available() and str(device) == "cuda" else "cpu")
 
     active_model: Any
+    # The action view: None until a source that knows it (a checkpoint, a NeuralAgent) says so.
+    known_view: Optional[bool] = None
     if isinstance(model, str):
         if not os.path.exists(model):
             raise FileNotFoundError(f"Model checkpoint path not found: {model}")
-        from tools.lib.player_agent import load_agent, NeuralAgent
         agent = load_agent(model, device=dev)
         if isinstance(agent, NeuralAgent):
             active_model = agent.model
+            known_view = agent.merged_influence
         else:
             raise ValueError(f"Model path {model} did not produce a NeuralAgent")
     elif isinstance(model, torch.nn.Module):
         active_model = model.to(dev)
+    elif isinstance(model, NeuralAgent):
+        active_model = model.model.to(dev)
+        known_view = model.merged_influence
     elif hasattr(model, "model"):
         active_model = model.model.to(dev) if hasattr(model.model, "to") else model.model
+        if hasattr(model, "merged_influence"):
+            known_view = bool(model.merged_influence)
     else:
         active_model = model
+    if known_view is not None and merged_influence is not None and known_view != merged_influence:
+        raise ValueError(
+            f"merged_influence={merged_influence} contradicts the model's own action view "
+            f"({'merged' if known_view else 'E4'}, from its checkpoint)")
+    merged = bool(known_view if known_view is not None else merged_influence)
+    features = model_obs_features(active_model)
 
     if hasattr(active_model, "eval"):
         active_model.eval()
@@ -181,8 +206,26 @@ def generate_self_play_replay(
             self.cursor = 0
             self.last_desc = ""
             self.last_policy: Optional[ReplayPolicyDict] = None
+            #: The second E4 step of a merged-view composed action, owed at the next node.
+            self.pending: Optional[int] = None
+
+        def take_pending(self, st: ts.GameState) -> ts.MicroAction:
+            """Play the owed second step of a composed action, which must be legal here (in E4)."""
+            assert self.pending is not None
+            action_idx, self.pending = self.pending, None
+            if not np.asarray(ActionEncoder.get_legal_mask(st))[action_idx]:
+                raise RuntimeError(
+                    f"the second step ({action_idx}) of a merged-view composed action is not "
+                    f"legal after Ops for Influence: the composition and the engine disagree")
+            self.last_desc = ActionEncoder.get_action_name(st, action_idx)
+            self.last_policy = (unasked_readout(action_idx, st, source="composed",
+                                                n_legal=int(np.asarray(ActionEncoder.get_legal_mask(st)).sum()))
+                                if trace else None)
+            return ts.ActionMask.decode_flat_action(st, action_idx)
 
         def choose(self, st: ts.GameState) -> Optional[ts.MicroAction]:
+            if self.pending is not None:
+                return self.take_pending(st)
             p_enum = (st.ctx().decision_player if st.ctx().decision_player != ts.Player.NONE
                       else st.phasing_player)
             player_name = "US" if p_enum == ts.Player.US else (
@@ -198,12 +241,13 @@ def generate_self_play_replay(
                 if trace:
                     # A scripted opening overrode a real choice, so there is no distribution to
                     # report and none is invented -- only the fact that the policy was overruled.
-                    n_legal = int(np.asarray(ActionEncoder.get_legal_mask(st)).sum())
+                    n_legal = int(legal_mask(st, merged).sum())
                     self.last_policy = unasked_readout(action_idx, st, source="scripted",
                                                        n_legal=n_legal)
             else:
-                obs = np.array(ts.extract_observation(st, p_enum), copy=False).reshape(1, -1)
-                mask = np.array(ActionEncoder.get_legal_mask(st), copy=False).reshape(1, -1)
+                # In the policy's own view: its feature set and its action view.
+                obs = observe(st, p_enum, features).reshape(1, -1)
+                mask = legal_mask(st, merged).reshape(1, -1)
                 obs_t = torch.from_numpy(obs).float().to(dev)
                 mask_t = torch.from_numpy(mask).to(dev)
                 if trace and hasattr(active_model, "sample_action"):
@@ -235,6 +279,11 @@ def generate_self_play_replay(
                             action_idx = int(torch.argmax(logits, dim=-1).item())
 
             self.last_desc = ActionEncoder.get_action_name(st, action_idx)
+            if merged and ts.ActionMask.is_merged_influence_action(st, action_idx):
+                # A composed action: Ops for Influence now, the placement (or Done) owed next.
+                self.pending = (ActionEncoder.CONFIRM_DONE_INDEX if action_idx == _OPS_INFLUENCE
+                                else action_idx)
+                action_idx = _OPS_INFLUENCE
             ma = ts.ActionMask.decode_flat_action(st, action_idx)
 
             # Blunder check. SELECT_PLAY_MODE is where both halves are known -- which card and
@@ -261,6 +310,18 @@ def generate_self_play_replay(
 
     def _record(rec: StepRecord, after: ts.GameState) -> None:
         """Runs only after the engine accepted the action -- a refusal raises out of the loop."""
+        if source.pending is not None:
+            if ts.Engine.is_terminal(after):
+                # Ops for Influence ended the game: the composed action is complete (the engine's
+                # merged path accepts only the place-nothing composition there).
+                source.pending = None
+            elif rec.forced:
+                # The settle policy played the owed step itself (it was the only legal action).
+                if rec.flat != source.pending:
+                    raise RuntimeError(
+                        f"a forced step ({rec.flat}) replaced the owed second step "
+                        f"({source.pending}) of a merged-view composed action")
+                source.pending = None
         dt = int(rec.action.decision_type)
         action_dict: ReplayActionDict = {
             "flat_action_idx": int(rec.flat) if rec.flat is not None else -1,
