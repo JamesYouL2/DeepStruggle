@@ -74,11 +74,23 @@ export interface ModelInfo {
 
 /** What happened besides moves. */
 export type RecordEventKind = "undo" | "debug" | "load" | "resume";
+
+/** A debug override's change to the position, exactly: what a rebuild of the game must apply. */
+export type DebugOverride =
+  | { kind: "country"; id: number; us: number; ussr: number }
+  | { kind: "defcon"; value: number }
+  | { kind: "vp"; value: number };
+
 export interface RecordEvent {
   /** Steps on the board when it happened. */
   step: number;
   kind: RecordEventKind;
   text: string;
+  /** A "debug" event's change. The steps alone do not rebuild a game that had one: it is applied
+   *  before step `step` (game/session.ts replayRecord), and a game with any is never `clean`. */
+  override?: DebugOverride;
+  /** The override was taken back (undo): a rebuild skips it. It still counts in debug_overrides. */
+  undone?: boolean;
 }
 
 export interface RecordSummary {

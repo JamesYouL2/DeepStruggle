@@ -13,7 +13,7 @@ import { WasmEngine } from "../engine/wasm_engine";
 import { describeAction, describeDeltas, describeEventTracks, describeRoll } from "./describe";
 import { clickInfo } from "./log_view";
 import { ReplayStep } from "../replay_controls";
-import { GameRecordData, ModelInfo, MoveHow, RecordEvent, RecordEventKind, Settings, StepTag } from "./record";
+import { DebugOverride, GameRecordData, ModelInfo, MoveHow, RecordEvent, RecordEventKind, Settings, StepTag } from "./record";
 
 const MAX_UNDO = 300;
 
@@ -23,6 +23,8 @@ interface UndoEntry {
   steps: number;
   stepIndex: number;
   moves: number;
+  /** A debug override's entry: its event in `events`, marked undone when this is taken back. */
+  event?: number;
 }
 
 /** One move of the game as played: the position before it (raw state) and the click. The belief over
@@ -167,11 +169,23 @@ export class GameSession {
     this.settings = rec.settings.map(s => ({ ...s }));
     this.models = { ...rec.models };
     this.events = rec.events.map(e => ({ ...e }));
+    // The debug overrides that stood, each where it was made: before the step it preceded.
+    const overrides = this.events.flatMap((e, i) => (e.kind === "debug" && e.override && !e.undone ? [i] : []));
+    const overridesAt = (step: number) => {
+      for (const i of overrides) {
+        const e = this.events[i];
+        if (e.step !== step) continue;
+        const why = this.override(e.text, e.override!, i);
+        if (why) throw new Error(`a debug override of the saved game was refused: ${why}`);
+      }
+    };
     rec.steps.forEach((s, i) => {
+      overridesAt(i);
       this.setting = s.tag.setting;
       const why = this.apply(s.action, s.tag.forcedDie, { source: s.tag.source, analysis: s.tag.analysis });
       if (why) throw new Error(`step ${i + 1} of the saved game was refused: ${why}`);
     });
+    overridesAt(rec.steps.length);
     this.id = rec.id;
     this.startedAt = rec.started_at;
     this.submitted = submitted;
@@ -230,7 +244,7 @@ export class GameSession {
     for (const r of rolls) lines.push(...describeRoll(this.engine, before, r, mover));
     lines.push(...describeEventTracks(before, end, eventTracks));
     lines.push(...describeDeltas(this.engine, before, { ...end, die_roll: undefined }, mover,
-                                 a.decision_type === 1 ? a.primary_id : 0));
+                                 a.decision_type === this.engine.layout.decision_types.SELECT_CARD ? a.primary_id : 0));
     this.tags.push({
       source: how.source, analysis: how.analysis, mover: mover === "US" || mover === "USSR" ? mover : "",
       forcedDie, rolled: rolls.length > 0, setting: this.setting,
@@ -303,7 +317,9 @@ export class GameSession {
   undo(announce = true): boolean {
     const e = this.history.pop();
     if (!e) return false;
-    // A debug override has no step of its own: taking one back is not a move taken back.
+    // A debug override has no step of its own: taking one back is not a move taken back, but a
+    // rebuild of the game must not apply it.
+    if (e.event !== undefined && this.events[e.event]) this.events[e.event].undone = true;
     if (announce && e.steps < this.steps.length) {
       const t = this.tags[e.steps];
       this.event("undo", `${t?.mover || "?"} ${t?.source ?? "?"} move taken back`);
@@ -325,30 +341,42 @@ export class GameSession {
     return true;
   }
 
-  // ---- debug overrides: engine testing, undoable ---------------------------------------------
+  // ---- debug overrides: engine testing, undoable, recorded -----------------------------------
+  //
+  // An override changes the position outside the rules, so the steps alone no longer rebuild the
+  // game: each is recorded as a "debug" event carrying the exact change (record.ts DebugOverride),
+  // which replayRecord applies again where it was made. Its summary is never `clean`.
 
-  private debug(text: string, change: () => string | null): string | null {
+  /** Apply `o` as one undoable change, logged; `event` is the record's event for it. */
+  private override(text: string, o: DebugOverride, event: number): string | null {
     this.remember();
-    const refused = change();
+    const refused = o.kind === "country" ? this.engine.setCountry(o.id, o.us, o.ussr)
+      : o.kind === "defcon" ? this.engine.setDefcon(o.value) : this.engine.setVp(o.value);
     if (refused) {
       this.history.pop();
       return refused;
     }
+    this.history[this.history.length - 1].event = event;
     const s = this.engine.display();
     this.logs.push({ step_index: this.stepIndex, turn: s.turn, ar: s.action_round, phase: "DEBUG", player: "DEBUG", text });
-    this.event("debug", text);
     return null;
+  }
+
+  private debug(text: string, o: DebugOverride): string | null {
+    const refused = this.override(text, o, this.events.length);
+    if (!refused) this.events.push({ step: this.steps.length, kind: "debug", text, override: o });
+    return refused;
   }
 
   setCountry(cid: number, us: number, ussr: number): string | null {
     return this.debug(`[DEBUG] Set ${this.engine.countryName(cid)} Influence -> US: ${us}, USSR: ${ussr}`,
-      () => this.engine.setCountry(cid, us, ussr));
+      { kind: "country", id: cid, us, ussr });
   }
   setDefcon(v: number): string | null {
-    return this.debug(`[DEBUG] Set DEFCON -> ${v}`, () => this.engine.setDefcon(v));
+    return this.debug(`[DEBUG] Set DEFCON -> ${v}`, { kind: "defcon", value: v });
   }
   setVp(v: number): string | null {
-    return this.debug(`[DEBUG] Set VP -> ${v}`, () => this.engine.setVp(v));
+    return this.debug(`[DEBUG] Set VP -> ${v}`, { kind: "vp", value: v });
   }
 
   // ---- positions -------------------------------------------------------------------------------

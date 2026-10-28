@@ -34,6 +34,7 @@ export interface Env {
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_LOG_CHARS = 48 * 1024;
 const SCHEMA = 1;
+const EVENT_KINDS = ["undo", "debug", "load", "resume"];
 
 function allowedOrigin(req: Request, env: Env): string | null {
   const origin = req.headers.get("Origin");
@@ -55,8 +56,34 @@ const isStr = (v: unknown, max: number): v is string => typeof v === "string" &&
 const isInt = (v: unknown, lo: number, hi: number): v is number => Number.isInteger(v) && (v as number) >= lo && (v as number) <= hi;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const SIDES = ["US", "USSR"];
+const isStrList = (v: unknown, n: number, max: number): v is string[] =>
+  Array.isArray(v) && v.length <= n && v.every(x => isStr(x, max));
 
-/** Why `v` is not a submission this Worker keeps, or null. */
+/** A setting the page moved under (record.ts Settings). */
+function validSetting(v: unknown): boolean {
+  return isObj(v) && ["DEV", "US", "USSR"].includes(v.view as string) && ["", "US", "USSR"].includes(v.auto as string)
+    && isStr(v.model, 64) && isStr(v.search, 256);
+}
+
+/** A model the page moved with, by its sha256 (record.ts ModelInfo). */
+function validModel(v: unknown): boolean {
+  return isObj(v) && isStr(v.label, 200) && isStr(v.source, 1024) && isStr(v.checkpoint, 1024);
+}
+
+/** What happened besides moves (record.ts RecordEvent), a debug override's change included. */
+function validEvent(v: unknown): boolean {
+  if (!isObj(v) || !isInt(v.step, 0, 20000) || !EVENT_KINDS.includes(v.kind as string) || !isStr(v.text, 500)) return false;
+  if (v.undone !== undefined && typeof v.undone !== "boolean") return false;
+  const o = v.override;
+  if (o === undefined) return true;
+  if (!isObj(o)) return false;
+  if (o.kind === "country") return isInt(o.id, 0, 83) && isInt(o.us, 0, 255) && isInt(o.ussr, 0, 255);
+  if (o.kind === "defcon" || o.kind === "vp") return isInt(o.value, -20, 20);
+  return false;
+}
+
+/** Why `v` is not a submission this Worker keeps, or null. Every field the row binds is checked for
+ *  its type and length here, so the INSERT never binds something the table does not expect. */
 export function invalid(v: unknown): string | null {
   if (!isObj(v)) return "not a JSON object";
   if (v.schema !== SCHEMA) return `schema must be ${SCHEMA}`;
@@ -73,9 +100,12 @@ export function invalid(v: unknown): string | null {
       || !isInt(r.end_turn, 0, 20) || !isStr(r.reason, 80)) return "bad result";
   const s = v.summary;
   if (!isObj(s) || typeof s.clean !== "boolean" || !(s.human_side === null || SIDES.includes(s.human_side as string))
-      || !Array.isArray(s.models) || !Array.isArray(s.searches)) return "bad summary";
-  if (!Array.isArray(v.settings) || v.settings.length > 255) return "bad settings";
-  if (!isObj(v.models) || !Array.isArray(v.events) || v.events.length > 5000) return "bad models or events";
+      || !isStrList(s.models, 255, 64) || !isStrList(s.searches, 255, 256)) return "bad summary";
+  if (!Array.isArray(v.settings) || v.settings.length > 255 || !v.settings.every(validSetting)) return "bad settings";
+  const models = v.models;
+  if (!isObj(models) || Object.keys(models).length > 255
+      || !Object.entries(models).every(([k, m]) => k.length <= 64 && validModel(m))) return "bad models";
+  if (!Array.isArray(v.events) || v.events.length > 5000 || !v.events.every(validEvent)) return "bad events";
   if (!(v.start_position === null || isStr(v.start_position, 8192))) return "bad start position";
   if (!isStr(v.log, MAX_LOG_CHARS) || !/^[A-Za-z0-9_-]+$/.test(v.log)) return "bad log";
   if (!isInt(v.n_steps, 1, 20000)) return "bad step count";
@@ -109,10 +139,16 @@ export async function handle(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return reply(405, { error: "POST a game" }, origin);
   if (!origin) return reply(403, { error: "origin not allowed" }, null);
 
-  const text = await req.text();
-  if (text.length > MAX_BODY_BYTES) return reply(413, { error: "too large" }, origin);
+  // The cap is on bytes, not characters (a character can be four bytes), and is checked before the
+  // body is decoded: a declared length over it is refused unread.
+  const declared = Number(req.headers.get("Content-Length") ?? "0");
+  if (declared > MAX_BODY_BYTES) return reply(413, { error: "too large" }, origin);
+  const raw = await req.arrayBuffer();
+  if (raw.byteLength > MAX_BODY_BYTES) return reply(413, { error: "too large" }, origin);
+  let text: string;
   let body: unknown;
   try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
     body = JSON.parse(text);
   } catch {
     return reply(400, { error: "not JSON" }, origin);
