@@ -29,6 +29,16 @@ class _FirstLegal(torch.nn.Module):
         z = torch.zeros(actions.shape[0])
         return actions, z, z, z, z
 
+    def forward(self, obs: torch.Tensor, mask: torch.Tensor):
+        """The same policy as masked logits: every mass on the lowest-indexed legal action, so it
+        is that action under argmax and under sampling at any temperature."""
+        n = obs.shape[0]
+        first = torch.argmax(mask.to(torch.int32), dim=1)
+        logits = torch.full((n, mask.shape[1]), -1e9)
+        logits[torch.arange(n), first] = 0.0
+        z = torch.zeros(n, 1)
+        return logits, z, z
+
 
 def _first_legal(state, player):
     mask = np.asarray(ts_engine.ActionMask.generate_flat_mask(state))
@@ -68,7 +78,14 @@ def test_it_refuses_a_model_of_the_wrong_width() -> None:
     class _Wrong(torch.nn.Module):
         TOTAL_OBS_SIZE = 4293      # legacy, retired
 
+        def __init__(self) -> None:
+            super().__init__()
+            self.marker = torch.nn.Parameter(torch.zeros(1))   # a device to be read from
+
         def sample_action(self, obs, mask, temperature: float = 1.0):
+            raise AssertionError("must not get as far as a forward pass")
+
+        def forward(self, obs: torch.Tensor, mask: torch.Tensor):
             raise AssertionError("must not get as far as a forward pass")
 
     with pytest.raises(ValueError, match="the engine emits"):

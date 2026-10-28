@@ -93,7 +93,7 @@ def test_the_probe_scalars_and_the_trainer_tag_table_agree() -> None:
     from ai.training.generic_trainer import MULTILINE_CHARTS, TB_TAGS
 
     produced = set(profile_self_play_batched(
-        create_coldwar_net_v2("cpu"), num_envs=4, max_iters=80)["scalars"])
+        create_coldwar_net_v2("cpu"), num_envs=4, max_iters=20_000)["scalars"])   # games must finish
 
     # A key is charted either as a series of its own or as one line of a combined chart -- the
     # four battleground series share `strategy/battlegrounds` rather than having four charts.

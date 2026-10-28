@@ -213,6 +213,16 @@ def test_batched_profile_mean_turn_matches_an_independent_drain() -> None:
             z = torch.zeros(actions.shape[0])
             return actions, z, z, z, z
 
+        def forward(self, obs: torch.Tensor, mask: torch.Tensor):
+            """The same policy as masked logits: every mass on the lowest-indexed legal action, so it
+            is that action under argmax and under sampling at any temperature."""
+            n = obs.shape[0]
+            first = torch.argmax(mask.to(torch.int32), dim=1)
+            logits = torch.full((n, mask.shape[1]), -1e9)
+            logits[torch.arange(n), first] = 0.0
+            z = torch.zeros(n, 1)
+            return logits, z, z
+
     num_envs, seed = 12, 4321
     profile = profile_self_play_batched(
         FirstLegal(), num_envs=num_envs, base_seed=seed, max_iters=20_000)

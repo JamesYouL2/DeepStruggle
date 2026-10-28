@@ -16,10 +16,12 @@ These tests pin that the time flags are gone and that a nonsensical budget fails
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 import pytest
+import ts_engine
 
 from ai.training.generic_trainer import train_pipeline
 from ai.training.train import build_parser
@@ -65,9 +67,12 @@ def test_a_nonsense_budget_raises_before_anything_is_built(kwargs, needle: str) 
 
 def test_the_cli_rejects_a_zero_budget_end_to_end() -> None:
     """Through the real entry point, so the check cannot be bypassed by the CLI layer."""
+    # The CLI imports the engine before anything else (it checks the build is fresh), so it is
+    # launched the documented way: the engine this suite imported on PYTHONPATH.
+    path = os.pathsep.join([os.path.dirname(os.path.abspath(ts_engine.__file__)), os.getcwd()])
     proc = subprocess.run(
         [sys.executable, "tools/train.py", "--train-steps", "0"],
-        capture_output=True, text=True, timeout=300)
+        capture_output=True, text=True, timeout=300, env={**os.environ, "PYTHONPATH": path})
     assert proc.returncode != 0, "a zero step budget must not start a run"
     combined = proc.stdout + proc.stderr
     assert "train_steps must be positive" in combined, combined[-2000:]

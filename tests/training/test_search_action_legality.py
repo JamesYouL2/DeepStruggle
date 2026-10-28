@@ -83,6 +83,7 @@ class _RogueMCTS:
         self._bogus = bogus
         self.cfg = real.cfg
         self.device = real.device
+        self.features = real.features
 
     def should_search(self, st: ts.GameState) -> bool:
         return True
