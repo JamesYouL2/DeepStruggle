@@ -40,7 +40,6 @@ def _buffer(rewards, players, dones=None, values=None) -> RolloutBuffer:
 def _gae(buf, lam, **kw):
     buf.compute_gae(
         last_v_win=torch.zeros(N), last_v_vp=torch.zeros(N),
-        last_dones=torch.zeros(N, dtype=torch.bool),
         last_players=torch.full((N,), 1, dtype=torch.int8),
         gamma=1.0, gae_lambda=lam, **kw)
     return buf.returns_win.clone()
@@ -91,7 +90,6 @@ def test_it_never_negates_a_value_across_a_change_of_mover() -> None:
 
     buf.compute_gae(
         last_v_win=torch.full((N,), 0.5), last_v_vp=torch.zeros(N),
-        last_dones=torch.zeros(N, dtype=torch.bool),
         last_players=torch.full((N,), 1, dtype=torch.int8),
         gamma=1.0, gae_lambda=0.0, per_player_gae=True)
     adv = buf.advantages.detach().numpy()

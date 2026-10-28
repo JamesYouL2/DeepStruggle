@@ -45,7 +45,6 @@ def _buffer(next_own: np.ndarray | None) -> RolloutBuffer:
 def _gae(buf: RolloutBuffer, same: bool) -> torch.Tensor:
     buf.compute_gae(
         last_v_win=torch.zeros(N), last_v_vp=torch.zeros(N),
-        last_dones=torch.zeros(N, dtype=torch.bool),
         last_players=torch.full((N,), 1, dtype=torch.int8),
         gamma=1.0, gae_lambda=0.98, same_perspective_bootstrap=same,
     )
@@ -85,7 +84,6 @@ def test_it_refuses_to_run_without_the_stored_values() -> None:
     with pytest.raises(ValueError, match="next_values_own"):
         _gae(buf, same=False) if False else buf.compute_gae(
             last_v_win=torch.zeros(N), last_v_vp=torch.zeros(N),
-            last_dones=torch.zeros(N, dtype=torch.bool),
             last_players=torch.full((N,), 1, dtype=torch.int8),
             same_perspective_bootstrap=True)
 

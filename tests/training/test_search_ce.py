@@ -77,7 +77,6 @@ def test_batches_carry_the_target_after_the_learner_mask() -> None:
     for _ in range(T):
         _add(b, pi, torch.ones(N))
     b.compute_gae(last_v_win=torch.zeros(N), last_v_vp=torch.zeros(N),
-                  last_dones=torch.zeros(N, dtype=torch.bool),
                   last_players=torch.ones(N, dtype=torch.int8))
     batch = next(b.get_batches(batch_size=8))
     assert len(batch) == 13, "search target and flag are elements 10 and 11, then seat, indices"

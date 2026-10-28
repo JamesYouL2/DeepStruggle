@@ -54,7 +54,6 @@ def _build(term_reward: float, held_us: bool = False, held_ussr: bool = False,
 
 def _gae(b: RolloutBuffer, **kw: object) -> List[float]:
     b.compute_gae(last_v_win=torch.tensor([-0.5]), last_v_vp=torch.zeros(1),
-                  last_dones=torch.tensor([1.0]),
                   last_players=torch.tensor([1], dtype=torch.int8),
                   gamma=0.999, gae_lambda=0.98, **kw)  # pyrefly: ignore
     return [float(x) for x in b.returns_win[:, 0]]

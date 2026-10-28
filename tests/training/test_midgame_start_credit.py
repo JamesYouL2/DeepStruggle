@@ -57,7 +57,7 @@ def test_gae_does_not_bootstrap_across_a_resumed_episode() -> None:
     _add(buf, player=-1, turn=8, done=False, value=0.9)
 
     buf.compute_gae(last_v_win=torch.zeros(1), last_v_vp=torch.zeros(1),
-                    last_dones=torch.zeros(1), last_players=torch.ones(1),
+                    last_players=torch.ones(1),
                     blunder_window=False)
 
     # The terminal step's return is its own reward, not the resumed episode's value.
@@ -82,7 +82,7 @@ def test_blunder_window_stays_inside_the_episode_that_blundered() -> None:
     _add(buf, player=1, turn=6, done=True, value=0.5, reward=-1.0, blunder=1)
 
     buf.compute_gae(last_v_win=torch.zeros(1), last_v_vp=torch.zeros(1),
-                    last_dones=torch.zeros(1), last_players=torch.ones(1),
+                    last_players=torch.ones(1),
                     blunder_window=True)
 
     # Inside the window the blunderer's return is pinned to -1.
@@ -102,7 +102,7 @@ def test_a_resumed_episode_is_scored_by_its_own_outcome() -> None:
     _add(buf, player=-1, turn=8, done=True, value=0.0, reward=-1.0)
 
     buf.compute_gae(last_v_win=torch.zeros(1), last_v_vp=torch.zeros(1),
-                    last_dones=torch.zeros(1), last_players=torch.ones(1),
+                    last_players=torch.ones(1),
                     blunder_window=False)
 
     assert abs(float(buf.returns_win[1, 0]) + 1.0) < 1e-5

@@ -57,7 +57,7 @@ def test_target_marks_only_the_doomed_players_run_up() -> None:
     _fill(buf, blunder_at=6, blunderer=1)  # US brings the loss on itself at t=6
     buf.compute_gae(
         last_v_win=torch.zeros(1), last_v_vp=torch.zeros(1),
-        last_dones=torch.zeros(1), last_players=torch.ones(1),
+        last_players=torch.ones(1),
         defcon_risk_horizon=4,
     )
     target = buf.defcon_risk_target[:, 0]
@@ -76,7 +76,7 @@ def test_no_blunder_means_no_positives() -> None:
     _fill(buf, blunder_at=6, blunderer=0)  # terminal, but not self-inflicted
     buf.compute_gae(
         last_v_win=torch.zeros(1), last_v_vp=torch.zeros(1),
-        last_dones=torch.zeros(1), last_players=torch.ones(1),
+        last_players=torch.ones(1),
     )
     assert buf.defcon_risk_target.sum() == 0.0
 
@@ -108,7 +108,7 @@ def test_batches_carry_the_target() -> None:
     _fill(buf, blunder_at=6, blunderer=1)
     buf.compute_gae(
         last_v_win=torch.zeros(1), last_v_vp=torch.zeros(1),
-        last_dones=torch.zeros(1), last_players=torch.ones(1),
+        last_players=torch.ones(1),
     )
     batch = next(buf.get_batches(batch_size=8))
     # Eighth tensor, and the learner mask is the ninth (added for frozen-opponent sampling).

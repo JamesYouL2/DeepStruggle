@@ -142,7 +142,6 @@ class TestOpponentEventDelegationCredit:
         buf.compute_gae(
             last_v_win=torch.tensor([0.0]),
             last_v_vp=torch.tensor([0.0]),
-            last_dones=torch.tensor([True]),
             last_players=torch.tensor([1]),
             gamma=0.999,
             gae_lambda=0.98,
@@ -183,7 +182,6 @@ class TestHeldScoringCardsCredit:
         buf.compute_gae(
             last_v_win=torch.tensor([0.0]),
             last_v_vp=torch.tensor([0.0]),
-            last_dones=torch.tensor([True]),
             last_players=torch.tensor([1]),
             gamma=0.999,
             gae_lambda=0.98,
@@ -538,7 +536,6 @@ class TestTurnBoundaryCreditSlicing:
         buf.compute_gae(
             last_v_win=torch.zeros(1),
             last_v_vp=torch.zeros(1),
-            last_dones=torch.tensor([True]),
             last_players=torch.tensor([-1]),
             gamma=1.0,
             gae_lambda=1.0,
@@ -596,7 +593,6 @@ class TestTurnBoundaryCreditSlicing:
         buf.compute_gae(
             last_v_win=torch.zeros(1),
             last_v_vp=torch.zeros(1),
-            last_dones=torch.tensor([True]),
             last_players=torch.tensor([1]),
             gamma=1.0,
             gae_lambda=1.0,
@@ -868,7 +864,6 @@ class TestHeldScoringAndPotentialFixes:
         buffer.compute_gae(
             last_v_win=torch.tensor([0.0]),
             last_v_vp=torch.tensor([0.0]),
-            last_dones=torch.tensor([True]),
             last_players=torch.tensor([1]),
             slice_turn_boundaries=True,
         )

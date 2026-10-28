@@ -26,7 +26,6 @@ T, N = 24, 16
 class _Last(NamedTuple):
     last_v_win: torch.Tensor
     last_v_vp: torch.Tensor
-    last_dones: torch.Tensor
     last_players: torch.Tensor
 
 
@@ -41,7 +40,7 @@ def _fill(b: RolloutBuffer, setup_len: int = 6, seed: int = 0) -> _Last:
     b.obs.zero_()
     b.obs[:, :, setup_phase_slot()] = 2.0 / 6.0            # action round
     b.obs[:setup_len, :, setup_phase_slot()] = 0.0         # the first steps are setup
-    return _Last(torch.rand(N, generator=g), torch.zeros(N), torch.zeros(N, dtype=torch.bool),
+    return _Last(torch.rand(N, generator=g), torch.zeros(N),
                  torch.ones(N, dtype=torch.int8))
 
 
@@ -87,7 +86,7 @@ def test_graphed_equals_eager_with_the_setup_block() -> None:
     for seed in range(3):
         for b in (eager, graphed):
             last = _fill(b, seed=seed)
-            b.compute_gae(last.last_v_win.cuda(), last.last_v_vp.cuda(), last.last_dones.cuda(),
+            b.compute_gae(last.last_v_win.cuda(), last.last_v_vp.cuda(),
                           last.last_players.cuda())
         assert torch.equal(eager.advantages, graphed.advantages)
 
@@ -138,7 +137,7 @@ def test_the_setup_only_injector_keeps_setup_rows_and_the_policy_term(tmp_path: 
 def _lam_one(mode: str, b: RolloutBuffer) -> torch.Tensor:
     """Which transitions a mode chains, read back through the recursion's own mask."""
     b.block_lambda = mode
-    last = _Last(torch.zeros(N), torch.zeros(N), torch.zeros(N, dtype=torch.bool),
+    last = _Last(torch.zeros(N), torch.zeros(N),
                  torch.ones(N, dtype=torch.int8))
     b.values_win.zero_(); b.rewards.zero_()
     # with V = 0 and rewards 0 except at the end, the advantage at t is non-zero only if the chain
@@ -205,7 +204,7 @@ def test_graphed_equals_eager_for_same_side() -> None:
             last = _fill(b, seed=seed)
             g = torch.Generator().manual_seed(seed + 10)
             b.rngs.copy_(torch.randint(0, 3, (T, N), generator=g).cumsum(0))
-            b.compute_gae(last.last_v_win.cuda(), last.last_v_vp.cuda(), last.last_dones.cuda(),
+            b.compute_gae(last.last_v_win.cuda(), last.last_v_vp.cuda(),
                           last.last_players.cuda())
         assert torch.equal(eager.advantages, graphed.advantages)
 

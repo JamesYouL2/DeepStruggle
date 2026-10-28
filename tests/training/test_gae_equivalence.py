@@ -100,7 +100,7 @@ def test_vectorized_matches_elementwise(slice_tb: bool, blunder_window: bool) ->
     lp = torch.randint(0, 2, (N,)).mul(2).sub(1).to(torch.int8)
 
     ref_adv, ref_ret = reference(buf, lv, lp, 1.0, 0.95, slice_tb, blunder_window)
-    buf.compute_gae(last_v_win=lv, last_v_vp=torch.zeros(N), last_dones=torch.zeros(N),
+    buf.compute_gae(last_v_win=lv, last_v_vp=torch.zeros(N),
                     last_players=lp, gamma=1.0, gae_lambda=0.95,
                     slice_turn_boundaries=slice_tb, blunder_window=blunder_window)
 

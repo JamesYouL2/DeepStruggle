@@ -26,7 +26,6 @@ T, N = 32, 48
 class _Last(NamedTuple):
     last_v_win: torch.Tensor
     last_v_vp: torch.Tensor
-    last_dones: torch.Tensor
     last_players: torch.Tensor
 
 
@@ -49,7 +48,7 @@ def _fill(b: RolloutBuffer, seed: int) -> _Last:
                            .to(torch.int8))
     b.next_values_own.copy_(r(T, N) * 2 - 1)
     b.has_next_values_own = True
-    return _Last(r(N) * 2 - 1, r(N) * 2 - 1, r(N) < 0.05,
+    return _Last(r(N) * 2 - 1, r(N) * 2 - 1,
                  torch.where(r(N) < 0.5, 1, -1).to(torch.int8))
 
 
