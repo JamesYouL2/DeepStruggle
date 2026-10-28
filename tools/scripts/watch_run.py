@@ -146,17 +146,64 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def run_pid(run_dir: str) -> Optional[int]:
-    """The PID the run recorded for itself, if it recorded one.
+def run_pid(run_dir: str) -> Optional[Tuple[int, float]]:
+    """The PID the run recorded for itself and when the file was written, if it recorded one.
 
     Preferred over any pattern match, because a pattern cannot distinguish two runs. Runs started
     before the trainer wrote this file have none, and the caller falls back.
     """
+    path = os.path.join(run_dir, "run.pid")
     try:
-        with open(os.path.join(run_dir, "run.pid"), encoding="utf-8") as f:
-            return int(f.read().strip())
+        with open(path, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+        return pid, os.path.getmtime(path)
     except (OSError, ValueError):
         return None
+
+
+#: Seconds of tolerance when comparing a process's start with the time its pid file was written:
+#: the kernel's boot time is whole seconds and the start time is in clock ticks.
+_START_SLACK = 5.0
+
+
+def process_start_time(pid: int) -> Optional[float]:
+    """The wall-clock time process `pid` started, from /proc, or None when it cannot be read."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            stat = f.read()
+        with open("/proc/stat", encoding="utf-8") as f:
+            btime = next(float(line.split()[1]) for line in f if line.startswith("btime "))
+    except (OSError, StopIteration, ValueError, IndexError):
+        return None
+    # The command name (field 2) is parenthesised and may hold spaces; fields resume after the
+    # last ")", at field 3, so starttime (field 22) is the 20th of the rest.
+    rest = stat.rsplit(")", 1)[-1].split()
+    try:
+        ticks = float(rest[19])
+    except (IndexError, ValueError):
+        return None
+    return btime + ticks / os.sysconf("SC_CLK_TCK")
+
+
+def pid_file_alive(pid: int, written: float, watcher_start: float, grace: float, now: float) -> bool:
+    """Is the run alive, judged by the `run.pid` it wrote at time `written`?
+
+    A run continued in place (one directory per run since 2026-10-07) inherits the previous leg's
+    `run.pid` until the new trainer writes its own, so the file alone is not evidence:
+
+    * a live process that started no later than the file was written is the writer -- alive;
+    * a live process that started *after* the file was written is a reused PID, not the run;
+    * a dead (or reused) PID in a file written since this watcher started means the run died;
+    * a dead (or reused) PID in a file older than this watcher is a previous leg's: the new leg is
+      given `grace` seconds to write its own before the run counts as dead.
+    """
+    if pid_alive(pid):
+        started = process_start_time(pid)
+        if started is None or started <= written + _START_SLACK:
+            return True
+    if written >= watcher_start:
+        return False
+    return now - watcher_start <= grace
 
 
 def process_alive(pattern: str) -> bool:
@@ -173,7 +220,8 @@ def process_alive(pattern: str) -> bool:
     `pgrep -f <run-name>` matches the watcher itself. That makes `process_alive` permanently
     true, and CRASH can then never fire -- the watcher reports PROGRESS forever while the run it
     is watching is dead. That is the exact failure this script exists to prevent, so the
-    self-match is filtered rather than assumed away.
+    self-match is filtered rather than assumed away: this process and every ancestor (whatever
+    shell or wrapper launched it) are excluded by PID, and any other watcher by its command line.
     """
     try:
         out = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True)
@@ -181,20 +229,37 @@ def process_alive(pattern: str) -> bool:
         return False
     if out.returncode != 0:
         return False
-    me = str(os.getpid())
+    mine = _self_and_ancestors()
     for pid in out.stdout.split():
-        if pid == me:
+        if not pid.isdigit() or int(pid) in mine:
             continue
         cmd = _cmdline(pid)
         if not cmd:
             continue
-        # The watcher, its shell wrapper, and any sibling watcher are not the training run.
+        # A sibling watcher (or its wrapper) is not the training run either.
         if "watch_run.py" in cmd:
-            continue
-        if "shell-snapshots" in cmd or cmd.strip().startswith("/usr/bin/zsh -c"):
             continue
         return True
     return False
+
+
+def _parent(pid: int) -> Optional[int]:
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            stat = f.read()
+        return int(stat.rsplit(")", 1)[-1].split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _self_and_ancestors() -> Set[int]:
+    """This process and every process above it, up to init."""
+    out: Set[int] = set()
+    pid: Optional[int] = os.getpid()
+    while pid is not None and pid > 1 and pid not in out:
+        out.add(pid)
+        pid = _parent(pid)
+    return out
 
 
 #: Health alarms, implementing the protocol in `research/method/detecting_collapse.md`.
@@ -223,8 +288,8 @@ POOL_GROWTH_ROWS = 100   # ...over at least this many iterations
 #: ranks first sustains 0.50-0.72 pinned, overlapping the heavily one-sided arm's 0.54-0.87.
 #: Transient total pinning is normal in healthy self-play, so any latched trigger would fire on
 #: the best run in the record. It stays a flag for a human to follow up, which is what
-#: `research/method/detecting_collapse.md` means by "a flag, not a verdict".
-ONESIDED_NO_ALARM = True
+#: `research/method/detecting_collapse.md` means by "a flag, not a verdict" -- so there is no
+#: one-sidedness alarm below at all.
 
 
 def _median(xs: List[float]) -> float:
@@ -284,7 +349,7 @@ def health_alarms(run_dir: str, fired: Set[str]) -> List[str]:
                  f"kl_div spiked to {recent:.3f} against this run's own median of {med:.4f} "
                  f"({recent / med:.0f}x) -- the KL-domination signature")
 
-    # 3. One-sidedness is deliberately NOT an alarm -- see the note on ONESIDED_NO_ALARM.
+    # 3. One-sidedness is deliberately NOT an alarm -- see the note above POOL_GROWTH_ROWS.
     return out
 
 
@@ -318,7 +383,9 @@ def main() -> int:
                          "this watcher and its shell are excluded from the match, since their own "
                          "command lines contain it too.")
     ap.add_argument("--grace", type=int, default=600,
-                    help="Seconds to allow before a run with no iterations counts as NOSTART")
+                    help="Seconds to allow before a run with no iterations counts as NOSTART, and "
+                         "for a run continued in place to replace the previous leg's run.pid "
+                         "before that leg's dead PID counts as this run's")
     ap.add_argument("--stall-after", type=int, default=1800,
                     help="Seconds without the step count advancing before reporting STALL")
     args = ap.parse_args()
@@ -334,9 +401,12 @@ def main() -> int:
 
     while True:
         steps, row, iters = read_metrics(args.run_dir)
-        pid = run_pid(args.run_dir)
-        alive = pid_alive(pid) if pid is not None else process_alive(args.pattern)
+        recorded_pid = run_pid(args.run_dir)
         now = time.time()
+        if recorded_pid is not None:
+            alive = pid_file_alive(recorded_pid[0], recorded_pid[1], t0, args.grace, now)
+        else:
+            alive = process_alive(args.pattern)
 
         if steps is not None and not started:
             started = True
