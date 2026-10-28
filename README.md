@@ -52,7 +52,7 @@ Known, reproducible, unfixed defects are tracked in [`BUGS.md`](BUGS.md).
 ├── engine/         # Core C++20 zero-allocation simulation engine
 ├── bindings/       # Native Python nanobind module (ts_engine) & environment bridge
 ├── ai/             # Networks (LadderNet; ColdWarNet V1/V2 for old checkpoints), rewards, NashPG, search, probes
-├── bot/            # Baseline bots (HeuristicBot, RandomBot, StrategicBot, NeuralBot)
+├── bot/            # Baseline bots (HeuristicBot, RandomBot, StrategicBot, ...); networks play via tools/lib/player_agent.py
 ├── web/            # Web Workbench, in the browser (WebAssembly engine + ONNX models) + a local files server
 ├── tools/          # Unified CLI suite for training, tournaments, matches, and replays
 ├── rules/          # Formal specifications (cards, map topology, effect flags)

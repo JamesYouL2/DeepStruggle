@@ -38,9 +38,7 @@ graph TD
 
     subgraph Bot ["Bots (bot/)"]
         BaseBot["BaseBot (bot/base_bot.py)"]
-        NeuralBotClient["NeuralBot (any checkpoint)"]
         Baselines["Random / Heuristic / HeuristicMCTS / Exploratory / Strategic / EventHeavy / Human"]
-        BaseBot --> NeuralBotClient
         BaseBot --> Baselines
     end
 
@@ -50,6 +48,7 @@ graph TD
         Leaderboard["tools/leaderboard.py, leaderboard_play.py"]
         MatchRunner["tools/play_match.py"]
         SharedLib["tools/lib/"]
+        Agents["NeuralAgent / OnnxAgent / searchers (tools/lib/player_agent.py: load_agent)"]
     end
 
     subgraph Bridge ["Python bindings (bindings/)"]
@@ -72,7 +71,7 @@ graph TD
     NashPG <--> Models
     Search <--> Nanobind
     Rewards <--> NashPG
-    Models --> NeuralBotClient
+    Models --> Agents
     SharedLib <--> Models
 ```
 
