@@ -23,7 +23,7 @@ import torch
 import ts_engine as ts
 from ai.eval.rollout_consistency import collect
 from ai.search.rollout_root import RolloutConfig, RolloutRoot, _stop_kw
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 def profile(root: RolloutRoot, states: List[ts.GameState], chunk: int) -> Dict[str, float]:
@@ -86,7 +86,7 @@ def main() -> int:
     ap.add_argument("--worlds", type=int, nargs="+", default=[16, 128])
     ap.add_argument("--positions", type=int, default=512)
     a = ap.parse_args()
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device="cuda").model.eval()
+    model = load_for_eval(a.checkpoint, "cuda", merged_ok=False).model
     dev = next(model.parameters()).device
     states = collect(model, dev, 64, 0.2, np.random.default_rng(1), True, a.positions)
     for w in a.worlds:

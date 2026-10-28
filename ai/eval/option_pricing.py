@@ -47,7 +47,7 @@ from ai.search.turn_pricing import Candidate, Nested, forward, price, priceable
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 from tools.lib.game_loop import GameLoop, SettlePolicy
-from tools.lib.player_agent import NeuralAgent, load_agent
+from ai.eval.loading import load_for_eval
 from tools.lib.self_play import generate_self_play_replay
 from web.server.replay import replays_dir
 
@@ -302,11 +302,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    agent = load_agent(args.model, device=str(device))
-    if not isinstance(agent, NeuralAgent):
-        raise SystemExit(f"{args.model} is not a network")
-    model = agent.model
-    model.eval()
+    # Every mask here, and the turn-end pricing's, is in the E4 view: a merged-view network is
+    # refused rather than priced as a policy it is not.
+    model = load_for_eval(args.model, device, merged_ok=False).model
     rng = random.Random(args.seed)
     seeds = [args.seed + i for i in range(args.games)]
     games, all_cands = play_games(model, device, seeds, args.sample, args.max_options, rng,

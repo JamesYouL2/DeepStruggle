@@ -40,7 +40,7 @@ from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
 from tools.lib.corpus_driver import state_from_token
 from tools.lib.game_step import drain_chance
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 _UINT64 = 1 << 64
 
@@ -358,11 +358,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     how = (f" (greedy to the turn's end, {a.worlds} worlds)" if a.turn_end else
            f" (the rollout continuation: {a.horizon} boundaries, {a.worlds} worlds)" if a.horizon > 0 else
            " (settled: the move's action round played out greedily)" if a.settled else "")
-    settler = NeuralAgent.from_checkpoint(a.settle_with, device=str(dev)).model.eval() if a.settle_with else None
+    settler = load_for_eval(a.settle_with, str(dev), merged_ok=False).model if a.settle_with else None
     if settler is not None:
         how += f", settled by {a.settle_with}"
     for ck in a.checkpoint:
-        model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
+        model = load_for_eval(ck, str(dev), merged_ok=False).model
         diff = (turn_end_differences(model, dev, pairs, a.worlds) if a.turn_end else
                 continuation_differences(model, dev, pairs, a.worlds, a.horizon) if a.horizon > 0
                 else critic_differences(model, dev, pairs, a.dice, settled=a.settled, settle_model=settler))

@@ -98,15 +98,20 @@ def loses_now(st: ts.GameState, a: int, mover: ts.Player) -> bool:
 def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
               keys: Sequence[ARKey], act: PolicyFn, seed: int,
               max_steps: int = 4000, select: Optional[StateSelector] = None,
-              watch: Optional[Watch] = None) -> List[float]:
+              watch: Optional[Watch] = None, *, features: int) -> List[float]:
     """Play every state to the end with `act` on both sides, in one batch, never taking an
     option that loses on the spot while another exists during the mover's action round (`keys`,
     read before the forced move). The mover's score per state: 1 win, 0.5 draw, 0 loss. `select`,
     if given, chooses instead of `act` (a searched continuation); where its choice is outside a
     row's mask as the guard narrowed it, `act` chooses over that mask. `watch`, if given, sees and
-    may steer the rows it asks for, after the safety guard."""
+    may steer the rows it asks for, after the safety guard.
+
+    `features` is the observation feature set `act` reads (`model_obs_features` of its network);
+    the rows it is handed are built in it. Required: a featured network fed the base layout
+    misreads without failing (HEADLINE_REVEAL changes content, not width). The masks are E4."""
     n = len(starts)
     runner = ts.VectorizedBatchRunner(n, seed)
+    runner.set_obs_features([int(features)] * n, [int(features)] * n)
     for i, st in enumerate(starts):
         runner.set_state(i, st)
     runner.refresh_all()
@@ -165,12 +170,13 @@ def play_safe(starts: Sequence[ts.GameState], movers: Sequence[ts.Player],
 
 def compare(positions: Sequence[Tuple[ts.GameState, Sequence[int]]], act: PolicyFn, pairs: int,
             seeds: Sequence[int], chunk: int = 1536,
-            select: Optional[StateSelector] = None) -> List[Dict[int, List[float]]]:
+            select: Optional[StateSelector] = None, *, features: int) -> List[Dict[int, List[float]]]:
     """Per position, every move's score in each pair: {action: [score of pair 0, 1, ...]}. All
     moves of one pair share the redeal and the dice, so differences are paired. `seeds` holds one
     seed per position, so a position's pairs do not depend on what it was batched with -- a
     seed from its index would give two positions in two runs the same redeals. `select` plays
-    the continuation instead of `act` (`play_safe`)."""
+    the continuation instead of `act` (`play_safe`). `features` is `act`'s observation feature
+    set (`play_safe`)."""
     if len(seeds) != len(positions):
         raise ValueError(f"{len(seeds)} seeds for {len(positions)} positions")
     out: List[Dict[int, List[float]]] = []
@@ -191,7 +197,7 @@ def compare(positions: Sequence[Tuple[ts.GameState, Sequence[int]]], act: Policy
                     movers.append(decider(st))
                     keys.append(ar_key(st))
                     index.append((p, a))
-        scores = play_safe(starts, movers, keys, act, seeds[lo], select=select)
+        scores = play_safe(starts, movers, keys, act, seeds[lo], select=select, features=features)
         res: List[Dict[int, List[float]]] = [{a: [] for a in positions[p][1]} for p in range(lo, hi)]
         for (p, a), s in zip(index, scores):
             res[p - lo][a].append(s)

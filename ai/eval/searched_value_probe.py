@@ -21,7 +21,7 @@ import torch
 
 from ai.search.rollout_root import RolloutConfig
 from ai.training.searched_games import SearchedGames
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -32,7 +32,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    searcher = NeuralAgent.from_checkpoint(a.searcher, device="cpu").model.eval()
+    searcher = load_for_eval(a.searcher, "cpu", merged_ok=False).model
     sg = SearchedGames(a.workers, searcher, RolloutConfig(k=4, worlds=16, horizon=4, rule="z2", stop="earlier",
                                                          leaf_side="own"), dev, envs=32)
     obs: List[np.ndarray] = []
@@ -53,7 +53,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     decided = y != 0
     print(f"{games} searched games by {a.searcher}: {x.shape[0]} decisions ({int(decided.sum())} in decided games)")
     for ck in a.critic:
-        model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
+        model = load_for_eval(ck, str(dev), merged_ok=False).model
         vs = []
         with torch.no_grad():
             for lo in range(0, x.shape[0], 4096):

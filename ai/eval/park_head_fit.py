@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 
 from ai.eval.park_head_probe import collect
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 def _bce(v: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -41,7 +41,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--lr", type=float, default=3e-4)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     obs, _side, gid, y_all = collect(model, dev, a.games, a.envs, a.seed)
     keep = y_all >= 0
     obs, gid = obs[keep], gid[keep]

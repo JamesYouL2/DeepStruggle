@@ -32,7 +32,7 @@ import torch
 import ts_engine as ts
 from ai.eval.leak_critic import LeakPair, load_pairs
 from bindings.ts_env import model_obs_features
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 from tools.value_labels import GraphedPolicy, SearchFollow, _drive, policy_streams
 
 
@@ -104,7 +104,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pairs = load_pairs(a.bank, a.playouts)
-    model = NeuralAgent.from_checkpoint(a.model, device=str(dev)).model.eval()
+    model = load_for_eval(a.model, str(dev), merged_ok=False).model
     label = np.asarray([p.label for p in pairs])
     print(f"{len(pairs)} confirmed pairs; the bank's label (2,048 greedy pairs, R39): lead {100 * label.mean():+.2f} pts, "
           f"{a.worlds} keyed worlds each here; playouts by {a.model}", flush=True)

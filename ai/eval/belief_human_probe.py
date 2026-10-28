@@ -35,7 +35,7 @@ import ts_engine as ts
 from ai.eval.belief_history_probe import collect
 from ai.search.belief import TRANSIENT, Decision, Now, card_locations, log_weights, posterior, record, sample_hands
 from tools.lib.corpus_paths import distinct_corpus_files, missing_corpus_reason
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 from tools.lib.ts_replayer_convert import convert_game
 
 
@@ -125,7 +125,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if reason is not None:
             raise SystemExit(reason)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     rng = np.random.default_rng(a.seed)
     jobs: List[Tuple[Now, np.ndarray, list]] = []
     truth: List[np.ndarray] = []

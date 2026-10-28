@@ -28,7 +28,7 @@ from ai.eval.belief_probe import _auc
 from ai.training.policy_fit import masks_of
 from ai.training.value_fit import Codes
 from tools.lib.engine_fingerprint import check_raw_states
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 def fit_classifier(x_tr: torch.Tensor, y_tr: torch.Tensor, x_va: torch.Tensor, y_va: torch.Tensor,
@@ -65,7 +65,7 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=7)
     a = ap.parse_args()
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     check_raw_states(a.dataset)
     z = np.load(a.dataset)
     held = z["heldout"].astype(bool)

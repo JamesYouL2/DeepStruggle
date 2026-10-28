@@ -108,9 +108,10 @@ class SubsWatch:
 
 
 def subs_branches(positions: Sequence[ts.GameState], alts: Sequence[int], act: PolicyFn, pairs: int,
-                  seed: int, chunk: int = 1536) -> List[Dict[str, Dict[str, List[float]]]]:
+                  seed: int, chunk: int = 1536, *, features: int) -> List[Dict[str, Dict[str, List[float]]]]:
     """Per position, per branch: the mover's score in each pair ("score") and each count's value in
-    each pair. Every position must be a US play-mode decision for Nuclear Subs with the event legal."""
+    each pair. Every position must be a US play-mode decision for Nuclear Subs with the event legal.
+    `features` is `act`'s observation feature set (`paired_playouts.play_safe`)."""
     out: List[Dict[str, Dict[str, List[float]]]] = []
     per = len(BRANCHES) * pairs
     step = max(1, chunk // per)
@@ -131,7 +132,7 @@ def subs_branches(positions: Sequence[ts.GameState], alts: Sequence[int], act: P
                     modes.append(b)
                     index.append((p, b))
         watch = SubsWatch(turns, modes)
-        scores = play_safe(starts, movers, keys, act, seed + lo, watch=watch)
+        scores = play_safe(starts, movers, keys, act, seed + lo, watch=watch, features=features)
         res = [{b: {k: [] for k in ("score",) + COUNTS} for b in BRANCHES} for _ in range(lo, hi)]
         for j, ((p, b), s) in enumerate(zip(index, scores)):
             res[p - lo][b]["score"].append(s)

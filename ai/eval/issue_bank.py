@@ -48,7 +48,7 @@ from bindings.ts_env import model_obs_features
 from tools.lib.corpus_driver import position_token
 from tools.lib.game_step import drain_chance
 from tools.lib.jsonl import write_jsonl
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 from tools.lib.position_bank import CARD_NAMES, move_name
 
 WORKBENCH = "https://mihaild.github.io/DeepStruggle"
@@ -363,7 +363,7 @@ def main() -> int:
     ap.add_argument("--report", required=True)
     a = ap.parse_args()
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     rows = mine_games(model, dev, a.games, a.seed, a.cap) + setup_rows(model, dev, a.deals, a.seed)
     write_jsonl(a.out, rows)
     with open(a.report, "w", encoding="utf-8") as f:

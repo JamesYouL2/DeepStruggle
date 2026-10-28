@@ -29,7 +29,7 @@ from ai.eval.leak_critic import LeakPair, load_pairs, load_screen_pairs
 from ai.models.ladder_net import region_bounds
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import model_obs_features
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 if p.decision_type == "POINT_NODE" and p.label > 0]
     print(f"placement pairs: {len(confirmed)} confirmed leaks, {len(screened)} screened pairs with a better move")
     for ck in a.checkpoint:
-        model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
+        model = load_for_eval(ck, str(dev), merged_ok=False).model
         print(f"== {ck}")
         if getattr(model, "region_attn", None) is not None:
             print(contribution(model, dev, confirmed + screened))

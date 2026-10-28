@@ -37,7 +37,7 @@ from ai.eval.belief_probe import (CARD_OFFSET, CARD_WIDTH, GLOBAL_OFFSET, GLOBAL
                                   scores)
 from ai.search.belief import Decision
 from bindings.ts_env import model_obs_features
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 DECK = int(ts.CardLocation.DRAW_DECK)
 UNKNOWN = {1: int(ts.CardLocation.HAND_US_UNKNOWN), 2: int(ts.CardLocation.HAND_USSR_UNKNOWN)}
@@ -235,7 +235,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=9091)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     test_games = set(range(0, a.games, 5))                       # one game in five held out
     val_games = set(range(1, a.games, 10))                       # and one in ten for early stopping
     samples = collect(model, dev, a.games, a.every, a.temperature, a.seed, test_games | val_games)

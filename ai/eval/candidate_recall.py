@@ -24,7 +24,7 @@ import torch
 import ts_engine as ts
 from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from tools.lib.corpus_driver import state_from_token
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 def load_positions(bank_path: str, n: int, seed: int) -> List[Tuple[ts.GameState, float, str]]:
@@ -87,7 +87,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=13)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     pos = load_positions(a.bank, a.positions, a.seed)
     root = RolloutRoot(model, RolloutConfig(k=a.k, worlds=a.worlds, horizon=4, rule="z2", seed=a.seed), device=dev)
     ranks = pick_ranks(root, [p for p, _, _ in pos])

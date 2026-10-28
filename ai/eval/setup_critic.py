@@ -24,7 +24,10 @@ from typing import Any, Dict, List, Sequence
 import numpy as np
 import ts_engine as ts
 
+from ai.eval.loading import load_for_eval
 from ai.eval.replay_critic import _resolve_chance, evaluate
+from bindings.ts_env import check_obs_width
+from tools.lib.player_agent import resolve_device
 from tools.lib.checkpoint_id import checkpoint_label
 from tools.lib.openings import OPENINGS, SETUP_DECISIONS, acting_side, scripted_setup_index
 
@@ -60,7 +63,6 @@ def deal(state: ts.GameState) -> List[int]:
 
 def measure(model: Any, seeds: Sequence[int], openings: Sequence[str]) -> Dict[str, Any]:
     """Per-seed and mean critic values after each opening, for one model."""
-    from bindings.ts_env import check_obs_width
 
     check_obs_width(model)
     model.eval()
@@ -79,7 +81,6 @@ def measure(model: Any, seeds: Sequence[int], openings: Sequence[str]) -> Dict[s
 
 
 def main() -> None:
-    from tools.lib.player_agent import NeuralAgent, resolve_device
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--checkpoints", nargs="+", required=True)
@@ -97,7 +98,7 @@ def main() -> None:
           f" {'US-view seeds won':>18} {'USSR-view diff':>15}")
     for path in args.checkpoints:
         label = checkpoint_label(path)
-        model = NeuralAgent.from_checkpoint(path, device=device).model
+        model = load_for_eval(path, device, merged_ok=False).model
         r = measure(model, args.seeds, args.openings)
         report["checkpoints"][label] = {"path": path, **r}
         ma, mb = r["mean"][a], r["mean"][b]

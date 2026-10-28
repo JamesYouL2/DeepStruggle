@@ -44,7 +44,7 @@ from ai.search.pimcts import acting_player
 from ai.search.rollout_root import STOPS, RolloutConfig, RolloutRoot
 from bindings.ts_env import model_obs_features
 from tools.lib.corpus_driver import state_from_token
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 _PLAYER = {1: ts.Player.US, -1: ts.Player.USSR}
 
@@ -391,7 +391,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--bank-positions", type=int, default=256)
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
+    model = load_for_eval(a.checkpoint, str(dev), merged_ok=False).model
     tab, outcome, bounds = Table(), {}, []
     for k in range(a.batches):
         t, o, b = play(model, dev, a.envs, a.seed + k, a.deal_positions - len(bounds))

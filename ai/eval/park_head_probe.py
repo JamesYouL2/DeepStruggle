@@ -22,7 +22,7 @@ import torch.nn.functional as F
 
 import ts_engine as ts
 from bindings.ts_env import model_obs_features
-from tools.lib.player_agent import NeuralAgent
+from ai.eval.loading import load_for_eval
 
 
 def collect(model: nn.Module, device: torch.device, games: int, envs: int, seed: int
@@ -157,7 +157,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     a = ap.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     for ck in a.checkpoint:
-        model = NeuralAgent.from_checkpoint(ck, device=str(dev)).model.eval()
+        model = load_for_eval(ck, str(dev), merged_ok=False).model
         print(report(ck, model, dev, a.games, a.envs, a.seed), flush=True)
     return 0
 
