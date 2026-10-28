@@ -216,18 +216,18 @@ def load(root: pathlib.Path = LEADERBOARD_DIR) -> Board:
     epochs = _read_json(root / "epochs.json")
     if not (isinstance(networks, dict) and isinstance(players, dict) and isinstance(epochs, dict)):
         raise LeaderboardError("networks.json, players.json and epochs.json must each hold an object")
-    matches: Dict[str, List[Record]] = {}
-    for name in epochs:
-        path = root / "matches" / f"{name}.jsonl"
+    # Every match file, not only those of known epochs: a file whose epoch is missing from
+    # epochs.json is reported by `validate`, which it could not be if it were never read.
+    matches: Dict[str, List[Record]] = {name: [] for name in epochs}
+    for path in sorted((root / "matches").glob("*.jsonl")):
         rows: List[Record] = []
-        if path.exists():
-            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if line.strip():
-                    try:
-                        rows.append(json.loads(line))
-                    except json.JSONDecodeError as e:
-                        raise LeaderboardError(f"{path}:{n}: not JSON ({e})") from None
-        matches[name] = rows
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if line.strip():
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    raise LeaderboardError(f"{path}:{n}: not JSON ({e})") from None
+        matches[path.stem] = rows
     return Board(networks, players, epochs, matches, root)  # type: ignore[arg-type]
 
 
@@ -406,6 +406,19 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             want_r = {"id", "a", "b", "a_as_us", "a_as_ussr", "base_seed", "engine", "commit", "date"}
             if not isinstance(rec, dict) or not want_r <= set(rec) <= want_r | {"behaviour"}:
                 errs.append(f"{at}: fields must be {sorted(want_r)} and behaviour")
+                continue
+            typed = [f for f, ok in (
+                ("id, a, b, commit and date must be strings",
+                 all(isinstance(rec[k], str) for k in ("id", "a", "b", "commit", "date"))),
+                ("base_seed must be an integer",
+                 isinstance(rec["base_seed"], int) and not isinstance(rec["base_seed"], bool)),
+                ("engine must be an engine fingerprint (64 lowercase hex digits)",
+                 isinstance(rec["engine"], str) and bool(_HEX64.match(rec["engine"]))),
+                ("behaviour must be a string", isinstance(rec.get("behaviour", ""), str)),
+            ) if not ok]
+            if typed:
+                # The checks below index and hash these fields; report, do not crash on them.
+                errs.extend(f"{at}: {f}" for f in typed)
                 continue
             if rec["a"] == rec["b"]:
                 errs.append(f"{at}: a player against itself")

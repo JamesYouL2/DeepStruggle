@@ -4,7 +4,7 @@
     PYTHONPATH=. python tools/leaderboard.py validate
     PYTHONPATH=. python tools/leaderboard.py show [--epoch E7] [--main-only] [--lineage E7-A8-R1-S44 ...]
     PYTHONPATH=. python tools/leaderboard.py fit --output web/ui/public/leaderboard.json
-    PYTHONPATH=. python tools/leaderboard.py add-network <name> <file> --description ... [--old-name ...] [--report ...] [--hf ...]
+    PYTHONPATH=. python tools/leaderboard.py add-network <name> <file> --description ... [--old-name ...] [--report ...] [--hf ...] [--replace [--rewrite-history]]
     PYTHONPATH=. python tools/leaderboard.py add-player <player-id> --description ... [--report ...] [--replace]
 
 Games are played, and recorded, by `tools/leaderboard_play.py`. The records are in `leaderboard/`
@@ -15,17 +15,17 @@ and the fit is `tools/lib/leaderboard.py`; this CLI needs neither torch nor the 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
 import sys
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Set
 
 from tools.lib.data_root import data_root
-from tools.lib.leaderboard import (LeaderboardError, ROOT, fit_epoch, load, markdown_table,
+from tools.lib.jsonl import sha256_file
+from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, fit_epoch, load, markdown_table,
                                    save_registry, site_data, validate, view)
-from tools.lib.player_spec import PlayerSpecError, parse_player_id, player_id, spec_to_dict
+from tools.lib.player_spec import PlayerSpecError, Rollout, parse_player_id, player_id, spec_from_dict, spec_to_dict
 
 
 def _head_commit() -> Optional[str]:
@@ -36,7 +36,7 @@ def _head_commit() -> Optional[str]:
         return None
 
 
-def _checked_board():
+def _checked_board() -> Board:
     board = load()
     problems = validate(board)
     if problems:
@@ -85,12 +85,15 @@ def cmd_show(a: argparse.Namespace) -> int:
     return 0
 
 
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def _recorded_pairings(board: Board, network: str) -> int:
+    """How many recorded pairings involve a player that runs `network` (as its policy or as a
+    rollout's leaf evaluator)."""
+    users: Set[str] = set()
+    for pid, pl in board.players.items():
+        spec = spec_from_dict(pl["inference"])
+        if pl["network"] == network or (isinstance(spec, Rollout) and spec.leaf_net == network):
+            users.add(pid)
+    return sum(1 for recs in board.matches.values() for r in recs if r["a"] in users or r["b"] in users)
 
 
 def cmd_add_network(a: argparse.Namespace) -> int:
@@ -101,10 +104,20 @@ def cmd_add_network(a: argparse.Namespace) -> int:
     root = os.path.realpath(data_root())
     if os.path.commonpath([path, root]) != root:
         raise LeaderboardError(f"{a.file} is not inside the shared data tree {root}")
+    sha = sha256_file(path)
+    old = board.networks.get(a.name)
+    if old is not None and old["sha256"] != sha:
+        played = _recorded_pairings(board, a.name)
+        if played and not a.rewrite_history:
+            raise LeaderboardError(
+                f"network {a.name!r} has {played} recorded pairing(s), played with weights of sha256 "
+                f"{old['sha256'][:12]}..., and {a.file} is {sha[:12]}...: replacing it would make those "
+                f"records claim games these weights never played. Register the new weights under a new "
+                f"name, or pass --rewrite-history if the records really are of these weights")
     # The path as given, not resolved: a name under data/checkpoints/_models/ is the readable
     # one, and the symlink it may be stays part of the record.
     rel = os.path.relpath(os.path.abspath(a.file), os.path.abspath(data_root()))
-    board.networks[a.name] = {"file": rel, "sha256": _sha256(path), "description": a.description,
+    board.networks[a.name] = {"file": rel, "sha256": sha, "description": a.description,
                               "old_names": list(a.old_name or []), "hf": a.hf, "report": a.report}
     problems = validate(board)
     if problems:
@@ -158,7 +171,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--report", default=None,
                    help="its behaviour report from tools/scripts/checkpoint_report.py (research/log/per_checkpoint/)")
     p.add_argument("--hf", default=None, help="its path in the Hugging Face repo, once published")
-    p.add_argument("--replace", action="store_true")
+    p.add_argument("--replace", action="store_true",
+                   help="update a registered network; refused when its weights change and it has recorded "
+                        "pairings, unless --rewrite-history")
+    p.add_argument("--rewrite-history", action="store_true",
+                   help="with --replace: let new weights take over a name whose recorded pairings were played "
+                        "with other weights -- it rewrites what those records mean")
     p.set_defaults(fn=cmd_add_network)
     p = sub.add_parser("add-player", help="register a player: a network and how it is run")
     p.add_argument("player", help="a player id, e.g. E7-A8-R1-S44@6800M~gumbel(sims=256,k=8,fpu=0.2)")
@@ -166,7 +184,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--report", default=None,
                    help="the behaviour report tools/scripts/checkpoint_report.py --players generated for this "
                         "player (research/log/per_checkpoint/); a greedy policy without one links its network's")
-    p.add_argument("--replace", action="store_true", help="update a registered player (unset fields are kept)")
+    # A player id fixes its network and inference, so --replace can only change the description
+    # and the report: what its recorded pairings were played by cannot change.
+    p.add_argument("--replace", action="store_true",
+                   help="update a registered player's description or report (unset fields are kept)")
     p.set_defaults(fn=cmd_add_player)
     return ap
 
