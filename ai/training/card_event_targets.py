@@ -258,7 +258,7 @@ def t3_t4(st: "ts.GameState", mover: "ts.Player", card: int, base_obs: np.ndarra
         x = st.clone()
         x.rng_state = int(s)
         vp0, dc0 = int(x.victory_points), int(x.defcon)
-        ts.CardHandlers.trigger_event(x, card, fire, 0)
+        ts.CardHandlers.trigger_event(x, card, fire)
         c1 = _ctx(x)
         if c1 != c0 and c1.decision_type != 0 and not resolve_choices(x, card):
             return True, None                         # did not finish: not labelled
