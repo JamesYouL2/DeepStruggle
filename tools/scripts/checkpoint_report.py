@@ -76,6 +76,7 @@ from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.data_root import data_path, data_root
 from tools.lib.engine_fingerprint import fingerprint, require_fresh
 from tools.lib.leaderboard import REPORT_DIR, load as load_leaderboard, player_spec
+from tools.lib.own_card_choices import OwnCardChoices, holding_outcomes as _holding_outcomes, pct as _pct
 from tools.lib.player_agent import NeuralAgent, load_agent
 from tools.lib.player_spec import Policy, kind_of, load_spec
 from tools.scripts.event_play_census import (EVENT, HOLDINGS_VERSION, SCORING, Holding, HoldingTracker,
@@ -425,50 +426,6 @@ class KalAftermath:
         if w is not None:
             w["ended"] = True
         self.selected.pop(g, None)
-
-
-class OwnCardChoices:
-    """Every card choice of `owner` (headline or action round, not inside an event) while `card`
-    is in its hand: whether the event could trigger, `feature(st)` (a number that conditions the
-    event's worth), and whether the card was played and how -- "headline", or in a round "event",
-    "Ops" or "space race". `holding` numbers the spells of the card in the owner's hand."""
-
-    def __init__(self, card: int, owner: Any, feature: Any) -> None:
-        self.card, self.owner, self.feature = card, owner, feature
-        self.choices: List[Dict[str, Any]] = []
-        self.pending: Dict[int, Dict[str, Any]] = {}
-        self.held: Dict[int, bool] = {}
-        self.spell: Dict[int, int] = {}
-
-    def see(self, g: int, st: ts.GameState, a: int) -> None:
-        ctx = st.ctx()
-        sel = self.pending.pop(g, None)
-        if sel is not None:
-            if ctx.decision_type == ts.DecisionType.SELECT_PLAY_MODE and int(ctx.pending_op_card) == self.card:
-                sel["played"] = "event" if a == EVENT else "space race" if a == SPACE else "Ops"
-            else:
-                sel["played"] = "not a play"
-        holding = ts.in_hand_of(st.get_card_location(self.card), self.owner)
-        if holding and not self.held.get(g, False):
-            self.spell[g] = self.spell.get(g, 0) + 1
-        self.held[g] = holding
-        if (not holding or int(ctx.resolving_card) != 0 or ctx.decision_player != self.owner
-                or ctx.decision_type != ts.DecisionType.SELECT_CARD
-                or st.current_phase not in (ts.Phase.HEADLINE, ts.Phase.ACTION_ROUND)):
-            return
-        headline = st.current_phase == ts.Phase.HEADLINE
-        chosen = a < ActionEncoder.PLAY_MODE_OFFSET and int(ts.decode_flat_action(st, a).primary_id) == self.card
-        rec: Dict[str, Any] = {"game": g, "holding": self.spell[g], "turn": int(st.turn),
-                               "phase": "headline" if headline else "ar",
-                               "legal": bool(ts.CardHandlers.can_trigger_event(st, self.card, self.owner)),
-                               "feature": self.feature(st), "played": "headline" if chosen and headline else None}
-        self.choices.append(rec)
-        if chosen and not headline:
-            self.pending[g] = rec
-
-    def done(self, g: int) -> None:
-        for d in (self.pending, self.held, self.spell):
-            d.pop(g, None)
 
 
 class SetupTracker:
@@ -863,10 +820,6 @@ def play_setups(model: Any, merged: bool, games: int, seed: int, batch: int) -> 
 # Report sections
 # --------------------------------------------------------------------------------------------
 
-def _pct(k: int, n: int) -> str:
-    return "—" if n == 0 else f"{100 * k / n:.1f}%"
-
-
 def star_wars_section(d: Dict[str, Any]) -> str:
     plays = d["plays"]
     behind = [p for p in plays if not p["ahead"]]
@@ -959,20 +912,6 @@ VP_BUCKETS = (("0-2 VP", 0, 2), ("3-4 VP", 3, 4), ("5+ VP", 5, 99))
 
 def _bucket(v: int) -> str:
     return next(name for name, lo, hi in VP_BUCKETS if lo <= v <= hi)
-
-
-def _holding_outcomes(choices: Sequence[Dict[str, Any]]) -> Dict[Tuple[int, int], Dict[str, Any]]:
-    """Per holding (game, spell): its choices where the event could trigger, the best `feature`
-    among them, and how the holding ended -- the card's play, if it was played at one of them."""
-    out: Dict[Tuple[int, int], Dict[str, Any]] = {}
-    for c in choices:
-        h = out.setdefault((c["game"], c["holding"]), {"max": -1, "played": None, "at": None, "legal": False})
-        if c["legal"]:
-            h["legal"] = True
-            h["max"] = max(h["max"], int(c["feature"]))
-        if c["played"] in ("headline", "event", "Ops", "space race"):
-            h["played"], h["at"] = c["played"], int(c["feature"])
-    return out
 
 
 def vp_card_section(name: str, intro: str, choices: Sequence[Dict[str, Any]]) -> str:

@@ -4,7 +4,7 @@
 Greedy self-play of each checkpoint; every owner holding of the card (the card in the owner's
 hand until it leaves) in which the event could trigger at one of the owner's card choices is
 counted by how it ended -- evented (headlined, or the event in a round), played for Ops or the
-space race, or not played by the owner. The per-choice bookkeeping is `checkpoint_report`'s
+space race, or not played by the owner. The per-choice bookkeeping is `tools/lib/own_card_choices.py`'s
 `OwnCardChoices`. `--max-turn` stops the games after that turn, which makes an Early War card
 cheap to follow; a holding still in hand then counts as not played.
 
@@ -24,12 +24,17 @@ import numpy as np
 import torch
 import ts_engine as ts
 
-from tools.scripts.checkpoint_report import ID, OwnCardChoices, _holding_outcomes, _pct
+from ai.stats import wilson_interval
+from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
+from tools.lib.action_view import checkpoint_merged_influence
+from tools.lib.data_root import data_root
+from tools.lib.engine_fingerprint import require_fresh
+from tools.lib.own_card_choices import CARD_IDS, OwnCardChoices, holding_outcomes, pct
+from tools.lib.player_agent import NeuralAgent
 
 
 def play(model: Any, merged: bool, card: int, owner: Any, games: int, seed: int, batch: int,
          max_turn: int) -> List[Dict[str, Any]]:
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
     check_obs_width(model)
     feats = model_obs_features(model)
     width = int(ts.obs_size_for(feats))
@@ -69,7 +74,7 @@ def play(model: Any, merged: bool, card: int, owner: Any, games: int, seed: int,
 
 
 def summarize(choices: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    hs = [h for h in _holding_outcomes(choices).values() if h["legal"]]
+    hs = [h for h in holding_outcomes(choices).values() if h["legal"]]
     return {"holdings": len(hs),
             "headline": sum(h["played"] == "headline" for h in hs),
             "event": sum(h["played"] == "event" for h in hs),
@@ -81,7 +86,6 @@ def plot_svg(series: Sequence[Tuple[str, Sequence[Dict[str, Any]]]], title: str,
              marks: Sequence[Tuple[float, str]] = ()) -> str:
     """The evented share of holdings against training steps, one line per sweep (its rows from
     --dump), with 95% Wilson bands; `marks` are vertical lines (step in millions, label)."""
-    from tools.scripts.star_wars_play import _wilson
     colours = [("#2a78d6", "#3987e5", "circle"), ("#eb6834", "#d95926", "square")]
     W, H, L, R, T, B = 760, 380, 56, 170, 70, 44
 
@@ -125,7 +129,7 @@ def plot_svg(series: Sequence[Tuple[str, Sequence[Dict[str, Any]]]], title: str,
         pts = []
         for r in rows:
             n, k = int(r["holdings"]), int(r["headline"]) + int(r["event"])
-            lo, hi = _wilson(k, n)
+            lo, hi = wilson_interval(k, n)
             pts.append((xm(r["label"]), k / max(1, n), lo, hi))
         band = " ".join(f"{X(x):.1f},{Y(hi):.1f}" for x, _, _, hi in pts) + " " + \
             " ".join(f"{X(x):.1f},{Y(lo):.1f}" for x, _, lo, _ in reversed(pts))
@@ -159,8 +163,6 @@ def _steps(path: str) -> Optional[int]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    from tools.lib.action_view import checkpoint_merged_influence
-    from tools.lib.player_agent import NeuralAgent
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--card", required=True, help="card name as in rules/cards.json")
     ap.add_argument("--owner", choices=("US", "USSR"), required=True)
@@ -173,7 +175,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dump", default=None, help="write the per-checkpoint summaries here (JSON)")
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
-    card = ID[a.card]
+    require_fresh()
+    card = CARD_IDS[a.card]
     owner = ts.Player.US if a.owner == "US" else ts.Player.USSR
     labels = a.labels or [f"{(_steps(p) or 0) / 1e6:,.0f}M" for p in a.checkpoints]
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -187,11 +190,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for path, label in zip(a.checkpoints, labels):
         model = NeuralAgent.from_checkpoint(path, device=str(dev)).model
         s = summarize(play(model, checkpoint_merged_influence(path), card, owner, a.games, a.seed, a.batch, a.max_turn))
-        s.update(label=label, checkpoint=os.path.relpath(path, "/workspace"))
+        s.update(label=label, checkpoint=os.path.relpath(path, os.path.dirname(data_root())))
         rows.append(s)
         n = s["holdings"]
-        line = (f"| {label} | {n:,} | **{_pct(s['headline'] + s['event'], n)}** | {_pct(s['headline'], n)} | "
-                f"{_pct(s['event'], n)} | {_pct(s['ops'], n)} | {_pct(s['kept'], n)} |")
+        line = (f"| {label} | {n:,} | **{pct(s['headline'] + s['event'], n)}** | {pct(s['headline'], n)} | "
+                f"{pct(s['event'], n)} | {pct(s['ops'], n)} | {pct(s['kept'], n)} |")
         out.append(line)
         print(line, flush=True)
         if a.dump:

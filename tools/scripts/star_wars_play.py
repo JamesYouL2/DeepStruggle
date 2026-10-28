@@ -28,7 +28,11 @@ import numpy as np
 import torch
 import ts_engine as ts
 
+from ai.stats import wilson_interval
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
+from tools.lib.engine_fingerprint import require_fresh
+from tools.lib.player_agent import NeuralAgent
 
 STAR_WARS = 85
 EVENT = ActionEncoder.PLAY_MODE_OFFSET              # 110
@@ -41,7 +45,6 @@ def _ahead(st: ts.GameState) -> bool:
 
 
 def play(model: Any, games: int, seed: int, batch: int, game0: int = 0) -> Dict[str, Any]:
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
     check_obs_width(model)
     feats = model_obs_features(model)
     width = int(ts.obs_size_for(feats))
@@ -204,15 +207,6 @@ class _EndLabel:
     share: float
 
 
-def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
-    if n == 0:
-        return 0.0, 0.0
-    p = k / n
-    c = (p + z * z / (2 * n)) / (1 + z * z / n)
-    h = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
-    return max(0.0, c - h), min(1.0, c + h)
-
-
 def plot_svg(points: Sequence[tuple[float, Dict[str, Any]]], title: str, branch_at: Optional[float]) -> str:
     """A line chart of the split of plays while ahead, one point per snapshot (x in millions of
     steps), with 95% Wilson bands; light and dark colours chosen by the viewer's scheme."""
@@ -261,7 +255,7 @@ def plot_svg(points: Sequence[tuple[float, Dict[str, Any]]], title: str, branch_
         for x, d in points:
             pl = [p for p in d["plays"] if p["ahead"]]
             k = sum(p["outcome"] == key for p in pl)
-            rows.append((x, k / max(1, len(pl)), *_wilson(k, len(pl))))
+            rows.append((x, k / max(1, len(pl)), *wilson_interval(k, len(pl))))
         band = " ".join(f"{X(x):.1f},{Y(hi):.1f}" for x, _, _, hi in rows) + " " + \
             " ".join(f"{X(x):.1f},{Y(lo):.1f}" for x, _, lo, _ in reversed(rows))
         o.append(f'<polygon class="s{i} band" points="{band}" fill-opacity="0.14"/>')
@@ -365,7 +359,6 @@ HEADER = ["| snapshot | plays while ahead | as event | headline | AR event | for
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    from tools.lib.player_agent import NeuralAgent
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoints", nargs="+", required=True)
     ap.add_argument("--labels", nargs="+", default=None)
@@ -384,6 +377,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--retrieval-periods", nargs="+", default=None,
                     help="tabulate the cards Star Wars took, pooled over these step ranges in millions (e.g. 880-1200)")
     a = ap.parse_args(argv)
+    if not a.load:
+        require_fresh()
     labels = a.labels or [f"{_steps(p) / 1e6:.0f}M" for p in a.checkpoints]
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     header = SPLIT_HEADER if a.target_plays else HEADER
