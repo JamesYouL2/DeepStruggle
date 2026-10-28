@@ -128,8 +128,10 @@ and reads windows (`--window-steps`) with their win/loss base rates beside each 
 
 ### Resuming and branching
 
-`--resume` restores weights, optimiser moments, π_ref and the step counter. It takes a file, a run
-directory (its newest state) or `<run_dir>:<steps>` to branch from a snapshot.
+`--resume` restores weights, optimiser moments, π_ref, the step counter and π_ref's refresh clock
+(steps since the last refresh; a state written before the clock was saved derives it as
+`total_env_steps % ref_update_freq`). It takes a file, a run directory (its newest state) or
+`<run_dir>:<steps>` to branch from a snapshot.
 
 * **An unchanged continuation stays in the run's directory**: same `--run-name`, newest state ->
   appends there and adds a leg to `metadata.json` (`legs`). A different name, an earlier state or
@@ -139,7 +141,11 @@ directory (its newest state) or `<run_dir>:<steps>` to branch from a snapshot.
   branchable; `--no-resume-every-snapshot` keeps only the newest. `tools/scripts/prune_resume_states.py`
   thins old ones.
 * **A `--seed` different from the state's also re-seeds torch and numpy**, so a replicate truly
-  diverges; the same seed, or none, restores the stream.
+  diverges; the same seed, or none, restores the streams -- torch's CPU and every CUDA device's,
+  numpy's and Python's `random` (older states carry the CPU and numpy ones only). A stream that is
+  saved and cannot be restored is an error, not a warning.
+* `--warmup-checkpoint` / `--warmup-dataset` naming a path that does not exist is an error, never a
+  cold start.
 
 #### Naming the run
 
