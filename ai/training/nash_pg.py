@@ -24,7 +24,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import ts_engine as ts
+
 from ai.models.coldwar_net_v2 import VP_LIMIT
+from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
+from ai.training.card_event_targets import aux_label
+from tools.lib.openings import NODE_OFFSET as _NODE, OPENINGS
 
 from bindings.ts_env import TsVectorizedEnv, model_obs_features
 from bindings.action_encoder import ActionEncoder
@@ -550,7 +555,6 @@ class BaseNashPGTrainer:
         #: once its gate is open, and its improved policy is the search-CE target there.
         self.active_search: Optional[Any] = None
         if self.search_ce_coef > 0.0 or self.search_value_beta > 0.0:
-            from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
             # The network the searcher runs: the one being trained, or a frozen teacher. Searching
             # with the learner closes a loop -- targets built from the network follow it as it
             # changes (R29: target entropy 0.17 -> 0.53 behind the policy's 0.21 -> 0.93); a frozen
@@ -727,7 +731,6 @@ class BaseNashPGTrainer:
         self._script_games = np.zeros(2, dtype=np.int64)                   # (scripted, own) games drawn
         self._script_scripts: List[Dict[int, List[int]]] = []
         if self.setup_script_frac > 0.0:
-            from tools.lib.openings import NODE_OFFSET as _NODE, OPENINGS
             if not 0.0 < self.setup_script_frac <= 1.0:
                 raise ValueError("--setup-script-frac must be in (0, 1]")
             if not self.setup_script_openings:
@@ -1251,8 +1254,6 @@ class BaseNashPGTrainer:
 
     def _card_aux_record(self, obs_t: torch.Tensor, dp: np.ndarray) -> None:
         """Card-event target: label a sampled fraction of this step's decisions with the engine."""
-        import ts_engine as ts
-        from ai.training.card_event_targets import aux_label
         rows = np.flatnonzero((dp != 0) & (np.random.random(dp.shape[0]) < self.aux_card_sample_frac))
         if rows.size == 0:
             return
@@ -2113,7 +2114,6 @@ class BaseNashPGTrainer:
         The phase check reads the runner's state, so it is bounded to the opening window of each
         episode -- setup is about 15 decisions of roughly 440 -- rather than run every step.
         """
-        import ts_engine as _ts
 
         cand = np.flatnonzero(self._setup_explore_env & (self._ep_decisions < 30))
         if cand.size == 0:
@@ -2122,11 +2122,10 @@ class BaseNashPGTrainer:
         forced = 0
         for i in cand:
             idx = int(i)
-            try:
-                st = self.env.runner.get_state(idx)
-            except Exception:                      # a runner without per-env state: skip quietly
-                return
-            if st.current_phase != _ts.Phase.SETUP:
+            # --setup-explore-frac was asked for: a runner that cannot report an env's state cannot
+            # run it, and skipping would silently train without the experiment.
+            st = self.env.runner.get_state(idx)
+            if st.current_phase != ts.Phase.SETUP:
                 continue
             legal = np.flatnonzero(masks_np[idx])
             if legal.size <= 1:
@@ -2179,7 +2178,6 @@ class BaseNashPGTrainer:
         """
         if self._searcher is None:
             return
-        import ts_engine as ts
 
         for i in range(self.num_envs):
             st = self.env.runner.get_state(i)
@@ -2201,9 +2199,6 @@ class BaseNashPGTrainer:
         """
         if self._searcher is None:
             return
-        import numpy as _np
-
-        from bindings.action_encoder import ActionEncoder
 
         queue, self._search_queue = self._search_queue, []
         # Every row is rewritten each rollout: a row left alone would keep last rollout's target.
@@ -2221,7 +2216,7 @@ class BaseNashPGTrainer:
             if self._search_pool is not None:
                 self._search_pool.feed(queue, final=True)
                 got = self._search_pool.collect()
-                res = [got.get(j, ([], _np.zeros(0))) for j in range(len(queue))]
+                res = [got.get(j, ([], np.zeros(0))) for j in range(len(queue))]
             for s0 in range(0, len(queue) if self._search_pool is None else 0, SEARCH_CHUNK):
                 chunk = [st for _t, _i, st in queue[s0:s0 + SEARCH_CHUNK]]
                 if self.search_gumbel_k > 0 or self.search_rollout_horizon > 0 or self.search_teacher_policy:
@@ -2233,9 +2228,6 @@ class BaseNashPGTrainer:
                 else:
                     res.extend(self._searcher.run(chunk))
             self.search_saturated_frac = sat_n / max(1, len(queue))
-        except Exception as exc:                      # a broken teacher must not kill the run
-            print(f"[X4b] search targets unavailable this rollout: {exc}", flush=True)
-            return
         finally:
             self.active_net.train(was_training)
 
@@ -2252,10 +2244,10 @@ class BaseNashPGTrainer:
         for (t, i, st), (acts, visits) in zip(queue, res):
             if not acts:
                 continue
-            v = _np.asarray(visits, dtype=_np.float32)
+            v = np.asarray(visits, dtype=np.float32)
             total_visits += float(v.sum())
             # The real state's mask is the only authority on what may be played.
-            legal_mask = _np.asarray(ActionEncoder.get_legal_mask(st))
+            legal_mask = np.asarray(ActionEncoder.get_legal_mask(st))
             probs, dropped = filter_search_visits(acts, v, legal_mask, width)
             if dropped > 0.0:
                 dropped_visits += dropped
@@ -2271,7 +2263,7 @@ class BaseNashPGTrainer:
             flag_t.append(t)
             flag_e.append(i)
         if self.search_value_beta > 0.0 and len(root_values) == len(queue):
-            sv = [(t, i, x) for (t, i, _st), x in zip(queue, root_values) if _np.isfinite(x)]
+            sv = [(t, i, x) for (t, i, _st), x in zip(queue, root_values) if np.isfinite(x)]
             if sv:
                 dev = self.buffer.search_v.device
                 ti = torch.tensor([a for a, _b, _c in sv], device=dev)

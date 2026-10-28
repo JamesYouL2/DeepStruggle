@@ -252,8 +252,8 @@ class UsefulActionsReward(BlunderAwareRewardCalculator):
 
     needs_all_states: bool = True
 
-    def __init__(self, potential_scale: float = 1.0):
-        super().__init__()
+    def __init__(self, potential_scale: float = 1.0, decisiveness_turns: float = 0.0) -> None:
+        super().__init__(decisiveness_turns=decisiveness_turns)
         self.potential_scale: float = potential_scale
         self.prev_potentials: Optional[np.ndarray] = None
 

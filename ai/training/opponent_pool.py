@@ -72,6 +72,8 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from bindings.ts_env import model_obs_features
+from bindings.ts_env import check_obs_width
+from tools.lib.player_agent import NeuralAgent
 
 
 class OpponentPool:
@@ -598,8 +600,6 @@ class OpponentPool:
 def load_pool(paths: Sequence[str], device: Any) -> List[Any]:
     """Load frozen networks from checkpoint paths, refusing a layout mismatch rather than
     letting a retired-layout checkpoint read the wrong floats."""
-    from bindings.ts_env import check_obs_width
-    from tools.lib.player_agent import NeuralAgent
 
     nets = []
     for path in paths:

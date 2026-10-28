@@ -48,6 +48,18 @@ from tools.lib.player_agent import PlayerAgent, NeuralAgent, load_agent, resolve
 from tools.lib.action_view import checkpoint_merged_influence, run_view
 from tools.lib.batch_tournament import BatchMatchRunner
 from tools.lib.tournament_evaluator import TournamentEvaluator
+from tools.lib.checkpoint_utils import discover_checkpoints
+from tools.lib.data_root import checkpoints_dir
+from tools.lib.openings import HUMAN_OPENING_MIX, OPENINGS, play_scripted_setup
+from tools.lib.player_agent import load_checkpoint_into
+from tools.tournament import run_massive_tournament
+from ai.eval.blunders import measure_blunders_batched
+from ai.eval.decisive_probe import measure_decisive_batched
+from ai.eval.position_diagnostics import format_report, profile_self_play_batched
+from ai.models.ladder_net import create_ladder_net
+from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
+from ai.training.opponent_pool import OpponentPool, load_pool
+from ai.training.rollout_buffer import setup_phase_slot
 from bindings.action_encoder import ActionEncoder
 
 # TensorBoard is optional: a missing (or broken) install must never take down a
@@ -211,7 +223,6 @@ def _resolve_run_dir(output_dir: Optional[str], run_name: Optional[str],
     # its own empty data/ because the directory is git-ignored, so a run launched from one writes
     # where nothing else looks and loses everything when the worktree is removed.
     # tools/lib/data_root.py resolves the main checkout from git.
-    from tools.lib.data_root import checkpoints_dir
 
     if run_name is not None:
         return os.path.join(checkpoints_dir(), f"{run_name}_{timestamp}")
@@ -519,8 +530,6 @@ class TensorBoardLogger:
         if self.writer is None or not len(values):
             return
         try:
-            import numpy as np
-
             self.writer.add_histogram(tag, np.asarray(values, dtype=np.float32), step)
         except Exception:
             pass
@@ -679,7 +688,6 @@ class _HumanInjector:
                  every: int, weight: float, batch_size: int = 512,
                  holdout_seed: int = 7, holdout_frac: float = 0.2,
                  setup_only: bool = False) -> None:
-        from ai.training.human_corpus_dataset import HumanCorpusDataset
 
         self.every = max(1, int(every))
         self.weight = float(weight)
@@ -708,7 +716,6 @@ class _HumanInjector:
         #: from a population whose later play is nothing like ours; the point is the opening.
         self.setup_only = bool(setup_only)
         if self.setup_only:
-            from ai.training.rollout_buffer import setup_phase_slot
             obs_col = self.ds._column("obs")
             phase = np.asarray(obs_col[:, setup_phase_slot()], dtype=np.float32)
             setup_rows = phase < (0.5 / 6.0)
@@ -1024,7 +1031,6 @@ def evaluate_and_log_snapshot(
     # invisible in aggregate results, decisive enough that each one is a whole game.
     decisive_metrics: Dict[str, float] = {}
     try:
-        from ai.eval.decisive_probe import measure_decisive_batched
         # Batched: the single-state loop spends 96.9% of its time in the policy forward,
         # so handing the GPU one state at a time was the whole cost.
         stats = measure_decisive_batched(model, num_envs=decisive_games,
@@ -1050,7 +1056,6 @@ def evaluate_and_log_snapshot(
     blunder_metrics: Dict[str, float] = {}
     for _temperature, _prefix in BLUNDER_PROBES:
         try:
-            from ai.eval.blunders import measure_blunders_batched
 
             counts = measure_blunders_batched(
                 model, num_games=blunder_games, temperature=_temperature,
@@ -1062,7 +1067,6 @@ def evaluate_and_log_snapshot(
 
     position_metrics: Dict[str, float] = {}
     try:
-        from ai.eval.position_diagnostics import format_report, profile_self_play_batched
         # Batched: ~106k decisions/sec against ~890 for the one-state-at-a-time loop, so
         # this costs seconds rather than minutes of every snapshot evaluation.
         profile = profile_self_play_batched(model, num_envs=position_games,
@@ -1165,9 +1169,6 @@ def run_post_training_tournament(
     games_per_side: int = 500,
     device: Optional[Union[torch.device, str]] = None,
 ) -> None:
-    from tools.tournament import run_massive_tournament
-    from tools.lib.checkpoint_utils import discover_checkpoints
-
     dev = resolve_device(device)
     print("\n" + "=" * 80, flush=True)
     print(" LAUNCHING POST-TRAINING MASSIVE TOURNAMENT BENCHMARK", flush=True)
@@ -1403,7 +1404,15 @@ def save_resume_state(path: str, model: nn.Module, trainer: Any, iteration: int,
         "iteration": int(iteration),
         "elapsed_seconds": float(elapsed_seconds),
         "torch_rng_state": torch.get_rng_state(),
+        # Every CUDA device's generator (dropout and on-device sampling draw from it) and Python's
+        # `random`; a state written before these were saved restores the CPU and numpy streams only.
+        "torch_cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
         "numpy_rng_state": np.random.get_state(),
+        "python_rng_state": random.getstate(),
+        # The pi_ref refresh clock (NashPG): steps since the reference policy was last refreshed. A
+        # resume that restarted it at 0 would postpone the next refresh by up to ref_update_freq.
+        "steps_since_ref_update": (int(trainer.steps_since_ref_update)
+                                   if hasattr(trainer, "steps_since_ref_update") else None),
         # The env's game-seed generator (--seed-env drives every game's seed), so a continuation keeps drawing new
         # deals instead of replaying its first leg's. None for an env without one.
         "env_game_rng_state": _env_game_rng_state(trainer),
@@ -1591,6 +1600,17 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
         print(f"[resume reset-policy-head] re-initialised {heads} with fresh Adam moments; the trunk, the value heads "
               f"and pi_ref are restored as saved (pi_ref refreshes on its own schedule)", flush=True)
     trainer.total_env_steps = int(blob["total_env_steps"])
+    if hasattr(trainer, "steps_since_ref_update"):
+        saved_clock = blob.get("steps_since_ref_update")
+        if saved_clock is None:
+            # A state written before the clock was saved. pi_ref refreshes whenever the clock reaches
+            # ref_update_freq and the clock then restarts at 0, so with a fixed freq the steps since the
+            # last refresh are the total modulo the freq (to within one iteration's steps).
+            freq = int(trainer.ref_update_freq)
+            saved_clock = int(blob["total_env_steps"]) % freq if freq > 0 else 0
+            print(f"[resume] the state predates the saved pi_ref clock; derived {saved_clock:,} steps since the "
+                  f"last refresh from total_env_steps % ref_update_freq", flush=True)
+        trainer.steps_since_ref_update = int(saved_clock)
     if hasattr(trainer, "total_iterations"):
         trainer.total_iterations = int(blob.get("total_iterations", 0))
     if hasattr(trainer, "wolf_sp_ussr"):
@@ -1612,12 +1632,18 @@ def load_resume_state(path: str, model: nn.Module, trainer: Any,
               f"resume file is deliberately not restored, so this continuation diverges.",
               flush=True)
     else:
-        try:
-            torch.set_rng_state(blob["torch_rng_state"].cpu().to(torch.uint8))
-            np.random.set_state(blob["numpy_rng_state"])
-        except Exception as exc:                  # a resumed run is still valid without these
-            print(f"Warning: could not restore RNG state ({exc}); continuing with the current one.",
-                  flush=True)
+        # A continuation restores every stream it saved; a failure here means the file is not the
+        # state it claims to be, and continuing on another stream would silently fork the run.
+        torch.set_rng_state(blob["torch_rng_state"].cpu().to(torch.uint8))
+        np.random.set_state(blob["numpy_rng_state"])
+        cuda_states = blob.get("torch_cuda_rng_state")
+        if cuda_states is not None and torch.cuda.is_available():
+            if len(cuda_states) != torch.cuda.device_count():
+                raise RuntimeError(f"{path} saved the RNG of {len(cuda_states)} CUDA device(s); this process "
+                                   f"sees {torch.cuda.device_count()}, so the continuation cannot restore them")
+            torch.cuda.set_rng_state_all([t.cpu().to(torch.uint8) for t in cuda_states])
+        if blob.get("python_rng_state") is not None:
+            random.setstate(blob["python_rng_state"])
     return {
         "iteration": int(blob.get("iteration", 0)),
         "total_env_steps": int(blob["total_env_steps"]),
@@ -1868,7 +1894,6 @@ def train_pipeline(
     ema_weights: float = 0.0,
 ) -> None:
     if setup_script_frac > 0.0 and not setup_script_openings:
-        from tools.lib.openings import HUMAN_OPENING_MIX
         setup_script_openings = list(HUMAN_OPENING_MIX)
     # Checked first, before a device is resolved or a directory is made: a run whose budget is
     # nonsense should fail having built nothing. Both are in env steps and there is no time flag
@@ -1966,14 +1991,17 @@ def train_pipeline(
     # Write metadata.json recording git commit, training mode, and description
     git_commit = "unknown"
     git_message = "unknown"
-    git_dirty = False
+    git_dirty: Optional[bool] = None             # None: unknown, recorded as such
     try:
         git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         git_message = subprocess.check_output(["git", "log", "-1", "--pretty=%B"], text=True).strip()
         status_out = subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
         git_dirty = bool(status_out)
-    except Exception:
-        pass
+    except (OSError, subprocess.CalledProcessError) as exc:
+        # Training still runs, but its metadata cannot name the code it ran (invariant 10), and
+        # that must be visible at launch rather than discovered later in metadata.json.
+        print(f"WARNING: could not read the git commit ({exc}); metadata.json records base_commit, "
+              f"commit_message and git_dirty as unknown", file=sys.stderr, flush=True)
 
     # P23 / E4.1: the step from which this run decides in the merged-influence view. Recorded so
     # every later consumer can tell, per snapshot, which view the weights were trained in
@@ -2261,7 +2289,6 @@ def train_pipeline(
     if arch == "ladder":
         # The whole structure is in `ladder_config`, which train.py refuses to build unless
         # every axis was named. Nothing here supplies a default.
-        from ai.models.ladder_net import create_ladder_net
         if not ladder_config:
             raise ValueError("--arch ladder requires a ladder configuration; see "
                              "research/plans/P21_architecture_ladder.md")
@@ -2275,7 +2302,6 @@ def train_pipeline(
                 raise ValueError("--ladder-token-chunk needs --ladder-token-layers")
             setattr(model, "token_chunk", int(token_chunk))
     elif arch == "mlp":
-        from ai.models.coldwar_net_v2 import create_coldwar_net_mlp
         model = create_coldwar_net_mlp(dev, categorical_value=categorical_value,
                                        drop_static=drop_static)
     elif arch == "v2":
@@ -2297,14 +2323,17 @@ def train_pipeline(
               f"(init used {_seed_init})", flush=True)
 
     # 2. Handle Warm-up
-    if warmup_checkpoint and os.path.exists(warmup_checkpoint):
+    # A path that was given and is not there is a typo, not a request for a cold start.
+    for _flag, _path in (("--warmup-checkpoint", warmup_checkpoint), ("--warmup-dataset", warmup_dataset)):
+        if _path and not os.path.exists(_path):
+            raise FileNotFoundError(f"{_flag} {_path}: no such file")
+    if warmup_checkpoint:
         print(f"Loading Warm-up Checkpoint from: {warmup_checkpoint}", flush=True)
-        from tools.lib.player_agent import load_checkpoint_into
         _warm = torch.load(warmup_checkpoint, map_location=dev, weights_only=True)
         check_state_obs_features(model, _warm, f"--warmup-checkpoint {warmup_checkpoint}")
         load_checkpoint_into(model, _warm)
         model.to(dev)
-    elif warmup_dataset and os.path.exists(warmup_dataset):
+    elif warmup_dataset:
         warmup_save_path = os.path.join(out_dir, f"coldwar_net_{arch}_warmup.pt")
         run_behavioral_cloning_warmup(
             model=model,
@@ -2318,8 +2347,12 @@ def train_pipeline(
 
     # 3. Setup Reward Calculator & Vectorized Env
     is_curriculum = (reward_scheme == "curriculum")
+    if decisiveness_turns and reward_scheme not in ("blunder_aware", "useful_actions", "curriculum"):
+        raise ValueError(f"--decisiveness-turns {decisiveness_turns:g} scales the blunder-aware terminal reward, "
+                         f"which --reward-scheme {reward_scheme} does not use; it applies to blunder_aware, "
+                         f"useful_actions and curriculum")
     if is_curriculum or reward_scheme == "useful_actions":
-        reward_calc = UsefulActionsReward()
+        reward_calc = UsefulActionsReward(decisiveness_turns=decisiveness_turns)
     elif reward_scheme == "blunder_aware":
         reward_calc = BlunderAwareRewardCalculator(decisiveness_turns=decisiveness_turns)
     elif reward_scheme == "shaped":
@@ -2344,7 +2377,6 @@ def train_pipeline(
         if start_pool_frac > 0.0:
             raise ValueError("--forced-opening and --start-pool-frac are not combined: the start "
                              "pool's harvested games would still use the policy's own setup")
-        from tools.lib.openings import OPENINGS, play_scripted_setup
         if forced_opening not in OPENINGS:
             raise ValueError(f"unknown opening {forced_opening!r}; known: {sorted(OPENINGS)}")
         _opening_env: List[TsVectorizedEnv] = []
@@ -2595,13 +2627,12 @@ def train_pipeline(
         pool = trainer.opponent_pool
         if pool is None or not league_dirs:
             return 0
-        from ai.training.opponent_pool import load_pool as _load
         new = scan_league_snapshots(league_dirs, _league_seen)
         _league_seen.update(new)
         added = 0
         for q in new[-int(league_pool_size):]:
             try:
-                net = _load([q], dev)[0]
+                net = load_pool([q], dev)[0]
             except Exception as exc:
                 print(f"[league] could not load {q} ({exc}); will retry at the next scan",
                       flush=True)
@@ -2617,8 +2648,6 @@ def train_pipeline(
         return added
 
     if opponent_frac > 0.0 and (opponent_checkpoints or opponent_self_pool or league_dirs):
-        from ai.training.opponent_pool import OpponentPool, load_pool
-
         _lock = {"us": 1, "ussr": -1, None: None}[opponent_lock_side]
         # Defined for both branches: a fixed-checkpoint pool has no recorded state to restore,
         # and the code after the branch reads these unconditionally.
@@ -2675,14 +2704,12 @@ def train_pipeline(
                 # any reconstruction: eviction is by spacing and depends on the order snapshots
                 # arrived, so an evenly-sampled rebuild lands on a *different* pool that merely
                 # looks similar -- and it zeroes the win/game record, which a PFSP draw needs.
+                # Losing the recorded pool is a change to the experiment that has to be asked for
+                # (--reset-opponent-pool), so a state that cannot be read here is an error.
                 if not reset_opponent_pool:
-                    try:
-                        _b = torch.load(_src_file, map_location="cpu", weights_only=False)
-                        _saved_pool = _b.get("opponent_pool")
-                        del _b
-                    except Exception as _exc:     # a resume is still valid without it
-                        print(f"[opponent pool] could not read pool state from {_src_file} "
-                              f"({_exc}); falling back to a rebuild.", flush=True)
+                    _b = torch.load(_src_file, map_location="cpu", weights_only=False)
+                    _saved_pool = _b.get("opponent_pool")
+                    del _b
 
                 _have = {n: q for n, q in _snaps}
                 _want = [int(x) for x in (_saved_pool or {}).get("steps", [])]

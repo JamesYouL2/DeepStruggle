@@ -29,8 +29,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import ts_engine as ts
+import numpy as np
+import torch
 
-from ai.eval.position_diagnostics import is_salvageable
+from ai.eval.position_diagnostics import is_salvageable, region_score_sums
+from bindings.ts_env import TsVectorizedEnv
 
 # Share of environments started from each turn. Turn 1 keeps the majority: start sampling
 # shifts the distribution the policy is optimised for away from the real game, and the real
@@ -178,11 +181,6 @@ class StartPositionPool:
         the new hand has not been dealt. Capturing after the deal would fix the cards, and
         every rollout from that position would replay the same draw.
         """
-        import numpy as np
-        import torch
-
-        from bindings.ts_env import TsVectorizedEnv
-
         device = next(model.parameters()).device
         was_training = model.training
         model.eval()
@@ -254,5 +252,4 @@ class StartPositionPool:
 
 
 def _region_net(state: ts.GameState) -> Tuple[int, int]:
-    from ai.eval.position_diagnostics import region_score_sums
     return region_score_sums(state)

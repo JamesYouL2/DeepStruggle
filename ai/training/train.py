@@ -11,6 +11,7 @@ import torch
 from ai.training.generic_trainer import (train_pipeline, run_behavioral_cloning_warmup, obs_feature_bits,
                                          DEFAULT_OBS_FEATURES, OBS_FEATURE_BITS)
 from ai.training.generic_trainer import run_search_distillation
+from ai.training.generic_trainer import resolve_resume
 from ai.training.policy_fit import PolicyFitConfig, run_policy_fit
 from ai.training.q_fit import QFitConfig, run_q_fit
 from ai.training.value_fit import ValueFitConfig, parse_arch, run_value_fit
@@ -50,8 +51,6 @@ def _resolve_head_center(args: argparse.Namespace) -> bool:
         return False
     src = getattr(args, "resume", None) or getattr(args, "warmup_checkpoint", None)
     if src:
-        import torch
-        from ai.training.generic_trainer import resolve_resume
         path = resolve_resume(src) if getattr(args, "resume", None) else src
         blob = torch.load(path, map_location="cpu", weights_only=False)
         sd = blob.get("model_state_dict", blob) if isinstance(blob, dict) else blob
@@ -440,7 +439,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "losses too, so a self-inflicted defeat on turn 3 costs more than on "
                              "turn 9, which is the intended 'prolong a lost game' incentive. K is "
                              "a slope: at 40, turn 3 is worth 0.925 and turn 10 is 0.75. Too steep "
-                             "biases against build-to-final-scoring play, so watch the ending mix.")
+                             "biases against build-to-final-scoring play, so watch the ending mix. "
+                             "Applies to --reward-scheme blunder_aware, useful_actions and "
+                             "curriculum (both stages); refused with terminal and shaped.")
     # A step budget is not a controlled comparison across engine versions: a rebuilt engine plays
     # a different game, so two runs with matched step counts are only broadly comparable. The
     # comparison that holds is a head-to-head tournament on the current engine, which does not
