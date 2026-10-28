@@ -32,7 +32,6 @@ with two labellers alternating so the engine steps one while the GPU evaluates t
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import pathlib
@@ -51,7 +50,8 @@ from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.checkpoint_id import checkpoint_label
 from tools.lib.data_root import data_root
 from tools.lib.engine_behaviour import measure
-from tools.lib.engine_fingerprint import fingerprint, staleness_reason
+from tools.lib.engine_fingerprint import fingerprint, require_fresh
+from tools.lib.jsonl import sha256_file
 from tools.lib.player_agent import NeuralAgent
 from tools.scripts.blunder_bank import Unprovable, exact_value
 from tools.scripts.run_codes import labelling_code
@@ -88,14 +88,6 @@ def load_model(path: str, device: torch.device) -> Any:
     return NeuralAgent.from_checkpoint(path, device=str(device)).model.eval()
 
 
-def sha256(path: pathlib.Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 22), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 _BEHAVIOUR: List[str] = []
 
 
@@ -117,9 +109,7 @@ def same_games(meta: Dict[str, Any], engine: str) -> bool:
 
 
 def engine_checked() -> str:
-    why = staleness_reason(str(ts.__file__))
-    if why:
-        raise SystemExit(why)
+    require_fresh()
     return fingerprint()
 
 
@@ -309,7 +299,7 @@ def run_positions(a: argparse.Namespace) -> int:
              game_score=np.where(mover == us, us_score, 1.0 - us_score)[order].astype(np.float32),
              holdout=(_holdout(game, a.holdout, a.seed))[order])
     meta = {"stage": "positions", "generator": model_id, "generator_file": path,
-            "generator_sha256": sha256(pathlib.Path(path)), "engine": engine, "games": a.games,
+            "generator_sha256": sha256_file(path), "engine": engine, "games": a.games,
             "part": f"{part}/{parts}", "seed": a.seed, "temperature": a.temperature, "keep": a.keep,
             "candidates": a.candidates, "holdout": a.holdout, "obs_features": features, "behaviour": behaviour(),
             "device": str(device), "positions": int(ids.size), "seconds": round(time.time() - t0, 1)}
@@ -419,7 +409,7 @@ def run_label(a: argparse.Namespace) -> int:
                          "leaderboard epoch lists both")
     device = torch.device(a.device)
     path, model_id = resolve_model(a.model) if a.model else (pmeta["generator_file"], pmeta["generator"])
-    if sha256(pathlib.Path(path)) != pmeta["generator_sha256"] and not a.model:
+    if sha256_file(path) != pmeta["generator_sha256"] and not a.model:
         raise SystemExit("the generator file changed since the positions were written")
     model = load_model(path, device)
     features = model_obs_features(model)
@@ -502,7 +492,7 @@ def run_label(a: argparse.Namespace) -> int:
     np.savez(sfile, id=cat(sib_out, "id", (), np.int64), meta=cat(sib_out, "meta", (5,), np.int32),
              cols=cat(sib_out, "cols", (4,), np.float32), swing=cat(sib_out, "swing", (7,), np.int32),
              leaf=cat(sib_out, "leaf", (ts.state_size(),), np.uint8))
-    meta = {"stage": "label", "labeller": model_id, "labeller_sha256": sha256(pathlib.Path(path)),
+    meta = {"stage": "label", "labeller": model_id, "labeller_sha256": sha256_file(path),
             "engine": engine, "behaviour": behaviour(), "positions_engine": pmeta["engine"], "part": f"{part}/{parts}", "seed": a.seed, "worlds": 0 if a.no_main else a.worlds,
             "main": not a.no_main, "safe": True,
             "siblings": a.siblings, "sibling_worlds": a.sibling_worlds, "sibling_k": a.sibling_k,
@@ -685,7 +675,7 @@ def merge_siblings_only(a: argparse.Namespace, d: pathlib.Path, pos: Dict[str, n
     S["holdout"] = np.isin(S["id"] // PLY_SPAN, hold_games)
     f = d / "siblings.npz"
     np.savez(f, id=S["id"], meta=S["meta"], cols=S["cols"], swing=S["swing"], leaf=S["leaf"], holdout=S["holdout"])
-    files = {f.name: sha256(f)}
+    files = {f.name: sha256_file(str(f))}
     sig = labelling_signature(pmeta, smetas[0])
     code = labelling_code(sig, update=True)
     assert code is not None
@@ -745,7 +735,7 @@ def run_merge(a: argparse.Namespace) -> int:
     for split, sel in (("train", ~pos["holdout"]), ("holdout", pos["holdout"])):
         f = d / f"{split}.npz"
         np.savez(f, **{k: v[sel] for k, v in pos.items()}, **{k: v[sel] for k, v in labels.items()})
-        files[f.name] = sha256(f)
+        files[f.name] = sha256_file(str(f))
     sfiles = sorted(d.glob("siblings_*.npz"))
     if sfiles:
         sib = [dict(np.load(f)) for f in sfiles]
@@ -755,7 +745,7 @@ def run_merge(a: argparse.Namespace) -> int:
         f = d / "siblings.npz"
         np.savez(f, id=S["id"], meta=S["meta"], cols=S["cols"], swing=S["swing"], leaf=S["leaf"],
                  holdout=S["holdout"])
-        files[f.name] = sha256(f)
+        files[f.name] = sha256_file(str(f))
     code = labelling_code(labelling_signature(pmeta, lmetas[0]), update=True)
     assert code is not None
     if a.code and a.code != code:
