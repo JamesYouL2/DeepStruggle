@@ -41,7 +41,7 @@ from ai.training.start_pool import DEFAULT_TURN_MIX, StartPositionPool
 from ai.eval.agreement import evaluate_dataset
 from ai.training.human_corpus_dataset import HumanCorpusDataset
 from ai.training.warmup_dataset_loader import WarmupDataset
-from bindings.ts_env import ENDING_REASON_KEYS
+from bindings.ts_env import ENDING_REASON_KEYS, model_obs_features
 from ai.eval.blunders import RULES as BLUNDER_RULES
 from ai.itsc_reference import ITSC_GAMES, ITSC_REFERENCE, reference_for
 from tools.lib.player_agent import PlayerAgent, NeuralAgent, load_agent, resolve_device
@@ -825,6 +825,7 @@ def run_search_distillation(
         loss_sum = 0.0
         agree = 0
         for b_obs, b_mask, b_pi, _b_dt in WarmupDataset(dataset_path).stream_policy_batches(
+                features=model_obs_features(model),
                 batch_size=batch_size, max_games=max_games, device=dev, merged=merged):
             logits, _v_win, _v_vp = model(b_obs, b_mask)
             logp = F.log_softmax(logits, dim=-1)
@@ -905,6 +906,7 @@ def run_behavioral_cloning_warmup(
                 yield batch
         else:
             for b in WarmupDataset(dataset_path).stream_batches(
+                features=model_obs_features(model),
                 batch_size=batch_size, max_games=max_games, device=dev, shuffle_buffer_size=4096
             ):
                 # Every self-play position has an outcome, so the value target always counts.

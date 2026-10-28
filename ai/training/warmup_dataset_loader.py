@@ -1,15 +1,54 @@
 import gzip
 import json
-import torch
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+
 import numpy as np
-from typing import Iterator, Tuple, List, Dict, Any, Optional
+import torch
+
 import ts_engine as ts
+from bindings.ts_env import legal_mask, observe
+from tools.lib.game_step import drain_chance
+
+
+@dataclass
+class ReplayedDecision:
+    """One recorded decision, at the replayed position it was taken in.
+
+    `state` is the live replay state BEFORE `action` is applied: valid only until the generator
+    advances (clone it to keep it). `mask` is the legal mask in the view the game was played in,
+    and the action is legal in it -- a record that is not ends its game (see `_replay`).
+    """
+    game: Dict[str, Any]
+    record: Dict[str, Any]
+    state: "ts.GameState"
+    player: "ts.Player"
+    mask: np.ndarray
+    action: int
+
+
+def _side_merged(game: Dict[str, Any], player: "ts.Player") -> bool:
+    """Whether `player` decided in the merged-influence view in a tools/generate_dataset.py game.
+
+    The generator records `us_merged_influence` / `ussr_merged_influence` on every game. A game
+    without them comes from a generator that never set a view on its runner, so it was played in
+    E4: False is what that file is, not a guess.
+    """
+    key = "us_merged_influence" if player == ts.Player.US else "ussr_merged_influence"
+    return bool(game.get(key, False))
+
 
 class WarmupDataset:
     """
     Forward-compatible Warmup Dataset Loader.
     Reads stored action traces from warmup games and dynamically re-extracts
     observation tensors using the current C++ engine state machine and observation code.
+
+    Every stream takes `features`, the observation feature set (`ts.OBS_FEATURE_*` bits,
+    `bindings.ts_env.model_obs_features(model)`) of the network the observations are FOR -- the
+    student being trained or the model being evaluated, not the one that generated the games. It
+    is required: a featured network fed the base layout misreads without failing
+    (`HEADLINE_REVEAL` has no width).
     """
     def __init__(self, filepath: str):
         # No default. The one that used to sit here pointed at a file that had moved, and a
@@ -17,114 +56,7 @@ class WarmupDataset:
         # and trains on it. Every caller passes the path explicitly.
         self.filepath = filepath
 
-    def stream_transitions(self, max_games: Optional[int] = None) -> Iterator[Tuple[np.ndarray, np.ndarray, int, float, float]]:
-        """
-        Streams (observation, action_mask, action_id, win_target, vp_target) tuples.
-        Replays the actual state machine on-the-fly, ensuring full compatibility
-        with future changes to Observation::extract or feature representations.
-        """
-        game_count = 0
-        with gzip.open(self.filepath, 'rt', encoding='utf-8') as f:
-            for line in f:
-                if max_games is not None and game_count >= max_games:
-                    break
-                game = json.loads(line)
-                st = ts.GameState()
-                ts.Engine.init_game(st, game['seed'])
-                winner = game.get('winner', 'DRAW')
-                final_vp = game.get('final_vp', 0)
-                
-                for a in game['actions']:
-                    p = st.ctx().decision_player if st.ctx().decision_player != ts.Player.NONE else st.phasing_player
-                    obs = np.array(ts.extract_observation(st, p), copy=True)
-                    mask = np.array(ts.get_flat_action_mask(st), copy=True)
-                    
-                    # Compute canonical perspective returns
-                    sign = 1.0 if (p == ts.Player.US or p == 1) else -1.0
-                    win_ret = (1.0 if winner == 'US' else (-1.0 if winner == 'USSR' else 0.0)) * sign
-                    vp_ret = (final_vp / 20.0) * sign
-                    
-                    flat_act = a['flat_action']
-
-                    # Skip transitions the replay cannot reproduce. A desynchronised
-                    # replay yields an empty mask or an illegal demonstrated action;
-                    # training on those regresses cross-entropy against -1e9 masked
-                    # logits and destroys the run.
-                    if mask.sum() == 0 or flat_act < 0 or flat_act >= mask.shape[0] or mask[flat_act] == 0:
-                        break
-
-                    yield obs, mask, flat_act, win_ret, vp_ret
-
-                    ma = ts.decode_flat_action(st, flat_act)
-                    ts.Engine.step(st, ma)
-
-                    # Datasets are generated through VectorizedBatchRunner::step_flat_all,
-                    # which resolves ROLL_DIE chance nodes internally and therefore records
-                    # only player decisions. Drain those same chance nodes here or the
-                    # replay stalls at the first die roll, misapplies every subsequent
-                    # recorded action, and diverges the RNG stream along with the hands.
-                    while (
-                        not ts.Engine.is_terminal(st)
-                        and st.ctx().decision_player == ts.Player.NONE
-                        and st.ctx().decision_type == ts.DecisionType.ROLL_DIE
-                    ):
-                        ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
-
-                game_count += 1
-
-
-
-    def stream_with_plays(self, max_games: Optional[int] = None):
-        """As `stream_transitions`, plus the id of the play each decision belongs to.
-
-        A card spends its Operations one point at a time and the order the points were recorded
-        in carries no decision, so agreement is scored over the play rather than the sequence
-        (`ai/eval/agreement`). The grouping is recovered here rather than stored, because this
-        format keeps only a seed and the actions and rebuilds everything else by replaying.
-        Coups and realignments are excluded from grouping -- a die resolves between their points
-        and the board the next one faces depends on the last.
-        """
-        from ai.eval.agreement import order_matters
-
-        play_id = 0
-        key = None
-        for game in self._games(max_games):
-            st = ts.GameState()
-            ts.Engine.init_game(st, game["seed"])
-            winner = game.get("winner", "DRAW")
-            final_vp = game.get("final_vp", 0)
-
-            for a in game["actions"]:
-                p = st.ctx().decision_player if st.ctx().decision_player != ts.Player.NONE else st.phasing_player
-                obs = np.array(ts.extract_observation(st, p), copy=True)
-                mask = np.array(ts.get_flat_action_mask(st), copy=True)
-                sign = 1.0 if (p == ts.Player.US or p == 1) else -1.0
-                win_ret = (1.0 if winner == "US" else (-1.0 if winner == "USSR" else 0.0)) * sign
-                vp_ret = (final_vp / 20.0) * sign
-                flat_act = a["flat_action"]
-                if (mask.sum() == 0 or flat_act < 0 or flat_act >= mask.shape[0]
-                        or mask[flat_act] == 0):
-                    break
-
-                ctx = st.ctx()
-                groupable = (ctx.decision_type == ts.DecisionType.POINT_NODE
-                             and not order_matters(st))
-                this_key = ((int(st.turn), int(st.action_round), int(p),
-                             int(ctx.resolving_card), int(ctx.pending_op_card))
-                            if groupable else None)
-                if this_key is None or this_key != key:
-                    play_id += 1
-                key = this_key
-                yield obs, mask, flat_act, win_ret, vp_ret, play_id
-
-                ma = ts.decode_flat_action(st, flat_act)
-                ts.Engine.step(st, ma)
-                while (not ts.Engine.is_terminal(st)
-                       and st.ctx().decision_player == ts.Player.NONE
-                       and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-                    ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
-
-    def _games(self, max_games: Optional[int] = None):
+    def _games(self, max_games: Optional[int] = None) -> Iterator[Dict[str, Any]]:
         count = 0
         with gzip.open(self.filepath, "rt", encoding="utf-8") as f:
             for line in f:
@@ -133,8 +65,89 @@ class WarmupDataset:
                 yield json.loads(line)
                 count += 1
 
+    def _replay(self, max_games: Optional[int],
+                merged: Optional[bool]) -> Iterator[ReplayedDecision]:
+        """The one replay loop: every recorded decision of every game, at its replayed position.
+
+        `merged` is the action view the games were played in: a bool for a dataset whose sidecar
+        names one view for both seats (tools/generate_policy_targets.py), None to read each side's
+        view from the game record (tools/generate_dataset.py, `_side_merged`). A composed E4.1
+        action is applied as the two E4 steps it names.
+
+        Datasets are generated through VectorizedBatchRunner::step_flat_all, which resolves
+        ROLL_DIE chance nodes internally and therefore records only player decisions. The same
+        chance nodes are drained here or the replay stalls at the first die roll, misapplies every
+        subsequent recorded action, and diverges the RNG stream along with the hands.
+
+        A record the replay cannot play -- an empty mask, or a demonstrated action outside it --
+        ends that game: a desynchronised replay is a different game from there on, and training
+        on it would regress cross-entropy against masked logits.
+        """
+        for game in self._games(max_games):
+            st = ts.GameState()
+            ts.Engine.init_game(st, game["seed"])
+            for rec in game["actions"]:
+                drain_chance(st)
+                p = st.ctx().decision_player if st.ctx().decision_player != ts.Player.NONE else st.phasing_player
+                view = _side_merged(game, p) if merged is None else merged
+                mask = legal_mask(st, view)
+                flat_act = int(rec["flat_action"])
+                if mask.sum() == 0 or flat_act < 0 or flat_act >= mask.shape[0] or mask[flat_act] == 0:
+                    break
+                yield ReplayedDecision(game=game, record=rec, state=st, player=p, mask=mask, action=flat_act)
+                # Raises if the engine refuses an action its own mask offered (an engine defect).
+                ts.Engine.step_flat(st, flat_act, False, view)
+
+    @staticmethod
+    def _returns(game: Dict[str, Any], player: "ts.Player") -> Tuple[float, float]:
+        """(win, vp) targets from `player`'s perspective."""
+        winner = game.get("winner", "DRAW")
+        final_vp = game.get("final_vp", 0)
+        sign = 1.0 if player == ts.Player.US else -1.0
+        win_ret = (1.0 if winner == "US" else (-1.0 if winner == "USSR" else 0.0)) * sign
+        return win_ret, (final_vp / 20.0) * sign
+
+    def stream_transitions(self, *, features: int, max_games: Optional[int] = None
+                           ) -> Iterator[Tuple[np.ndarray, np.ndarray, int, float, float]]:
+        """
+        Streams (observation, action_mask, action_id, win_target, vp_target) tuples.
+        Replays the actual state machine on-the-fly, ensuring full compatibility
+        with future changes to Observation::extract or feature representations.
+        """
+        for d in self._replay(max_games, None):
+            win_ret, vp_ret = self._returns(d.game, d.player)
+            yield observe(d.state, d.player, features), d.mask, d.action, win_ret, vp_ret
+
+    def stream_with_plays(self, *, features: int, order_matters: Callable[["ts.GameState"], bool],
+                          max_games: Optional[int] = None
+                          ) -> Iterator[Tuple[np.ndarray, np.ndarray, int, float, float, int]]:
+        """As `stream_transitions`, plus the id of the play each decision belongs to.
+
+        A card spends its Operations one point at a time and the order the points were recorded
+        in carries no decision, so agreement is scored over the play rather than the sequence
+        (`ai/eval/agreement`). The grouping is recovered here rather than stored, because this
+        format keeps only a seed and the actions and rebuilds everything else by replaying.
+        Coups and realignments are excluded from grouping -- a die resolves between their points
+        and the board the next one faces depends on the last. Which point decisions are a
+        sequence is `order_matters` (`ai.eval.agreement.order_matters`), passed in by the caller.
+        """
+        play_id = 0
+        key: Optional[Tuple[int, ...]] = None
+        for d in self._replay(max_games, None):
+            win_ret, vp_ret = self._returns(d.game, d.player)
+            st = d.state
+            ctx = st.ctx()
+            groupable = ctx.decision_type == ts.DecisionType.POINT_NODE and not order_matters(st)
+            this_key = ((int(st.turn), int(st.action_round), int(d.player),
+                         int(ctx.resolving_card), int(ctx.pending_op_card))
+                        if groupable else None)
+            if this_key is None or this_key != key:
+                play_id += 1
+            key = this_key
+            yield observe(st, d.player, features), d.mask, d.action, win_ret, vp_ret, play_id
+
     def stream_policy_transitions(
-        self, max_games: Optional[int] = None, merged: bool = False
+        self, *, features: int, max_games: Optional[int] = None, merged: bool = False
     ) -> Iterator[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
         """Streams (observation, action_mask, policy_target) for SEARCHED decisions only.
 
@@ -159,47 +172,23 @@ class WarmupDataset:
         (`tools/generate_policy_targets.py --merged-view`) desynchronises at its first composed
         action if replayed in E4, so the caller reads the view from the dataset's sidecar.
         """
-        with gzip.open(self.filepath, 'rt', encoding='utf-8') as f:
-            games = 0
-            for line in f:
-                if max_games is not None and games >= max_games:
-                    break
-                game = json.loads(line)
-                st = ts.GameState()
-                ts.Engine.init_game(st, game['seed'])
-                for a in game['actions']:
-                    p_ = (st.ctx().decision_player
-                          if st.ctx().decision_player != ts.Player.NONE else st.phasing_player)
-                    mask = np.array(ts.get_flat_action_mask(st, merged), copy=True)
-                    flat_act = a['flat_action']
-                    if (mask.sum() == 0 or flat_act < 0 or flat_act >= mask.shape[0]
-                            or mask[flat_act] == 0):
-                        break            # desynchronised replay; the rest of this game is junk
-
-                    pi = a.get('search_pi')
-                    if pi:
-                        obs = np.array(ts.extract_observation(st, p_), copy=True)
-                        target = np.zeros(mask.shape[0], dtype=np.float32)
-                        for act, vis in zip(pi['a'], pi['v']):
-                            if 0 <= act < target.shape[0] and mask[act]:
-                                target[act] += float(vis)
-                        tot = target.sum()
-                        if tot > 0:
-                            yield obs, mask, target / tot, int(st.ctx().decision_type)
-
-                    if merged:
-                        ts.Engine.step_flat(st, flat_act, False, True)
-                    else:
-                        ma = ts.decode_flat_action(st, flat_act)
-                        ts.Engine.step(st, ma)
-                    while (not ts.Engine.is_terminal(st)
-                           and st.ctx().decision_player == ts.Player.NONE
-                           and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
-                        ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
-                games += 1
+        for d in self._replay(max_games, merged):
+            pi = d.record.get("search_pi")
+            if not pi:
+                continue
+            target = np.zeros(d.mask.shape[0], dtype=np.float32)
+            for act, vis in zip(pi["a"], pi["v"]):
+                if 0 <= act < target.shape[0] and d.mask[act]:
+                    target[act] += float(vis)
+            tot = target.sum()
+            if tot > 0:
+                yield (observe(d.state, d.player, features), d.mask, target / tot,
+                       int(d.state.ctx().decision_type))
 
     def stream_policy_batches(
         self,
+        *,
+        features: int,
         batch_size: int = 512,
         max_games: Optional[int] = None,
         device: torch.device = torch.device('cpu'),
@@ -207,13 +196,13 @@ class WarmupDataset:
         merged: bool = False,
     ) -> Iterator[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Bounded-memory shuffled batches of (obs, mask, policy_target, decision_type); `merged`
-        as in stream_policy_transitions."""
+        and `features` as in stream_policy_transitions."""
         b_obs: List[np.ndarray] = []
         b_mask: List[np.ndarray] = []
         b_pi: List[np.ndarray] = []
         b_dt: List[int] = []
 
-        def emit(idx):
+        def emit(idx: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
             return (
                 torch.from_numpy(np.stack([b_obs[i] for i in idx])).float().to(device),
                 torch.from_numpy(np.stack([b_mask[i] for i in idx])).to(device),
@@ -221,7 +210,8 @@ class WarmupDataset:
                 torch.tensor([b_dt[i] for i in idx], dtype=torch.long, device=device),
             )
 
-        for obs, mask, pi, dt in self.stream_policy_transitions(max_games=max_games, merged=merged):
+        for obs, mask, pi, dt in self.stream_policy_transitions(features=features, max_games=max_games,
+                                                                merged=merged):
             b_obs.append(obs)
             b_mask.append(mask)
             b_pi.append(pi)
@@ -245,6 +235,8 @@ class WarmupDataset:
 
     def stream_batches(
         self,
+        *,
+        features: int,
         batch_size: int = 512,
         max_games: Optional[int] = None,
         device: torch.device = torch.device('cpu'),
@@ -254,95 +246,31 @@ class WarmupDataset:
         Streams mini-batches directly as PyTorch tensors using an online reservoir buffer.
         Peak memory is strictly bounded by shuffle_buffer_size (< 40 MB), completely eliminating OOM.
         """
-        buffer_obs: List[np.ndarray] = []
-        buffer_mask: List[np.ndarray] = []
-        buffer_act: List[int] = []
-        buffer_w: List[float] = []
-        buffer_vp: List[float] = []
+        buf: List[Tuple[np.ndarray, np.ndarray, int, float, float]] = []
 
-        for obs, mask, act, w_ret, vp_ret in self.stream_transitions(max_games=max_games):
-            buffer_obs.append(obs)
-            buffer_mask.append(mask)
-            buffer_act.append(act)
-            buffer_w.append(w_ret)
-            buffer_vp.append(vp_ret)
-
-            if len(buffer_obs) >= shuffle_buffer_size:
-                indices = np.random.choice(len(buffer_obs), size=batch_size, replace=False)
-                keep_mask = np.ones(len(buffer_obs), dtype=bool)
-                keep_mask[indices] = False
-
-                b_obs = [buffer_obs[i] for i in indices]
-                b_mask = [buffer_mask[i] for i in indices]
-                b_act = [buffer_act[i] for i in indices]
-                b_w = [buffer_w[i] for i in indices]
-                b_vp = [buffer_vp[i] for i in indices]
-
-                buffer_obs = [buffer_obs[i] for i in range(len(buffer_obs)) if keep_mask[i]]
-                buffer_mask = [buffer_mask[i] for i in range(len(buffer_mask)) if keep_mask[i]]
-                buffer_act = [buffer_act[i] for i in range(len(buffer_act)) if keep_mask[i]]
-                buffer_w = [buffer_w[i] for i in range(len(buffer_w)) if keep_mask[i]]
-                buffer_vp = [buffer_vp[i] for i in range(len(buffer_vp)) if keep_mask[i]]
-
-                yield (
-                    torch.from_numpy(np.array(b_obs, dtype=np.float32)).to(device),
-                    torch.from_numpy(np.array(b_mask, dtype=np.uint8)).to(device),
-                    torch.tensor(b_act, dtype=torch.long, device=device),
-                    torch.tensor(b_w, dtype=torch.float32, device=device),
-                    torch.tensor(b_vp, dtype=torch.float32, device=device),
-                )
-
-        while len(buffer_obs) >= batch_size:
-            indices = np.random.choice(len(buffer_obs), size=batch_size, replace=False)
-            keep_mask = np.ones(len(buffer_obs), dtype=bool)
-            keep_mask[indices] = False
-
-            b_obs = [buffer_obs[i] for i in indices]
-            b_mask = [buffer_mask[i] for i in indices]
-            b_act = [buffer_act[i] for i in indices]
-            b_w = [buffer_w[i] for i in indices]
-            b_vp = [buffer_vp[i] for i in indices]
-
-            buffer_obs = [buffer_obs[i] for i in range(len(buffer_obs)) if keep_mask[i]]
-            buffer_mask = [buffer_mask[i] for i in range(len(buffer_mask)) if keep_mask[i]]
-            buffer_act = [buffer_act[i] for i in range(len(buffer_act)) if keep_mask[i]]
-            buffer_w = [buffer_w[i] for i in range(len(buffer_w)) if keep_mask[i]]
-            buffer_vp = [buffer_vp[i] for i in range(len(buffer_vp)) if keep_mask[i]]
-
-            yield (
-                torch.from_numpy(np.array(b_obs, dtype=np.float32)).to(device),
-                torch.from_numpy(np.array(b_mask, dtype=np.uint8)).to(device),
-                torch.tensor(b_act, dtype=torch.long, device=device),
-                torch.tensor(b_w, dtype=torch.float32, device=device),
-                torch.tensor(b_vp, dtype=torch.float32, device=device),
+        def emit(rows: List[Tuple[np.ndarray, np.ndarray, int, float, float]]
+                 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            return (
+                torch.from_numpy(np.array([r[0] for r in rows], dtype=np.float32)).to(device),
+                torch.from_numpy(np.array([r[1] for r in rows], dtype=np.uint8)).to(device),
+                torch.tensor([r[2] for r in rows], dtype=torch.long, device=device),
+                torch.tensor([r[3] for r in rows], dtype=torch.float32, device=device),
+                torch.tensor([r[4] for r in rows], dtype=torch.float32, device=device),
             )
 
-    def build_in_memory_tensors(self, max_games: Optional[int] = None, device: torch.device = torch.device('cpu')) -> Dict[str, torch.Tensor]:
-        """Extracts and loads dataset directly into PyTorch tensors.
-        WARNING: High RAM consumption. Use stream_batches() for training to prevent OOM.
-        """
-        if max_games is None or max_games > 500:
-            raise ValueError(
-                f"build_in_memory_tensors is restricted to max_games <= 500 to prevent system OOM. "
-                f"Use stream_batches() for bounded streaming training on large datasets."
-            )
-        all_obs = []
-        all_masks = []
-        all_acts = []
-        all_win_rets = []
-        all_vp_rets = []
-        
-        for obs, mask, act, w_ret, vp_ret in self.stream_transitions(max_games=max_games):
-            all_obs.append(obs)
-            all_masks.append(mask)
-            all_acts.append(act)
-            all_win_rets.append(w_ret)
-            all_vp_rets.append(vp_ret)
-            
-        return {
-            'observations': torch.from_numpy(np.array(all_obs, dtype=np.float32)).to(device),
-            'action_masks': torch.from_numpy(np.array(all_masks, dtype=np.uint8)).to(device),
-            'actions': torch.tensor(all_acts, dtype=torch.long).to(device),
-            'win_targets': torch.tensor(all_win_rets, dtype=torch.float32).to(device),
-            'vp_targets': torch.tensor(all_vp_rets, dtype=torch.float32).to(device),
-        }
+        def draw() -> List[Tuple[np.ndarray, np.ndarray, int, float, float]]:
+            nonlocal buf
+            indices = np.random.choice(len(buf), size=batch_size, replace=False)
+            keep = np.ones(len(buf), dtype=bool)
+            keep[indices] = False
+            rows = [buf[i] for i in indices]
+            buf = [buf[i] for i in range(len(buf)) if keep[i]]
+            return rows
+
+        for row in self.stream_transitions(features=features, max_games=max_games):
+            buf.append(row)
+            if len(buf) >= shuffle_buffer_size:
+                yield emit(draw())
+
+        while len(buf) >= batch_size:
+            yield emit(draw())

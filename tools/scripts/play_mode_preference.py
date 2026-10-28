@@ -33,6 +33,7 @@ import numpy as np
 import torch
 
 from ai.training.warmup_dataset_loader import WarmupDataset
+from bindings.ts_env import model_obs_features
 from tools.lib.player_agent import NeuralAgent
 
 EVENT, OPS, SPACE, PASS = 110, 111, 112, 113
@@ -79,7 +80,7 @@ def main() -> int:
 
     with torch.no_grad():
         for b_obs, b_mask, b_pi, b_dt in WarmupDataset(a.dataset).stream_policy_batches(
-                batch_size=a.batch_size, max_games=a.max_games, device=dev):
+                features=model_obs_features(model), batch_size=a.batch_size, max_games=a.max_games, device=dev):
             logits, _, _ = model(b_obs, b_mask)
             probs = torch.softmax(logits, dim=-1)
             probs = probs * b_mask.float()

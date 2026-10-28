@@ -12,6 +12,8 @@ from torch.utils.data import Dataset, DataLoader
 import ts_engine as ts
 from ai.models.coldwar_net import ColdWarNet, create_coldwar_net
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import model_obs_features, observe
+from tools.lib.game_step import drain_chance
 # ArenaEvaluator imported in train.py
 
 
@@ -368,15 +370,18 @@ class BehavioralCloningTrainer:
         game_outcomes = []
 
         total_steps = 0
+        features = model_obs_features(self.model)
         for g_idx in range(num_games):
             state = ts.GameState()
             seed = int(np.random.randint(1, 1_000_000_000))
             ts.Engine.init_game(state, seed)
 
             game_start_idx = len(all_obs)
+            drain_chance(state)
             while not ts.Engine.is_terminal(state) and (len(all_obs) - game_start_idx) < 5000:
                 p = state.ctx().decision_player if state.ctx().decision_player != ts.Player.NONE else state.phasing_player
-                obs = ts.extract_observation(state, p)
+                # In the student's feature set: a featured network fed the base layout misreads.
+                obs = observe(state, p, features)
                 mask = ActionEncoder.get_legal_mask(state)
 
                 action_idx = HeuristicPolicy.select_action(state)
@@ -388,6 +393,9 @@ class BehavioralCloningTrainer:
                 all_game_indices.append(g_idx)
 
                 ts.Engine.step_flat(state, action_idx)
+                # A die roll is nobody's decision: resolve it rather than record the heuristic
+                # "choosing" it for whoever is phasing.
+                drain_chance(state)
                 total_steps += 1
 
             term_util = float(ts.Engine.get_terminal_utility(state))
