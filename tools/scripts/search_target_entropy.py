@@ -44,6 +44,7 @@ import ts_engine as ts
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import load_agent
+from tools.lib.engine_fingerprint import require_fresh
 
 
 def snapshots(run_dir: str) -> List[Tuple[int, str]]:
@@ -181,6 +182,7 @@ def main() -> int:
                     help="checkpoint whose self-play supplies the fixed positions "
                          "(default: the run's earliest snapshot)")
     a = ap.parse_args()
+    require_fresh()
 
     snaps = snapshots(a.run)[:: a.every]
     if not snaps:

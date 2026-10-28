@@ -37,6 +37,7 @@ from tools.lib.player_agent import NeuralAgent, resolve_device  # noqa: E402
 
 from tools.lib.merged_targets import (INFL, NODE, OP_CHOICE, factorised_policy,  # noqa: E402
                                       post_commit_policy)
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 
 def collect(model: Any, games: int, device: torch.device) -> List[ts.GameState]:
@@ -110,6 +111,7 @@ def main() -> None:
                     help="an E4.1 checkpoint to score against the teacher's translated policy "
                          "(e.g. one distilled from it), instead of the teacher's own raw output")
     args = ap.parse_args()
+    require_fresh()
     device = resolve_device(args.device)
     agent = NeuralAgent.from_checkpoint(args.checkpoint, device=device)
     model = agent.model

@@ -36,6 +36,7 @@ import ts_engine as ts
 from tools.lib.corpus_driver import state_from_token
 from tools.lib.corpus_paths import corpus_path
 from tools.lib.ts_replayer_convert import card_id
+from tools.lib.engine_fingerprint import require_fresh
 from tools.scripts.disagreement_bank import row_id
 
 CHINA = 6
@@ -48,6 +49,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--untrusted", default=None, help="JSON {replay id: first untrusted turn}")
     ap.add_argument("--exclude", default=None, help="JSON list: flagged rows and untrusted-turn rows")
     a = ap.parse_args(argv)
+    require_fresh()
     hands: Dict[int, Dict[str, Dict[str, List[str]]]] = {}
     untrusted: Dict[str, Optional[int]] = json.load(open(a.untrusted)) if a.untrusted else {}
     flags: Dict[str, List[str]] = {}

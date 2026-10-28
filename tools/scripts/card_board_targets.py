@@ -54,6 +54,7 @@ from tools.lib.player_agent import NeuralAgent  # noqa: E402
 from ai.training.card_event_targets import (BOARD_W, CARD_OFFSET, CARD_W, DECISION_TYPE,  # noqa: E402,F401
                                             GLOBAL_OFFSET, MAX_HAND, N_CARDS, N_COUNTRIES, SCORING,
                                             T2_NAMES, T4_NAMES, label)
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 
 @torch.no_grad()
@@ -110,6 +111,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--output", required=True)
     a = ap.parse_args(argv)
+    require_fresh()
     if os.path.exists(a.output):
         raise SystemExit(f"{a.output} exists; refusing to overwrite")
     dev = torch.device(a.device)

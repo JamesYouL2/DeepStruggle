@@ -55,6 +55,7 @@ from tools.lib.corpus_driver import load_policy, require_e4_view, state_from_tok
 from tools.lib.jsonl import read_jsonl, sha256_file, write_jsonl
 from tools.lib.player_agent import OnnxAgent
 from tools.lib.position_bank import exact_mistake, move_name, position_seed, searched_continuation
+from tools.lib.engine_fingerprint import require_fresh
 from tools.scripts.disagreement_bank import row_id
 
 WHO = ("human", "network", "search")
@@ -315,6 +316,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--expect", type=int, default=0, help="the number of parts the run was split into")
     a = ap.parse_args(argv)
+    if a.cmd in ("run", "validate"):
+        require_fresh()
     if a.cmd == "select":
         return select(a.clarity, a.bank, a.top, a.out, a.min_gap)
     if a.cmd == "run":

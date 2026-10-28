@@ -53,6 +53,7 @@ from bindings.settle import SettleMode, settle  # noqa: E402
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from ai.eval.ops_block import NODE_OFFSET, access, controlled, country_table, influence  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 from tools.scripts.ops_block_oracle import _pair_seed, playouts  # noqa: E402
 
 MODE_BASE = 110
@@ -383,6 +384,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
     if a.scenario in ("locked-bg", "locked-bg-takeable"):
         res = run_locked(a.checkpoint, a.positions_per_class, a.pairs, a.envs, a.seed, dev, a.chunk_envs,

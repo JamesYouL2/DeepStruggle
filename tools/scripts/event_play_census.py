@@ -35,6 +35,7 @@ from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import (LogitsFn, corpus_map, feed_corpus_game, load_policy, position_token,
                                      read_corpus_game, require_e4_view, rules_json, selfplay)
 from tools.lib.player_agent import load_agent
+from tools.lib.engine_fingerprint import require_fresh
 from tools.scripts.placement_census import PlacementTracker
 
 EVENT = ActionEncoder.PLAY_MODE_OFFSET
@@ -390,6 +391,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dump", default=None, help="write the holdings here (JSON), for --merge")
     ap.add_argument("--merge", nargs="+", default=None, help="tabulate these dumps instead of playing")
     a = ap.parse_args(argv)
+    if not a.merge:
+        require_fresh()
     if a.merge:
         recs: List[Holding] = []
         games = 0

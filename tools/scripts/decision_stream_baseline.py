@@ -44,6 +44,7 @@ import numpy as np
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
+from tools.lib.engine_fingerprint import require_fresh
 
 MAX_STEPS = 4000
 
@@ -169,6 +170,7 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="write the stream here")
     ap.add_argument("--compare", default=None, help="regenerate and diff against this file")
     a = ap.parse_args()
+    require_fresh()
 
     if not a.out and not a.compare:
         print("give --out to freeze a baseline, or --compare to check against one",

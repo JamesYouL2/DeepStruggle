@@ -42,6 +42,7 @@ import ts_engine as ts  # noqa: E402
 from ai.eval.ops_block import (NODE_OFFSET, Allocation, analyse, contested_battlegrounds,  # noqa: E402
                                controlled, country_table, force_take, influence, play_block)
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 from tools.scripts.ops_block_probe import _obs_mask, collect_starts, critic_values  # noqa: E402
 
 _SEED_MIX = 0x9E3779B97F4A7C15
@@ -237,6 +238,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     res = run(a.checkpoint, a.positions, a.pairs, a.envs, a.seed, torch.device(a.device),
               a.temperature, a.chunk_envs)
     lines = summarise(res)

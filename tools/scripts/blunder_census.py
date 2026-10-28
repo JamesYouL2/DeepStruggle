@@ -65,6 +65,7 @@ from tools.lib.corpus_driver import (load_policy, position_token, require_e4_vie
 from tools.lib.jsonl import append_jsonl, read_jsonl, sha256_file
 from tools.lib.player_agent import load_agent, resolve_device
 from tools.lib.position_bank import exact_mistake, move_name
+from tools.lib.engine_fingerprint import require_fresh
 
 SCHEMA = 1
 #: the cheap search of stage 1 (research/log/E7_gumbel_headroom.md calls k=4 at 16-64 evaluations
@@ -632,6 +633,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--top", type=int, default=20, help="failures to show, grouped by root cause")
     r.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.cmd in ("benchmark", "screen"):
+        require_fresh()
     if a.cmd == "benchmark":
         return benchmark(a.model, a.out_dir, a.games, a.project, a.seed, a.control_rate, a.runners)
     if a.cmd == "screen":

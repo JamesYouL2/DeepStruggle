@@ -43,6 +43,7 @@ import ts_engine as ts  # noqa: E402
 
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 from tools.scripts.aux_ownership_probe import N_COUNTRIES, _absolute_class, _control, analyse  # noqa: E402
 
 
@@ -256,6 +257,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device)
 
     parts: List[Dict[str, np.ndarray]] = []

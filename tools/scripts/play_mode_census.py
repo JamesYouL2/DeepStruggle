@@ -36,6 +36,7 @@ import ts_engine as ts  # noqa: E402
 
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 #: flat indices of the resolution choice, in ts::Resolution order
 MODE_BASE = 110
@@ -170,6 +171,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--output-json", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
     results = [self_play(c, a.games, a.envs, a.seed, a.temperature, dev) for c in a.checkpoint]
     if a.human_corpus:

@@ -45,6 +45,7 @@ from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import require_e4_view, state_from_token
 from tools.lib.player_agent import load_agent
 from tools.lib.position_bank import move_name
+from tools.lib.engine_fingerprint import require_fresh
 from tools.scripts.disagreement_bank import row_id
 
 WHO = ("human", "network", "search")
@@ -145,6 +146,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--emit-playouts", nargs=2, default=None, metavar=("N", "PATH"),
                     help="write the N clearest positions as bank_playouts.py's input")
     a = ap.parse_args(argv)
+    require_fresh()
 
     rows = load_rows(a.bank, a.patterns)
     k, n = (int(x) for x in a.part.split("/"))

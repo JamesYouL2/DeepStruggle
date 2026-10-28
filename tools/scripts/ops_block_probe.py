@@ -34,6 +34,7 @@ from ai.eval.ops_block import (BlockReport, analyse, enumerate_block, is_block_s
                                play_block)
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 
 def _obs_mask(states: Sequence["ts.GameState"], persp: "ts.Player", dev: torch.device):
@@ -161,6 +162,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device)
     results = [probe_checkpoint(p, a.positions, a.envs, a.seed, dev, a.max_allocations)
                for p in a.checkpoints]

@@ -65,6 +65,7 @@ from tools.lib.hidden_draws import ManyDraws, step_outcomes
 from tools.lib.jsonl import read_jsonl, sha256_file, write_jsonl
 from tools.lib.player_agent import BatchSelector, Reseedable, load_agent, resolve_device
 from tools.lib.position_bank import CARD_NAMES, move_name, position_seed, searched_continuation
+from tools.lib.engine_fingerprint import require_fresh
 
 SCHEMA = 1
 WORKBENCH = "https://mihaild.github.io/DeepStruggle"
@@ -660,6 +661,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     t.add_argument("--prove", nargs="+", required=True, help="prove's rows (every part)")
     t.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    if a.cmd in ("prove", "confirm", "score"):
+        require_fresh()
     if a.cmd == "settle":
         return settle(a.bank, a.prove, a.out)
     if a.cmd == "prove":

@@ -42,6 +42,7 @@ import ts_engine as ts  # noqa: E402
 
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 N_COUNTRIES = 84
 US, USSR, NONE = 0, 1, 2                 # absolute classes
@@ -206,6 +207,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device)
     agent = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev))
     if not getattr(agent.model, "aux_heads", False):

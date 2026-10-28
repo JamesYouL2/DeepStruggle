@@ -46,6 +46,7 @@ import ts_engine as ts  # noqa: E402
 
 from bindings.action_encoder import ActionEncoder  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 from tools.scripts.trunk_ownership_probe import collect  # noqa: E402
 
 N_COUNTRIES, BOARD_W, N_CARDS, CARD_W = 84, 26, 110, 14
@@ -326,6 +327,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device)
     _regions()
 

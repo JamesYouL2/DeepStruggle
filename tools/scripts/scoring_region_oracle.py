@@ -51,6 +51,7 @@ import ts_engine as ts  # noqa: E402
 from ai.eval.ops_block import (NODE_OFFSET, Allocation, _ctx, _in_block, _legal, influence,  # noqa: E402
                                play_block)
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 from tools.scripts.card_country_interaction_probe import CARD_OFFSET, CARD_W, MY_HAND, REGIONS, _regions  # noqa: E402
 from tools.scripts.ops_block_oracle import _pair_seed, playouts  # noqa: E402
 from tools.scripts.ops_block_probe import _obs_mask, collect_starts  # noqa: E402
@@ -239,6 +240,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     _regions()
     res = run(a.checkpoint, a.starts, a.per_cell, a.pairs, a.envs, a.seed, torch.device(a.device),
               a.temperature, a.chunk_envs, a.direction)

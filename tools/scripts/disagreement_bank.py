@@ -51,6 +51,7 @@ from tools.lib.corpus_driver import (feed_corpus_game, load_policy, position_tok
 from tools.lib.corpus_paths import distinct_corpus_files
 from tools.lib.player_agent import load_agent
 from tools.lib.position_bank import move_name
+from tools.lib.engine_fingerprint import require_fresh
 
 KINDS = ("headline", "card", "mode")
 PATTERNS = ("human-alone", "network-alone", "search-alone", "all-differ")
@@ -283,6 +284,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--resume", action="store_true",
                     help="skip the games --out already holds (their counts are kept in <out>.games.jsonl)")
     a = ap.parse_args(argv)
+    require_fresh()
     if a.pack:
         return pack(a.pack, a.out, a.human_alone_max_p, a.clarity, a.playouts, a.exclude)
     if not a.net or not a.search:

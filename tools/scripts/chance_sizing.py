@@ -43,6 +43,7 @@ import ts_engine as ts  # noqa: E402
 from bindings.settle import SettleMode, settle  # noqa: E402
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 
 @torch.no_grad()
@@ -83,6 +84,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-md", default=None)
     ap.add_argument("--output-json", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     torch.set_num_threads(a.threads)
     dev = torch.device(a.device if (a.device == "cpu" or torch.cuda.is_available()) else "cpu")
     agent = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev))

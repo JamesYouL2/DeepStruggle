@@ -47,6 +47,7 @@ if _root not in sys.path:
 
 from bindings.ts_env import TsVectorizedEnv  # noqa: E402
 from tools.lib.corpus_driver import LogitsFn, load_policy  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 BLOCKADE = ts.CardData.get_card_by_name("Blockade")
 WEST_GERMANY = ts.MapData.get_country_by_name("West Germany")
@@ -223,6 +224,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--output-json", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
 
     logits_fn, features = load_policy(a.checkpoint)
     kept = collect(logits_fn, features, a.games, a.seed, a.batch)

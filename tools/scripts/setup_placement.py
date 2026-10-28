@@ -26,6 +26,7 @@ import os
 import ts_engine as ts
 
 from tools.lib.player_agent import load_agent
+from tools.lib.engine_fingerprint import require_fresh
 
 _MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), "rules", "map.json")
@@ -142,6 +143,7 @@ def main() -> int:
     ap.add_argument("--games", type=int, default=40)
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args()
+    require_fresh()
 
     labels = a.labels if a.labels and len(a.labels) == len(a.checkpoints) else a.checkpoints
 

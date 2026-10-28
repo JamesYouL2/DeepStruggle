@@ -43,6 +43,7 @@ import ts_engine as ts  # noqa: E402
 from ai.eval.ops_block import NODE_OFFSET, country_table  # noqa: E402
 from bindings.settle import SettleMode, settle  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 from tools.scripts.ops_block_oracle import playouts  # noqa: E402
 from tools.scripts.ops_block_probe import _obs_mask  # noqa: E402
 
@@ -126,6 +127,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="Whose opening is varied; the other side sets up as the checkpoint would.")
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args(argv)
+    require_fresh()
     dev = torch.device(a.device if torch.cuda.is_available() else "cpu")
     model = NeuralAgent.from_checkpoint(a.checkpoint, device=str(dev)).model.eval()
     ids = _country_ids()

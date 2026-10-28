@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import ts_engine as ts
 
 from tools.lib.corpus_driver import corpus_map, feed_corpus_game, load_policy, rules_json, selfplay
+from tools.lib.engine_fingerprint import require_fresh
 
 US, USSR = 1, -1
 _MAP = rules_json("map.json")["countries"]
@@ -183,6 +184,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dump", default=None)
     ap.add_argument("--output-md", default=None)
     a = ap.parse_args(argv)
+    require_fresh()
     if a.compare:
         human = load_records(a.compare[0])
         bots = {}

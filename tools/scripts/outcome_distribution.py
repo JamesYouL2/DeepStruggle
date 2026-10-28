@@ -41,6 +41,7 @@ import torch
 
 from bindings.ts_env import TsVectorizedEnv
 from tools.lib.player_agent import load_agent
+from tools.lib.engine_fingerprint import require_fresh
 
 
 def play(checkpoint: str, games: int, num_envs: int, seed: int,
@@ -159,6 +160,7 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--compare", default=None)
     a = ap.parse_args()
+    require_fresh()
 
     if not a.out and not a.compare:
         print("give --out to freeze, or --compare to check", file=sys.stderr)

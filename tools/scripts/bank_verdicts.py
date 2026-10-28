@@ -41,6 +41,7 @@ from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import require_e4_view, state_from_token
 from tools.lib.player_agent import BatchSelector, load_agent
 from tools.lib.position_bank import move_name
+from tools.lib.engine_fingerprint import require_fresh
 from tools.scripts.disagreement_bank import row_id
 
 BANK = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "ai", "eval", "banks",
@@ -137,6 +138,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                    choices=["kind", "pattern", "side", "confidence"], help="also break the score down by these")
     s.add_argument("--out", default=None, help="JSONL of the agent's move and its mark, per position")
     a = ap.parse_args(argv)
+    if a.cmd in ("score",):
+        require_fresh()
     if a.cmd == "collect":
         return collect(a.src, a.out)
     return score(a.agent, a.bank, a.by, a.out)
