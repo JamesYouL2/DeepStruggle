@@ -9,8 +9,11 @@ services:
       args:
         REF: ${DEEPSTRUGGLE_REF:-main}
     image: deepstruggle-web
+    # The host's loopback only: there is no authentication, and anyone who reaches the port can
+    # read the mounted checkpoints. To serve other machines, put an authenticating reverse proxy in
+    # front (it reaches this port on 127.0.0.1) -- or, knowingly, set BIND=0.0.0.0.
     ports:
-      - "${PORT:-8000}:8000"
+      - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
     volumes:
       - ${CHECKPOINTS:-./checkpoints}:/data/checkpoints:ro
       - replays:/data/replays

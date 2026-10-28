@@ -18,6 +18,7 @@ import re
 import threading
 from typing import List, Optional
 
+from tools.export_onnx import export
 from tools.lib.data_root import checkpoints_dir, data_path
 from tools.lib.engine_fingerprint import fingerprint
 from web.server.replay_types import AnalysisModelListDict, AnalysisRunDict
@@ -102,8 +103,6 @@ def onnx_for(rel: str) -> str:
     or a rebuilt engine gets a fresh export (whose metadata names the engine it was made next
     to), never a stale one.
     """
-    from tools.export_onnx import export
-
     path = resolve_model_path(rel)
     st = os.stat(path)
     key = f"{st.st_size}-{st.st_mtime_ns}-{fingerprint()[:12]}.onnx"

@@ -1,8 +1,9 @@
 import json
 import os
 import time
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Optional, Union, cast
 from web.server.replay_types import (
+    ReplayListErrorDict,
     ReplayLogDict,
     ReplayStepDict,
     ReplaySummaryDict,
@@ -21,9 +22,8 @@ DEFAULT_REPLAYS_DIR: str = os.path.join(_ROOT_DIR, "data", "replays")
 #: Environment variable that overrides where replays are read from and written to.
 REPLAYS_DIR_ENV: str = "TS_REPLAYS_DIR"
 
-# Kept for callers that import the name. Prefer `replays_dir()`: this is only the default, and
-# it cannot see an override set after import.
-REPLAYS_DIR: str = DEFAULT_REPLAYS_DIR
+#: The only files the replay directory is read for.
+REPLAY_SUFFIX: str = ".tslog.json"
 
 
 def replays_dir() -> str:
@@ -132,63 +132,102 @@ class ReplayLogger:
 
 
 class ReplayManager:
+    """The replay directory as the local server serves it: `*.tslog.json` files only, nothing
+    outside the directory."""
+
     @staticmethod
-    def list_replays() -> List[ReplaySummaryDict]:
+    def list_replays() -> List[Union[ReplaySummaryDict, ReplayListErrorDict]]:
+        """Every replay in the directory, newest first; a file that cannot be read is listed after
+        them with the reason, rather than left out."""
         target = replays_dir()
         os.makedirs(target, exist_ok=True)
         replays: List[ReplaySummaryDict] = []
-        for fname in os.listdir(target):
-            if fname.endswith(".tslog.json") or fname.endswith(".json"):
-                full_path = os.path.join(target, fname)
-                try:
-                    with open(full_path, "r", encoding="utf-8") as f:
-                        data: Dict[str, Any] = json.load(f)
-                        meta = data.get("metadata")
-                        if meta and isinstance(meta, dict):
-                            total = meta.get("total_steps", len(data.get("steps", [])))
-                            res = meta.get("result", None)
-                            replays.append({
-                                "filename": fname,
-                                "game_id": meta.get("game_id", fname),
-                                "created_at": meta.get("created_at", ""),
-                                "players": meta.get("players", {}),
-                                "total_steps": total,
-                                "result": res,
-                            })
-                        else:
-                            # Backward-compatible fallback for flat/legacy schemas (e.g. events, logs)
-                            steps_list = data.get("steps") or data.get("events") or data.get("logs") or []
-                            total_cnt = data.get("total_steps", len(steps_list))
-                            fallback_result: Optional[ReplayResultDict] = None
-                            if "winner" in data:
-                                fallback_result = {
-                                    "winner": str(data["winner"]),
-                                    "margin": int(data.get("final_vp", 0)),
-                                    "end_turn": int(data.get("final_turn", 1)),
-                                    "reason": "Terminal Evaluation",
-                                }
-                            replays.append({
-                                "filename": fname,
-                                "game_id": str(data.get("game_id", fname)),
-                                "created_at": str(data.get("created_at", "")),
-                                "players": data.get("players", {}),
-                                "total_steps": int(total_cnt),
-                                "result": fallback_result,
-                            })
-                except Exception:
-                    continue
+        broken: List[ReplayListErrorDict] = []
+        for fname in sorted(os.listdir(target)):
+            if not fname.endswith(REPLAY_SUFFIX):
+                continue
+            try:
+                with open(os.path.join(target, fname), "r", encoding="utf-8") as f:
+                    data: object = json.load(f)
+                replays.append(_summary(fname, data))
+            except (OSError, ValueError, TypeError) as e:
+                # ValueError: not JSON (json.JSONDecodeError), not UTF-8 (UnicodeDecodeError), or
+                # fields that are not what a replay holds (_summary).
+                broken.append({"filename": fname, "error": f"{type(e).__name__}: {e}"})
         replays.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return replays
+        return [*replays, *broken]
 
     @staticmethod
     def load_replay(filename: str) -> Optional[ReplayLogDict]:
+        """The replay `filename` (with or without its `.tslog.json`), or None when the directory
+        has no such replay. Raises ValueError for a file there that is not a replay."""
         target = os.path.realpath(replays_dir())
-        full_path = os.path.join(target, filename)
-        if not os.path.exists(full_path):
-            full_path = os.path.join(target, f"{filename}.tslog.json")
+        name = filename if filename.endswith(REPLAY_SUFFIX) else f"{filename}{REPLAY_SUFFIX}"
+        full_path = os.path.join(target, name)
         # Served over HTTP by the local workbench: nothing outside the replay directory.
         if not os.path.realpath(full_path).startswith(target + os.sep) or not os.path.isfile(full_path):
             return None
         with open(full_path, "r", encoding="utf-8") as f:
-            data: ReplayLogDict = json.load(f)
-            return data
+            data: object = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError(f"{name} is not a replay: a JSON {type(data).__name__}, not an object")
+        return cast(ReplayLogDict, data)
+
+
+def _summary(fname: str, data: object) -> ReplaySummaryDict:
+    """What the replay picker shows of one replay. Raises ValueError (or TypeError) for anything
+    not shaped like one."""
+    if not isinstance(data, dict):
+        raise ValueError(f"a JSON {type(data).__name__}, not an object")
+    meta = data.get("metadata")
+    if isinstance(meta, dict):
+        steps = data.get("steps", [])
+        return {
+            "filename": fname,
+            "game_id": str(meta.get("game_id", fname)),
+            "created_at": str(meta.get("created_at", "")),
+            "players": _players(meta.get("players", {})),
+            "total_steps": int(meta.get("total_steps", len(steps) if isinstance(steps, list) else 0)),
+            "result": _result(meta.get("result")),
+        }
+    # Older flat files: the steps under "steps", "events" or "logs", the outcome at the top level.
+    steps_list = data.get("steps") or data.get("events") or data.get("logs") or []
+    fallback: Optional[ReplayResultDict] = None
+    if "winner" in data:
+        fallback = {
+            "winner": str(data["winner"]),
+            "margin": int(data.get("final_vp", 0)),
+            "end_turn": int(data.get("final_turn", 1)),
+            "reason": "Terminal Evaluation",
+        }
+    return {
+        "filename": fname,
+        "game_id": str(data.get("game_id", fname)),
+        "created_at": str(data.get("created_at", "")),
+        "players": _players(data.get("players", {})),
+        "total_steps": int(data.get("total_steps", len(steps_list) if isinstance(steps_list, list) else 0)),
+        "result": fallback,
+    }
+
+
+def _players(v: object) -> Dict[str, str]:
+    if not isinstance(v, dict):
+        raise ValueError("players is not an object")
+    return {str(k): str(p) for k, p in v.items()}
+
+
+def _result(v: object) -> Optional[ReplayResultDict]:
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("result is not an object")
+    out: ReplayResultDict = {}
+    if "winner" in v:
+        out["winner"] = str(v["winner"])
+    if "margin" in v:
+        out["margin"] = int(v["margin"])
+    if "end_turn" in v:
+        out["end_turn"] = int(v["end_turn"])
+    if "reason" in v:
+        out["reason"] = str(v["reason"])
+    return out

@@ -14,12 +14,11 @@ and serves the built page (web/ui/dist, from tools/scripts/build_web.sh) at `/`.
 
     PYTHONPATH=.:build/release .venv/bin/python -m web.server.main --port 8000
 """
-from web.server.replay_types import AnalysisModelListDict, ReplayLogDict, ReplaySummaryDict
 import argparse
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +30,8 @@ from tools.lib.engine_fingerprint import fingerprint
 from web.server.local_files import (LocalFileError, list_models, models_root, onnx_cache_root,
                                     onnx_for)
 from web.server.replay import ReplayManager, replays_dir
+from web.server.replay_types import (AnalysisModelListDict, LocalInfoDict, ReplayListErrorDict, ReplayLogDict,
+                                     ReplaySummaryDict)
 
 
 def setup_server_logging(log_file: Optional[str] = None, log_level_name: str = "INFO") -> None:
@@ -51,12 +52,16 @@ logger = logging.getLogger("ts_server")
 
 app = FastAPI(title="Twilight Struggle Workbench (local files)")
 
-# The Vite dev server (npm run dev) runs on another port and proxies /api here; allow it.
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
+# Pages on this machine only. The page is served from here, and the Vite dev server (npm run dev,
+# port 5173) proxies /api to here, so neither needs CORS; a page on another localhost port (vite
+# preview) may still read the API. A page from anywhere else may not: these are this machine's
+# checkpoints and replays, and the server has no authentication.
+LOCAL_ORIGINS = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+app.add_middleware(CORSMiddleware, allow_origin_regex=LOCAL_ORIGINS, allow_methods=["GET"], allow_headers=["*"])
 
 
-@app.get("/api/local/info")
-async def local_info() -> Dict[str, Any]:
+@app.get("/api/local/info", response_model=None)
+async def local_info() -> LocalInfoDict:
     """What the page compares its own engine against: a page built from other sources than
     these plays other rules, and says so."""
     return {
@@ -88,13 +93,17 @@ async def local_model_onnx(path: str) -> FileResponse:
 
 
 @app.get("/api/local/replays", response_model=None)
-async def local_replays() -> List[ReplaySummaryDict]:
+async def local_replays() -> List[Union[ReplaySummaryDict, ReplayListErrorDict]]:
+    """The replays, newest first, then any file that could not be read with its `error`."""
     return ReplayManager.list_replays()
 
 
 @app.get("/api/local/replays/{filename}", response_model=None)
 async def local_replay(filename: str) -> ReplayLogDict:
-    data = ReplayManager.load_replay(filename)
+    try:
+        data = ReplayManager.load_replay(filename)
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"{filename} could not be read: {e}")
     if not data:
         raise HTTPException(status_code=404, detail="Replay not found")
     return data

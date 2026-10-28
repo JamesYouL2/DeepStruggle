@@ -352,6 +352,25 @@ class AnalysisModelListDict(TypedDict):
     root: str
     runs: List[AnalysisRunDict]
     loose: List[str]
+
+
+class ReplayListErrorDict(TypedDict):
+    """`GET /api/local/replays`: a replay file in the directory that could not be read, and why --
+    listed rather than left out, so a broken file is seen."""
+    filename: str
+    error: str
+
+
+class LocalInfoDict(TypedDict):
+    """`GET /api/local/info`: the engine fingerprint of the sources the server runs from, and the
+    trees it serves."""
+    engine_fingerprint: str
+    checkpoints_root: str
+    replays_dir: str
+    onnx_cache: str
+
+
+
 class SavedGameSessionDict(TypedDict, total=False):
     """Serialization format for local game state checkpoint in CLI agent player."""
     seed: int

@@ -4,7 +4,7 @@
 # lists and exports this machine's checkpoints -- built from the GitHub repository.
 #
 #     docker build -t deepstruggle-web deploy/web
-#     docker run -d -p 8000:8000 -v /path/to/checkpoints:/data/checkpoints:ro \
+#     docker run -d -p 127.0.0.1:8000:8000 -v /path/to/checkpoints:/data/checkpoints:ro \
 #                -v deepstruggle-replays:/data/replays deepstruggle-web
 #
 # The source is not taken from the build context: it is fetched from REPO at REF by BuildKit's git
@@ -124,4 +124,6 @@ VOLUME ["/data/replays", "/data/onnx_cache"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/local/info', timeout=4)"]
+# 0.0.0.0 inside the container, which is what lets Docker forward to it; publish it on the host's
+# loopback (-p 127.0.0.1:8000:8000, compose.yaml's default) -- there is no authentication.
 CMD ["python", "-m", "web.server.main", "--host", "0.0.0.0", "--port", "8000", "--log-level", "INFO"]

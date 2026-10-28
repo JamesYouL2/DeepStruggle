@@ -145,6 +145,5 @@
  "tools/scripts/kal007_sk_control.py": 2,
  "tools/scripts/launch_flags.py": 1,
  "tools/scripts/star_wars_play.py": 2,
- "tools/value_probe.py": 21,
- "web/server/local_files.py": 1
+ "tools/value_probe.py": 21
 }

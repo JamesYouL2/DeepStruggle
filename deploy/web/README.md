@@ -60,14 +60,16 @@ local checkout. What it deploys is whatever that ref holds: publish first, then 
 ```bash
 docker build -t deepstruggle-web deploy/web                      # main
 docker build -t deepstruggle-web --build-arg REF=<sha> deploy/web  # a specific commit or tag
-docker run -d --name deepstruggle -p 8000:8000 \
+docker run -d --name deepstruggle -p 127.0.0.1:8000:8000 \
   -v /path/to/checkpoints:/data/checkpoints:ro \
   -v deepstruggle-replays:/data/replays \
   deepstruggle-web
 # or: CHECKPOINTS=/path/to/checkpoints docker compose -f deploy/web/compose.yaml up -d --build
 ```
 
-Then open `http://<host>:8000/`. The analysis panel lists the mounted checkpoints; the server
+Then open `http://localhost:8000/`. Both publish the port on the host's loopback only (compose:
+`BIND`, default `127.0.0.1`); inside the container the server listens on `0.0.0.0`, which is what
+lets Docker forward to it. The server answers cross-origin requests only from `localhost` pages. The analysis panel lists the mounted checkpoints; the server
 exports one to ONNX the first time it is picked (a few seconds, verified against torch) and caches
 it in `/data/onnx_cache`.
 
@@ -104,5 +106,5 @@ A checkpoint's action view (E4 or E4.1) is read from its run directory's `metada
 mount run directories whole, not bare `.pt` files.
 
 There is no authentication. The server only serves the page and lists and exports the mounted
-files, but anyone who can reach the port can read them. Put it behind a reverse proxy with auth
-before exposing it.
+files, but anyone who can reach the port can read them -- which is why the port is published on
+loopback only. Put it behind a reverse proxy with auth before exposing it.

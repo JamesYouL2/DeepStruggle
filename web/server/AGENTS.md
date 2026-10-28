@@ -25,8 +25,15 @@ the old Python session, the readout against `read_policy` / `read_critic`).
     request exports it with `tools/export_onnx.py` (a few seconds: the export is verified against
     torch on real positions and refused if ONNX Runtime disagrees); later ones are served from the
     cache. 404 for anything outside the tree, 422 for a checkpoint that does not export.
-  - `GET /api/local/replays`, `GET /api/local/replays/<file>` -- the replay directory.
+  - `GET /api/local/replays`, `GET /api/local/replays/<file>` -- the replay directory's
+    `*.tslog.json` files. A file that cannot be read is listed after the replays as
+    `{filename, error}` (the page shows it, disabled) rather than left out; opening one is a 422.
   - Serves the built page (`web/ui/dist`) at `/`.
+  - CORS: only pages on `localhost` / `127.0.0.1` / `[::1]` (any port) may read the API from
+    another origin. The page is served from here and the Vite dev server proxies `/api`, so neither
+    needs it; nothing else should read this machine's checkpoints. The server binds 127.0.0.1 by
+    default; the images listen on 0.0.0.0 inside the container and are published on the host's
+    loopback (`deploy/web/compose.yaml`, `web/Dockerfile`'s run line).
 
 - [`local_files.py`](local_files.py): what those endpoints read.
   - `models_root()` (`$TS_CHECKPOINTS_DIR`, else the shared `data/checkpoints`) and
@@ -54,8 +61,8 @@ the old Python session, the readout against `read_policy` / `read_critic`).
   - `ReplayManager`: discovers and loads those files, confined to the replay directory.
     `replays_dir()` resolves the location per call — `$TS_REPLAYS_DIR` if set, else
     `data/replays` — so a test fixture can point the server at a directory it has just generated
-    a replay into. Prefer it to the `REPLAYS_DIR` constant, which cannot see an override set after
-    import.
+    a replay into. (The import-time `REPLAYS_DIR` constant, which could not see an override, is
+    gone.)
 
 - [`replay_types.py`](replay_types.py):
   - Strongly typed `TypedDict` definitions for all serialized game states, action logs, replays
