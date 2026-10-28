@@ -112,10 +112,9 @@ class HeuristicLeaf:
             # "Do not spend your own or a neutral card on the track while holding an equal-Ops
             # opponent card": the track is the one outlet that spends a card without firing its
             # Event, so spending yours and keeping theirs is backwards.
-            try:
-                outcome = dominance.space_dominance_outcome(state, mover, card)
-            except Exception:
-                outcome = None
+            # No try/except: the rule reads a hand and a card table, and an exception from it is a
+            # defect to see, not a reason to drop the penalty silently.
+            outcome = dominance.space_dominance_outcome(state, mover, card)
             if outcome is False:
                 penalties[i] += self.cfg.blunder_penalty
         return penalties
@@ -130,15 +129,10 @@ class HeuristicLeaf:
         child_values = np.empty(n, dtype=float)
         for i, action in enumerate(legal):
             probe = state.clone()
-            try:
-                ts.Engine.step_flat(probe, int(action))
-            except Exception:
-                # An action the mask offered and `step` refused is an engine defect, not
-                # something to paper over with a guess -- but a search is the wrong place to
-                # raise it. Rank it last and let the fuzzer and the differential tests be what
-                # reports it.
-                child_values[i] = -np.inf
-                continue
+            # An action the mask offered and the engine refuses is an engine defect: step_flat
+            # raises, and the search lets it. Ranking it last instead hid the defect inside a
+            # benchmark opponent's play, where nothing would ever report it.
+            ts.Engine.step_flat(probe, int(action))
             drain_chance_nodes(probe)
             child_values[i] = evaluate(probe, self.cfg.weights)
 

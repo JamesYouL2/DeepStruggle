@@ -54,7 +54,7 @@ from ai.search.dmcts import determinize
 from ai.search.pimcts import acting_player
 from bindings.action_encoder import ActionEncoder
 from bindings.settle import SettleMode, settle
-from bindings.ts_env import model_obs_features
+from bindings.ts_env import observe
 
 if TYPE_CHECKING:
     from ai.search.batched_mcts import BatchedMCTS, _BNode
@@ -168,9 +168,7 @@ class GumbelRoot:
 
     def _network(self, states: Sequence[ts.GameState]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Logits, legal masks and the mover's value at the real positions."""
-        feats = model_obs_features(self.mcts.model)
-        obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), feats),
-                                   dtype=np.float32) for s in states])
+        obs = np.stack([observe(s, acting_player(s), self.mcts.features) for s in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         dev = self.mcts.device
         with torch.no_grad():
@@ -182,8 +180,16 @@ class GumbelRoot:
         """The move to play at each position: the last survivor of the halving. `candidates`, for
         a diagnostic only (tools/search_bank.py oracle), replaces a position's top-k candidates
         with the given legal moves (None keeps the usual ones)."""
+        states = list(states)
         alive = self._halve(states, candidates).survivors
-        return [int(c[0]) if c else 0 for c in alive]
+        for i, c in enumerate(alive):
+            if not c:
+                st = states[i]
+                raise RuntimeError(
+                    f"the Gumbel root has no candidate at position {i}: no legal action (terminal="
+                    f"{ts.Engine.is_terminal(st)}, decision_type={int(st.ctx().decision_type)})"
+                    + ("" if candidates is None else ", or none of the forced candidates is legal"))
+        return [int(c[0]) for c in alive]
 
     def improved_policies(self, states: Sequence[ts.GameState]) -> List[Tuple[List[int], np.ndarray]]:
         """The improved policy at each position, as a training target (P32 T1): softmax over

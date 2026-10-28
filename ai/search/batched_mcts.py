@@ -44,7 +44,7 @@ from ai.search.dmcts import determinize
 from ai.search.gumbel_root import GumbelRoot, GumbelStats
 from ai.search.pimcts import PIMCTSConfig, acting_player, drain_chance_nodes
 from bindings.action_encoder import ActionEncoder
-from bindings.ts_env import model_obs_features
+from bindings.ts_env import model_obs_features, observe
 
 _UINT64 = 1 << 64
 _US = int(ts.Player.US)
@@ -285,6 +285,9 @@ class BatchedMCTS:
         self.model = model
         self.device = device or next(model.parameters()).device
         self.cfg = config or BatchedMCTSConfig()
+        #: The observation feature set the network reads; every observation the search builds --
+        #: the C++ tree's, the featuriser runners', the per-node path's -- is in exactly this set.
+        self.features = model_obs_features(model)
         #: Optional C++ featurisers. `extract_observation` per leaf is 22.7% of a search; a runner
         #: does the whole batch at once for ~10x less. One runner per power-of-two size up to
         #: `featurise_capacity`, built on first use: `refresh_all` rebuilds EVERY slot, so a single
@@ -387,8 +390,7 @@ class BatchedMCTS:
             obs = np.asarray(runner.get_observations(), dtype=np.float32)[:n]
             masks = np.asarray(runner.get_action_masks())[:n]
             return obs, masks
-        obs = np.stack([np.asarray(ts.extract_observation(nd.state, acting_player(nd.state)),
-                                   dtype=np.float32) for nd in nodes])
+        obs = np.stack([observe(nd.state, acting_player(nd.state), self.features) for nd in nodes])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(nd.state)) for nd in nodes])
         return obs, masks
 
@@ -401,6 +403,9 @@ class BatchedMCTS:
         runner = self._featurisers.get(cap)
         if runner is None:
             runner = ts.VectorizedBatchRunner(cap, int(self.cfg.seed))
+            # In the network's feature set, both sides: a runner with none set emits the base
+            # layout, which a HEADLINE_REVEAL network misreads at the same width.
+            runner.set_obs_features([self.features] * cap, [self.features] * cap)
             self._featurisers[cap] = runner
         return runner
 
@@ -596,7 +601,7 @@ class BatchedMCTS:
             cap *= 2
         self._cpp = None                      # release the old one before allocating the new
         cs = ts.BatchedSearch(cap, float(self.cfg.c_puct), bool(self.cfg.auto_advance),
-                              int(model_obs_features(self.model)), False,
+                              int(self.features), False,
                               float(self.cfg.fpu_reduction))
         bufs = _SearchBuffers(cap, int(cs.obs_width), torch.device(self.device))
         cs.set_buffers(bufs.obs.numpy(), bufs.masks.numpy())
@@ -749,16 +754,26 @@ class BatchedMCTS:
         return self._gumbel.last_stats if self._gumbel is not None else []
 
     def best_actions(self, states: Sequence[ts.GameState]) -> List[int]:
-        """Most-visited action per position; falls back to the first legal action. With
-        `gumbel_k` set, the Gumbel root's choice instead (ai/search/gumbel_root.py)."""
+        """Most-visited action per position. With `gumbel_k` set, the Gumbel root's choice instead
+        (ai/search/gumbel_root.py).
+
+        A root with nothing to search is legitimate in one case only: `advance_root` settled a
+        position whose one legal action is forced (settling consumes exactly those), so that action
+        is the move. Anything else -- no legal action at all, or several legal actions under a root
+        that offers none -- is a defect and raises rather than playing an arbitrary move."""
         if self._gumbel is not None:
             return self._gumbel.choose(states)
         picks: List[int] = []
         for r, st in zip(self._search(states), states):
             if r is None or r.terminal or not r.actions:
-                mask = np.asarray(ActionEncoder.get_legal_mask(st))
-                legal = np.flatnonzero(mask)
-                picks.append(int(legal[0]) if len(legal) else 0)
+                legal = np.flatnonzero(np.asarray(ActionEncoder.get_legal_mask(st)))
+                if len(legal) != 1:
+                    raise RuntimeError(
+                        f"the search root offers no move but the position has {len(legal)} legal "
+                        f"action(s) (decision_type={int(st.ctx().decision_type)}, terminal="
+                        f"{ts.Engine.is_terminal(st)}); a terminal or empty position must not be "
+                        f"handed to a searcher")
+                picks.append(int(legal[0]))
             else:
                 picks.append(int(r.actions[self._most_visited(r)]))
         return picks
@@ -828,12 +843,13 @@ class BatchedMCTSAgent:
         self.mcts.reseed(seed)
 
     def _policy_actions(self, states: Sequence[ts.GameState]) -> List[int]:
-        """The unsearched fallback: this agent's own greedy policy, in one batched pass."""
-        obs = np.stack([np.asarray(ts.extract_observation(
-            st, st.ctx().decision_player if st.ctx().decision_player != ts.Player.NONE
-            else st.phasing_player), dtype=np.float32) for st in states])
+        """The unsearched fallback: this agent's own greedy policy, in one batched pass, in the
+        network's observation feature set."""
+        obs = np.stack([observe(st, acting_player(st), self.mcts.features) for st in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(st), dtype=np.uint8)
                           for st in states])
+        if not masks.any(axis=1).all():
+            raise RuntimeError("the greedy policy was asked to move at a position with no legal action")
         dev = self.mcts.device
         with torch.no_grad():
             logits, _, _ = self.model(torch.from_numpy(obs).to(dev),

@@ -42,6 +42,7 @@ onnxruntime -- so the two searchers cannot drift apart in anything but the netwo
 """
 from __future__ import annotations
 
+import os
 import random
 import re
 from dataclasses import dataclass
@@ -55,7 +56,7 @@ from ai.search.belief import BeliefTracker
 from ai.search.gumbel_root import sigma_completed
 from ai.search.pimcts import acting_player
 from bindings.action_encoder import ActionEncoder
-from bindings.ts_env import model_obs_features
+from bindings.ts_env import model_obs_features, observe
 
 #: A playout that has not met its horizon in this many plies is an error, not a leaf: reading an
 #: unfinished rollout where it stands would value it silently at a depth nobody asked for.
@@ -239,6 +240,12 @@ class RolloutRoot:
         self.last_stats: List[Dict[str, Any]] = []
         #: Network rows of the last `choose`: the root plus every playout ply and leaf.
         self.rows = 0
+        #: The root forward of the last `choose` -- logits, masks, each position's value for its
+        #: mover -- so a caller that needs the network's own reading (RolloutTeacher's targets) reuses
+        #: it rather than running the same batch through the network twice.
+        self.last_forward: Tuple[np.ndarray, np.ndarray, np.ndarray] = (
+            np.zeros((0, ActionEncoder.FLAT_ACTION_SIZE), dtype=np.float32),
+            np.zeros((0, ActionEncoder.FLAT_ACTION_SIZE), dtype=np.uint8), np.zeros(0, dtype=np.float32))
 
     def reseed(self, seed: int) -> None:
         self._rng = random.Random(seed)
@@ -266,8 +273,7 @@ class RolloutRoot:
 
     def _forward(self, states: Sequence[ts.GameState]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Logits, masks and each position's value for its own acting player."""
-        obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), self.features),
-                                   dtype=np.float32) for s in states])
+        obs = np.stack([observe(s, acting_player(s), self.features) for s in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         lg, v = self._net(obs, masks)
         return lg, masks, v
@@ -294,9 +300,16 @@ class RolloutRoot:
         worlds' opposing hands (worlds x 110 uint8, a belief's) instead of uniform redeals."""
         states = list(states)
         self.rows = 0
-        lg, masks, _ = self._forward(states)
+        lg, masks, v = self._forward(states)
         lg = np.ascontiguousarray(lg, dtype=np.float32)
+        self.last_forward = (lg, masks, v)
         cands: List[List[int]] = [ts.rollout_candidates(lg[i], masks[i], self.cfg.k) for i in range(len(states))]
+        for i, c in enumerate(cands):
+            if not c:
+                raise RuntimeError(
+                    f"rollout root: position {i} has no legal action (terminal="
+                    f"{ts.Engine.is_terminal(states[i])}, decision_type="
+                    f"{int(states[i].ctx().decision_type)}); a searcher is never handed one")
         batch = ts.RolloutBatch(horizon=self.cfg.horizon, shared_dice=True, guard=True,
                                 features=self.features, seed=self._rng.getrandbits(64), **_stop_kw(self.cfg))
         position_of: Dict[int, int] = {}
@@ -322,7 +335,7 @@ class RolloutRoot:
         picks: List[int] = []
         self.last_stats = []
         for i in range(len(states)):
-            raw = cands[i][0] if cands[i] else int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf)))
+            raw = cands[i][0]
             p = position_of.get(i)
             if p is None:
                 picks.append(raw)
@@ -445,8 +458,8 @@ class RolloutTeacher:
         """The root's move at each position and its improved policy over the legal moves (P36's active
         search plays the first and trains toward the second)."""
         states = list(states)
-        picks = self.root.choose(states)          # fills last_stats: candidates, worlds, Q
-        lg, masks, v = self.root._forward(states)
+        picks = self.root.choose(states)          # fills last_stats (candidates, worlds, Q) and last_forward
+        lg, masks, v = self.root.last_forward
         out: List[Tuple[List[int], np.ndarray]] = []
         for i, st in enumerate(self.root.last_stats):
             acts = [int(a) for a in np.flatnonzero(masks[i])]
@@ -540,8 +553,7 @@ class TeacherPolicyTargets:
         states = list(states)
         if not states:
             return []
-        obs = np.stack([np.asarray(ts.extract_observation_features(s, acting_player(s), self.features),
-                                   dtype=np.float32) for s in states])
+        obs = np.stack([observe(s, acting_player(s), self.features) for s in states])
         masks = np.stack([np.asarray(ActionEncoder.get_legal_mask(s), dtype=np.uint8) for s in states])
         with torch.no_grad():
             lg, _v, _ = self.model(torch.from_numpy(obs).to(self.device), torch.from_numpy(masks).to(self.device))
@@ -580,6 +592,8 @@ class SparseRolloutAgent:
     def select_actions_batch(self, states: Sequence[ts.GameState]) -> List[int]:
         states = list(states)
         lg, masks, _ = self.inner.root._forward(states)
+        if not masks.any(axis=1).all():
+            raise RuntimeError(f"{self.name}: asked to move at a position with no legal action")
         picks = [int(np.argmax(np.where(masks[i].astype(bool), lg[i], -np.inf))) for i in range(len(states))]
         chosen = [i for i in range(len(states)) if self._rng.random() < self.frac]
         if chosen:
@@ -595,8 +609,11 @@ class SparseRolloutAgent:
 
 def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
     """(stop, leaf checkpoint, CUDA graphs) of rollout:<ckpt>:k:worlds:horizon:rule[:stop][:graphs][:leaf].
-    The trailing fields are told apart by value: a stop word, the word `graphs`, or else the leaf (a
-    sixth field that is a path is the leaf, the form before the others existed)."""
+    The trailing fields are told apart by value: a stop word, the word `graphs`, a flag
+    `rollout_spec_config` reads, or the leaf -- a checkpoint path (ending in .pt or naming a directory;
+    a sixth field that is a path is the leaf, the form before the others existed). Anything else is a
+    misspelt flag and is refused: read as a leaf path it would only fail later, as a missing file, or
+    -- worse -- not at all if the word happened to name one."""
     parts = spec.split(":")
     stop, leaf, graphs = "boundaries", None, False
     for p in parts[6:]:
@@ -610,8 +627,14 @@ def _spec_tail(spec: str) -> Tuple[str, Optional[str], bool]:
             graphs = True
         elif p in ("keyed", "keyed2", "oracle", "aligned", "box4") or re.fullmatch(r"belief\d*|race\d+", p):
             continue                                   # rollout_spec_config reads them
-        else:
+        elif p.endswith(".pt") or os.sep in p:
+            if leaf is not None:
+                raise ValueError(f"two leaf checkpoints ({leaf!r}, {p!r}) in rollout spec {spec!r}")
             leaf = p
+        else:
+            raise ValueError(f"unknown field {p!r} in rollout spec {spec!r}: expected a stop "
+                             f"({', '.join(STOPS)}), a leaf side ({', '.join(LEAF_SIDES)}), graphs, keyed, "
+                             f"keyed2, oracle, aligned, box4, belief<n>, race<n>, or a leaf checkpoint path")
     return stop, leaf, graphs
 
 

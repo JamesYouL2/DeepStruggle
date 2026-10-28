@@ -32,6 +32,7 @@ import torch
 import ts_engine as ts
 from bindings.settle import SettleMode, settle
 from bindings.action_encoder import ActionEncoder
+from bindings.ts_env import model_obs_features, observe
 
 _UINT64 = 1 << 64
 
@@ -91,6 +92,8 @@ class PIMCTSAgent:
         self.name = name
         self.cfg = config or PIMCTSConfig()
         self.leaf_fn = leaf_fn
+        #: The network's observation feature set (0 without a network): the leaves are observed in it.
+        self.features = model_obs_features(model) if model is not None else 0
         self._rng = random.Random(self.cfg.seed)
         self._np_rng = np.random.RandomState(self.cfg.seed)
         if model is not None:
@@ -128,8 +131,8 @@ class PIMCTSAgent:
                          actions=[int(a) for a in legal], priors=np.asarray(priors, dtype=float),
                          n=np.zeros(len(legal)), w=np.zeros(len(legal)))
 
-        obs = ts.extract_observation(state, acting_player(state))
-        obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).unsqueeze(0).to(self.device)
+        obs = observe(state, acting_player(state), self.features)
+        obs_t = torch.from_numpy(obs).unsqueeze(0).to(self.device)
         mask_t = torch.from_numpy(mask).unsqueeze(0).to(self.device)
         with torch.no_grad():
             logits, v_win, _ = self.model.forward(obs_t, mask_t)
@@ -210,9 +213,9 @@ class PIMCTSAgent:
                       temperature: float = 0.1) -> int:
         actions, visits = self.search(state)
         if not actions:
-            mask = np.asarray(ActionEncoder.get_legal_mask(state))
-            legal = np.flatnonzero(mask)
-            return int(legal[0]) if len(legal) else 0
+            raise RuntimeError(
+                f"{self.name}: asked to move at a position with no legal action (terminal="
+                f"{ts.Engine.is_terminal(state)}, decision_type={int(state.ctx().decision_type)})")
         temp = self.cfg.temperature if self.cfg.temperature > 0 else temperature
         if temp <= 0.05 or visits.sum() <= 0:
             return int(actions[int(np.argmax(visits))])
