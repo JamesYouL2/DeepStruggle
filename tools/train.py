@@ -15,7 +15,12 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from ai.training.train import main
+import ts_engine  # noqa: E402, F401 -- the build require_fresh() checks before training starts
+from ai.training.train import main  # noqa: E402
+from tools.lib.engine_fingerprint import require_fresh  # noqa: E402
 
 if __name__ == "__main__":
+    # Key invariant 13: a checkpoint trained on a stale engine keeps loading and running later,
+    # so nothing announces it. check_engine_fresh.sh guards a shell launch; this guards every one.
+    require_fresh()
     main()
