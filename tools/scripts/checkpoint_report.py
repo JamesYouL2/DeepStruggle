@@ -45,6 +45,10 @@ rewrites the index and those links; `--index` does that alone.
 
 Each checkpoint gets `research/log/per_checkpoint/<run>_<step>M.md` (and the raw records in
 `data/eval/per_checkpoint/`); the directory's `README.md` index is rewritten to list every report.
+The records carry their identity -- the network's sha256, the engine fingerprint and the player --
+and `--load` refuses records whose identity differs from the checkpoint, engine and player at hand
+(or that carry none, from before 2026-10-28); a stem holding another network's records is never
+overwritten.
 """
 
 from __future__ import annotations
@@ -70,6 +74,7 @@ from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import TsVectorizedEnv, check_obs_width, model_obs_features
 from tools.lib.action_view import checkpoint_merged_influence
 from tools.lib.data_root import data_path, data_root
+from tools.lib.engine_fingerprint import fingerprint, require_fresh
 from tools.lib.leaderboard import REPORT_DIR, load as load_leaderboard, player_spec
 from tools.lib.player_agent import NeuralAgent, load_agent
 from tools.lib.player_spec import Policy, kind_of, load_spec
@@ -80,7 +85,16 @@ from tools.scripts.star_wars_play import _tag_retrievals, retrieval_table
 US, USSR = int(ts.Player.US), int(ts.Player.USSR)
 SPACE = ActionEncoder.PLAY_MODE_OFFSET + 1
 NODE = ActionEncoder.NODE_OFFSET
-CARDS = {int(c["id"]): c for c in json.load(open("rules/cards.json"))}
+#: The repository root, from this file, so the rules load from any working directory.
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _rules(name: str) -> Any:
+    with open(os.path.join(_ROOT, "rules", name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+CARDS = {int(c["id"]): c for c in _rules("cards.json")}
 ID = {c["name"]: i for i, c in CARDS.items()}
 STAR_WARS = ID["Star Wars"]
 FIVE_YEAR_PLAN = ID["Five Year Plan"]
@@ -95,7 +109,7 @@ RED_SCARE = ID["Red Scare/Purge"]
 CHERNOBYL = ID["Chernobyl"]
 #: The engine's `Region` order, which is also Chernobyl's designation (`primary_id`).
 REGIONS = ["Europe", "Asia", "Middle East", "Africa", "Central America", "South America"]
-_MAP = {c["name"]: c for c in json.load(open("rules/map.json"))["countries"]}
+_MAP = {c["name"]: c for c in _rules("map.json")["countries"]}
 COUNTRY_REGION = {int(c["id"]): REGIONS.index(c["region"]) for c in _MAP.values()}
 LATE_WAR = 8
 #: The Chernobyl section analyses a checkpoint only when the US plays the event in more than this
@@ -1501,6 +1515,55 @@ def _sha(path: str) -> str:
     return h.hexdigest()
 
 
+def _commit() -> str:
+    """The short HEAD commit, with `-dirty` when tracked files differ from it: a report generated from
+    uncommitted code says so rather than naming a commit that did not produce it."""
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=_ROOT, capture_output=True, text=True)
+    head = git("rev-parse", "--short", "HEAD")
+    if head.returncode != 0:
+        raise SystemExit(f"checkpoint_report: git rev-parse failed: {head.stderr.strip()}")
+    status = git("status", "--porcelain", "--untracked-files=no")
+    if status.returncode != 0:
+        raise SystemExit(f"checkpoint_report: git status failed: {status.stderr.strip()}")
+    return head.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
+
+
+#: What a record of self-play is a record of: the network file, the engine build that played it and
+#: the player (None for the greedy network). `--load` refuses records whose identity differs.
+IDENTITY_KEYS = ("model_sha256", "engine_fingerprint", "agent")
+
+
+def _identity(path: str, agent_spec: Optional[str]) -> Dict[str, Optional[str]]:
+    return {"model_sha256": _sha(path), "engine_fingerprint": fingerprint(),
+            "agent": _census_player(agent_spec, path)}
+
+
+def _read_record(dump: str) -> Dict[str, Any]:
+    with open(dump, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_record(dump: str, d: Dict[str, Any]) -> None:
+    with open(dump, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+
+
+def _identity_mismatch(dump: str, d: Dict[str, Any], want: Dict[str, Optional[str]]) -> Optional[str]:
+    """Why the saved records `d` are not of this checkpoint, engine build and player, or None."""
+    have = d.get("identity")
+    if not isinstance(have, dict):
+        return (f"{dump} carries no identity (records written before checkpoint_report recorded the network's "
+                f"sha256, the engine fingerprint and the player), so nothing says which checkpoint, engine or "
+                f"player produced them -- replay them (drop --load), after moving the file aside")
+    differ = [k for k in IDENTITY_KEYS if have.get(k) != want[k]]
+    if differ:
+        return (f"{dump} was recorded under a different " + ", ".join(differ) + ": "
+                + "; ".join(f"{k} {have.get(k)!r} there, {want[k]!r} here" for k in differ)
+                + " -- replay it (drop --load)")
+    return None
+
+
 def _label(path: str) -> Tuple[str, str, str]:
     """(run short name, step label, file stem) from a checkpoint path."""
     run_dir = os.path.basename(os.path.dirname(os.path.abspath(path)))
@@ -1557,10 +1620,11 @@ def report(path: str, d: Dict[str, Any], merged: bool, feats: int,
     title = label or f"{short} @ {step}"
     meta: Dict[str, Any] = {}
     try:
-        meta = json.load(open(os.path.join(os.path.dirname(os.path.abspath(path)), "metadata.json")))
+        with open(os.path.join(os.path.dirname(os.path.abspath(path)), "metadata.json"), encoding="utf-8") as f:
+            meta = json.load(f)
     except (OSError, ValueError):
-        pass
-    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+        pass                                 # a soup or an SWA outside a run directory has none
+    commit = _commit()
     home = os.path.dirname(data_root())      # paths print as data/..., on any machine
     rel = os.path.relpath(path, home)
     out = [f"# {title}: {BEHAVIOUR if d['games'] else LEAK}", "",
@@ -1704,6 +1768,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if a.index:
         write_index(a.output_dir)
         return 0
+    require_fresh()
     # A player brings its network's file, its search and its description, all from the registry.
     agents: List[Optional[str]] = []
     if a.players:
@@ -1750,19 +1815,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         merged = checkpoint_merged_influence(path)
         model = NeuralAgent.from_checkpoint(path, device=str(dev)).model
         feats = model_obs_features(model)
+        want = _identity(path, agents[k])
+        kept_leak: Optional[Dict[str, Any]] = None
+        if not a.load and os.path.exists(dump):
+            # Checked before playing: a stem names one network, and records of another under the same
+            # stem are refused rather than overwritten hours later.
+            old = _read_record(dump)
+            had = old.get("identity")
+            if isinstance(had, dict) and had.get("model_sha256") != want["model_sha256"]:
+                raise SystemExit(f"{dump} holds the records of another network (sha256 "
+                                 f"{str(had.get('model_sha256'))[:12]}, this one {str(want['model_sha256'])[:12]}): "
+                                 f"pick another --labels name, or move the file aside")
+            kept_leak = old.get("leak")
+            why = check_leak(kept_leak, path, agents[k]) if kept_leak is not None else None
+            if why:
+                raise SystemExit(f"{dump} holds a searched-leak census of something else ({why}); move the file aside")
         if a.load:
-            d = json.load(open(dump))
+            d = _read_record(dump)
+            why = _identity_mismatch(dump, d, want)
+            if why:
+                raise SystemExit(why)
             if d["games"] and "setups" not in d:   # records from before the setup section: replay the setups
                 d["setups"] = play_setups(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
-                json.dump(d, open(dump, "w"))
+                _write_record(dump, d)
             if d["games"] and "endings" not in d:  # ... and before the endings section: replay the games
                 d["endings"] = play_endings(model, merged, int(d["games"]), int(d["seed"]), int(d["batch"]))
-                json.dump(d, open(dump, "w"))
+                _write_record(dump, d)
         elif a.games <= 0:
             if os.path.exists(dump):
                 raise SystemExit(f"{dump} exists: --load adds the census to its records")
             d = {"games": 0, "seed": a.seed, "batch": a.batch,
-                 "player": a.labels[k] if agents[k] is not None else None}
+                 "player": a.labels[k] if agents[k] is not None else None, "identity": want}
         else:
             agent_spec = agents[k]
             player = a.labels[k] if agent_spec is not None else None
@@ -1775,18 +1858,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             else:
                 agent = load_agent(agent_spec, device=dev) if agent_spec is not None else None
                 d = play(model, merged, a.games, a.seed, a.batch, agent=agent, player=player)
-            if leaks[k] is None and os.path.exists(dump):
-                # The searched-leak census these records hold (`--games 0 --leak`): a rerun keeps it.
-                kept = json.load(open(dump)).get("leak")
-                if kept is not None:
-                    d["leak"] = kept
-            json.dump(d, open(dump, "w"))
+            d["identity"] = want
+            if leaks[k] is None and kept_leak is not None:
+                # The searched-leak census these records held (`--games 0 --leak`): a rerun keeps it.
+                d["leak"] = kept_leak
+            _write_record(dump, d)
         if leaks[k] is not None:
             d["leak"] = leaks[k]
-            json.dump(d, open(dump, "w"))
+            _write_record(dump, d)
         md = report(path, d, merged, feats, label, note)
         out = os.path.join(a.output_dir, f"{stem}.md")
-        open(out, "w").write(md)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(md)
         print(f"{path} -> {out}", flush=True)
     if os.path.abspath(a.output_dir) == os.path.abspath(REPORT_DIR):
         write_index()
