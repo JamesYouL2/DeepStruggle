@@ -84,7 +84,8 @@ def test_a_region_badge_opens_its_scoring_summary(phone: Any) -> None:
     assert rs.locator(".rs-net").inner_text() == "even"
     assert "West Germany" in rs.locator(".rs-list").first.inner_text()
     assert "East Germany" in rs.locator(".rs-list").nth(1).inner_text()
-    assert "Control wins the game" in rs.inner_text()
+    # Europe's terms are quoted from the card itself, not restated by the page.
+    assert "Control: Automatic Victory" in rs.inner_text()
 
 
 def test_the_space_race_says_what_the_next_attempt_needs(phone: Any) -> None:

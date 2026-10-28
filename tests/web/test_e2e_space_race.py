@@ -1,18 +1,12 @@
 import json
 import os
+
 import pytest
-import threading
-import time
-import socket
-import uvicorn
 from playwright.sync_api import sync_playwright
+
+from tests.web.live_server import serving
 from tests.web.test_e2e_workbench import HF_BLOCKED
 from web.server.main import app
-
-def get_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        return s.getsockname()[1]
 
 SPACE_REPLAY = "space_race_fixture.tslog.json"
 
@@ -51,16 +45,8 @@ def server_url(tmp_path_factory):
     _write_space_race_replay(replays)
     previous = os.environ.get("TS_REPLAYS_DIR")
     os.environ["TS_REPLAYS_DIR"] = str(replays)
-    port = get_free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    t = threading.Thread(target=server.run, daemon=True)
-    t.start()
-    
-    url = f"http://127.0.0.1:{port}"
-    time.sleep(1.0)
-    yield url
-    server.should_exit = True
+    with serving(app) as url:
+        yield url
     if previous is None:
         os.environ.pop("TS_REPLAYS_DIR", None)
     else:

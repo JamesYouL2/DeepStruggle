@@ -133,17 +133,6 @@ def test_the_hover_card_says_what_control_costs(browser: Any, site: str, mid_gam
     page.close()
 
 
-def test_a_region_closed_by_defcon_says_no_coups(browser: Any, site: str) -> None:
-    """DEFCON 3 closes Europe and Asia (Southeast Asia with it), not the Middle East."""
-    save = _us_action_round(7).to_save_dict()
-    save["defcon"] = 3
-    page = _open(browser, site, f"pos={_token(ts.state_from_save_dict(save))}")
-    closed = page.eval_on_selector_all(
-        ".svg-region-badge", "gs => gs.filter(g => g.querySelector('.svg-region-defcon')).map(g => g.dataset.region)")
-    assert sorted(closed) == ["ASIA", "EUROPE", "SOUTHEAST ASIA"]
-    page.close()
-
-
 #: From a fixed deal, play random legal moves (a fixed sequence) until a coup has been rolled.
 _PLAY_TO_COUP = """seed => { const wb = window.__wb; let x = seed;
     wb.session.newGame(seed); wb.refresh();

@@ -14,16 +14,13 @@ import hashlib
 import http.server
 import json
 import os
-import socket
 import threading
-import time
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote
 
 import numpy as np
 import pytest
 import torch
-import uvicorn
 from playwright.sync_api import sync_playwright
 
 import ts_engine as ts
@@ -32,6 +29,7 @@ from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from bindings.action_encoder import ActionEncoder
 from tools.lib.player_agent import NeuralAgent
 from tools.lib.player_spec import Rollout, spec_from_dict
+from tests.web.live_server import serving
 from web.server.main import app
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,12 +42,6 @@ SNAP = "snapshot_2000000steps.pt"
 #: Requests a test serves itself with `page.route` are answered before name resolution.
 HF_BLOCKED = "--host-resolver-rules=MAP huggingface.co ~NOTFOUND"
 HF_TREE = "https://huggingface.co/api/models/mihaild/deepstruggle/tree/main?recursive=true"
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return int(s.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
@@ -76,14 +68,10 @@ def server(checkpoint: Dict[str, str], tmp_path_factory: pytest.TempPathFactory)
     }
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
-    port = _free_port()
-    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
-    threading.Thread(target=srv.run, daemon=True).start()
-    time.sleep(1.0)
     try:
-        yield f"http://127.0.0.1:{port}"
+        with serving(app) as url:
+            yield url
     finally:
-        srv.should_exit = True
         for k, v in old.items():
             if v is None:
                 os.environ.pop(k, None)
@@ -95,7 +83,7 @@ def server(checkpoint: Dict[str, str], tmp_path_factory: pytest.TempPathFactory)
 def static_site() -> Iterator[str]:
     """The built page on a plain static server with no API -- what GitHub Pages is."""
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=DIST)
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", _free_port()), handler)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)   # bound, so ready
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         yield f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -961,8 +949,10 @@ def test_each_region_says_whether_its_scoring_card_can_still_come(browser: Any, 
         "EUROPE": "live", "ASIA": "live", "MIDDLE EAST": "live",
         "AFRICA": "later", "CENTRAL AMERICA": "later", "SOUTH AMERICA": "later", "SOUTHEAST ASIA": "later",
     }, "at the start the Early War scoring cards are dealt or in the deck; the Mid War ones are not in yet"
+    # The state as shown carries the engine's region scores (main.ts sets them), which is what the
+    # badges are drawn from; the raw game state does not, and drew no badges at all.
     page.evaluate("""() => {
-        const wb = window.__wb, s = structuredClone(wb.state);
+        const wb = window.__wb, s = structuredClone(wb.shown);
         s.card_locations['2'] = 'DISCARD_PILE';
         s.card_locations['1'] = 'HAND_USSR_UNKNOWN';
         s.card_locations['37'] = 'DRAW_DECK';

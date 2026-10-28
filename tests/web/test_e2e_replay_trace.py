@@ -4,22 +4,12 @@ The backend tests prove the numbers are recorded; these prove they reach the scr
 are checked against a replay generated here, so they are driven by what the writer emits today
 rather than by a fixture that can drift from it.
 """
-import socket
-import threading
-import time
-
 import pytest
-import uvicorn
 from playwright.sync_api import sync_playwright
 
+from tests.web.live_server import serving
 from tests.web.test_e2e_workbench import HF_BLOCKED
 from web.server.main import app
-
-
-def get_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return int(s.getsockname()[1])
 
 
 @pytest.fixture(scope="module")
@@ -40,13 +30,8 @@ def traced_replay_server(tmp_path_factory):
             game_id="traced_fixture", output_path=str(target / "traced_fixture.tslog.json"),
             device="cpu", verbose=False, max_steps=80)
 
-        port = get_free_port()
-        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
-                                               log_level="error"))
-        threading.Thread(target=server.run, daemon=True).start()
-        time.sleep(1.0)
-        yield f"http://127.0.0.1:{port}"
-        server.should_exit = True
+        with serving(app) as url:
+            yield url
     finally:
         if previous is None:
             os.environ.pop(REPLAYS_DIR_ENV, None)

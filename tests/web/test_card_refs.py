@@ -8,6 +8,7 @@ Checked under node on a two-turn game's grouped log and on one hand-written line
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 from typing import Any, Dict, List
@@ -42,7 +43,8 @@ def _spans(h: str) -> List[tuple]:
 
 
 def _strip(h: str) -> str:
-    return SPAN.sub(lambda m: m.group(2), h)
+    """The line with the spans taken out and its text unescaped (the log escapes what it renders)."""
+    return html.unescape(SPAN.sub(lambda m: m.group(2), h))
 
 
 def test_the_spans_change_nothing_else(refs: Dict[str, Any]) -> None:
