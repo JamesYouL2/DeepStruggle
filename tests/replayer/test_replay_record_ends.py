@@ -11,36 +11,23 @@ on a pass the log records and the engine will not allow, and three more on a boa
 Those are the reconstruction being wrong about something the log does state, and they stay
 failures. The distinction is between the log saying nothing and the log saying something else.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict
-
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import (Mismatch, _is_the_record_ending,
                                            convert_game)
 from tools.lib.ts_replayer_parse import parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
-
-
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
 
 
 @pytest.mark.parametrize("replay_id,tail", [
     (153, "Event: Arab-Israeli War"),
     (251, "Coup (3 Ops):"),
 ])
-def test_the_record_stops_mid_entry(replay_id: int, tail: str) -> None:
-    raws = _game(replay_id)["all_turns"]
+def test_the_record_stops_mid_entry(replay_id: int, tail: str, corpus: ReplayCorpus) -> None:
+    raws = corpus.game(replay_id)["all_turns"]
     assert (raws[-1].get("text") or "").strip().endswith(tail)
-    conv = convert_game(_game(replay_id))
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} reported {conv.failure}"
     assert conv.truncated_at is not None
     # The whole of the turn it stops in is given back, so what remains ends on a turn boundary.
@@ -51,42 +38,42 @@ def test_the_record_stops_mid_entry(replay_id: int, tail: str) -> None:
 
 
 @pytest.mark.parametrize("replay_id", [153, 251, 112, 158, 37, 38, 44])
-def test_these_games_convert_up_to_where_the_log_ends(replay_id: int) -> None:
-    conv = convert_game(_game(replay_id))
+def test_these_games_convert_up_to_where_the_log_ends(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} reported {conv.failure}"
     assert conv.truncated_at is not None
 
 
-def test_a_die_the_log_never_prints_is_the_record_ending() -> None:
+def test_a_die_the_log_never_prints_is_the_record_ending(corpus: ReplayCorpus) -> None:
     """Replay 132's last entry is turn 5 AR7, "Nuclear Test Ban: Space Race (3 Ops):".
 
     The log prints every space race die, and here there is none. The engine rolled one of its
     own, and with the US on 18 whether the game ended at 20 turned on where the deck happened to
     be -- a US win the humans never recorded. The attempt is the recording stopping.
     """
-    raws = _game(132)["all_turns"]
+    raws = corpus.game(132)["all_turns"]
     assert (raws[-1].get("text") or "").strip().endswith("Space Race (3 Ops):")
-    conv = convert_game(_game(132))
+    conv = corpus.converted(132)
     assert conv.failure is None, f"replay 132 reported {conv.failure}"
     assert conv.truncated_at is not None
     assert (conv.truncated_at.kind, conv.truncated_at.turn) == ("roll not in the log", 5)
     assert not conv.game_ended
 
 
-def test_replay_182_is_whole_and_no_longer_stops_short() -> None:
+def test_replay_182_is_whole_and_no_longer_stops_short(corpus: ReplayCorpus) -> None:
     """Its last entry is turn 10 AR8, the US racing with the China Card.
 
     It sat in the list above while the engine refused to play the China Card for the Space
     Race, which made the last turn unconvertible and read as a record that stops early.
     """
-    conv = convert_game(_game(182))
+    conv = corpus.converted(182)
     assert conv.failure is None, f"replay 182 reported {conv.failure}"
     assert conv.truncated_at is None
     assert conv.entries_converted == conv.entries_total == 143
 
 
 @pytest.mark.corpus_full
-def test_every_game_in_the_corpus_converts() -> None:
+def test_every_game_in_the_corpus_converts(corpus: ReplayCorpus) -> None:
     """There is no disagreement left to point at, which is what this file is here to guard.
 
     A disagreement inside a turn the log completes is ours to fix rather than the recording's
@@ -94,13 +81,12 @@ def test_every_game_in_the_corpus_converts() -> None:
     rule is tested on its own below, against a Mismatch built by hand -- there is no longer a
     game that exercises it.
     """
-    for path in sorted(glob.glob(os.path.join(CORPUS, "*.json.gz"))):
-        with gzip.open(path, "rt") as f:
-            conv = convert_game(json.load(f))
-        assert conv.failure is None, f"{os.path.basename(path)} stopped at {conv.failure}"
+    for replay_id, game in corpus.every_game():
+        conv = convert_game(game)
+        assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
 
 
-def test_a_skipped_round_at_the_end_of_the_file_is_the_record_ending() -> None:
+def test_a_skipped_round_at_the_end_of_the_file_is_the_record_ending(corpus: ReplayCorpus) -> None:
     """A bare "Turn N, SIDE ARk" header means a skip when entries follow it, and not at EOF.
 
     Every one of the corpus's pass failures is the second shape -- the header last in the file
@@ -108,29 +94,29 @@ def test_a_skipped_round_at_the_end_of_the_file_is_the_record_ending() -> None:
     always followed by the other player's entries.
     """
     for replay_id in (191, 274, 76):
-        conv = convert_game(_game(replay_id))
+        conv = corpus.converted(replay_id)
         assert conv.failure is None, f"replay {replay_id} reported {conv.failure}"
         assert conv.truncated_at is not None
         assert conv.truncated_at.kind == "logged pass is not legal"
 
 
-def test_a_skipped_round_with_entries_after_it_is_still_driven() -> None:
+def test_a_skipped_round_with_entries_after_it_is_still_driven(corpus: ReplayCorpus) -> None:
     """Replay 114 turn 5: the USSR skips AR4 through AR7 and the US plays on."""
-    conv = convert_game(_game(114))
+    conv = corpus.converted(114)
     assert conv.failure is None, f"replay 114 stopped at {conv.failure}"
     assert conv.truncated_at is None
     assert conv.entries_converted == conv.entries_total
 
 
-def test_a_decision_unanswered_in_an_earlier_turn_is_a_defect() -> None:
+def test_a_decision_unanswered_in_an_earlier_turn_is_a_defect(corpus: ReplayCorpus) -> None:
     """The record can only end where it ends: in the last turn, at the last entry.
 
     Anywhere before that, an unanswered decision means the answer is somewhere we are not
     reading.
     """
-    raws = _game(153)["all_turns"]
+    raws = corpus.game(153)["all_turns"]
     last = parse_entry(raws[-1])
-    conv = convert_game(_game(153))
+    conv = corpus.converted(153)
     assert conv.truncated_at is not None
     earlier_turn = type(conv.truncated_at)(
         conv.truncated_at.replay_id, last.turn - 1, "AR1", last.player,
@@ -138,16 +124,16 @@ def test_a_decision_unanswered_in_an_earlier_turn_is_a_defect() -> None:
     assert not _is_the_record_ending(earlier_turn, raws)
 
 
-def test_a_disagreement_in_a_completed_turn_is_never_read_as_the_record_ending() -> None:
+def test_a_disagreement_in_a_completed_turn_is_never_read_as_the_record_ending(corpus: ReplayCorpus) -> None:
     """Replay 154 plays its last turn out, so nothing in it is excused.
 
     Inside a turn the recording stops in, a disagreement *is* read that way -- the turn is a
     fragment and is dropped whatever the reason, so whether we could have reproduced it is
     moot. That is the case the test above covers.
     """
-    raws = _game(154)["all_turns"]
+    raws = corpus.game(154)["all_turns"]
     last = parse_entry(raws[-1])
-    conv = convert_game(_game(154))
+    conv = corpus.converted(154)
     assert conv.truncated_at is None, "its last turn runs to AR7"
     for kind in ("board mismatch after replay", "score mismatch after replay",
                  "logged pass is not legal", "target not legal"):

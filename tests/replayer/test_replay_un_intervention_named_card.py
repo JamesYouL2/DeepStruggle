@@ -7,21 +7,15 @@ something else -- so the player holds nothing for the naming card to name.
 """
 from __future__ import annotations
 
-import gzip
-import json
-import os
 from typing import Dict, List
 
-import pytest
-
-from tools.lib.corpus_paths import corpus_dir
+from tests.replay_corpus import ReplayCorpus
 from tools.lib.ts_replayer_convert import (
     _cards_named_through_un_intervention,
     card_id,
     convert_game,
 )
 
-_CORPUS = str(corpus_dir())
 _OAS_FOUNDED = 70
 _UN_INTERVENTION = 32
 
@@ -83,13 +77,9 @@ def test_only_un_intervention_moves_cards_this_way() -> None:
     assert hands["USSR"] == []
 
 
-def test_replay_269_converts_end_to_end() -> None:
+def test_replay_269_converts_end_to_end(corpus: ReplayCorpus) -> None:
     """Turn 5 AR7: UN Intervention naming OAS Founded, its one Op spent on Panama."""
-    path = os.path.join(_CORPUS, "269.json.gz")
-    if not os.path.exists(path):
-        pytest.skip("corpus not downloaded")
-    with gzip.open(path, "rt") as f:
-        game = json.load(f)
+    game = corpus.game(269)
     listed = game["hands"]["5"]["ussr"]
     assert _OAS_FOUNDED not in [card_id(n) for n in listed], (
         "the premise: the turn's list does not mention the card at all")

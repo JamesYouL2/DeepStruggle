@@ -6,33 +6,18 @@ the next entry, as every entry's is. Listed, and only for plays the rules settle
 """
 from __future__ import annotations
 
-import gzip
-import json
-import os
 from typing import Dict, List, cast
 
-import pytest
-
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _INVALID_PLAYS, _LOG_MISCOUNTED, convert_game
+from tools.lib.ts_replayer_convert import _INVALID_PLAYS, _LOG_MISCOUNTED
 from tools.lib.ts_replayer_parse import parse_entry
-
-_CORPUS = str(corpus_dir())
-
-
-def _game(replay_id: int) -> Dict[str, object]:
-    path = os.path.join(_CORPUS, f"{replay_id}.json.gz")
-    if not os.path.exists(path):
-        pytest.skip("corpus not downloaded")
-    with gzip.open(path, "rt") as f:
-        return json.load(f)
+from tests.replay_corpus import ReplayCorpus
 
 
-def test_a_missile_envy_card_may_not_go_to_the_space_race() -> None:
+def test_a_missile_envy_card_may_not_go_to_the_space_race(corpus: ReplayCorpus) -> None:
     """Replay 59 turn 8: the USSR headlines Missile Envy and takes Five Year Plan, a US card,
     so they get its Operations rather than its event -- and a space race attempt is not
     Operations. The attempt failed in the log, so nothing came of it there either."""
-    raws = cast(List[Dict[str, object]], _game(59)["all_turns"])
+    raws = cast(List[Dict[str, object]], corpus.game(59)["all_turns"])
     entry = next(parse_entry(r) for r in raws
                  if (parse_entry(r).turn, parse_entry(r).phase) == (8, "Headline"))
     assert entry.mode == "space"
@@ -40,8 +25,8 @@ def test_a_missile_envy_card_may_not_go_to_the_space_race() -> None:
     assert (8, "Headline", "both") in _INVALID_PLAYS[59]
 
 
-def test_the_entry_converts_and_teaches_nothing() -> None:
-    conv = convert_game(_game(59))
+def test_the_entry_converts_and_teaches_nothing(corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(59)
     assert conv.failure is None, f"replay 59 stopped at {conv.failure}"
     # The op mode and the two placements it leads to: Influence Ops must be spent in full
     # (2026-09-26), so the play can no longer be answered with the mode and an immediate stop.
@@ -49,7 +34,7 @@ def test_the_entry_converts_and_teaches_nothing() -> None:
     assert conv.entries_converted == 122
 
 
-def test_the_voice_of_america_entry_converts_with_the_board_taken_from_the_log() -> None:
+def test_the_voice_of_america_entry_converts_with_the_board_taken_from_the_log(corpus: ReplayCorpus) -> None:
     """Replay 260 turn 10 AR7: the log removes 3 of the card's 4 with a fourth still available.
 
     P17 6a took away the early stop that placement never should have had, so the engine now
@@ -57,7 +42,7 @@ def test_the_voice_of_america_entry_converts_with_the_board_taken_from_the_log()
     record's is not. The entry still has to convert: it is what carries the game to its ending,
     and without it the whole of turn 10 rewinds as an unfinished fragment.
     """
-    conv = convert_game(_game(260))
+    conv = corpus.converted(260)
     assert conv.failure is None, f"replay 260 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total == 144
     assert conv.game_ended, "the entry is what carries this game to its ending"
@@ -77,14 +62,13 @@ def test_no_other_game_carries_an_invalid_play() -> None:
             assert key not in _LOG_MISCOUNTED.get(replay_id, {})
 
 
-
-def test_purge_and_vietnam_revolts_cancel_and_the_play_is_valid() -> None:
+def test_purge_and_vietnam_revolts_cancel_and_the_play_is_valid(corpus: ReplayCorpus) -> None:
     """Replay 219 turn 2 AR6: Truman Doctrine for Influence under both Red Scare/Purge and
     Vietnam Revolts is 1 - 1 + 1 = 1 Op, and the log's single point in Burma spends it. It
     looked like a forgone bonus point while Purge was floored at 1 before Vietnam Revolts added
     its +1, which made the play worth 2. Not an invalid play: nothing in it is answered."""
     assert 219 not in _INVALID_PLAYS
-    conv = convert_game(_game(219))
+    conv = corpus.converted(219)
     assert conv.failure is None, f"replay 219 stopped at {conv.failure}"
     assert conv.invalid_decisions == 0
     assert conv.entries_converted == conv.entries_total

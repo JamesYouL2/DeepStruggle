@@ -7,19 +7,11 @@ control Canada, and firing for a drop that happened somewhere other than an acti
 defcon_dropped_to_2 records the drop. The engine clears it when an action round ends; it now
 clears it when the headline ends too, so a headline's drop cannot claim the round that follows.
 """
-import glob
-import gzip
-import json
-import os
-
 import numpy as np
-import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 DUCK_AND_COVER = 4          # degrades DEFCON
 SOCIALIST_GOVERNMENTS = 15
 NORAD = 106
@@ -115,13 +107,10 @@ def test_a_headline_drop_does_not_claim_the_first_action_round() -> None:
         "and the headline's drop does not carry into the action rounds")
 
 
-@pytest.mark.skipif(not glob.glob(os.path.join(CORPUS, "*.json.gz")),
-                    reason="ts-replayer corpus not downloaded")
-def test_replay_296_gets_past_its_bear_trap_escape() -> None:
+def test_replay_296_gets_past_its_bear_trap_escape(corpus: ReplayCorpus) -> None:
     """It used to stop at turn 5 AR1, where the USSR discards a card to escape Bear Trap and
     the US was handed a NORAD placement the log has no trace of. The game stops later now, for
     reasons this test says nothing about."""
-    with gzip.open(os.path.join(CORPUS, "296.json.gz"), "rt") as f:
-        conv = convert_game(json.load(f))
+    conv = corpus.converted(296)
     assert conv.failure is None or (conv.failure.turn, conv.failure.phase) != (5, "AR1"), (
         f"replay 296 stops at its trap escape: {conv.failure}")

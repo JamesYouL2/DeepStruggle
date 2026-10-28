@@ -22,20 +22,15 @@ turn 3 AR5 asserted against it.
 Terrorism draws the same way, from whichever side it is played against, and is searched for
 with the same seed search.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import _force_random_discard, convert_game
 from tools.lib.ts_replayer_parse import Entry, parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 FIVE_YEAR_PLAN = 5
 NASSER = 15
 EUROPE_SCORING = 2
@@ -43,19 +38,9 @@ MISSILE_ENVY = 49
 STAR_WARS = 85
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def _raws(replay_id: int) -> List[Dict]:
-    return _game(replay_id)["all_turns"]
-
-
-def test_the_log_names_the_card_five_year_plan_discarded() -> None:
+def test_the_log_names_the_card_five_year_plan_discarded(corpus: ReplayCorpus) -> None:
     """Replay 107 turn 3 AR5: "Event: Five Year Plan / USSR discards Nasser*"."""
-    entry = parse_entry(_raws(107)[35])
+    entry = parse_entry(corpus.turns(107)[35])
     assert entry.card is not None and entry.card.startswith("Five Year Plan")
     assert ("USSR", "Nasser*") in entry.discards
 
@@ -74,19 +59,19 @@ def test_a_card_the_ussr_does_not_hold_cannot_be_the_one_discarded() -> None:
     assert _force_random_discard(state, [NASSER], action=0) is False
 
 
-def test_five_year_plan_discards_what_the_log_says_when_the_event_follows_the_ops() -> None:
+def test_five_year_plan_discards_what_the_log_says_when_the_event_follows_the_ops(corpus: ReplayCorpus) -> None:
     """The discard has to be steered on a chance-node step, not only on a decision."""
-    conv = convert_game(_game(107))
+    conv = corpus.converted(107)
     assert conv.failure is None, f"replay 107 stopped at {conv.failure}"
 
 
 @pytest.mark.parametrize("replay_id", [107, 119])
-def test_the_five_year_plan_games_convert_end_to_end(replay_id: int) -> None:
-    conv = convert_game(_game(replay_id))
+def test_the_five_year_plan_games_convert_end_to_end(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
 
 
-def _where_after(replay_id: int, turn: int, phase: str, card: int,
+def _where_after(corpus: ReplayCorpus, replay_id: int, turn: int, phase: str, card: int,
                  player: Optional[str] = None) -> ts.CardLocation:
     seen: List[ts.CardLocation] = []
 
@@ -94,13 +79,13 @@ def _where_after(replay_id: int, turn: int, phase: str, card: int,
         if (e.turn, e.phase) == (turn, phase) and player in (None, e.player):
             seen.append(st.get_card_location(card))
 
-    conv = convert_game(_game(replay_id), on_entry=on_entry)
+    conv = convert_game(corpus.game(replay_id), on_entry=on_entry)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
     assert len(seen) == 1
     return seen[0]
 
 
-def test_the_card_being_resolved_can_be_the_one_discarded() -> None:
+def test_the_card_being_resolved_can_be_the_one_discarded(corpus: ReplayCorpus) -> None:
     """Replay 206 turn 4 headline: "USSR discards Missile Envy".
 
     The US headlines Missile Envy, the USSR gives up Five Year Plan for it, and the US plays
@@ -108,40 +93,40 @@ def test_the_card_being_resolved_can_be_the_one_discarded() -> None:
     the same step. It is neither in the USSR hand before the step nor out of play during it,
     so the discard was left to chance and drew OAS Founded, whose placement the log never wrote.
     """
-    assert _where_after(206, 4, "Headline", MISSILE_ENVY) == ts.CardLocation.DISCARD_PILE
+    assert _where_after(corpus, 206, 4, "Headline", MISSILE_ENVY) == ts.CardLocation.DISCARD_PILE
 
 
-def test_a_card_another_draw_takes_is_not_the_one_discarded() -> None:
+def test_a_card_another_draw_takes_is_not_the_one_discarded(corpus: ReplayCorpus) -> None:
     """Replay 270 turn 9 headline: "Event: Five Year Plan / USSR discards Europe Scoring".
 
     Glasnost's last Influence sets off Grain Sales To Soviets in the same step, and a seed that
     had Grain Sales take Europe Scoring into the US hand passed for the discard. Grain Sales was
     then steered to Five Year Plan as the log says, and Five Year Plan threw out U-2 Incident.
     """
-    assert _where_after(270, 9, "Headline", EUROPE_SCORING) == ts.CardLocation.DISCARD_PILE
+    assert _where_after(corpus, 270, 9, "Headline", EUROPE_SCORING) == ts.CardLocation.DISCARD_PILE
 
 
-def test_terrorism_discards_what_the_log_says() -> None:
+def test_terrorism_discards_what_the_log_says(corpus: ReplayCorpus) -> None:
     """Replay 104 turn 9 AR3: "Event: Terrorism / USSR discards Missile Envy".
 
     Left to the seed, the draw took Star Wars. The next entry's hands then put Star Wars back in
     the USSR hand, since the log has the USSR still holding it, and Missile Envy went to the deck
     as a card nobody held -- a card the log discarded, back in play at the next reshuffle.
     """
-    assert _where_after(104, 9, "AR3", MISSILE_ENVY, "US") == ts.CardLocation.DISCARD_PILE
-    assert ts.in_hand_of(_where_after(104, 9, "AR3", STAR_WARS, "US"), ts.Player.USSR)
+    assert _where_after(corpus, 104, 9, "AR3", MISSILE_ENVY, "US") == ts.CardLocation.DISCARD_PILE
+    assert ts.in_hand_of(_where_after(corpus, 104, 9, "AR3", STAR_WARS, "US"), ts.Player.USSR)
 
 
-def test_a_score_past_the_end_of_the_track_is_the_replayers_arithmetic() -> None:
+def test_a_score_past_the_end_of_the_track_is_the_replayers_arithmetic(corpus: ReplayCorpus) -> None:
     """Replay 109 turn 5 AR7: the log reads "Score is USSR 21".
 
     The VP track runs from 20 to -20 and the game ends the moment either end is reached, so
     the USSR had already won at 20. The engine clamps and stops; the expected value has to be
     clamped with it or the last entry of the game can never match.
     """
-    raws = _raws(109)
+    raws = corpus.turns(109)
     last = parse_entry(raws[-1])
     assert last.vp_gains and last.vp_gains[-1].lead == 21
-    conv = convert_game(_game(109))
+    conv = corpus.converted(109)
     assert conv.failure is None, f"replay 109 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total

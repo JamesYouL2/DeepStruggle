@@ -10,38 +10,21 @@ takes Marshall Plan at random from the USSR hand, the US plays it, and it coups 
 Envy then asks the US for a card, the highest Ops in that hand tie, and the reveal at the head
 of the queue was Grain Sales' Marshall Plan rather than Missile Envy's own Muslim Revolution.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict
-
-import pytest
-
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import (_KNOWN_INCOMPLETE, _missile_envy_took,
-                                           card_id, convert_game)
+from tools.lib.ts_replayer_convert import _KNOWN_INCOMPLETE, _missile_envy_took, card_id
 from tools.lib.ts_replayer_parse import parse_entry
-
-CORPUS = str(corpus_dir())
-
+from tests.replay_corpus import ReplayCorpus
 
 
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def _headline(replay_id: int, turn: int):
-    for raw in _game(replay_id)["all_turns"]:
+def _headline(corpus: ReplayCorpus, replay_id: int, turn: int):
+    for raw in corpus.game(replay_id)["all_turns"]:
         e = parse_entry(raw)
         if e.turn == turn and e.phase == "Headline":
             return e
     raise AssertionError(f"replay {replay_id} has no headline on turn {turn}")
 
 
-def test_the_entry_prints_two_reveals_and_only_one_is_missile_envys() -> None:
-    e = _headline(14, 4)
+def test_the_entry_prints_two_reveals_and_only_one_is_missile_envys(corpus: ReplayCorpus) -> None:
+    e = _headline(corpus, 14, 4)
     names = [nm for _side, nm in e.revealed]
     assert names.count("Marshall Plan*") == 2, "Grain Sales' reveal, printed twice"
     assert "Muslim Revolution" in names
@@ -51,27 +34,27 @@ def test_the_entry_prints_two_reveals_and_only_one_is_missile_envys() -> None:
         "the reveal under Event: Missile Envy is the one that answers")
 
 
-def test_replay_14_converts_end_to_end() -> None:
-    conv = convert_game(_game(14))
+def test_replay_14_converts_end_to_end(corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(14)
     assert conv.failure is None, f"replay 14 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total
 
 
-def test_a_headline_the_log_stops_inside_is_listed_not_guessed() -> None:
+def test_a_headline_the_log_stops_inside_is_listed_not_guessed(corpus: ReplayCorpus) -> None:
     """Replay 133's last entry is one line: "USSR Headlines Missile Envy".
 
     No US headline, no reveal, and no answer to the same tie -- ABM Treaty against Muslim
     Revolution, both 4 Ops. Nothing in the record decides it, so the game is converted up to
     that entry and no further rather than picking one.
     """
-    raws = _game(133)["all_turns"]
+    raws = corpus.game(133)["all_turns"]
     last = parse_entry(raws[-1])
     assert (last.turn, last.phase) == (10, "Headline")
     assert last.revealed == []
     assert last.headlines == {"USSR": "Missile Envy"}, "the US headline is not recorded"
     assert (10, "Headline", "both") in _KNOWN_INCOMPLETE[133]
 
-    conv = convert_game(_game(133))
+    conv = corpus.converted(133)
     assert conv.failure is None
     assert conv.truncated_at is not None
     assert conv.entries_converted == len(raws) - 1

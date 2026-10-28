@@ -8,36 +8,21 @@ there on is compared against its own number plus the offset.
 """
 from __future__ import annotations
 
-import gzip
-import json
-import os
 from typing import Dict, List, Tuple, cast
 
-import pytest
-
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _KNOWN_SCORE, _LOG_MISCOUNTED, convert_game
+from tools.lib.ts_replayer_convert import _KNOWN_SCORE, _LOG_MISCOUNTED
 from tools.lib.ts_replayer_parse import parse_entry
-
-_CORPUS = str(corpus_dir())
-
-
-def _game(replay_id: int) -> Dict[str, object]:
-    path = os.path.join(_CORPUS, f"{replay_id}.json.gz")
-    if not os.path.exists(path):
-        pytest.skip("corpus not downloaded")
-    with gzip.open(path, "rt") as f:
-        return json.load(f)
+from tests.replay_corpus import ReplayCorpus
 
 
-def test_replay_259_converts_past_the_miscounted_asia_scoring() -> None:
+def test_replay_259_converts_past_the_miscounted_asia_scoring(corpus: ReplayCorpus) -> None:
     """Turn 7 AR3: Asia Scoring under Shuttle Diplomacy, with the USSR holding Japan.
 
     The card takes a USSR battleground country out of the region, and Japan borders the United
     States, so taking it takes the USSR's superpower-adjacent Influence too. The log scores the
     USSR 2 and keeps the adjacency; it is 1, which is what the engine scores.
     """
-    conv = convert_game(_game(259))
+    conv = corpus.converted(259)
     assert conv.failure is None, f"replay 259 stopped at {conv.failure}"
     assert conv.entries_converted == 128
     # Recognised by rule, not by a hand-written entry list, and the log's number is adopted
@@ -46,7 +31,7 @@ def test_replay_259_converts_past_the_miscounted_asia_scoring() -> None:
     assert conv.log_miscounts == 0
 
 
-def test_the_logged_score_is_what_the_run_carries_forward() -> None:
+def test_the_logged_score_is_what_the_run_carries_forward(corpus: ReplayCorpus) -> None:
     """After the Shuttle/Japan scoring the engine holds the log's number, not the rules' one.
 
     The rules pay the USSR one less than the log does here, but the players were reading the
@@ -54,7 +39,7 @@ def test_the_logged_score_is_what_the_run_carries_forward() -> None:
     data has to be the position the human actually saw, so the engine adopts the logged score
     and carries it. The log stays on 17 for the rest of turn 7; the engine must agree.
     """
-    raws = cast(List[Dict[str, object]], _game(259)["all_turns"])
+    raws = cast(List[Dict[str, object]], corpus.game(259)["all_turns"])
     after: List[Tuple[int, str, int]] = []
     seen = False
     for raw in raws:
@@ -68,7 +53,7 @@ def test_the_logged_score_is_what_the_run_carries_forward() -> None:
     assert {score for _t, _p, score in after} == {17}, (
         "the log stays on its own number for the rest of the turn")
 
-    conv = convert_game(_game(259))
+    conv = corpus.converted(259)
     assert conv.failure is None
 
 
@@ -83,7 +68,7 @@ def test_the_two_lists_are_kept_apart_and_small() -> None:
     assert sum(len(v) for v in _KNOWN_SCORE.values()) <= 3
 
 
-def test_the_shuttle_japan_fault_is_recognised_by_rule_not_by_a_list() -> None:
+def test_the_shuttle_japan_fault_is_recognised_by_rule_not_by_a_list(corpus: ReplayCorpus) -> None:
     """Replay 127 has the same fault and was never listed.
 
     The correction used to be a single hand-written entry for replay 259. Deriving it from the
@@ -92,13 +77,13 @@ def test_the_shuttle_japan_fault_is_recognised_by_rule_not_by_a_list() -> None:
     took the log's score, which pays the USSR an adjacency bonus the card had removed, straight
     into the training data.
     """
-    conv = convert_game(_game(127))
+    conv = corpus.converted(127)
     assert conv.failure is None, f"replay 127 stopped at {conv.failure}"
     assert conv.shuttle_japan_corrections == 1
 
 
-def test_a_game_without_the_fault_is_left_alone() -> None:
+def test_a_game_without_the_fault_is_left_alone(corpus: ReplayCorpus) -> None:
     """The rule must not fire on every Asia scoring, only the ones meeting all three conditions."""
-    conv = convert_game(_game(182))
+    conv = corpus.converted(182)
     assert conv.failure is None
     assert conv.shuttle_japan_corrections == 0

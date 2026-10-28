@@ -17,40 +17,17 @@ checks it against what the entry says. The comparison is deliberately generous: 
 mentions anywhere -- played, revealed, returned, discarded, headlined, or fired -- is not an
 event from nowhere. Only a card the log knows nothing about at all fails.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict, Set
+from typing import Set
 
-import pytest
+from tools.lib.ts_replayer_convert import _UNNAMED_EVENTS, _events_the_log_names, card_id
+from tests.replay_corpus import ReplayCorpus
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import (_UNNAMED_EVENTS, _events_the_log_names,
-                                           card_id, convert_game)
-from tools.lib.ts_replayer_parse import parse_entry
-
-CORPUS = str(corpus_dir())
 NORAD = 106
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def _entry(replay_id: int, turn: int, phase: str, player: str):
-    for raw in _game(replay_id)["all_turns"]:
-        e = parse_entry(raw)
-        if (e.turn, e.phase, e.player) == (turn, phase, player):
-            return e
-    raise AssertionError(f"replay {replay_id} has no {player} {phase} of turn {turn}")
-
-
-def test_the_entry_names_star_wars_and_what_it_took() -> None:
+def test_the_entry_names_star_wars_and_what_it_took(corpus: ReplayCorpus) -> None:
     """Replay 158 turn 8 AR3: Star Wars, then Grain Sales, then the card it drew."""
-    e = _entry(158, 8, "AR3", "US")
+    e = corpus.entry(158, 8, "AR3", "US")
     named = _events_the_log_names(e)
     assert card_id("Star Wars*") in named
     assert card_id("Grain Sales To Soviets") in named
@@ -58,7 +35,7 @@ def test_the_entry_names_star_wars_and_what_it_took() -> None:
     assert card_id("Blockade*") not in named, "and it says nothing of Blockade"
 
 
-def test_an_event_the_entry_never_names_would_be_reported() -> None:
+def test_an_event_the_entry_never_names_would_be_reported(corpus: ReplayCorpus) -> None:
     """The check is a set difference, and this is the difference it was written for.
 
     Replay 158's Star Wars entry is fixed now -- Grain Sales draws the Cuban Missile Crisis the
@@ -66,7 +43,7 @@ def test_an_event_the_entry_never_names_would_be_reported() -> None:
     the predicate itself: had Blockade been resolved on this entry, it would not have been
     covered by anything the entry names, and the check would have said so.
     """
-    e = _entry(158, 8, "AR3", "US")
+    e = corpus.entry(158, 8, "AR3", "US")
     named = _events_the_log_names(e)
     blockade = card_id("Blockade*")
     assert blockade is not None
@@ -78,10 +55,10 @@ def test_an_event_the_entry_never_names_would_be_reported() -> None:
         "and one the entry does mention does not")
 
 
-def test_no_game_in_the_corpus_fires_an_event_its_log_never_names() -> None:
+def test_no_game_in_the_corpus_fires_an_event_its_log_never_names(corpus: ReplayCorpus) -> None:
     """The check found six games. All six are fixed; it stays here to keep them fixed."""
     for replay_id in (158, 51, 52, 145, 300, 14, 100):
-        conv = convert_game(_game(replay_id))
+        conv = corpus.converted(replay_id)
         if conv.failure is not None:
             assert conv.failure.kind != "event the log does not mention", (
                 f"replay {replay_id}: {conv.failure}")
@@ -92,15 +69,15 @@ def test_norad_is_allowed_to_go_unnamed() -> None:
     assert NORAD in _UNNAMED_EVENTS
 
 
-def test_a_clean_game_names_everything_it_fires() -> None:
+def test_a_clean_game_names_everything_it_fires(corpus: ReplayCorpus) -> None:
     for replay_id in (14, 100, 127, 144, 150):
-        conv = convert_game(_game(replay_id))
+        conv = corpus.converted(replay_id)
         assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
 
 
-def test_the_naming_set_covers_every_way_an_entry_can_mention_a_card() -> None:
+def test_the_naming_set_covers_every_way_an_entry_can_mention_a_card(corpus: ReplayCorpus) -> None:
     """A headline names two cards, and neither is the entry's own card field."""
-    e = _entry(150, 8, "Headline", "both")
+    e = corpus.entry(150, 8, "Headline", "both")
     named: Set[int] = _events_the_log_names(e)
     assert card_id("The Reformer*") in named
     assert card_id("East European Unrest") in named

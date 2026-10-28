@@ -21,39 +21,18 @@ the entry. Those points are asked for last of all, after every queue that can sa
 decision is for: offered earlier they answered Che's free coup with a country Che may not
 touch, and Ortega's the same way.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict
-
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game, point_queue
-from tools.lib.ts_replayer_parse import InfluenceLine, parse_entry
+from tools.lib.ts_replayer_convert import point_queue
+from tools.lib.ts_replayer_parse import InfluenceLine
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 NIGERIA, PANAMA, ANGOLA, ARGENTINA, POLAND = 53, 70, 59, 82, 15
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def _entry(replay_id: int, turn: int, phase: str, player: str):
-    for raw in _game(replay_id)["all_turns"]:
-        e = parse_entry(raw)
-        if (e.turn, e.phase, e.player) == (turn, phase, player):
-            return e
-    raise AssertionError(f"replay {replay_id} has no {player} {phase} of turn {turn}")
-
-
-def test_two_coups_by_two_sides_queue_two_targets_and_one_placement() -> None:
+def test_two_coups_by_two_sides_queue_two_targets_and_one_placement(corpus: ReplayCorpus) -> None:
     """Replay 184 turn 7 AR6: the USSR coups Nigeria, the US coups it back, NORAD to Panama."""
-    e = _entry(184, 7, "AR6", "US")
+    e = corpus.entry(184, 7, "AR6", "US")
     assert e.card == '"Lone Gunman"*'
     assert e.targets == [NIGERIA, NIGERIA]
     assert [s.mode for s in e.sections] == ["coup", "coup"]
@@ -61,26 +40,26 @@ def test_two_coups_by_two_sides_queue_two_targets_and_one_placement() -> None:
         "the USSR's own gain in Nigeria is its coup's, not a placement")
 
 
-def test_a_failed_coup_explains_nothing_that_follows_it() -> None:
+def test_a_failed_coup_explains_nothing_that_follows_it(corpus: ReplayCorpus) -> None:
     """Replay 150 turn 6 AR3: the coup on Angola fails and NORAD places there."""
-    e = _entry(150, 6, "AR3", "USSR")
+    e = corpus.entry(150, 6, "AR3", "USSR")
     assert e.coup_rolls == [(1, False)]
     assert e.influence == [InfluenceLine("US", 1, ANGOLA, 2, 0)], "no removal: the coup took nothing"
     assert point_queue(e) == [ANGOLA, ANGOLA], "the target, then NORAD's placement"
 
 
-def test_the_victim_gaining_in_the_couped_country_is_still_norad() -> None:
+def test_the_victim_gaining_in_the_couped_country_is_still_norad(corpus: ReplayCorpus) -> None:
     """Replay 131 turn 6 AR1: the USSR coups Argentina, the US puts NORAD back into it."""
-    e = _entry(131, 6, "AR1", "USSR")
+    e = corpus.entry(131, 6, "AR1", "USSR")
     assert point_queue(e) == [ARGENTINA, ARGENTINA]
 
 
-def test_a_placement_in_another_country_is_unchanged() -> None:
+def test_a_placement_in_another_country_is_unchanged(corpus: ReplayCorpus) -> None:
     """Replay 104 turn 6 AR3: couped Panama, NORAD into Poland."""
-    assert point_queue(_entry(104, 6, "AR3", "USSR")) == [PANAMA, POLAND]
+    assert point_queue(corpus.entry(104, 6, "AR3", "USSR")) == [PANAMA, POLAND]
 
 
 @pytest.mark.parametrize("replay_id", [184, 150, 131, 104, 143, 123, 105, 173, 129])
-def test_the_coup_and_norad_games_convert(replay_id: int) -> None:
-    conv = convert_game(_game(replay_id))
+def test_the_coup_and_norad_games_convert(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"

@@ -8,25 +8,17 @@ Both directions matter. A hand one card too large gives Missile Envy the wrong c
 Blockade a discard the player did not have; a hand one card too small is a position the rules
 cannot produce, and 47% of the corpus's lists are exactly that.
 """
-import glob
-import gzip
-import json
-import os
-
 import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import (_mid_turn_acquisitions, _sort_key_for_keeping,
-                                           convert_game)
+from tools.lib.ts_replayer_convert import _mid_turn_acquisitions, _sort_key_for_keeping
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 SALT_NEGOTIATIONS = 43
 ASK_NOT = 77
 RED_SCARE_PURGE = 31
 DE_STALINIZATION = 33
 DUCK_AND_COVER = 4
-
 
 
 def _raw(num, player, phase, card, text):
@@ -97,17 +89,15 @@ def test_the_keeping_order_is_ops_then_side() -> None:
             pytest.fail("US and neutral cards come before USSR ones at the same Ops")
 
 
-def test_the_solved_hands_hold_the_cards_carried_over() -> None:
+def test_the_solved_hands_hold_the_cards_carried_over(corpus: ReplayCorpus) -> None:
     """A player carries what they do not play into the next turn, and never reveals it there,
     so the turn's list runs short by that card; the solved hands put it back."""
     for replay_id in (100, 105, 111, 114, 237, 78, 96, 73):
-        with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-            conv = convert_game(json.load(f))
+        conv = corpus.converted(replay_id)
         assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
         assert conv.cards_carried_over > 0
 
 
-def test_replay_64_still_converts_end_to_end() -> None:
-    with gzip.open(os.path.join(CORPUS, "64.json.gz"), "rt") as f:
-        conv = convert_game(json.load(f))
+def test_replay_64_still_converts_end_to_end(corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(64)
     assert conv.failure is None, f"replay 64 stopped at {conv.failure}"

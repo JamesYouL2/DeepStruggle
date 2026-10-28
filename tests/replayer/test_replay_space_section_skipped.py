@@ -12,39 +12,25 @@ Brezhnev Doctrine out of the USSR hand and the US puts it on the space race. Jun
 answered for it. "space" is not an Ops mode, so nothing was chosen, and the coup on Panama the
 log records never happened.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict
-
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game
 from tools.lib.ts_replayer_parse import parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 PANAMA = 70
 CHILE = 81
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def _headline(replay_id: int, turn: int):
-    for raw in _game(replay_id)["all_turns"]:
+def _headline(corpus: ReplayCorpus, replay_id: int, turn: int):
+    for raw in corpus.game(replay_id)["all_turns"]:
         e = parse_entry(raw)
         if e.turn == turn and e.phase == "Headline":
             return e
     raise AssertionError(f"replay {replay_id} has no headline on turn {turn}")
 
 
-def test_the_entry_holds_a_space_section_ahead_of_the_coup() -> None:
-    e = _headline(156, 6)
+def test_the_entry_holds_a_space_section_ahead_of_the_coup(corpus: ReplayCorpus) -> None:
+    e = _headline(corpus, 156, 6)
     assert e.headlines == {"USSR": "Junta", "US": "Grain Sales To Soviets"}
     modes = [s.mode for s in e.sections]
     assert modes == ["space", "coup"], (
@@ -52,29 +38,29 @@ def test_the_entry_holds_a_space_section_ahead_of_the_coup() -> None:
     assert e.sections[1].targets == [PANAMA]
 
 
-def test_the_free_action_is_the_coup_the_log_records() -> None:
+def test_the_free_action_is_the_coup_the_log_records(corpus: ReplayCorpus) -> None:
     """Junta places 2 in Chile, then coups Panama."""
-    e = _headline(156, 6)
+    e = _headline(corpus, 156, 6)
     placed = [(row.country, row.delta) for row in e.influence if row.country == CHILE]
     assert placed == [(CHILE, 2)]
     assert e.event_mode == "coup"
 
 
-def test_replay_156_converts_end_to_end() -> None:
+def test_replay_156_converts_end_to_end(corpus: ReplayCorpus) -> None:
     """Everything but the last turn, which the recording stops inside -- see
     tests/replayer/test_replay_unfinished_final_turn.py."""
-    conv = convert_game(_game(156))
+    conv = corpus.converted(156)
     assert conv.failure is None, f"replay 156 stopped at {conv.failure}"
     assert conv.entries_converted == 69
 
 
-def test_an_entry_whose_sections_are_all_ops_is_unaffected() -> None:
+def test_an_entry_whose_sections_are_all_ops_is_unaffected(corpus: ReplayCorpus) -> None:
     """Replay 103 turn 4 AR4: two coups under two headers, and both must still be taken."""
-    conv = convert_game(_game(103))
+    conv = corpus.converted(103)
     assert conv.failure is None, f"replay 103 stopped at {conv.failure}"
 
 
 @pytest.mark.parametrize("replay_id", [156, 103, 100, 150])
-def test_the_multi_section_games_convert(replay_id: int) -> None:
-    conv = convert_game(_game(replay_id))
+def test_the_multi_section_games_convert(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"

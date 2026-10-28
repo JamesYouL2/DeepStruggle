@@ -12,26 +12,15 @@ which is what made the entry look like a board mismatch rather than a truncated 
 
 The USSR's half of that same action round is complete and still converts.
 """
-import glob
-import gzip
-import json
-import os
 from typing import Dict, Optional, Tuple
 
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _KNOWN_INCOMPLETE, convert_game, country_id
+from tools.lib.ts_replayer_convert import _KNOWN_INCOMPLETE, country_id
 from tools.lib.ts_replayer_parse import parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 EAST_GERMANY = 14
-
-
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
 
 
 def _east_germany(raw: Dict) -> Optional[Tuple[int, int]]:
@@ -41,8 +30,8 @@ def _east_germany(raw: Dict) -> Optional[Tuple[int, int]]:
     return None
 
 
-def test_the_last_entry_stops_mid_coup() -> None:
-    raws = _game(55)["all_turns"]
+def test_the_last_entry_stops_mid_coup(corpus: ReplayCorpus) -> None:
+    raws = corpus.game(55)["all_turns"]
     last = parse_entry(raws[-1])
     assert (last.turn, last.phase, last.player) == (9, "AR7", "US")
     assert last.card == "Tear Down This Wall*"
@@ -51,14 +40,14 @@ def test_the_last_entry_stops_mid_coup() -> None:
     assert last.targets == [], "and so there is nothing to drive it with"
 
 
-def test_the_ussr_influence_the_missing_coup_would_have_taken() -> None:
+def test_the_ussr_influence_the_missing_coup_would_have_taken(corpus: ReplayCorpus) -> None:
     """East Germany settles at 5 at turn 3 AR2 and the log never moves it again.
 
     It passes through 5 earlier -- Warsaw Pact Formed puts it there at turn 1 AR2 and COMECON
     takes it to 6 at turn 2 AR6 -- so what matters is where it comes to rest: East European
     Unrest at turn 3 AR2, after which nothing in the record touches the USSR's Influence there.
     """
-    raws = _game(55)["all_turns"]
+    raws = corpus.game(55)["all_turns"]
     settles_at = next(i for i, r in enumerate(raws)
                       if (parse_entry(r).turn, parse_entry(r).phase) == (3, "AR2"))
     assert _east_germany(raws[settles_at]) == (0, 5)
@@ -69,14 +58,14 @@ def test_the_ussr_influence_the_missing_coup_would_have_taken() -> None:
     assert _east_germany(raws[-1]) == (3, 5), "Tear Down This Wall only adds the US's 3"
 
 
-def test_the_game_converts_up_to_the_turn_the_record_stops_in() -> None:
+def test_the_game_converts_up_to_the_turn_the_record_stops_in(corpus: ReplayCorpus) -> None:
     """Turn 9 goes entire, not just the entry that was cut short.
 
     A turn the recording stops inside lists only the cards played before it stopped, so every
     decision already converted in it was driven from a hand the player never held.
     """
-    raws = _game(55)["all_turns"]
-    conv = convert_game(_game(55))
+    raws = corpus.game(55)["all_turns"]
+    conv = corpus.converted(55)
     assert conv.failure is None, f"replay 55 stopped at {conv.failure}"
     assert conv.truncated_at is not None
     kept = [parse_entry(r) for r in raws[:conv.entries_converted]]
@@ -84,18 +73,18 @@ def test_the_game_converts_up_to_the_turn_the_record_stops_in() -> None:
     assert all(e.turn <= 8 for e in kept)
 
 
-def test_the_other_half_of_that_action_round_goes_with_it() -> None:
+def test_the_other_half_of_that_action_round_goes_with_it(corpus: ReplayCorpus) -> None:
     """Turn 9 AR7 holds a complete USSR entry, and it is dropped too.
 
     Not because anything is wrong with it -- it replays to the log's own board -- but because
     it belongs to a turn whose hand list is a fragment. Which half of the round the registry
     names no longer changes how much is given back; it records where the log stopped.
     """
-    raws = _game(55)["all_turns"]
+    raws = corpus.game(55)["all_turns"]
     ussr = parse_entry(raws[-2])
     assert (ussr.turn, ussr.phase, ussr.player) == (9, "AR7", "USSR")
     assert ussr.card == "Latin American Debt Crisis"
-    conv = convert_game(_game(55))
+    conv = corpus.converted(55)
     assert conv.entries_converted < len(raws) - 1
     assert parse_entry(raws[conv.entries_converted - 1]).turn == 8
 
@@ -107,11 +96,11 @@ def test_the_registry_names_the_player() -> None:
 
 @pytest.mark.parametrize("replay_id,last_complete_turn", [(60, 6), (133, 9)])
 def test_the_other_listed_games_stop_at_a_turn_boundary(replay_id: int,
-                                                        last_complete_turn: int) -> None:
-    conv = convert_game(_game(replay_id))
+                                                        last_complete_turn: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
     assert conv.truncated_at is not None
-    raws = _game(replay_id)["all_turns"]
+    raws = corpus.game(replay_id)["all_turns"]
     kept = [parse_entry(r) for r in raws[:conv.entries_converted]]
     assert kept[-1].turn == last_complete_turn
     assert all(e.turn <= last_complete_turn for e in kept)

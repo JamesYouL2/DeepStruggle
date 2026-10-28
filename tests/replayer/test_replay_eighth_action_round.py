@@ -13,28 +13,17 @@ The engine may have taken the round away before anyone is asked: it passes a pla
 empty hand automatically. Where it has not, the pass is driven, and a pass with cards still in
 hand would be reported rather than forced.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict, List
+from typing import List
 
-import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _is_skipped_round, convert_game
+from tools.lib.ts_replayer_convert import _is_skipped_round
 from tools.lib.ts_replayer_parse import parse_entry
 from bindings.action_encoder import ActionEncoder
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 DUCK_AND_COVER, FIVE_YEAR_PLAN = 4, 5
 PASS = ActionEncoder.CONFIRM_DONE_INDEX
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
 def _at_action_round(turn: int, action_round: int, mover, hand: List[int]) -> ts.GameState:
     state = ts.GameState()
     ts.Engine.init_game(state, 12345)
@@ -78,8 +67,8 @@ def test_an_ordinary_round_may_not_be_declined() -> None:
     assert not ts.ActionMask.generate_flat_mask(state)[PASS]
 
 
-def test_the_log_gives_the_declined_round_an_entry_of_its_own() -> None:
-    raws = _game(16)["all_turns"]
+def test_the_log_gives_the_declined_round_an_entry_of_its_own(corpus: ReplayCorpus) -> None:
+    raws = corpus.game(16)["all_turns"]
     entry = next(parse_entry(r) for r in raws
                  if (parse_entry(r).turn, parse_entry(r).phase) == (9, "AR8"))
     assert entry.player == "USSR"
@@ -87,8 +76,8 @@ def test_the_log_gives_the_declined_round_an_entry_of_its_own() -> None:
     assert _is_skipped_round(entry)
 
 
-def test_an_entry_that_plays_something_is_not_a_skipped_round() -> None:
-    raws = _game(16)["all_turns"]
+def test_an_entry_that_plays_something_is_not_a_skipped_round(corpus: ReplayCorpus) -> None:
+    raws = corpus.game(16)["all_turns"]
     played = next(parse_entry(r) for r in raws
                   if (parse_entry(r).turn, parse_entry(r).phase, parse_entry(r).player)
                   == (9, "AR7", "US"))
@@ -96,9 +85,9 @@ def test_an_entry_that_plays_something_is_not_a_skipped_round() -> None:
     assert not _is_skipped_round(played)
 
 
-def test_replay_16_converts_end_to_end() -> None:
+def test_replay_16_converts_end_to_end(corpus: ReplayCorpus) -> None:
     """It stopped at turn 5 AR1 on the military ops score, then here at turn 9 AR8."""
-    conv = convert_game(_game(16))
+    conv = corpus.converted(16)
     assert conv.failure is None, f"replay 16 stopped at {conv.failure}"
     assert conv.truncated_at is None
     assert conv.entries_converted == conv.entries_total == 155

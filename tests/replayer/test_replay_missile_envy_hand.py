@@ -7,28 +7,14 @@ The turn's hand list in the log is everything a player held at some point during
 including what they picked up part way through it -- SALT Negotiations retrieves a card from
 the discard pile mid-turn, and that card appears in the list as though it had been dealt.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Optional
-
-import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _seed_missile_envy_hand, convert_game
+from tools.lib.ts_replayer_convert import _seed_missile_envy_hand
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 SUEZ_CRISIS = 28
 RED_SCARE_PURGE = 31
 CAMP_DAVID = 65
-
-
-
-def _convert(replay_id: int):
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return convert_game(json.load(f))
 
 
 def _state_with_us_hand(cards) -> ts.GameState:
@@ -75,8 +61,8 @@ def test_a_scoring_card_is_never_set_aside() -> None:
     assert scoring in _us_hand(state)
 
 
-def test_replay_64_converts_end_to_end() -> None:
-    conv = _convert(64)
+def test_replay_64_converts_end_to_end(corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(64)
     assert conv.failure is None, f"replay 64 stopped at {conv.failure}"
     # Everything but the last turn, which the recording stops inside -- see
     # tests/replayer/test_replay_unfinished_final_turn.py.

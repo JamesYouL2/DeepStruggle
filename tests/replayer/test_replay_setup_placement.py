@@ -17,41 +17,29 @@ Dealing one at a time round the named countries gives every one of them Influenc
 base allotment, so the handicap has somewhere to go, and both spreads reach the same board.
 """
 import collections
-import glob
-import gzip
-import json
-import os
-from typing import Dict, List
 
 import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game, point_queue
+from tools.lib.ts_replayer_convert import point_queue
 from tools.lib.ts_replayer_parse import parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 WEST_GERMANY, FRANCE, ITALY = 7, 8, 10
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
+def _first(corpus: ReplayCorpus, replay_id: int):
+    return parse_entry(corpus.game(replay_id)["all_turns"][0])
 
 
-def _first(replay_id: int):
-    return parse_entry(_game(replay_id)["all_turns"][0])
+def test_the_first_entry_is_marked_as_carrying_the_setup(corpus: ReplayCorpus) -> None:
+    assert _first(corpus, 152).setup is True
+    assert parse_entry(corpus.game(152)["all_turns"][5]).setup is False
 
 
-def test_the_first_entry_is_marked_as_carrying_the_setup() -> None:
-    assert _first(152).setup is True
-    assert parse_entry(_game(152)["all_turns"][5]).setup is False
-
-
-def test_the_setup_is_dealt_one_at_a_time_round_the_named_countries() -> None:
+def test_the_setup_is_dealt_one_at_a_time_round_the_named_countries(corpus: ReplayCorpus) -> None:
     """Replay 152's US opens 4 West Germany, 3 France, 2 Italy."""
-    queue = point_queue(_first(152))
+    queue = point_queue(_first(corpus, 152))
     us = [c for c in queue if c in (WEST_GERMANY, FRANCE, ITALY)]
     assert collections.Counter(us) == {WEST_GERMANY: 4, FRANCE: 3, ITALY: 2}, (
         "the totals are the log's and must not change")
@@ -60,25 +48,25 @@ def test_the_setup_is_dealt_one_at_a_time_round_the_named_countries() -> None:
     assert ITALY in us[:7], "Italy must be reached before the handicap opens"
 
 
-def test_the_totals_survive_the_reordering() -> None:
+def test_the_totals_survive_the_reordering(corpus: ReplayCorpus) -> None:
     """Reordering may not add, drop or move a single point."""
     for replay_id in (100, 107, 109, 136, 152):
-        entry = _first(replay_id)
+        entry = _first(corpus, replay_id)
         want: collections.Counter = collections.Counter()
         for row in entry.ops_influence:
             want[row.country] += abs(int(row.delta))
         assert collections.Counter(point_queue(entry)) == want, replay_id
 
 
-def test_replay_152_converts_past_the_setup() -> None:
+def test_replay_152_converts_past_the_setup(corpus: ReplayCorpus) -> None:
     """It converted nothing at all before: the very first entry's board was wrong."""
-    conv = convert_game(_game(152))
+    conv = corpus.converted(152)
     assert conv.entries_converted > 100, f"replay 152 stopped at {conv.failure}"
 
 
 @pytest.mark.parametrize("replay_id", [100, 107, 109, 113, 136])
-def test_the_ordinary_setups_still_convert(replay_id: int) -> None:
-    conv = convert_game(_game(replay_id))
+def test_the_ordinary_setups_still_convert(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
 
 

@@ -10,44 +10,30 @@ where the log has the USSR ahead by 8.
 
 236 cards across 48 of the 287 games are listed under the wrong side.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict, List
-
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import (_reattribute_hands, card_id,
-                                           convert_game)
+from tools.lib.ts_replayer_convert import _reattribute_hands, card_id
 from tools.lib.ts_replayer_parse import parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 ASIA_SCORING = card_id("Asia Scoring")
 ABM_TREATY = card_id("ABM Treaty")
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def test_the_headline_says_who_played_which_card() -> None:
-    entry = next(parse_entry(r) for r in _game(111)["all_turns"]
+def test_the_headline_says_who_played_which_card(corpus: ReplayCorpus) -> None:
+    entry = next(parse_entry(r) for r in corpus.game(111)["all_turns"]
                  if parse_entry(r).turn == 6 and parse_entry(r).phase == "Headline")
     assert entry.headlines == {"US": "Asia Scoring", "USSR": "ABM Treaty"}
 
 
-def test_the_hand_lists_have_those_two_the_other_way_round() -> None:
-    hands = _game(111)["hands"]["6"]
+def test_the_hand_lists_have_those_two_the_other_way_round(corpus: ReplayCorpus) -> None:
+    hands = corpus.game(111)["hands"]["6"]
     assert "Asia Scoring" in hands["ussr"], "the list gives the USSR the US's card"
     assert "ABM Treaty" in hands["us"], "and the US the USSR's"
 
 
-def test_the_cards_are_moved_to_the_side_that_played_them() -> None:
-    game = _game(111)
+def test_the_cards_are_moved_to_the_side_that_played_them(corpus: ReplayCorpus) -> None:
+    game = corpus.game(111)
     hands = game["hands"]["6"]
     turn_hands = {
         "US": [c for c in (card_id(n) for n in hands["us"]) if c],
@@ -61,8 +47,8 @@ def test_the_cards_are_moved_to_the_side_that_played_them() -> None:
     assert ABM_TREATY not in turn_hands["US"]
 
 
-def test_a_card_already_on_the_right_side_is_left_alone() -> None:
-    game = _game(100)
+def test_a_card_already_on_the_right_side_is_left_alone(corpus: ReplayCorpus) -> None:
+    game = corpus.game(100)
     hands = game["hands"]["1"]
     turn_hands = {
         "US": [c for c in (card_id(n) for n in hands["us"]) if c],
@@ -74,15 +60,15 @@ def test_a_card_already_on_the_right_side_is_left_alone() -> None:
            {k: sorted(v) for k, v in before.items()}
 
 
-def test_replay_111_converts_end_to_end() -> None:
+def test_replay_111_converts_end_to_end(corpus: ReplayCorpus) -> None:
     """It stopped at turn 6 AR7, the engine at +20 VP where the log says -8."""
-    conv = convert_game(_game(111))
+    conv = corpus.converted(111)
     assert conv.failure is None, f"replay 111 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total
     assert conv.hand_reattributions > 0
 
 
 @pytest.mark.parametrize("replay_id", [111, 105, 114, 152])
-def test_the_reattributed_games_convert(replay_id: int) -> None:
-    conv = convert_game(_game(replay_id))
+def test_the_reattributed_games_convert(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"

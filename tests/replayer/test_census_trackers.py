@@ -8,23 +8,21 @@ is legal there, and it concerns the holding's card.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import ts_engine as ts
 
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import feed_corpus_game, state_from_token
-from tools.lib.corpus_paths import corpus_dir
 from tools.scripts.event_play_census import HoldingTracker, _human_game, _owner, load_holding
 from tools.scripts.placement_census import COUNTRY, PlacementTracker
+from tests.replay_corpus import ReplayCorpus
 
 #: a complete game (it converts to the end), used throughout
-GAME = os.path.join(str(corpus_dir()), "100.json.gz")
+GAME = 100
 
 
-def test_spent_holdings_point_at_their_own_decision() -> None:
-    recs, status = _human_game(GAME)
+def test_spent_holdings_point_at_their_own_decision(corpus: ReplayCorpus) -> None:
+    recs, status = _human_game(str(corpus.path(GAME)))
     assert status == "complete"
     hs = [load_holding(r) for r in recs]
     spent = [h for h in hs if h.outcome != "kept"]
@@ -43,9 +41,9 @@ def test_spent_holdings_point_at_their_own_decision() -> None:
             assert h.outcome in ("headline", "event", "fired", "no event", "un")
 
 
-def test_every_holding_of_a_complete_game_is_accounted_for() -> None:
+def test_every_holding_of_a_complete_game_is_accounted_for(corpus: ReplayCorpus) -> None:
     t = HoldingTracker()
-    assert feed_corpus_game(GAME, t) == "complete"
+    assert feed_corpus_game(str(corpus.path(GAME)), t) == "complete"
     assert {h.outcome for h in t.holdings} >= {"headline", "event", "ops"}
     for h in t.holdings:
         # A spent holding knows when; a kept one does not.
@@ -60,9 +58,9 @@ def test_every_holding_of_a_complete_game_is_accounted_for() -> None:
         assert latest[card].outcome == "kept"
 
 
-def test_placement_records_only_action_round_ops_into_countries() -> None:
+def test_placement_records_only_action_round_ops_into_countries(corpus: ReplayCorpus) -> None:
     t = PlacementTracker()
-    assert feed_corpus_game(GAME, t) == "complete"
+    assert feed_corpus_game(str(corpus.path(GAME)), t) == "complete"
     assert len(t.records) > 50
     for side, turn, cid, held in t.records:
         assert side in (1, -1) and 1 <= turn <= 10 and cid in COUNTRY and held >= 0
@@ -80,10 +78,10 @@ class _Hands:
             self.largest = max(self.largest, n)
 
 
-def test_the_turn_a_record_stops_in_never_reaches_a_tracker() -> None:
+def test_the_turn_a_record_stops_in_never_reaches_a_tracker(corpus: ReplayCorpus) -> None:
     # Replay 147's record stops in turn 9, where the converter has only a fragment of the hands:
     # fed that turn, a tracker saw the USSR holding 14 cards at AR1.
     t = _Hands()
-    assert feed_corpus_game(os.path.join(str(corpus_dir()), "147.json.gz"), t) == "partial"
+    assert feed_corpus_game(str(corpus.path(147)), t) == "partial"
     assert max(t.turns) == 8
     assert t.largest <= 10                          # nine cards and the China Card

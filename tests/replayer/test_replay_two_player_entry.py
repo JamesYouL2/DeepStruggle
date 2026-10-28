@@ -9,36 +9,13 @@ since couping a country needs opposing Influence in it.
 These run the converter over the real corpus, because the failure is in how the driver
 sequences decisions against the engine and no hand-built entry would exercise that.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict, Optional
 
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game
-
-CORPUS = str(corpus_dir())
+from tests.replay_corpus import ReplayCorpus, failed_at
 
 
-def _convert(replay_id: int):
-    path = os.path.join(CORPUS, f"{replay_id}.json.gz")
-    with gzip.open(path, "rt") as f:
-        return convert_game(json.load(f))
-
-
-def _failed_at(conv) -> Optional[str]:
-    """Where conversion stopped, as "T<turn> <phase>", or None if it finished."""
-    if conv.failure is None:
-        return None
-    return f"T{conv.failure.turn} {conv.failure.phase}"
-
-
-
-
-def test_ortega_free_coup_and_the_players_own_coup_are_kept_apart() -> None:
+def test_ortega_free_coup_and_the_players_own_coup_are_kept_apart(corpus: ReplayCorpus) -> None:
     """Replay 105 turn 9 AR2: the US plays Ortega Elected in Nicaragua for Ops.
 
     The USSR takes the event's free coup against Costa Rica -- adjacent to Nicaragua, and
@@ -46,50 +23,50 @@ def test_ortega_free_coup_and_the_players_own_coup_are_kept_apart() -> None:
     Driving both from one flat target queue spent the USSR's coup first and then aimed the
     US's at Costa Rica, which has no USSR Influence for the US to coup.
     """
-    conv = _convert(105)
-    assert _failed_at(conv) != "T9 AR2", (
+    conv = corpus.converted(105)
+    assert failed_at(conv) != "T9 AR2", (
         f"the two coups belong to different players: {conv.failure}")
 
 
-def test_ches_free_coups_use_the_logged_die() -> None:
+def test_ches_free_coups_use_the_logged_die(corpus: ReplayCorpus) -> None:
     """Replay 113 turn 6 AR7: the US plays Che for a realignment, the USSR gets two coups.
 
     Their removed Influence is the result of a die, not a target anyone chose. Treated as
     event placements it never reached the outcome search, and the engine rolled freely --
     3 and 1 against the human's 2 and 2.
     """
-    conv = _convert(113)
-    assert _failed_at(conv) != "T6 AR7", (
+    conv = corpus.converted(113)
+    assert failed_at(conv) != "T6 AR7", (
         f"Che's free coups must reproduce the logged rolls: {conv.failure}")
 
 
-def test_replay_105_gets_past_its_ortega_entry() -> None:
-    conv = _convert(105)
-    assert _failed_at(conv) != "T9 AR2", f"replay 105 stops at Ortega: {conv.failure}"
+def test_replay_105_gets_past_its_ortega_entry(corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(105)
+    assert failed_at(conv) != "T9 AR2", f"replay 105 stops at Ortega: {conv.failure}"
 
 
 @pytest.mark.parametrize("replay_id,expect_at_least", [(105, 99), (113, 86)])
-def test_no_earlier_entry_is_traded_away(replay_id: int, expect_at_least: int) -> None:
+def test_no_earlier_entry_is_traded_away(replay_id: int, expect_at_least: int, corpus: ReplayCorpus) -> None:
     """A guard on the count, so a fix that buys these entries with earlier ones is caught."""
-    conv = _convert(replay_id)
+    conv = corpus.converted(replay_id)
     assert conv.entries_converted >= expect_at_least, (
         f"replay {replay_id} converted {conv.entries_converted} entries, "
         f"expected at least {expect_at_least}: {conv.failure}")
 
 
-def test_star_wars_pick_from_the_discard_pile_is_read_from_the_log() -> None:
+def test_star_wars_pick_from_the_discard_pile_is_read_from_the_log(corpus: ReplayCorpus) -> None:
     """Replay 100 turn 10 headline: Star Wars takes a card out of the discard pile.
 
     The card is played as its event, so the log prints it on an "Event:" line of its own --
     the entry does say which of the pile was taken. The driver only ever answered a card
     request from the discard or reveal lines, so this one had no answer at all.
     """
-    conv = _convert(100)
-    assert _failed_at(conv) != "T10 Headline", (
+    conv = corpus.converted(100)
+    assert failed_at(conv) != "T10 Headline", (
         f"replay 100 stops at its Star Wars headline: {conv.failure}")
 
 
-def test_a_game_the_log_ends_at_defcon_1_is_allowed_to_end() -> None:
+def test_a_game_the_log_ends_at_defcon_1_is_allowed_to_end(corpus: ReplayCorpus) -> None:
     """Replay 104 turn 9 AR7: the USSR plays Star Wars and loses the game to it.
 
     The US takes How I Learned To Stop Worrying out of the discard pile and sets DEFCON to 1.
@@ -98,19 +75,19 @@ def test_a_game_the_log_ends_at_defcon_1_is_allowed_to_end() -> None:
     DEFCON 1 is otherwise never the tie-break to take -- which put the real branch out of
     reach. The entry records defcon 1, so the log settles it.
     """
-    conv = _convert(104)
-    assert _failed_at(conv) != "T9 AR7", (
+    conv = corpus.converted(104)
+    assert failed_at(conv) != "T9 AR7", (
         f"replay 104 stops where the log ends the game: {conv.failure}")
 
 
-def test_the_defcon_1_penalty_still_applies_where_the_log_played_on() -> None:
+def test_the_defcon_1_penalty_still_applies_where_the_log_played_on(corpus: ReplayCorpus) -> None:
     """Replay 101 turn 4's headline is the game that motivated the penalty."""
-    conv = _convert(101)
+    conv = corpus.converted(101)
     assert conv.failure is None, f"replay 101 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total == 90
 
 
-def test_an_empty_ops_header_is_a_decline_not_a_skipped_section() -> None:
+def test_an_empty_ops_header_is_a_decline_not_a_skipped_section(corpus: ReplayCorpus) -> None:
     """Replay 123 turn 8 AR2: the US plays Ortega, the USSR declines the free coup.
 
     The log prints "Coup (1 Ops):" with nothing under it, and the US then places 2 Influence
@@ -118,12 +95,12 @@ def test_an_empty_ops_header_is_a_decline_not_a_skipped_section() -> None:
     target from the US's placements -- couping Nigeria, which at DEFCON 2 is thermonuclear
     war and lost the USSR the game outright.
     """
-    conv = _convert(123)
-    assert _failed_at(conv) != "T8 AR2", (
+    conv = corpus.converted(123)
+    assert failed_at(conv) != "T8 AR2", (
         f"the declined coup must be answered as a decline: {conv.failure}")
 
 
-def test_an_entry_can_reach_two_play_modes() -> None:
+def test_an_entry_can_reach_two_play_modes(corpus: ReplayCorpus) -> None:
     """Replay 113 turn 7 AR1: the US plays Grain Sales To Soviets as its Event.
 
     Grain Sales takes a card from the USSR hand -- Nuclear Subs -- and the US chooses to play
@@ -131,19 +108,19 @@ def test_an_entry_can_reach_two_play_modes() -> None:
     modes in one entry. The driver allowed a single play mode per entry, so the second
     request had no answer at all.
     """
-    conv = _convert(113)
-    assert _failed_at(conv) != "T7 AR1", (
+    conv = corpus.converted(113)
+    assert failed_at(conv) != "T7 AR1", (
         f"replay 113 stops at its Grain Sales entry: {conv.failure}")
 
 
 @pytest.mark.parametrize("replay_id", [113, 118, 125])
-def test_the_grain_sales_games_get_past_their_grain_sales(replay_id: int) -> None:
-    conv = _convert(replay_id)
-    assert _failed_at(conv) != "T7 AR1", (
+def test_the_grain_sales_games_get_past_their_grain_sales(replay_id: int, corpus: ReplayCorpus) -> None:
+    conv = corpus.converted(replay_id)
+    assert failed_at(conv) != "T7 AR1", (
         f"replay {replay_id} stops at its Grain Sales entry: {conv.failure}")
 
 
-def test_only_star_wars_may_move_a_card_into_the_discard_pile() -> None:
+def test_only_star_wars_may_move_a_card_into_the_discard_pile(corpus: ReplayCorpus) -> None:
     """Replay 234 turn 4 headline: Missile Envy hands the USSR Nuclear Test Ban.
 
     The entry goes on to fire Nuclear Test Ban's event, so it sits in the queue of cards this
@@ -152,15 +129,15 @@ def test_only_star_wars_may_move_a_card_into_the_discard_pile() -> None:
     Nuclear Test Ban into the discard pile, out of the US hand. Missile Envy then found nothing
     above 3 Ops to take, and the 1 VP the event owed the USSR never moved.
     """
-    conv = _convert(234)
-    assert _failed_at(conv) != "T4 Headline", (
+    conv = corpus.converted(234)
+    assert failed_at(conv) != "T4 Headline", (
         f"replay 234 stops at its Missile Envy headline: {conv.failure}")
 
 
 @pytest.mark.parametrize("replay_id", [100, 104])
-def test_star_wars_itself_still_reaches_into_the_discard_pile(replay_id: int) -> None:
+def test_star_wars_itself_still_reaches_into_the_discard_pile(replay_id: int, corpus: ReplayCorpus) -> None:
     """The scoping must not cost Star Wars the card it is entitled to take."""
-    conv = _convert(replay_id)
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
 
 
@@ -170,12 +147,12 @@ def test_star_wars_itself_still_reaches_into_the_discard_pile(replay_id: int) ->
 # names, and left as a failure because it is the hand model that is wrong. Its UN Intervention
 # entry is at turn 5 AR6, past where the game now stops.
 @pytest.mark.parametrize("replay_id", [159])
-def test_un_intervention_may_name_a_card_the_hand_list_omits(replay_id: int) -> None:
+def test_un_intervention_may_name_a_card_the_hand_list_omits(replay_id: int, corpus: ReplayCorpus) -> None:
     """Replay 159 turn 5 AR4: the US plays Quagmire through UN Intervention.
 
     Quagmire appears nowhere in the eight cards the log credits the US with that turn, but the
     log says outright that they played it. The card is seated in that hand on the log's word,
     the same forcing a headline card already gets.
     """
-    conv = _convert(replay_id)
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"

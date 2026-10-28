@@ -13,11 +13,14 @@ These tests pin the stepping contract rather than any particular policy's behavi
 they stay meaningful as the agent changes.
 """
 
+import pathlib
+
 import numpy as np
-import pytest
 import ts_engine as ts
 
+from ai.models.coldwar_net import create_coldwar_net
 from bindings.action_encoder import ActionEncoder
+from tools.lib.self_play import generate_self_play_replay
 
 
 def _drain(state: ts.GameState) -> None:
@@ -95,17 +98,13 @@ def test_draining_chance_nodes_lengthens_games() -> None:
     )
 
 
-def test_generator_never_asks_the_policy_at_a_chance_node(tmp_path) -> None:
+def test_generator_never_asks_the_policy_at_a_chance_node(tmp_path: pathlib.Path) -> None:
     """The contract, stated policy-independently.
 
     A chance node is not a decision. If any logged step carries decision_type ROLL_DIE
     then the generator queried the network there instead of resolving it, which is exactly
     the defect that halved replay game length.
     """
-    pytest.importorskip("torch")
-    from ai.models.coldwar_net import create_coldwar_net
-    from tools.lib.self_play import generate_self_play_replay
-
     # Write into tmp_path: the workbench lists data/replays non-recursively, and a test
     # artefact appearing beside real games is how a stale replay gets reviewed by mistake.
     log, _ = generate_self_play_replay(

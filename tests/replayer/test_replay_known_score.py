@@ -16,31 +16,17 @@ The engine cannot reconstruct it until Shuttle Diplomacy's target is a decision 
 so the score is listed in _KNOWN_SCORE, the log's value stands, and the game carries on. The
 list is deliberately small: a disagreement that is not understood belongs in a failure.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Dict
-
-import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _KNOWN_SCORE, convert_game, country_id
+from tools.lib.ts_replayer_convert import _KNOWN_SCORE, country_id
 from tools.lib.ts_replayer_parse import VpGain, parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 ASIA = ts.Region.ASIA
 
 
-
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
-def test_the_log_scores_the_ussr_six_where_best_play_allows_five() -> None:
-    raws = _game(127)["all_turns"]
+def test_the_log_scores_the_ussr_six_where_best_play_allows_five(corpus: ReplayCorpus) -> None:
+    raws = corpus.game(127)["all_turns"]
     scoring = parse_entry(raws[59])
     assert (scoring.turn, scoring.phase, scoring.player) == (5, "AR3", "USSR")
     assert scoring.card == "Asia Scoring"
@@ -50,7 +36,7 @@ def test_the_log_scores_the_ussr_six_where_best_play_allows_five() -> None:
         "the score going in is US 1, so a gain of 6 leaves USSR 5")
 
 
-def test_japan_is_the_battleground_that_carries_the_adjacency() -> None:
+def test_japan_is_the_battleground_that_carries_the_adjacency(corpus: ReplayCorpus) -> None:
     """It is worth two to the USSR: the battleground and the adjacency both."""
     japan = country_id("Japan")
     assert japan is not None
@@ -58,7 +44,7 @@ def test_japan_is_the_battleground_that_carries_the_adjacency() -> None:
     assert info["battleground"] is True
     assert info["superpower_adjacent"] == "US"
 
-    board = _game(127)["all_turns"][58]["countries"]
+    board = corpus.game(127)["all_turns"][58]["countries"]
     state = ts.GameState()
     ts.Engine.init_game(state, 12345)
     for key, c in board.items():
@@ -80,9 +66,9 @@ def test_japan_is_the_battleground_that_carries_the_adjacency() -> None:
     # the one taken is Japan, 11 - 5 = 6 if it is not.
 
 
-def test_the_disagreement_is_listed_and_the_logs_score_stands() -> None:
+def test_the_disagreement_is_listed_and_the_logs_score_stands(corpus: ReplayCorpus) -> None:
     assert _KNOWN_SCORE[127][(5, "AR3", "USSR")] == -5, "US positive, so USSR 5"
-    conv = convert_game(_game(127))
+    conv = corpus.converted(127)
     assert conv.failure is None, f"replay 127 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total
     assert conv.scores_forced == 1, "exactly the one entry, and no other"

@@ -9,34 +9,14 @@ The die rides on the target choice in secondary_id rather than being handed to t
 that usually follows, because Che's two free coups have no such node: they resolve inside the
 event, where secondary_id is the only way in.
 """
-import glob
-import gzip
-import json
-import os
-from typing import Optional
 
-import pytest
-
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game
 from tools.lib.ts_replayer_parse import parse_entry
-
-CORPUS = str(corpus_dir())
-
+from tests.replay_corpus import ReplayCorpus, failed_at
 
 
 def _entry(text: str):
     return parse_entry({"num": "4", "player": "USSR", "phase": "AR4",
                         "card": "Che", "text": text})
-
-
-def _convert(replay_id: int):
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return convert_game(json.load(f))
-
-
-def _failed_at(conv) -> Optional[str]:
-    return None if conv.failure is None else f"T{conv.failure.turn} {conv.failure.phase}"
 
 
 def test_every_coup_in_an_entry_keeps_its_own_die() -> None:
@@ -55,24 +35,24 @@ def test_a_failed_coup_records_its_die_too() -> None:
     assert e.coup_rolls == [(1, False)]
 
 
-def test_ches_two_coups_reproduce_the_logged_boards() -> None:
+def test_ches_two_coups_reproduce_the_logged_boards(corpus: ReplayCorpus) -> None:
     """Replay 103 turn 4 AR4: dice of 1 and 6 into Sudan and Saharan States.
 
     The count is the end of turn 5, not the end of the file: replay 103's last turn stops
     short of its final action round, so it is a fragment and is given back. Turn 4 -- the one
     Che's coups are in -- converts either way, which is what this test is about.
     """
-    conv = _convert(103)
+    conv = corpus.converted(103)
     assert conv.failure is None, f"replay 103 stopped at {conv.failure}"
     assert conv.entries_converted > 60, "well past the turn 4 AR4 the coups are in"
 
 
-def test_a_coup_whose_country_is_touched_again_in_the_same_entry() -> None:
+def test_a_coup_whose_country_is_touched_again_in_the_same_entry(corpus: ReplayCorpus) -> None:
     """Replay 129 turn 4 headline: Junta coups Panama, then Liberation Theology places there.
 
     No rng seed could ever reproduce Panama's final [1][1] from the coup alone, so this entry
     stopped the game at 39 of 114 entries.
     """
-    conv = _convert(129)
-    assert _failed_at(conv) != "T4 Headline", f"replay 129 stops at its coup: {conv.failure}"
+    conv = corpus.converted(129)
+    assert failed_at(conv) != "T4 Headline", f"replay 129 stops at its coup: {conv.failure}"
     assert conv.entries_converted > 100

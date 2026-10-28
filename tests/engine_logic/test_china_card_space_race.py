@@ -6,19 +6,13 @@ to the opponent face down, so it is never discarded.
 """
 from __future__ import annotations
 
-import gzip
-import json
-import os
 from typing import List
 
-import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game
 from bindings.action_encoder import ActionEncoder
+from tests.replay_corpus import ReplayCorpus
 
-_CORPUS = str(corpus_dir())
 THE_CHINA_CARD = 6
 DUCK_AND_COVER = 4
 FIVE_YEAR_PLAN = 5
@@ -134,12 +128,8 @@ def test_a_mismatched_decision_type_cannot_force_a_die() -> None:
         "a rejected action consumed the roll")
 
 
-def test_replay_247_converts_end_to_end() -> None:
+def test_replay_247_converts_end_to_end(corpus: ReplayCorpus) -> None:
     """Turn 10 AR4: the US races to box 5 with the China Card, for 3 VP."""
-    path = os.path.join(_CORPUS, "247.json.gz")
-    if not os.path.exists(path):
-        pytest.skip("corpus not downloaded")
-    with gzip.open(path, "rt") as f:
-        conv = convert_game(json.load(f))
+    conv = corpus.converted(247)
     assert conv.failure is None, f"replay 247 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total == 144

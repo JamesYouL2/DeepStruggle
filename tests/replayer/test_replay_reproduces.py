@@ -11,20 +11,23 @@ draining the ROLL_DIE nodes that follow an action, so a reader that compares bef
 draining sees spurious mismatches -- a coup's die roll has not been applied yet. Drain
 after stepping, then compare.
 
-The first test generates its own replay so it works in a fresh checkout, where
-data/replays is empty (it is gitignored). The second checks whatever replays are on disk,
-and skips rather than fails when there are none.
+Both tests generate their own replay, so they work in a fresh checkout where data/replays is
+empty (it is gitignored): the first retraces the log object the generator returns, the second
+the file it saved, read back from disk (the `generated_replay_dir` fixture). They used to read
+whatever was in data/replays and skip when it held nothing -- that is, everywhere but one
+machine.
 """
 
 import glob
 import json
 import os
+import pathlib
 from typing import Any, Dict, List
 
-import pytest
 import ts_engine as ts
 
-REPLAY_DIRS = ("data/replays", "replays")
+from ai.models.coldwar_net import create_coldwar_net
+from tools.lib.self_play import generate_self_play_replay
 
 
 def _drain(state: ts.GameState) -> None:
@@ -51,11 +54,9 @@ def _digest(d: Dict[str, Any]) -> Dict[str, Any]:
 def _assert_reproduces(log: Any, label: str) -> None:
     steps = log.get("steps") or []
     assert steps, f"{label}: replay has no steps"
-    if "flat_action_idx" not in steps[0].get("action", {}):
-        pytest.skip(
-            f"{label}: pre-dates flat_action_idx in the log format, so its actions cannot "
-            f"be re-applied at all"
-        )
+    assert "flat_action_idx" in steps[0].get("action", {}), (
+        f"{label}: the log does not record flat_action_idx, so its actions cannot be re-applied"
+    )
 
     state = ts.GameState()
     ts.Engine.init_game(state, log["metadata"]["seed"])
@@ -79,11 +80,8 @@ def _assert_reproduces(log: Any, label: str) -> None:
         )
 
 
-def test_a_freshly_generated_replay_reproduces(tmp_path) -> None:
+def test_a_freshly_generated_replay_reproduces(tmp_path: pathlib.Path) -> None:
     """Generate through the canonical path, then retrace it from the seed alone."""
-    from ai.models.coldwar_net import create_coldwar_net
-    from tools.lib.self_play import generate_self_play_replay
-
     out = str(tmp_path / "roundtrip.tslog.json")
     log, _ = generate_self_play_replay(
         model=create_coldwar_net("cpu"), seed=31337, temperature=1.0,
@@ -93,18 +91,11 @@ def test_a_freshly_generated_replay_reproduces(tmp_path) -> None:
     _assert_reproduces(log, "freshly generated replay")
 
 
-def _replay_files() -> List[str]:
-    for directory in REPLAY_DIRS:
-        found = sorted(glob.glob(os.path.join(directory, "*.tslog.json")))
-        if found:
-            return found
-    return []
-
-
-@pytest.mark.parametrize("path", _replay_files() or [pytest.param("", marks=pytest.mark.skip(
-    reason="no .tslog.json replays on disk (data/replays is gitignored)"))])
-def test_saved_replay_reproduces_exactly(path: str) -> None:
-    """Every replay kept on disk must still retrace under the current engine."""
-    with open(path) as fh:
-        log = json.load(fh)
-    _assert_reproduces(log, os.path.basename(path))
+def test_saved_replay_reproduces_exactly(generated_replay_dir: str) -> None:
+    """A replay as saved to disk -- written, then read back -- retraces under the current engine."""
+    paths = sorted(glob.glob(os.path.join(generated_replay_dir, "*.tslog.json")))
+    assert paths, f"the replay fixture wrote no .tslog.json into {generated_replay_dir}"
+    for path in paths:
+        with open(path) as fh:
+            log = json.load(fh)
+        _assert_reproduces(log, os.path.basename(path))

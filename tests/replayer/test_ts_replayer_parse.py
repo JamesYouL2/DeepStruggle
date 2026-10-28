@@ -6,18 +6,12 @@ checked against the log's own arithmetic. These tests pin the grammar and the ch
 them a silently dropped state change would poison a training set with no visible symptom.
 """
 
-import glob
-import gzip
-import json
+import itertools
 
-import pytest
-
-from tools.lib.corpus_paths import corpus_files
 from tools.lib.ts_replayer_parse import (DieRoll, InfluenceLine, RealignRoll, VpGain,
                                          country_id, initial_board, parse_entry,
                                          verify_game)
-
-CORPUS = [str(p) for p in corpus_files()]
+from tests.replay_corpus import ReplayCorpus
 
 
 def _entry(text: str, **kw):
@@ -108,13 +102,11 @@ def test_initial_board_has_the_fixed_setup_influence() -> None:
     assert sum(ussr for _, ussr in board.values()) > 0
 
 
-def test_real_games_reconcile_on_influence_board_and_defcon() -> None:
+def test_real_games_reconcile_on_influence_board_and_defcon(corpus: ReplayCorpus) -> None:
     """The checks that matter for reconstructing placements must be exact, not approximate."""
     infl = board = defcon = 0
     infl_bad = board_bad = defcon_bad = 0
-    for path in CORPUS[:25]:
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            game = json.load(f)
+    for _, game in itertools.islice(corpus.every_game(), 25):
         chk, _ = verify_game(game)
         infl += chk.influence_lines
         infl_bad += chk.influence_mismatch

@@ -8,51 +8,36 @@ Wargames is the exception: at DEFCON 2 it offers 6 VP to the opponent and an imm
 nothing at all, and the two differ in nothing but the score. The log states that score, which
 settles it.
 """
-import glob
-import gzip
-import json
-import os
-
 import pytest
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import convert_game
 from tools.lib.ts_replayer_parse import parse_entry
-
-CORPUS = str(corpus_dir())
-
-
-
-def _convert(replay_id: int):
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return convert_game(json.load(f))
+from tests.replay_corpus import ReplayCorpus
 
 
 @pytest.mark.parametrize("replay_id", [113, 118, 125])
-def test_the_wargames_games_convert_end_to_end(replay_id: int) -> None:
+def test_the_wargames_games_convert_end_to_end(replay_id: int, corpus: ReplayCorpus) -> None:
     """Turn 8 AR1: the USSR takes the ending and the log reads "US gains 6 VP. Score is USSR 7."
 
     Declining instead left the score six adrift and the game running on past its end.
     """
-    conv = _convert(replay_id)
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"
 
 
-def test_the_ending_entry_is_the_last_one_converted() -> None:
+def test_the_ending_entry_is_the_last_one_converted(corpus: ReplayCorpus) -> None:
     """Wargames ends the game, so nothing after it is training data."""
-    with gzip.open(os.path.join(CORPUS, "113.json.gz"), "rt") as f:
-        raws = json.load(f)["all_turns"]
+    raws = corpus.turns(113)
     wargames = [i for i, r in enumerate(raws)
                 if (parse_entry(r).card or "").startswith("Wargames")]
     assert wargames, "replay 113 should contain a Wargames entry"
-    conv = _convert(113)
+    conv = corpus.converted(113)
     assert conv.entries_converted == conv.entries_total
     assert conv.entries_total == wargames[0] + 1, (
         "the game ends on the Wargames entry, so that is the last one converted")
 
 
 @pytest.mark.parametrize("replay_id", [302, 164])
-def test_named_targets_outrank_the_score_when_choosing_a_branch(replay_id: int) -> None:
+def test_named_targets_outrank_the_score_when_choosing_a_branch(replay_id: int, corpus: ReplayCorpus) -> None:
     """Warsaw Pact Formed offers removal or placement, and the log spells out the placements.
 
     The score compared when choosing a branch is the one the *entry* ends on, which a branch
@@ -62,5 +47,5 @@ def test_named_targets_outrank_the_score_when_choosing_a_branch(replay_id: int) 
     Poland and Bulgaria -- stops short of it. The targets the log names are the better
     evidence, so they decide and the score only breaks ties where there are none.
     """
-    conv = _convert(replay_id)
+    conv = corpus.converted(replay_id)
     assert conv.failure is None, f"replay {replay_id} stopped at {conv.failure}"

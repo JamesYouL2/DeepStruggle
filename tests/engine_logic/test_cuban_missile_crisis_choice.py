@@ -11,13 +11,17 @@ chance node opens on the far side of the answer with nothing to rebuild. Where o
 can pay there is nothing to choose and execute_coup settles it as before; the USSR side is
 Cuba alone and has no choice at all.
 """
+import os
+import re
 from typing import List
 
-import pytest
-
-from tools.lib.corpus_paths import corpus_dir
 import ts_engine as ts
+
 from bindings.action_encoder import ActionEncoder
+from tests.replay_corpus import ReplayCorpus
+
+_CONSTANTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                          "engine", "include", "ts", "constants.hpp")
 
 WEST_GERMANY, TURKEY, CUBA = 7, 12, 71
 ANGOLA = 59
@@ -25,17 +29,17 @@ CUBAN_MISSILE_CRISIS = 40
 DUCK_AND_COVER = 4
 OP_COUP = 113   # P17: Ops modes moved to [112..114]
 PASS = ActionEncoder.CONFIRM_DONE_INDEX
+
+
 def _bit(name: str) -> int:
-    import re
-    hdr = open("engine/include/ts/constants.hpp").read()
+    with open(_CONSTANTS) as f:
+        hdr = f.read()
     m = re.search(rf"{name}\s*=\s*1(?:ull|ULL)?\s*<<\s*(\d+)", hdr)
     assert m, f"no effect bit named {name}"
     return 1 << int(m.group(1))
 
 
 CMC_ACTIVE_USSR = _bit("CMC_ACTIVE_USSR")
-
-
 CMC_ACTIVE_US = _bit("CMC_ACTIVE_US")
 
 
@@ -136,7 +140,7 @@ def test_no_choice_is_offered_when_only_one_country_can_pay() -> None:
     assert int(state.get_country(TURKEY).us_influence) == 1
 
 
-def _offer_at_head_of_round(payer, **influence) -> ts.GameState:
+def _offer_at_head_of_round(payer: ts.Player, **influence: int) -> ts.GameState:
     """The payoff as the engine poses it at the head of a round: a decision that may be declined.
 
     Built directly rather than by playing a turn out, because what is under test here is the
@@ -192,17 +196,9 @@ def test_the_ussr_pays_from_cuba_and_nowhere_else() -> None:
     assert not (state.persistent_effects & CMC_ACTIVE_US)
 
 
-def test_replay_264_converts_end_to_end() -> None:
+def test_replay_264_converts_end_to_end(corpus: ReplayCorpus) -> None:
     """The USSR pays out of Cuba, then plays "We Will Bury You" for its 4 Operations."""
-    import gzip
-    import json
-    import os
-    path = os.path.join(str(corpus_dir()), "264.json.gz")
-    if not os.path.exists(path):
-        pytest.skip("corpus not downloaded")
-    from tools.lib.ts_replayer_convert import convert_game
-    with gzip.open(path, "rt") as f:
-        conv = convert_game(json.load(f))
+    conv = corpus.converted(264)
     assert conv.failure is None, f"replay 264 stopped at {conv.failure}"
     assert conv.entries_converted == conv.entries_total == 144
 

@@ -8,20 +8,11 @@ a side that looks full has no deficit to pay for -- so the comparison quietly aw
 That is invisible at the time. At turn 6 of replay 60 it cost the USSR the 2 VP they were owed,
 and the game ran seven more entries before Central America Scoring landed on 20 and ended it.
 """
-import glob
-import gzip
-import json
-import os
-
-import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
-from tools.lib.ts_replayer_convert import _reconcile_scalars, convert_game
+from tools.lib.ts_replayer_convert import _reconcile_scalars
 from tools.lib.ts_replayer_parse import parse_entry
-
-CORPUS = str(corpus_dir())
-
+from tests.replay_corpus import ReplayCorpus
 
 
 def _entry(turn: int, text: str):
@@ -51,15 +42,14 @@ def test_counts_from_an_earlier_turn_are_not_carried_over() -> None:
     assert int(state.ussr_mil_ops) == 0
 
 
-def test_replay_60_reaches_the_score_the_log_records() -> None:
+def test_replay_60_reaches_the_score_the_log_records(corpus: ReplayCorpus) -> None:
     """Turn 6 ends with the US on 0 and the USSR on 5 against DEFCON 2, so the US owes 2.
 
     With turn 5's counts carried over, both sides looked full and nothing moved; the score then
     stood two ahead of the log all the way to turn 7 AR2, where Central America Scoring's 5 VP
     reached 20 and ended a game that ran to turn 10.
     """
-    with gzip.open(os.path.join(CORPUS, "60.json.gz"), "rt") as f:
-        conv = convert_game(json.load(f))
+    conv = corpus.converted(60)
     stopped_at_the_divergence = (conv.failure is not None
                                  and conv.failure.turn == 7
                                  and conv.failure.phase == "AR2")
@@ -68,8 +58,7 @@ def test_replay_60_reaches_the_score_the_log_records() -> None:
     # against the score the log states, and with turn 5's counts carried over they stood two
     # apart. Turn 7 is where the recording stops and is given back entire, so the count is the
     # end of turn 6 rather than the end of the file.
-    with gzip.open(os.path.join(CORPUS, "60.json.gz"), "rt") as f:
-        raws = json.load(f)["all_turns"]
+    raws = corpus.turns(60)
     kept = [parse_entry(r) for r in raws[:conv.entries_converted]]
     assert kept, "replay 60 converted nothing"
     assert kept[-1].turn == 6, f"replay 60 stops in turn {kept[-1].turn}, not at the end of 6"

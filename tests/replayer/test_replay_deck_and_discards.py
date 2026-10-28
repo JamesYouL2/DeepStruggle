@@ -10,20 +10,16 @@ so does every redeal from a converted position.
 A card the engine dealt and the humans were never dealt is still in the deck. Anything a hand
 really gave up went through the engine, which moved it to the discard pile or out of the game.
 """
-import gzip
-import json
-import os
 from dataclasses import dataclass
 from typing import Dict, List, Set
 
 import pytest
 import ts_engine as ts
 
-from tools.lib.corpus_paths import corpus_dir
 from tools.lib.ts_replayer_convert import card_id, convert_game
 from tools.lib.ts_replayer_parse import Entry, parse_entry
+from tests.replay_corpus import ReplayCorpus
 
-CORPUS = str(corpus_dir())
 THE_CHINA_CARD = 6
 RED_SCARE_PURGE = 31
 SALT_NEGOTIATIONS = 43
@@ -38,11 +34,6 @@ class _Piles:
     spent: Set[int]
 
 
-def _game(replay_id: int) -> Dict:
-    with gzip.open(os.path.join(CORPUS, f"{replay_id}.json.gz"), "rt") as f:
-        return json.load(f)
-
-
 def _spent(e: Entry) -> Set[int]:
     """The cards an entry shows leaving a hand: headlined, played, played through another, discarded."""
     names: List[str] = list(e.headlines.values())
@@ -55,9 +46,9 @@ def _spent(e: Entry) -> Set[int]:
     return {c for c in cards if c and c != THE_CHINA_CARD}
 
 
-def _piles_at_each_decision(replay_id: int, last_turn: int) -> List[_Piles]:
+def _piles_at_each_decision(corpus: ReplayCorpus, replay_id: int, last_turn: int) -> List[_Piles]:
     """The piles at every decision up to `last_turn`."""
-    game = _game(replay_id)
+    game = corpus.game(replay_id)
     entries = [parse_entry(r) for r in game["all_turns"]]
     spent_by: Dict[int, Set[int]] = {}
     since_reshuffle: Set[int] = set()
@@ -90,20 +81,20 @@ def _name(cards: Set[int]) -> List[str]:
     return sorted(ts.CardData.get_card_name(c) for c in cards)
 
 
-def test_turn_1_of_replay_51_discards_only_what_was_played() -> None:
+def test_turn_1_of_replay_51_discards_only_what_was_played(corpus: ReplayCorpus) -> None:
     """At turn 1 AR2 of replay 51 the pile held 13 cards, 9 of them never played --
     Middle East Scoring among them."""
-    rows = [r for r in _piles_at_each_decision(51, 1) if r.where.startswith("turn 1 AR2")]
+    rows = [r for r in _piles_at_each_decision(corpus, 51, 1) if r.where.startswith("turn 1 AR2")]
     assert rows
     for r in rows:
         assert r.discard <= r.spent, f"{r.where}: never played {_name(r.discard - r.spent)}"
 
 
 @pytest.mark.parametrize("replay_id", [51, 107, 119, 206])
-def test_the_early_war_piles_are_the_logs(replay_id: int) -> None:
+def test_the_early_war_piles_are_the_logs(replay_id: int, corpus: ReplayCorpus) -> None:
     """Through turn 3 the discard pile is exactly the log's: nothing in it the humans did not
     spend, and nothing they spent back in the deck by a reshuffle they never had."""
-    rows = _piles_at_each_decision(replay_id, 3)
+    rows = _piles_at_each_decision(corpus, replay_id, 3)
     assert rows
     for r in rows:
         assert r.discard <= r.spent, f"{r.where}: never played {_name(r.discard - r.spent)}"
@@ -111,7 +102,7 @@ def test_the_early_war_piles_are_the_logs(replay_id: int) -> None:
             f"{r.where}: spent and back in the deck {_name(r.spent & r.deck)}")
 
 
-def test_salt_takes_back_the_card_the_log_names() -> None:
+def test_salt_takes_back_the_card_the_log_names(corpus: ReplayCorpus) -> None:
     """Replay 117 turn 9 AR5: "Event: SALT Negotiations* ... US reveals Red Scare/Purge".
 
     SALT lets its player take a card back out of the discard pile. With the pile padded, the
@@ -125,6 +116,6 @@ def test_salt_takes_back_the_card_the_log_names() -> None:
         if st.ctx().resolving_card == SALT_NEGOTIATIONS and (e.turn, e.phase) == (9, "AR5"):
             picks.append(ts.ActionMask.decode_flat_action(st, chosen).primary_id)
 
-    conv = convert_game(_game(117), on_decision=on_decision)
+    conv = convert_game(corpus.game(117), on_decision=on_decision)
     assert conv.failure is None, f"replay 117 stopped at {conv.failure}"
     assert picks == [RED_SCARE_PURGE]
