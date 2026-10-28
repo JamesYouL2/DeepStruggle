@@ -45,6 +45,7 @@ import numpy as np
 import torch
 
 from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, merge_matchup_results
+from tools.lib.engine_fingerprint import fingerprint
 from tools.lib.player_agent import PlayerAgent, Reseedable, load_agent, resolve_device
 
 Pair = Tuple[int, int]
@@ -104,10 +105,28 @@ def plan_shards(matchups: Sequence[Pair], games_per_side: int, shard_pairs: int)
     return shards
 
 
+#: Bounds of `shard_seed`'s mixed radix: entrant indices below 2**8, first game pairs below 2**14.
+_SEED_ENTRANTS = 1 << 8
+_SEED_PAIRS = 1 << 14
+
+
 def shard_seed(base_seed: int, shard: Shard) -> int:
-    """The seed a shard's agents and samplers start from. A function of the shard alone."""
+    """The seed a shard's agents and samplers start from. A function of the shard alone.
+
+    Distinct shards of one tournament get distinct seeds, and so do their agents (`seed_shard`
+    gives agent n `seed + n`): the shard's (i, j, first pair) is written in a mixed radix whose
+    lowest digit is left for the agent, then shifted by `base_seed` modulo 2**31, a bijection on
+    the 2**31 values the radix spans. The previous `i * 65537 + j * 257 + pair` collided as soon
+    as a matchup had more than 257 shards -- at --shard-pairs 1 from 258 game pairs on, (j, k)
+    and (j + 1, k - 257) played one seed. Outside the radix's bounds it raises rather than wrap.
+    """
     i, j = shard.pair
-    return (base_seed * 1_000_003 + i * 65_537 + j * 257 + shard.pairs[0]) % (2 ** 31 - 1)
+    k = shard.pairs[0]
+    if not (0 <= i < _SEED_ENTRANTS and 0 <= j < _SEED_ENTRANTS and 0 <= k < _SEED_PAIRS):
+        raise ValueError(f"shard {shard.label}: shard_seed supports entrant indices below {_SEED_ENTRANTS} "
+                         f"and first game pairs below {_SEED_PAIRS}")
+    code = ((i * _SEED_ENTRANTS + j) * _SEED_PAIRS + k) * 2
+    return (base_seed + code) % (1 << 31)
 
 
 def seed_shard(seed: int, agents: Sequence[PlayerAgent]) -> None:
@@ -306,8 +325,9 @@ def run_matchups_parallel(
 
 # -- parts: one tournament over several machines --------------------------------------------
 #
-# A part file is what one machine played: the tournament's configuration, and the raw result of
-# every shard it was given. `pool_parts` checks that a set of part files describe one tournament
+# A part file is what one machine played: the tournament's configuration, the engine build that
+# played it (its source fingerprint, tools/lib/engine_fingerprint.py), and the raw result of every
+# shard it was given. `pool_parts` checks that a set of part files describe one tournament
 # and cover each of its shards exactly once, and merges them. Because a shard's games depend only
 # on the shard (module docstring), the pooled tournament equals one machine playing every shard.
 
@@ -335,6 +355,9 @@ class PartConfig(TypedDict):
 class PartDoc(TypedDict):
     format: str
     config: PartConfig
+    #: The source fingerprint of the engine that played the part. Stamped by `write_part` itself,
+    #: so no caller can leave it out; parts played on different builds are refused by `pool_parts`.
+    engine: str
     part: List[int]
     wall_seconds: float
     shards: List[ShardDoc]
@@ -351,6 +374,7 @@ def write_part(path: str, config: PartConfig, part: Part, results: Sequence[Shar
     doc: PartDoc = {
         "format": PART_FORMAT,
         "config": config,
+        "engine": fingerprint(),
         "part": list(part),
         "wall_seconds": wall_seconds,
         "shards": [r.to_doc() for r in results],
@@ -365,6 +389,9 @@ def _read_part(path: str) -> PartDoc:
         doc = json.load(f)
     if not isinstance(doc, dict) or doc.get("format") != PART_FORMAT:
         raise ValueError(f"{path} is not a {PART_FORMAT} file")
+    if not isinstance(doc.get("engine"), str):
+        raise ValueError(f"{path} records no engine fingerprint (written before parts recorded one), so "
+                         f"nothing says which engine build played it; replay the part")
     return cast(PartDoc, doc)
 
 
@@ -372,14 +399,18 @@ def pool_parts(paths: Sequence[str]) -> PooledParts:
     """The tournament's configuration, every shard's result in plan order, and the slowest
     part's wall time.
 
-    Refuses parts of different tournaments, and a set that misses a shard or holds one twice --
-    a pooled rating over part of the games would read as a rating over all of them.
+    Refuses parts of different tournaments, parts played on different engine builds (a rebuilt
+    engine can play different games from the same deals), and a set that misses a shard or holds
+    one twice -- a pooled rating over part of the games would read as a rating over all of them.
     """
     if not paths:
         raise ValueError("no part files given")
     docs = [_read_part(p) for p in paths]
     config = docs[0]["config"]
     for p, d in zip(paths, docs):
+        if d["engine"] != docs[0]["engine"]:
+            raise ValueError(f"{p} was played on engine {d['engine'][:12]}..., {paths[0]} on "
+                             f"{docs[0]['engine'][:12]}...: parts of one tournament must come from one build")
         if d["config"] != config:
             diff = sorted(k for k in set(config) | set(d["config"])
                           if config.get(k) != d["config"].get(k))
