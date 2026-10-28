@@ -26,6 +26,8 @@ _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
+import ts_engine  # noqa: F401 -- the build require_fresh() checks before a game is played
+from tools.lib.engine_fingerprint import require_fresh
 from tools.lib.player_agent import PlayerAgent, load_agent, resolve_device
 from tools.lib.batch_tournament import BatchMatchRunner, MatchupResult, compute_mle_elo
 from tools.lib.parallel_tournament import (MatchOptions, Pair, Part, PartConfig,
@@ -659,9 +661,11 @@ def main():
     args = parser.parse_args()
 
     if args.pool_parts:
+        # Pools results already played (each part records its engine); plays nothing.
         pool_tournament_parts(args.pool_parts, output_report=args.output_report,
                               output_json=args.output_json, log_games=args.log_games)
         return
+    require_fresh()
 
     part: Optional[Part] = None
     if args.part:
@@ -683,8 +687,14 @@ def main():
                 parser.error(f"{flag} does not apply to --part; pass it to --pool-parts")
 
     models = list(args.models) if args.models else []
-    if args.checkpoint_dir and os.path.exists(args.checkpoint_dir):
-        discovered = [os.path.join(args.checkpoint_dir, f) for f in sorted(os.listdir(args.checkpoint_dir)) if f.endswith(".pt")]
+    if args.checkpoint_dir:
+        if not os.path.isdir(args.checkpoint_dir):
+            parser.error(f"--checkpoint-dir {args.checkpoint_dir}: no such directory")
+        # resume_*.pt is training state (optimizer, RNG), not a policy, and cannot be loaded as one.
+        discovered = [os.path.join(args.checkpoint_dir, f) for f in sorted(os.listdir(args.checkpoint_dir))
+                      if f.endswith(".pt") and not f.startswith("resume_")]
+        if not discovered:
+            parser.error(f"--checkpoint-dir {args.checkpoint_dir}: no checkpoint (.pt) in it")
         models.extend(discovered)
         # When evaluating a checkpoint directory, default to including baselines unless explicitly specified
         if not args.models and not args.include_baselines:
