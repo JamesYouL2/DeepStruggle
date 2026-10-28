@@ -73,7 +73,7 @@ are cited from elsewhere; keep them.
   - Serialization: `state_to_dict()` / `GameState.to_dict()` (the display state),
     `GameState.to_display_json()`, `GameState.to_save_json()` (byte for byte
     `json.dumps(to_save_dict(), sort_keys=True, separators=(",", ":"))`), `state_from_save_json()`;
-    `game_ending_reason(state)` (`tools/lib/tournament_evaluator.classify_game_ending_reason`
+    `game_ending_reason(state)` (`tools/lib/game_ending.classify_game_ending_reason`
     delegates to it) and `selftest_digest(games)`, the whole-game digest the WebAssembly build must
     reproduce.
   - **Save format** `ts_save_v2`: `GameState.to_save_dict()` / `state_from_save_dict()`, named
@@ -236,8 +236,15 @@ are cited from elsewhere; keep them.
   What introspection cannot recover goes in [`ts_engine.pyi.pattern`](ts_engine.pyi.pattern).
 - [`action_encoder.py`](action_encoder.py): the codec between the flat action space (220 slots) and
   `ts::MicroAction`.
-- [`ts_env.py`](ts_env.py): `TsVectorizedEnv` and `TsSingleEnv`, the batch-runner environments for
-  PyTorch RL loops; `check_obs_width(model)` and `model_obs_features(model)`.
+- [`ts_env.py`](ts_env.py): `TsVectorizedEnv`, the batch-runner environment for PyTorch RL loops;
+  `check_obs_width(model)`, `model_obs_features(model)`, and the view helpers every harness builds a
+  model's inputs with: `observe(state, player, features)` (the observation in a feature set),
+  `legal_mask(state, merged_influence)` (the mask in an action view) and `agent_view(agent)` ->
+  `AgentView(features, merged_influence)`. A bare `ts.extract_observation` is the feature set 0 and
+  nothing refuses it for a featured model: `HEADLINE_REVEAL` (the E8 default) has no width, so the
+  base observation loads, runs and misreads. Per env and side, `TsVectorizedEnv.set_obs_features`,
+  `set_merged_influence` and `set_capture_predeal` survive `reset_all(base_seed)`, and
+  `observations_for(players)` builds each row in that side's feature set.
   - `TsVectorizedEnv.step` returns an `info` dict whose `completed_episodes` entries carry `turn`
     (reads 11 for a completed game, since `finish_end_turn` increments before testing its bound),
     `ply` (game length in [`ai/game_length.py`](../ai/game_length.py)'s numeration, 1 = the USSR's

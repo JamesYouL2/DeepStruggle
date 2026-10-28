@@ -29,7 +29,7 @@ from web.server.replay_types import (
     ReplayPolicyDict,
     ReplayTraceMetaDict,
 )
-from tools.lib.tournament_evaluator import classify_game_ending_reason
+from tools.lib.game_ending import classify_game_ending_reason
 from tools.lib.game_loop import GameLoop, SettlePolicy, StepRecord
 from tools.lib.openings import acting_side, scripted_setup_index
 

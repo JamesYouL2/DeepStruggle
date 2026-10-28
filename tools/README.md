@@ -944,7 +944,7 @@ modules stay importable without torch):
 - `leaderboard.py`: the leaderboard's records, validation and two-stage fit (stdlib only).
 - `batch_tournament.py`: the C++ batch tournament runner and Bradley-Terry MLE; plays any subset of a matchup's pairs and merges parts.
 - `parallel_tournament.py`: shards a tournament over worker processes.
-- `tournament_evaluator.py`: loss-cause classifier (`classify_game_ending_reason`).
+- `game_ending.py`: the game-ending classifier (`classify_game_ending_reason`, the engine's `game_ending_reason`).
 - `self_play.py`: single-game runner and the one writer of `.tslog.json` replays.
 - `scoring_formatter.py`: a scoring card's breakdown of a GameState, the numbers from `ts.Scoring`.
 - `checkpoint_utils.py`: checkpoint discovery (no loading).

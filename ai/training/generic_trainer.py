@@ -47,7 +47,6 @@ from ai.itsc_reference import ITSC_GAMES, ITSC_REFERENCE, reference_for
 from tools.lib.player_agent import PlayerAgent, NeuralAgent, load_agent, resolve_device
 from tools.lib.action_view import checkpoint_merged_influence, run_view
 from tools.lib.batch_tournament import BatchMatchRunner
-from tools.lib.tournament_evaluator import TournamentEvaluator
 from tools.lib.checkpoint_utils import discover_checkpoints
 from tools.lib.data_root import checkpoints_dir
 from tools.lib.openings import HUMAN_OPENING_MIX, OPENINGS, play_scripted_setup

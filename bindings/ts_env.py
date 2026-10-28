@@ -11,7 +11,7 @@ from ai.game_length import ply as _game_ply
 
 # Canonical short keys for the game-ending reasons reported per completed episode.
 # The long-form strings come from ts.game_ending_reason (ts::state_json::ending_reason, the
-# one classifier, which tools.lib.tournament_evaluator.classify_game_ending_reason wraps).
+# one classifier, which tools.lib.game_ending.classify_game_ending_reason wraps).
 ENDING_REASON_KEYS: Tuple[str, ...] = (
     "20vp",
     "europe_control",
@@ -35,9 +35,7 @@ _ENDING_REASON_MAP: Dict[str, str] = {
 def _classify_ending(state: ts.GameState, held_scoring: bool) -> str:
     """Maps a terminal state to one of ENDING_REASON_KEYS.
 
-    Asks the engine directly rather than through tools.lib.tournament_evaluator, whose
-    classify_game_ending_reason is the same call: that module imports the model zoo (torch,
-    onnxruntime) and, through tools.lib.player_agent, this module.
+    Asks the engine directly; tools.lib.game_ending.classify_game_ending_reason is the same call.
     """
     reason = ts.game_ending_reason(state)
     if reason not in _ENDING_REASON_MAP:

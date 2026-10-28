@@ -134,7 +134,7 @@ graph TD
 │   ├── inspect_checkpoints.py, behavioral_test.py, annotate_replay.py, ...
 │   ├── lib/                    # shared backend: ts_replayer_{parse,convert,hands}.py (corpus conversion),
 │   │                           # self_play.py (the replay writer), player_agent.py / player_spec.py,
-│   │                           # tournament_evaluator.py, batch_tournament.py, parallel_tournament.py,
+│   │                           # game_ending.py, batch_tournament.py, parallel_tournament.py,
 │   │                           # leaderboard.py, action_view.py, data_root.py, corpus_paths.py,
 │   │                           # engine_fingerprint.py (sources -> stale build), engine_behaviour.py
 │   │                           # (what the engine does -> leaderboard epoch), checkpoint_utils.py, ...

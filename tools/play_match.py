@@ -57,7 +57,7 @@ from ai.eval.policy_readout import (
     unasked_readout,
 )
 from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint
-from tools.lib.tournament_evaluator import classify_game_ending_reason
+from tools.lib.game_ending import classify_game_ending_reason
 from tools.lib.scoring_formatter import format_regional_scoring_breakdown
 from tools.lib.checkpoint_utils import discover_checkpoints
 from tools.lib.game_loop import GameLoop, SettlePolicy, StepRecord

@@ -21,7 +21,7 @@ from tools.lib.player_agent import (BatchActor, BatchSelector, HeuristicAgent, N
                                     PlayerAgent, RandomAgent, load_agent, resolve_device)
 from ai.game_length import ply as game_ply
 from ai.search.turn_pricing import Candidate, price, priceable
-from tools.lib.tournament_evaluator import classify_game_ending_reason
+from tools.lib.game_ending import classify_game_ending_reason
 
 
 def categorize_flat_action_detailed(action_idx: int) -> str:
@@ -527,12 +527,10 @@ class BatchMatchRunner:
     ) -> MatchupResult:
         """Play a matchup batched. Action selection matches NeuralAgent.select_action.
 
-        temperature/deterministic are the same contract as the one-game-at-a-time path in
-        TournamentEvaluator.play_matchup: sampling at the given temperature unless it is low
-        enough to be indistinguishable from an argmax. This used to be hard-coded to
-        deterministic=True here while the sequential path sampled at 0.1, so the two
-        disagreed on win rate (0.450 vs 0.610 on one 100-game matchup) and could not be
-        swapped for one another.
+        temperature/deterministic are the same contract as NeuralAgent.select_action: sampling
+        at the given temperature unless it is low enough to be indistinguishable from an argmax.
+        This used to be hard-coded to deterministic=True here while a sequential path sampled at
+        0.1, so the two disagreed on win rate (0.450 vs 0.610 on one 100-game matchup).
 
         `pairs` plays only those game pairs (indices into range(games_per_side)), each with the
         deal it has in the full matchup. That is what lets a matchup be split across processes

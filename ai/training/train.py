@@ -19,7 +19,6 @@ from tools.lib.data_root import data_path
 from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR
 from tools.lib.player_agent import load_agent
 from tools.lib.batch_tournament import BatchMatchRunner
-from tools.lib.tournament_evaluator import TournamentEvaluator
 from ai.models.coldwar_net import create_coldwar_net
 from ai.models.coldwar_net_v2 import create_coldwar_net_v2
 
