@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 
 # The opening itself lives in `tools.lib.openings` so that this probe and the replay
 # generators cannot drift apart -- a replay labelled "the human opening" has to be the opening
@@ -43,16 +44,11 @@ def _influence(state: ts.GameState, cid: int) -> Tuple[int, int]:
 def measure(model: Any, num_games: int = 512, forced: bool = True,
             temperature: float = 1.0, base_seed: int = 414_000,
             max_iters: int = 20_000) -> Dict[str, Any]:
-    """Play `num_games` from a forced (or free) opening and report what became of Europe."""
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
+    """Play `num_games` from a forced (or free) opening and report what became of Europe. The
+    model plays in its own observation feature set and the E4 action view (merged_ok=False)."""
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=base_seed)
+    sampler = Sampler(model, temperature, base_seed)
+    env = make_env(num_games, base_seed, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     ussr_script, us_script = _expand(USSR_OPENING), _expand(US_OPENING)
@@ -108,11 +104,7 @@ def measure(model: Any, num_games: int = 512, forced: bool = True,
     for _ in range(max_iters):
         if all(finished):
             break
-        with torch.no_grad():
-            acts, *_ = model.sample_action(
-                torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device),
-                torch.from_numpy(np.asarray(masks)).to(device), temperature=temperature)
-        a = acts.cpu().numpy().astype(np.int64)
+        a = sampler(obs, masks)
         # Cloned for the reason recorded in held_scoring: get_state was a live view onto the
         # runner slot, which auto-reset rewound before step() returned. It is a copy now.
         prev: List[Optional[ts.GameState]] = [
@@ -137,6 +129,7 @@ def measure(model: Any, num_games: int = 512, forced: bool = True,
             if reason == "europe_control":
                 europe_control += 1
 
+    check_finished(finished, max_iters, "forced_setup.measure")
     wg_u = np.asarray(wg_us_end, dtype=float)
     wg_s = np.asarray(wg_ussr_end, dtype=float)
     n = max(len(wg_u), 1)

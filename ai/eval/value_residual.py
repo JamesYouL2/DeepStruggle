@@ -22,8 +22,11 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, make_env, model_view
+from bindings.ts_env import model_obs_features, observe
 
 SCORING_CARDS = [c for c in range(1, 111) if ts.CardData.get_card_info(c)["is_scoring"]]
 HANDS = {
@@ -47,24 +50,18 @@ def _hand_stats(state: ts.GameState) -> Dict[str, Any]:
 
 def measure(model: Any, num_games: int = 256, temperature: float = 1.0,
             sample_every: int = 25, max_iters: int = 4000) -> Dict[str, Any]:
-    """Residual against hand size and against scoring-card asymmetry."""
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
+    """Residual against hand size and against scoring-card asymmetry. Self-play and both critic
+    readings in the model's own observation feature set; E4 action view (merged_ok=False)."""
     device = next(model.parameters()).device
+    feats = model_obs_features(model)
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=626_000)
+    sampler = Sampler(model, temperature, 626_000)
+    env = make_env(num_games, 626_000, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     rows: List[Dict[str, Any]] = []
     for it in range(max_iters):
-        obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-        mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-        with torch.no_grad():
-            acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
+        acts = sampler(obs, masks)
 
         if it % sample_every == 0:
             for i in range(0, num_games, 4):
@@ -73,8 +70,7 @@ def measure(model: Any, num_games: int = 256, temperature: float = 1.0,
                     continue
                 vals = {}
                 for tag, p in (("us", ts.Player.US), ("ussr", ts.Player.USSR)):
-                    o = np.asarray(ts.extract_observation(st, p),
-                                   dtype=np.float32).reshape(1, -1)
+                    o = observe(st, p, feats).reshape(1, -1)
                     with torch.no_grad():
                         _, vw, _ = model(torch.from_numpy(o).to(device), None)
                     vals[tag] = float(vw.item())
@@ -87,7 +83,7 @@ def measure(model: Any, num_games: int = 256, temperature: float = 1.0,
                     "turn": int(st.turn),
                 })
 
-        obs, masks, _, dones, _ = env.step(acts.cpu().numpy().astype(np.int64))
+        obs, masks, _, dones, _ = env.step(acts)
         if it > 400 and all(bool(d) for d in dones):
             break
     return {"rows": rows}

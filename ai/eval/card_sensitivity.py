@@ -19,8 +19,11 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, make_env, model_view
+from bindings.ts_env import model_obs_features, observe
 
 SCORING_CARDS = [c for c in range(1, 111) if ts.CardData.get_card_info(c)["is_scoring"]]
 HANDS = {
@@ -44,42 +47,35 @@ def _deck(state: ts.GameState) -> List[int]:
 
 
 def _value(model: Any, state: ts.GameState, player: Any) -> float:
-    import torch
-
     device = next(model.parameters()).device
-    obs = np.asarray(ts.extract_observation(state, player), dtype=np.float32).reshape(1, -1)
+    obs = observe(state, player, model_obs_features(model)).reshape(1, -1)
     with torch.no_grad():
         _, v_win, _ = model(torch.from_numpy(obs).to(device), None)
     return float(v_win.item())
 
 
-def _card_block(state: ts.GameState, player: Any) -> np.ndarray:
-    obs = np.asarray(ts.extract_observation(state, player), dtype=np.float32)
+def _card_block(state: ts.GameState, player: Any, features: int) -> np.ndarray:
+    obs = observe(state, player, features)
     return obs[BOARD_FLOATS:BOARD_FLOATS + CARD_FLOATS].copy()
 
 
 def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
             sample_every: int = 20, max_iters: int = 4000,
             seed: int = 808_000) -> Dict[str, Any]:
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
+    """Critic sensitivity to the hand against the board. Self-play and every reading are in the
+    model's own observation feature set; E4 action view (merged_ok=False)."""
+    feats = model_obs_features(model)
     model.eval()
     rng = np.random.default_rng(seed)
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=seed)
+    sampler = Sampler(model, temperature, seed)
+    env = make_env(num_games, seed, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     rows: List[Dict[str, float]] = []
     inert = 0
 
     for it in range(max_iters):
-        obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(next(model.parameters()).device)
-        mask_t = torch.from_numpy(np.asarray(masks)).to(next(model.parameters()).device)
-        with torch.no_grad():
-            acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
+        acts = sampler(obs, masks)
 
         if it % sample_every == 0:
             for i in range(0, num_games, 4):
@@ -96,7 +92,7 @@ def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
                     continue
 
                 v_base = _value(model, base_state, p)
-                block_base = _card_block(base_state, p)
+                block_base = _card_block(base_state, p, feats)
 
                 # --- random hand -------------------------------------------------------
                 swapped = base_state.clone()
@@ -105,7 +101,7 @@ def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
                     swapped.set_card_location(c, ts.CardLocation.DRAW_DECK)
                 for k, c in zip(picks, hand):
                     swapped.set_card_location(int(deck[int(k)]), base_state.get_card_location(c))
-                if np.array_equal(_card_block(swapped, p), block_base):
+                if np.array_equal(_card_block(swapped, p, feats), block_base):
                     inert += 1
                     continue
                 v_rand = _value(model, swapped, p)
@@ -140,7 +136,7 @@ def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
                     "hand_size": float(len(hand)),
                 })
 
-        obs, masks, _, dones, _ = env.step(acts.cpu().numpy().astype(np.int64))
+        obs, masks, _, dones, _ = env.step(acts)
         if it > 400 and all(bool(d) for d in dones):
             break
 

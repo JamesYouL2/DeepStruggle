@@ -28,8 +28,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, make_env, model_view
+from ai.eval.play_modes import collision_groups
 
 
 @dataclass(frozen=True)
@@ -101,14 +104,11 @@ def collect(model: Any, num_envs: int = 128, steps: int = 900, every: int = 6,
     a random split over positions puts step t in train and step t+6 of the same game in test,
     and the probe scores partly on having seen the position already.
     """
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
     device = next(model.parameters()).device
     model.eval()
-    env = TsVectorizedEnv(num_envs=num_envs, base_seed=525_252)
+    # The model's own observation feature set; E4 action view (load with merged_ok=False).
+    sampler = Sampler(model, temperature, 525_252)
+    env = make_env(num_envs, 525_252, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     feats: List[np.ndarray] = []
@@ -121,9 +121,8 @@ def collect(model: Any, num_envs: int = 128, steps: int = 900, every: int = 6,
 
     for step in range(steps):
         obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-        mask_t = torch.from_numpy(np.asarray(masks)).to(device)
+        acts = sampler(obs, masks)
         with torch.no_grad():
-            acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
             trunk = model.extract_features(obs_t)
             if isinstance(trunk, tuple):
                 trunk = trunk[0]
@@ -168,7 +167,7 @@ def collect(model: Any, num_envs: int = 128, steps: int = 900, every: int = 6,
                     float(st.us_space_track if mine else st.ussr_space_track),
                     float(st.ussr_space_track if mine else st.us_space_track),
                 ], dtype=np.float32))
-        obs, masks, *_ = env.step(acts.cpu().numpy().astype(np.int64))
+        obs, masks, *_ = env.step(acts)
 
     return np.asarray(feats, dtype=np.float64), {
         "board": np.asarray(board, dtype=np.float64),
@@ -177,23 +176,6 @@ def collect(model: Any, num_envs: int = 128, steps: int = 900, every: int = 6,
         "hand": np.asarray(hand, dtype=np.float64),
         "tracks": np.asarray(tracks, dtype=np.float64),
     }, np.asarray(env_ids, dtype=np.int64)
-
-
-def collision_groups() -> List[List[int]]:
-    """Cards that share one feature vector, so only identity can separate them."""
-    import collections
-
-    from ai.eval.positions import PositionBuilder
-    from ai.models.coldwar_net_v2 import ColdWarNetV2
-
-    st = PositionBuilder(hand=tuple(range(1, 111)), side=ts.Player.USSR,
-                         defcon=3, turn=5).build()
-    o = np.asarray(ts.extract_observation(st, ts.Player.USSR), dtype=np.float32)
-    off, cf = ColdWarNetV2.BOARD_FEATURES * 84, ColdWarNetV2.CARD_FEATURES
-    groups: Dict[Any, List[int]] = collections.defaultdict(list)
-    for cid in range(1, 111):
-        groups[tuple(o[off + (cid - 1) * cf: off + cid * cf].tolist())].append(cid)
-    return [g for g in groups.values() if len(g) > 1]
 
 
 def within_group_accuracy(x: np.ndarray, hand: np.ndarray, tr: np.ndarray,
@@ -372,8 +354,6 @@ def multinomial_accuracy(x: np.ndarray, lev: np.ndarray, tr: np.ndarray, te: np.
     answer at 92% -- but the same test confirms pure noise still scores exactly the constant
     baseline at 1e-5, so the loose penalty buys recovery without buying false signal.
     """
-    import torch
-
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     per_country = x.ndim == 3
     n_country = lev.shape[1]
@@ -427,10 +407,6 @@ def collect_board_stages(model: Any, num_envs: int = 128, steps: int = 450, ever
     Only v2-shaped models have the graph layers; anything else raises rather than quietly
     returning a shorter ladder.
     """
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
     # A model may carry two graph layers, one, or none (a per-country encoder with no
     # adjacency). Tap whatever it has rather than assuming two: a depth ablation must still be
     # measurable on the same ladder as the arms it is being compared against.
@@ -438,9 +414,9 @@ def collect_board_stages(model: Any, num_envs: int = 128, steps: int = 450, ever
     if not taps_wanted:
         raise TypeError(f"{type(model).__name__} has no board encoder to tap")
 
-    check_obs_width(model)
     device = next(model.parameters()).device
     model.eval()
+    sampler = Sampler(model, temperature, 525_252)
 
     taps: Dict[str, Any] = {}
 
@@ -451,7 +427,7 @@ def collect_board_stages(model: Any, num_envs: int = 128, steps: int = 450, ever
 
     handles = [getattr(model, n).register_forward_hook(hook(n)) for n in taps_wanted]
 
-    env = TsVectorizedEnv(num_envs=num_envs, base_seed=525_252)
+    env = make_env(num_envs, 525_252, model_view(model, False))
     obs, masks, _ = env.reset_all()
     keys = ("raw", "gconv1", "gconv2", "trunk", "own", "opp")
     env_ids: List[int] = []
@@ -459,9 +435,8 @@ def collect_board_stages(model: Any, num_envs: int = 128, steps: int = 450, ever
     try:
         for step in range(steps):
             obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
+            acts = sampler(obs, masks)
             with torch.no_grad():
-                acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
                 trunk = model.extract_features(obs_t)
                 if isinstance(trunk, tuple):
                     trunk = trunk[0]
@@ -496,7 +471,7 @@ def collect_board_stages(model: Any, num_envs: int = 128, steps: int = 450, ever
                     acc["opp"].append(np.array(
                         [float(c.ussr_influence if mine else c.us_influence) for c in cs],
                         dtype=np.float32))
-            obs, masks, *_ = env.step(acts.cpu().numpy().astype(np.int64))
+            obs, masks, *_ = env.step(acts)
     finally:
         for h in handles:
             h.remove()

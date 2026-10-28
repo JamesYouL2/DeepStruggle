@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import numpy as np
+import torch
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, make_env, model_view
 from bindings.action_encoder import ActionEncoder
 
 #: The five European battlegrounds -- the countries Europe control actually turns on.
@@ -36,16 +38,11 @@ def _controls(state: ts.GameState, cid: int, player: ts.Player) -> bool:
 
 def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
             sample_every: int = 5, max_iters: int = 4000) -> Dict[str, Any]:
-    import torch
-
-    from bindings.action_encoder import ActionEncoder
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
+    """Placement mass on each European battleground, per side. The model plays in its own
+    observation feature set and the E4 action view (load with merged_ok=False)."""
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=909_000)
+    sampler = Sampler(model, temperature, 909_000)
+    env = make_env(num_games, 909_000, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     # per side: decisions seen, times the country was a legal target, summed probability mass
@@ -64,15 +61,11 @@ def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
         for side in ("US", "USSR")}
 
     for it in range(max_iters):
-        obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-        mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-        with torch.no_grad():
-            acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
+        logits = sampler.forward(obs, masks)[0]
+        acts = sampler.pick(logits)
 
         if it % sample_every == 0:
-            with torch.no_grad():
-                logits, _, _ = model(obs_t, mask_t)
-                probs = torch.softmax(logits, dim=-1).cpu().numpy()
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
             for i in range(num_games):
                 st = env.runner.get_state(i)
                 if ts.Engine.is_terminal(st):
@@ -103,7 +96,7 @@ def measure(model: Any, num_games: int = 128, temperature: float = 1.0,
                             s["by_turn_mass"][c][t] = (
                                 s["by_turn_mass"][c].get(t, 0.0) + float(probs[i][idx]))
 
-        obs, masks, _, dones, _ = env.step(acts.cpu().numpy().astype(np.int64))
+        obs, masks, _, dones, _ = env.step(acts)
         if it > 400 and all(bool(d) for d in dones):
             break
 
@@ -160,30 +153,20 @@ def regime_of(state: ts.GameState, cid: int, me: Any, opp: Any) -> str:
 def measure_by_regime(model: Any, num_games: int = 256, temperature: float = 1.0,
                       sample_every: int = 5, max_iters: int = 4000) -> Dict[str, Any]:
     """Probability mass on each European battleground, split by who controls it."""
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=515_000)
+    sampler = Sampler(model, temperature, 515_000)
+    env = make_env(num_games, 515_000, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     n: Dict[Any, int] = {}
     mass: Dict[Any, float] = {}
 
     for it in range(max_iters):
-        obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-        mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-        with torch.no_grad():
-            acts, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
+        logits = sampler.forward(obs, masks)[0]
+        acts = sampler.pick(logits)
 
         if it % sample_every == 0:
-            with torch.no_grad():
-                logits, _, _ = model(obs_t, mask_t)
-                probs = torch.softmax(logits, dim=-1).cpu().numpy()
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
             for i in range(num_games):
                 st = env.runner.get_state(i)
                 if ts.Engine.is_terminal(st):
@@ -205,7 +188,7 @@ def measure_by_regime(model: Any, num_games: int = 256, temperature: float = 1.0
                     n[key] = n.get(key, 0) + 1
                     mass[key] = mass.get(key, 0.0) + float(probs[i][idx])
 
-        obs, masks, _, dones, _ = env.step(acts.cpu().numpy().astype(np.int64))
+        obs, masks, _, dones, _ = env.step(acts)
         if it > 400 and all(bool(d) for d in dones):
             break
 

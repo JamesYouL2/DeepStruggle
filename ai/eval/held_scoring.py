@@ -18,9 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-import numpy as np
-
 import ts_engine as ts
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 
 SCORING_CARDS = [c for c in range(1, 111) if ts.CardData.get_card_info(c)["is_scoring"]]
 
@@ -37,16 +36,11 @@ ANY_HAND = HANDS["US"] + HANDS["USSR"]
 
 def measure(model: Any, num_games: int = 512, temperature: float = 1.0,
             max_iters: int = 20_000) -> Dict[str, Any]:
-    """Play out games, and for each held-scoring ending record what was stranded."""
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
+    """Play out games, and for each held-scoring ending record what was stranded. The model plays
+    in its own observation feature set and the E4 action view (load with merged_ok=False)."""
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=313_000)
+    sampler = Sampler(model, temperature, 313_000)
+    env = make_env(num_games, 313_000, model_view(model, False))
     obs, masks, _ = env.reset_all()
     finished = [False] * num_games
 
@@ -62,11 +56,7 @@ def measure(model: Any, num_games: int = 512, temperature: float = 1.0,
     for it in range(max_iters):
         if all(finished):
             break
-        with torch.no_grad():
-            acts, *_ = model.sample_action(
-                torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device),
-                torch.from_numpy(np.asarray(masks)).to(device), temperature=temperature)
-        a = acts.cpu().numpy().astype(np.int64)
+        a = sampler(obs, masks)
 
         if it % sample_every == 0:
             for i in range(num_games):
@@ -112,6 +102,7 @@ def measure(model: Any, num_games: int = 512, temperature: float = 1.0,
                     if st.get_card_location(c) in HANDS[side]:
                         stranded[c] += 1
 
+    check_finished(finished, max_iters, "held_scoring.measure")
     total_exposure = sum(held_exposure.values()) or 1
     total_stranded = sum(stranded.values()) or 1
     rows: List[Dict[str, Any]] = []

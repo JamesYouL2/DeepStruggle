@@ -56,6 +56,7 @@ import numpy as np
 import ts_engine as ts
 
 from ai.eval.blunders import Blunder, BlunderCounts, _name, defcon_suicide_cards
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 from ai.eval.positions import legal_play_modes, step_to_play_mode
 
 UN_INTERVENTION = 32
@@ -157,16 +158,11 @@ def measure_sequencing(model: Any, num_games: int = 500, base_seed: int = 830_00
     Batched for the same reason `measure_blunders_batched` is: the per-decision inspection is
     cheap and the forward pass is not.
     """
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
     was_training = model.training
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=base_seed)
+    # The model's own observation feature set; E4 action view (load with merged_ok=False).
+    sampler = Sampler(model, temperature, base_seed)
+    env = make_env(num_games, base_seed, model_view(model, False))
     obs, masks, _ = env.reset_all()
 
     counts = new_counts()
@@ -180,11 +176,7 @@ def measure_sequencing(model: Any, num_games: int = 500, base_seed: int = 830_00
         for _ in range(max_iters):
             if all(done):
                 break
-            obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-            with torch.no_grad():
-                actions, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
-            acts = actions.cpu().numpy().astype(np.int64)
+            acts = sampler(obs, masks)
 
             for i in range(num_games):
                 if done[i]:
@@ -209,7 +201,13 @@ def measure_sequencing(model: Any, num_games: int = 500, base_seed: int = 830_00
                 elif int(ctx.pending_op_card) == 0:
                     pre_play[i] = (state.clone(), int(state.turn), player)
 
-            obs, masks, *_ = env.step(acts)
+            # The env auto-resets, so a finished game is never seen terminal above: one episode
+            # per env ends where step() reports it done (the loop otherwise ran to max_iters).
+            obs, masks, _, dones, _ = env.step(acts)
+            for i, d in enumerate(dones):
+                if d:
+                    done[i] = True
+        check_finished(done, max_iters, "measure_sequencing")
     finally:
         if was_training:
             model.train()

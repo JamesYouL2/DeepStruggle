@@ -29,6 +29,10 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 
 import ts_engine as ts
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
+from ai.eval.positions import PositionBuilder
+from ai.models.coldwar_net_v2 import ColdWarNetV2
+from bindings.ts_env import observe
 
 MODES = ("EVENT", "OPS", "SPACE", "PASS")
 
@@ -82,13 +86,12 @@ def _js(p: np.ndarray, q: np.ndarray) -> float:
 
 
 def collision_groups() -> List[List[int]]:
-    """Cards sharing one feature vector, so only identity can separate their mode choice."""
-    from ai.eval.positions import PositionBuilder
-    from ai.models.coldwar_net_v2 import ColdWarNetV2
-
+    """Cards sharing one feature vector, so only identity can separate them (their mode choice
+    here; which one is held in `state_readout`). Read from the base layout's card rows: the
+    static card features no observation feature block changes."""
     st = PositionBuilder(hand=tuple(range(1, 111)), side=ts.Player.USSR,
                          defcon=3, turn=5).build()
-    o = np.asarray(ts.extract_observation(st, ts.Player.USSR), dtype=np.float32)
+    o = observe(st, ts.Player.USSR, 0)
     off, cf = ColdWarNetV2.BOARD_FEATURES * 84, ColdWarNetV2.CARD_FEATURES
     groups: Dict[Any, List[int]] = collections.defaultdict(list)
     for cid in range(1, 111):
@@ -116,17 +119,12 @@ def within_group_divergence(pm: PlayModes, min_plays: int = 20) -> Tuple[float, 
 
 def measure_play_modes(model: Any, num_games: int = 400, base_seed: int = 404_000,
                        temperature: float = 0.1, max_iters: int = 20_000) -> PlayModes:
-    """Count how each card is spent, by the side spending it."""
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
+    """Count how each card is spent, by the side spending it. The model plays in its own
+    observation feature set and the E4 action view (load with merged_ok=False)."""
     was_training = model.training
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=base_seed)
+    sampler = Sampler(model, temperature, base_seed)
+    env = make_env(num_games, base_seed, model_view(model, False))
     obs, masks, _ = env.reset_all()
     out = PlayModes()
     pending: List[Dict[Any, int]] = [dict() for _ in range(num_games)]
@@ -136,11 +134,7 @@ def measure_play_modes(model: Any, num_games: int = 400, base_seed: int = 404_00
         for _ in range(max_iters):
             if all(finished):
                 break
-            with torch.no_grad():
-                acts, *_ = model.sample_action(
-                    torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device),
-                    torch.from_numpy(np.asarray(masks)).to(device), temperature=temperature)
-            a = acts.cpu().numpy().astype(np.int64)
+            a = sampler(obs, masks)
 
             for i in range(num_games):
                 if finished[i]:
@@ -168,6 +162,7 @@ def measure_play_modes(model: Any, num_games: int = 400, base_seed: int = 404_00
                 if r and not finished[i]:
                     finished[i] = True
                     out.games += 1
+        check_finished(finished, max_iters, "measure_play_modes")
     finally:
         if was_training:
             model.train()

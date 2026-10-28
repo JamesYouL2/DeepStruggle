@@ -41,6 +41,7 @@ import numpy as np
 
 import ts_engine as ts
 
+from ai.eval.playout import Sampler, check_finished, make_env, model_view
 from ai.eval.blunders import (DUCK_AND_COVER, FIVE_YEAR_PLAN, KAL_007, OLYMPIC_GAMES,
                               WE_WILL_BURY_YOU, _play_mode, defcon_suicide_cards, hand_of)
 from ai.stats import wilson_interval
@@ -198,16 +199,11 @@ def measure_defcon_endings(model: Any, num_games: int = 500, base_seed: int = 61
     against the logs before trusting anything built on this: at 0.1 the probe reproduces them
     (33.9% total, 9.1% self) and at 1.0 it does not.
     """
-    import torch
-
-    from bindings.ts_env import TsVectorizedEnv, check_obs_width
-
-    check_obs_width(model)
-    device = next(model.parameters()).device
     was_training = model.training
     model.eval()
-
-    env = TsVectorizedEnv(num_envs=num_games, base_seed=base_seed)
+    # The model's own observation feature set; E4 action view (load with merged_ok=False).
+    sampler = Sampler(model, temperature, base_seed)
+    env = make_env(num_games, base_seed, model_view(model, False))
     obs, masks, _ = env.reset_all()
     out = DefconEndings()
 
@@ -228,11 +224,7 @@ def measure_defcon_endings(model: Any, num_games: int = 500, base_seed: int = 61
         for _ in range(max_iters):
             if all(finished):
                 break
-            obs_t = torch.from_numpy(np.asarray(obs, dtype=np.float32)).to(device)
-            mask_t = torch.from_numpy(np.asarray(masks)).to(device)
-            with torch.no_grad():
-                actions, *_ = model.sample_action(obs_t, mask_t, temperature=temperature)
-            acts = actions.cpu().numpy().astype(np.int64)
+            acts = sampler(obs, masks)
 
             for i in range(num_games):
                 if finished[i]:
@@ -302,6 +294,7 @@ def measure_defcon_endings(model: Any, num_games: int = 500, base_seed: int = 61
                     continue
                 out.in_action_round += 1
                 classify_ending(loser, reason == "defcon1_provoked", lp, coup_flag[i], out)
+        check_finished(finished, max_iters, "measure_defcon_endings")
     finally:
         if was_training:
             model.train()
