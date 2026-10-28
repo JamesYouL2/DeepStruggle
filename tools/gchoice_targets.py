@@ -53,6 +53,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
+import torch
+
+import ts_engine as ts
+from tools.lib.engine_fingerprint import require_fresh
+from tools.lib.jsonl import read_jsonl
+from tools.lib.player_agent import NeuralAgent
 
 FORMS = ("departures", "gated", "consensus", "soft", "own")
 
@@ -112,13 +118,6 @@ def target(rec: Dict[str, Any], form: str, budget: str, min_margin: float,
     return {"a": [c], "v": [1.0]}
 
 
-def _read_games(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
-    for p in paths:
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            for line in f:
-                yield json.loads(line)
-
-
 def _source_meta(paths: Sequence[str]) -> List[Dict[str, Any]]:
     out = []
     for p in paths:
@@ -136,7 +135,7 @@ def arm(inputs: Sequence[str], form: str, budget: str, min_margin: float, out: s
     counts = {"games": 0, "searched": 0, "departures": 0, "targeted": 0}
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     with gzip.open(out, "wt", encoding="utf-8") as f:
-        for game in _read_games(inputs):
+        for game in read_jsonl(inputs):
             counts["games"] += 1
             for a in game["actions"]:
                 rec = a.pop("gchoice", None)
@@ -176,8 +175,7 @@ class SearchedRecord:
 
 def replay(paths: Sequence[str]) -> Iterator[SearchedRecord]:
     """Every searched record of the games, replayed through the engine as `WarmupDataset.stream_policy_transitions` does."""
-    import ts_engine as ts
-    for game in _read_games(paths):
+    for game in read_jsonl(paths):
         st = ts.GameState()
         ts.Engine.init_game(st, game["seed"])
         for a in game["actions"]:
@@ -199,7 +197,6 @@ def replay(paths: Sequence[str]) -> Iterator[SearchedRecord]:
 
 
 def _policies(model: Any, obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
-    import torch
     with torch.no_grad():
         lg, _, _ = model(torch.from_numpy(obs).float(), torch.from_numpy(masks))
     lg = lg.float().numpy()
@@ -215,7 +212,6 @@ def _entropy(p: np.ndarray) -> np.ndarray:
 def check(inputs: Sequence[str], base: str, model: str, budget: str,
           batch: int = 512) -> Dict[str, Any]:
     """Where did `model` move against `base` on the held-out searched positions?"""
-    from tools.lib.player_agent import NeuralAgent
     nb = NeuralAgent.from_checkpoint(base, device="cpu").model.eval()
     nm = NeuralAgent.from_checkpoint(model, device="cpu").model.eval()
     b = str(budget)
@@ -321,6 +317,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps(arm(args.input, args.form, args.budget, args.min_margin, args.out,
                              args.agree_with, args.tau), indent=1))
         return 0
+    require_fresh()     # check replays the games through the engine; arm only rewrites files
     res = check(args.input, args.base, args.model, args.budget)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(res, f, indent=1)
