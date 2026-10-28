@@ -942,7 +942,7 @@ modules stay importable without torch):
 - `player_agent.py`: `load_agent` and policy wrappers, including `OnnxAgent`.
 - `player_spec.py`: a player as a network plus a typed inference spec, its canonical id and its `load_agent` string; search defaults live here.
 - `leaderboard.py`: the leaderboard's records, validation and two-stage fit (stdlib only).
-- `batch_tournament.py`: the C++ batch tournament runner and Bradley-Terry MLE; plays any subset of a matchup's pairs and merges parts.
+- `batch_tournament.py`: the C++ batch tournament runner and Bradley-Terry MLE (`compute_mle_elo`, the leaderboard's Newton fit with seats pooled, iterated to convergence); plays any subset of a matchup's pairs and merges parts. A game still running at `max_steps` raises (a stuck agent is a bug), it is never counted as a draw.
 - `parallel_tournament.py`: shards a tournament over worker processes.
 - `game_ending.py`: the game-ending classifier (`classify_game_ending_reason`, the engine's `game_ending_reason`).
 - `self_play.py`: single-game runner and the one writer of `.tslog.json` replays.

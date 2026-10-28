@@ -14,6 +14,7 @@ import torch
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
 from tools.lib.game_step import IllegalActionError
+from tools.lib.leaderboard import _Binomial, _newton
 from tools.lib.openings import ScriptedSetupOverride
 from tools.lib.scripted_rules import SCRIPTS
 from bindings.ts_env import agent_view
@@ -24,14 +25,19 @@ from ai.search.turn_pricing import Candidate, price, priceable
 from tools.lib.game_ending import classify_game_ending_reason
 
 
+#: The scoring cards' ids, from the engine's card table rather than a hand-kept list (which had
+#: listed 39, Arms Race, and missed 79, Africa Scoring).
+SCORING_CARD_IDS: frozenset[int] = frozenset(
+    c for c in range(1, 111) if bool(ts.CardData.get_card_info(c)["is_scoring"]))
+
+
 def categorize_flat_action_detailed(action_idx: int) -> str:
     """Categorizes a flat action into human-readable semantic categories."""
     if action_idx == ActionEncoder.CONFIRM_DONE_INDEX:
         return "CONFIRM_DONE / PASS"
     elif action_idx < 110:
         card_id = action_idx + 1
-        scoring_ids = {1, 2, 3, 37, 38, 39, 81}
-        card_type = "Scoring Card" if card_id in scoring_ids else "Normal Card"
+        card_type = "Scoring Card" if card_id in SCORING_CARD_IDS else "Normal Card"
         return f"SELECT_CARD ({card_type})"
     elif action_idx < 114:
         modes = ["EVENT", "OPS", "SPACE", "PASS"]
@@ -494,6 +500,17 @@ class _Chunking:
                 + (full_half if second_half else 0) + 1)
 
 
+def _raise_unfinished(active: npt.NDArray[np.bool_], steps: int, max_steps: int, what: str) -> None:
+    """Called before each step's decisions, once the step's finished games are counted: a game still
+    running when `max_steps` steps have been played is a stuck agent or engine, not a draw. Counting
+    it as one (the old "Early Termination", utility 0) quietly moved win rates. Raise instead."""
+    if steps >= max_steps and np.any(active):
+        raise RuntimeError(
+            f"{int(np.count_nonzero(active))} game(s) of {what} still running after {steps} steps "
+            f"(max_steps={max_steps}): an agent or the engine is stuck, or max_steps is too low for "
+            f"this setting (auto_advance off needs more). Not counted as draws.")
+
+
 def _agent_temperature(agent: PlayerAgent, temperature: float,
                        deterministic: Optional[bool]) -> Tuple[float, bool]:
     """(temperature, greedy) for one agent. An agent may pin its own temperature
@@ -642,7 +659,7 @@ class BatchMatchRunner:
             chunk_us_total = np.zeros(cur_games, dtype=np.int32)
             chunk_us_single = np.zeros(cur_games, dtype=np.int32)
 
-            while np.any(active) and steps < max_steps:
+            while np.any(active):
                 obs = runner.get_observations()
                 masks = runner.get_action_masks()
                 d_players = np.array(runner.get_decision_players())
@@ -664,6 +681,7 @@ class BatchMatchRunner:
 
                 if not np.any(active):
                     break
+                _raise_unfinished(active, steps, max_steps, f"{agent_a.name} vs {agent_b.name}")
 
                 if track_choices:
                     active_indices = np.where(active)[0]
@@ -742,7 +760,7 @@ class BatchMatchRunner:
                 term_util = chunk_utils[idx]
                 vp = chunk_vps[idx]
                 turn = chunk_turns[idx]
-                reason = chunk_causes[idx] or "Early Termination"
+                reason = chunk_causes[idx]
 
                 tally.record(float(term_util), a_is_ussr, reason)
                 all_steps.append(chunk_steps[idx])
@@ -785,7 +803,7 @@ class BatchMatchRunner:
                             "turn": int(chunk_turns[idx]),
                             "ply": int(chunk_plies[idx]),
                             "steps": int(chunk_steps[idx]),
-                            "cause": chunk_causes[idx] or "Early Termination",
+                            "cause": chunk_causes[idx],
                             "ussr_total_micro_actions": m_ussr_tot,
                             "ussr_single_choice_micro_actions": m_ussr_sgl,
                             "ussr_single_choice_pct": round(m_ussr_sgl / max(1, m_ussr_tot) * 100.0, 2),
@@ -892,7 +910,7 @@ class BatchMatchRunner:
         causes = [""] * n
         t0 = time.time()
         steps = 0
-        while np.any(active) and steps < max_steps:
+        while np.any(active):
             obs = runner.get_observations()
             masks = runner.get_action_masks()
             d_players = np.array(runner.get_decision_players())
@@ -911,6 +929,7 @@ class BatchMatchRunner:
             active = active & (~terms)
             if not np.any(active):
                 break
+            _raise_unfinished(active, steps, max_steps, ", ".join(f"{a.name} vs {b.name}" for a, b in pairs))
 
             actor = np.where(d_players == -1, ussr_agent, us_agent)
             actions = np.zeros(n, dtype=np.int32)
@@ -969,7 +988,7 @@ class BatchMatchRunner:
             v_margin = []
             for idx in range(off, off + 2 * gps):
                 ussr_is_a = bool(a_is_ussr[idx])
-                tally.record(float(utils[idx]), ussr_is_a, causes[idx] or "Early Termination")
+                tally.record(float(utils[idx]), ussr_is_a, causes[idx])
                 v_margin.append(-vps[idx] if ussr_is_a else vps[idx])
             sl = slice(off, off + 2 * gps)
             out.append(_matchup_result(
@@ -987,38 +1006,32 @@ def compute_mle_elo(
     total_matrix: np.ndarray,
     anchor_model: str = "HeuristicBot",
     anchor_elo: float = 1500.0,
-    iterations: int = 1000,
-    lr: float = 0.01,
 ) -> Dict[str, float]:
-    """Computes Bradley-Terry Maximum Likelihood Elo ratings anchored to a reference model."""
-    M = len(model_names)
-    ratings = np.ones(M, dtype=np.float64) * 1500.0
+    """Bradley-Terry maximum-likelihood Elo ratings, `anchor_model` held at `anchor_elo`.
 
-    for _ in range(iterations):
-        grad = np.zeros(M, dtype=np.float64)
-        for i in range(M):
-            for j in range(M):
-                if i == j or total_matrix[i, j] == 0:
-                    continue
-                w_ij = win_matrix[i, j]
-                w_ji = win_matrix[j, i]
-                d_ij = total_matrix[i, j] - w_ij - w_ji
-                # Win = 1.0, Draw = 0.5
-                score_i = w_ij + 0.5 * d_ij
-                n_ij = total_matrix[i, j]
-
-                gamma_i = np.exp(ratings[i] / 400.0 * np.log(10))
-                gamma_j = np.exp(ratings[j] / 400.0 * np.log(10))
-                e_ij = gamma_i / (gamma_i + gamma_j)
-
-                grad[i] += (score_i - n_ij * e_ij)
-
-        # Update unanchored ratings
-        ratings += lr * grad
-
-        # Re-anchor to baseline
-        if anchor_model in model_names:
-            anchor_idx = model_names.index(anchor_model)
-            ratings += (anchor_elo - ratings[anchor_idx])
-
-    return {model_names[i]: float(ratings[i]) for i in range(M)}
+    `win_matrix[i, j]` is i's wins over j and `total_matrix[i, j]` (symmetric) their games; a game
+    neither won is a draw, half a win. The fit is the leaderboard's (`tools.lib.leaderboard._newton`:
+    Newton steps on the binomial log-likelihood to convergence, with the leaderboard's weak prior of
+    sd PRIOR_SD centred on the anchor's rating), seats pooled. It replaced 1,000 fixed gradient steps
+    of size 0.01, which had not converged on a small tournament -- a few hundred games move the
+    ratings by only ~0.01 x games per step -- so the reported gaps depended on the step budget. The
+    prior keeps an unbeaten or winless entrant finite instead of drifting with the iteration count.
+    Without the anchor among the entrants every rating is free and the prior alone sets the level.
+    """
+    names = [str(n) for n in model_names]
+    if len(set(names)) != len(names):
+        raise ValueError(f"duplicate entrant names: {names}")
+    obs: List[_Binomial] = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            n_ij = int(total_matrix[i, j])
+            if n_ij == 0:
+                continue
+            w_ij, w_ji = float(win_matrix[i, j]), float(win_matrix[j, i])
+            if w_ij + w_ji > n_ij:
+                raise ValueError(f"{names[i]} vs {names[j]}: {w_ij + w_ji:g} wins in {n_ij} games")
+            obs.append(_Binomial(names[i], names[j], 1, w_ij + 0.5 * (n_ij - w_ij - w_ji), n_ij))
+    fixed = {anchor_model: float(anchor_elo)} if anchor_model in names else {}
+    free = [n for n in names if n not in fixed]
+    fit = _newton(free, fixed, obs, fit_seat=False, seat=0.0, prior_mean=float(anchor_elo))
+    return {n: float(fixed[n]) if n in fixed else float(fit.ratings[n]) for n in names}
