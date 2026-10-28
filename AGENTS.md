@@ -171,7 +171,10 @@ top of it.
 `tools/scripts/check_engine_fresh.sh` (invariant 13) hashes the `engine/` and `bindings/` sources
 and compares them with the stamp written beside the built module: exit 0 when they match, rebuild
 and exit **1** when not, so a chained command stops. It hashes content rather than comparing mtimes
-because a branch checkout rewrites mtimes without changing anything.
+because a branch checkout rewrites mtimes without changing anything. The CLIs and analysis scripts
+that produce numbers from the engine also call `tools.lib.engine_fingerprint.require_fresh()` after
+parsing their arguments, so a stale or unstamped build exits non-zero even when launched without
+the script.
 
 ### 3.2 Training
 

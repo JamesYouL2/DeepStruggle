@@ -249,7 +249,10 @@ metadata. Greedy, it plays its checkpoint's games; sampled, only in distribution
 
 `--part I/N --output-part part.json` plays every N-th shard; `--pool-parts part*.json` checks the
 parts belong together and cover each shard once, merges them, and writes the report. Every part
-needs the same entrants, `--games-per-side` and `--shard-pairs`.
+needs the same entrants, `--games-per-side` and `--shard-pairs`. Each part records the engine build
+that played it (its source fingerprint), and `--pool-parts` refuses parts from different builds.
+Shard seeds are a collision-free mixed radix of the entrants and the shard's first pair, so
+tournaments sharded before 2026-10-28 played different games at the same `--base-seed`.
 
 ```bash
 tools/tournament.py --models heuristic_mcts <model.onnx> --games-per-side 200 --device cpu \
@@ -292,7 +295,7 @@ among themselves (anchor pinned), then everyone else against them held fixed. Ga
 player never move a main rating.
 
 ```bash
-PYTHONPATH=. python tools/leaderboard.py add-network <name> <file.pt> --description "..."
+PYTHONPATH=. python tools/leaderboard.py add-network <name> <file.pt> --description "..."   # --replace refuses new weights for a network with recorded pairings unless --rewrite-history
 PYTHONPATH=. python tools/leaderboard.py add-player '<name>~gumbel(sims=256,k=8)'   # --report, --replace
 tools/scripts/check_engine_fresh.sh && PYTHONPATH=.:build/release python tools/leaderboard_play.py \
   --epoch E8 --players '<player-id>' --games-per-side 1000    # --opponents ..., --round-robin, --base-seed
@@ -341,6 +344,8 @@ registered (`add-player <id> --replace --report <path>`).
 
 `mihaild/deepstruggle` mirrors `data/checkpoints/`: a run directory goes up whole, an SWA or soup
 as `_models/<name>.pt`. `resume_*.pt`, `pool_*.pt`, `run.pid` and `snapshot_final.pt` stay local.
+An existing `.onnx` is reused only if its metadata names the `.pt`'s sha256 and this engine's
+fingerprint; otherwise it is re-exported.
 `.onnx` files go up only for the final plain snapshot, the final SWA, every file in
 `leaderboard/networks.json`, and every file given to `files`. After an upload, registered networks
 get their `hf` path -- commit that change. Needs a write token (`hf auth login` or `HF_TOKEN`).
@@ -484,9 +489,15 @@ A *syntax* prior: it can only distil the policy that produced it, biases include
 
 ## 5. `tools/inspect_checkpoints.py` (Checkpoint Registry Inspector)
 
-Lists every model under `data/checkpoints/` with size, date and the architecture detected from its
-weights. A retired architecture is reported as such and refused by
-`tools.lib.player_agent.reject_retired_architecture` rather than partly loaded.
+Lists every `.pt` under a directory (default: the shared data tree's `checkpoints/`) with size, date
+and the architecture the evaluation loader (`tools.lib.player_agent.NeuralAgent`) builds from its
+weights; each is loaded in full on the CPU, so pass a run directory rather than the whole tree.
+`resume_*.pt` are listed as training state. A file that fails to load (a retired architecture
+included) is listed with its error and the command exits 1.
+
+```bash
+PYTHONPATH=.:build/release python tools/inspect_checkpoints.py [directory]
+```
 
 ---
 
@@ -915,11 +926,11 @@ tools/scripts/check_engine_fresh.sh && TRITON_CACHE_DIR=.triton_cache PYTHONPATH
 | `tools/generate_policy_targets.py` | two seat specialists play each other; records each one's policy as a distillation target |
 | `tools/fetch_acts_corpus.py` | crawls ACTS tournament game journals into `data/` |
 | `tools/scrape_card_strategies.py` | builds Markdown card-strategy guides from twilightstrategy.com into `docs/` (git-ignored for their licence) |
-| `tools/scripts/launch_flags.py` | a run's effective flags, and `--diff` against another run |
-| `tools/scripts/watch_run.py` | the monitor for a launched run (progress, stalls, exit) |
+| `tools/scripts/launch_flags.py` | a run's effective flags and what its metadata does not record (exit 2 on a ladder_config key it cannot map), and `--diff` against another run |
+| `tools/scripts/watch_run.py` | the monitor for a launched run (progress, stalls, exit); a stale run.pid from a previous leg gets `--grace` to be replaced |
 | `tools/scripts/average_weights.py` | uniform weight averages: a run's late snapshots give its **SWA**, branches of one state a **model soup** |
-| `tools/scripts/checkpoint_report.py` | a network's behaviour report (`research/log/per_checkpoint/`), with its searched-leak census (`--leak`) |
-| `tools/scripts/check_engine_fresh.sh` | exits 0 if the built engine matches the sources, else rebuilds and exits 1 |
+| `tools/scripts/checkpoint_report.py` | a network's behaviour report (`research/log/per_checkpoint/`), with its searched-leak census (`--leak`); its records carry the network's sha256, the engine fingerprint and the player, and `--load` refuses records that differ or carry none |
+| `tools/scripts/check_engine_fresh.sh` | exits 0 if the built engine matches the sources, else rebuilds and exits 1. Every CLI that produces numbers from the engine also calls `tools.lib.engine_fingerprint.require_fresh()` and exits with the reason on a stale or unstamped build |
 | `tools/scripts/check_doc_links.py` | every Markdown link and anchor, resolved the way Obsidian does |
 
 Most other `tools/scripts/*.py` are single-experiment probes; each one's docstring names the log
@@ -934,8 +945,10 @@ modules stay importable without torch):
 - `parallel_tournament.py`: shards a tournament over worker processes.
 - `tournament_evaluator.py`: loss-cause classifier (`classify_game_ending_reason`).
 - `self_play.py`: single-game runner and the one writer of `.tslog.json` replays.
-- `scoring_formatter.py`: regional scoring formatter.
-- `checkpoint_utils.py`: architecture detection and checkpoint discovery.
+- `scoring_formatter.py`: a scoring card's breakdown of a GameState, the numbers from `ts.Scoring`.
+- `checkpoint_utils.py`: checkpoint discovery (no loading).
+- `engine_fingerprint.py`: the engine source fingerprint; `require_fresh()`, the stale-engine guard every number-producing CLI calls.
+- `own_card_choices.py`: what a side does with each of its own cards (shared by `checkpoint_report.py` and `card_event_trajectory.py`).
 - `corpus_paths.py`, `data_root.py`: where the corpus and the shared data tree live; content deduplication.
 - `corpus_driver.py`: feeds self-play or the converted corpus one decision at a time to a tracker; `pos=` tokens; the E4-view check.
 - `jsonl.py`: JSON-lines rows, plain or gzipped, and file SHA-256 -- the one reader/writer of bank files.
