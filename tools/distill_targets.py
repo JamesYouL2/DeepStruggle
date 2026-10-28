@@ -67,7 +67,7 @@ import ts_engine as ts  # noqa: E402
 from ai.search.pimcts import acting_player  # noqa: E402
 from ai.search.rollout_root import RolloutConfig, RolloutTeacher, rollout_spec_config, rollout_spec_leaf  # noqa: E402
 from bindings.ts_env import model_obs_features  # noqa: E402
-from tools.lib.engine_fingerprint import check_raw_states, fingerprint  # noqa: E402
+from tools.lib.engine_fingerprint import check_raw_states, fingerprint, require_fresh  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
 
 WIDTH = 16
@@ -352,6 +352,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--device", default=None)
     ap.add_argument("--output", required=True)
     a = ap.parse_args(argv)
+    require_fresh()
     teachers = [parse_teacher(t) for t in a.teacher]
     worlds = a.worlds if a.worlds is not None else ([] if teachers or a.states else [16, 64, 128])
     teachers = [(str(w), f"root:4:{w}:4:z2:earlier:own:keyed") for w in worlds] + teachers

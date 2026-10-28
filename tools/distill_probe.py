@@ -44,7 +44,8 @@ if _ROOT not in sys.path:
 
 from ai.training.policy_fit import masks_of  # noqa: E402
 from ai.training.value_fit import Codes  # noqa: E402
-from tools.lib.engine_fingerprint import check_raw_states  # noqa: E402
+import ts_engine  # noqa: E402, F401 -- the build require_fresh() checks
+from tools.lib.engine_fingerprint import check_raw_states, require_fresh  # noqa: E402
 from tools.lib.player_agent import NeuralAgent  # noqa: E402
 
 
@@ -212,6 +213,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         p.add_argument("--device", default=None)
         p.add_argument("--json", default=None, help="also write the readings here")
     a = ap.parse_args(argv)
+    require_fresh()
     d = load(a.dataset)
     dev = torch.device(a.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     result: Dict[str, Any] = {"dataset": a.dataset, "command": a.cmd}

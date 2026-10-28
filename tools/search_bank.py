@@ -104,6 +104,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 import numpy as np
 import torch
 import ts_engine as ts
+from tools.lib.engine_fingerprint import require_fresh
 
 from ai.eval.paired_playouts import compare
 from ai.eval.subs_followup import BRANCHES, COUNTS, NUCLEAR_SUBS, subs_branches
@@ -113,6 +114,7 @@ from tools.lib.player_agent import OnnxAgent, load_agent
 from tools.lib.position_bank import position_seed
 from tools.scripts.bank_clarity import value_moves_per_world
 from tools.scripts.event_play_census import load_holding
+from tools.lib.jsonl import sha256_file
 
 SCHEMA = 1
 #: label -> (simulations, k): the configurations of research/log/E7_gumbel_headroom.md
@@ -219,14 +221,6 @@ def annotate_states(states: Sequence[ts.GameState], logits_fn: Any, features: in
     return rows
 
 
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def annotate(a: argparse.Namespace) -> int:
 
     torch.set_num_threads(max(1, int(os.environ.get("OMP_NUM_THREADS", os.cpu_count() or 1))))
@@ -241,7 +235,7 @@ def annotate(a: argparse.Namespace) -> int:
         done = {json.loads(line)["game"] for line in open(ledger)}
     todo = [g for g in mine if g not in done]
     budgets = parse_budgets(a.budgets)
-    json.dump({"schema": SCHEMA, "model": os.path.basename(a.model), "model_sha256": _sha256(a.model),
+    json.dump({"schema": SCHEMA, "model": os.path.basename(a.model), "model_sha256": sha256_file(a.model),
                "temperature": None if a.player else a.temperature, "player": a.player,
                "sample": a.sample, "seed": a.seed, "games": a.games,
                "part": a.part, "budgets": {lb: {"simulations": s, "k": kk} for lb, s, kk in budgets}},
@@ -407,7 +401,7 @@ def reference(a: argparse.Namespace) -> int:
             done = {json.loads(line)["id"] for line in f}
     todo = [r for r in rows if r["id"] not in done]
     json.dump({"schema": SCHEMA, "stage": "reference", "model": os.path.basename(a.model),
-               "model_sha256": _sha256(a.model), "ref": {"simulations": a.ref_sims, "k": a.ref_k,
+               "model_sha256": sha256_file(a.model), "ref": {"simulations": a.ref_sims, "k": a.ref_k,
                                                           "seeds": a.ref_seeds},
                "values": {"simulations": a.value_sims, "worlds": a.worlds, "top": a.top},
                "critic": {"simulations": a.critic_sims}}, open(a.out + ".meta.json", "w"), indent=1)
@@ -1779,6 +1773,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help="decisions with 2+ legal moves in a raw game (annotate keeps 1 in --sample)")
     rp.add_argument("--out", required=True, help="Markdown; the numbers go to <out>.json")
     a = ap.parse_args(argv)
+    require_fresh()
     if a.cmd == "playout-select":
         rows = playout_select(read_rows([a.bank]), read_rows(a.reference), a.rest, a.control, a.seed)
         with gzip.open(a.out, "wt") as f:

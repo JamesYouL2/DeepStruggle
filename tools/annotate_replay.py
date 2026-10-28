@@ -38,7 +38,7 @@ from ai.eval.policy_readout import (
 from ai.eval.replay_critic import load_actions, verify
 from bindings.action_encoder import ActionEncoder
 from bindings.ts_env import check_obs_width
-from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint
+from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint, require_fresh
 from tools.lib.game_step import drain_chance
 from tools.lib.player_agent import NeuralAgent, load_agent
 from tools.lib.self_play import checkpoint_digest
@@ -202,6 +202,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Print the per-step table")
     parser.add_argument("--print-rows", type=int, default=60)
     args = parser.parse_args(argv)
+    require_fresh()
 
     agent = load_agent(args.model, device=args.device)
     if not isinstance(agent, NeuralAgent):

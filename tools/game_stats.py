@@ -28,7 +28,7 @@ from typing import Dict, List, Optional, Sequence, cast
 
 import ts_engine as ts
 from bindings.action_encoder import ActionEncoder
-from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint
+from tools.lib.engine_fingerprint import fingerprint as engine_fingerprint, require_fresh
 from tools.lib.game_stats import (BAD_LOG, RatedGame, SubmissionDict, decode_log, fit_rating, load_export,
                                   outcome, play_step, player_key, rated_game, start_state, summarize_submission,
                                   verify)
@@ -112,6 +112,7 @@ def _rebuild(sub: SubmissionDict) -> str:
 
 
 def cmd_verify(a: argparse.Namespace) -> int:
+    require_fresh()
     fp = engine_fingerprint()
     counts: Dict[str, int] = {}
     for sub in load_export(a.export):
@@ -128,6 +129,7 @@ def cmd_verify(a: argparse.Namespace) -> int:
 
 
 def cmd_rating(a: argparse.Namespace) -> int:
+    require_fresh()
     by_player: Dict[str, List[RatedGame]] = {}
     skipped: Dict[str, int] = {}
     # Every game that would count is re-driven on this build, whatever engine it names: the record's

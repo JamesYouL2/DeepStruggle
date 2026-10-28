@@ -26,7 +26,6 @@ rate. Gains are paired playout differences against the teacher network's move, i
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import math
@@ -37,22 +36,10 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 import ts_engine as ts
+from tools.lib.engine_fingerprint import require_fresh
 
 from tools.lib.corpus_driver import position_token
-
-
-def _read(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
-    for p in paths:
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            for line in f:
-                yield json.loads(line)
-
-
-def _write(path: str, rows: Sequence[Dict[str, Any]]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with gzip.open(path, "wt", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
+from tools.lib.jsonl import read_jsonl, write_jsonl
 
 
 def _keep(key: str, seed: int, p: float) -> bool:
@@ -65,7 +52,7 @@ def select(targets: Sequence[str], budget: str, departures: int, agreements: int
            out: str) -> int:
     counts = {"dep": 0, "agree": 0}
     games = 0
-    for g in _read(targets):
+    for g in read_jsonl(targets):
         games += 1
         for a in g["actions"]:
             rec = a.get("gchoice")
@@ -74,7 +61,7 @@ def select(targets: Sequence[str], budget: str, departures: int, agreements: int
     p = {"dep": min(1.0, departures / max(1, counts["dep"])),
          "agree": min(1.0, agreements / max(1, counts["agree"]))}
     rows: List[Dict[str, Any]] = []
-    for g in _read(targets):
+    for g in read_jsonl(targets):
         st = ts.GameState()
         ts.Engine.init_game(st, g["seed"])
         for idx, a in enumerate(g["actions"]):
@@ -99,7 +86,7 @@ def select(targets: Sequence[str], budget: str, departures: int, agreements: int
             while (not ts.Engine.is_terminal(st) and st.ctx().decision_player == ts.Player.NONE
                    and st.ctx().decision_type == ts.DecisionType.ROLL_DIE):
                 ts.Engine.step(st, ts.MicroAction(ts.DecisionType.ROLL_DIE, 0, 0, 0))
-    _write(out, rows)
+    write_jsonl(out, rows)
     srcs = [json.load(open(t + ".meta.json")) for t in targets if os.path.exists(t + ".meta.json")]
     searched = counts["dep"] + counts["agree"]
     subsample = float(srcs[0]["searcher"].get("subsample", 1.0)) if srcs else 1.0
@@ -265,9 +252,9 @@ def markdown(res: Dict[str, Any], judge: str) -> str:
 
 def report(bank_path: str, search_paths: Sequence[str], play_sets: Sequence[Tuple[str, Sequence[str]]],
            names: Dict[str, str], out: str) -> int:
-    bank = {str(r["id"]): r for r in _read([bank_path])}
+    bank = {str(r["id"]): r for r in read_jsonl([bank_path])}
     picks: Dict[str, Dict[str, int]] = {}
-    for r in _read(search_paths):
+    for r in read_jsonl(search_paths):
         cur = picks.setdefault(str(r["id"]), {})
         for n, ps in r["picks"].items():
             if ps:
@@ -275,7 +262,7 @@ def report(bank_path: str, search_paths: Sequence[str], play_sets: Sequence[Tupl
     results, md = {}, ["# Search-correction transfer", ""]
     for judge, paths in play_sets:
         diffs: Dict[str, Dict[int, Tuple[float, float]]] = {}
-        for r in _read(paths):
+        for r in read_jsonl(paths):
             diffs[str(r["id"])] = {int(a): (float(v[0]), float(v[1])) for a, v in r["diff_vs_raw"].items()}
         results[judge] = analyse(bank, picks, diffs, names)
         md.append(markdown(results[judge], judge))
@@ -307,6 +294,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--role", nargs="+", default=[], help="role=spec_name, e.g. teacher_search=soup_g256")
     r.add_argument("--out", required=True)
     a = ap.parse_args(argv)
+    require_fresh()
     if a.cmd == "select":
         return select(a.targets, a.budget, a.departures, a.agreements, a.seed, a.out)
     judges = a.judges or [f"judge {k + 1}" for k in range(len(a.playouts))]

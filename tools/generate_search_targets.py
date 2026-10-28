@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import json
 import os
 import subprocess
@@ -53,11 +52,13 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import numpy as np
 import torch
 import ts_engine as ts
+from tools.lib.engine_fingerprint import require_fresh
 
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from ai.search.rollout_root import RolloutConfig, RolloutRoot
 from tools.lib.data_root import data_path
 from tools.lib.player_agent import NeuralAgent
+from tools.lib.jsonl import sha256_file
 
 
 def _commit() -> str:
@@ -66,14 +67,6 @@ def _commit() -> str:
                                        stderr=subprocess.DEVNULL).strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
-
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _dirty() -> bool:
@@ -180,7 +173,7 @@ def generate(checkpoint: str, total_games: int, batch_size: int, sims: int,
                       "subsample": subsample, "search_pi_from": budgets[0]} if target == "gchoice" else
                      {"target": "rollout", "rollout_spec": rollout_spec, "node_filter": node_filter,
                       "subsample": subsample, "search_pi_from": "rollout"}),
-        "checkpoint_sha256": _sha256(checkpoint),
+        "checkpoint_sha256": sha256_file(checkpoint),
         "seed_offset": seed_offset,
         "acting_policy": "raw (search never acts)",
         "temperature": temperature,
@@ -354,6 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     a = build_parser().parse_args()
+    require_fresh()
     out = a.output_path or data_path("datasets", "x4a_search_targets.jsonl.gz")
     return generate(a.checkpoint, a.total_games, a.batch_size, a.sims, a.node_filter,
                     a.temperature, out, a.device, target=a.target, gumbel_sims=a.gumbel_sims,

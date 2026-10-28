@@ -11,13 +11,14 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 from typing import IO, Any, Dict, Iterator, Sequence, cast
 
 
 def _open(path: str, mode: str) -> IO[str]:
     if path.endswith(".gz"):
-        return cast(IO[str], gzip.open(path, mode + "t"))
-    return open(path, mode)
+        return cast(IO[str], gzip.open(path, mode + "t", encoding="utf-8"))
+    return open(path, mode, encoding="utf-8")
 
 
 def read_jsonl(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
@@ -30,6 +31,8 @@ def read_jsonl(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
 
 
 def write_jsonl(path: str, rows: Sequence[Dict[str, Any]]) -> None:
+    """Write `rows`, creating the file's directory if it is missing."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with _open(path, "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")

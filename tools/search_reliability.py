@@ -34,7 +34,6 @@ inclusion probability `pl_incl`); its model is the one to search with.
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import math
@@ -46,6 +45,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 import ts_engine as ts
+from tools.lib.engine_fingerprint import require_fresh
 
 from ai.eval.paired_playouts import compare, paired_diff
 from ai.search.batched_mcts import BatchedMCTS
@@ -54,37 +54,16 @@ from ai.search.rollout_root import RolloutRoot, rollout_spec_config
 from bindings.action_encoder import ActionEncoder
 from tools.lib.corpus_driver import load_policy, state_from_token
 from tools.lib.player_agent import NeuralAgent, search_spec_config
+from tools.lib.jsonl import read_jsonl, write_jsonl, sha256_file
 
 #: The search bank's annotate stage sampled one decision in 8 of 1,500 games, so its population
 #: weights sum to the decisions of 1,500 / 8 games: a weighted sum times this is per game.
 PER_GAME = 8.0 / 1500.0
 
 
-def _read(paths: Sequence[str]) -> Iterator[Dict[str, Any]]:
-    for p in paths:
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            for line in f:
-                yield json.loads(line)
-
-
-def _write(path: str, rows: Sequence[Dict[str, Any]]) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with gzip.open(path, "wt", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-
-
 def _part(rows: List[Dict[str, Any]], part: str) -> List[Dict[str, Any]]:
     k, n = (int(x) for x in part.split("/"))
     return [r for i, r in enumerate(sorted(rows, key=lambda r: str(r["id"]))) if i % n == k - 1]
-
-
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def parse_spec(text: str) -> Tuple[str, str]:
@@ -146,7 +125,7 @@ def chunk_seed(spec: str, seed: int, ids: Sequence[str]) -> int:
 
 def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, part: str,
            chunk: int, out: str, model2: Optional[str] = None) -> int:
-    rows = _part(list(_read([bank])), part)
+    rows = _part(list(read_jsonl([bank])), part)
     nets = {1: NeuralAgent.from_checkpoint(model, device="cpu").model.eval()}
     paths = {1: model}
     if model2:
@@ -196,11 +175,11 @@ def search(bank: str, model: str, specs: Sequence[Tuple[str, str]], seeds: int, 
                     res[str(r["id"])]["evals"][name].append(e)
         print(f"  {min(lo + chunk, len(rows))}/{len(rows)} positions | {time.time() - t0:.0f}s",
               file=sys.stderr, flush=True)
-    _write(out, list(res.values()))
+    write_jsonl(out, list(res.values()))
     meta = {"stage": "search", "bank": os.path.basename(bank), "model": os.path.basename(model),
-            "model_sha256": _sha256(model),
+            "model_sha256": sha256_file(model),
             "model2": os.path.basename(model2) if model2 else None,
-            "model2_sha256": _sha256(model2) if model2 else None, "specs": {n: f for n, f in specs},
+            "model2_sha256": sha256_file(model2) if model2 else None, "specs": {n: f for n, f in specs},
             "labels": {n: searchers[n][1] for n, _ in specs}, "seeds": seeds, "part": part,
             "positions": len(rows), "search_seconds": secs, "wall_s": round(time.time() - t0, 1)}
     with open(out + ".meta.json", "w", encoding="utf-8") as f:
@@ -216,10 +195,10 @@ def position_seed(rid: str, seed: int) -> int:
 def playouts(bank: str, search_paths: Sequence[str], model: str, pairs: int, seed: int, part: str,
              out: str) -> int:
     picks: Dict[str, Dict[str, Any]] = {}
-    for r in _read(search_paths):            # several search files: their searchers side by side
+    for r in read_jsonl(search_paths):            # several search files: their searchers side by side
         cur = picks.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "picks": {}})
         cur["picks"].update(r["picks"])
-    rows = [r for r in _part(list(_read([bank])), part) if str(r["id"]) in picks]
+    rows = [r for r in _part(list(read_jsonl([bank])), part) if str(r["id"]) in picks]
     logits_fn, _ = load_policy(model)
 
     def act(obs: np.ndarray, masks: np.ndarray) -> np.ndarray:
@@ -241,7 +220,7 @@ def playouts(bank: str, search_paths: Sequence[str], model: str, pairs: int, see
                     "score": {str(a): round(sum(v) / len(v), 5) for a, v in sc.items()},
                     "diff_vs_raw": {str(a): [round(x, 5) for x in paired_diff(v, sc[raw])]
                                     for a, v in sc.items() if a != raw}})
-    _write(out, res)
+    write_jsonl(out, res)
     with open(out + ".meta.json", "w", encoding="utf-8") as f:
         json.dump({"stage": "playouts", "model": os.path.basename(model), "pairs": pairs,
                    "seed": seed, "part": part, "positions": len(res), "continuation": "raw greedy",
@@ -344,18 +323,18 @@ def _table_rows(res: Dict[str, Any], names: Sequence[str]) -> List[str]:
 
 def report(bank: str, search_paths: Sequence[str], play_paths: Sequence[str], out: str,
            by_kind: bool = False) -> int:
-    bank_rows = {str(r["id"]): r for r in _read([bank])}
+    bank_rows = {str(r["id"]): r for r in read_jsonl([bank])}
     # Several runs merge by position: their searchers side by side, their playouts' moves pooled.
     # Valid because a position's pairs depend only on its id and the playout seed, so the raw move
     # scores the same in every run that shares the seed (checked below).
     search_rows: Dict[str, Dict[str, Any]] = {}
-    for r in _read(search_paths):
+    for r in read_jsonl(search_paths):
         cur = search_rows.setdefault(str(r["id"]), {"id": r["id"], "raw": r["raw"], "kind": r.get("kind", "?"),
                                                     "picks": {}, "evals": {}})
         cur["picks"].update(r["picks"])
         cur["evals"].update(r["evals"])
     play_rows: Dict[str, Dict[str, Any]] = {}
-    for r in _read(play_paths):
+    for r in read_jsonl(play_paths):
         cur = play_rows.get(str(r["id"]))
         if cur is None:
             play_rows[str(r["id"])] = {"id": r["id"], "pairs": r["pairs"], "score": dict(r["score"]),
@@ -461,6 +440,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     r.add_argument("--by-kind", action="store_true",
                    help="also the table on each decision kind's positions (placement is `target (influence)`)")
     a = ap.parse_args(argv)
+    require_fresh()
     if a.cmd == "search":
         return search(a.bank, a.model, a.spec, a.seeds, a.part, a.chunk, a.out, a.model2)
     if a.cmd == "playouts":
