@@ -39,6 +39,7 @@ import torch.nn.functional as F
 import ts_engine as ts
 from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
 from ai.training.generic_trainer import _resolve_run_dir
+from ai.training.npz_mmap import load_npz_mmap
 from ai.training.value_fit import Codes, _git
 from tools.lib.engine_fingerprint import check_raw_states
 
@@ -177,8 +178,7 @@ def run_policy_fit(cfg: PolicyFitConfig, run_name: Optional[str], description: O
 
     t0 = time.time()
     check_raw_states(cfg.dataset)
-    with np.load(cfg.dataset) as z:
-        d = {k: z[k] for k in z.files}
+    d = load_npz_mmap(cfg.dataset)          # memory-mapped: members are read as they are used
     w = cfg.target or str(cfg.worlds)
     if f"acts_{w}" not in d:
         names = sorted(k[5:] for k in d if k.startswith("acts_"))

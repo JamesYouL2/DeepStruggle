@@ -63,6 +63,7 @@ import torch.nn as nn
 
 from ai.models.ladder_net import create_ladder_net, ladder_config_from_state_dict
 from ai.training.generic_trainer import _resolve_run_dir
+from ai.training.npz_mmap import load_npz_mmap
 from ai.training.policy_fit import ACTIONS, POLICY_MODULES, masks_of
 from ai.training.value_fit import Codes, _git
 from tools.lib.engine_fingerprint import check_raw_states
@@ -156,8 +157,7 @@ def run_q_fit(cfg: QFitConfig, run_name: Optional[str], description: Optional[st
     t0 = time.time()
     meta_path = pathlib.Path(cfg.dataset + ".meta.json")
     check_raw_states(cfg.dataset)
-    with np.load(cfg.dataset) as z:
-        d = {k: z[k] for k in z.files}
+    d = load_npz_mmap(cfg.dataset)          # memory-mapped: members are read as they are used
     t = cfg.target
     if f"lead_{t}" not in d:
         names = sorted(k[5:] for k in d if k.startswith("lead_") and not k.startswith("lead_se"))

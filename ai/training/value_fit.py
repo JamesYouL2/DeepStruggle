@@ -35,6 +35,7 @@ import torch.nn.functional as F
 import ts_engine as ts
 from ai.models.ladder_net import LadderNet, create_ladder_net, ladder_config_from_state_dict
 from ai.training.generic_trainer import _resolve_run_dir
+from ai.training.npz_mmap import load_npz_mmap
 from tools.lib.engine_fingerprint import fingerprint
 
 #: Region order of the dataset's swing columns (tools/value_labels.REGIONS).
@@ -130,8 +131,8 @@ def _vp(model: LadderNet, h: torch.Tensor) -> torch.Tensor:
 
 
 def _load_split(path: pathlib.Path) -> Dict[str, np.ndarray]:
-    with np.load(path) as z:
-        return {k: z[k] for k in z.files}
+    """A split's arrays, memory-mapped (ai/training/npz_mmap.py): read as they are used, never all at once."""
+    return load_npz_mmap(path)
 
 
 class Codes:
