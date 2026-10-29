@@ -59,16 +59,9 @@ _SAME: Dict[str, Callable[[Any], Any]] = {
 
 #: (where, name) -> why it is left as it is. Found by this test on 2026-10-28 and reported, not
 #: aligned: which side is right is the owner's call.
-KNOWN_DRIFT: Dict[Tuple[str, str], str] = {
-    ("cli->pipeline", "forced_openings_us"):
-        "the CLI defaults to the owner's three openings, train_pipeline to none; only read when "
-        "forced_openings_frac > 0, but a direct call with a fraction gets no openings",
-    ("cli->pipeline", "forced_openings_ussr"):
-        "as forced_openings_us: the owner's two openings against none",
-    ("pipeline->trainer", "num_envs"):
-        "512 in the CLI and train_pipeline, 64 in NashPGTrainer.__init__; the pipeline always "
-        "passes it, so only a trainer built directly gets 64",
-}
+#: Empty: the three it found when written (forced_openings_us/_ussr, the trainer's num_envs) were
+#: aligned to the CLI's defaults (owner, 2026-10-29).
+KNOWN_DRIFT: Dict[Tuple[str, str], str] = {}
 
 
 def _canon(name: str, value: Any) -> Any:

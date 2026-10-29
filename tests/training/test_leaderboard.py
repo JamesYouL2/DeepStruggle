@@ -234,6 +234,24 @@ def test_a_line_merged_in_twice_and_an_edited_record_are_caught(tmp_path: pathli
     assert any("does not match its content" in e for e in lb.validate(lb.load(tmp_path)))
 
 
+def test_an_also_accepted_digest_validates_records_and_nothing_else_does(tmp_path: pathlib.Path) -> None:
+    """A build the owner ruled plays the epoch's games (`also_accepts`) may record pairings under its
+    own digest; any other digest is still refused, and an accepted entry must give its reason."""
+    board = _board(tmp_path, ["A", "B"], [])
+    other = cast(lb.Behaviour, dict(BEHAVIOUR, runner="5" * 64))
+    seats: lb.Seat = {"w": 6, "l": 4, "d": 0}
+    lb.append_record(board, "T", lb.make_record("A@1M", "B@1M", seats, seats, 1, ENGINE,
+                                                lb.behaviour_id(other), "c", "d"))
+    assert any("not one T accepts" in e for e in lb.validate(board))
+
+    board.epochs["T"]["also_accepts"] = [{"behaviour": other, "why": "only an ending label moved"}]
+    assert lb.validate(board) == []
+    assert lb.epoch_behaviours(board.epochs["T"]) == [BEHAVIOUR, other]
+
+    board.epochs["T"]["also_accepts"] = [{"behaviour": other, "why": " "}]
+    assert any("also_accepts must be" in e for e in lb.validate(board))
+
+
 def test_a_non_canonical_player_id_is_caught(tmp_path: pathlib.Path) -> None:
     board = _board(tmp_path, ["A", "B"], [])
     board.players["A@1M~gumbel"] = {"network": "A@1M", "description": "", "report": None,
@@ -330,7 +348,7 @@ def test_a_record_is_of_its_epoch_by_behaviour_or_by_a_frozen_pre_digest_engine(
     # Another engine's behaviour is another epoch, whatever the engine's sources.
     other = lb.behaviour_id({**BEHAVIOUR, "mcts": "5" * 64})
     board.matches["T"] = [lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, other, "c", "d")]
-    assert any("not T's" in e for e in lb.validate(board))
+    assert any("not one T accepts" in e for e in lb.validate(board))
     # A record from before behaviour digests is held to the epoch's frozen list of engines.
     old = {k: v for k, v in lb.make_record("A@1M", "B@1M", win, win, 1, ENGINE, "", "c", "d").items()
            if k not in ("id", "behaviour")}

@@ -29,7 +29,7 @@ import ts_engine as ts
 from ai.models.coldwar_net_v2 import VP_LIMIT
 from ai.search.batched_mcts import BatchedMCTS, BatchedMCTSConfig
 from ai.training.card_event_targets import aux_label
-from tools.lib.openings import NODE_OFFSET as _NODE, OPENINGS
+from tools.lib.openings import FORCED_OPENINGS_US, FORCED_OPENINGS_USSR, NODE_OFFSET as _NODE, OPENINGS
 
 from bindings.ts_env import TsVectorizedEnv, model_obs_features
 from bindings.action_encoder import ActionEncoder
@@ -343,7 +343,7 @@ class BaseNashPGTrainer:
         active_net: nn.Module,
         reference_net: Optional[nn.Module] = None,
         env: Optional[TsVectorizedEnv] = None,
-        num_envs: int = 64,
+        num_envs: int = 512,
         buffer_size: int = 128,
         batch_size: int = 4096,
         lr: float = 3e-4,
@@ -431,8 +431,8 @@ class BaseNashPGTrainer:
         seed_frac: float = 0.0,
         seed_scenarios_from: int = 0,
         forced_openings_frac: float = 0.0,     # > 0: per side, that share of games start from a forced opening
-        forced_openings_us: Sequence[str] = (),
-        forced_openings_ussr: Sequence[str] = (),
+        forced_openings_us: Sequence[str] = FORCED_OPENINGS_US,
+        forced_openings_ussr: Sequence[str] = FORCED_OPENINGS_USSR,
         aux_opp_legality: float = 0.0,
         aux_opp_legality_frac: float = 0.1,
         aux_opp_legality_min_batch: int = 4096,

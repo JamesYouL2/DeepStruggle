@@ -38,7 +38,8 @@ from tools.lib.engine_behaviour import measure
 from tools.lib.engine_fingerprint import fingerprint, require_fresh
 from tools.lib.jsonl import sha256_file
 from tools.lib.leaderboard import (Board, LeaderboardError, ROOT, append_record, behaviour_id, behaviour_mismatch,
-                                   fit_epoch, load, make_record, markdown_table, player_spec, validate, view)
+                                   epoch_behaviours, fit_epoch, load, make_record, markdown_table, player_spec,
+                                   validate, view)
 from tools.lib.player_spec import PlayerSpecError, Rollout, load_spec
 from tools.tournament import run_massive_tournament
 
@@ -142,17 +143,20 @@ def _run(a: argparse.Namespace) -> int:
 
     require_fresh()     # after --dry-run, which plays nothing
     engine = fingerprint()
-    want = board.epochs[a.epoch]["behaviour"]
+    accepted = epoch_behaviours(board.epochs[a.epoch])
     print(f"leaderboard_play: measuring the engine's behaviour (tools/lib/engine_behaviour.py) ...", flush=True)
     have = measure()
-    differ = behaviour_mismatch(want, have)
-    if differ:
+    match = next((w for w in accepted if not behaviour_mismatch(w, have)), None)
+    if match is None:
+        want = accepted[0]
+        differ = behaviour_mismatch(want, have)
         raise LeaderboardError(
             f"this engine does not play epoch {a.epoch}'s games: its {', '.join(differ)} stream differs "
-            f"from the epoch's (digest version {have['version']}, the epoch's {want['version']}). "
-            f"If the difference is meant, it is a new epoch; if not, it is a bug. This engine's "
+            f"from the epoch's (digest version {have['version']}, the epoch's {want['version']}), and it "
+            f"is none of the epoch's also_accepts. If the difference is meant, it is a new epoch (or, if "
+            f"no game differs, an also_accepts entry); if not, it is a bug. This engine's "
             f"behaviour:\n{json.dumps(have, indent=2)}")
-    behaviour = behaviour_id(want)
+    behaviour = behaviour_id(match)
     dirty = _git("status", "--porcelain", "--", *_CODE_PATHS)
     if dirty:
         raise LeaderboardError(f"uncommitted changes to the code that plays; commit them first:\n{dirty}")

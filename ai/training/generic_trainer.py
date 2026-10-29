@@ -49,7 +49,8 @@ from tools.lib.action_view import checkpoint_merged_influence, run_view
 from tools.lib.batch_tournament import BatchMatchRunner
 from tools.lib.checkpoint_utils import discover_checkpoints
 from tools.lib.data_root import checkpoints_dir
-from tools.lib.openings import HUMAN_OPENING_MIX, OPENINGS, play_scripted_setup
+from tools.lib.openings import (FORCED_OPENINGS_US, FORCED_OPENINGS_USSR, HUMAN_OPENING_MIX, OPENINGS,
+                                play_scripted_setup)
 from tools.lib.player_agent import load_checkpoint_into
 from tools.tournament import run_massive_tournament
 from ai.eval.blunders import measure_blunders_batched
@@ -1826,8 +1827,8 @@ def train_pipeline(
     seed_frac: float = 0.0,
     seed_scenarios_from: int = 0,
     forced_openings_frac: float = 0.0,
-    forced_openings_us: Sequence[str] = (),
-    forced_openings_ussr: Sequence[str] = (),
+    forced_openings_us: Sequence[str] = FORCED_OPENINGS_US,
+    forced_openings_ussr: Sequence[str] = FORCED_OPENINGS_USSR,
     aux_opp_legality: float = 0.0,
     aux_opp_legality_frac: float = 0.1,
     aux_opp_legality_min_batch: int = 4096,

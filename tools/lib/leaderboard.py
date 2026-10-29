@@ -14,7 +14,9 @@ log that mentions it, nor the leak census written alone (`--games 0`), which has
   player's canonical id; a bot has no network.
 * `epochs.json` -- one engine epoch per entry: the engine behaviour whose games it accepts (the
   digest of tools/lib/engine_behaviour.py: any build that reproduces it plays the epoch's games,
-  whatever its sources), the main players, and the anchor that fixes the scale.
+  whatever its sources), the main players, and the anchor that fixes the scale. `also_accepts` lists
+  further digests the owner ruled play the same games -- a build whose digest moved only in what it
+  records, not in what is played -- each with the reason; a record names the digest it reproduced.
 * `matches/<epoch>.jsonl` -- one line per pairing played, append-only: both seats' wins, losses
   and draws, the first deal seed, the engine (its source fingerprint), its behaviour digest's id
   and the commit. Records from before epochs were defined by behaviour carry no behaviour; their
@@ -100,9 +102,17 @@ class Behaviour(TypedDict):
     mcts: str
 
 
+class AcceptedBehaviour(TypedDict):
+    """A further digest an epoch accepts, and why its games are the epoch's."""
+    behaviour: Behaviour
+    why: str
+
+
 class Epoch(TypedDict):
     description: str
     behaviour: Behaviour
+    #: Builds whose digest differs from `behaviour` only where the owner ruled no game differs.
+    also_accepts: NotRequired[List[AcceptedBehaviour]]
     #: The source fingerprints of the builds the epoch's first records were played on, before
     #: epochs were defined by behaviour: a frozen list that only validates those records.
     pre_digest_engines: NotRequired[List[str]]
@@ -253,6 +263,17 @@ def behaviour_id(b: Behaviour) -> str:
     return hashlib.sha256(json.dumps(dict(b), sort_keys=True).encode()).hexdigest()
 
 
+def epoch_behaviours(ep: Epoch) -> List[Behaviour]:
+    """Every digest whose games the epoch accepts: its own first, then `also_accepts` in order."""
+    return [ep["behaviour"], *(a["behaviour"] for a in ep.get("also_accepts", []))]
+
+
+def _behaviour_ok(beh: object) -> bool:
+    fields: Mapping[str, object] = beh if isinstance(beh, dict) else {}
+    return (set(fields) == {"version", *BEHAVIOUR_SECTIONS} and isinstance(fields["version"], int)
+            and all(isinstance(v, str) and bool(_HEX64.match(v)) for v in (fields[s] for s in BEHAVIOUR_SECTIONS)))
+
+
 def behaviour_mismatch(want: Behaviour, have: Behaviour) -> List[str]:
     """The sections in which `have` differs from `want`; every section when the versions differ."""
     if want["version"] != have["version"]:
@@ -375,20 +396,28 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
     for name, ep in board.epochs.items():
         where = f"epochs.json[{name}]"
         want = {"description", "behaviour", "anchor", "anchor_elo", "main"}
-        if not want <= set(ep) <= want | {"strong", "pre_digest_engines"}:
+        if not want <= set(ep) <= want | {"strong", "pre_digest_engines", "also_accepts"}:
             errs.append(f"{where}: fields must be {sorted(want)} (and optionally strong, "
-                        f"pre_digest_engines), got {sorted(ep)}")
+                        f"pre_digest_engines, also_accepts), got {sorted(ep)}")
             continue
         strong = ep.get("strong", [])
         if any(pid not in ep["main"] for pid in strong) or len(set(strong)) != len(strong):
             errs.append(f"{where}: the strong tier must be distinct main players")
         beh = ep["behaviour"]
-        fields: Mapping[str, object] = beh if isinstance(beh, dict) else {}
-        if (set(fields) != {"version", *BEHAVIOUR_SECTIONS} or not isinstance(fields["version"], int)
-                or not all(isinstance(v, str) and _HEX64.match(v) for v in (fields[s] for s in BEHAVIOUR_SECTIONS))):
+        if not _behaviour_ok(beh):
             errs.append(f"{where}: behaviour must be {{version, {', '.join(BEHAVIOUR_SECTIONS)}}}, "
                         f"each section a sha256 (tools/lib/engine_behaviour.py)")
             continue
+        accepted = ep.get("also_accepts", [])
+        if not isinstance(accepted, list) or not all(
+                isinstance(a, dict) and set(a) == {"behaviour", "why"} and _behaviour_ok(a["behaviour"])
+                and isinstance(a["why"], str) and a["why"].strip() for a in accepted):
+            errs.append(f"{where}: also_accepts must be a list of {{behaviour, why}}, each behaviour a "
+                        f"digest like `behaviour` and each why a non-empty reason")
+            continue
+        accepted_ids = {behaviour_id(b) for b in epoch_behaviours(ep)}
+        if len(accepted_ids) != 1 + len(accepted):
+            errs.append(f"{where}: also_accepts repeats a digest")
         legacy = ep.get("pre_digest_engines", [])
         if not all(isinstance(e, str) and _HEX64.match(e) for e in legacy):
             errs.append(f"{where}: pre_digest_engines must be engine fingerprints")
@@ -430,9 +459,9 @@ def validate(board: Board, repo_root: pathlib.Path = ROOT) -> List[str]:
             elif sum(int(s[k]) for s in (rec["a_as_us"], rec["a_as_ussr"]) for k in ("w", "l", "d")) == 0:
                 errs.append(f"{at}: no games")
             if "behaviour" in rec:
-                if rec["behaviour"] != behaviour_id(beh):
+                if rec["behaviour"] not in accepted_ids:
                     errs.append(f"{at}: played on an engine of behaviour {str(rec['behaviour'])[:12]}…, "
-                                f"not {name}'s")
+                                f"not one {name} accepts")
             elif rec["engine"] not in legacy:
                 errs.append(f"{at}: a record with no behaviour, on engine {rec['engine'][:12]}…, which "
                             f"is not one of {name}'s pre_digest_engines")

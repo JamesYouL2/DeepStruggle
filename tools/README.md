@@ -271,7 +271,7 @@ One Elo scale per engine epoch, kept as reviewed records in `leaderboard/` and f
 |:---|:---|
 | `networks.json` | each network: file (relative to `data/`), sha256, `hf` path once published, behaviour `report`, description, `old_names` |
 | `players.json` | each player: a network plus how it is run (`tools/lib/player_spec.py`), description, its own `report` |
-| `epochs.json` | each engine epoch: its engine `behaviour` digest, main players, anchor and rating, an optional `strong` tier of main players, and the frozen `pre_digest_engines` of records played before digests |
+| `epochs.json` | each engine epoch: its engine `behaviour` digest (and any `also_accepts` digests ruled to play the same games), main players, anchor and rating, an optional `strong` tier of main players, and the frozen `pre_digest_engines` of records played before digests |
 | `matches/<epoch>.jsonl` | one line per pairing: both seats' w/l/d, base seed, engine (source fingerprint), behaviour digest id, commit -- append-only |
 
 **A player is a network plus an inference spec**, spelled in its id: the bare network name is its
@@ -323,7 +323,10 @@ version 3) and `mcts` (`BatchedSearch`), the searches driven by a stand-in netwo
 the rows it is shown. It takes about 5 seconds. Any build that reproduces an epoch's
 digest plays its games -- a refactor, a comment or a change to the web page needs nothing done --
 and one that does not is refused, naming the sections that differ: a new epoch if the change is
-meant, a bug if not. A new epoch's `behaviour` is what
+meant, a bug if not. A digest that moved without any game moving (only what a game records, e.g. an
+ending's reason) can instead be added to the epoch's `also_accepts` as `{behaviour, why}` with the
+owner's ruling; records name the digest they reproduced, and `validate` accepts exactly those. A new
+epoch's `behaviour` is what
 `PYTHONPATH=.:build/release python tools/lib/engine_behaviour.py` prints; bump
 `BEHAVIOUR_VERSION` (`tools/lib/leaderboard.py`) whenever what the digest hashes changes, and
 re-take every epoch's digest on one of its engines.
