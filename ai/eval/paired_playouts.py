@@ -76,11 +76,13 @@ def pair_start(state: ts.GameState, k: int, seed: int) -> ts.GameState:
 
 
 def apply_move(state: ts.GameState, action: int) -> ts.GameState:
-    """A copy with `action` applied and chance resolved; refuses an illegal action."""
+    """A copy with `action` applied and chance resolved; refuses an illegal action. An until-control
+    slot (P42) is applied in the macro view, so a base network's play can be priced against one."""
     st = state.clone()
-    if not np.asarray(ActionEncoder.get_legal_mask(st))[action]:
+    macro = action >= ActionEncoder.BASE_ACTION_SIZE
+    if not np.asarray(ts.Engine.get_flat_action_mask(st, False, macro))[action]:
         raise ValueError(f"action {action} is illegal here")
-    ts.Engine.step_flat(st, int(action))
+    ts.Engine.step_flat(st, int(action), False, False, macro)
     drain_chance(st, context="paired_playouts move")
     return st
 

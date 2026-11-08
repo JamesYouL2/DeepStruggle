@@ -1,0 +1,109 @@
+# Stage 1 of the takeover pricing (tools/scripts/takeover_pricing.py collect): a network's self-play and
+# its opportunities for P42's until-control macro, as bank rows. Later stages are search_bank.yml
+# stage=playouts on a release of the pooled rows (asset bank.jsonl.gz), through tools/scripts/ci_batches.py.
+#
+#   gh workflow run takeover_collect.yml --ref <branch> -f model=<run>/<file>.pt -f games=2000 -f runners=2
+#   gh run download <run-id> -n takeover-collect-<run-id> -D data/reports/<name>/collect
+name: takeover-collect
+
+on:
+  # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
+  # push run skips every job.
+  push:
+    branches: [exp/j1-takeover]
+    paths: [.github/workflows/takeover_collect.yml]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "The .pt in the Hugging Face repo to price"
+        required: true
+      games:
+        description: "Self-play games over all parts"
+        default: "2000"
+      runners:
+        description: "Parts (one job each)"
+        default: "2"
+      args:
+        description: "Further arguments for collect (--sample, --seed, --top-macros, ...)"
+        default: ""
+      hf_repo:
+        description: "Hugging Face repo"
+        default: "mihaild/deepstruggle"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:build/release
+  MODEL: ${{ inputs.model }}
+  GAMES: ${{ inputs.games || '2000' }}
+  RUNNERS: ${{ inputs.runners || '2' }}
+  ARGS: ${{ inputs.args || '' }}
+  HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      parts: ${{ steps.p.outputs.parts }}
+    steps:
+      - id: p
+        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Fetch the model
+        run: |
+          mkdir -p data/checkpoints/hf
+          curl -sSfL --retry 3 -o "data/checkpoints/hf/$(basename "$MODEL")" "https://huggingface.co/$HF_REPO/resolve/main/$MODEL"
+          sha256sum "data/checkpoints/hf/$(basename "$MODEL")"
+      - name: collect (part ${{ matrix.part }})
+        run: |
+          OMP_NUM_THREADS=4 python tools/scripts/takeover_pricing.py collect \
+            --model "data/checkpoints/hf/$(basename "$MODEL")" --games "$GAMES" \
+            --part "${{ matrix.part }}/$RUNNERS" --out-dir "out/part-${{ matrix.part }}" $ARGS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: takeover-collect-part-${{ github.run_id }}-${{ matrix.part }}
+          path: out/
+          retention-days: 14
+
+  pool:
+    needs: [plan, run]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: takeover-collect-part-${{ github.run_id }}-*
+          path: parts
+          merge-multiple: true
+      - name: Pool
+        run: |
+          mkdir -p report
+          cat parts/part-*/rows.jsonl.gz > report/bank.jsonl.gz
+          for d in parts/part-*; do cp "$d/summary.json" "report/summary-$(basename "$d").json"; done
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $HF_REPO $MODEL  games: $GAMES  args: $ARGS"
+            echo "parts: $RUNNERS (received: $(ls -d parts/part-* | wc -l))"
+            echo "rows: $(zcat report/bank.jsonl.gz | wc -l)"
+          } > report/provenance.txt
+          cat report/provenance.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: takeover-collect-${{ github.run_id }}
+          path: report/
+          retention-days: 90

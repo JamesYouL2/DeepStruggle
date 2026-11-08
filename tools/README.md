@@ -1001,6 +1001,39 @@ tools/scripts/check_engine_fresh.sh && TRITON_CACHE_DIR=.triton_cache PYTHONPATH
 
 ---
 
+## 7g. Pricing a Macro on a Frozen Network (`tools/scripts/takeover_pricing.py`) and Splitting CI Runs
+
+P42's until-control macro asked of a base network with no training: at each run of influence points, what are
+the takeovers it passes up worth, in its own positions and with its own greedy play afterwards?
+`ai.eval.paired_playouts.apply_move` applies an until-control slot in the macro view, so
+`search_bank.py playouts` and `confirm-select` price these rows unchanged.
+
+```bash
+# 1. the opportunities (one job a part; a row: raw's move, its 8 likeliest macros, 4 drawn from the rest)
+gh workflow run takeover_collect.yml --ref <branch> -f model=<run>/<file>.pt -f games=2000 -f runners=2
+# 2. release the pooled bank.jsonl.gz, then screen every macro against raw's move
+tools/scripts/ci_batches.py --workflow search_bank.yml --ref <branch> --parts 20 --ledger screen_runs.jsonl \
+    -f stage=playouts -f runners=20 -f release=<rel> -f model=<run>/<file>.pt -f "args=--pairs 128 --seed 0"
+# 3. search_bank.py confirm-select, release it, play the escalated rows on fresh pairs (--seed 1)
+# 4. the report
+.venv/bin/python tools/scripts/takeover_pricing.py report --rows bank.jsonl.gz --summary summary-*.json \
+    --screen screen.jsonl.gz --confirm-input confirm_input.jsonl.gz --confirm confirm.jsonl.gz --out report.md
+```
+
+The gain a chooser collects is read only on the fresh pairs, and every other opportunity counts zero; each
+macro's screen lead is unselected and tabled by side, kind, period, region, country and raw's probability of the
+line. A clear gain supports P42; no gain does not rule it out, since nothing here trains in the view.
+
+**`tools/scripts/ci_batches.py`** dispatches a many-part stage as a series of small runs, so a long stage does not
+hold every runner: `--parts N --batch 6 --cap 14` dispatches the next parts only while the repository's active jobs
+plus the batch fit under the cap, resumes from its `--ledger`, and at the end names every job that did not succeed
+(exit 1). `search_bank.yml` and `bank_playouts.yml` take the batch as `part_range`. Size N so a job stays under an
+hour: the runs' own job timeouts are 60 minutes on the branches that use it.
+
+**`blunder_screen.yml`** is the CI path of §7d's stage 1 (`-f model=... -f games=400 -f runners=4`).
+
+---
+
 ## 8. Other CLIs and the shared library
 
 | CLI | what it is for |
