@@ -49,8 +49,11 @@ on:
         description: "Pairs per position"
         default: "64"
       runners:
-        description: "Runners"
+        description: "Parts the stage is split into (k/N); one job plays one part"
         default: "20"
+      part_range:
+        description: "The parts this run plays, lo-hi (empty: all); several small runs share the 20-job limit"
+        default: ""
       args:
         description: "Further arguments for the stage (e.g. --search-sims 256 --continue-with 256:8)"
         default: ""
@@ -68,6 +71,7 @@ env:
   MODEL: ${{ inputs.model || 'E7line_swa_4720-4800M.onnx' }}
   PAIRS: ${{ inputs.pairs || '64' }}
   RUNNERS: ${{ inputs.runners || '20' }}
+  PART_RANGE: ${{ inputs.part_range }}
   ARGS: ${{ inputs.args || '' }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
@@ -79,12 +83,12 @@ jobs:
       parts: ${{ steps.p.outputs.parts }}
     steps:
       - id: p
-        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+        run: echo "parts=$(python3 -c "import json,os; lo,hi=(os.environ['PART_RANGE'] or '1-'+os.environ['RUNNERS']).split('-'); print(json.dumps(list(range(int(lo), int(hi) + 1))))")" >> "$GITHUB_OUTPUT"
 
   run:
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -117,6 +121,7 @@ jobs:
             "${model_flag[@]}" \
             --part "${{ matrix.part }}/$RUNNERS" --out "out/playouts-${{ matrix.part }}.jsonl.gz" $ARGS
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: bank-playouts-part-${{ github.run_id }}-${{ matrix.part }}
           path: out/
@@ -140,13 +145,15 @@ jobs:
       - name: Pool
         run: |
           mkdir -p report
-          python tools/scripts/bank_playouts.py pool --parts parts/playouts-*.jsonl.gz --expect "$RUNNERS" \
+          # A batch of a split stage expects only its own range; missing parts are named per batch.
+          expect=$([ -n "$PART_RANGE" ] && echo 0 || echo "$RUNNERS")
+          python tools/scripts/bank_playouts.py pool --parts parts/playouts-*.jsonl.gz --expect "$expect" \
             --out report/playouts.jsonl.gz
           {
             echo "commit: $GITHUB_SHA"
             echo "stage: $STAGE  args: $ARGS"
             echo "positions: release $RELEASE"
-            echo "model: $HF_REPO $MODEL  pairs: $PAIRS  runners: $RUNNERS"
+            echo "model: $HF_REPO $MODEL  pairs: $PAIRS  parts: range ${PART_RANGE:-all} of $RUNNERS"
             echo "parts: $(cat report/playouts.jsonl.gz.parts.json)"
           } > report/provenance.txt
       - uses: actions/upload-artifact@v7

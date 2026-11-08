@@ -14,7 +14,7 @@ on:
   # Registers the branch-only workflow (GitHub will not dispatch one it has never seen run); a
   # push run skips every job.
   push:
-    branches: [exp/search-bank, exp/leak-r34]
+    branches: [exp/search-bank, exp/leak-r34, exp/j1-census]
     paths: [.github/workflows/search_bank.yml]
   workflow_dispatch:
     inputs:
@@ -34,8 +34,11 @@ on:
         description: ".pt in the repo with the export's architecture"
         default: "shallow_E7-02+03+04+05_1200M.pt"
       runners:
-        description: "Runners (a free public repo runs up to 20 jobs at once)"
+        description: "Parts the stage is split into (k/N); one job plays one part"
         default: "20"
+      part_range:
+        description: "The parts this run plays, lo-hi (empty: all); several small runs share the 20-job limit"
+        default: ""
       hf_repo:
         description: "Hugging Face repo"
         default: "mihaild/deepstruggle"
@@ -50,6 +53,7 @@ env:
   MODEL: ${{ inputs.model || 'E7line_swa_4720-4800M.onnx' }}
   TEMPLATE: ${{ inputs.template || 'shallow_E7-02+03+04+05_1200M.pt' }}
   RUNNERS: ${{ inputs.runners || '20' }}
+  PART_RANGE: ${{ inputs.part_range }}
   HF_REPO: ${{ inputs.hf_repo || 'mihaild/deepstruggle' }}
 
 jobs:
@@ -61,12 +65,12 @@ jobs:
       parts: ${{ steps.p.outputs.parts }}
     steps:
       - id: p
-        run: echo "parts=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['RUNNERS']) + 1))))")" >> "$GITHUB_OUTPUT"
+        run: echo "parts=$(python3 -c "import json,os; lo,hi=(os.environ['PART_RANGE'] or '1-'+os.environ['RUNNERS']).split('-'); print(json.dumps(list(range(int(lo), int(hi) + 1))))")" >> "$GITHUB_OUTPUT"
 
   run:
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 330
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -131,7 +135,7 @@ jobs:
             echo "commit: $GITHUB_SHA"
             echo "stage: $STAGE  args: $ARGS"
             echo "model: $HF_REPO $MODEL (template $TEMPLATE)  release: $RELEASE"
-            echo "runners: $RUNNERS (parts received: $(ls parts/part-*.jsonl.gz | wc -l))"
+            echo "parts: range ${PART_RANGE:-all} of $RUNNERS (received: $(ls parts/part-*.jsonl.gz | sort -V | xargs -n1 basename | tr '\n' ' '))"
             echo "rows: $(zcat "report/$STAGE.jsonl.gz" | wc -l)"
           } > report/provenance.txt
           cat report/provenance.txt
