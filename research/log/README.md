@@ -185,6 +185,7 @@ per-seat control ratings, setup placement and temperature self-play.
 | [`E7_searched_leak_R39.md`](E7_searched_leak_R39.md) | where R39 under the rollout root still loses |
 | [`E7_searched_leak_A13_R48.md`](E7_searched_leak_A13_R48.md) | the same census on A13+R48 at 12,000M |
 | [`E8_J1_census_and_leak.md`](E8_J1_census_and_leak.md) | J1's searched leak is level with R48's; engine-proven blunders are rare and cheap; its largest estimated rows are the Cuban Missile Crisis hole |
+| [`E9_B6_J1_searched_leak_root64.md`](E9_B6_J1_searched_leak_root64.md) | under the 64-world raced root on E9 the B6 soup and J1 leak the same (+43.7 ± 5.1 and +42.0 ± 5.8 a game); card choice, about +20, is the largest kind in both and has not moved since R48 |
 | [`P56_afterstate_advantage_probe.md`](P56_afterstate_advantage_probe.md) | one rollout of R169: where a step has an afterstate (30% of decisions) the dice and the opponent's turn are 90% of its variance; a decay there is mostly a shorter reach (0.5 = lambda 0.69) and 6-15% better than one at equal return error; the afterstate critic is as calibrated as the decision's, separates the policy's moves by 0.013 and agrees with its top move in 52% |
 | [`P50_lambda_clock_and_own_view.md`](P50_lambda_clock_and_own_view.md) | one rollout of the base: lambda per card play is the same estimator as per decision (0.921 a play is 0.98 a decision; a play is 2-6 decisions); per-player GAE matches the default's reach at 0.96, advantages correlated 0.986; a side's value moves 0.075 when its own hidden hand is redealt, and 45% of the default's bootstrap weight sits on the view that cannot see it |
 | [`P49_exploiter_cross_table.md`](P49_exploiter_cross_table.md) | four exploiters as the US against five networks: J1's exploit is its reward family's (66-68% against J1' and R98 unseen, 11-12% against the pure win/loss runs); the no-pool run's is its own and costs nothing elsewhere (67.8%, 44-55% against the rest); same-lineage exploiters find none; part of an exploit is the snapshot's |
@@ -211,7 +212,8 @@ per-seat control ratings, setup placement and temperature self-play.
 | [`per_checkpoint/`](per_checkpoint/README.md) | generated behaviour reports, one per rated checkpoint (`tools/scripts/checkpoint_report.py`) |
 
 The subdirectories `E7_blunder_bank/`, `E7_leak_by_kind_*/`, `E7_rollout_root_tuning_R39/`,
-`E7_searched_leak_*/` and `E8_J1_census_and_leak/` hold the generated tables their notes link to.
+`E7_searched_leak_*/`, `E8_J1_census_and_leak/` and `E9_B6_J1_searched_leak_root64/` hold the generated tables
+their notes link to.
 
 ## E8 / E9: placement order, throughput, the critics and the audit
 
